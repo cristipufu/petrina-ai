@@ -69,7 +69,10 @@ const HEREDOC_MARK = "\u0000heredoc:";
 const LITERAL = "\u0001";
 
 /** Split a command line into words and operators, honouring quotes and here-documents. */
-function tokenize(input: string): { tokens: string[]; substitutions: string[]; heredocs: Heredoc[]; opaque?: string } {
+function tokenize(input: string): { tokens: string[]; substitutions: string[]; heredocs: Heredoc[]; arithmetic: boolean; opaque?: string } {
+  // Bash evaluates variable contents inside arithmetic, command substitutions included, so any
+  // arithmetic the shell would evaluate (not single-quoted) makes the command unreadable.
+  let arithmetic = false;
   const tokens: string[] = [];
   const substitutions: string[] = [];
   const heredocs: Heredoc[] = [];
@@ -96,7 +99,7 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
       if (input[j] === "'" || input[j] === '"') {
         const quote = input[j]!;
         const end = input.indexOf(quote, j + 1);
-        if (end < 0) return { tokens, substitutions, heredocs, opaque: "an unbalanced here-document" };
+        if (end < 0) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced here-document" };
         delimiter = input.slice(j + 1, end);
         quoted = true;
         j = end + 1;
@@ -106,7 +109,7 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
         quoted = (match?.[0] ?? "").includes("\\");
         j += match?.[0].length ?? 0;
       }
-      if (!delimiter) return { tokens, substitutions, heredocs, opaque: "a here-document without a delimiter" };
+      if (!delimiter) return { tokens, substitutions, heredocs, arithmetic, opaque: "a here-document without a delimiter" };
       pending.push({ delimiter, quoted, strip, index: heredocs.length + pending.length });
       tokens.push(`${HEREDOC_MARK}${heredocs.length + pending.length - 1}`);
       i = j - 1;
@@ -128,8 +131,9 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
           }
           lines.push(line);
         }
-        if (!closed) return { tokens, substitutions, heredocs, opaque: "an unterminated here-document" };
+        if (!closed) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unterminated here-document" };
         heredocs[doc.index] = { body: lines.join("\n"), quoted: doc.quoted };
+        if (!doc.quoted && /\$\(\(|\$\[/.test(lines.join("\n"))) arithmetic = true;
       }
       pending.length = 0;
       tokens.push(";");
@@ -138,7 +142,7 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
     }
     if (ch === "'") {
       const end = input.indexOf("'", i + 1);
-      if (end < 0) return { tokens, substitutions, heredocs, opaque: "an unbalanced quote" };
+      if (end < 0) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced quote" };
       word += input.slice(i + 1, end);
       inWord = true;
       i = end;
@@ -146,19 +150,21 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
       let j = i + 1;
       for (; j < input.length && input[j] !== '"'; j += 1) {
         if (input[j] === "\\") j += 1;
-        else if (input[j] === "$" && input[j + 1] === "(") {
+        else if (input[j] === "$" && (input[j + 1] === "[" || (input[j + 1] === "(" && input[j + 2] === "("))) {
+          arithmetic = true;
+        } else if (input[j] === "$" && input[j + 1] === "(") {
           const close = matchParen(input, j + 1);
-          if (close < 0) return { tokens, substitutions, heredocs, opaque: "an unbalanced substitution" };
+          if (close < 0) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced substitution" };
           substitutions.push(input.slice(j + 2, close));
           j = close;
         } else if (input[j] === "`") {
           const close = input.indexOf("`", j + 1);
-          if (close < 0) return { tokens, substitutions, heredocs, opaque: "an unbalanced substitution" };
+          if (close < 0) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced substitution" };
           substitutions.push(input.slice(j + 1, close));
           j = close;
         }
       }
-      if (j >= input.length) return { tokens, substitutions, heredocs, opaque: "an unbalanced quote" };
+      if (j >= input.length) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced quote" };
       word += input.slice(i + 1, j).replace(/\\(.)/g, "$1");
       inWord = true;
       i = j;
@@ -166,16 +172,21 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
       word += input[i + 1] ?? "";
       inWord = true;
       i += 1;
+    } else if (ch === "$" && input[i + 1] === "[") {
+      arithmetic = true;
+      word += ch;
+      inWord = true;
     } else if (ch === "$" && input[i + 1] === "(") {
+      if (input[i + 2] === "(") arithmetic = true;
       const close = matchParen(input, i + 1);
-      if (close < 0) return { tokens, substitutions, heredocs, opaque: "an unbalanced substitution" };
+      if (close < 0) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced substitution" };
       substitutions.push(input.slice(i + 2, close));
       word += "$(…)";
       inWord = true;
       i = close;
     } else if (ch === "`") {
       const close = input.indexOf("`", i + 1);
-      if (close < 0) return { tokens, substitutions, heredocs, opaque: "an unbalanced substitution" };
+      if (close < 0) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced substitution" };
       substitutions.push(input.slice(i + 1, close));
       word += "`…`";
       inWord = true;
@@ -183,6 +194,7 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
     } else if (/\s/.test(ch) && ch !== "\n") {
       push();
     } else if (ch === "\n" || ch === ";" || ch === "|" || ch === "&" || ch === "(" || ch === ")") {
+      if (ch === "(" && input[i + 1] === "(") arithmetic = true;
       push();
       const two = input.slice(i, i + 2);
       if (two === "&&" || two === "||" || two === ";;") {
@@ -199,8 +211,8 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
     }
   }
   push();
-  if (pending.length) return { tokens, substitutions, heredocs, opaque: "an unterminated here-document" };
-  return { tokens, substitutions, heredocs };
+  if (pending.length) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unterminated here-document" };
+  return { tokens, substitutions, heredocs, arithmetic };
 }
 
 function matchParen(input: string, open: number): number {
@@ -220,10 +232,8 @@ const OPERATORS = new Set([";", "&&", "||", "|", "&", "(", ")", ";;"]);
 export function analyze(command: string, depth = 0): Analysis {
   if (depth > 4) return { segments: [], opaque: "deeply nested commands", compound: true };
   // Arithmetic contexts reuse << as a shift; the tokenizer would read it as a here-document.
-  // Arithmetic reuses << as a shift, which the tokenizer would read as a here-document. Arithmetic
-  // without << parses safely, so only the two together fail closed (on the raw text, no quote stripping).
-  if (/\(\(|\$\[/.test(command) && command.includes("<<")) return { segments: [], opaque: "arithmetic next to a here-document marker", compound: true };
-  const { tokens, substitutions, heredocs, opaque } = tokenize(command);
+  const { tokens, substitutions, heredocs, arithmetic, opaque } = tokenize(command);
+  if (arithmetic) return { segments: [], opaque: "shell arithmetic, which can run hidden commands", compound: true };
   if (heredocs.some((doc) => !doc.quoted && /\\$/m.test(doc.body))) return { segments: [], opaque: "a here-document with line continuations", compound: true };
   const compound = substitutions.length > 0 || heredocs.length > 0 || tokens.some((token) => OPERATORS.has(token) || token === ">" || token === "<");
   const analysis: Analysis = { segments: [], compound, ...(opaque ? { opaque } : {}) };

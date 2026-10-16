@@ -183,7 +183,15 @@ describe("permission policy", () => {
 
   it("fails closed when arithmetic and here-document markers meet, whatever the quoting", () => {
     expect(run("echo \\' (( x <<EOF )) '\ngit push\nEOF")).not.toBe("allow");
-    expect(run("python3 -c 'x = 1 << 2; print(((1+0.055)/1.055))'")).not.toBe("allow");
+    expect(run("python3 -c 'x = 1 << 2; print(((1+0.055)/1.055))'")).toBe("allow");
     expect(run("python3 -I -c 'print(((1+0.055)/1.055)**2.4)'", "code-reviewer")).toBe("allow");
+  });
+
+  it("treats any arithmetic the shell would evaluate as unreadable", () => {
+    for (const command of ["x='a[$(git push)]'; echo $((x))", 'echo "$((1+2))"', "echo $[1+2]", "(( n++ ))", "cat <<EOF\n$((x))\nEOF"]) {
+      expect(`${command} → ${run(command)}`).not.toBe(`${command} → allow`);
+    }
+    expect(run("cat <<'EOF'\n$((x))\nEOF")).toBe("allow");
+    expect(run("echo '$((1+2))'")).toBe("allow");
   });
 });
