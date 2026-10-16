@@ -121,8 +121,10 @@ export class AgentRun {
             paths: (merged.locations ?? []).map((location) => location.path),
           };
           const decision = await callbacks.onPermission(info);
-          const wanted = decision === "allow" ? ["allow_once", "allow_always"] : ["reject_once", "reject_always"];
-          const option = params.options.find((entry) => wanted.includes(entry.kind)) ?? params.options.find((entry) => (decision === "allow" ? entry.kind.startsWith("allow") : entry.kind.startsWith("reject")));
+          // Always prefer the one-time option, whatever order the agent lists them in: "always" is
+          // Petrina's decision to remember, never the agent's.
+          const order = decision === "allow" ? ["allow_once", "allow_always"] : ["reject_once", "reject_always"];
+          const option = order.map((kind) => params.options.find((entry) => entry.kind === kind)).find((entry) => entry !== undefined);
           if (!option) return { outcome: { outcome: "cancelled" } };
           return { outcome: { outcome: "selected", optionId: option.optionId } };
         },
