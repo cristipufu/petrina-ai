@@ -408,12 +408,28 @@ function ghApiReads(argv: readonly string[]): boolean {
 /** Environment a non-shipper must not touch: credentials and where tools look for them. */
 const CREDENTIAL_ENV = /^(GH_|GITHUB_|GIT_|SSH_|GCM_|DYLD_|HOME$|XDG_CONFIG_HOME$|GNUPGHOME$|NETRC$|CURL_HOME$|EDITOR$|VISUAL$|PAGER$|BASH_ENV$|ENV$|PROMPT_COMMAND$|LD_PRELOAD$|LD_LIBRARY_PATH$|NODE_OPTIONS$|PYTHONSTARTUP$)/;
 
-/** git accepts any unambiguous prefix of a long option (--upload-p means --upload-pack): match the same way. */
-function longOption(arg: string, names: readonly string[]): boolean {
-  if (!arg.startsWith("--")) return false;
-  const name = arg.split("=")[0]!;
-  return name.length > 3 && names.some((full) => full.startsWith(name));
+/**
+ * git accepts any unambiguous prefix of a long option (--u can mean --upload-pack), so prefix
+ * matching is a guessing game. Long options are matched by exact name against an allowlist;
+ * anything else is unknown, and unknown fails closed.
+ */
+function longOptionName(arg: string): string | undefined {
+  return arg.startsWith("--") && arg.length > 2 ? arg.split("=")[0]! : undefined;
 }
+
+/** Long options that are safe on network-facing git commands, by exact name. */
+const GIT_NETWORK_SAFE = new Set([
+  "--all", "--append", "--atomic", "--autostash", "--no-autostash", "--branch", "--depth", "--deepen", "--dry-run", "--exit-code",
+  "--ff", "--no-ff", "--ff-only", "--filter", "--force", "--get-url", "--heads", "--jobs", "--keep", "--multiple",
+  "--negotiate-only", "--no-checkout", "--no-tags", "--origin", "--porcelain", "--progress", "--no-progress", "--prune",
+  "--prune-tags", "--quiet", "--rebase", "--no-rebase", "--recurse-submodules", "--no-recurse-submodules", "--refs", "--set-upstream",
+  "--shallow-exclude", "--shallow-since", "--show-forced-updates", "--single-branch", "--no-single-branch", "--sort", "--squash",
+  "--no-squash", "--stat", "--no-stat", "--symref", "--tags", "--unshallow", "--update-shallow", "--verbose", "--write-fetch-head",
+  "--no-write-fetch-head", "--commit", "--no-commit", "--edit", "--no-edit", "--sparse", "--bare", "--local", "--no-local",
+  "--shared", "--template-dir-not-allowed",
+]);
+/** Long options on `git push` that neither force, delete nor run anything. */
+const GIT_PUSH_SAFE = new Set(["--set-upstream", "--tags", "--follow-tags", "--no-follow-tags", "--atomic", "--no-atomic", "--porcelain", "--quiet", "--verbose", "--dry-run", "--progress", "--no-progress", "--no-verify", "--verify", "--signed", "--no-signed", "--ipv4", "--ipv6"]);
 
 /** git's subcommand, after its global options, and any `-c` settings that change what it does. */
 function gitCommand(argv: string[]): { sub: string; rest: string[]; risky: string[] } {
@@ -487,8 +503,13 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
   if (program === "git") {
     const { sub, rest, risky } = gitCommand(argv);
     if (risky.length) effects.push({ kind: "git-risky-config", settings: risky });
-    if (sub === "rebase" && rest.some((arg) => (/^-[A-Za-z]+/.test(arg) && !arg.startsWith("--") && arg.includes("x")) || longOption(arg, ["--exec"]))) effects.push({ kind: "git-exec", what: "git rebase --exec" });
-    if (["fetch", "pull", "clone", "ls-remote", "archive", "push", "submodule"].includes(sub) && rest.some((arg) => longOption(arg, ["--upload-pack", "--receive-pack", "--exec"]) || (sub !== "push" && (arg === "-u" || /^-u./.test(arg))))) effects.push({ kind: "git-exec", what: `git ${sub} with a custom pack program` });
+    const longs = rest.map(longOptionName).filter((name): name is string => name !== undefined);
+    if (sub === "rebase" && (rest.some((arg) => /^-[A-Za-z]+/.test(arg) && !arg.startsWith("--") && arg.includes("x")) || longs.some((name) => "--exec".startsWith(name)))) effects.push({ kind: "git-exec", what: "git rebase --exec" });
+    if (["fetch", "pull", "clone", "ls-remote", "archive", "submodule"].includes(sub)) {
+      if (longs.some((name) => ["--upload-pack", "--receive-pack", "--exec"].some((full) => full.startsWith(name))) || rest.some((arg) => arg === "-u" || /^-u./.test(arg))) effects.push({ kind: "git-exec", what: `git ${sub} with a custom pack program` });
+      const unknown = longs.find((name) => !GIT_NETWORK_SAFE.has(name));
+      if (unknown) effects.push({ kind: "opaque", reason: `a git ${sub} option Petrina does not know (${unknown})` });
+    }
     if (sub === "bisect" && rest[0] === "run") effects.push({ kind: "git-exec", what: "git bisect run" });
     if (sub === "submodule" && rest.includes("foreach")) effects.push({ kind: "git-exec", what: "git submodule foreach" });
     if (["difftool", "mergetool", "filter-branch", "filter-repo"].includes(sub)) effects.push({ kind: "git-exec", what: `git ${sub}` });
@@ -509,7 +530,8 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
     }
     if (sub === "push") {
       // Short option clusters (-uf), long forms (--force-with-lease, --mirror…) and +/: refspecs all rewrite or delete.
-      const force = rest.some((arg) => (/^-[a-zA-Z]+$/.test(arg) && /[fd]/.test(arg)) || /^--(force|mirror|delete|prune)/.test(arg) || longOption(arg, ["--force", "--force-with-lease", "--force-if-includes", "--mirror", "--delete", "--prune"]) || (!arg.startsWith("-") && (arg.includes("+") || arg.startsWith(":"))));
+      // Short clusters with f or d, any long option not known to be safe, and +/: refspecs all count as force.
+      const force = rest.some((arg) => (/^-[a-zA-Z]+$/.test(arg) && /[fd]/.test(arg)) || ((longOptionName(arg) ?? "") !== "" && !GIT_PUSH_SAFE.has(longOptionName(arg)!)) || (!arg.startsWith("-") && (arg.includes("+") || arg.startsWith(":"))));
       effects.push({ kind: "ship", force });
     } else if (!GIT_LOCAL.has(sub)) {
       effects.push({ kind: "git-other", sub });

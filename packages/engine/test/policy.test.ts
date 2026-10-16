@@ -162,4 +162,14 @@ describe("permission policy", () => {
     expect(run("find . -exec echo + -exec git push \\;")).toBe("deny");
     expect(run("find . -name '*.md' -exec wc -l {} +")).toBe("allow");
   });
+
+  it("matches long git options by exact name and fails closed on the rest", () => {
+    expect(run("git ls-remote --u=evil origin")).toBe("deny");
+    expect(run("git fetch --up=evil origin")).toBe("deny");
+    expect(run("git fetch --some-new-option origin")).toBe("ask");
+    expect(run("git fetch --prune --tags origin")).toBe("allow");
+    expect(run("git push --f origin x", "shipper")).toBe("ask");
+    expect(run("git push --fo origin x", "shipper")).toBe("ask");
+    expect(run("git push --set-upstream origin petrina/x", "shipper")).toBe("allow");
+  });
 });
