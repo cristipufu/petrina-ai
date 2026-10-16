@@ -220,7 +220,9 @@ const OPERATORS = new Set([";", "&&", "||", "|", "&", "(", ")", ";;"]);
 export function analyze(command: string, depth = 0): Analysis {
   if (depth > 4) return { segments: [], opaque: "deeply nested commands", compound: true };
   // Arithmetic contexts reuse << as a shift; the tokenizer would read it as a here-document.
-  if (/\(\(|\$\[/.test(command)) return { segments: [], opaque: "arithmetic that Petrina does not parse", compound: true };
+  // Only outside quotes: Python's ((x+1)/2) inside a quoted -c script is not shell arithmetic.
+  const unquoted = command.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "''");
+  if (/\(\(|\$\[/.test(unquoted)) return { segments: [], opaque: "arithmetic that Petrina does not parse", compound: true };
   const { tokens, substitutions, heredocs, opaque } = tokenize(command);
   if (heredocs.some((doc) => !doc.quoted && /\\$/m.test(doc.body))) return { segments: [], opaque: "a here-document with line continuations", compound: true };
   const compound = substitutions.length > 0 || heredocs.length > 0 || tokens.some((token) => OPERATORS.has(token) || token === ">" || token === "<");
@@ -505,6 +507,9 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
     if (risky.length) effects.push({ kind: "git-risky-config", settings: risky });
     const longs = rest.map(longOptionName).filter((name): name is string => name !== undefined);
     if (sub === "rebase" && (rest.some((arg) => /^-[A-Za-z]+/.test(arg) && !arg.startsWith("--") && arg.includes("x")) || longs.some((name) => "--exec".startsWith(name)))) effects.push({ kind: "git-exec", what: "git rebase --exec" });
+    if (sub === "push" && longs.some((name) => ["--receive-pack", "--exec", "--repo"].some((full) => full.startsWith(name)))) {
+      effects.push({ kind: "git-exec", what: "git push with a custom pack program or repository" });
+    }
     if (["fetch", "pull", "clone", "ls-remote", "archive", "submodule"].includes(sub)) {
       if (longs.some((name) => ["--upload-pack", "--receive-pack", "--exec"].some((full) => full.startsWith(name))) || rest.some((arg) => arg === "-u" || /^-u./.test(arg))) effects.push({ kind: "git-exec", what: `git ${sub} with a custom pack program` });
       const unknown = longs.find((name) => !GIT_NETWORK_SAFE.has(name));

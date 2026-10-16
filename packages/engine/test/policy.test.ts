@@ -172,4 +172,12 @@ describe("permission policy", () => {
     expect(run("git push --fo origin x", "shipper")).toBe("ask");
     expect(run("git push --set-upstream origin petrina/x", "shipper")).toBe("allow");
   });
+
+  it("denies push with a custom pack program, and reads quoted code past its parentheses", () => {
+    expect(run("git push --receive-pack=evil origin x", "shipper")).toBe("deny");
+    expect(run("git push --rec=evil origin x", "shipper")).toBe("deny");
+    expect(run("git push --exe=evil origin x", "shipper")).toBe("deny");
+    expect(run("python3 -I -c 'print(((1+0.055)/1.055)**2.4)'", "code-reviewer")).toBe("allow");
+    expect(run("(( x <<EOF ))\ngit push\nEOF")).not.toBe("allow");
+  });
 });
