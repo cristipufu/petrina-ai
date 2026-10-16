@@ -204,6 +204,11 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
         i += 1;
       } else tokens.push(ch === "\n" ? ";" : ch);
     } else if (ch === ">" || ch === "<") {
+      // `2>&1`: the digits are a file descriptor, not an argument.
+      if (inWord && /^\d+$/.test(word)) {
+        word = "";
+        inWord = false;
+      }
       push();
       tokens.push(ch);
       if (input[i + 1] === ch || input[i + 1] === "&") i += 1;
