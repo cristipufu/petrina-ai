@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { forwardRef, useState, type ReactNode } from "react";
 import {
   CircleHelp,
   Compass,
   GitPullRequest,
+  Hand,
   Map as MapIcon,
   PanelRightClose,
   PartyPopper,
@@ -14,13 +15,13 @@ import {
 import { DELIVERY_LABEL, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, type Lookup } from "../lib";
-import { ProductChip, ProfileChip, RoleAvatar } from "./bits";
+import { ProductName, ProfileText, RoleAvatar } from "./bits";
 import type { SheetTab } from "./TaskCard";
 
 const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> = {
   question: { label: "Question", icon: CircleHelp, tone: "violet" },
   permission: { label: "Permission", icon: ShieldQuestion, tone: "amber" },
-  plan: { label: "Plan", icon: MapIcon, tone: "indigo" },
+  plan: { label: "Plan check", icon: MapIcon, tone: "indigo" },
   design: { label: "Design check", icon: Compass, tone: "violet" },
   disagreement: { label: "Disagreement", icon: Scale, tone: "purple" },
   delivery: { label: "Ready to ship", icon: GitPullRequest, tone: "green" },
@@ -30,31 +31,42 @@ const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> =
 interface InboxProps {
   state: State;
   find: Lookup;
+  /** Over the board, in narrow windows. */
+  overlay: boolean;
   onOpen: (taskId: string, tab?: SheetTab) => void;
   onClose: () => void;
 }
 
-export function Inbox({ state, find, onOpen, onClose }: InboxProps) {
+export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state, find, overlay, onOpen, onClose }, ref) {
   const priorityOf = (item: InboxItem) => find.task(item.taskId)?.startedAt ?? 0;
   const items = [...state.inbox].sort((a, b) => Number(b.blocking) - Number(a.blocking) || priorityOf(a) - priorityOf(b) || a.at - b.at);
   const blocking = items.filter((item) => item.blocking).length;
 
   return (
-    <aside className="inbox" aria-label="Needs you">
+    <aside
+      ref={ref}
+      className={`inbox ${overlay ? "overlay" : ""}`}
+      aria-label="Needs you"
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (overlay && event.key === "Escape") onClose();
+      }}
+    >
       <div className="inbox-head">
-        <h2>Needs you</h2>
-        <span className="n">{items.length}</span>
-        <button className="btn ghost icon" title="Hide (I)" onClick={onClose}>
-          <PanelRightClose size={16} />
+        <h2>
+          Needs you <span className="n">{items.length}</span>
+        </h2>
+        <button className="btn ghost icon" aria-label="Hide the inbox" title="Hide the inbox (I)" onClick={onClose}>
+          <PanelRightClose size={18} />
         </button>
       </div>
-      <div className="inbox-sub">
+      <p className="inbox-sub">
         {items.length === 0
           ? "You're not blocking anyone."
           : blocking > 0
             ? `${blocking} agent${blocking === 1 ? " is" : "s are"} waiting on you. The rest wait at checkpoints.`
             : "Nobody is stuck. These wait at checkpoints."}
-      </div>
+      </p>
       <div className="inbox-list">
         {items.length === 0 && (
           <div className="inbox-empty">
@@ -70,11 +82,13 @@ export function Inbox({ state, find, onOpen, onClose }: InboxProps) {
       </div>
     </aside>
   );
-}
+});
 
+/** One thing waiting on the coordinator. The inbox and the session show it the same way. */
 export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: State; find: Lookup; onOpen: InboxProps["onOpen"] }) {
   const [reply, setReply] = useState("");
   const [noting, setNoting] = useState(false);
+  const [note, setNote] = useState("");
   const [showDetail, setShowDetail] = useState(false);
   const task = find.task(item.taskId);
   const product = find.product(task?.productId);
@@ -82,104 +96,125 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const Icon = kind.icon;
   const role = find.role(item.roleId);
   const profile = find.profile(item.profileId);
+  const titleId = `ask-${item.id}`;
 
-  const sendBack = (label: string) =>
+  // The quiet "send it back with a note" action every checkpoint has.
+  const sendBack = (label: string): ReactNode =>
     noting ? (
-      <div className="ask-reply">
+      <form
+        className="reply"
+        style={{ flexBasis: "100%" }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (note.trim()) sim.requestChanges(item.id, note.trim());
+        }}
+      >
         <input
           autoFocus
+          aria-label="What should change?"
           placeholder="What should change?"
-          value={reply}
-          onChange={(event) => setReply(event.target.value)}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && reply.trim()) sim.requestChanges(item.id, reply.trim());
-            if (event.key === "Escape") setNoting(false);
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setNoting(false);
+            }
           }}
         />
-        <button className="btn small" disabled={!reply.trim()} onClick={() => sim.requestChanges(item.id, reply.trim())}>
+        <button className="btn" type="submit" disabled={!note.trim()}>
           Send
         </button>
-      </div>
+      </form>
     ) : (
-      <button className="btn small ghost" onClick={() => setNoting(true)}>
+      <button className="btn quiet" onClick={() => setNoting(true)}>
         {label}
       </button>
     );
 
   return (
-    <article className={`ask ${item.blocking ? "blocking" : ""}`}>
-      <div className="ask-head">
-        <span className={`kind tone-${kind.tone}`}>
-          <Icon size={13} strokeWidth={2.3} />
-          {kind.label}
+    <article className={`ask ${item.blocking ? "blocking" : ""}`} aria-labelledby={titleId}>
+      <div className={`ask-kind tone-${kind.tone}`}>
+        <Icon size={14} strokeWidth={2.3} aria-hidden="true" />
+        <span>
+          {kind.label} <span className="when num">· {ago(item.at, state.now) === "now" ? "just now" : `${ago(item.at, state.now)} ago`}</span>
         </span>
-        {item.blocking && <span className="pill needs-you">Blocking an agent</span>}
-        <span className="when num">{ago(item.at, state.now)}</span>
       </div>
-      <div className="ask-title">{item.title}</div>
-      {item.body && <div className="ask-body">{item.body}</div>}
-      <div className="ask-who">
-        <ProductChip product={product} />
-        <span>·</span>
+      {item.blocking && (
+        <div className="ask-blocking">
+          <Hand size={14} strokeWidth={2.3} aria-hidden="true" />
+          An agent is waiting on this
+        </div>
+      )}
+      <h3 className="ask-title" id={titleId}>
+        {item.title}
+      </h3>
+      {item.body && <p className="ask-body">{item.body}</p>}
+      <div className="ask-context">
+        <ProductName product={product} />
+        <span aria-hidden="true">·</span>
         <button className="task-link" onClick={() => onOpen(item.taskId)}>
           {task?.title}
         </button>
         {role && (
           <>
-            <span>·</span>
-            <RoleAvatar role={role} size={16} />
-            {role.name}
-            <ProfileChip profile={profile} find={find} showTool={false} />
+            <span aria-hidden="true">·</span>
+            <span className="who">
+              <RoleAvatar role={role} size={16} />
+              {role.name}
+            </span>
+            <ProfileText profile={profile} find={find} />
           </>
         )}
       </div>
 
       {item.kind === "question" && (
         <>
-          <div className="ask-options">
-            {item.options?.map((option, index) => (
-              <button key={option} className={`btn small ${index === 0 ? "primary" : ""}`} onClick={() => sim.answer(item.id, option)}>
-                {option}
-              </button>
-            ))}
-          </div>
-          <div className="ask-actions">
-            {item.options && item.options.length > 0 && (
-              <button className="btn small ghost" onClick={() => sim.decideForMe(item.id)} title="The agent goes with its own recommendation">
-                Decide for me
-              </button>
-            )}
-          </div>
-          <div className="ask-reply">
-            <input
-              placeholder="Or answer in your own words"
-              value={reply}
-              onChange={(event) => setReply(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && reply.trim()) sim.answer(item.id, reply.trim());
-              }}
-            />
-            <button className="btn small" disabled={!reply.trim()} onClick={() => sim.answer(item.id, reply.trim())}>
+          {item.options && item.options.length > 0 && (
+            <div className="choices" role="group" aria-label="Answers">
+              {item.options.map((option, index) => (
+                <button key={`${option}-${index}`} className={`choice ${index === 0 ? "suggested" : ""}`} onClick={() => sim.answer(item.id, option)}>
+                  {index === 0 && <span className="tag">Agent's suggestion</span>}
+                  <span>{option}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {item.options && item.options.length > 0 && (
+            <button className="btn quiet decide" onClick={() => sim.decideForMe(item.id)}>
+              Decide for me
+              <span className="ask-note">Chooses the first answer shown above.</span>
+            </button>
+          )}
+          <form
+            className="reply"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (reply.trim()) sim.answer(item.id, reply.trim());
+            }}
+          >
+            <input aria-label="Your answer" placeholder={item.options?.length ? "Or answer in your own words" : "Your answer"} value={reply} onChange={(event) => setReply(event.target.value)} />
+            <button className="btn" type="submit" disabled={!reply.trim()}>
               Answer
             </button>
-          </div>
+          </form>
         </>
       )}
 
       {item.kind === "permission" && (
         <>
           <div className="ask-actions">
-            <button className="btn small primary" onClick={() => sim.allow(item.id, "once")}>
+            <button className="btn lead" onClick={() => sim.allow(item.id, "once")}>
               Allow
             </button>
-            <button className="btn small ghost danger" onClick={() => sim.deny(item.id)}>
+            <button className="btn quiet danger" onClick={() => sim.deny(item.id)}>
               Deny
             </button>
           </div>
           {item.detail && (
-            <div style={{ marginTop: 8 }}>
-              <button className="linkish" onClick={() => setShowDetail((on) => !on)}>
-                {showDetail ? "Hide details" : "Show the exact command"}
+            <div>
+              <button className="linkish" aria-expanded={showDetail} onClick={() => setShowDetail((on) => !on)}>
+                {showDetail ? "Hide the exact command" : "Show the exact command"}
               </button>
               {showDetail && <div className="detail">{item.detail}</div>}
             </div>
@@ -189,10 +224,10 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {item.kind === "plan" && (
         <div className="ask-actions">
-          <button className="btn small primary" onClick={() => sim.approve(item.id)}>
+          <button className="btn lead" onClick={() => sim.approve(item.id)}>
             Approve plan
           </button>
-          <button className="btn small" onClick={() => onOpen(item.taskId, "plan")}>
+          <button className="btn" onClick={() => onOpen(item.taskId, "plan")}>
             See the plan
           </button>
           {sendBack("Re-plan…")}
@@ -201,10 +236,10 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {item.kind === "design" && (
         <div className="ask-actions">
-          <button className="btn small primary" onClick={() => sim.approve(item.id)}>
+          <button className="btn lead" onClick={() => sim.approve(item.id)}>
             Approve design
           </button>
-          <button className="btn small" onClick={() => onOpen(item.taskId, "design")}>
+          <button className="btn" onClick={() => onOpen(item.taskId, "design")}>
             Read the brief
           </button>
           {sendBack("Request changes…")}
@@ -213,11 +248,11 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {item.kind === "disagreement" && (
         <div className="ask-actions">
-          <button className="btn small primary" onClick={() => sim.approve(item.id)}>
-            Side with the architect
-          </button>
-          <button className="btn small" onClick={() => onOpen(item.taskId, "design")}>
+          <button className="btn lead" onClick={() => onOpen(item.taskId, "design")}>
             Read both sides
+          </button>
+          <button className="btn quiet" onClick={() => sim.approve(item.id)}>
+            Side with the architect
           </button>
           {sendBack("Write my call…")}
         </div>
@@ -225,13 +260,13 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {item.kind === "stuck" && (
         <div className="ask-actions">
-          <button className="btn small primary" onClick={() => sim.retry(item.id)}>
+          <button className="btn lead" onClick={() => sim.retry(item.id)}>
             Try again
           </button>
-          <button className="btn small" onClick={() => onOpen(item.taskId, "session")}>
+          <button className="btn" onClick={() => onOpen(item.taskId, "session")}>
             See what happened
           </button>
-          <button className="btn small ghost danger" onClick={() => sim.cancel(item.taskId)}>
+          <button className="btn quiet danger" onClick={() => sim.cancel(item.taskId)}>
             Cancel task
           </button>
         </div>
@@ -239,11 +274,11 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {item.kind === "delivery" && (
         <div className="ask-actions">
-          <button className="btn small primary" onClick={() => sim.approve(item.id)}>
-            <GitPullRequest size={13} />
+          <button className="btn lead" onClick={() => sim.approve(item.id)}>
+            <GitPullRequest size={16} aria-hidden="true" />
             {task ? DELIVERY_LABEL[task.delivery] : "Ship it"}
           </button>
-          <button className="btn small" onClick={() => onOpen(item.taskId, "review")}>
+          <button className="btn" onClick={() => onOpen(item.taskId, "review")}>
             See the reviews
           </button>
           {sendBack("Send back…")}

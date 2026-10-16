@@ -133,8 +133,10 @@ ${shape}
 If you cannot go on without a decision from the coordinator, end with this instead, and you will get the answer:
 
 \`\`\`petrina
-{"needsInput": {"question": "One clear question, in plain language", "options": ["A short option", "Another option"]}}
-\`\`\``;
+{"needsInput": {"question": "One clear question, in plain language", "options": ["The answer you recommend", "Another option"]}}
+\`\`\`
+
+When you offer options, put the answer you recommend first: the coordinator sees it as your suggestion, and "Decide for me" picks it.`;
 
 const SHAPES: Record<string, string> = {
   planner: `{"rationale": "Why this plan, in one or two plain sentences", "stages": [

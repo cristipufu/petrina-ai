@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   ArrowUpToLine,
   Ban,
@@ -7,7 +7,6 @@ import {
   CircleCheck,
   Ellipsis,
   ExternalLink,
-  GitPullRequest,
   Hand,
   MessageSquare,
   Pause,
@@ -17,10 +16,10 @@ import {
   User,
   X,
 } from "lucide-react";
-import type { Stage, State, Task } from "@petrina/core";
+import type { Finding, Objection, Role, Stage, State, Task } from "@petrina/core";
 import { sim } from "../engine";
-import { ago, currentPhase, duration, PHASES, phasesInPlan, safeUrl, type Lookup } from "../lib";
-import { ProductChip, ProfileChip, RoleAvatar, StatePill } from "./bits";
+import { ago, deliveryText, duration, profileText, safeUrl, STATE_LABEL, type Lookup } from "../lib";
+import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useViewport } from "./bits";
 import { Session } from "./Session";
 import type { SheetTab } from "./TaskCard";
 
@@ -44,19 +43,61 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
 
 export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: SheetProps) {
   const [menu, setMenu] = useState(false);
+  const [titleGone, setTitleGone] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const sheet = useRef<HTMLElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const hero = useRef<HTMLElement>(null);
+  const heroTitle = useRef<HTMLHeadingElement>(null);
+  const menuBox = useRef<HTMLSpanElement>(null);
+  const closeMenu = useCallback(() => setMenu(false), []);
+  useDismiss(menuBox, menu, closeMenu);
+  const viewport = useViewport();
+  // Narrow or short sheets keep the one-line title in the bar from the start.
+  const compact = viewport.width < 900 || viewport.height < 640;
+  const short = viewport.height < 640;
+
   const product = find.product(task.productId);
-  const phase = currentPhase(task);
-  const used = phasesInPlan(task);
   const prUrl = safeUrl(task.pr?.url);
   const canPause = task.state === "running" || task.state === "needs-you" || task.state === "waiting";
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Focus moves into the sheet, and back to whatever opened it when it closes.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    sheet.current?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const title = heroTitle.current;
+    const root = scroller.current;
+    if (!title || !root) return;
+    // The one-line title takes over as soon as the full title is no longer wholly in view.
+    const observer = new IntersectionObserver(([entry]) => setTitleGone((entry?.intersectionRatio ?? 1) < 0.99), { root, threshold: [0, 0.99, 1] });
+    observer.observe(title);
+    return () => observer.disconnect();
+  }, [task.id]);
+
+  // Each task opens at its top (the session opens at its latest message instead). Switching
+  // tabs keeps the tabs in view and starts the new tab from its beginning.
+  useEffect(() => {
+    if (tab !== "session") scroller.current?.scrollTo({ top: 0 });
+  }, [task.id]);
+  useEffect(() => {
+    const el = scroller.current;
+    const top = hero.current?.offsetHeight ?? 0;
+    if (el && tab !== "session" && el.scrollTop > top) el.scrollTop = top;
+  }, [tab]);
 
   const counts: Partial<Record<SheetTab, number>> = {
     review: task.findings.filter((finding) => finding.status === "open").length,
@@ -64,116 +105,161 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
     session: task.queued.length,
   };
 
+  const onTabKey = (event: KeyboardEvent) => {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const index = TABS.findIndex((entry) => entry.id === tab);
+    const next = TABS[(index + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]!;
+    onTab(next.id);
+    document.getElementById(`tab-${next.id}`)?.focus();
+  };
+
+  const act = (action: () => void) => () => {
+    setMenu(false);
+    action();
+  };
+
   return (
     <>
       <div className="scrim" onClick={onClose} />
-      <section className="sheet" role="dialog" aria-label={task.title}>
-        <header className="sheet-head">
-          <div className="sheet-meta">
-            <ProductChip product={product} />
-            <span>·</span>
-            <StatePill state={task.state} />
-            {task.startedAt !== undefined && <span className="num">started {ago(task.startedAt, state.now)} ago</span>}
-            <span className="actions">
-              {prUrl && (
-                <a className="btn small" href={prUrl} target="_blank" rel="noopener noreferrer">
-                  <GitPullRequest size={14} />#{task.pr?.number}
-                  <ExternalLink size={12} />
-                </a>
-              )}
-              <button className="btn small ghost" onClick={() => onTab("session")}>
-                <MessageSquare size={14} />
-                Message
+      <section ref={sheet} className={`sheet ${compact ? "compact" : ""} ${short ? "short" : ""}`} role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabIndex={-1}>
+        <div className={`sheet-bar ${scrolled ? "scrolled" : ""}`}>
+          {compact || titleGone ? (
+            <div className="compact-title" title={task.title}>
+              {task.title}
+            </div>
+          ) : (
+            <div className="crumb">
+              <ProductName product={product} />
+              <span aria-hidden="true">·</span>
+              <span className={`label ${task.state === "needs-you" ? "needs-you" : task.state === "failed" ? "bad" : ""}`}>{task.held && task.state === "queued" ? "On hold" : STATE_LABEL[task.state]}</span>
+              {task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}
+            </div>
+          )}
+          <div className="sheet-actions">
+            {prUrl && (
+              <a className="btn quiet small" href={prUrl} target="_blank" rel="noopener noreferrer" title="Open the pull request on GitHub">
+                Pull request #{task.pr?.number}
+                <ExternalLink size={14} aria-hidden="true" />
+              </a>
+            )}
+            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={() => onTab("session")}>
+              <MessageSquare size={16} aria-hidden="true" />
+              {!compact && "Message"}
+            </button>
+            {canPause && (
+              <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Pause" onClick={() => sim.pause(task.id)}>
+                <Pause size={16} aria-hidden="true" />
+                {!compact && "Pause"}
               </button>
-              {canPause && (
-                <button className="btn small ghost" onClick={() => sim.pause(task.id)}>
-                  <Pause size={14} />
-                  Pause
-                </button>
-              )}
-              {task.state === "paused" && (
-                <button className="btn small ghost" onClick={() => sim.resume(task.id)}>
-                  <Play size={14} />
-                  Resume
-                </button>
-              )}
-              <span style={{ position: "relative" }}>
-                <button className="btn small ghost icon" aria-label="More" onClick={() => setMenu((open) => !open)}>
+            )}
+            {task.state === "paused" && (
+              <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Resume" onClick={() => sim.resume(task.id)}>
+                <Play size={16} aria-hidden="true" />
+                {!compact && "Resume"}
+              </button>
+            )}
+            {task.state !== "done" && task.state !== "cancelled" && (
+              <span ref={menuBox} style={{ position: "relative" }}>
+                <button className="btn quiet small icon" aria-label="More" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((open) => !open)}>
                   <Ellipsis size={16} />
                 </button>
                 {menu && (
-                  <div className="menu" style={{ right: 0, top: 34 }} onMouseLeave={() => setMenu(false)}>
+                  <div className="menu" role="menu" style={{ right: 0, top: "calc(100% + 4px)" }}>
                     {task.state === "queued" && (
                       <>
-                        <button onClick={() => (sim.moveToTop(task.id), setMenu(false))}>
-                          <ArrowUpToLine size={14} />
+                        <button role="menuitem" autoFocus onClick={act(() => sim.moveToTop(task.id))}>
+                          <ArrowUpToLine size={16} />
                           Move to top
                         </button>
-                        <button onClick={() => (sim.setHeld(task.id, !task.held), setMenu(false))}>
-                          <Hand size={14} />
-                          {task.held ? "Release hold" : "Hold (don't start yet)"}
+                        <button role="menuitem" onClick={act(() => sim.setHeld(task.id, !task.held))}>
+                          <Hand size={16} />
+                          {task.held ? "Release the hold" : "Hold (don't start yet)"}
                         </button>
                       </>
                     )}
-                    {task.state !== "done" && task.state !== "cancelled" && (
-                      <button className="danger" onClick={() => (sim.cancel(task.id), setMenu(false))}>
-                        <Ban size={14} />
-                        Cancel task
-                      </button>
-                    )}
+                    <button role="menuitem" className="danger" autoFocus={task.state !== "queued"} onClick={act(() => sim.cancel(task.id))}>
+                      <Ban size={16} />
+                      Cancel task
+                    </button>
                   </div>
                 )}
               </span>
-              <button className="btn small ghost icon" aria-label="Close" onClick={onClose}>
-                <X size={16} />
-              </button>
-            </span>
+            )}
+            <button className="btn quiet small icon" aria-label="Close" title="Close (Esc)" onClick={onClose}>
+              <X size={18} />
+            </button>
           </div>
-          <h1 className="sheet-title">{task.title}</h1>
+        </div>
 
-          <div className="stepper" aria-label="Progress">
-            {PHASES.map((name, index) => {
-              let cls = "step";
-              if (!used.has(index)) cls += " skip";
-              else if (index < phase) cls += " done";
-              else if (index === phase) cls += ` now ${task.state}`;
-              return (
-                <span key={name} style={{ display: "contents" }}>
-                  {index > 0 && <span className={`bar ${index <= phase && used.has(index) ? "done" : ""}`} />}
-                  <span className={cls}>
-                    <span className="ring">{index < phase && used.has(index) ? <Check size={11} strokeWidth={3} /> : index + 1}</span>
-                    {name}
-                  </span>
-                </span>
-              );
-            })}
-          </div>
+        <div className="sheet-scroll" ref={scroller} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}>
+          <header className="sheet-hero" ref={hero}>
+            {compact && (
+              <div className="sheet-meta">
+                <ProductName product={product} />
+                <span aria-hidden="true">·</span>
+                <span>{STATE_LABEL[task.state]}</span>
+              </div>
+            )}
+            <h1 className="sheet-title" id="sheet-title" ref={heroTitle}>
+              {task.title}
+            </h1>
+            <Stepper task={task} />
+          </header>
 
-          <nav className="tabs" role="tablist">
+          <nav className="tabs" role="tablist" aria-label="Task details" onKeyDown={onTabKey}>
             {TABS.map((entry) => (
-              <button key={entry.id} role="tab" aria-selected={tab === entry.id} className={tab === entry.id ? "on" : ""} onClick={() => onTab(entry.id)}>
+              <button
+                key={entry.id}
+                id={`tab-${entry.id}`}
+                role="tab"
+                aria-selected={tab === entry.id}
+                aria-controls="sheet-panel"
+                tabIndex={tab === entry.id ? 0 : -1}
+                className={tab === entry.id ? "on" : ""}
+                onClick={() => onTab(entry.id)}
+              >
                 {entry.label}
                 {counts[entry.id] ? <span className="count">{counts[entry.id]}</span> : null}
               </button>
             ))}
           </nav>
-        </header>
 
-        {tab === "session" ? (
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <Session task={task} state={state} find={find} onToast={onToast} onTab={onTab} />
-          </div>
-        ) : (
-          <div className="sheet-body">
+          <div className="sheet-body" id="sheet-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
             {tab === "overview" && <Overview task={task} state={state} find={find} />}
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
             {tab === "review" && <ReviewView task={task} find={find} />}
+            {tab === "session" && <Session.Log task={task} state={state} find={find} scroller={scroller} onToast={onToast} onTab={onTab} />}
           </div>
-        )}
+        </div>
+
+        {tab === "session" && <Session.Composer task={task} find={find} />}
       </section>
     </>
   );
+}
+
+function nowSentence(task: Task, role: Role | undefined): string {
+  if (task.state === "needs-you") return role ? `${role.name} is waiting on you` : "Waiting on you";
+  if (task.state === "running" && role) return `${role.name} is working`;
+  if (task.state === "paused") return role ? `Paused while the ${role.name.toLowerCase()} was working` : "Paused";
+  switch (task.state) {
+    case "queued":
+      return task.held ? "On hold in the queue" : "Waiting in the queue";
+    case "waiting":
+      return "Waiting for a free slot";
+    case "failed":
+      return "Stuck. It needs you to try again or cancel";
+    case "pr-open":
+      return "Delivered. Waiting for you to merge it on GitHub";
+    case "done":
+      return deliveryText(task)?.text ?? "Completed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return "Between stages";
+  }
 }
 
 function Overview({ task, state, find }: { task: Task; state: State; find: Lookup }) {
@@ -185,185 +271,210 @@ function Overview({ task, state, find }: { task: Task; state: State; find: Looku
   return (
     <>
       {task.description && (
-        <>
-          <h3>What you asked for</h3>
-          <p className="prose" style={{ marginTop: 0 }}>
-            {task.description}
-          </p>
-        </>
+        <section className="sheet-section reading">
+          <h2>What you asked for</h2>
+          <p className="prose">{task.description}</p>
+        </section>
       )}
 
-      <h3>Right now</h3>
-      <div className={`now-card ${task.state}`}>
-        {role ? <RoleAvatar role={role} size={34} /> : <span className="avatar tone-slate" style={{ width: 34, height: 34 }}><User size={18} /></span>}
-        <div style={{ minWidth: 0 }}>
-          <div className="who">
-            {role ? `${role.name} ${task.state === "needs-you" ? "is waiting on you" : "is working"}` : task.state === "needs-you" ? "Waiting on you" : stateSentence(task)}
-            {profile && <ProfileChip profile={profile} find={find} />}
-          </div>
-          <div className="what">
-            <span className={`dot ${task.state}`} />
-            {task.statusLine}
-            {task.agent && <span className="num" style={{ color: "var(--text-3)" }}>· {duration(task.agent.since, state.now)}</span>}
+      <section className="sheet-section">
+        <h2>Right now</h2>
+        <div className={`now ${task.state}`}>
+          {role ? (
+            <RoleAvatar role={role} size={32} />
+          ) : (
+            <span className="avatar tone-slate" style={{ width: 32, height: 32 }} aria-hidden="true">
+              <User size={18} />
+            </span>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <div className="who">{nowSentence(task, role)}</div>
+            {profile && <div className="tool">{profileText(profile, find, true)}</div>}
+            <div className="what">
+              <span className={`dot ${task.state}`} aria-hidden="true" />
+              <span>
+                {task.statusLine}
+                {task.agent && <span className="num quiet-text"> · {duration(task.agent.since, state.now)}</span>}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <h3>Timeline</h3>
-      {!all && task.timeline.length > entries.length && (
-        <button className="linkish show-earlier" onClick={() => setAll(true)}>
-          Show {task.timeline.length - entries.length} earlier events
-        </button>
-      )}
-      <div className="timeline">
-        {entries.map((entry) => {
-          const entryRole = find.role(entry.roleId);
-          return (
-            <div key={entry.id} className={`tl ${entry.tone}`}>
-              <span className="icon">
-                {entry.tone === "you" ? (
-                  <User size={13} />
-                ) : entry.tone === "warn" ? (
-                  <CircleAlert size={13} />
-                ) : entry.tone === "done" ? (
-                  <CircleCheck size={13} />
-                ) : entryRole ? (
-                  <RoleAvatar role={entryRole} size={24} />
-                ) : (
-                  <span className="dot" />
-                )}
-              </span>
-              <span className="text">{entry.text}</span>
-              <span className="when">{ago(entry.at, state.now)}</span>
-            </div>
-          );
-        })}
-      </div>
+      <section className="sheet-section">
+        <h2>Timeline</h2>
+        {!all && task.timeline.length > entries.length && (
+          <button className="linkish" style={{ alignSelf: "flex-start" }} onClick={() => setAll(true)}>
+            Show {task.timeline.length - entries.length} earlier events
+          </button>
+        )}
+        <ol className="timeline">
+          {entries.map((entry) => {
+            const entryRole = find.role(entry.roleId);
+            return (
+              <li key={entry.id} className={`tl ${entry.tone}`}>
+                <span className="when">{ago(entry.at, state.now)}</span>
+                <span className="icon" aria-hidden="true">
+                  {entry.tone === "you" ? (
+                    <User size={14} />
+                  ) : entry.tone === "warn" ? (
+                    <CircleAlert size={14} />
+                  ) : entry.tone === "done" ? (
+                    <CircleCheck size={14} />
+                  ) : entryRole ? (
+                    <RoleAvatar role={entryRole} size={24} />
+                  ) : (
+                    <span className="dot" />
+                  )}
+                </span>
+                <span className="text">
+                  {entryRole && entry.tone !== "you" && <span className="sr-only">{entryRole.name}: </span>}
+                  {entry.text}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
     </>
   );
-}
-
-function stateSentence(task: Task): string {
-  switch (task.state) {
-    case "queued":
-      return task.held ? "On hold in the queue" : "Waiting in the queue";
-    case "waiting":
-      return "Waiting for a free slot";
-    case "paused":
-      return "Paused";
-    case "pr-open":
-      return "Delivered. Waiting for you to merge on GitHub";
-    case "done":
-      return "Merged";
-    case "cancelled":
-      return "Cancelled";
-    default:
-      return "Between stages";
-  }
 }
 
 const KIND_LABEL: Record<Stage["kind"], string> = {
   do: "",
   converge: "Until both agree",
   "review-chain": "One after another",
-  gate: "Checkpoint",
+  gate: "Your check",
 };
 
 function PlanView({ task, state, find }: { task: Task; state: State; find: Lookup }) {
   const plan = task.plan;
   if (!plan)
     return (
-      <div className="empty-state">
-        The planner writes the plan when the task starts.
-        <br />
-        It picks the roles, the tools and the order for this task.
+      <div className="empty-state reading">
+        The planner writes the plan when the task starts. It picks the roles, the tools and the order for this task.
       </div>
     );
 
   const planner = find.profile(plan.plannerProfileId);
-  const profileOptions = state.profiles;
 
   const select = (stage: Stage, list: "profileIds" | "reviewerProfileIds", index: number, value: string, editable: boolean) =>
     editable ? (
-      <select value={value} aria-label="Who does this" onChange={(event) => sim.setStageProfile(task.id, stage.id, list, index, event.target.value)}>
-        {profileOptions.map((profile) => (
+      <select className="select" value={value} aria-label={`Who does ${stage.title.toLowerCase()}`} onChange={(event) => sim.setStageProfile(task.id, stage.id, list, index, event.target.value)}>
+        {state.profiles.map((profile) => (
           <option key={profile.id} value={profile.id}>
-            {find.tool(profile.toolId)?.name} · {profile.model} · {profile.effort}
+            {profileText(profile, find, true)}
           </option>
         ))}
       </select>
     ) : (
-      <ProfileChip profile={find.profile(value)} find={find} />
+      <ProfileText profile={find.profile(value)} find={find} full />
     );
 
   return (
     <>
-      <h3>Why this plan</h3>
-      <p className="prose" style={{ marginTop: 0 }}>
-        {plan.rationale}
-      </p>
-      <div className="row" style={{ color: "var(--text-3)", fontSize: 12.5, marginBottom: 6 }}>
-        Composed by the planner on <ProfileChip profile={planner} find={find} />. Stages that haven't started can be changed.
-      </div>
+      <section className="sheet-section reading">
+        <h2>Why this plan</h2>
+        <p className="prose">{plan.rationale}</p>
+        <p className="note">
+          Composed by the planner on {profileText(planner, find, true)}. Stages that haven't started can be changed.
+        </p>
+      </section>
 
-      <h3>Stages</h3>
-      {plan.stages.map((stage, index) => {
-        const role = find.role(stage.roleId);
-        const reviewerRole = find.role(stage.reviewerRoleId);
-        const past = index < task.stageIndex || task.state === "pr-open" || task.state === "done";
-        const now = index === task.stageIndex && !past;
-        const editable = index > task.stageIndex && task.state !== "done" && task.state !== "cancelled";
-        const rounds = task.rounds[stage.id];
-        return (
-          <div key={stage.id} className={`stage ${past ? "past" : ""} ${now ? "now" : ""}`}>
-            <span className="n">{past ? <Check size={14} strokeWidth={3} /> : index + 1}</span>
-            <div>
-              <div className="head">
-                {stage.title}
-                {KIND_LABEL[stage.kind] && <span className="kind">· {KIND_LABEL[stage.kind]}</span>}
-                {stage.maxRounds && <span className="kind">· up to {stage.maxRounds} rounds</span>}
-                {rounds && rounds > 1 && <span className="pill accent">round {rounds}</span>}
-                {now && <span className="pill running">now</span>}
-              </div>
-              <div className="who">
-                {stage.kind === "gate" ? (
-                  <>
-                    <ShieldCheck size={14} />
-                    You decide before the squad goes on.
-                  </>
-                ) : stage.kind === "converge" ? (
-                  <>
-                    <RoleAvatar role={role} size={20} />
-                    {role?.name}
-                    {select(stage, "profileIds", 0, stage.profileIds[0] ?? "", editable)}
-                    <Repeat size={13} />
-                    <RoleAvatar role={reviewerRole} size={20} />
-                    {reviewerRole?.name}
-                    {select(stage, "reviewerProfileIds", 0, stage.reviewerProfileIds?.[0] ?? "", editable)}
-                  </>
-                ) : (
-                  <>
-                    <RoleAvatar role={role} size={20} />
-                    {role?.name}
-                    {stage.profileIds.map((profileId, at) => (
-                      <span key={`${profileId}-${at}`} className="row" style={{ gap: 6 }}>
-                        {at > 0 && <span>→</span>}
-                        {select(stage, "profileIds", at, profileId, editable)}
-                      </span>
-                    ))}
-                    {stage.kind === "review-chain" && editable && (
-                      <button className="btn small ghost" onClick={() => sim.addReviewer(task.id, stage.id, "sonnet-medium")}>
-                        + reviewer
-                      </button>
+      <section className="sheet-section">
+        <h2>Stages</h2>
+        <ol className="stages">
+          {plan.stages.map((stage, index) => {
+            const role = find.role(stage.roleId);
+            const reviewerRole = find.role(stage.reviewerRoleId);
+            const past = index < task.stageIndex || task.state === "pr-open" || task.state === "done";
+            const now = index === task.stageIndex && !past;
+            const editable = index > task.stageIndex && task.state !== "done" && task.state !== "cancelled";
+            const rounds = task.rounds[stage.id];
+            return (
+              <li key={stage.id} className={`stage ${past ? "past" : ""} ${now ? "now" : ""}`}>
+                <span className="n" aria-hidden="true">
+                  {past ? <Check size={14} strokeWidth={3} /> : index + 1}
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <div className="head">
+                    <span>{stage.title}</span>
+                    {KIND_LABEL[stage.kind] && <span className="kind">{KIND_LABEL[stage.kind]}</span>}
+                    {stage.maxRounds && <span className="kind">Up to {stage.maxRounds} rounds</span>}
+                    {rounds && rounds > 1 && <span className="kind num">Round {rounds}</span>}
+                    {now && <span className="label running">Now</span>}
+                    {past && <span className="sr-only">Done</span>}
+                  </div>
+                  <div className="who">
+                    {stage.kind === "gate" ? (
+                      <>
+                        <ShieldCheck size={16} aria-hidden="true" />
+                        You decide before the squad goes on.
+                      </>
+                    ) : stage.kind === "converge" ? (
+                      <>
+                        <RoleAvatar role={role} size={20} />
+                        {role?.name}
+                        {select(stage, "profileIds", 0, stage.profileIds[0] ?? "", editable)}
+                        <Repeat size={14} aria-label="with" />
+                        <RoleAvatar role={reviewerRole} size={20} />
+                        {reviewerRole?.name}
+                        {select(stage, "reviewerProfileIds", 0, stage.reviewerProfileIds?.[0] ?? "", editable)}
+                      </>
+                    ) : (
+                      <>
+                        <RoleAvatar role={role} size={20} />
+                        {role?.name}
+                        {stage.profileIds.map((profileId, at) => (
+                          <span key={`${profileId}-${at}`} className="row" style={{ gap: 8 }}>
+                            {at > 0 && <span aria-label="then">→</span>}
+                            {select(stage, "profileIds", at, profileId, editable)}
+                          </span>
+                        ))}
+                        {stage.kind === "review-chain" && editable && (
+                          <button className="btn quiet small" onClick={() => sim.addReviewer(task.id, stage.id, "sonnet-medium")}>
+                            Add a reviewer
+                          </button>
+                        )}
+                      </>
                     )}
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
     </>
+  );
+}
+
+/** Open blockers first, then other open points, then settled ones. */
+function openFirst<T extends { status: string; blocking: boolean }>(items: readonly T[]): T[] {
+  const rank = (item: T) => (item.status === "open" ? (item.blocking ? 0 : 1) : 2);
+  return [...items].sort((a, b) => rank(a) - rank(b));
+}
+
+function ObjectionItem({ objection, find }: { objection: Objection; find: Lookup }) {
+  const status = objection.status === "open" ? "Open" : objection.status === "accepted" ? "Accepted" : "Rejected";
+  return (
+    <li className="issue">
+      <div className="issue-status">
+        <span className={`label ${objection.status === "open" ? (objection.blocking ? "bad" : "warn") : objection.status === "accepted" ? "ok" : ""}`}>{status}</span>
+        <span aria-hidden="true">·</span>
+        <span>{objection.blocking ? "Blocking" : "Not blocking"}</span>
+        <span aria-hidden="true">·</span>
+        <span className="num">Round {objection.round}</span>
+      </div>
+      <p className="issue-text">{objection.text}</p>
+      <p className="issue-who">Raised by {profileText(find.profile(objection.raisedBy), find, true)}</p>
+      {objection.answer && (
+        <div className="issue-response">
+          <b>The architect's answer</b>
+          {objection.answer}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -373,123 +484,111 @@ function DesignView({ task, find }: { task: Task; find: Lookup }) {
     <>
       {brief ? (
         <>
-          <h3>Design brief</h3>
-          <p className="prose" style={{ marginTop: 0 }}>
-            {brief.summary}
-          </p>
-          <div className="brief-grid">
-            <div className="panel">
-              <h4>What changes for users</h4>
-              <ul>
-                {brief.forUsers.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="panel">
-              <h4>Parts of the product</h4>
-              <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
-                {brief.areas.map((area) => (
-                  <span key={area} className="chip">
-                    {area}
-                  </span>
-                ))}
-              </div>
-              <h4 style={{ marginTop: 12 }}>Risks</h4>
-              <ul>
+          <section className="sheet-section reading">
+            <h2>Design brief</h2>
+            <p className="prose">{brief.summary}</p>
+          </section>
+          <section className="sheet-section reading">
+            <h2>What changes for users</h2>
+            <ul className="list">
+              {brief.forUsers.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </section>
+          <section className="sheet-section reading">
+            <h2>Parts of the product</h2>
+            <p className="prose">{brief.areas.join(", ")}</p>
+          </section>
+          <section className="sheet-section reading">
+            <h2>Acceptance checklist</h2>
+            <ul className="checks">
+              {brief.acceptance.map((item) => {
+                const met = item.met ?? (task.state === "pr-open" || task.state === "done" || task.column === "ready");
+                return (
+                  <li key={item.text} className="check">
+                    <span className={`box ${met ? "on" : ""}`} aria-hidden="true">
+                      {met && <Check size={12} strokeWidth={3} />}
+                    </span>
+                    <span>
+                      <span className="sr-only">{met ? "Met: " : "Not met yet: "}</span>
+                      {item.text}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+          {brief.risks.length > 0 && (
+            <section className="sheet-section reading">
+              <h2>Risks</h2>
+              <ul className="list">
                 {brief.risks.map((risk) => (
                   <li key={risk}>{risk}</li>
                 ))}
               </ul>
-            </div>
-          </div>
-          <h3>Acceptance checklist</h3>
-          <div className="panel">
-            {brief.acceptance.map((item) => {
-              const met = item.met ?? (task.state === "pr-open" || task.state === "done" || task.column === "ready");
-              return (
-                <div key={item.text} className="check">
-                  <span className={`box ${met ? "on" : ""}`}>{met && <Check size={11} strokeWidth={3} />}</span>
-                  {item.text}
-                </div>
-              );
-            })}
-          </div>
+            </section>
+          )}
         </>
       ) : (
-        <div className="empty-state">{task.plan?.stages.some((stage) => stage.kind === "converge") ? "The architects haven't settled the brief yet." : "This plan has no design stage. The builder works from your description."}</div>
+        <div className="empty-state reading">{task.plan?.stages.some((stage) => stage.kind === "converge") ? "The architects haven't settled the brief yet." : "This plan has no design stage. The builder works from your description."}</div>
       )}
 
       {task.objections.length > 0 && (
-        <>
-          <h3>Disagreement log</h3>
-          {task.objections.map((objection) => (
-            <div key={objection.id} className="item">
-              <span className="text">{objection.text}</span>
-              <span>
-                <span className={`pill ${objection.status === "open" ? "needs-you" : objection.status === "accepted" ? "ok" : ""}`}>
-                  {objection.status === "open" ? "Open" : objection.status === "accepted" ? "Accepted" : "Rejected"}
-                </span>
-              </span>
-              <span className="sub">
-                {objection.blocking ? <span className="pill bad">Blocking</span> : <span className="pill">Not blocking</span>}
-                Round {objection.round} · raised by
-                <ProfileChip profile={find.profile(objection.raisedBy)} find={find} />
-              </span>
-              {objection.answer && <span className="answer">Architect: {objection.answer}</span>}
-            </div>
-          ))}
-        </>
+        <section className="sheet-section">
+          <h2>Disagreements</h2>
+          <ol className="issues">
+            {openFirst(task.objections).map((objection) => (
+              <ObjectionItem key={objection.id} objection={objection} find={find} />
+            ))}
+          </ol>
+        </section>
       )}
     </>
   );
 }
 
+function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
+  const status = finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : "Open";
+  return (
+    <li className="issue">
+      <div className="issue-status">
+        <span className={`label ${finding.status === "fixed" ? "ok" : finding.status === "open" ? (finding.severity === "blocking" ? "bad" : "warn") : ""}`}>{status}</span>
+        <span aria-hidden="true">·</span>
+        <span>{finding.severity === "blocking" ? "Blocking" : "Suggestion"}</span>
+      </div>
+      <p className="issue-text">{finding.text}</p>
+      <p className="issue-who">
+        Raised by {profileText(find.profile(finding.raisedBy), find, true)}
+        {finding.confirmedBy.length > 0 && `. Confirmed by ${finding.confirmedBy.map((profileId) => profileText(find.profile(profileId), find, true)).join(" and ")}`}
+      </p>
+    </li>
+  );
+}
+
 function ReviewView({ task, find }: { task: Task; find: Lookup }) {
   const reviewing = task.plan?.stages.some((stage, index) => stage.kind === "review-chain" && index <= task.stageIndex) || task.state === "pr-open" || task.state === "done";
-  if (task.findings.length === 0)
-    return <div className="empty-state">{reviewing ? "No findings. Every reviewer passed it." : "Reviews start after the build."}</div>;
+  if (task.findings.length === 0) return <div className="empty-state">{reviewing ? "No findings. Every reviewer passed it." : "Reviews start after the build."}</div>;
 
-  const groups = [
-    { title: "Blocking", items: task.findings.filter((finding) => finding.severity === "blocking") },
-    { title: "Suggestions", items: task.findings.filter((finding) => finding.severity === "suggestion") },
-  ];
+  const findings = openFirst(task.findings.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" })));
+  const open = findings.filter((finding) => finding.status === "open").length;
 
   return (
     <>
-      <div className="row" style={{ color: "var(--green)", fontSize: 12.5, fontWeight: 600 }}>
-        <ShieldCheck size={15} />
+      <p className="tamper">
+        <ShieldCheck size={16} aria-hidden="true" />
         Tamper check passed: no tests were removed, weakened or skipped.
-      </div>
-      {groups.map((group) =>
-        group.items.length === 0 ? null : (
-          <div key={group.title}>
-            <h3>{group.title}</h3>
-            {group.items.map((finding) => (
-              <div key={finding.id} className="item">
-                <span className="text">{finding.text}</span>
-                <span>
-                  <span className={`pill ${finding.status === "fixed" ? "ok" : finding.severity === "blocking" ? "bad" : ""}`}>
-                    {finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : "Open"}
-                  </span>
-                </span>
-                <span className="sub">
-                  {finding.where && <span>{finding.where} ·</span>}
-                  raised by <ProfileChip profile={find.profile(finding.raisedBy)} find={find} />
-                  {finding.confirmedBy.length > 0 && (
-                    <>
-                      confirmed by
-                      {finding.confirmedBy.map((profileId) => (
-                        <ProfileChip key={profileId} profile={find.profile(profileId)} find={find} />
-                      ))}
-                    </>
-                  )}
-                </span>
-              </div>
-            ))}
-          </div>
-        ),
-      )}
+      </p>
+      <section className="sheet-section">
+        <h2>
+          Findings <span className="quiet-text num">{open > 0 ? `${open} open` : "all settled"}</span>
+        </h2>
+        <ol className="issues">
+          {findings.map((finding) => (
+            <FindingItem key={finding.id} finding={finding} find={find} />
+          ))}
+        </ol>
+      </section>
     </>
   );
 }

@@ -53,20 +53,18 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
   return (
     <>
       <div className="dialog-scrim" onClick={onClose} />
-      <div className="dialog" role="dialog" aria-label="New task">
+      <div className="dialog" role="dialog" aria-modal="true" aria-label="New task">
         {state.products.length <= 5 ? (
-          <div className="segmented" style={{ marginBottom: 8 }}>
+          <div className="segmented" role="radiogroup" aria-label="Product" style={{ marginBottom: 8 }}>
             {state.products.map((product) => (
-              <button key={product.id} className={productId === product.id ? "on" : ""} onClick={() => pickProduct(product.id)}>
-                <span className={`product-chip tone-${product.tone}`}>
-                  <i />
-                </span>
+              <button key={product.id} role="radio" aria-checked={productId === product.id} className={`tone-${product.tone} ${productId === product.id ? "on" : ""}`} onClick={() => pickProduct(product.id)}>
+                <i style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--tone)" }} aria-hidden="true" />
                 {product.name}
               </button>
             ))}
           </div>
         ) : (
-          <select className="field" style={{ marginBottom: 8, flex: "none" }} aria-label="Product" value={productId} onChange={(event) => pickProduct(event.target.value)}>
+          <select className="select" style={{ marginBottom: 8 }} aria-label="Product" value={productId} onChange={(event) => pickProduct(event.target.value)}>
             {[...state.products].sort((a, b) => a.name.localeCompare(b.name)).map((product) => (
               <option key={product.id} value={product.id}>
                 {product.name}
@@ -78,6 +76,7 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
           ref={titleRef}
           autoFocus
           className="title-input"
+          aria-label="What do you want done?"
           placeholder="What do you want done?"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
@@ -95,41 +94,41 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
         />
         {batch.length > 1 && (
           <div className="row" style={{ marginBottom: 6 }}>
-            <span className="pill accent">+ {batch.length - 1} more tasks from your paste</span>
+            <span className="label running">Plus {batch.length - 1} more tasks from your paste</span>
             <button className="linkish" onClick={() => setBatch([])}>
               Keep only the first
             </button>
           </div>
         )}
-        <textarea placeholder="Add details, links or how you'll judge it's done (optional)" value={description} onChange={(event) => setDescription(event.target.value)} />
+        <textarea className="details" aria-label="Details" placeholder="Add details, links or how you'll judge it's done (optional)" value={description} onChange={(event) => setDescription(event.target.value)} />
         <div className="options">
           <div className="opt">
-            <label>Kind of work</label>
-            <div className="segmented">
+            <span id="new-kind">Kind of work</span>
+            <div className="segmented" role="radiogroup" aria-labelledby="new-kind">
               {KINDS.map((entry) => (
-                <button key={entry.id} className={kind === entry.id ? "on" : ""} onClick={() => setKind(entry.id)} title={entry.hint}>
+                <button key={entry.id} role="radio" aria-checked={kind === entry.id} className={kind === entry.id ? "on" : ""} onClick={() => setKind(entry.id)} title={entry.hint}>
                   {entry.label}
                 </button>
               ))}
             </div>
           </div>
           <div className="opt">
-            <label>When it's ready</label>
-            <div className="segmented">
+            <span id="new-delivery">When it's ready</span>
+            <div className="segmented" role="radiogroup" aria-labelledby="new-delivery">
               {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
-                <button key={mode} className={delivery === mode ? "on" : ""} onClick={() => setDelivery(mode)}>
+                <button key={mode} role="radio" aria-checked={delivery === mode} className={delivery === mode ? "on" : ""} onClick={() => setDelivery(mode)}>
                   {DELIVERY_LABEL[mode]}
                 </button>
               ))}
             </div>
           </div>
           <div className="opt">
-            <label>Queue</label>
-            <div className="segmented">
-              <button className={position === "bottom" ? "on" : ""} onClick={() => setPosition("bottom")}>
+            <span id="new-position">Place in the queue</span>
+            <div className="segmented" role="radiogroup" aria-labelledby="new-position">
+              <button role="radio" aria-checked={position === "bottom"} className={position === "bottom" ? "on" : ""} onClick={() => setPosition("bottom")}>
                 Bottom
               </button>
-              <button className={position === "top" ? "on" : ""} onClick={() => setPosition("top")}>
+              <button role="radio" aria-checked={position === "top"} className={position === "top" ? "on" : ""} onClick={() => setPosition("top")}>
                 Top
               </button>
             </div>
@@ -146,11 +145,11 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
               Ask me before shipping
             </label>
           </span>
-          <button className="btn ghost" onClick={() => add(true)} disabled={!title.trim()}>
+          <button className="btn quiet" onClick={() => add(true)} disabled={!title.trim()}>
             Add another <kbd>⇧↵</kbd>
           </button>
-          <button className="btn primary" onClick={() => add(false)} disabled={!title.trim()}>
-            Add to queue <kbd style={{ background: "transparent", color: "#fff", borderColor: "rgba(255,255,255,.4)" }}>↵</kbd>
+          <button className="btn lead" onClick={() => add(false)} disabled={!title.trim()}>
+            Add to queue <kbd>↵</kbd>
           </button>
         </div>
       </div>

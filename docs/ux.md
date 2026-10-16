@@ -23,7 +23,7 @@ What success feels like: many pull requests a day, little time spent being the t
 4. **You set the pace.** A visible pool of agent slots. You choose how many run at once and see who is in each slot.
 5. **Everything is interruptible.** Message an agent, pause, reprioritize, take over or cancel, at any time.
 6. **Decisions, not configuration.** The planner proposes, you nudge. Defaults are good enough to never open settings.
-7. **Agents ask, you answer.** Every question and permission request comes with suggested answers. One click unblocks.
+7. **Agents ask, you answer.** Every question comes with suggested answers, the agent's own recommendation first. One click unblocks.
 
 ## Words the app uses
 
@@ -41,69 +41,80 @@ What success feels like: many pull requests a day, little time spent being the t
 ## Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│ ◆ Petrina   All products ▾     ⌕ Search ⌘K            Pool ■■■□ 3/4     Inbox  4   │
-├──────┬───────────────────────────────────────────────────────────────┬──────────────┤
-│ Board│ Queue · 4   Planning · 1  Designing · 1  Building · 1  Review… │ Needs you    │
-│ Agents│ ┌───────┐  ┌──────────┐   ┌──────────┐   ┌──────────┐         │ ┌──────────┐ │
-│ Library│ │ #1 …  │  │ …        │   │ …        │   │ …        │         │ │ Question │ │
-│ Settings│└───────┘  └──────────┘   └──────────┘   └──────────┘         │ └──────────┘ │
-└──────┴───────────────────────────────────────────────────────────────┴──────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│ ◆ Petrina  All products ▾  ⌕ Search ⌘K   Blocking 2  ■■■□ 3/4  Inbox 4  + New task   │
+├──────────┬──────────────────────────────────────────────────────────┬────────────────┤
+│ Board    │ Needs you 4                                              │ Needs you 4    │
+│ Products │ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │ ┌────────────┐ │
+│ Agents   │ │ Shop     │ │ Notes    │ │ …        │ │ …        │      │ │ Question   │ │
+│ Library  │ └──────────┘ └──────────┘ └──────────┘ └──────────┘      │ └────────────┘ │
+│          │ Working 1 · Waiting · Queue 4 · Done 2 (folded)          │                │
+└──────────┴──────────────────────────────────────────────────────────┴────────────────┘
 ```
 
-- **Top bar:** product switcher, search and command palette (⌘K), the pool indicator, the inbox button with its count.
-- **Left rail:** Board, Agents, Library, Settings. Icons with labels; it collapses to icons.
+- **Top bar** (56px): product switcher, search (⌘K), the pool indicator, the inbox button with its count, and **New task**, the only solid violet button in the workspace. It stays quiet: no border, neutral buttons.
+- **Left rail** (64px): Board, Products, Agents, Library. Icons with labels.
 - **Main area:** the board by default.
-- **Right panel:** the inbox. It opens on its own when something new needs you (setting), and it can be pinned or hidden.
-- **A task** opens as a wide sheet over the board, so the board stays in view. ⌘↵ makes it full screen.
+- **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
+- **A task** opens as a sheet over the board (840px wide), so the board stays in view.
+
+### Window size
+
+- The desktop window opens at 1680×1000, never larger than the screen's usable area. It can shrink to 1100×680.
+- Narrower windows show fewer cards per row; the board itself never scrolls sideways. Wide tables, like the Products page, scroll sideways instead of squeezing.
+- As the window narrows, the top bar gives things up in order: the wordmark and repeated wording first, then the search field becomes a button that opens it, then the pool shows only its count, then the pool and the theme move into a More menu. The product switcher, Inbox and New task always stay.
+- Below 1200px of usable width the inbox opens over the board instead of beside it. Esc or the close button hides it and puts focus back on the Inbox button.
+- Browser zoom and enlarged text count as a narrower window, so the same steps apply at 200%.
 
 ## Board
 
-A kanban board. Columns follow the life of a task:
+One grid of task cards, ordered by what each task needs rather than by stage. Every card carries its own progress, so nothing has to move between columns:
 
-| Column | What is happening |
+| Group | What is in it |
 |---|---|
-| **Queue** | Waiting to start, in priority order |
-| **Planning** | The planner is composing the plan, or the plan waits for your OK |
-| **Designing** | Research, architecture and design review rounds |
-| **Building** | Builder (and tester) at work |
-| **Reviewing** | The review chain |
-| **Ready** | Waiting for your delivery OK, or the pull request is open for you to merge on GitHub. Merged and cancelled tasks fold into a "Done" list at the bottom, so the whole flow fits on one screen |
+| **Needs you** | A question, a permission, a checkpoint, or a task that failed. Agents kept waiting come first, in the same order as the inbox |
+| **Working** | An agent is on it right now |
+| **Waiting** | Waiting for a free slot, paused, or delivered and waiting for you to merge |
+| **Queue** | Not started yet, in priority order |
+| **Done** | Merged, released, delivered locally or cancelled. Folded away at the end |
 
-The run state is shown on the card, not as a column, so a task never jumps around:
+Empty groups are not shown. The product switcher and search filter the whole board.
 
-- **Running:** a soft pulsing dot and the live status line.
-- **Needs you:** amber edge and a "Needs you" pill. These cards float to the top of their column.
-- **Waiting for a slot:** in the queue, below the "starts next" line.
-- **Paused, Failed, Held:** grey, red and striped respectively.
+The run state is written on the card, never shown by dimming it:
+
+- **Working:** a soft pulsing dot and the live status line.
+- **Needs you:** these cards sit under the Needs you heading with an amber edge, and their status line says what they wait for ("Waiting for your permission"). They carry no extra badge.
+- **On hold, Paused, Waiting for a slot, Failed, Awaiting merge, Completed, Cancelled:** said in words at the top of the card. Held cards sit on a quieter surface; failed ones get a red edge.
 
 ### The queue
 
-- Drag cards to reorder. ⌥↑ / ⌥↓ moves the focused card. "Move to top" is in the card menu.
-- A dashed **starts next** line sits under as many cards as there are free slots. Everything above it starts as soon as possible.
-- **Hold** keeps a task in the queue without starting it ("not yet").
+- Drag cards to reorder. ⌥↑ / ⌥↓ moves the focused card. "Move to top" is a card shortcut.
+- The cards that start as soon as a slot frees say **Starts next**.
+- **Hold** keeps a task in the queue without starting it ("not yet"). It is in the card's More menu and the task sheet.
 - New tasks go to the bottom by default; the new-task dialog offers "Top".
 
 ### Card
 
 ```
 ┌────────────────────────────────────────────┐
-│ #2  Guest checkout                    Shop │  priority, title, product
-│ ▰▰▰▱▱  Building                            │  stage progress
-│ 🔨 Builder · Claude Code · Opus 5.5 ●●●    │  who is working: role, tool, model, effort
-│ ● Adding the guest email step              │  live status line
-│ 12m · round 1 · Needs you                  │  time, rounds, blockers
+│ ● Shop · #2 in queue              On hold │  product, queue position, state
+│ Guest checkout                             │  title, semibold, wraps
+│ ● Waiting for your permission              │  live status line, wraps
+│ ✓ ✓ ✓ ◉ Build ○ ○                          │  its own pipeline: done steps checked, the current one named
+│ 🔨 Builder  Opus 5.5  ◷ 19m  Round 2  ✉ ⏸ … │  agent, model (quiet), time, rounds · shortcuts
 └────────────────────────────────────────────┘
 ```
 
-Hover shows quick actions: Message, Pause or Resume, Join session, and a menu (Move to top, Hold, Cancel).
+- The pipeline comes from the task's plan, for example Plan, Design, Your check, Build, Review, Ship. Stages the plan does not have are absent. Hovering or focusing any step names it in a small tooltip ("Plan, done", "Build, now", "Review, next"), so the whole pipeline is readable without opening the task. The strip is one tab stop; the arrow keys move between its steps. The task sheet lists every step by name too.
+- Delivery shows in the footer in words: "Pull request #237 · awaiting merge", "Released v1.4.0", "Delivered locally to main".
+- Shortcuts (Message, Pause or Resume, Move to top, and More: Open, Join the session, Hold, Cancel) appear on hover and on keyboard focus, in space the footer always keeps for them, so nothing moves or gets covered.
 
 ## Many products
 
 A coordinator may run twenty products or more, so nothing assumes a handful.
 
-- **Product switcher** (⌘P) in the top bar: a search field, then products grouped as *Needs you*, *Active* and *Quiet*, each with badges for what waits on you, agents working and tasks queued. The board keeps its full width.
-- **Products page:** the portfolio on one screen. One row per product with its pipeline (queue, plan, design, build, review, ready), what shipped, and what waits on you. Products that need you sort first; clicking one filters the board to it.
+- **Product switcher** (⌘P) in the top bar: a search field, then products grouped as *Needs you*, *Active* and *Quiet*, each saying in quiet text what waits on you, how many agents work and how many tasks are queued. The board keeps its full width.
+- **Products page:** the portfolio on one screen. One row per product with its pipeline (queue, plan, design, build, review, ready), what shipped, and what waits on you, as aligned numbers rather than badges. Products that need you sort first; clicking one filters the board to it. In a small window the table scrolls sideways.
 - The queue and the pool stay global: priority is across products, because the pool of agents is shared.
 - Cards always carry their product, so an all-products board stays readable.
 
@@ -126,31 +137,28 @@ How many agents may run at once.
 
 ## Inbox: "Needs you"
 
-Everything waiting on you, ordered by task priority, then by age. Each item says which product and task, who is asking (role, tool, model), how long it has waited, and whether it is blocking an agent.
+Everything waiting on you: items that keep an agent waiting first, then by task priority, then by age. Each item reads top to bottom: its kind and how long it has waited, "An agent is waiting on this" on its own line when it is blocking, the full request, the agent's explanation, then the product, task and who is asking (role, with the model as quiet text). Buttons line up the same way in every item: at least 36px high, 8px apart, and long labels wrap. Each item has at most one lead button (charcoal in light mode, pale in dark mode); the rest are quieter.
 
 | Kind | Example | Actions |
 |---|---|---|
-| **Question** | "Should dark mode follow the system setting, or be a manual toggle?" | Suggested answers as buttons, free text, "Decide for me" (the agent takes its own recommendation) |
-| **Permission** | "Builder wants to add a new package: Stripe.js" | Allow once, Always allow in this product, Deny with a note. "Details" shows the exact command |
-| **Plan** | The planner's plan, if you asked to approve plans | Approve, Edit, Re-plan with a note |
-| **Design checkpoint** | The design brief and the disagreement log | Approve, Request changes with a comment |
-| **Disagreement** | The architects did not agree after the round limit | Both positions side by side. Pick one or write your call |
-| **Delivery** | Acceptance checklist and review summary | Open pull request, Send back with a note |
-| **Stuck** | A stage failed twice, or a tool needs you to log in | Retry, Switch tool or model, Edit plan, Cancel |
+| **Question** | "Should dark mode follow the system setting, or be a manual toggle?" | The agent's answers as equal choices, its own recommendation first and marked "Agent's suggestion". "Decide for me" (only when there are choices) picks that first answer, and says so. Or answer in your own words |
+| **Permission** | "Add a new package: Stripe.js" | **Allow** (once) or **Deny**. "Show the exact command" reveals what the tool asked to run |
+| **Plan** | The planner's plan, if you asked to approve plans | **Approve plan**, See the plan, Re-plan with a note |
+| **Design check** | The design brief and the disagreement log | **Approve design**, Read the brief, Request changes with a note |
+| **Disagreement** | The architects did not agree after the round limit | **Read both sides** leads; "Side with the architect" and "Write my call" are equally quiet |
+| **Ready to ship** | Acceptance checklist and review summary | **Open a pull request** (or publish, or commit), See the reviews, Send back with a note |
+| **Stuck** | A stage failed, or a tool needs you to log in | **Try again**, See what happened, Cancel task |
+
+Every agent is told: when you ask the coordinator a question with choices, put the answer you recommend first. The demo squad does the same, and keeps every answer in its order.
 
 ### Permissions
 
-Agents start with full permissions inside their own working copy, so they rarely need to ask. A short **ask-me list** escalates to you instead:
+Agents start with full permissions inside their own working copy, so they rarely need to ask. Petrina relies on each tool's own safety checker (Claude Code in Auto mode, Codex in Auto review) and does not read commands itself. When a tool's checker flags something, its request comes to the inbox unchanged:
 
-- adding or removing dependencies,
-- deleting anything outside the working copy,
-- network access to hosts not seen before,
-- pushing, and force-pushing in particular,
-- reading secrets or `.env` files,
-- anything that spends money (paid APIs, cloud resources),
-- running for longer than the stage's time limit.
-
-The list is editable in Settings, with overrides per product ("Always allow in Shop").
+- **Allow** lets it go ahead this once. **Deny** blocks it.
+- Nothing is remembered: the next request asks again, in any task and any product. Petrina never picks a tool's own "always" option.
+- Because nothing is remembered, there is no list of saved permissions in the app. Seeing and removing remembered permissions is not available yet; if remembering ever comes back, it belongs to Product settings and board papercuts.
+- Plan, design and delivery checks are the engine's gates, not permissions: an agent cannot skip them, and only the shipper ever delivers.
 
 ### Notifications
 
@@ -160,28 +168,29 @@ The list is editable in Settings, with overrides per product ("Always allow in S
 
 ## Task sheet
 
-**Header:** title (editable), product, priority, a status pill, and a stage stepper (`Plan · Design · Build · Review · Ship`). Actions: Message, Pause, Join session, and a menu.
+**Header:** the product and state, the title (28px, wrapping in its own area), and the task's steps from its plan with every step named. Actions: the pull request link when there is one, Message, Pause or Resume, a More menu (Move to top, Hold, Cancel) and Close. As you scroll, the full title and the steps scroll away and leave a one-line title, the actions and the tabs. In narrow or short windows the one-line title shows from the start.
 
 **Tabs:**
 
-- **Overview:** the live timeline. One section per stage: who did it, how many rounds, the outcome, and plain-language events. The current stage is expanded with its streaming status lines.
-- **Plan:** the plan card. You can edit it: reorder stages, swap the tool or model on a role, add a reviewer, change round limits, toggle checkpoints. "Re-plan" sends a note to the planner.
-- **Design:** the brief (what changes for users, which parts of the product, the acceptance checklist, risks) and the disagreement log. Each objection shows who raised it, whether it is open, accepted or rejected, and why.
-- **Review:** the merged findings. Blocking ones first, each with who raised, confirmed or disputed it, plus the result of the tamper check.
+- **Overview:** what you asked for, who is on it right now (role, tool, model and effort in words), and the timeline: one row per event with its time aligned on the left, and a clear break at each stage change.
+- **Plan:** why this plan, then the stages as a spacious numbered list. Stages that have not started can change tool or model, and a review can gain a reviewer. "Re-plan" sends a note to the planner.
+- **Design:** the brief in one reading column (what changes for users, which parts of the product, the acceptance checklist, risks), then the disagreements. Each one separates the issue, its status, who raised it and the architect's answer, with open blockers first.
+- **Review:** the tamper check, then the findings: open blockers first, each with its status, who raised it and who confirmed it.
 - **Session:** join the agent that is working right now (below).
 
-A composer stays at the bottom of every tab: "Message the agent on this task…".
+Prose (the plan's reasoning, the brief, the conversation and questions) sits in a reading column about 620px wide, roughly 60 to 70 characters a line. The timeline and the reviews use the full width.
 
 ## Session: join an agent
 
 This is the "open in terminal" experience, made friendly.
 
-- A chat transcript of the current agent. Its messages are plain text. Tool activity is folded into readable lines ("Ran the tests: 42 passed", "Edited 3 files in Checkout"). Questions appear inline with their answer buttons.
+- A chat transcript of the task. Every message names its speaker, including You, keeps its paragraphs, and sits on a quiet background on both sides. Tool activity is grouped into quiet readable lines between messages ("Ran the tests: 42 passed", "Edited 3 files in Checkout").
+- New messages only scroll the conversation when you are already at the bottom, so reading earlier messages is never interrupted.
 - The composer has two modes:
   - **Queue** (default): delivered when the agent finishes its current step. Queued messages show as chips you can edit, reorder or delete.
   - **Interrupt**: stops the current step and delivers now.
 - **Take over:** opens the agent's own CLI in your terminal, resumed on the same session in its working copy. Petrina pauses the stage while you drive. **Hand back** resumes it, with a note of what you did.
-- Anything the task is waiting on (a question, a permission, a checkpoint) shows above the composer with the same buttons as the inbox, so you can unblock without leaving the session.
+- Anything the task is waiting on (a question, a permission, a checkpoint) shows at the end of the conversation with the same wording and buttons as the inbox, so you can unblock without leaving the session. It scrolls with the conversation; the composer stays compact at the bottom.
 - Earlier agents of the task (previous stages) can be read the same way.
 
 ## New task
@@ -204,7 +213,7 @@ This is the "open in terminal" experience, made friendly.
 
 ## Settings
 
-Pool limit and caps per tool. The ask-me list. Notifications. Default checkpoints. Appearance: light, dark or system. Where data lives.
+Pool limit and caps per tool. Notifications. Default checkpoints. Appearance: light, dark or system. Where data lives. (There is no permission list: Petrina remembers no permission answers.)
 
 ## First run
 
@@ -215,8 +224,9 @@ Pool limit and caps per tool. The ask-me list. Notifications. Default checkpoint
 
 ## Visual language
 
-- Light and airy, warm neutrals. Dark mode is first class.
-- One accent colour (Petrina violet). Semantic colours: running blue, needs-you amber, done green, failed red, queued slate.
+- Calm and airy, warm neutrals. Light mode puts white content on warm off-white surroundings; dark mode puts visibly raised charcoal surfaces on graphite. Both are deliberate, not inverted.
+- One accent colour (Petrina violet), used for the one solid button, New task, and for selection. Decisions lead with a charcoal button in light mode and a pale one in dark mode. Secondary actions are neutral surfaces or plain text. Semantic colours: running blue, needs-you amber, done green, failed red, queued slate.
+- Fewer borders, pills and chips: states, counts and tool information are quiet text.
 - Each role has an icon and a colour:
 
 | Role | Icon | Colour |
@@ -230,10 +240,36 @@ Pool limit and caps per tool. The ask-me list. Notifications. Default checkpoint
 | Tester | flask | green |
 | Code reviewer | magnifier | teal |
 
-- Tool chip: tool name, model, and effort as dots (●●●○ for high).
-- Motion is subtle: cards glide between columns, the live dot breathes, no walls of spinners.
-- System font, 13 to 14 px base, generous spacing, tabular numbers.
-- A density toggle: comfortable or compact.
+- Tools and models are quiet text: a card shows the model ("Opus 5.5"); the sheet says it in full ("Claude Code · Opus 5.5 · high effort").
+- Motion is subtle: the live dot breathes, sheets slide in, no walls of spinners. Reduced motion turns it off.
+
+### Type
+
+Inter, bundled with the app (the window's security policy only loads fonts from the app itself), with its standard letterforms. Sizes and line heights:
+
+| Use | Size / line height | Weight |
+|---|---|---|
+| Metadata: times, counts, product names | 12 / 16 | Regular |
+| Controls: buttons, tabs, fields | 13 / 20 | Medium |
+| Card titles and short body text | 14 / 20 | Semibold titles, regular text |
+| Questions and longer reading | 16 / 24 | Regular |
+| Panel headings | 20 / 28 | Semibold |
+| Page and task titles | 28 / 36 | Semibold |
+
+- Sentence case everywhere. Nothing essential is smaller than 12px.
+- Counts, durations, timestamps and pool usage use equal-width digits.
+- Sizes follow enlarged text: at 200% the layout gives up space the same way a narrower window does.
+
+### Spacing
+
+- A 4px grid, mostly 8, 12, 16, 24 and 32.
+- Cards and inbox items have 16px padding; 12px between cards; 16px board margins.
+- The task sheet has 32px padding and 32px between reading sections (16px in narrow windows).
+
+### Contrast
+
+- All enabled text is at least 4.5:1 against what it actually sits on, in both themes, including hover. Field outlines, focus rings, the amber edge and other essential boundaries are at least 3:1. Field outlines are stronger than decorative separators.
+- Keyboard focus is always visible.
 
 ## Keyboard
 

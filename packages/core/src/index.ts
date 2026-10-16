@@ -3,3 +3,4 @@ export * from "./library.js";
 export * from "./scheduler.js";
 export * from "./sim.js";
 export * from "./demo.js";
+export * from "./board.js";

@@ -1,34 +1,162 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Send, SquareTerminal, X } from "lucide-react";
-import type { MessageMode, State, Task } from "@petrina/core";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { ArrowRight, Send, SquareTerminal, User, X } from "lucide-react";
+import type { MessageMode, SessionLine, State, Task } from "@petrina/core";
 import { sim } from "../engine";
-import { ago, type Lookup } from "../lib";
-import { ProfileChip, RoleAvatar } from "./bits";
+import { ago, profileText, type Lookup } from "../lib";
+import { RoleAvatar } from "./bits";
 import { Ask } from "./Inbox";
 import type { SheetTab } from "./TaskCard";
 
-interface SessionProps {
+interface LogProps {
   task: Task;
   state: State;
   find: Lookup;
+  /** The sheet's scrolling area, which the conversation scrolls in. */
+  scroller: RefObject<HTMLDivElement | null>;
   onToast: (title: string, detail?: string) => void;
   onTab: (tab: SheetTab) => void;
 }
 
-/** Join the agent working on a task: its live transcript, and a composer that queues or interrupts. */
-export function Session({ task, state, find, onToast, onTab }: SessionProps) {
-  const [text, setText] = useState("");
-  const [mode, setMode] = useState<MessageMode>("queue");
-  const log = useRef<HTMLDivElement>(null);
+/** Consecutive activity lines read as one quiet block between messages. */
+function groupLines(lines: readonly SessionLine[]): (SessionLine | SessionLine[])[] {
+  const groups: (SessionLine | SessionLine[])[] = [];
+  for (const line of lines) {
+    const last = groups.at(-1);
+    if (line.from === "activity" && Array.isArray(last)) last.push(line);
+    else groups.push(line.from === "activity" ? [line] : line);
+  }
+  return groups;
+}
+
+function when(at: number, now: number): string {
+  const value = ago(at, now);
+  return value === "now" ? "just now" : `${value} ago`;
+}
+
+/** Join the agent working on a task: its live conversation, with anything it waits on below. */
+function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
   const live = task.state === "running";
   const asks = state.inbox.filter((item) => item.taskId === task.id);
+  const pinned = useRef(true);
 
+  // Follow new lines only while the reader is at the bottom; reading earlier messages stays put.
   useEffect(() => {
-    const el = log.current;
+    const el = scroller.current;
+    if (!el) return;
+    const onScroll = () => {
+      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+    };
+    el.addEventListener("scroll", onScroll);
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [scroller]);
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [task.session.length, task.queued.length]);
+    pinned.current = true;
+  }, [scroller, task.id]);
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [scroller, task.session.length, asks.length]);
+
+  const speaker = (line: SessionLine): ReactNode => {
+    const lineRole = find.role(line.roleId);
+    const you = line.from === "you";
+    return (
+      <div key={line.id} className={`msg ${you ? "you" : "agent"}`}>
+        {you ? (
+          <span className="avatar tone-violet" style={{ width: 28, height: 28 }} aria-hidden="true">
+            <User size={16} />
+          </span>
+        ) : (
+          <RoleAvatar role={lineRole} size={28} />
+        )}
+        <div style={{ minWidth: 0 }}>
+          <div className="name">
+            {you ? "You" : (lineRole?.name ?? "Agent")}
+            <time className="num">{when(line.at, state.now)}</time>
+          </div>
+          <div className="bubble">{line.text}</div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div className="session-head">
+        {role && profile ? (
+          <>
+            <RoleAvatar role={role} size={24} />
+            <strong>{role.name}</strong>
+            <span className="quiet-text">{profileText(profile, find, true)}</span>
+            <span className={`dot ${task.state}`} aria-hidden="true" />
+            <span>{live ? "Working" : task.state === "needs-you" ? "Waiting on you" : "Idle"}</span>
+          </>
+        ) : (
+          <span>No agent is working on this right now. Messages wait until one starts.</span>
+        )}
+        <button
+          className="btn small"
+          disabled={!task.agent}
+          title="Open this agent's own tool in your terminal, on the same session"
+          onClick={() =>
+            onToast("Take over arrives with the real agents", "It will open the agent's own tool in your terminal on this session and pause the stage until you hand back.")
+          }
+        >
+          <SquareTerminal size={16} aria-hidden="true" />
+          Take over in terminal
+        </button>
+      </div>
+
+      <div className="chat reading" aria-label="Conversation">
+        {task.session.length === 0 && <div className="empty-state">The conversation starts when an agent picks this task up.</div>}
+        {groupLines(task.session).map((group) => {
+          if (Array.isArray(group))
+            return (
+              <ul key={group[0]!.id} className="activity" aria-label="What the agent did">
+                {group.map((line) => (
+                  <li key={line.id}>
+                    <ArrowRight size={12} aria-hidden="true" />
+                    {line.text}
+                  </li>
+                ))}
+              </ul>
+            );
+          if (group.from === "system")
+            return (
+              <div key={group.id} className="system">
+                <RoleAvatar role={find.role(group.roleId)} size={16} />
+                <span>
+                  {group.text} · <span className="num">{when(group.at, state.now)}</span>
+                </span>
+              </div>
+            );
+          return speaker(group);
+        })}
+      </div>
+
+      {asks.length > 0 && (
+        <div className="session-asks reading" aria-label="Waiting on you">
+          {asks.map((item) => (
+            <Ask key={item.id} item={item} state={state} find={find} onOpen={(_taskId, tab) => tab && onTab(tab)} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Messages queue until the agent finishes its step, or interrupt it. */
+function Composer({ task, find }: { task: Task; find: Lookup }) {
+  const [text, setText] = useState("");
+  const [mode, setMode] = useState<MessageMode>("queue");
+  const role = find.role(task.agent?.roleId);
+  const live = task.state === "running";
 
   const send = () => {
     if (!text.trim()) return;
@@ -37,127 +165,57 @@ export function Session({ task, state, find, onToast, onTab }: SessionProps) {
   };
 
   return (
-    <div className="session">
-      <div className="session-bar">
-        {role && profile ? (
-          <>
-            <RoleAvatar role={role} size={20} />
-            <strong style={{ color: "var(--text)" }}>{role.name}</strong>
-            <ProfileChip profile={profile} find={find} />
-            <span className={`dot ${task.state}`} />
-            <span>{live ? "working" : task.state === "needs-you" ? "waiting on you" : "idle"}</span>
-          </>
-        ) : (
-          <span>No agent is working on this right now. Messages wait until one starts.</span>
-        )}
-        <button
-          className="btn small"
-          disabled={!task.agent}
-          title="Open this agent's own CLI in your terminal, on the same session"
-          onClick={() =>
-            onToast(
-              "Take over arrives with the real agents",
-              "It will open the agent's CLI in your terminal on this session and pause the stage until you hand back.",
-            )
-          }
-        >
-          <SquareTerminal size={14} />
-          Take over in terminal
-        </button>
-      </div>
-
-      <div className="session-log" ref={log}>
-        {task.session.length === 0 && <div className="empty-state">The conversation starts when an agent picks this task up.</div>}
-        {task.session.map((line) => {
-          const lineRole = find.role(line.roleId);
-          if (line.from === "activity")
-            return (
-              <div key={line.id} className="activity">
-                <ArrowRight size={12} />
-                {line.text}
-              </div>
-            );
-          if (line.from === "system")
-            return (
-              <div key={line.id} className="system">
-                <RoleAvatar role={lineRole} size={16} />
-                {line.text} · {ago(line.at, state.now)}
-              </div>
-            );
-          if (line.from === "you")
-            return (
-              <div key={line.id} className="msg you">
-                <div className="bubble">{line.text}</div>
-              </div>
-            );
-          return (
-            <div key={line.id} className="msg agent">
-              <RoleAvatar role={lineRole} size={22} />
-              <div>
-                <div className="name">{lineRole?.name ?? "Agent"}</div>
-                <div className="bubble">{line.text}</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {asks.length > 0 && (
-        <div className="session-asks">
-          {asks.map((item) => (
-            <Ask key={item.id} item={item} state={state} find={find} onOpen={(_taskId, tab) => tab && onTab(tab)} />
+    <div className="composer">
+      {task.queued.length > 0 && (
+        <div className="queued-msgs" aria-label="Queued messages">
+          {task.queued.map((message) => (
+            <span key={message.id} className="q" title={message.text}>
+              <span>Queued: {message.text}</span>
+              <button aria-label="Remove queued message" onClick={() => sim.removeQueued(task.id, message.id)}>
+                <X size={14} />
+              </button>
+            </span>
           ))}
         </div>
       )}
-
-      <div className="composer">
-        {task.queued.length > 0 && (
-          <div className="queued-msgs" aria-label="Queued messages">
-            {task.queued.map((message) => (
-              <span key={message.id} className="q" title={message.text}>
-                <span>Queued: {message.text}</span>
-                <button aria-label="Remove queued message" onClick={() => sim.removeQueued(task.id, message.id)}>
-                  <X size={12} />
-                </button>
-              </span>
-            ))}
+      <div className="composer-row">
+        <textarea
+          rows={1}
+          aria-label="Message"
+          placeholder={live ? `Message the ${role?.name.toLowerCase() ?? "agent"}…` : "Message the next agent on this task…"}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              send();
+            }
+          }}
+        />
+        {live && (
+          <div className="segmented" role="radiogroup" aria-label="When to deliver">
+            <button role="radio" aria-checked={mode === "queue"} className={mode === "queue" ? "on" : ""} onClick={() => setMode("queue")} title="Deliver after the current step">
+              Queue
+            </button>
+            <button role="radio" aria-checked={mode === "interrupt"} className={mode === "interrupt" ? "on" : ""} onClick={() => setMode("interrupt")} title="Stop the current step and deliver now">
+              Interrupt
+            </button>
           </div>
         )}
-        <div className="composer-row">
-          <textarea
-            rows={1}
-            placeholder={live ? `Message the ${role?.name.toLowerCase() ?? "agent"}…` : "Message the next agent on this task…"}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                send();
-              }
-            }}
-          />
-          {live && (
-            <div className="segmented" role="radiogroup" aria-label="Delivery">
-              <button className={mode === "queue" ? "on" : ""} onClick={() => setMode("queue")} title="Deliver after the current step">
-                Queue
-              </button>
-              <button className={mode === "interrupt" ? "on" : ""} onClick={() => setMode("interrupt")} title="Stop the current step and deliver now">
-                Interrupt
-              </button>
-            </div>
-          )}
-          <button className="btn primary" onClick={send} disabled={!text.trim()}>
-            <Send size={14} />
-          </button>
-        </div>
-        <div className="hint">
-          {live
-            ? mode === "queue"
-              ? "Delivered when the agent finishes its current step. ↵ to send, ⇧↵ for a new line."
-              : "Stops the current step and delivers right away."
-            : "Delivered as soon as an agent starts on this task."}
-        </div>
+        <button className="btn lead" onClick={send} disabled={!text.trim()}>
+          <Send size={16} aria-hidden="true" />
+          Send
+        </button>
+      </div>
+      <div className="hint">
+        {live
+          ? mode === "queue"
+            ? "Delivered when the agent finishes its current step. Enter sends, Shift+Enter starts a new line."
+            : "Stops the current step and delivers right away."
+          : "Delivered as soon as an agent starts on this task."}
       </div>
     </div>
   );
 }
+
+export const Session = { Log, Composer };

@@ -11,6 +11,7 @@ export const DEMO_PRODUCTS: readonly Product[] = [
   { id: "site", name: "Site", repo: "acme/site", tone: "orange", delivery: "local", approveDelivery: false },
 ];
 
+// Question choices list the agent's own recommendation first, as real agents are told to.
 export const DEMO_TRIGGERS: Triggers = {
   "guest-checkout|builder|1|2": {
     kind: "permission",

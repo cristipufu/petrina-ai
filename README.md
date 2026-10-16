@@ -10,12 +10,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/board-light.png" alt="The Petrina board: a queue of tasks, columns for planning, designing, building, reviewing and ready, and a Needs you inbox with a permission request and a question" />
+  <img src="docs/screenshots/board-light.png" alt="The Petrina board: task cards grouped by what they need (needs you, working, the queue), each with its own progress through its plan, and a Needs you inbox with a permission request and a question" />
 </p>
 
 ## What it does
 
-- **A board for your products.** Every task is a card that moves from the queue through planning, design, build and review to a pull request. Each card says, in plain language, who is working on it and what they are doing.
+- **A board for your products.** Every task is a card, grouped by what it needs: you first, then work in progress, then the queue. Each card shows its own progress through its plan (plan, design, your check, build, review, ship) and says, in plain language, who is working on it and what they are doing.
 - **A queue you control.** Drag tasks to set priority. The top of the queue starts first, as soon as a slot is free. Hold a task to keep it from starting.
 - **Many products.** A searchable product switcher (⌘P) and a Products page that shows every product's pipeline and what waits on you, so twenty products stay as calm as two.
 - **A pool of agents.** Choose how many agents may run at once, with caps per tool so one subscription is not exhausted. See who is in each slot.
@@ -28,8 +28,8 @@
 - **No code in the app.** You see plans, briefs, checklists and verdicts. The code lives in the pull request. Petrina never merges.
 
 <p align="center">
-  <img src="docs/screenshots/sheet-plan.png" alt="A task's plan: design until both architects agree, a design checkpoint, the build, a chain of two reviewers and a delivery checkpoint, each stage with its tool, model and effort" width="49%" />
-  <img src="docs/screenshots/session.png" alt="Joining a code reviewer's session: its activity in plain language and a queued message from the coordinator" width="49%" />
+  <img src="docs/screenshots/sheet-plan.png" alt="A task's plan: design until both architects agree, your design check, the build, a chain of two reviewers and your delivery check, each stage with its tool, model and effort" width="49%" />
+  <img src="docs/screenshots/session.png" alt="Joining a code reviewer's session: each agent's activity in plain language, the planner's message, and a queued message from the coordinator" width="49%" />
 </p>
 
 ## How it runs agents

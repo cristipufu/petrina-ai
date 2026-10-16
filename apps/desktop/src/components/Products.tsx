@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { DELIVERY_LABEL, type Column, type DeliveryMode, type Product, type State } from "@petrina/core";
 import { sim } from "../engine";
-import type { Lookup } from "../lib";
+import { useDismiss } from "./bits";
 
 /** Per-product numbers the switcher and the Products page both show. */
 export interface ProductStats {
@@ -37,21 +37,24 @@ export function productStats(state: State): ProductStats[] {
   });
 }
 
-export function ProductBadges({ stats }: { stats: ProductStats }) {
+/** What waits on you, who is working and what is queued, as quiet text. */
+export function ProductCounts({ stats }: { stats: ProductStats }) {
   return (
-    <span className="badges">
-      {stats.needsYou > 0 && <span className="b amber" title="Waiting on you">{stats.needsYou}</span>}
-      {stats.working > 0 && <span className="b blue" title="Agents working">{stats.working}</span>}
-      {stats.queued > 0 && <span className="b" title="Queued">{stats.queued}</span>}
+    <span className="stats">
+      {stats.needsYou > 0 && <span className="needs">{stats.needsYou} need you</span>}
+      {stats.working > 0 && <span>{stats.working} working</span>}
+      {stats.queued > 0 && <span>{stats.queued} queued</span>}
     </span>
   );
 }
 
 /** Scales to many products: search, then grouped by what needs attention. */
-export function ProductSwitcher({ state, value, onChange }: { state: State; find: Lookup; value: string; onChange: (productId: string) => void }) {
+export function ProductSwitcher({ state, value, onChange }: { state: State; value: string; onChange: (productId: string) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const box = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(box, open, close);
   const stats = useMemo(() => productStats(state), [state]);
   const current = state.products.find((product) => product.id === value);
 
@@ -61,17 +64,9 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; find
         event.preventDefault();
         setOpen(true);
       }
-      if (event.key === "Escape") setOpen(false);
-    };
-    const onDown = (event: MouseEvent) => {
-      if (box.current && !box.current.contains(event.target as Node)) setOpen(false);
     };
     window.addEventListener("keydown", onKey);
-    window.addEventListener("mousedown", onDown);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("mousedown", onDown);
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const match = (entry: ProductStats) => !query.trim() || entry.product.name.toLowerCase().includes(query.trim().toLowerCase());
@@ -90,24 +85,29 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; find
   };
 
   return (
-    <div style={{ position: "relative" }} ref={box}>
-      <button className="btn switcher" onClick={() => setOpen((on) => !on)} aria-expanded={open} title="Switch product (⌘P)">
-        {current ? (
-          <span className={`product-chip tone-${current.tone}`} style={{ color: "var(--text)", fontSize: 13 }}>
-            <i />
-            {current.name}
-          </span>
-        ) : (
-          <>All products · {state.products.length}</>
-        )}
-        <ChevronDown size={14} />
+    <div style={{ position: "relative", minWidth: 0, flex: "0 1 auto" }} ref={box}>
+      <button className="btn switcher" onClick={() => setOpen((on) => !on)} aria-expanded={open} aria-haspopup="dialog" title="Switch product (⌘P)">
+        <span className="label-text">
+          {current ? (
+            <span className={`tone-${current.tone}`} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <i style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--tone)", display: "inline-block" }} aria-hidden="true" />
+              {current.name}
+            </span>
+          ) : (
+            <>
+              All products <span className="num quiet-text">{state.products.length}</span>
+            </>
+          )}
+        </span>
+        <ChevronDown size={16} aria-hidden="true" />
       </button>
       {open && (
-        <div className="popover switcher-pop" style={{ left: 0, right: "auto" }}>
-          <label className="search" style={{ width: "100%", marginBottom: 8 }}>
-            <Search size={14} />
+        <div className="popover switcher-pop" role="dialog" aria-label="Switch product">
+          <label className="search-field" style={{ width: "100%", marginBottom: 8 }}>
+            <Search size={16} aria-hidden="true" />
             <input
               autoFocus
+              aria-label="Search products"
               placeholder={`Search ${state.products.length} products`}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -119,24 +119,22 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; find
           </label>
           <div className="switcher-list">
             {!query.trim() && (
-              <button className={`switcher-row ${value === "all" ? "on" : ""}`} onClick={() => pick("all")}>
+              <button className={`switcher-row ${value === "all" ? "on" : ""}`} onClick={() => pick("all")} aria-current={value === "all"}>
                 <span className="name">All products</span>
-                {value === "all" && <Check size={14} />}
+                {value === "all" && <Check size={16} aria-hidden="true" />}
               </button>
             )}
             {groups.map((group) =>
               group.items.length === 0 ? null : (
-                <div key={group.title}>
+                <div key={group.title} role="group" aria-label={group.title}>
                   <div className="switcher-group">
-                    {group.title} · {group.items.length}
+                    {group.title} <span className="num">{group.items.length}</span>
                   </div>
                   {group.items.map((entry) => (
-                    <button key={entry.product.id} className={`switcher-row ${value === entry.product.id ? "on" : ""}`} onClick={() => pick(entry.product.id)}>
-                      <span className={`product-chip tone-${entry.product.tone}`}>
-                        <i />
-                      </span>
+                    <button key={entry.product.id} className={`switcher-row tone-${entry.product.tone} ${value === entry.product.id ? "on" : ""}`} onClick={() => pick(entry.product.id)} aria-current={value === entry.product.id}>
+                      <i aria-hidden="true" />
                       <span className="name">{entry.product.name}</span>
-                      <ProductBadges stats={entry} />
+                      <ProductCounts stats={entry} />
                     </button>
                   ))}
                 </div>
@@ -164,19 +162,21 @@ export function ProductsPage({ state, onPick, onAdd }: { state: State; onPick: (
     (a, b) => b.needsYou - a.needsYou || Number(b.active) - Number(a.active) || b.working - a.working || a.product.name.localeCompare(b.product.name),
   );
   const active = stats.filter((entry) => entry.active).length;
+  const waiting = stats.reduce((sum, entry) => sum + entry.needsYou, 0);
+  const count = (value: number) => (value > 0 ? value : <span className="zero" aria-label="none">–</span>);
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
           <h1>Products</h1>
-          <p>
-            {state.products.length} products · {active} with work in flight · {stats.reduce((sum, entry) => sum + entry.needsYou, 0)} things waiting on you
+          <p className="num">
+            {state.products.length} products · {active} with work in flight · {waiting} {waiting === 1 ? "thing" : "things"} waiting on you
           </p>
         </div>
         {onAdd && (
           <div className="tools">
-            <button className="btn primary" onClick={onAdd}>
+            <button className="btn outline" onClick={onAdd}>
               Add product
             </button>
           </div>
@@ -187,58 +187,76 @@ export function ProductsPage({ state, onPick, onAdd }: { state: State; onPick: (
           No products yet. Add a local clone of a GitHub repository to give the squad something to work on.
         </div>
       )}
-      <div className="portfolio">
-        <div className="portfolio-row head">
-          <span>Product</span>
-          {PIPE.map((step) => (
-            <span key={step.column} className="c">
-              {step.label}
-            </span>
-          ))}
-          <span className="c">Shipped</span>
-          <span className="c">Needs you</span>
-          <span>When ready</span>
-        </div>
-        {stats.map((entry) => (
-          <button key={entry.product.id} className={`portfolio-row ${entry.active ? "" : "quiet"}`} onClick={() => onPick(entry.product.id)}>
-            <span className="who">
-              <span className={`product-chip tone-${entry.product.tone}`}>
-                <i />
-              </span>
-              <span>
-                <span className="name">{entry.product.name}</span>
-                <span className="repo">{entry.product.repo}</span>
-              </span>
-            </span>
-            {PIPE.map((step) => {
-              const count = entry.byColumn[step.column];
-              return (
-                <span key={step.column} className="c">
-                  <span className={`cell ${count > 0 ? "on" : ""} ${step.column}`}>{count || "·"}</span>
-                </span>
-              );
-            })}
-            <span className="c num">{entry.shipped || "·"}</span>
-            <span className="c">{entry.needsYou > 0 ? <span className="pill needs-you">{entry.needsYou}</span> : <span className="muted">·</span>}</span>
-            <span onClick={(event) => event.stopPropagation()} className="delivery-cell">
-              <select
-                aria-label={`What happens when ${entry.product.name} work is ready`}
-                value={entry.product.delivery ?? "pull-request"}
-                onChange={(event) => sim.setProductDelivery(entry.product.id, event.target.value as DeliveryMode, entry.product.approveDelivery ?? true)}
+      <div className="portfolio-wrap">
+        <table className="portfolio">
+          <thead>
+            <tr>
+              <th scope="col">Product</th>
+              {PIPE.map((step) => (
+                <th key={step.column} scope="col" className="c">
+                  {step.label}
+                </th>
+              ))}
+              <th scope="col" className="c">
+                Shipped
+              </th>
+              <th scope="col" className="c">
+                Needs you
+              </th>
+              <th scope="col">When ready</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.map((entry) => (
+              <tr
+                key={entry.product.id}
+                className={entry.active ? "" : "quiet"}
+                onClick={(event) => {
+                  if (!(event.target as HTMLElement).closest(".delivery-cell, button")) onPick(entry.product.id);
+                }}
               >
-                {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
-                  <option key={mode} value={mode}>
-                    {DELIVERY_LABEL[mode]}
-                  </option>
+                <th scope="row">
+                  <span className={`product-cell tone-${entry.product.tone}`}>
+                    <i aria-hidden="true" />
+                    <span style={{ minWidth: 0 }}>
+                      <button className="product-pick" onClick={() => onPick(entry.product.id)} title={`Show ${entry.product.name} on the board`}>
+                        {entry.product.name}
+                      </button>
+                      <span className="repo">{entry.product.repo}</span>
+                    </span>
+                  </span>
+                </th>
+                {PIPE.map((step) => (
+                  <td key={step.column} className="c">
+                    {count(entry.byColumn[step.column])}
+                  </td>
                 ))}
-              </select>
-              <label className="toggle" title="Ask me before shipping">
-                <input type="checkbox" checked={entry.product.approveDelivery ?? true} onChange={(event) => sim.setProductDelivery(entry.product.id, entry.product.delivery ?? "pull-request", event.target.checked)} />
-                ask me
-              </label>
-            </span>
-          </button>
-        ))}
+                <td className="c">{count(entry.shipped)}</td>
+                <td className="c">{entry.needsYou > 0 ? <span className="needs">{entry.needsYou}</span> : count(0)}</td>
+                <td>
+                  <span className="delivery-cell">
+                    <select
+                      className="select"
+                      aria-label={`What happens when ${entry.product.name} work is ready`}
+                      value={entry.product.delivery ?? "pull-request"}
+                      onChange={(event) => sim.setProductDelivery(entry.product.id, event.target.value as DeliveryMode, entry.product.approveDelivery ?? true)}
+                    >
+                      {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
+                        <option key={mode} value={mode}>
+                          {DELIVERY_LABEL[mode]}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="toggle">
+                      <input type="checkbox" checked={entry.product.approveDelivery ?? true} onChange={(event) => sim.setProductDelivery(entry.product.id, entry.product.delivery ?? "pull-request", event.target.checked)} />
+                      Ask me first
+                    </label>
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

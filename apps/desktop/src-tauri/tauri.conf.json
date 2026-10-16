@@ -14,10 +14,11 @@
       {
         "label": "main",
         "title": "Petrina",
-        "width": 1480,
-        "height": 920,
+        "width": 1680,
+        "height": 1000,
         "minWidth": 1100,
         "minHeight": 680,
+        "center": true,
         "dragDropEnabled": false
       }
     ],

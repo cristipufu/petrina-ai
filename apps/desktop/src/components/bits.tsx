@@ -1,5 +1,7 @@
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import {
   BookOpen,
+  Check,
   Compass,
   FlaskConical,
   Hammer,
@@ -10,8 +12,8 @@ import {
   Search,
   type LucideIcon,
 } from "lucide-react";
-import { EFFORTS, type AgentProfile, type Effort, type Product, type Role, type RoleIcon, type RunState, type Task } from "@petrina/core";
-import { currentPhase, PHASES, phasesInPlan, STATE_LABEL, TOOL_COLORS, type Lookup } from "../lib";
+import { pipelineOf, stepTip, type AgentProfile, type Product, type Role, type RoleIcon, type Task } from "@petrina/core";
+import { profileText, type Lookup } from "../lib";
 
 export const ROLE_ICONS: Record<RoleIcon, LucideIcon> = {
   map: MapIcon,
@@ -48,67 +50,135 @@ export function RoleAvatar({ role, size = 22 }: { role: Role | undefined; size?:
   if (!role) return null;
   const Icon = ROLE_ICONS[role.icon];
   return (
-    <span className={`avatar tone-${role.tone}`} style={{ width: size, height: size }} title={role.name}>
-      <Icon size={Math.round(size * 0.56)} strokeWidth={2.2} />
+    <span className={`avatar tone-${role.tone}`} style={{ width: size, height: size }} aria-hidden="true">
+      <Icon size={Math.round(size * 0.58)} strokeWidth={2.2} />
     </span>
   );
 }
 
-export function EffortDots({ effort }: { effort: Effort }) {
-  const level = EFFORTS.indexOf(effort);
-  return (
-    <span className="effort" title={`Effort: ${effort}`}>
-      {EFFORTS.map((name, index) => (
-        <i key={name} className={index <= level ? "on" : ""} />
-      ))}
-    </span>
-  );
-}
-
-export function ProfileChip({ profile, find, showTool = true }: { profile: AgentProfile | undefined; find: Lookup; showTool?: boolean }) {
+/** The tool, model and effort as quiet text. Cards show the model; the sheet shows all three. */
+export function ProfileText({ profile, find, full = false }: { profile: AgentProfile | undefined; find: Lookup; full?: boolean }) {
   if (!profile) return null;
-  const tool = find.tool(profile.toolId);
   return (
-    <span className="chip profile" title={`${tool?.name ?? profile.toolId} · ${profile.model} · ${profile.effort} effort`}>
-      <i className="tool-dot" style={{ background: TOOL_COLORS[profile.toolId] ?? "var(--slate)" }} />
-      {showTool ? `${tool?.name ?? profile.toolId} · ` : ""}
-      {profile.model}
-      <EffortDots effort={profile.effort} />
+    <span className="profile-text" title={full ? undefined : profileText(profile, find, true)}>
+      {profileText(profile, find, full)}
     </span>
   );
 }
 
-export function ProductChip({ product }: { product: Product | undefined }) {
+export function ProductName({ product }: { product: Product | undefined }) {
   if (!product) return null;
   return (
-    <span className={`product-chip tone-${product.tone}`}>
-      <i />
+    <span className={`product-name tone-${product.tone}`}>
+      <i aria-hidden="true" />
       {product.name}
     </span>
   );
 }
 
-export function StatePill({ state }: { state: RunState }) {
+function progressLabel(task: Task): string {
+  const steps = pipelineOf(task);
+  return `Progress: ${steps.map((step) => `${step.label}${step.state === "done" ? " done" : step.state === "current" ? ", the current step" : ""}`).join(", ")}`;
+}
+
+/**
+ * A card's own pipeline, quiet: done steps checked, the current one named, skipped ones absent.
+ * Every step is named in a tooltip on hover and on keyboard focus ("Review, next"). The strip is
+ * one tab stop; the arrow keys move between its steps, and Enter or a click opens the task.
+ */
+export function Pipeline({ task, onActivate }: { task: Task; onActivate?: () => void }) {
+  const [focused, setFocused] = useState<number>();
+  const steps = pipelineOf(task);
+  if (steps.length === 0) return null;
+  const tabStop = focused ?? Math.max(0, steps.findIndex((step) => step.state === "current"));
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLOListElement>) => {
+    const index = focused ?? tabStop;
+    const target = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: steps.length - 1 }[event.key];
+    if (target !== undefined) {
+      event.preventDefault();
+      (event.currentTarget.children[Math.max(0, Math.min(steps.length - 1, target))] as HTMLElement | undefined)?.focus();
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onActivate?.();
+    }
+  };
+
   return (
-    <span className={`pill ${state}`}>
-      {(state === "running" || state === "needs-you") && <span className={`dot ${state}`} />}
-      {STATE_LABEL[state]}
-    </span>
+    <ol className="pipeline" aria-label="Progress" onClick={onActivate} onKeyDown={onKeyDown} onBlur={(event) => !event.currentTarget.contains(event.relatedTarget) && setFocused(undefined)}>
+      {steps.map((step, index) => (
+        <li
+          key={`${step.label}-${index}`}
+          className={step.state === "current" ? `current ${task.state}` : step.state}
+          tabIndex={index === tabStop ? 0 : -1}
+          aria-label={stepTip(step)}
+          data-tip={stepTip(step)}
+          onFocus={() => setFocused(index)}
+        >
+          <span className="mark" aria-hidden="true">
+            {step.state === "done" && <Check size={10} strokeWidth={3} />}
+          </span>
+          {step.state === "current" && <span aria-hidden="true">{step.label}</span>}
+        </li>
+      ))}
+    </ol>
   );
 }
 
-export function Phases({ task }: { task: Task }) {
-  const now = currentPhase(task);
-  const used = phasesInPlan(task);
+/** The same pipeline in the task sheet, with every step named. */
+export function Stepper({ task }: { task: Task }) {
+  const steps = pipelineOf(task);
+  if (steps.length === 0) return null;
   return (
-    <div className="phases" aria-label={now >= 0 && now < 5 ? `Phase: ${PHASES[now]}` : undefined}>
-      {PHASES.map((name, index) => {
-        let cls = "";
-        if (!used.has(index)) cls = "skip";
-        else if (index < now) cls = "done";
-        else if (index === now) cls = `now ${task.state}`;
-        return <i key={name} className={cls} title={name} />;
-      })}
-    </div>
+    <ol className="stepper" aria-label={progressLabel(task)}>
+      {steps.map((step, index) => (
+        <li key={`${step.label}-${index}`} className={step.state === "current" ? `current ${task.state}` : step.state} aria-hidden="true">
+          <span className="mark">{step.state === "done" ? <Check size={12} strokeWidth={3} /> : index + 1}</span>
+          {step.label}
+        </li>
+      ))}
+    </ol>
   );
+}
+
+/** Close a popover or menu on a click outside it or on Escape. */
+export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void): void {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) close();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        close();
+      }
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [ref, open, close]);
+}
+
+/**
+ * The window's size as the layout sees it: CSS pixels at the normal text size. Browser zoom makes
+ * it smaller, and so does enlarged text (a window twice as wide is needed for twice the text).
+ */
+export function viewportSize(): { width: number; height: number } {
+  const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const scale = 16 / root;
+  return { width: Math.round(window.innerWidth * scale), height: Math.round(window.innerHeight * scale) };
+}
+
+export function useViewport(): { width: number; height: number } {
+  const [size, setSize] = useState(viewportSize);
+  useEffect(() => {
+    const onResize = () => setSize(viewportSize());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return size;
 }

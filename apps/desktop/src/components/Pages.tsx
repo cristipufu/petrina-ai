@@ -1,8 +1,8 @@
 import { Pause, Play, SquareTerminal } from "lucide-react";
 import { queueOf, slotUses, type State } from "@petrina/core";
 import { sim } from "../engine";
-import { duration, TOOL_COLORS, type Lookup } from "../lib";
-import { ProductChip, ProfileChip, RoleAvatar, ROLE_ICONS } from "./bits";
+import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
+import { ProductName, RoleAvatar, ROLE_ICONS } from "./bits";
 import { LimitStepper } from "./Pool";
 import type { SheetTab } from "./TaskCard";
 
@@ -19,16 +19,16 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
       <div className="page-head">
         <div>
           <h1>Agents</h1>
-          <p>
+          <p className="num">
             {holders.length} of {state.pool.limit} slots in use
-            {state.pool.paused ? " · pool paused, nothing new starts" : ""}.
+            {state.pool.paused ? ". The pool is paused, so nothing new starts." : "."}
           </p>
         </div>
         <div className="tools">
           <LimitStepper limit={state.pool.limit} />
           <button className="btn" onClick={() => sim.setPoolPaused(!state.pool.paused)}>
-            {state.pool.paused ? <Play size={14} /> : <Pause size={14} />}
-            {state.pool.paused ? "Resume pool" : "Pause pool"}
+            {state.pool.paused ? <Play size={16} aria-hidden="true" /> : <Pause size={16} aria-hidden="true" />}
+            {state.pool.paused ? "Resume the pool" : "Pause the pool"}
           </button>
         </div>
       </div>
@@ -39,23 +39,25 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
           return (
             <div key={task.id} className={`tile ${waiting ? "waiting" : ""}`}>
               <div className="row">
-                <RoleAvatar role={role} size={30} />
+                <RoleAvatar role={role} size={32} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 650 }}>{role?.name}</div>
-                  <ProfileChip profile={find.profile(task.agent?.profileId)} find={find} />
+                  <div style={{ fontWeight: 600 }}>{role?.name}</div>
+                  <div className="quiet-text" style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>
+                    {profileText(find.profile(task.agent?.profileId), find, true)}
+                  </div>
                 </div>
               </div>
               <div className="title">{task.title}</div>
-              <div className="status-line" style={{ marginTop: 0 }}>
-                <span className={`dot ${task.state}`} />
-                {task.statusLine}
-              </div>
+              <p className="card-status">
+                <span className={`dot ${task.state}`} aria-hidden="true" />
+                <span>{task.statusLine}</span>
+              </p>
               <div className="grow" />
               <div className="foot">
-                <ProductChip product={find.product(task.productId)} />
-                <span className="num">· {duration(task.agent?.since, state.now)}</span>
-                <button className={`btn small ${waiting ? "amber" : ""}`} onClick={() => onOpen(task.id, "session")}>
-                  <SquareTerminal size={13} />
+                <ProductName product={find.product(task.productId)} />
+                <span className="num">{duration(task.agent?.since, state.now)}</span>
+                <button className={`btn small ${waiting ? "lead" : ""}`} onClick={() => onOpen(task.id, "session")}>
+                  <SquareTerminal size={16} aria-hidden="true" />
                   {waiting ? "Answer" : "Join"}
                 </button>
               </div>
@@ -72,6 +74,8 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
     </div>
   );
 }
+
+const TOOL_STATUS = { ready: "Ready", "logged-out": "Needs you to log in", "not-installed": "Not installed" } as const;
 
 /** The squad's roles, the tools found on this machine, and the profiles built from them. */
 export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
@@ -91,19 +95,21 @@ export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
         </div>
       </div>
 
-      <div className="section-title">Roles</div>
+      <h2 className="section-title">Roles</h2>
       <div className="grid">
         {state.roles.map((role) => {
           const Icon = ROLE_ICONS[role.icon];
           return (
             <div key={role.id} className="tile role-card">
               <div className="head">
-                <span className={`avatar tone-${role.tone}`} style={{ width: 34, height: 34, borderRadius: 11 }}>
+                <span className={`avatar tone-${role.tone}`} style={{ width: 32, height: 32, borderRadius: 10 }} aria-hidden="true">
                   <Icon size={18} strokeWidth={2.2} />
                 </span>
                 <div>
                   <div className="name">{role.name}</div>
-                  <span className={`pill ${role.canEdit ? "accent" : ""}`}>{role.canEdit ? "Edits the product" : "Read-only"}</span>
+                  <div className="quiet-text" style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>
+                    {role.canEdit ? "Edits the product" : "Read-only"}
+                  </div>
                 </div>
               </div>
               <div style={{ color: "var(--text-2)" }}>{role.purpose}</div>
@@ -118,32 +124,31 @@ export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
         })}
       </div>
 
-      <div className="section-title">Tools on this machine</div>
+      <h2 className="section-title">Tools on this machine</h2>
       <div className="grid">
         {state.tools.map((tool) => (
           <div key={tool.id} className="tile" style={{ minHeight: 0 }}>
             <div className="row between">
-              <div className="row">
-                <i className="tool-dot" style={{ width: 10, height: 10, borderRadius: 3, background: TOOL_COLORS[tool.id] ?? "var(--slate)" }} />
-                <strong>{tool.name}</strong>
+              <div className="row" style={{ gap: 8 }}>
+                <i style={{ width: 10, height: 10, borderRadius: 3, background: TOOL_COLORS[tool.id] ?? "var(--slate)" }} aria-hidden="true" />
+                <strong style={{ fontWeight: 600 }}>{tool.name}</strong>
               </div>
-              <span className={`pill ${tool.status === "ready" ? "ok" : ""}`}>{tool.status === "ready" ? "Ready" : tool.status === "logged-out" ? "Log in needed" : "Not installed"}</span>
+              <span className={`label ${tool.status === "ready" ? "ok" : "warn"}`} style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>
+                {TOOL_STATUS[tool.status]}
+              </span>
             </div>
-            <div className="mono" style={{ color: "var(--text-3)" }}>
-              {tool.command.join(" ")}
-            </div>
-            <div style={{ color: "var(--text-3)", fontSize: 12 }}>{tool.models.length ? `Models: ${tool.models.join(", ")}` : "Connects through ACP once installed"}</div>
+            <div style={{ color: "var(--text-2)" }}>{tool.models.length ? `Models: ${tool.models.join(", ")}` : "Connects through ACP once installed"}</div>
           </div>
         ))}
       </div>
 
-      <div className="section-title">Profiles</div>
+      <h2 className="section-title">Profiles</h2>
       <div className="grid">
         {state.profiles.map((profile) => (
           <div key={profile.id} className="tile" style={{ minHeight: 0 }}>
-            <ProfileChip profile={profile} find={find} />
-            <div style={{ color: "var(--text-3)", fontSize: 12.5 }}>
-              {find.tool(profile.toolId)?.name} running {profile.model} at {profile.effort} effort. Used in {usage(profile.id)} stages right now.
+            <strong style={{ fontWeight: 600 }}>{profileText(profile, find)}</strong>
+            <div style={{ color: "var(--text-2)" }}>
+              {find.tool(profile.toolId)?.name} running {profile.model} at {profile.effort === "xhigh" ? "extra high" : profile.effort} effort. Used in <span className="num">{usage(profile.id)}</span> stages right now.
             </div>
           </div>
         ))}

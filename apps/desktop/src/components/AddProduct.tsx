@@ -33,20 +33,23 @@ export function AddProductDialog({ onClose, onAdded }: { onClose: () => void; on
   return (
     <>
       <div className="dialog-scrim" onClick={onClose} />
-      <div className="dialog" role="dialog" aria-label="Add a product">
-        <div className="row" style={{ gap: 12, marginBottom: 6 }}>
-          <span className="avatar tone-violet" style={{ width: 38, height: 38, borderRadius: 12 }}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="add-product-title">
+        <div className="row" style={{ gap: 12, marginBottom: 8 }}>
+          <span className="avatar tone-violet" style={{ width: 40, height: 40, borderRadius: 12 }} aria-hidden="true">
             <FolderGit2 size={20} />
           </span>
           <div>
-            <div style={{ fontWeight: 680, fontSize: 16 }}>Add a product</div>
-            <div style={{ color: "var(--text-3)", fontSize: 12.5 }}>Point Petrina at a local clone of the product's GitHub repository.</div>
+            <h2 className="heading" id="add-product-title">
+              Add a product
+            </h2>
+            <p style={{ color: "var(--text-2)" }}>Point Petrina at a local clone of the product's GitHub repository.</p>
           </div>
         </div>
         <input
           autoFocus
           className="field"
-          style={{ width: "100%", margin: "12px 0 6px", fontFamily: "var(--mono)", fontSize: 12.5 }}
+          aria-label="Folder of the local clone"
+          style={{ width: "100%", margin: "16px 0 8px" }}
           placeholder="/Users/you/code/my-product"
           value={path}
           onChange={(event) => setPath(event.target.value)}
@@ -54,13 +57,17 @@ export function AddProductDialog({ onClose, onAdded }: { onClose: () => void; on
             if (event.key === "Enter") void add();
           }}
         />
-        {error && <div style={{ color: "var(--red)", fontSize: 12.5, margin: "4px 0 8px" }}>{error}</div>}
-        <div className="foot" style={{ marginTop: 10 }}>
+        {error && (
+          <p className="error-text" role="alert" style={{ margin: "4px 0 8px" }}>
+            {error}
+          </p>
+        )}
+        <div className="foot" style={{ marginTop: 16 }}>
           <span className="left">Each task gets its own working copy, so your clone stays untouched.</span>
-          <button className="btn ghost" onClick={onClose}>
+          <button className="btn quiet" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" disabled={!path.trim() || busy} onClick={() => void add()}>
+          <button className="btn lead" disabled={!path.trim() || busy} onClick={() => void add()}>
             {busy ? "Adding…" : "Add product"}
           </button>
         </div>

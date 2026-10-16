@@ -57,7 +57,7 @@ queued → planning → designing → building → reviewing → ready → done
             └──── any stage can be: running · needs-you · paused · failed
 ```
 
-The board column is derived from the role of the current stage. The run state (running, waiting on you, paused, failed) is separate, so cards do not jump columns when they block.
+The stage column (planning, designing, building…) is derived from the role of the current stage; the Products page counts tasks by it. The board itself is one grid of cards grouped by what each task needs (needs you, working, waiting, queue, done), and every card shows its own pipeline from its plan: done steps checked, the current one named, stages the plan does not have left out (`packages/core/src/board.ts`).
 
 ## Tools: ACP first
 
@@ -117,6 +117,7 @@ Petrina relies on each tool's own safety checker instead of building one:
 
 - Petrina reads no commands. When a tool's checker flags something and asks, the question goes to the inbox unchanged, with the exact command or paths, and the coordinator allows or denies it once.
 - Petrina never picks a tool's "always" option: those write settings into the working copy or switch modes.
+- Nothing is remembered: every request is allowed or denied once, in the inbox or the session, with the same wording and buttons in both. There are no remembered rules per product and no list of them in Settings. Seeing and removing remembered permissions is not available yet; if remembering returns, it belongs to Product settings and board papercuts.
 - If a tool's automatic mode is not available for a model, the session log says so and that tool asks before acting.
 - Approval gates and round limits are enforced by the engine, never by prompting a model to stop.
 

@@ -1,34 +1,4 @@
-import type { AgentProfile, Id, Role, RunState, Stage, State, Task, Tool } from "@petrina/core";
-
-export const PHASES = ["Plan", "Design", "Build", "Review", "Ship"] as const;
-
-const DESIGN_ROLES = new Set(["researcher", "architect", "design-reviewer", "ux-designer"]);
-
-/** Which of the five phases a stage belongs to. */
-export function phaseOfStage(stage: Stage): number {
-  if (stage.kind === "gate") return stage.gate === "plan" ? 0 : stage.gate === "design" ? 1 : 4;
-  if (stage.kind === "converge" || DESIGN_ROLES.has(stage.roleId)) return 1;
-  if (stage.kind === "review-chain") return 3;
-  return 2;
-}
-
-/** The phase the task is in: -1 queued, 0..4, or 5 when everything is done. */
-export function currentPhase(task: Task): number {
-  if (task.state === "queued") return -1;
-  if (task.state === "done") return 5;
-  if (task.state === "pr-open") return 4;
-  if (task.stageIndex < 0) return 0;
-  const stage = task.plan?.stages[task.stageIndex];
-  return stage ? phaseOfStage(stage) : 4;
-}
-
-/** Phases the plan actually uses. Planning and shipping are always there. */
-export function phasesInPlan(task: Task): Set<number> {
-  const used = new Set<number>([0, 4]);
-  if (!task.plan) return new Set([0, 1, 2, 3, 4]);
-  for (const stage of task.plan.stages) used.add(phaseOfStage(stage));
-  return used;
-}
+import type { AgentProfile, Effort, Id, Role, RunState, State, Task, Tool } from "@petrina/core";
 
 export function lookup(state: State) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
@@ -54,10 +24,32 @@ export const STATE_LABEL: Record<RunState, string> = {
   "needs-you": "Needs you",
   paused: "Paused",
   failed: "Failed",
-  "pr-open": "Pull request open",
-  done: "Done",
+  "pr-open": "Awaiting merge",
+  done: "Completed",
   cancelled: "Cancelled",
 };
+
+const EFFORT_LABEL: Record<Effort, string> = {
+  low: "low effort",
+  medium: "medium effort",
+  high: "high effort",
+  xhigh: "extra high effort",
+};
+
+/** A profile in words: "Opus 5.5", or in full "Claude Code · Opus 5.5 · high effort". */
+export function profileText(profile: AgentProfile | undefined, find: Lookup, full = false): string {
+  if (!profile) return "";
+  if (!full) return profile.model;
+  return `${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profile.model} · ${EFFORT_LABEL[profile.effort]}`;
+}
+
+/** Where delivered work stands, in words, or undefined before delivery. */
+export function deliveryText(task: Task): { text: string; done: boolean } | undefined {
+  if (task.release) return { text: `Released ${task.release.tag}`, done: true };
+  if (task.landed) return { text: `Delivered locally to ${task.landed.branch}`, done: true };
+  if (task.pr) return task.pr.state === "merged" ? { text: `Pull request #${task.pr.number} merged`, done: true } : { text: `Pull request #${task.pr.number} · awaiting merge`, done: false };
+  return undefined;
+}
 
 export function ago(at: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - at) / 1000));
