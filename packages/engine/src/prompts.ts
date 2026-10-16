@@ -36,7 +36,7 @@ export const BriefResult = z.object({
   areas: z.array(z.string()).default([]),
   acceptance: z.array(z.string()).min(1),
   risks: z.array(z.string()).default([]),
-  answers: z.array(z.object({ id: z.string(), status: z.enum(["accepted", "rejected"]), answer: z.string() })).default([]),
+  answers: z.array(z.object({ id: z.string(), status: z.enum(["accepted", "rejected"]), answer: z.string(), byCall: z.boolean().default(false) })).default([]),
 });
 
 export const ObjectionsResult = z.object({
@@ -145,6 +145,7 @@ const SHAPES: Record<string, string> = {
 ]}`,
   researcher: `{"summary": "What you found, in plain language", "notes": ["One finding per line"]}`,
   architect: `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "answers": [{"id": "<objection id>", "status": "accepted", "answer": "What you changed, or why not"}]}`,
+  "architect-call": `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "answers": [{"id": "<objection id the call decides>", "status": "accepted", "byCall": true, "answer": "What you changed in the brief to follow the call"}, {"id": "<objection id the call does not speak to>", "status": "rejected", "byCall": false, "answer": "What you changed, or why not"}]}`,
   "design-reviewer": `{"objections": [{"text": "A concrete gap in the design", "blocking": true}]}`,
   "ux-designer": `{"summary": "The screens and words you propose", "notes": ["One note per line"]}`,
   builder: `{"summary": "What you built, in plain language", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result"}`,
@@ -182,6 +183,7 @@ Rules:
     case "researcher":
       return "Research what users expect from this and how good products solve it. Look at the repository to understand the current state. Do not change any files.";
     case "architect":
+      if (task.call) return CALL_INSTRUCTIONS;
       return `Design how this should work, for users and in the product. Read the code you need. Do not change any files: your output is the design brief.
 Write it for a product person: plain language, no code. The acceptance list is what the builder must satisfy and the reviewers will check.
 If objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason.`;
@@ -209,6 +211,13 @@ Do not change any files.`;
       return role.purpose;
   }
 }
+
+const CALL_INSTRUCTIONS = `The architects disagreed and the coordinator made the call below. The call is final: do not reopen it, argue with it or ask for another review. Nobody reviews the design again; the coordinator checks the brief before anything is built.
+Update the design brief so it follows the call. Read the code you need. Do not change any files: your output is the design brief. Write it for a product person: plain language, no code.
+Answer every objection listed as still open, by its id. Leave none out:
+- If the call decides it, set "byCall" to true, set "status" to what the call says (accepted or rejected), and in "answer" say what you changed in the brief to follow the call.
+- If the call does not speak to it, set "byCall" to false and answer it yourself: accept it and change the brief, or reject it with a reason.
+If notes from the coordinator are listed below, they come from checking the brief that follows the call: change the brief to cover them too, still following the call.`;
 
 function shipperInstructions(ctx: PromptContext, defaultBranch: string): string {
   const { task, branch } = ctx;
@@ -250,7 +259,7 @@ ${roleInstructions(ctx)}
 ${sections}
 
 Keep a short to-do list as you work, written in plain language: the coordinator watches it live.
-${RESULT_FOOTER(SHAPES[role.id] ?? SHAPES["researcher"]!)}`;
+${RESULT_FOOTER(SHAPES[role.id === "architect" && task.call ? "architect-call" : role.id] ?? SHAPES["researcher"]!)}`;
 }
 
 export function repairPrompt(error: string): string {
@@ -259,7 +268,9 @@ Reply with only the corrected \`\`\`petrina block, nothing else.`;
 }
 
 export function formatObjections(objections: readonly Objection[]): string {
-  return objections.map((objection) => `- [${objection.id}] ${objection.blocking ? "BLOCKING" : "not blocking"} (${objection.status}): ${objection.text}${objection.answer ? ` | Architect: ${objection.answer}` : ""}`).join("\n");
+  return objections
+    .map((objection) => `- [${objection.id}] ${objection.blocking ? "BLOCKING" : "not blocking"} (${objection.status}${objection.call ? " by the coordinator's call" : ""}): ${objection.text}${objection.answer ? ` | Architect: ${objection.answer}` : ""}`)
+    .join("\n");
 }
 
 export function formatFindings(findings: readonly Finding[]): string {

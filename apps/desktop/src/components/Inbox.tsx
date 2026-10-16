@@ -83,12 +83,12 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const role = find.role(item.roleId);
   const profile = find.profile(item.profileId);
 
-  const sendBack = (label: string) =>
+  const sendBack = (label: string, placeholder = "What should change?", send = "Send") =>
     noting ? (
       <div className="ask-reply">
         <input
           autoFocus
-          placeholder="What should change?"
+          placeholder={placeholder}
           value={reply}
           onChange={(event) => setReply(event.target.value)}
           onKeyDown={(event) => {
@@ -97,7 +97,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
           }}
         />
         <button className="btn small" disabled={!reply.trim()} onClick={() => sim.requestChanges(item.id, reply.trim())}>
-          Send
+          {send}
         </button>
       </div>
     ) : (
@@ -215,15 +215,18 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       )}
 
       {item.kind === "disagreement" && (
-        <div className="ask-actions">
-          <button className="btn small primary" onClick={() => sim.approve(item.id)}>
-            Side with the architect
-          </button>
-          <button className="btn small" onClick={() => onOpen(item.taskId, "design")}>
-            Read both sides
-          </button>
-          {sendBack("Write my call…")}
-        </div>
+        <>
+          <div className="ask-body">Your call settles the design: the architect follows it, with no further review round, and you check the brief before anything is built.</div>
+          <div className="ask-actions">
+            <button className="btn small primary" onClick={() => sim.approve(item.id)}>
+              Side with the architect
+            </button>
+            <button className="btn small" onClick={() => onOpen(item.taskId, "design")}>
+              Read both sides
+            </button>
+            {sendBack("Write my call…", "Your call: what should the design do?", "Make the call")}
+          </div>
+        </>
       )}
 
       {item.kind === "stuck" && (

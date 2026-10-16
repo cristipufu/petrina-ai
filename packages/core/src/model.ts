@@ -135,6 +135,19 @@ export interface Objection {
   raisedBy: Id;
   status: "open" | "accepted" | "rejected";
   answer?: string;
+  /** The coordinator's words, when their call settled this objection. `answer` is then the architect's note on how the brief follows it. */
+  call?: string;
+}
+
+/** The coordinator's call on a design disagreement. It is final: the architect follows it and nobody reviews the design again. */
+export interface DesignCall {
+  /** The coordinator's own words. */
+  text: string;
+  /** The design stage that raised the disagreement. */
+  stageId: Id;
+  /** The objections that were open when the call was written. */
+  open: readonly Id[];
+  at: number;
 }
 
 export interface Finding {
@@ -193,6 +206,8 @@ export interface Task {
   queued: readonly QueuedMessage[];
   brief?: DesignBrief;
   objections: readonly Objection[];
+  /** Set from the coordinator's call on a disagreement until they approve the brief that follows it. */
+  call?: DesignCall;
   findings: readonly Finding[];
   pr?: PullRequest;
   /** Ticks spent with the pull request open (simulator only). */

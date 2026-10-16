@@ -3,15 +3,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { State } from "@petrina/core";
+import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
 
-function makeRepo(): string {
-  const repo = join(temp, "repo");
+function makeRepo(name = "repo"): string {
+  const repo = join(temp, name);
   execFileSync("mkdir", ["-p", repo]);
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "test@example.com");
@@ -21,6 +21,8 @@ function makeRepo(): string {
   git(repo, "commit", "-q", "-m", "init");
   return repo;
 }
+
+afterAll(() => rmSync(temp, { recursive: true, force: true }));
 
 /** Wait for a condition on the engine's state, answering the inbox like a coordinator would. */
 async function until(engine: Engine, done: (state: State) => boolean, respond: (engine: Engine, state: State) => void, ms = 60_000): Promise<State> {
@@ -38,10 +40,7 @@ describe("Engine with a fake ACP agent", () => {
   const repo = makeRepo();
   const engine = new Engine(join(temp, "data"), { agentCommand: () => ["bun", fake] });
 
-  afterAll(() => {
-    engine.shutdown();
-    rmSync(temp, { recursive: true, force: true });
-  });
+  afterAll(() => engine.shutdown());
 
   it("takes a task from the queue to a commit on main, asking the coordinator along the way", async () => {
     const productId = await engine.addProduct(repo);
@@ -84,5 +83,159 @@ describe("Engine with a fake ACP agent", () => {
     expect(decide({ title: "Push", kind: "execute", command: "git push origin main", paths: [] }, { role, worktree: repo, allowed: [] }).decision).toBe("deny");
     const reviewer = engine.getState().roles.find((entry) => entry.id === "code-reviewer")!;
     expect(decide({ title: "Edit", kind: "edit", paths: [join(repo, "a.ts")] }, { role: reviewer, worktree: repo, allowed: [] }).decision).toBe("deny");
+  });
+});
+
+describe("The coordinator's call on a design disagreement", () => {
+  const CALL = "Show the greeting to everyone, in English only.";
+  const repo = makeRepo("call-repo");
+  const data = join(temp, "call-data");
+  const start = () => new Engine(data, { agentCommand: () => ["bun", fake] });
+  let engine = start();
+
+  afterAll(() => engine.shutdown());
+
+  /** Answer questions and permissions; leave checkpoints to the test. */
+  const coordinator = (current: Engine, state: State) => {
+    for (const item of state.inbox) {
+      if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
+      else if (item.kind === "permission") current.allow(item.id, "once");
+    }
+  };
+  const itemOf = (state: State, taskId: string, kind: InboxKind) => state.inbox.find((item) => item.taskId === taskId && item.kind === kind);
+  const taskOf = (state: State, taskId: string) => state.tasks.find((task) => task.id === taskId)!;
+  const waitFor = (taskId: string, kind: InboxKind) => until(engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
+  const reviewerRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "design-reviewer" && entry.tone === "milestone").length;
+  const architectRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "architect" && entry.tone === "milestone").length;
+  let productId = "";
+
+  it("settles the design: the architect follows the call once, then a design check, with no review round", async () => {
+    productId = await engine.addProduct(repo);
+    const taskId = engine.addTask({ productId, title: "Pick a greeting", description: "A greeting file. [disagree]" });
+    let state = await waitFor(taskId, "disagreement");
+    const before = taskOf(state, taskId);
+    const open = before.objections.filter((objection) => objection.status === "open");
+    expect(open).toHaveLength(2);
+    const design = before.plan!.stages[before.stageIndex]!;
+    const rounds = before.rounds[design.id];
+    const reviews = reviewerRuns(before);
+    const architects = architectRuns(before);
+
+    engine.requestChanges(itemOf(state, taskId, "disagreement")!.id, CALL);
+    expect(taskOf(engine.getState(), taskId).call).toMatchObject({ text: CALL, stageId: design.id, open: open.map((objection) => objection.id) });
+    state = await waitFor(taskId, "design");
+    const after = taskOf(state, taskId);
+    expect(after.error).toBeUndefined();
+
+    // The architect ran exactly once more, the reviewer not at all, and the round count stayed put.
+    expect(architectRuns(after)).toBe(architects + 1);
+    expect(reviewerRuns(after)).toBe(reviews);
+    expect(after.rounds[design.id]).toBe(rounds);
+    expect(itemOf(state, taskId, "disagreement")).toBeUndefined();
+    // It was told the call is final, in the coordinator's words, with every open objection by id.
+    expect(after.session.some((line) => line.from === "agent" && line.text === `Call: ${CALL}. Final: yes. Open: ${open.map((objection) => objection.id).join(", ")}.`)).toBe(true);
+    // It left one objection out, was asked again, and every objection has an answer: none open, none defaulted.
+    expect(after.objections.find((objection) => objection.id === open[0]!.id)).toMatchObject({ status: "rejected", call: CALL, answer: "Removed it from the brief, as the call says." });
+    expect(after.objections.find((objection) => objection.id === open[1]!.id)).toMatchObject({ status: "accepted", answer: "Added it to the brief." });
+    expect(after.objections.find((objection) => objection.id === open[1]!.id)?.call).toBeUndefined();
+    expect(after.objections.some((objection) => objection.status === "open")).toBe(false);
+
+    const texts = after.timeline.map((entry) => entry.text);
+    expect(texts).toContain(CALL_WORDS.made(CALL));
+    expect(texts.some((text) => text.startsWith("You asked for changes"))).toBe(false);
+    expect(texts.indexOf(CALL_WORDS.updated)).toBeGreaterThan(texts.indexOf(CALL_WORDS.made(CALL)));
+    expect(texts.indexOf(CALL_WORDS.settled)).toBeGreaterThan(texts.indexOf(CALL_WORDS.updated));
+    expect(after.statusLine).toBe(CALL_WORDS.waiting);
+    expect(itemOf(state, taskId, "design")?.body).toContain("Your call settled 1 objection (0 accepted, 1 rejected). The architect answered 1 on its own.");
+
+    // Changes asked for at this check go to the architect only and come back to the same check.
+    const check = itemOf(state, taskId, "design")!;
+    const checkIndex = after.stageIndex;
+    engine.requestChanges(check.id, "Say where the greeting shows.");
+    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
+    const revised = taskOf(state, taskId);
+    expect(revised.stageIndex).toBe(checkIndex);
+    expect(architectRuns(revised)).toBe(architects + 2);
+    expect(reviewerRuns(revised)).toBe(reviews);
+    expect(revised.rounds[design.id]).toBe(rounds);
+    expect(revised.timeline.map((entry) => entry.text)).toContain(CALL_WORDS.revised);
+    expect(itemOf(state, taskId, "disagreement")).toBeUndefined();
+
+    // Approving moves on to the build.
+    engine.approve(itemOf(state, taskId, "design")!.id);
+    state = await until(engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
+    expect(taskOf(state, taskId).call).toBeUndefined();
+    engine.cancel(taskId);
+  });
+
+  it("leaves siding with the architect as it was", async () => {
+    const taskId = engine.addTask({ productId, title: "Pick a welcome", description: "A welcome file. [disagree]" });
+    let state = await waitFor(taskId, "disagreement");
+    const before = taskOf(state, taskId);
+    const open = before.objections.filter((objection) => objection.status === "open").map((objection) => objection.id);
+    const stages = before.plan!.stages.length;
+
+    engine.approve(itemOf(state, taskId, "disagreement")!.id);
+    state = await waitFor(taskId, "design");
+    const after = taskOf(state, taskId);
+    expect(after.timeline.map((entry) => entry.text)).toContain("You sided with the architect");
+    for (const id of open) expect(after.objections.find((objection) => objection.id === id)).toMatchObject({ status: "rejected" });
+    expect(after.objections.some((objection) => objection.call !== undefined)).toBe(false);
+    expect(after.call).toBeUndefined();
+    expect(after.plan!.stages).toHaveLength(stages);
+    expect(itemOf(state, taskId, "design")?.body).toBeUndefined();
+    engine.cancel(taskId);
+  });
+
+  it("sends the design back for a full round when changes are asked for at a check with no call", async () => {
+    const taskId = engine.addTask({ productId, title: "Pick a motto", description: "A motto file." });
+    let state = await waitFor(taskId, "design");
+    const check = itemOf(state, taskId, "design")!;
+    // The engine's state is live: keep what it was before asking for changes.
+    const before = taskOf(state, taskId);
+    const design = before.plan!.stages.find((stage) => stage.kind === "converge")!;
+    const reviews = reviewerRuns(before);
+    const rounds = before.rounds[design.id] ?? 1;
+
+    engine.requestChanges(check.id, "Make it shorter.");
+    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
+    const after = taskOf(state, taskId);
+    expect(reviewerRuns(after)).toBe(reviews + 1);
+    expect(after.rounds[design.id]).toBe(rounds + 1);
+    expect(after.timeline.map((entry) => entry.text)).toContain("You asked for changes: Make it shorter.");
+    engine.cancel(taskId);
+  });
+
+  it("follows the call after a restart and a pause, adding the design check the plan did not have", async () => {
+    const taskId = engine.addTask({ productId, title: "Pick a farewell", description: "A farewell file. [disagree] [no-check]" });
+    let state = await waitFor(taskId, "disagreement");
+    const before = taskOf(state, taskId);
+    const design = before.plan!.stages[before.stageIndex]!;
+    expect(before.plan!.stages[before.stageIndex + 1]?.kind).not.toBe("gate");
+    const reviews = reviewerRuns(before);
+
+    // The call is written while nothing can start, then Petrina restarts and the task is paused and resumed.
+    engine.setPoolPaused(true);
+    engine.requestChanges(itemOf(state, taskId, "disagreement")!.id, CALL);
+    engine.shutdown();
+    engine = start();
+    expect(taskOf(engine.getState(), taskId).call?.text).toBe(CALL);
+    engine.pause(taskId);
+    engine.resume(taskId);
+    engine.setPoolPaused(false);
+
+    state = await waitFor(taskId, "design");
+    const after = taskOf(state, taskId);
+    expect(after.error).toBeUndefined();
+    expect(reviewerRuns(after)).toBe(reviews);
+    expect(after.timeline.map((entry) => entry.text)).toContain(CALL_WORDS.updated);
+    expect(after.plan!.stages[after.stageIndex]).toMatchObject({ kind: "gate", gate: "design", id: `${design.id}:call-check` });
+    expect(after.objections.some((objection) => objection.status === "open")).toBe(false);
+
+    // Approving the added check moves on to the next stage of the plan.
+    engine.approve(itemOf(state, taskId, "design")!.id);
+    state = await until(engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
+    expect(taskOf(state, taskId).plan!.stages[taskOf(state, taskId).stageIndex]!.roleId).toBe("builder");
+    engine.cancel(taskId);
   });
 });
