@@ -65,10 +65,14 @@ interface Heredoc {
   body: string;
   /** A quoted delimiter (<<'EOF') turns off expansion inside the body. */
   quoted: boolean;
+  /** The body is only known at run time (a here-string with $, `…` or a substitution in it). */
+  dynamic?: boolean;
 }
 
 const HEREDOC_MARK = "\u0000heredoc:";
 const LITERAL = "\u0001";
+/** Marks a >(…) substitution, whose command reads what the outer command writes into it. */
+const FED = "\u0002";
 
 /** Split a command line into words and operators, honouring quotes and here-documents. */
 function tokenize(input: string): { tokens: string[]; substitutions: string[]; heredocs: Heredoc[]; arithmetic: boolean; opaque?: string } {
@@ -215,7 +219,7 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
       // Process substitution runs a command: analyse it like $(…).
       const close = matchParen(input, i + 1);
       if (close < 0) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced process substitution" };
-      substitutions.push(input.slice(i + 2, close));
+      substitutions.push(`${ch === ">" ? FED : ""}${input.slice(i + 2, close)}`);
       word += `${ch}(…)`;
       inWord = true;
       i = close;
@@ -296,7 +300,8 @@ export function analyze(command: string, depth = 0): Analysis {
     if (token === "<<<") {
       // A here-string is the command's input: data, or a script for an interpreter.
       const body = tokens[i + 1] ?? "";
-      stdin.push({ body: body.startsWith(LITERAL) ? body.slice(1) : body, quoted: true });
+      // Fail closed: any $, backtick or substitution placeholder means the text is built at run time.
+      stdin.push({ body: body.startsWith(LITERAL) ? body.slice(1) : body, quoted: true, dynamic: /[$`]|…/.test(body) });
       redirected = true;
       i += 1;
       continue;
@@ -311,8 +316,9 @@ export function analyze(command: string, depth = 0): Analysis {
   flush(false);
 
   for (const inner of substitutions) {
-    const nested = analyze(inner, depth + 1);
-    analysis.segments.push(...nested.segments);
+    const fed = inner.startsWith(FED);
+    const nested = analyze(fed ? inner.slice(1) : inner, depth + 1);
+    analysis.segments.push(...(fed ? nested.segments.map((segment) => ({ ...segment, pipedIn: true })) : nested.segments));
     if (nested.opaque && !analysis.opaque) analysis.opaque = nested.opaque;
   }
   return analysis;
@@ -403,7 +409,11 @@ function unwrapCommand(argv: string[], depth: number, stdin: readonly Heredoc[])
   if (/^(g|m|n)?awk$/.test(program) && args.some((arg) => /\bsystem\s*\(|\|\s*getline|\|&|print\s*[^;]*\|/.test(arg))) {
     return { segments: [withAssigns({ argv: args, interpreterFromStdin: false })], opaque: "awk running commands" };
   }
-  if (program === "eval" || (program === "source" && args[1] && !/\.env/.test(args[1]))) return { segments: [withAssigns({ argv: args, interpreterFromStdin: false })], opaque: `${program} runs code Petrina cannot read` };
+  if (program === "eval" || ((program === "source" || program === ".") && args[1] && !/\.env/.test(args[1]))) return { segments: [withAssigns({ argv: args, interpreterFromStdin: false })], opaque: `${program} runs code Petrina cannot read` };
+  // Unquoted here-documents and here-strings with expansions are only known at run time.
+  if (INTERPRETERS.has(program) && stdin.some((doc) => doc.dynamic || (!doc.quoted && /[$`]/.test(doc.body)))) {
+    return { segments: [withAssigns({ argv: args, interpreterFromStdin: true, pipedIn: true })], opaque: "a script built at run time fed to an interpreter" };
+  }
   if (stdin.length && SHELLS.has(program) && !args.some((arg) => /^-[a-z]*c[a-z]*$/.test(arg))) {
     // A shell reading a here-document runs it: read it as commands.
     const nested = analyze(stdin.map((doc) => doc.body).join("\n"), depth + 1);
@@ -424,6 +434,9 @@ function unwrapCommand(argv: string[], depth: number, stdin: readonly Heredoc[])
   const inlineFlags = INLINE_CODE[program.replace(/[0-9.]+$/, "")] ?? INLINE_CODE[program];
   const inlineAt = inlineFlags ? args.findIndex((arg, index) => index > 0 && inlineFlags.includes(arg)) : -1;
   const script = inlineAt >= 0 ? args[inlineAt + 1] ?? "" : undefined;
+  // `bash <(curl …)` runs another command's output as its script, like a pipe.
+  const fromSubstitution = INTERPRETERS.has(program) && args.slice(1).some((arg) => arg.includes("<(…)"));
+  if (fromSubstitution) return { segments: [withAssigns({ argv: args, interpreterFromStdin: true, pipedIn: true })] };
   const interpreterFromStdin = INTERPRETERS.has(program) && inlineAt < 0 && args.slice(1).every((arg) => arg.startsWith("-"));
   return { segments: [withAssigns({ argv: args, interpreterFromStdin, ...(script !== undefined ? { script } : {}) })] };
 }
