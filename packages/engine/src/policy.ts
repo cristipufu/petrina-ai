@@ -220,9 +220,9 @@ const OPERATORS = new Set([";", "&&", "||", "|", "&", "(", ")", ";;"]);
 export function analyze(command: string, depth = 0): Analysis {
   if (depth > 4) return { segments: [], opaque: "deeply nested commands", compound: true };
   // Arithmetic contexts reuse << as a shift; the tokenizer would read it as a here-document.
-  // Only outside quotes: Python's ((x+1)/2) inside a quoted -c script is not shell arithmetic.
-  const unquoted = command.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "''");
-  if (/\(\(|\$\[/.test(unquoted)) return { segments: [], opaque: "arithmetic that Petrina does not parse", compound: true };
+  // Arithmetic reuses << as a shift, which the tokenizer would read as a here-document. Arithmetic
+  // without << parses safely, so only the two together fail closed (on the raw text, no quote stripping).
+  if (/\(\(|\$\[/.test(command) && command.includes("<<")) return { segments: [], opaque: "arithmetic next to a here-document marker", compound: true };
   const { tokens, substitutions, heredocs, opaque } = tokenize(command);
   if (heredocs.some((doc) => !doc.quoted && /\\$/m.test(doc.body))) return { segments: [], opaque: "a here-document with line continuations", compound: true };
   const compound = substitutions.length > 0 || heredocs.length > 0 || tokens.some((token) => OPERATORS.has(token) || token === ">" || token === "<");

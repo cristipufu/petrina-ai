@@ -180,4 +180,10 @@ describe("permission policy", () => {
     expect(run("python3 -I -c 'print(((1+0.055)/1.055)**2.4)'", "code-reviewer")).toBe("allow");
     expect(run("(( x <<EOF ))\ngit push\nEOF")).not.toBe("allow");
   });
+
+  it("fails closed when arithmetic and here-document markers meet, whatever the quoting", () => {
+    expect(run("echo \\' (( x <<EOF )) '\ngit push\nEOF")).not.toBe("allow");
+    expect(run("python3 -c 'x = 1 << 2; print(((1+0.055)/1.055))'")).not.toBe("allow");
+    expect(run("python3 -I -c 'print(((1+0.055)/1.055)**2.4)'", "code-reviewer")).toBe("allow");
+  });
 });
