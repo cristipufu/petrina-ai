@@ -86,4 +86,46 @@ describe("permission policy", () => {
     expect(env.GIT_CONFIG_VALUE_0).toBe("");
     expect(env.PATH).toBe("/bin");
   });
+
+  it("closes the third review's gaps", () => {
+    for (const command of [
+      'git status && echo "git push origin x" | sh',
+      "gh api --method=POST repos/a/b/pulls",
+      "gh api -XPOST repos/a/b/pulls",
+      "gh api --field=title=x repos/a/b/pulls",
+      "gh api -H X-HTTP-Method-Override:POST repos/a/b/pulls",
+      "GH_TOKEN=x gh pr view 1",
+      "export GIT_CONFIG_COUNT=0",
+      "HOME=/tmp/x git status",
+      "env GIT_SSH_COMMAND=ssh git fetch",
+      'git rebase -x "make" main',
+      "git rebase --exec=make main",
+      "git bisect run make",
+      "git submodule foreach git pull",
+      "git config alias.p push",
+      "git config credential.helper store",
+      "git -c credential.helper=store fetch",
+      "find . -name x -exec git push \\;",
+      "git commit -m 'make git push faster'",
+    ]) {
+      expect(`${command} → ${run(command)}`).toBe(`${command} → deny`);
+    }
+    expect(run("gh api repos/a/b --jq .name")).toBe("allow");
+    expect(run("git config user.name")).toBe("allow");
+    expect(run("git config --get user.email")).toBe("allow");
+    expect(run("git commit -m 'fix the login page'")).toBe("allow");
+    expect(run("awk 'BEGIN{system(\"ls\")}'")).toBe("ask");
+    expect(run("find . -name '*.ts' -exec wc -l {} +")).toBe("allow");
+    expect(run("cat data.json | python3")).toBe("ask");
+  });
+
+  it("reads here-documents as data, or as code when they feed an interpreter", () => {
+    const shoot = "mkdir -p /tmp/shots && cd /tmp/shots && cat > shoot.ts <<'EOF'\nconst port = `${9333 + 1}`;\nconst [,, url] = process.argv;\nEOF\nbun shoot.ts http://localhost:1430/?demo";
+    expect(run(shoot)).toBe("allow");
+    expect(run("cat > notes.txt <<EOF\n$(git push origin x)\nEOF")).toBe("deny");
+    expect(run("python3 <<'EOF'\nimport os; os.system('git push')\nEOF")).toBe("deny");
+    expect(run("bash <<'EOF'\ngit push origin x\nEOF")).toBe("deny");
+    expect(run("python3 <<'EOF'\nprint(1)\nEOF")).toBe("allow");
+    expect(run("cat <<'EOF'\nunterminated")).toBe("ask");
+  });
 });
