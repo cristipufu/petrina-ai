@@ -184,10 +184,12 @@ Rules:
     case "architect":
       return `Design how this should work, for users and in the product. Read the code you need. Do not change any files: your output is the design brief.
 Write it for a product person: plain language, no code. The acceptance list is what the builder must satisfy and the reviewers will check.
-If objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason.`;
+Keep the design as small as the task allows. Do not add mechanisms the task did not ask for (new security layers, sandboxes, settings, background services): if you see a need, put it in risks as a follow-up instead.
+If objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason. Rejecting an objection that would grow the task beyond what was asked is a good reason.`;
     case "design-reviewer":
       return `Challenge the design brief below. Look for gaps, contradictions, missing edge cases, and things that will not work in this codebase. Do not change any files.
-Mark an objection blocking only if building the design as written would be a mistake. If nothing blocking is left, return an empty or non-blocking list.`;
+Mark an objection blocking only if building the design as written would be a mistake. Rare, recoverable edge cases and ideas that would grow the task beyond what was asked (new security layers, sandboxes, settings) are non-blocking: list them for follow-up. Prefer objections that make the design simpler.
+If nothing blocking is left, return an empty or non-blocking list.`;
     case "ux-designer":
       return "Shape the screens, layout and words users will see for this change, following the product's existing design. Do not change any files: describe the design in your notes.";
     case "builder":
