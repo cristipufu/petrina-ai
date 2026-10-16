@@ -209,6 +209,8 @@ export interface Task {
   release?: { tag: string; url: string };
   /** Set when a `local` product committed this task onto its default branch. */
   landed?: { branch: string; sha: string };
+  /** Everything the coordinator said about this task, kept for every later agent (latest wins). */
+  notes?: readonly { at: number; text: string }[];
 }
 
 export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck";

@@ -305,6 +305,7 @@ export class Engine {
     const task = this.task(taskId);
     const trimmed = text.trim();
     if (!task || !trimmed) return;
+    this.remember(task, trimmed);
     const message = { id: this.id(taskId), text: trimmed, at: Date.now() };
     const run = this.runs.get(taskId);
     if (mode === "interrupt" && run) {
@@ -391,6 +392,7 @@ export class Engine {
     const task = this.task(item.taskId);
     if (task) {
       this.log(task, "you", note ? `You said no: ${note}` : `You said no to: ${item.title}`);
+      if (note) this.remember(task, note);
       if (note) task.queued.push({ id: this.id(task.id), text: note, at: Date.now() });
       this.unblock(task);
     }
@@ -440,6 +442,7 @@ export class Engine {
     if (!item || !task) return;
     this.log(task, "you", `You asked for changes: ${note}`);
     this.say(task, "you", note);
+    this.remember(task, note);
     task.queued.push({ id: this.id(task.id), text: note, at: Date.now() });
     const stages = task.plan?.stages ?? [];
     if (item.kind === "plan") {
@@ -816,8 +819,10 @@ export class Engine {
   private sectionsFor(task: MTask, roleId: Id): { title: string; body: string }[] {
     const sections: { title: string; body: string }[] = [];
     const brief = task.brief;
-    const notes = task.queued.splice(0).map((message) => `- ${message.text}`);
-    if (notes.length) sections.push({ title: "Notes from the coordinator", body: notes.join("\n") });
+    task.queued.splice(0);
+    // Every agent on the task sees all of the coordinator's notes, reviewers included.
+    const notes = (task.notes ?? []).map((note) => `- ${note.text}`);
+    if (notes.length) sections.push({ title: "The coordinator's notes on this task (follow them; where they conflict with the brief or each other, the latest wins)", body: notes.join("\n\n") });
     if (brief && roleId !== "planner") {
       sections.push({
         title: "Design brief",
@@ -1014,6 +1019,10 @@ export class Engine {
     task.state = "failed";
     this.log(task, "warn", `Stuck: ${message.slice(0, 300)}`);
     this.commit();
+  }
+
+  private remember(task: MTask, text: string): void {
+    task.notes = [...(task.notes ?? []), { at: Date.now(), text }];
   }
 
   private toWaiting(task: MTask): void {
