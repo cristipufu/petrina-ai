@@ -953,3 +953,17 @@ kbd {
 .delivery-cell { display: flex; align-items: center; gap: 8px; }
 .delivery-cell select { border: 1px solid var(--line); background: var(--bg); border-radius: 7px; padding: 3px 6px; font-size: 12px; color: var(--text-2); }
 .engine-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.engine-pill .where { color: var(--text-3); opacity: 0.85; }
+.engine-pill.linkish { border: 0; background: transparent; cursor: pointer; padding: 0; }
+
+/* ── The engine starting, or not ───────────────────────────────────── */
+
+.engine-screen { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: var(--bg); animation: fade 0.18s ease both; }
+.engine-card { display: grid; justify-items: center; gap: 8px; max-width: 440px; padding: 24px; text-align: center; }
+.engine-card .t { font-size: 18px; font-weight: 680; letter-spacing: -0.01em; margin-top: 6px; }
+.engine-card .s { color: var(--text-2); font-size: 13px; line-height: 1.5; }
+.engine-card .detail { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); background: var(--bg-elev); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; max-height: 120px; overflow: auto; text-align: left; width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.engine-card .starting { animation: starting 1.6s ease-in-out infinite; display: grid; }
+@keyframes starting { 0%, 100% { opacity: 1; transform: none; } 50% { opacity: 0.6; transform: scale(0.96); } }
+@media (prefers-reduced-motion: reduce) { .engine-card .starting { animation: none; } }
+.queued-msgs .q.unsent { background: var(--amber-soft); color: var(--amber); padding-right: 9px; }

@@ -153,10 +153,20 @@ packages/core           Domain model, scheduler, plan engine, simulator
 docs/                   This document and the UX brainstorm
 ```
 
-- **Rust is a thin host.** It starts and stops processes, manages worktrees, stores events in SQLite, runs the bridge socket, and opens pull requests with `gh`.
-- **TypeScript holds everything domain-specific:** roles, plans, the scheduler, the engine, ACP handling, and the UI.
+- **Rust is a thin host.** It starts the engine, passes the engine's address and key to the window, and stops the engine it started when the app quits. No web client, no plugins beyond Tauri's core.
+- **TypeScript holds everything domain-specific:** roles, plans, the scheduler, the engine, ACP handling, worktrees, SQLite, and the UI.
 - `@petrina/core` never imports Tauri. It talks to a host interface, so the whole engine runs under Node in tests with fake agents.
 - **State** is an append-only event log per task in SQLite. The UI and the engine read the same state, so tasks pick up where they left off after a restart.
+
+## The engine process
+
+The engine is one Bun process per Petrina folder (`~/.petrina`, or `PETRINA_HOME`).
+
+- **One engine per folder.** The engine holds an exclusive SQLite transaction on `engine.lock` for as long as it runs; the operating system releases it the moment the process ends, crash included. A second engine finds it through the lock, or through `engine.json` for an engine started before the lock existed, and refuses ("already running"), or in app mode steps aside and hands over the running engine's address. The engine decides this, not the shell.
+- **App mode.** The desktop shell starts `cli.ts app` with its stdin and stdout as a private line. The engine picks a free port, writes `engine.json` for scripts, and says it is ready in one JSON line on stdout; that line, with the key, never goes to a log. Everything else the engine prints goes to `engine.log`, written only by the engine that holds the folder. When stdin closes (the app quit, crashed or was force-quit) the engine stops its agents the way pausing does, saves, removes `engine.json` and exits; the shell forces it after 8 seconds. An engine the app did not start is left alone. Started from the Dock, the engine asks the login shell for the PATH the terminal has.
+- **The key.** The window asks the shell for the address and key through a Tauri command that only the main window may call (`capabilities/default.json`), keeps them in memory, and presents the key as a WebSocket subprotocol when the connection opens. The engine refuses any request with the key in its address, a wrong or missing key, and pages that are not Petrina's own.
+- **Restarts are safe.** Everything the coordinator says during a step (messages, answers, the note with a "No", the change request that started the step) is saved before any agent sees it, and kept on the task until the step hands back its result. An agent that starts the step again gets all of it, in order, in its opening instructions. The window keeps what it sent until the engine confirms it, and sends it again after reconnecting, with an id so a resend counts once.
+- **Shipping is never repeated blindly.** Before the shipper gets any work, the engine saves that shipping started, with the branch's head, where main was and the latest release. If shipping is interrupted (a quit, a crash, a pause, a failed attempt), the next run looks for the delivery first: a pull request for the branch, the work on the default branch, or a release published since shipping started that contains it. Found: it is recorded. Not found, half done, or GitHub unreachable: the coordinator decides ("Check again", "Ship it again", "Mark as done"), and a second shipper is told what the first one left behind.
 
 ## Security model
 

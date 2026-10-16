@@ -1,7 +1,10 @@
 // The real engine: the same state the UI renders, driven by real agents over ACP.
 // Each task runs as one async driver while it holds a pool slot. Gates and the queue
 // live in state; questions and permissions wait on the coordinator in code.
+// Two rules make restarts safe: what the coordinator says during a step is on disk before any
+// agent sees it, and kept until the step finishes; and shipping is never repeated blindly.
 
+import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -22,6 +25,7 @@ import {
   type Role,
   type Stage,
   type State,
+  type StepNote,
   type Task,
   type TaskKind,
   type Tone,
@@ -34,8 +38,10 @@ import {
   BriefResult,
   BuildResult,
   buildPrompt,
+  EARLIER_ATTEMPT,
   formatFindings,
   formatObjections,
+  formatStepNotes,
   NotesResult,
   ObjectionsResult,
   parseResult,
@@ -59,6 +65,8 @@ const SHIPPER_PROFILE = "opus-high";
 const TONES: readonly Tone[] = ["blue", "green", "orange", "violet", "pink", "teal", "indigo", "purple", "amber", "slate"];
 const MAX_SESSION_LINES = 800;
 const MAX_TIMELINE = 400;
+/** How far before shipping started a release still counts, for clocks that disagree. */
+const CLOCK_SLACK_MS = 10 * 60_000;
 
 export interface NewTaskInput {
   productId: Id;
@@ -71,6 +79,24 @@ export interface NewTaskInput {
   approveDelivery?: boolean;
 }
 
+export interface EngineOptions {
+  /** Tests: run a fake agent instead of the tool's adapter. */
+  agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
+  /** Tests: a fake GitHub instead of `gh`. */
+  gh?: readonly string[];
+}
+
+/** What the window adds to an answer, so it still counts when the question is gone (a restart dropped it). */
+export interface SaidContext {
+  taskId?: Id;
+  /** The question, or what a "No" refused. */
+  about?: string;
+  /** The window's id for what it sent: a resend after a lost confirmation counts once. */
+  clientId?: Id;
+}
+
+type Delivery = { found: true; text: string; record: () => void } | { found: false; text: string };
+
 class Aborted extends Error {}
 
 export class Engine {
@@ -82,10 +108,13 @@ export class Engine {
   private readonly waiting = new Map<Id, { resolve: (value: string) => void; reject: (error: Error) => void }>();
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly timers: ReturnType<typeof setInterval>[] = [];
+  private stopped = false;
+  /** This run of the engine, to tell a restart from a pause. */
+  private readonly boot = randomBytes(6).toString("hex");
 
   constructor(
     private readonly dataDir: string,
-    private readonly options: { agentCommand?: (profile: AgentProfile) => readonly string[] | undefined } = {},
+    private readonly options: EngineOptions = {},
   ) {
     this.store = new Store(join(dataDir, "petrina.db"));
     const loaded = this.store.load();
@@ -107,8 +136,13 @@ export class Engine {
     };
   };
 
+  /** Stop every agent the way pausing does, save, and close. Their tasks continue on the next start. */
   shutdown(): void {
+    if (this.stopped) return;
+    this.stopped = true;
     for (const timer of this.timers) clearInterval(timer);
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
     for (const controller of this.drivers.values()) controller.abort();
     for (const run of this.runs.values()) run.close();
     this.store.save(this.getState());
@@ -300,29 +334,33 @@ export class Engine {
     this.schedule();
   }
 
-  sendMessage(taskId: Id, text: string, mode: "queue" | "interrupt" = "queue"): void {
+  sendMessage(taskId: Id, text: string, mode: "queue" | "interrupt" = "queue", clientId?: Id): void {
     const task = this.task(taskId);
     const trimmed = text.trim();
-    if (!task || !trimmed) return;
-    this.remember(task, trimmed);
+    if (!task || !trimmed || !this.firstTime(task, clientId)) return;
     const message = { id: this.id(taskId), text: trimmed, at: Date.now() };
+    this.remember(task, trimmed, message.id);
     const run = this.runs.get(taskId);
-    if (mode === "interrupt" && run) {
+    const interrupt = mode === "interrupt" && run !== undefined;
+    this.stepNote(task, interrupt ? "interrupt" : "message", trimmed, { id: message.id });
+    if (interrupt) {
       task.queued.unshift(message);
       this.say(task, "system", "You interrupted the current step");
-      this.commit();
-      void run.cancel();
-      return;
+    } else {
+      task.queued.push(message);
     }
-    task.queued.push(message);
-    this.commit();
+    this.commitNow();
+    if (interrupt) void run.cancel();
   }
 
+  /** Take back a message before any agent got it. */
   removeQueued(taskId: Id, messageId: Id): void {
     const task = this.task(taskId);
-    if (!task) return;
+    if (!task || !task.queued.some((message) => message.id === messageId)) return;
     task.queued = task.queued.filter((message) => message.id !== messageId);
-    this.commit();
+    task.stepNotes = task.stepNotes?.filter((note) => note.id !== messageId);
+    task.notes = task.notes?.filter((note) => note.id !== messageId);
+    this.commitNow();
   }
 
   setStageProfile(taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): void {
@@ -349,18 +387,25 @@ export class Engine {
 
   // ── Inbox ──────────────────────────────────────────────────────────────
 
-  answer(itemId: Id, answer: string): void {
-    const item = this.takeItem(itemId);
-    if (!item) return;
-    const task = this.task(item.taskId);
-    if (task) {
-      this.say(task, "you", answer);
-      this.log(task, "you", `You answered: ${answer}`);
-      this.unblock(task);
-    }
+  /**
+   * Answer an agent's question. On disk before the agent gets it. When the question is gone (a
+   * restart dropped it before the answer arrived), the answer still reaches the step.
+   */
+  answer(itemId: Id, answer: string, context: SaidContext = {}): void {
+    const item = this.s.inbox.find((entry) => entry.id === itemId);
+    const task = this.task(item?.taskId ?? context.taskId ?? "");
+    const about = item?.title ?? context.about;
+    if (!task || !this.firstTime(task, context.clientId)) return;
+    if (!item && (!about || ["done", "cancelled"].includes(task.state))) return;
+    this.takeItem(itemId);
+    this.stepNote(task, "answer", answer, { ...(about ? { about } : {}) });
+    this.say(task, "you", answer);
+    this.log(task, "you", `You answered: ${answer}`);
+    if (item) this.unblock(task);
+    else task.queued.push({ id: this.id(task.id), text: `About your question “${about}”: ${answer}`, at: Date.now() });
+    this.commitNow();
     this.waiting.get(itemId)?.resolve(answer);
     this.waiting.delete(itemId);
-    this.commit();
   }
 
   decideForMe(itemId: Id): void {
@@ -382,24 +427,37 @@ export class Engine {
     this.commit();
   }
 
-  deny(itemId: Id, note?: string): void {
-    const item = this.takeItem(itemId);
-    if (!item) return;
-    const task = this.task(item.taskId);
-    if (task) {
-      this.log(task, "you", note ? `You said no: ${note}` : `You said no to: ${item.title}`);
-      if (note) this.remember(task, note);
-      if (note) task.queued.push({ id: this.id(task.id), text: note, at: Date.now() });
-      this.unblock(task);
+  /** Say no to a permission. The note with it is on disk before the agent hears the "No". */
+  deny(itemId: Id, note?: string, context: SaidContext = {}): void {
+    const item = this.s.inbox.find((entry) => entry.id === itemId);
+    const task = this.task(item?.taskId ?? context.taskId ?? "");
+    const said = note?.trim();
+    const about = item?.title ?? context.about;
+    if (!task || !this.firstTime(task, context.clientId)) return;
+    // A plain "No" to a request a restart already dropped changes nothing.
+    if (!item && (!said || ["done", "cancelled"].includes(task.state))) return;
+    this.takeItem(itemId);
+    this.log(task, "you", said ? `You said no: ${said}` : `You said no to: ${about}`);
+    if (said) {
+      const id = this.id(task.id);
+      this.remember(task, said, id);
+      this.stepNote(task, "denied", said, { id, ...(about ? { about } : {}) });
+      task.queued.push({ id, text: said, at: Date.now() });
     }
+    if (item) this.unblock(task);
+    this.commitNow();
     this.waiting.get(itemId)?.resolve("deny");
     this.waiting.delete(itemId);
-    this.commit();
   }
 
   approve(itemId: Id): void {
-    if (this.s.inbox.find((entry) => entry.id === itemId)?.kind === "stuck") {
+    const kind = this.s.inbox.find((entry) => entry.id === itemId)?.kind;
+    if (kind === "stuck") {
       this.retry(itemId);
+      return;
+    }
+    if (kind === "shipping") {
+      this.checkShipping(itemId);
       return;
     }
     const item = this.takeItem(itemId);
@@ -438,8 +496,12 @@ export class Engine {
     if (!item || !task) return;
     this.log(task, "you", `You asked for changes: ${note}`);
     this.say(task, "you", note);
-    this.remember(task, note);
-    task.queued.push({ id: this.id(task.id), text: note, at: Date.now() });
+    const id = this.id(task.id);
+    this.remember(task, note, id);
+    task.queued.push({ id, text: note, at: Date.now() });
+    // The change request starts the next step: it is the first thing that step keeps.
+    this.finishStep(task);
+    this.stepNote(task, "changes", note, { id });
     const stages = task.plan?.stages ?? [];
     if (item.kind === "plan") {
       task.stageIndex = -1;
@@ -459,13 +521,50 @@ export class Engine {
     }
     task.sub = 0;
     this.toWaiting(task);
+    this.commitNow();
+    this.schedule();
+  }
+
+  /** "Check again": look for the interrupted delivery once more. */
+  checkShipping(itemId: Id): void {
+    const task = this.takeShippingItem(itemId);
+    if (!task) return;
+    this.log(task, "you", "You asked Petrina to check again");
+    this.toWaiting(task);
     this.commit();
+    this.schedule();
+  }
+
+  /** "Ship it again": the shipper finishes the interrupted attempt, told what Petrina found. */
+  shipAgain(itemId: Id): void {
+    const task = this.takeShippingItem(itemId);
+    if (!task) return;
+    if (task.shipping) task.shipping.again = true;
+    this.log(task, "you", "You asked to ship it again");
+    this.toWaiting(task);
+    this.commitNow();
+    this.schedule();
+  }
+
+  /** "Mark as done": it went out another way. */
+  markDone(itemId: Id): void {
+    const task = this.takeShippingItem(itemId);
+    if (!task) return;
+    delete task.shipping;
+    this.finishStep(task);
+    task.state = "done";
+    task.column = "done";
+    task.finishedAt = Date.now();
+    task.statusLine = "Marked as done by you";
+    this.log(task, "you", "You marked it as done");
+    this.commitNow();
     this.schedule();
   }
 
   // ── Scheduling ─────────────────────────────────────────────────────────
 
   private schedule(): void {
+    if (this.stopped) return;
     const candidates: Candidate[] = [];
     const tool = (profileId: Id) => this.profile(profileId)?.toolId ?? "unknown";
     for (const task of this.s.tasks.filter((entry) => entry.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
@@ -549,7 +648,7 @@ export class Engine {
       this.fail(taskId, error);
     } finally {
       if (this.drivers.get(taskId) === controller) this.drivers.delete(taskId);
-      this.schedule();
+      if (!this.stopped) this.schedule();
     }
   }
 
@@ -571,6 +670,7 @@ export class Engine {
     task.plan = this.normalizePlan(task, result);
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
     this.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", PLANNER_PROFILE);
+    this.finishStep(task);
     this.commit();
   }
 
@@ -618,10 +718,10 @@ export class Engine {
     const roleId = stage.roleId;
     const profileId = stage.profileIds[0] ?? "opus-xhigh";
     const role = this.role(roleId);
-    const sections = this.sectionsFor(task, roleId);
+    const sections = () => this.sectionsFor(task, roleId);
 
     if (roleId === "builder") {
-      const result = await this.turn(task, roleId, profileId, sections, BuildResult, signal);
+      const result = await this.turn(task, roleId, profileId, sections(), BuildResult, signal);
       const label = this.describe(roleId, profileId);
       const sha = await git.commitAll(task.worktree!, `${task.title}${task.fixing ? " (review fixes)" : ""}\n\n${result.summary}\n\n${result.changes.map((change) => `- ${change}`).join("\n")}\n\nBuilt by Petrina: ${label}`);
       task.report = { summary: result.summary, changes: result.changes, ...(result.tests ? { tests: result.tests } : {}) };
@@ -631,17 +731,20 @@ export class Engine {
       }
       this.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, profileId);
     } else if (roleId === "shipper") {
-      const result = await this.turn(task, roleId, profileId, sections, ShipResult, signal);
+      // Shipping is never repeated blindly: after an interruption, look for the delivery first.
+      if (task.shipping && !task.shipping.again) return this.checkDelivery(task, signal);
+      await this.startShipping(task);
+      const result = await this.turn(task, roleId, profileId, sections(), ShipResult, signal);
       await this.verifyDelivery(task, result);
       return "stop";
     } else if (roleId === "tester") {
-      const result = await this.turn(task, roleId, profileId, sections, TestResult, signal);
+      const result = await this.turn(task, roleId, profileId, sections(), TestResult, signal);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => ({ ...item, met: result.checks.find((check) => check.text === item.text)?.pass ?? item.met }));
       const failed = result.checks.filter((check) => !check.pass);
       for (const check of failed) task.findings.push({ id: this.id(task.id), text: `Failed acceptance check: ${check.text}`, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });
       this.log(task, failed.length ? "warn" : "done", failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, profileId);
     } else {
-      const result = await this.turn(task, roleId, profileId, sections, NotesResult, signal);
+      const result = await this.turn(task, roleId, profileId, sections(), NotesResult, signal);
       this.say(task, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, profileId);
       this.log(task, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, profileId);
     }
@@ -649,6 +752,7 @@ export class Engine {
       await git.discardChanges(task.worktree);
       this.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
     }
+    this.finishStep(task);
     task.stageIndex += 1;
     task.sub = 0;
     this.commit();
@@ -671,6 +775,7 @@ export class Engine {
       for (const objection of task.objections) if (objection.status === "open" && objection.round < round) objection.status = "accepted";
       this.log(task, "done", round === 1 ? "Design brief ready" : "Answered every objection", stage.roleId, profileId);
       await this.undoReadOnly(task, stage.roleId);
+      this.finishStep(task);
       task.sub = 1;
       this.commit();
       return "continue";
@@ -682,6 +787,7 @@ export class Engine {
       task.objections.push({ id: this.id(`${task.id}-obj`), round, text: objection.text, blocking: objection.blocking, raisedBy: reviewerProfile, status: "open" });
     }
     await this.undoReadOnly(task, reviewerRole);
+    this.finishStep(task);
     const blocking = result.objections.filter((objection) => objection.blocking).length;
     if (blocking === 0) {
       for (const objection of task.objections) if (objection.status === "open" && !objection.blocking) objection.status = "rejected";
@@ -739,6 +845,7 @@ export class Engine {
       });
     }
     await this.undoReadOnly(task, "code-reviewer");
+    this.finishStep(task);
     const blockingNow = result.findings.filter((finding) => finding.severity === "blocking").length;
     this.log(task, blockingNow ? "warn" : "done", result.verdict === "pass" && !blockingNow ? "Passed" : `Found ${blockingNow} blocking issue${blockingNow === 1 ? "" : "s"}`, "code-reviewer", profileId);
 
@@ -781,35 +888,163 @@ export class Engine {
     delete task.agent;
     task.holdsSlot = false;
     if (task.delivery === "pull-request") {
-      const pr = await git.findPr(task.worktree!, task.branch!);
+      const pr = await git.findPr(task.worktree!, task.branch!, this.options.gh);
       if (!pr) throw new Error("The shipper finished, but no pull request exists for this branch");
-      task.pr = { number: pr.number, url: pr.url, state: "open", openedAt: Date.now() };
-      task.state = "pr-open";
-      task.column = "ready";
-      task.statusLine = `Pull request #${pr.number} is open. Merge it on GitHub when you are happy`;
+      this.recordPr(task, { ...pr, state: "open" });
       this.log(task, "done", `Opened pull request #${pr.number}`, "shipper", SHIPPER_PROFILE);
     } else if (task.delivery === "release") {
-      const release = result.tag ? await git.findRelease(task.worktree!, result.tag) : undefined;
+      const release = result.tag ? await git.findRelease(task.worktree!, result.tag, this.options.gh) : undefined;
       if (!release) throw new Error("The shipper finished, but the release could not be found on GitHub");
-      task.release = release;
-      task.state = "done";
-      task.column = "done";
-      task.finishedAt = Date.now();
-      task.statusLine = `Released ${release.tag}`;
+      this.recordRelease(task, release);
       this.log(task, "done", `Published release ${release.tag}`, "shipper", SHIPPER_PROFILE);
     } else {
       const sha = result.sha ?? (await git.head(task.worktree!));
       const branch = product.defaultBranch ?? "main";
       if (!(await git.landedOn(product.path!, branch, sha))) throw new Error(`The shipper finished, but the work is not on ${branch}`);
-      task.landed = { branch, sha: sha.slice(0, 7) };
-      task.state = "done";
-      task.column = "done";
-      task.finishedAt = Date.now();
-      task.statusLine = `Committed to ${branch}`;
+      this.recordLanded(task, branch, sha);
       this.log(task, "done", `Committed to ${branch} (${sha.slice(0, 7)})`, "shipper", SHIPPER_PROFILE);
     }
+    delete task.shipping;
+    this.finishStep(task);
     this.say(task, "agent", `${result.summary}\n\n${label}`, "shipper", SHIPPER_PROFILE);
+    this.commitNow();
+  }
+
+  private recordPr(task: MTask, pr: { number: number; url: string; state: "open" | "merged" | "closed" }): void {
+    task.pr = { number: pr.number, url: pr.url, state: pr.state === "merged" ? "merged" : "open", openedAt: Date.now() };
+    if (pr.state === "open") {
+      task.state = "pr-open";
+      task.column = "ready";
+      task.statusLine = `Pull request #${pr.number} is open. Merge it on GitHub when you are happy`;
+    } else {
+      this.finished(task, pr.state === "merged" ? `Merged #${pr.number} on GitHub` : `Closed #${pr.number} without merging`);
+    }
+  }
+
+  private recordRelease(task: MTask, release: { tag: string; url: string }): void {
+    task.release = release;
+    this.finished(task, `Released ${release.tag}`);
+  }
+
+  private recordLanded(task: MTask, branch: string, sha: string): void {
+    task.landed = { branch, sha: sha.slice(0, 7) };
+    this.finished(task, `Committed to ${branch}`);
+  }
+
+  private finished(task: MTask, statusLine: string): void {
+    task.state = "done";
+    task.column = "done";
+    task.finishedAt = Date.now();
+    task.statusLine = statusLine;
+  }
+
+  // ── Shipping is never repeated blindly ─────────────────────────────────
+
+  /** On disk before the shipper gets any work: when it started, the latest release, and where main was. */
+  private async startShipping(task: MTask): Promise<void> {
+    const product = this.productOf(task)!;
+    const branch = product.defaultBranch ?? "main";
+    const earlier = task.shipping;
+    // A second attempt keeps what the first one found: the check covers everything since then.
+    const [head, mainSha, originSha, latestRelease] = earlier
+      ? [earlier.head, earlier.mainSha, earlier.originSha, earlier.latestRelease]
+      : await Promise.all([
+          git.head(task.worktree!).catch(() => undefined),
+          git.revParse(product.path!, `refs/heads/${branch}`),
+          git.revParse(task.worktree!, `refs/remotes/origin/${branch}`),
+          task.delivery === "release" ? git.latestRelease(task.worktree!, this.options.gh) : undefined,
+        ]);
+    task.shipping = {
+      startedAt: earlier?.startedAt ?? Date.now(),
+      attempts: (earlier?.attempts ?? 0) + 1,
+      boot: this.boot,
+      ...(head ? { head } : {}),
+      ...(mainSha ? { mainSha } : {}),
+      ...(originSha ? { originSha } : {}),
+      ...(latestRelease ? { latestRelease } : {}),
+      ...(earlier?.found ? { found: earlier.found } : {}),
+    };
+    this.log(task, "status", earlier ? "Shipping again, finishing the interrupted attempt" : "Shipping started");
+    this.commitNow();
+  }
+
+  /** After an interruption: record the delivery if it went out, or ask the coordinator. Never ship again on its own. */
+  private async checkDelivery(task: MTask, signal: AbortSignal): Promise<"stop"> {
+    const shipping = task.shipping!;
+    task.statusLine = "Checking whether it already went out";
     this.commit();
+    const delivery = await this.lookForDelivery(task, shipping);
+    if (signal.aborted) throw new Aborted();
+    delete task.agent;
+    task.holdsSlot = false;
+    const when = shipping.boot === this.boot ? "" : " after a restart";
+    if (delivery.found) {
+      delivery.record();
+      delete task.shipping;
+      this.finishStep(task);
+      this.log(task, "done", `Found${when} that it had already gone out: ${delivery.text}`, "shipper", SHIPPER_PROFILE);
+      this.commitNow();
+      return "stop";
+    }
+    shipping.found = delivery.text;
+    task.statusLine = "Shipping was interrupted. Your call";
+    this.raise(task, "shipping", `Shipping “${task.title}” was interrupted`, false, {
+      body: `${delivery.text} Petrina will not ship it again on its own: check again, ship it again (the shipper finishes the interrupted attempt), or mark it as done if it went out another way.`,
+    });
+    this.log(task, "warn", `Shipping was interrupted${when}. ${delivery.text}`);
+    this.commitNow();
+    return "stop";
+  }
+
+  private async lookForDelivery(task: MTask, shipping: NonNullable<MTask["shipping"]>): Promise<Delivery> {
+    const product = this.productOf(task)!;
+    const branch = product.defaultBranch ?? "main";
+    const worktree = task.worktree!;
+    const head = shipping.head ?? (await git.head(worktree).catch(() => undefined));
+    const unreachable: Delivery = { found: false, text: "Petrina could not reach GitHub to check whether it went out." };
+    if (!head) return { found: false, text: "Petrina could not tell which work was being shipped." };
+
+    if (task.delivery === "pull-request") {
+      const pr = await git.prForBranch(worktree, task.branch!, this.options.gh);
+      if (!pr.ok) return unreachable;
+      const found = pr.value;
+      if (found) return { found: true, text: `pull request #${found.number}`, record: () => this.recordPr(task, found) };
+      const pushed = await git.remoteBranch(worktree, task.branch!);
+      if (!pushed.ok) return unreachable;
+      return { found: false, text: pushed.value ? "The branch was pushed to GitHub, but no pull request was opened for it." : "No pull request was opened for this task's branch." };
+    }
+
+    if (task.delivery === "local") {
+      // The shipper may have merged main into the branch first: its newer head counts too.
+      const now = await git.head(worktree).catch(() => undefined);
+      for (const sha of new Set([now ?? head, head])) {
+        if (await git.landedOn(product.path!, branch, sha)) return { found: true, text: `the work is on ${branch} (${sha.slice(0, 7)})`, record: () => this.recordLanded(task, branch, sha) };
+      }
+      return { found: false, text: `The work is not on ${branch} yet.` };
+    }
+
+    const releases = await git.releasesSince(worktree, shipping.startedAt - CLOCK_SLACK_MS, this.options.gh);
+    if (!releases.ok) return unreachable;
+    for (const tag of releases.value) {
+      const contains = await git.originContains(worktree, { tag }, head);
+      if (!contains.ok) return unreachable;
+      if (!contains.value) continue;
+      const release = await git.findRelease(worktree, tag, this.options.gh);
+      if (!release) return unreachable;
+      return { found: true, text: `release ${tag}`, record: () => this.recordRelease(task, release) };
+    }
+    const pushed = await git.originContains(worktree, { branch }, head);
+    if (!pushed.ok) return unreachable;
+    return {
+      found: false,
+      text: pushed.value ? `The work (with any version change) was pushed to ${branch} on GitHub, but no release containing it was published.` : "No release containing this work was published since shipping started.",
+    };
+  }
+
+  private takeShippingItem(itemId: Id): MTask | undefined {
+    if (this.s.inbox.find((entry) => entry.id === itemId)?.kind !== "shipping") return undefined;
+    const item = this.takeItem(itemId);
+    return item && this.task(item.taskId);
   }
 
   private sectionsFor(task: MTask, roleId: Id): { title: string; body: string }[] {
@@ -837,17 +1072,29 @@ export class Engine {
     if (roleId === "shipper") {
       const reviews = task.findings.filter((finding) => finding.status !== "dismissed");
       sections.push({ title: "Review summary", body: reviews.length ? formatFindings(reviews as Task["findings"]) : "Every reviewer passed it." });
+      if (task.shipping?.found) {
+        sections.push({
+          title: "An earlier attempt to ship this was interrupted",
+          body: `What Petrina found: ${task.shipping.found}\nFinish that attempt instead of starting over. Reuse what it already did (a pushed branch, a version change, a tag). Do not choose a new version if one is already pushed, and never open a second pull request or publish a second release for this work.`,
+        });
+      }
     }
     return sections;
   }
 
   /** One agent, one stage: run turns until it hands back a valid result. */
-  private async turn<T>(task: MTask, roleId: Id, profileId: Id, sections: { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal): Promise<T> {
+  private async turn<T>(task: MTask, roleId: Id, profileId: Id, given: { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal): Promise<T> {
     const role = this.role(roleId);
     const profile = this.profile(profileId);
     const product = this.productOf(task);
     if (!role || !profile || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profileId}`);
     const taskId = task.id;
+
+    // Starting the step again: everything the coordinator said in it so far, in order.
+    task.stepAttempts = (task.stepAttempts ?? 0) + 1;
+    const earlier = task.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
+    const sections = earlier.length ? [...given, { title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) }] : given;
+    if (earlier.length) this.log(task, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
 
     task.agent = { roleId, profileId, since: Date.now(), step: 0 };
     task.state = "running";
@@ -856,7 +1103,7 @@ export class Engine {
     task.statusLine = `${role.name} is starting`;
     this.say(task, "system", `${role.name} joined · ${this.describe(roleId, profileId)}`, roleId, profileId);
     this.log(task, "milestone", `${role.name} started`, roleId, profileId);
-    this.commit();
+    this.commitNow();
 
     const live = () => this.task(taskId);
     const command = this.options.agentCommand?.(profile);
@@ -1011,8 +1258,27 @@ export class Engine {
     this.commit();
   }
 
-  private remember(task: MTask, text: string): void {
-    task.notes = [...(task.notes ?? []), { at: Date.now(), text }];
+  private remember(task: MTask, text: string, id?: Id): void {
+    task.notes = [...(task.notes ?? []), { at: Date.now(), text, ...(id ? { id } : {}) }];
+  }
+
+  /** Keep what the coordinator said for the current step, until the step finishes. */
+  private stepNote(task: MTask, kind: StepNote["kind"], text: string, extra: { id?: Id; about?: string } = {}): void {
+    task.stepNotes = [...(task.stepNotes ?? []), { id: extra.id ?? this.id(task.id), at: Date.now(), kind, text, ...(extra.about ? { about: extra.about } : {}) }];
+  }
+
+  /** The step handed back its result: the next step starts clean. */
+  private finishStep(task: MTask): void {
+    delete task.stepNotes;
+    delete task.stepAttempts;
+  }
+
+  /** False for a resend of something already received (its confirmation was lost on the way back). */
+  private firstTime(task: MTask, clientId: Id | undefined): boolean {
+    if (!clientId) return true;
+    if (task.received?.includes(clientId)) return false;
+    task.received = [...(task.received ?? []), clientId].slice(-50);
+    return true;
   }
 
   private toWaiting(task: MTask): void {
@@ -1070,7 +1336,7 @@ export class Engine {
 
   private async pollPullRequests(): Promise<void> {
     for (const task of this.s.tasks.filter((entry) => entry.state === "pr-open" && entry.pr && entry.worktree)) {
-      const state = await git.prState(task.worktree!, task.pr!.number).catch(() => undefined);
+      const state = await git.prState(task.worktree!, task.pr!.number, this.options.gh).catch(() => undefined);
       if (state === "merged" || state === "closed") {
         task.pr!.state = state === "merged" ? "merged" : "open";
         task.state = "done";
@@ -1159,6 +1425,7 @@ export class Engine {
   }
 
   private commit(): void {
+    if (this.stopped) return;
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
     if (!this.saveTimer) {
@@ -1167,6 +1434,16 @@ export class Engine {
         this.store.save(this.getState());
       }, 400);
     }
+  }
+
+  /** Commit and save right away: what the coordinator said survives a forced kill a moment later. */
+  private commitNow(): void {
+    if (this.stopped) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    this.store.save(this.getState());
+    this.s.now = Date.now();
+    for (const listener of this.listeners) listener();
   }
 }
 

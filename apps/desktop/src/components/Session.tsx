@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Send, SquareTerminal, X } from "lucide-react";
 import type { MessageMode, State, Task } from "@petrina/core";
-import { sim } from "../engine";
+import { sim, useEngineStatus, useUnsent } from "../engine";
+import { UnsentNote } from "./EngineState";
 import { ago, type Lookup } from "../lib";
 import { ProfileChip, RoleAvatar } from "./bits";
 import { Ask } from "./Inbox";
@@ -24,11 +25,13 @@ export function Session({ task, state, find, onToast, onTab }: SessionProps) {
   const profile = find.profile(task.agent?.profileId);
   const live = task.state === "running";
   const asks = state.inbox.filter((item) => item.taskId === task.id);
+  const unsent = useUnsent().filter((entry) => entry.taskId === task.id);
+  const connected = useEngineStatus().link === "live";
 
   useEffect(() => {
     const el = log.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [task.session.length, task.queued.length]);
+  }, [task.session.length, task.queued.length, unsent.length]);
 
   const send = () => {
     if (!text.trim()) return;
@@ -111,8 +114,11 @@ export function Session({ task, state, find, onToast, onTab }: SessionProps) {
       )}
 
       <div className="composer">
-        {task.queued.length > 0 && (
+        {(task.queued.length > 0 || unsent.length > 0) && (
           <div className="queued-msgs" aria-label="Queued messages">
+            {unsent.map((entry) => (
+              <UnsentNote key={entry.clientId} entry={entry} live={connected} />
+            ))}
             {task.queued.map((message) => (
               <span key={message.id} className="q" title={message.text}>
                 <span>Queued: {message.text}</span>

@@ -2,7 +2,7 @@
 // A stage only counts as done when its block parses and validates.
 
 import { z } from "zod";
-import type { AgentProfile, Finding, Objection, Product, Role, Task } from "@petrina/core";
+import type { AgentProfile, Finding, Objection, Product, Role, StepNote, Task } from "@petrina/core";
 
 export const NeedsInput = z.object({
   needsInput: z.object({
@@ -264,4 +264,25 @@ export function formatObjections(objections: readonly Objection[]): string {
 
 export function formatFindings(findings: readonly Finding[]): string {
   return findings.map((finding) => `- [${finding.id}] ${finding.severity} (${finding.status}): ${finding.text}${finding.where ? ` at ${finding.where}` : ""}`).join("\n");
+}
+
+export const EARLIER_ATTEMPT = "What the coordinator said in an earlier attempt at this step";
+
+/** Everything said during a step that started before and was cut short, in order, each marked as earlier. */
+export function formatStepNotes(notes: readonly StepNote[]): string {
+  const lines = notes.map((note) => {
+    switch (note.kind) {
+      case "changes":
+        return `- (earlier attempt) The change request that started this step: ${note.text}`;
+      case "message":
+        return `- (earlier attempt) A message from the coordinator: ${note.text}`;
+      case "interrupt":
+        return `- (earlier attempt) The coordinator interrupted with: ${note.text}`;
+      case "answer":
+        return `- (earlier attempt) The agent asked: ${note.about ?? "a question"} | The coordinator answered: ${note.text}`;
+      case "denied":
+        return `- (earlier attempt) The agent wanted to: ${note.about ?? "do something"} | The coordinator said no: ${note.text}`;
+    }
+  });
+  return `This step started before and was cut short (Petrina was closed, stopped or paused). Here is everything the coordinator said during it, in order. Take all of it into account; where two conflict, the later one wins. Permissions allowed in the earlier attempt are not carried over.\n${lines.join("\n")}`;
 }

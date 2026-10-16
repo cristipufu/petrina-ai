@@ -1,5 +1,6 @@
 // The local API the UI (and scripts) use. It only listens on 127.0.0.1, every request
 // needs the random token, and Host/Origin are checked so a web page cannot reach it.
+// The token never travels in an address: requests that carry it there are refused.
 
 import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
@@ -8,6 +9,10 @@ import { z } from "zod";
 import type { Engine } from "./engine.js";
 
 const ALLOWED_ORIGINS = new Set(["http://localhost:1430", "http://127.0.0.1:1430", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"]);
+
+/** The window's id for something it sent, so a resend after a lost confirmation counts once. */
+const ClientId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+const Said = z.object({ taskId: z.string().optional(), about: z.string().max(4000).optional(), clientId: ClientId.optional() });
 
 const Action = z.discriminatedUnion("name", [
   z.object({ name: z.literal("addProduct"), args: z.tuple([z.string().min(1)]) }),
@@ -38,16 +43,19 @@ const Action = z.discriminatedUnion("name", [
   z.object({ name: z.literal("resume"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("cancel"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("retry"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("sendMessage"), args: z.tuple([z.string(), z.string().min(1).max(8000), z.enum(["queue", "interrupt"]).optional()]) }),
+  z.object({ name: z.literal("sendMessage"), args: z.tuple([z.string(), z.string().min(1).max(8000), z.enum(["queue", "interrupt"]).optional(), ClientId.optional()]) }),
   z.object({ name: z.literal("removeQueued"), args: z.tuple([z.string(), z.string()]) }),
   z.object({ name: z.literal("setStageProfile"), args: z.tuple([z.string(), z.string(), z.enum(["profileIds", "reviewerProfileIds"]), z.number().int(), z.string()]) }),
   z.object({ name: z.literal("addReviewer"), args: z.tuple([z.string(), z.string(), z.string()]) }),
-  z.object({ name: z.literal("answer"), args: z.tuple([z.string(), z.string().min(1).max(4000)]) }),
+  z.object({ name: z.literal("answer"), args: z.tuple([z.string(), z.string().min(1).max(4000), Said.optional()]) }),
   z.object({ name: z.literal("decideForMe"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("allow"), args: z.tuple([z.string(), z.enum(["once", "always"])]) }),
-  z.object({ name: z.literal("deny"), args: z.tuple([z.string(), z.string().optional()]) }),
+  z.object({ name: z.literal("deny"), args: z.tuple([z.string(), z.string().max(4000).optional(), Said.optional()]) }),
   z.object({ name: z.literal("approve"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("requestChanges"), args: z.tuple([z.string(), z.string().min(1).max(4000)]) }),
+  z.object({ name: z.literal("checkShipping"), args: z.tuple([z.string()]) }),
+  z.object({ name: z.literal("shipAgain"), args: z.tuple([z.string()]) }),
+  z.object({ name: z.literal("markDone"), args: z.tuple([z.string()]) }),
 ]);
 
 export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
@@ -61,10 +69,11 @@ interface Socket {
   authed: boolean;
 }
 
+/** `port` 0 picks a free one: read it back from the returned server. */
 export function serve(engine: Engine, options: { port: number; token: string; ui?: string }) {
-  const { port, token, ui } = options;
-  const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
-  const selfOrigins = new Set([...ALLOWED_ORIGINS, `http://127.0.0.1:${port}`, `http://localhost:${port}`]);
+  const { token, ui } = options;
+  let hosts = new Set<string>();
+  let selfOrigins = new Set<string>();
   const sockets = new Set<ServerWebSocket<Socket>>();
 
   let pending: ReturnType<typeof setTimeout> | undefined;
@@ -85,12 +94,14 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
     return diff === 0;
   };
 
-  return Bun.serve<Socket>({
+  const server = Bun.serve<Socket>({
     hostname: "127.0.0.1",
-    port,
+    port: options.port,
     async fetch(request, server) {
       const url = new URL(request.url);
       if (!hosts.has(request.headers.get("host") ?? "")) return new Response("Forbidden", { status: 403 });
+      // An address with the key in it ends up in logs and history: refuse it, even when the key is right.
+      if (request.url.includes(token) || url.searchParams.has("token")) return new Response("The key never goes in the address", { status: 400 });
       const origin = request.headers.get("origin");
       if (origin && !selfOrigins.has(origin)) return new Response("Forbidden", { status: 403 });
 
@@ -107,6 +118,7 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
       if (url.pathname.startsWith("/api/")) {
         const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
         if (!tokenOk(bearer)) return new Response("Unauthorized", { status: 401 });
+        if (url.pathname === "/api/health" && request.method === "GET") return Response.json({ ok: true, pid: process.pid });
         if (url.pathname === "/api/state" && request.method === "GET") return Response.json(engine.getState());
         if (url.pathname === "/api/action" && request.method === "POST") {
           try {
@@ -144,6 +156,9 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
       },
     },
   });
+  hosts = new Set([`127.0.0.1:${server.port}`, `localhost:${server.port}`]);
+  selfOrigins = new Set([...ALLOWED_ORIGINS, `http://127.0.0.1:${server.port}`, `http://localhost:${server.port}`]);
+  return server;
 }
 
 /**

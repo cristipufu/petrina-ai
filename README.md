@@ -38,7 +38,7 @@ Petrina talks to agents through the [Agent Client Protocol](https://agentclientp
 
 ## Status
 
-Early, and working: the engine runs real Claude Code and Codex agents over ACP in their own git worktrees, with the planner, design convergence, review chain, permissions, questions and delivery (pull request, release, or a commit to main) wired end to end. Without the engine running, the app opens on a simulated squad (`?demo` or `?demo=portfolio`).
+Early, and working: the engine runs real Claude Code and Codex agents over ACP in their own git worktrees, with the planner, design convergence, review chain, permissions, questions and delivery (pull request, release, or a commit to main) wired end to end. The desktop app starts its engine by itself. Opened in a browser any other way than `bun run open`, the screens run on a simulated squad (`?demo` or `?demo=portfolio`).
 
 ## Develop
 
@@ -46,20 +46,31 @@ You need [Bun](https://bun.sh) 1.4, and for the desktop shell, Rust and the [Tau
 
 ```bash
 bun install
-bun run engine       # the engine on 127.0.0.1:4317 (data in ~/.petrina)
-bun run dev          # the UI at http://localhost:1430, connected to the engine
-bun run tauri dev    # the desktop app
-bun run test         # core and engine tests (the engine test uses a fake ACP agent)
+bun run tauri dev    # the desktop app; it starts its own engine (data in ~/.petrina)
+bun run open         # Petrina in your browser, connected to the running engine
+bun run test         # core and engine tests (fake agents and a fake GitHub, no tokens spent)
 bun run typecheck
 ```
 
-`bun run petrina state` prints the engine's state, and `bun run petrina do '<action json>'` runs an action, for scripts.
+The desktop app starts the engine when it opens and stops it when you quit. If an engine is already running for the same Petrina folder, the app uses that one and leaves it running when you quit; the Live label says which it is. You can still start the engine by hand with `bun run engine` (on 127.0.0.1:4317) and use the screens in a browser with `bun run dev` and `bun run open`. Only one engine runs per Petrina folder: a second one says it is already running. The engine's output goes to `~/.petrina/engine.log`, started fresh each time.
+
+`bun run petrina state` prints the engine's state, and `bun run petrina do '<action json>'` runs an action, for scripts. They work whoever started the engine.
+
+The engine's key never goes in a web address in the app: the window asks the app's shell for it and keeps it in memory. `bun run open` puts it after the `#` in the address (browsers never send that part anywhere) and the page removes it at once.
+
+### Quitting, crashes and restarts
+
+- **Running agents.** Quitting the app stops the engine it started. Its agents stop the way they do when you pause a task; their tasks wait for a free slot and continue the next time Petrina opens, and the step in progress starts over. Petrina stops the agent itself, not every command it started: a build or test run may finish on its own.
+- **What you said.** Messages, answers, the note given with a "No", and the change request that started a step are saved the moment Petrina receives them, and kept until the step finishes. An agent that starts the step again (after a quit, a forced close, a pause or "Try again") gets all of it, in order, marked as earlier. Permissions you allowed once may be asked again. In the app, anything not yet confirmed shows as unsent and goes out after reconnecting.
+- **Shipping.** Petrina never ships twice on its own. If it closed while shipping, it first checks whether the pull request, the commit on main or the release already went out, and records it with its link. If it cannot tell, the task waits in the inbox under "Shipping was interrupted" with "Check again", "Ship it again" and "Mark as done".
+- **The engine stopping unexpectedly.** The app starts a new one and reconnects. After three failed starts in a row it says so, with "Try again" and "Open the demo". If the app itself crashes or is force-quit, the engine it started notices and stops within a few seconds.
+- **Installed builds** only run an engine shipped inside the app. Packaging the engine is not done yet, so for now run Petrina from its source folder.
 
 | Path | What lives there |
 |---|---|
-| `apps/desktop` | The Tauri app: React UI in `src/`, the Rust host in `src-tauri/` |
+| `apps/desktop` | The Tauri app: React UI in `src/`, the Rust shell that starts and stops the engine in `src-tauri/` |
 | `packages/core` | Domain model, scheduler, plans and the simulated squad |
-| `packages/engine` | The engine: ACP agents, worktrees, credentials, prompts, SQLite, the local API |
+| `packages/engine` | The engine: ACP agents, worktrees, credentials, prompts, SQLite, the local API, one engine per folder |
 | `docs` | Design and UX |
 
 ## License

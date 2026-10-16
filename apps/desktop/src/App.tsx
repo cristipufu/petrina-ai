@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Boxes, Bot, Hand, LayoutGrid, Library, Moon, Plus, Search, Sun, X } from "lucide-react";
 import type { Task } from "@petrina/core";
-import { engineStatus, mode, startClock, useSim } from "./engine";
+import { mode, startClock, useEngineStatus, useSim } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
+import { CouldNotStart, EnginePill, StartingScreen } from "./components/EngineState";
 import { blockingCount, lookup } from "./lib";
 import { Logo } from "./components/bits";
 import { Board } from "./components/Board";
@@ -26,6 +27,7 @@ interface Toast {
 
 export function App() {
   const state = useSim();
+  const status = useEngineStatus();
   const find = useMemo(() => lookup(state), [state]);
   const [view, setView] = useState<View>("board");
   const [product, setProduct] = useState<string>("all");
@@ -114,10 +116,7 @@ export function App() {
           )}
         </label>
         <div className="spacer" />
-        <span className="engine-pill" title={mode === "engine" ? "Connected to the Petrina engine on this machine" : "Running on a simulated squad"}>
-          <span className={`dot ${mode === "demo" ? "" : engineStatus().connected ? "done" : "failed"}`} />
-          {mode === "demo" ? "Demo" : engineStatus().connected ? "Live" : "Reconnecting…"}
-        </span>
+        <EnginePill status={status} />
         {blocking > 0 && (
           <button className="blocking-pill" style={{ cursor: "pointer" }} onClick={() => setInboxOpen(true)}>
             <Hand size={13} />
@@ -203,6 +202,9 @@ export function App() {
           }}
         />
       )}
+
+      {mode === "engine" && status.desktop && status.link === "starting" && <StartingScreen />}
+      {mode === "engine" && status.link === "failed" && <CouldNotStart problem={status.problem} />}
 
       <div className="toasts" aria-live="polite">
         {toasts.map((entry) => (

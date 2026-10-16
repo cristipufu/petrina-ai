@@ -4,6 +4,7 @@ import {
   Compass,
   GitPullRequest,
   Map as MapIcon,
+  PackageSearch,
   PanelRightClose,
   PartyPopper,
   Scale,
@@ -12,8 +13,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DELIVERY_LABEL, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
-import { sim } from "../engine";
+import { sim, useEngineStatus, useUnsent } from "../engine";
 import { ago, type Lookup } from "../lib";
+import { UnsentNote } from "./EngineState";
 import { ProductChip, ProfileChip, RoleAvatar } from "./bits";
 import type { SheetTab } from "./TaskCard";
 
@@ -25,6 +27,7 @@ const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> =
   disagreement: { label: "Disagreement", icon: Scale, tone: "purple" },
   delivery: { label: "Ready to ship", icon: GitPullRequest, tone: "green" },
   stuck: { label: "Stuck", icon: TriangleAlert, tone: "slate" },
+  shipping: { label: "Shipping was interrupted", icon: PackageSearch, tone: "amber" },
 };
 
 interface InboxProps {
@@ -38,6 +41,9 @@ export function Inbox({ state, find, onOpen, onClose }: InboxProps) {
   const priorityOf = (item: InboxItem) => find.task(item.taskId)?.startedAt ?? 0;
   const items = [...state.inbox].sort((a, b) => Number(b.blocking) - Number(a.blocking) || priorityOf(a) - priorityOf(b) || a.at - b.at);
   const blocking = items.filter((item) => item.blocking).length;
+  const connected = useEngineStatus().link === "live";
+  // Answers whose question is gone (a restart dropped it): still shown until the engine has them.
+  const orphans = useUnsent().filter((entry) => entry.itemId && !state.inbox.some((item) => item.id === entry.itemId));
 
   return (
     <aside className="inbox" aria-label="Needs you">
@@ -56,6 +62,13 @@ export function Inbox({ state, find, onOpen, onClose }: InboxProps) {
             : "Nobody is stuck. These wait at checkpoints."}
       </div>
       <div className="inbox-list">
+        {orphans.length > 0 && (
+          <div className="queued-msgs" aria-label="Not sent yet">
+            {orphans.map((entry) => (
+              <UnsentNote key={entry.clientId} entry={entry} live={connected} />
+            ))}
+          </div>
+        )}
         {items.length === 0 && (
           <div className="inbox-empty">
             <span className="big">
@@ -82,6 +95,8 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const Icon = kind.icon;
   const role = find.role(item.roleId);
   const profile = find.profile(item.profileId);
+  const unsent = useUnsent().filter((entry) => entry.itemId === item.id);
+  const connected = useEngineStatus().link === "live";
 
   const sendBack = (label: string) =>
     noting ? (
@@ -134,7 +149,15 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         )}
       </div>
 
-      {item.kind === "question" && (
+      {unsent.length > 0 && (
+        <div className="queued-msgs" style={{ marginTop: 8 }}>
+          {unsent.map((entry) => (
+            <UnsentNote key={entry.clientId} entry={entry} live={connected} />
+          ))}
+        </div>
+      )}
+
+      {unsent.length === 0 && item.kind === "question" && (
         <>
           <div className="ask-options">
             {item.options?.map((option, index) => (
@@ -166,7 +189,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </>
       )}
 
-      {item.kind === "permission" && (
+      {unsent.length === 0 && item.kind === "permission" && (
         <>
           <div className="ask-actions">
             <button className="btn small primary" onClick={() => sim.allow(item.id, "once")}>
@@ -187,7 +210,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </>
       )}
 
-      {item.kind === "plan" && (
+      {unsent.length === 0 && item.kind === "plan" && (
         <div className="ask-actions">
           <button className="btn small primary" onClick={() => sim.approve(item.id)}>
             Approve plan
@@ -199,7 +222,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {item.kind === "design" && (
+      {unsent.length === 0 && item.kind === "design" && (
         <div className="ask-actions">
           <button className="btn small primary" onClick={() => sim.approve(item.id)}>
             Approve design
@@ -211,7 +234,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {item.kind === "disagreement" && (
+      {unsent.length === 0 && item.kind === "disagreement" && (
         <div className="ask-actions">
           <button className="btn small primary" onClick={() => sim.approve(item.id)}>
             Side with the architect
@@ -237,7 +260,21 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {item.kind === "delivery" && (
+      {item.kind === "shipping" && (
+        <div className="ask-actions">
+          <button className="btn small primary" onClick={() => sim.checkShipping(item.id)} title="Look on GitHub and in the repository again">
+            Check again
+          </button>
+          <button className="btn small" onClick={() => sim.shipAgain(item.id)} title="The shipper finishes the interrupted attempt">
+            Ship it again
+          </button>
+          <button className="btn small ghost" onClick={() => sim.markDone(item.id)} title="It went out another way">
+            Mark as done
+          </button>
+        </div>
+      )}
+
+      {unsent.length === 0 && item.kind === "delivery" && (
         <div className="ask-actions">
           <button className="btn small primary" onClick={() => sim.approve(item.id)}>
             <GitPullRequest size={13} />

@@ -94,7 +94,8 @@ export class AgentRun {
     if (!adapter) throw new Error(`No adapter for tool ${profile.toolId}`);
 
     const [program, ...args] = options.command ?? ["node", adapterEntry(adapter)];
-    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env });
+    // windowsHide: no console window flashes up on Windows when an agent starts.
+    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env, windowsHide: true });
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
     const killed = new Promise<never>((_, reject) => {
       child.once("exit", (code) => reject(new Error(`${adapter.name} stopped (exit ${code ?? "signal"})`)));
