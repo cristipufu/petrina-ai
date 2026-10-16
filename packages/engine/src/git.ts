@@ -94,6 +94,11 @@ export async function commitAll(path: string, message: string): Promise<string |
   return must(["git", "rev-parse", "HEAD"], path);
 }
 
+export async function resetTo(path: string, sha: string): Promise<void> {
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) return;
+  await run(["git", "reset", "--hard", "--quiet", sha], path);
+}
+
 export async function head(path: string): Promise<string> {
   return must(["git", "rev-parse", "HEAD"], path);
 }

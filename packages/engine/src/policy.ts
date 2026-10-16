@@ -18,6 +18,8 @@ interface Segment {
   argv: string[];
   /** The segment reads a script from stdin (sh, bash, python… with no script argument). */
   interpreterFromStdin: boolean;
+  /** Code passed inline to an interpreter (python -c, node -e…): scanned, never trusted. */
+  script?: string;
 }
 
 interface Analysis {
@@ -30,7 +32,20 @@ interface Analysis {
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
 const INTERPRETERS = new Set([...SHELLS, "python", "python3", "node", "bun", "deno", "ruby", "perl"]);
-const WRAPPERS = new Set(["command", "nohup", "time", "nice", "stdbuf"]);
+const WRAPPERS = new Set(["command", "nohup", "time", "nice", "stdbuf", "exec", "builtin", "caffeinate"]);
+/** Shell keywords that can sit in front of a command. */
+const RESERVED = new Set(["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}", "for", "in", "case", "esac", "select", "function"]);
+/** Inline-code flags per interpreter. */
+const INLINE_CODE: Record<string, readonly string[]> = {
+  python: ["-c"],
+  python3: ["-c"],
+  node: ["-e", "--eval", "-p", "--print"],
+  bun: ["-e", "--eval", "-p", "--print"],
+  deno: ["eval"],
+  ruby: ["-e"],
+  perl: ["-e", "-E"],
+  osascript: ["-e"],
+};
 
 /** Split a command line into words and operators, honouring quotes. */
 function tokenize(input: string): { tokens: string[]; substitutions: string[]; opaque?: string } {
@@ -166,8 +181,9 @@ export function analyze(command: string, depth = 0): Analysis {
 function unwrap(argv: string[], depth: number): { segments: Segment[]; opaque?: string } {
   let args = [...argv];
   for (;;) {
-    while (args.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0]!)) args = args.slice(1);
+    while (args.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0]!) || RESERVED.has(args[0]!))) args = args.slice(1);
     const program = basename(args[0] ?? "");
+    if (program === "env" && args.some((arg) => arg === "-S" || arg.startsWith("--split-string"))) return { segments: [], opaque: "env -S, which builds a command Petrina cannot read" };
     if (program === "env") {
       args = args.slice(1);
       while (args.length && (args[0]!.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0]!))) args = args.slice(args[0] === "-u" || args[0] === "--unset" ? 2 : 1);
@@ -190,6 +206,8 @@ function unwrap(argv: string[], depth: number): { segments: Segment[]; opaque?: 
     break;
   }
   if (!args.length) return { segments: [] };
+  // A program name built from a variable or a substitution cannot be read: fail closed.
+  if (/[$`]|…/.test(args[0]!)) return { segments: [{ argv: args, interpreterFromStdin: false }], opaque: "a program name built at run time" };
   const program = basename(args[0]!);
   if (program === "eval" || (program === "source" && args[1] && !/\.env/.test(args[1]))) return { segments: [{ argv: args, interpreterFromStdin: false }], opaque: `${program} runs code Petrina cannot read` };
   if (SHELLS.has(program)) {
@@ -201,26 +219,54 @@ function unwrap(argv: string[], depth: number): { segments: Segment[]; opaque?: 
       return { segments: nested.segments, ...(nested.opaque ? { opaque: nested.opaque } : {}) };
     }
   }
-  const interpreterFromStdin = INTERPRETERS.has(program) && args.slice(1).every((arg) => arg.startsWith("-") && !/^-[a-z]*[ce]$/.test(arg));
-  return { segments: [{ argv: args, interpreterFromStdin }] };
+  const inlineFlags = INLINE_CODE[program.replace(/[0-9.]+$/, "")] ?? INLINE_CODE[program];
+  const inlineAt = inlineFlags ? args.findIndex((arg, index) => index > 0 && inlineFlags.includes(arg)) : -1;
+  const script = inlineAt >= 0 ? args[inlineAt + 1] ?? "" : undefined;
+  const interpreterFromStdin = INTERPRETERS.has(program) && inlineAt < 0 && args.slice(1).every((arg) => arg.startsWith("-"));
+  return { segments: [{ argv: args, interpreterFromStdin, ...(script !== undefined ? { script } : {}) }] };
 }
 
-/** git's subcommand, after its global options. */
-function gitCommand(argv: string[]): { sub: string; rest: string[] } {
+/** git's subcommand, after its global options, and any `-c` settings that change what it does. */
+function gitCommand(argv: string[]): { sub: string; rest: string[]; risky: string[] } {
+  const risky: string[] = [];
   let i = 1;
   for (; i < argv.length; i += 1) {
     const arg = argv[i]!;
-    if (arg === "-C" || arg === "-c" || arg === "--git-dir" || arg === "--work-tree" || arg === "--namespace" || arg === "--exec-path" || arg === "--config-env") {
+    if (arg === "-c" || arg === "--config-env") {
+      const setting = argv[i + 1] ?? "";
+      if (/^(alias|credential|remote|url|push|core\.(sshcommand|hookspath|fsmonitor|editor|pager)|include)/i.test(setting)) risky.push(setting.split("=")[0]!);
+      i += 1;
+      continue;
+    }
+    if (arg === "-C" || arg === "--git-dir" || arg === "--work-tree" || arg === "--namespace" || arg === "--exec-path") {
       i += 1;
       continue;
     }
     if (arg.startsWith("-")) continue;
     break;
   }
-  return { sub: argv[i] ?? "", rest: argv.slice(i + 1) };
+  return { sub: argv[i] ?? "", rest: argv.slice(i + 1), risky };
 }
 
-type Effect = { kind: "deny"; reason: string } | { kind: "ship"; force: boolean } | { kind: "ask"; title: string; body: string };
+/** What a non-shipper may run: git that only reads or changes its own working copy. */
+const GIT_LOCAL = new Set(["status", "diff", "log", "show", "blame", "grep", "ls-files", "ls-tree", "rev-parse", "rev-list", "describe", "shortlog", "reflog", "cat-file", "merge-base", "name-rev", "for-each-ref", "show-ref", "add", "commit", "checkout", "switch", "restore", "reset", "stash", "merge", "rebase", "cherry-pick", "revert", "rm", "mv", "clean", "branch", "tag", "fetch", "config", "worktree", "apply", "am", "format-patch", "notes", "bisect", "difftool", "range-diff", "whatchanged", "check-ignore", "check-attr", "count-objects", "fsck", "gc", "help", "version", "--version"]);
+/** What a read-only role may run: git that changes nothing. */
+const GIT_READ = new Set(["status", "diff", "log", "show", "blame", "grep", "ls-files", "ls-tree", "rev-parse", "rev-list", "describe", "shortlog", "reflog", "cat-file", "merge-base", "name-rev", "for-each-ref", "show-ref", "range-diff", "whatchanged", "check-ignore", "check-attr", "help", "version", "--version"]);
+/** gh commands that only read. */
+const GH_READ = /^(pr|issue|repo|release|run|workflow|label|search|gist|status)$/;
+const GH_READ_ACTIONS = new Set(["view", "list", "diff", "status", "checks", "watch", "download", ""]);
+
+/** A whole-command fallback: git or gh that the parser did not see as a program. */
+const HIDDEN_GIT = /(^|[\s;&|('"`$=])(git|gh)\s+(-[A-Za-z-]+\s+\S+\s+)*(push|pr|release|api|repo|remote|credential|tag|config|-c)\b/;
+
+type Effect =
+  | { kind: "deny"; reason: string }
+  | { kind: "ship"; force: boolean }
+  | { kind: "ask"; title: string; body: string }
+  | { kind: "opaque"; reason: string }
+  | { kind: "git-other"; sub: string }
+  | { kind: "git-write"; sub: string }
+  | { kind: "gh-write"; what: string };
 
 const PACKAGE_MANAGERS: Record<string, readonly string[]> = {
   npm: ["install", "i", "add"],
@@ -244,14 +290,21 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
   const effects: Effect[] = [];
 
   if (program === "git") {
-    const { sub, rest } = gitCommand(argv);
+    const { sub, rest, risky } = gitCommand(argv);
+    if (risky.length) effects.push({ kind: "opaque", reason: `git settings that change what it does (${risky.join(", ")})` });
     if (sub === "push") {
-      const force = rest.some((arg) => /^(-f|--force|--force-with-lease.*|--mirror|--delete|-d|--prune)$/.test(arg) || arg.startsWith("+") || arg.startsWith(":"));
+      // Short option clusters (-uf), long forms (--force-with-lease, --mirror…) and +/: refspecs all rewrite or delete.
+      const force = rest.some((arg) => (/^-[a-zA-Z]+$/.test(arg) && /[fd]/.test(arg)) || /^--(force|mirror|delete|prune)/.test(arg) || (!arg.startsWith("-") && (arg.includes("+") || arg.startsWith(":"))));
       effects.push({ kind: "ship", force });
+    } else if (!GIT_LOCAL.has(sub)) {
+      effects.push({ kind: "git-other", sub });
     }
+    if (!GIT_READ.has(sub)) effects.push({ kind: "git-write", sub });
   }
   if (program === "gh") {
-    const [, group, action] = argv;
+    const [, group = "", action = ""] = argv;
+    const reads = (GH_READ.test(group) && GH_READ_ACTIONS.has(action.startsWith("-") ? "" : action)) || (group === "api" && !argv.some((arg, index) => /^(-f|-F|--field|--raw-field|--input)$/.test(arg) || ((argv[index - 1] === "-X" || argv[index - 1] === "--method") && arg.toUpperCase() !== "GET"))) || group === "auth" && action === "status" || group === "--version" || group === "help";
+    if (!reads) effects.push({ kind: "gh-write", what: `${group} ${action}`.trim() });
     if (group === "pr" && action === "merge") effects.push({ kind: "deny", reason: "Petrina never merges pull requests" });
     if (group === "repo" && (action === "delete" || action === "archive" || action === "rename")) effects.push({ kind: "deny", reason: "Agents do not delete, archive or rename repositories" });
     if ((group === "pr" && ["create", "edit", "close", "ready", "reopen", "comment"].includes(action ?? "")) || (group === "release" && ["create", "edit", "delete", "upload"].includes(action ?? ""))) effects.push({ kind: "ship", force: group === "release" && action === "delete" });
@@ -328,15 +381,29 @@ export function decide(info: PermissionInfo, context: { role: Role; worktree: st
 
   const analysis = analyze(command);
   const effects = analysis.segments.flatMap((segment) => effectsOf(segment, analysis.segments, worktree));
+  const shipper = role.id === "shipper";
+  const of = <K extends Effect["kind"]>(kind: K) => effects.filter((effect): effect is Extract<Effect, { kind: K }> => effect.kind === kind);
 
   // Hard rules first: nothing saved earlier can override them.
-  const denied = effects.find((effect): effect is Extract<Effect, { kind: "deny" }> => effect.kind === "deny");
+  const denied = of("deny")[0];
   if (denied) return { decision: "deny", reason: denied.reason };
-  const shipping = effects.filter((effect): effect is Extract<Effect, { kind: "ship" }> => effect.kind === "ship");
-  if (shipping.length && role.id !== "shipper") return { decision: "deny", reason: "Only the shipper pushes or talks to GitHub, after you approve the delivery" };
-  if (shipping.some((effect) => effect.force)) return { decision: "ask", title: "Force-push or delete on GitHub", body: "This rewrites or removes history on GitHub.", detail: command };
+  if (!shipper) {
+    // Fail closed for the programs that can publish: git and gh are allowlisted per role.
+    if (of("ship").length || of("gh-write").length) return { decision: "deny", reason: "Only the shipper pushes or writes to GitHub, after you approve the delivery" };
+    const unknownGit = of("git-other")[0];
+    if (unknownGit) return { decision: "deny", reason: `git ${unknownGit.sub} is not something agents run (aliases included)` };
+    const write = of("git-write")[0];
+    if (write && !role.canEdit) return { decision: "deny", reason: `${role.name} is read-only (git ${write.sub})` };
+    const scripts = analysis.segments.map((segment) => segment.script).filter((script): script is string => script !== undefined);
+    if (HIDDEN_GIT.test(command) && !analysis.segments.some((segment) => ["git", "gh"].includes(basename(segment.argv[0] ?? ""))) || scripts.some((script) => /\b(git|gh)\b/.test(script))) {
+      return { decision: "deny", reason: "git or gh hidden inside another command; run it directly" };
+    }
+  } else if (of("ship").some((effect) => effect.force)) {
+    return { decision: "ask", title: "Force-push or delete on GitHub", body: "This rewrites or removes history on GitHub.", detail: command };
+  }
 
-  if (analysis.opaque) return { decision: "ask", title: "Run a command Petrina cannot read", body: `The command contains ${analysis.opaque}.`, detail: command };
+  const opaque = analysis.opaque ?? of("opaque")[0]?.reason;
+  if (opaque) return { decision: "ask", title: "Run a command Petrina cannot read", body: `The command contains ${opaque}.`, detail: command };
 
   const ask = effects.find((effect): effect is Extract<Effect, { kind: "ask" }> => effect.kind === "ask");
   if (ask) {
@@ -347,14 +414,30 @@ export function decide(info: PermissionInfo, context: { role: Role; worktree: st
   return { decision: "allow" };
 }
 
-/** Environment that disables pushing for agents that must not push (defence in depth). */
-export function noPushEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+const CREDENTIAL_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS"];
+
+/**
+ * The environment for agents that must not publish anything. They get no GitHub credentials
+ * at all (defence in depth, so a policy miss still cannot push): no tokens, an empty gh
+ * config, git credential helpers reset, and no SSH for git.
+ */
+export function agentEnv(env: NodeJS.ProcessEnv, emptyGhConfig: string): NodeJS.ProcessEnv {
+  const clean: NodeJS.ProcessEnv = { ...env };
+  for (const name of CREDENTIAL_VARS) delete clean[name];
   const count = Number(env.GIT_CONFIG_COUNT ?? 0) || 0;
-  return {
-    GIT_CONFIG_COUNT: String(count + 2),
-    [`GIT_CONFIG_KEY_${count}`]: "remote.origin.pushurl",
-    [`GIT_CONFIG_VALUE_${count}`]: "petrina-push-disabled://only-the-shipper-pushes",
-    [`GIT_CONFIG_KEY_${count + 1}`]: "remote.pushDefault",
-    [`GIT_CONFIG_VALUE_${count + 1}`]: "petrina-no-push",
-  };
+  const settings: [string, string][] = [
+    ["credential.helper", ""],
+    ["remote.origin.pushurl", "petrina-push-disabled://only-the-shipper-pushes"],
+    ["core.sshCommand", "petrina-ssh-disabled"],
+  ];
+  settings.forEach(([key, value], index) => {
+    clean[`GIT_CONFIG_KEY_${count + index}`] = key;
+    clean[`GIT_CONFIG_VALUE_${count + index}`] = value;
+  });
+  clean.GIT_CONFIG_COUNT = String(count + settings.length);
+  clean.GIT_SSH_COMMAND = "petrina-ssh-disabled";
+  clean.GIT_TERMINAL_PROMPT = "0";
+  clean.GH_CONFIG_DIR = emptyGhConfig;
+  clean.GH_PROMPT_DISABLED = "1";
+  return clean;
 }

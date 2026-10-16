@@ -29,7 +29,7 @@ import {
 import type { z } from "zod";
 import { AgentRun, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
-import { decide, noPushEnv, ruleFor } from "./policy.js";
+import { agentEnv, decide, ruleFor } from "./policy.js";
 import {
   BriefResult,
   BuildResult,
@@ -854,8 +854,8 @@ export class Engine {
     const run = await AgentRun.start({
       profile,
       ...(command ? { command } : {}),
-      // Only the shipper can push; for everyone else git itself refuses (defence in depth).
-      ...(roleId === "shipper" ? {} : { env: noPushEnv(process.env) }),
+      // Only the shipper has GitHub credentials; everyone else cannot push even if the policy misses something.
+      ...(roleId === "shipper" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
       cwd: task.worktree!,
       readOnly: !role.canEdit,
       signal,
@@ -879,6 +879,7 @@ export class Engine {
       },
     });
     this.runs.set(taskId, run);
+    const headBefore = !role.canEdit && task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined;
     try {
       let reply = await run.prompt(buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.s.roles as Role[], profiles: this.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.base!, defaultBranch: product.defaultBranch ?? "main", sections }));
       for (let repairs = 0; ; ) {
@@ -913,6 +914,11 @@ export class Engine {
     } finally {
       this.runs.delete(taskId);
       run.close();
+      // A read-only role must leave the branch where it found it, commits included.
+      if (headBefore && task.worktree && (await git.head(task.worktree).catch(() => headBefore)) !== headBefore) {
+        await git.resetTo(task.worktree, headBefore);
+        this.log(task, "warn", `Undid commits from ${role.name}, which is read-only`);
+      }
     }
   }
 
@@ -1131,6 +1137,12 @@ export class Engine {
     if (from === "activity" && last?.from === "activity" && last.text === text) return;
     task.session.push({ id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) });
     if (task.session.length > MAX_SESSION_LINES) task.session.splice(0, task.session.length - MAX_SESSION_LINES);
+  }
+
+  private async emptyGhConfig(): Promise<string> {
+    const dir = join(this.dataDir, "gh-none");
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    return dir;
   }
 
   private async agentLog(taskId: Id, text: string): Promise<void> {

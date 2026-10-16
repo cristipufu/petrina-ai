@@ -88,13 +88,13 @@ export class AgentRun {
     private readonly state: { text: string; lastActivity: string },
   ) {}
 
-  static async start(options: { profile: AgentProfile; cwd: string; readOnly: boolean; callbacks: RunCallbacks; signal: AbortSignal; command?: readonly string[]; env?: Record<string, string> }): Promise<AgentRun> {
+  static async start(options: { profile: AgentProfile; cwd: string; readOnly: boolean; callbacks: RunCallbacks; signal: AbortSignal; command?: readonly string[]; env?: NodeJS.ProcessEnv }): Promise<AgentRun> {
     const { profile, cwd, readOnly, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
     if (!adapter) throw new Error(`No adapter for tool ${profile.toolId}`);
 
     const [program, ...args] = options.command ?? ["node", adapterEntry(adapter)];
-    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(options.env ?? {}) } });
+    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env });
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
     const killed = new Promise<never>((_, reject) => {
       child.once("exit", (code) => reject(new Error(`${adapter.name} stopped (exit ${code ?? "signal"})`)));

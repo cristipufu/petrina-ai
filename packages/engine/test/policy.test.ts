@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BUILT_IN_ROLES } from "@petrina/core";
-import { decide, ruleFor } from "../src/policy.js";
+import { agentEnv, decide, ruleFor } from "../src/policy.js";
 
 const worktree = realpathSync(mkdtempSync(join(tmpdir(), "petrina-policy-")));
 const role = (id: string) => BUILT_IN_ROLES.find((entry) => entry.id === id)!;
@@ -55,5 +55,35 @@ describe("permission policy", () => {
     const link = join(worktree, "escape");
     symlinkSync(tmpdir(), link);
     expect(decide({ title: "", kind: "edit", paths: [join(link, "x.txt")] }, { role: role("builder"), worktree, allowed: [] }).decision).toBe("ask");
+  });
+
+  it("fails closed when git or gh is hidden, aliased or built at run time", () => {
+    for (const command of ["if true; then git push; fi", "exec git push origin x", "builtin command git push", 'env -S "git push origin x"', "python3 -c \"import os; os.system('git push')\"", "node -e \"require('child_process').execSync('gh pr merge 1')\"", "git -c alias.p=push p", "git st", 'rg "git push" src']) {
+      expect(`${command} → ${run(command)}`).toBe(`${command} → deny`);
+    }
+    expect(run("$GIT push")).toBe("ask");
+    expect(run("git push -uf origin x", "shipper")).toBe("ask");
+    expect(run("git push origin +main", "shipper")).toBe("ask");
+  });
+
+  it("allowlists git and gh per role", () => {
+    expect(run("git commit -m wip", "builder")).toBe("allow");
+    expect(run("git commit -m wip", "code-reviewer")).toBe("deny");
+    expect(run("git diff origin/main...HEAD", "code-reviewer")).toBe("allow");
+    expect(run("gh pr view 12", "code-reviewer")).toBe("allow");
+    expect(run("gh issue create --title x", "builder")).toBe("deny");
+    expect(run("gh api repos/a/b/pulls", "builder")).toBe("allow");
+    expect(run("gh api -X POST repos/a/b/pulls", "builder")).toBe("deny");
+  });
+
+  it("gives non-shipper agents no GitHub credentials", () => {
+    const env = agentEnv({ GH_TOKEN: "secret", GITHUB_TOKEN: "secret", SSH_AUTH_SOCK: "/tmp/agent", PATH: "/bin" }, "/tmp/empty-gh");
+    expect(env.GH_TOKEN).toBeUndefined();
+    expect(env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.GH_CONFIG_DIR).toBe("/tmp/empty-gh");
+    expect(env.GIT_CONFIG_KEY_0).toBe("credential.helper");
+    expect(env.GIT_CONFIG_VALUE_0).toBe("");
+    expect(env.PATH).toBe("/bin");
   });
 });
