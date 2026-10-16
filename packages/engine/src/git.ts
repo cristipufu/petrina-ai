@@ -15,6 +15,8 @@ export interface RunResult {
   code: number;
   stdout: string;
   stderr: string;
+  /** The command was stopped at its time limit. */
+  timedOut?: boolean;
 }
 
 let empty: string | undefined;
@@ -36,6 +38,9 @@ const SAFE_TRANSPORT: readonly (readonly [string, string])[] = [
   ["protocol.git.allow", "never"],
   ["remote.origin.uploadpack", "git-upload-pack"],
   ["fetch.recurseSubmodules", "false"],
+  // A connection slower than 1 KB/s for 20 seconds gives up, so nothing lingers after a time limit.
+  ["http.lowSpeedLimit", "1000"],
+  ["http.lowSpeedTime", "20"],
 ];
 
 function gitEnv(credentials: boolean): NodeJS.ProcessEnv {
@@ -52,7 +57,7 @@ async function gh(repo: string, args: readonly string[]): Promise<RunResult | un
   return run(["gh", ...args, "--repo", repo], tmpdir(), undefined, { credentials: true });
 }
 
-export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean } = {}): Promise<RunResult> {
+export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean; timeoutMs?: number } = {}): Promise<RunResult> {
   const proc = Bun.spawn([...cmd], {
     cwd,
     stdin: input === undefined ? "ignore" : new Blob([input]),
@@ -60,6 +65,17 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
     stderr: "pipe",
     env: gitEnv(options.credentials === true),
   });
+  if (options.timeoutMs) {
+    // Race the exit, not the output: git's network helpers can keep the pipes open after git is killed.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"timeout">((resolve) => (timer = setTimeout(() => resolve("timeout"), options.timeoutMs)));
+    const first = await Promise.race([proc.exited, deadline]);
+    clearTimeout(timer);
+    if (first === "timeout") {
+      proc.kill("SIGKILL");
+      return { code: 124, stdout: "", stderr: "timed out", timedOut: true };
+    }
+  }
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { code, stdout: stdout.trim(), stderr: stderr.trim() };
 }
@@ -138,15 +154,26 @@ export async function riskySettings(root: string): Promise<string[]> {
   return [...new Set(risky)];
 }
 
+/** How long Petrina waits for GitHub before working from the local copy. */
+export const FETCH_TIMEOUT_MS = 30_000;
+
 /** Create (or reuse) the task's worktree on its own branch, based on the latest default branch. */
-export async function ensureWorktree(root: string, path: string, branch: string, defaultBranch: string): Promise<{ base: string; skippedFetch?: string[] }> {
+export async function ensureWorktree(
+  root: string,
+  path: string,
+  branch: string,
+  defaultBranch: string,
+  fetchTimeoutMs = FETCH_TIMEOUT_MS,
+): Promise<{ base: string; skippedFetch?: string[]; fetchTimedOut?: boolean }> {
   // Fail closed: never fetch with the coordinator's login while the repository's settings could misuse it.
   const risky = await riskySettings(root);
-  if (!risky.length) await run(["git", "fetch", "--quiet", "origin", defaultBranch], root, undefined, { credentials: true });
+  const fetched = risky.length ? undefined : await run(["git", "fetch", "--quiet", "origin", defaultBranch], root, undefined, { credentials: true, timeoutMs: fetchTimeoutMs });
+  // A stalled network never holds a task: after the time limit it works from the local copy.
+  const timedOut = fetched?.timedOut === true;
   const remoteBase = `origin/${defaultBranch}`;
   const hasRemote = (await run(["git", "rev-parse", "--verify", "--quiet", remoteBase], root)).code === 0;
   const base = hasRemote ? remoteBase : defaultBranch;
-  const skipped = risky.length ? { skippedFetch: risky } : {};
+  const skipped = { ...(risky.length ? { skippedFetch: risky } : {}), ...(timedOut ? { fetchTimedOut: true } : {}) };
   if (existsSync(path) && (await run(["git", "rev-parse", "--is-inside-work-tree"], path)).code === 0) return { base, ...skipped };
   await mkdir(dirname(path), { recursive: true });
   const branchExists = (await run(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], root)).code === 0;

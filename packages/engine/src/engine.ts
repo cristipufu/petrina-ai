@@ -81,6 +81,7 @@ export class Engine {
   private readonly runs = new Map<Id, AgentRun>();
   private readonly waiting = new Map<Id, { resolve: (value: string) => void; reject: (error: Error) => void }>();
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
+  private closed = false;
   private readonly timers: ReturnType<typeof setInterval>[] = [];
 
   constructor(
@@ -108,6 +109,10 @@ export class Engine {
   };
 
   shutdown(): void {
+    // Closed first: stopping agents still changes state, and nothing may save after the store closes.
+    this.closed = true;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
     for (const controller of this.drivers.values()) controller.abort();
     for (const run of this.runs.values()) run.close();
@@ -558,7 +563,8 @@ export class Engine {
     if (!product?.path) throw new Error(`${product?.name ?? "This product"} has no local copy`);
     const branch = task.branch ?? git.branchName(task.title, task.id);
     const worktree = task.worktree ?? join(this.dataDir, "worktrees", product.id, task.id);
-    const { base, skippedFetch } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
+    const { base, skippedFetch, fetchTimedOut } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
+    if (fetchTimedOut) this.log(task, "warn", "GitHub did not answer in time, so this task starts from the local copy");
     if (skippedFetch) this.log(task, "warn", `Did not update from GitHub: the repository's git settings include ${skippedFetch.slice(0, 3).join(", ")}, which could misuse your GitHub login. Working from the local copy.`);
     if (!task.branch) this.log(task, "milestone", "Set up a fresh working copy");
     task.branch = branch;
@@ -1168,10 +1174,10 @@ export class Engine {
   private commit(): void {
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
-    if (!this.saveTimer) {
+    if (!this.saveTimer && !this.closed) {
       this.saveTimer = setTimeout(() => {
         this.saveTimer = undefined;
-        this.store.save(this.getState());
+        if (!this.closed) this.store.save(this.getState());
       }, 400);
     }
   }

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitAll, isClean, riskySettings } from "../src/git.js";
+import { commitAll, ensureWorktree, isClean, riskySettings } from "../src/git.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
@@ -44,5 +44,26 @@ describe("Petrina's own git steps", () => {
     git(repo, "config", "http.extraHeader", "X-Leak: 1");
     git(repo, "config", "core.alternateRefsCommand", "sh -c id");
     expect((await riskySettings(repo)).sort()).toEqual(["core.alternaterefscommand", "credential.helper", "http.extraheader", "url.https://evil.example/.insteadof"]);
+  });
+
+  it("never waits on a stalled fetch: it works from the local copy", async () => {
+    const origin = join(temp, "origin");
+    execFileSync("mkdir", ["-p", origin]);
+    git(origin, "init", "-q", "-b", "main");
+    git(origin, "config", "user.email", "test@example.com");
+    git(origin, "config", "user.name", "Test");
+    writeFileSync(join(origin, "a.txt"), "a\n");
+    git(origin, "add", ".");
+    git(origin, "commit", "-q", "-m", "init");
+    // An https remote that accepts the connection and never answers.
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    git(origin, "remote", "add", "origin", `https://127.0.0.1:${server.port}/acme/shop.git`);
+    const started = Date.now();
+    const result = await ensureWorktree(origin, join(temp, "wt"), "petrina/x", "main", 1500);
+    server.stop(true);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(result.fetchTimedOut).toBe(true);
+    expect(result.base).toBe("main");
+    expect(existsSync(join(temp, "wt", "a.txt"))).toBe(true);
   });
 });
