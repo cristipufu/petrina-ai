@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitAll, isClean } from "../src/git.js";
+import { commitAll, isClean, riskySettings } from "../src/git.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
@@ -29,5 +29,15 @@ describe("Petrina's own git steps", () => {
     expect(await isClean(repo)).toBe(false);
     expect(await commitAll(repo, "Add a")).toMatch(/^[0-9a-f]{40}$/);
     expect(existsSync(marker)).toBe(false);
+  });
+
+  it("will not fetch with the coordinator's login when the repository's settings could misuse it", async () => {
+    const repo = join(temp, "risky");
+    execFileSync("mkdir", ["-p", repo]);
+    git(repo, "init", "-q", "-b", "main");
+    expect(await riskySettings(repo)).toEqual([]);
+    git(repo, "config", "credential.helper", "!sh -c 'touch /tmp/stolen'");
+    git(repo, "config", "url.https://evil.example/.insteadOf", "https://github.com/");
+    expect(await riskySettings(repo)).toEqual(["credential.helper", "url.https://evil.example/.insteadof"]);
   });
 });

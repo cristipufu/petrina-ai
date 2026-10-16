@@ -558,7 +558,8 @@ export class Engine {
     if (!product?.path) throw new Error(`${product?.name ?? "This product"} has no local copy`);
     const branch = task.branch ?? git.branchName(task.title, task.id);
     const worktree = task.worktree ?? join(this.dataDir, "worktrees", product.id, task.id);
-    const { base } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
+    const { base, skippedFetch } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
+    if (skippedFetch) this.log(task, "warn", `Did not update from GitHub: the repository's git settings include ${skippedFetch.slice(0, 3).join(", ")}, which could misuse your GitHub login. Working from the local copy.`);
     if (!task.branch) this.log(task, "milestone", "Set up a fresh working copy");
     task.branch = branch;
     task.worktree = worktree;

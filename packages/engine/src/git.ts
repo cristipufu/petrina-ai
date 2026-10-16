@@ -103,18 +103,36 @@ export function branchName(title: string, taskId: string): string {
   return `petrina/${slug || "task"}-${suffix}`;
 }
 
+/** Repository settings that could start a program or redirect a connection made with the coordinator's login. */
+const RISKY_SETTING = /^(include|includeif)\.|^credential\.|^core\.(sshcommand|askpass|gitproxy)$|^url\..*\.(insteadof|pushinsteadof)$|^https?\.(.*\.)?proxy$|^remote\.[^.]+\.(uploadpack|receivepack|proxy)$/i;
+
+/** The repository's own settings (agents can change them) that make a credentialed fetch unsafe. */
+export async function riskySettings(root: string): Promise<string[]> {
+  const listed = await run(["git", "config", "--list", "--show-scope", "--name-only"], root);
+  if (listed.code !== 0) return ["unreadable git settings"];
+  const keys = listed.stdout
+    .split("\n")
+    .map((line) => line.split("\t"))
+    .filter(([scope]) => scope === "local" || scope === "worktree")
+    .map(([, key]) => key ?? "");
+  return [...new Set(keys.filter((key) => RISKY_SETTING.test(key)))];
+}
+
 /** Create (or reuse) the task's worktree on its own branch, based on the latest default branch. */
-export async function ensureWorktree(root: string, path: string, branch: string, defaultBranch: string): Promise<{ base: string }> {
-  await run(["git", "fetch", "--quiet", "origin", defaultBranch], root, undefined, { credentials: true });
+export async function ensureWorktree(root: string, path: string, branch: string, defaultBranch: string): Promise<{ base: string; skippedFetch?: string[] }> {
+  // Fail closed: never fetch with the coordinator's login while the repository's settings could misuse it.
+  const risky = await riskySettings(root);
+  if (!risky.length) await run(["git", "fetch", "--quiet", "origin", defaultBranch], root, undefined, { credentials: true });
   const remoteBase = `origin/${defaultBranch}`;
   const hasRemote = (await run(["git", "rev-parse", "--verify", "--quiet", remoteBase], root)).code === 0;
   const base = hasRemote ? remoteBase : defaultBranch;
-  if (existsSync(path) && (await run(["git", "rev-parse", "--is-inside-work-tree"], path)).code === 0) return { base };
+  const skipped = risky.length ? { skippedFetch: risky } : {};
+  if (existsSync(path) && (await run(["git", "rev-parse", "--is-inside-work-tree"], path)).code === 0) return { base, ...skipped };
   await mkdir(dirname(path), { recursive: true });
   const branchExists = (await run(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], root)).code === 0;
   if (branchExists) await must(["git", "worktree", "add", path, branch], root);
   else await must(["git", "worktree", "add", "-b", branch, path, base], root);
-  return { base };
+  return { base, ...skipped };
 }
 
 export async function isClean(path: string): Promise<boolean> {
