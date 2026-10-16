@@ -153,4 +153,13 @@ describe("permission policy", () => {
     expect(run("git config --global --get user.email")).toBe("allow");
     expect(run("find . -name '*.ts' -exec wc -l {} \\;")).toBe("allow");
   });
+
+  it("matches git's abbreviated long options and find's + terminator like they do", () => {
+    expect(run("git fetch --upload-p='sh -c x' origin")).toBe("deny");
+    expect(run("git ls-remote --upl=evil origin")).toBe("deny");
+    expect(run("git push --forc origin x", "shipper")).toBe("ask");
+    expect(run("git push --mirr origin", "shipper")).toBe("ask");
+    expect(run("find . -exec echo + -exec git push \\;")).toBe("deny");
+    expect(run("find . -name '*.md' -exec wc -l {} +")).toBe("allow");
+  });
 });

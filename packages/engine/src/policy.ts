@@ -332,7 +332,8 @@ function unwrapCommand(argv: string[], depth: number, stdin: readonly Heredoc[])
     let rest = 0;
     for (let at = 0; at < args.length; at += 1) {
       if (!["-exec", "-execdir", "-ok", "-okdir"].includes(args[at]!)) continue;
-      const end = args.findIndex((arg, index) => index > at && (arg === `${LITERAL};` || arg === ";" || arg === "+"));
+      // `+` only ends a clause right after `{}`; otherwise keep looking for `\;`.
+      const end = args.findIndex((arg, index) => index > at && (arg === `${LITERAL};` || arg === ";" || (arg === "+" && args[index - 1] === "{}")));
       if (end < 0) return { segments: [], opaque: "find -exec without an end" };
       const nested = unwrap(args.slice(at + 1, end).filter((arg) => arg !== "{}"), depth + 1);
       segments.push(...nested.segments);
@@ -407,6 +408,13 @@ function ghApiReads(argv: readonly string[]): boolean {
 /** Environment a non-shipper must not touch: credentials and where tools look for them. */
 const CREDENTIAL_ENV = /^(GH_|GITHUB_|GIT_|SSH_|GCM_|DYLD_|HOME$|XDG_CONFIG_HOME$|GNUPGHOME$|NETRC$|CURL_HOME$|EDITOR$|VISUAL$|PAGER$|BASH_ENV$|ENV$|PROMPT_COMMAND$|LD_PRELOAD$|LD_LIBRARY_PATH$|NODE_OPTIONS$|PYTHONSTARTUP$)/;
 
+/** git accepts any unambiguous prefix of a long option (--upload-p means --upload-pack): match the same way. */
+function longOption(arg: string, names: readonly string[]): boolean {
+  if (!arg.startsWith("--")) return false;
+  const name = arg.split("=")[0]!;
+  return name.length > 3 && names.some((full) => full.startsWith(name));
+}
+
 /** git's subcommand, after its global options, and any `-c` settings that change what it does. */
 function gitCommand(argv: string[]): { sub: string; rest: string[]; risky: string[] } {
   const risky: string[] = [];
@@ -479,8 +487,8 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
   if (program === "git") {
     const { sub, rest, risky } = gitCommand(argv);
     if (risky.length) effects.push({ kind: "git-risky-config", settings: risky });
-    if (sub === "rebase" && rest.some((arg) => (/^-[A-Za-z]+/.test(arg) && !arg.startsWith("--") && arg.includes("x")) || (arg.startsWith("--ex") && "--exec".startsWith(arg.split("=")[0]!)))) effects.push({ kind: "git-exec", what: "git rebase --exec" });
-    if (["fetch", "pull", "clone", "ls-remote", "archive", "push"].includes(sub) && rest.some((arg) => /^--(upload-pack|receive-pack|exec)\b/.test(arg) || (sub !== "push" && (arg === "-u" || /^-u./.test(arg))))) effects.push({ kind: "git-exec", what: `git ${sub} with a custom pack program` });
+    if (sub === "rebase" && rest.some((arg) => (/^-[A-Za-z]+/.test(arg) && !arg.startsWith("--") && arg.includes("x")) || longOption(arg, ["--exec"]))) effects.push({ kind: "git-exec", what: "git rebase --exec" });
+    if (["fetch", "pull", "clone", "ls-remote", "archive", "push", "submodule"].includes(sub) && rest.some((arg) => longOption(arg, ["--upload-pack", "--receive-pack", "--exec"]) || (sub !== "push" && (arg === "-u" || /^-u./.test(arg))))) effects.push({ kind: "git-exec", what: `git ${sub} with a custom pack program` });
     if (sub === "bisect" && rest[0] === "run") effects.push({ kind: "git-exec", what: "git bisect run" });
     if (sub === "submodule" && rest.includes("foreach")) effects.push({ kind: "git-exec", what: "git submodule foreach" });
     if (["difftool", "mergetool", "filter-branch", "filter-repo"].includes(sub)) effects.push({ kind: "git-exec", what: `git ${sub}` });
@@ -501,7 +509,7 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
     }
     if (sub === "push") {
       // Short option clusters (-uf), long forms (--force-with-lease, --mirror…) and +/: refspecs all rewrite or delete.
-      const force = rest.some((arg) => (/^-[a-zA-Z]+$/.test(arg) && /[fd]/.test(arg)) || /^--(force|mirror|delete|prune)/.test(arg) || (!arg.startsWith("-") && (arg.includes("+") || arg.startsWith(":"))));
+      const force = rest.some((arg) => (/^-[a-zA-Z]+$/.test(arg) && /[fd]/.test(arg)) || /^--(force|mirror|delete|prune)/.test(arg) || longOption(arg, ["--force", "--force-with-lease", "--force-if-includes", "--mirror", "--delete", "--prune"]) || (!arg.startsWith("-") && (arg.includes("+") || arg.startsWith(":"))));
       effects.push({ kind: "ship", force });
     } else if (!GIT_LOCAL.has(sub)) {
       effects.push({ kind: "git-other", sub });
