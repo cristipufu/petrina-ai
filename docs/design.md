@@ -165,11 +165,12 @@ Agents start with full permissions inside their own working copy; the coordinato
 | Layer | What it guarantees |
 |---|---|
 | **The tools' own checkers** | Claude Code's Auto mode and Codex's Auto review decide what is safe to run; Codex also keeps its own workspace sandbox. Petrina does not second-guess them or re-implement them. |
-| **Credentials** | Only the shipper's process gets GitHub credentials and an SSH agent. Every other agent runs with no tokens, an empty gh config, git credential helpers reset and SSH for git disabled, so it has nothing to push or publish with. |
+| **Credentials** | Only a shipper delivering to GitHub (pull request or release) gets GitHub credentials and an SSH agent. Every other agent, and a shipper delivering locally, runs with no tokens, an empty gh config, git credential helpers reset and SSH for git disabled, so it has nothing to push or publish with. |
+| **Petrina's own git steps** | Never run hooks or the file monitor, whatever an agent wrote into the repository's settings. Only fetching and GitHub lookups get credentials; everything that touches a working copy runs without them. |
 | **Gates** | Plan, design and delivery checks live in the engine. No agent can skip them, and only the shipper runs after delivery approval. |
-| **Read-only roles** | Any change or commit a read-only role leaves behind is undone when its stage ends. |
+| **Read-only roles** | They run in the tool's automatic mode too, so they could change files: every change and commit they leave behind is undone when their stage ends, however it ends. |
 
-Known limit: credentials are kept out of agents' environment, not locked away. Agents run as the coordinator's user, so a GitHub login saved on disk or in the keychain is only as protected as the tools' checkers keep it.
+Known limits: a shipper delivering to GitHub holds the coordinator's login, so "never merge" rests on its instructions and its tool's checker until Petrina publishes deliveries itself. Credentials are kept out of agents' environment, not locked away. Agents run as the coordinator's user, so a GitHub login saved on disk or in the keychain is only as protected as the tools' checkers keep it.
 
 ## Security notes
 

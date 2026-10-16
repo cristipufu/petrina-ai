@@ -1,8 +1,15 @@
 // Git and GitHub operations. Every command is an argument array: nothing goes through a shell.
+//
+// Agents can change a working copy's git settings (worktrees share them with the main clone), so
+// Petrina's own git steps never run hooks or the file monitor, and only the steps that talk to
+// GitHub (fetch, gh) get the coordinator's credentials. Anything else a repository's settings
+// start (filters, signing) runs with no credentials, like an agent.
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { agentEnv, withGitConfig } from "./env.js";
 
 export interface RunResult {
   code: number;
@@ -10,13 +17,27 @@ export interface RunResult {
   stderr: string;
 }
 
-export async function run(cmd: readonly string[], cwd: string, input?: string): Promise<RunResult> {
+let empty: string | undefined;
+/** Empty folders for "no hooks" and "no gh login", made once per engine. */
+function emptyDir(name: "hooks" | "gh"): string {
+  empty ??= mkdtempSync(join(tmpdir(), "petrina-none-"));
+  const dir = join(empty, name);
+  if (!existsSync(dir)) mkdirSync(dir, { mode: 0o700 });
+  return dir;
+}
+
+function gitEnv(credentials: boolean): NodeJS.ProcessEnv {
+  const base = credentials ? process.env : agentEnv(process.env, emptyDir("gh"));
+  return { ...withGitConfig(base, [["core.hooksPath", emptyDir("hooks")], ["core.fsmonitor", "false"]]), GIT_TERMINAL_PROMPT: "0" };
+}
+
+export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean } = {}): Promise<RunResult> {
   const proc = Bun.spawn([...cmd], {
     cwd,
     stdin: input === undefined ? "ignore" : new Blob([input]),
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    env: gitEnv(options.credentials === true),
   });
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { code, stdout: stdout.trim(), stderr: stderr.trim() };
@@ -64,7 +85,7 @@ export function branchName(title: string, taskId: string): string {
 
 /** Create (or reuse) the task's worktree on its own branch, based on the latest default branch. */
 export async function ensureWorktree(root: string, path: string, branch: string, defaultBranch: string): Promise<{ base: string }> {
-  await run(["git", "fetch", "--quiet", "origin", defaultBranch], root);
+  await run(["git", "fetch", "--quiet", "origin", defaultBranch], root, undefined, { credentials: true });
   const remoteBase = `origin/${defaultBranch}`;
   const hasRemote = (await run(["git", "rev-parse", "--verify", "--quiet", remoteBase], root)).code === 0;
   const base = hasRemote ? remoteBase : defaultBranch;
@@ -104,7 +125,7 @@ export async function head(path: string): Promise<string> {
 }
 
 export async function diffStat(path: string, base: string): Promise<{ files: number; additions: number; deletions: number }> {
-  const out = (await run(["git", "diff", "--numstat", `${base}...HEAD`], path)).stdout;
+  const out = (await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--numstat", `${base}...HEAD`], path)).stdout;
   let files = 0;
   let additions = 0;
   let deletions = 0;
@@ -123,9 +144,9 @@ const SKIP_MARKERS = /^\+.*(\b(it|test|describe)\.(skip|only)\(|\bxit\(|\bxdescr
 /** A mechanical check before review: deleted test files and newly skipped tests block the change. */
 export async function tamperCheck(path: string, base: string): Promise<string[]> {
   const problems: string[] = [];
-  const deleted = (await run(["git", "diff", "--name-only", "--diff-filter=D", `${base}...HEAD`], path)).stdout.split("\n").filter(Boolean);
+  const deleted = (await run(["git", "diff", "--no-ext-diff", "--name-only", "--diff-filter=D", `${base}...HEAD`], path)).stdout.split("\n").filter(Boolean);
   for (const file of deleted) if (TEST_FILE.test(file)) problems.push(`A test file was deleted: ${file}`);
-  const patch = (await run(["git", "diff", "--unified=0", `${base}...HEAD`], path)).stdout;
+  const patch = (await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--unified=0", `${base}...HEAD`], path)).stdout;
   let file = "";
   for (const line of patch.split("\n")) {
     if (line.startsWith("+++ b/")) file = line.slice(6);
@@ -135,7 +156,7 @@ export async function tamperCheck(path: string, base: string): Promise<string[]>
 }
 
 export async function prState(path: string, number: number): Promise<"open" | "merged" | "closed" | undefined> {
-  const result = await run(["gh", "pr", "view", String(number), "--json", "state", "--jq", ".state"], path);
+  const result = await run(["gh", "pr", "view", String(number), "--json", "state", "--jq", ".state"], path, undefined, { credentials: true });
   if (result.code !== 0) return undefined;
   const state = result.stdout.toLowerCase();
   return state === "merged" ? "merged" : state === "closed" ? "closed" : "open";
@@ -143,7 +164,7 @@ export async function prState(path: string, number: number): Promise<"open" | "m
 
 /** Verify a pull request the shipper says it opened. */
 export async function findPr(path: string, branch: string): Promise<{ number: number; url: string } | undefined> {
-  const result = await run(["gh", "pr", "view", branch, "--json", "number,url"], path);
+  const result = await run(["gh", "pr", "view", branch, "--json", "number,url"], path, undefined, { credentials: true });
   if (result.code !== 0) return undefined;
   try {
     const parsed = JSON.parse(result.stdout) as { number?: unknown; url?: unknown };
@@ -156,7 +177,7 @@ export async function findPr(path: string, branch: string): Promise<{ number: nu
 /** Verify a release the shipper says it published. */
 export async function findRelease(path: string, tag: string): Promise<{ tag: string; url: string } | undefined> {
   if (!/^[A-Za-z0-9._\-/]+$/.test(tag)) return undefined;
-  const result = await run(["gh", "release", "view", tag, "--json", "tagName,url"], path);
+  const result = await run(["gh", "release", "view", tag, "--json", "tagName,url"], path, undefined, { credentials: true });
   if (result.code !== 0) return undefined;
   try {
     const parsed = JSON.parse(result.stdout) as { tagName?: unknown; url?: unknown };

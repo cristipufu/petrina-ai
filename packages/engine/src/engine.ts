@@ -863,8 +863,8 @@ export class Engine {
     const run = await AgentRun.start({
       profile,
       ...(command ? { command } : {}),
-      // Only the shipper has GitHub credentials, so nothing else can push or publish whatever it runs.
-      ...(roleId === "shipper" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
+      // GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none.
+      ...(roleId === "shipper" && task.delivery !== "local" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
       cwd: task.worktree!,
       signal,
       callbacks: {
@@ -922,10 +922,15 @@ export class Engine {
     } finally {
       this.runs.delete(taskId);
       run.close();
-      // A read-only role must leave the branch where it found it, commits included.
+      // A read-only role runs in its tool's automatic mode, so it could change things: leave the
+      // working copy exactly as it found it, commits and uncommitted changes alike.
       if (headBefore && task.worktree && (await git.head(task.worktree).catch(() => headBefore)) !== headBefore) {
         await git.resetTo(task.worktree, headBefore);
         this.log(task, "warn", `Undid commits from ${role.name}, which is read-only`);
+      }
+      if (!role.canEdit && task.worktree && !(await git.isClean(task.worktree).catch(() => true))) {
+        await git.discardChanges(task.worktree);
+        this.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
       }
     }
   }
