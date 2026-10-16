@@ -214,10 +214,10 @@ Do not change any files.`;
 
 const CALL_INSTRUCTIONS = `The architects disagreed and the coordinator made the call below. The call is final: do not reopen it, argue with it or ask for another review. Nobody reviews the design again; the coordinator checks the brief before anything is built.
 Update the design brief so it follows the call. Read the code you need. Do not change any files: your output is the design brief. Write it for a product person: plain language, no code.
-Answer every objection listed as still open, by its id. Leave none out:
+Answer every objection listed as still open, or as answered after the call, by its id. Leave none out:
 - If the call decides it, set "byCall" to true, set "status" to what the call says (accepted or rejected), and in "answer" say what you changed in the brief to follow the call.
 - If the call does not speak to it, set "byCall" to false and answer it yourself: accept it and change the brief, or reject it with a reason.
-If notes from the coordinator are listed below, they come from checking the brief that follows the call: change the brief to cover them too, still following the call.`;
+If notes from the coordinator are listed below, they come from checking the brief that follows the call: change the brief to cover them too, still following the call. Then answer every objection answered after the call again: keep or correct its status and "byCall" (the notes may say you read the call wrong), and make "answer" match the updated brief. Your new answers replace the old ones.`;
 
 function shipperInstructions(ctx: PromptContext, defaultBranch: string): string {
   const { task, branch } = ctx;

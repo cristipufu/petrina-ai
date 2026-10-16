@@ -53,17 +53,28 @@ export function designStageForChanges(task: Pick<Task, "plan" | "stageIndex" | "
   return called >= 0 ? called : designStageIndex(stages, task.stageIndex);
 }
 
-/** Open objections the architect has not answered yet. After a call, none may be left. */
-export function unanswered(objections: readonly Objection[], answers: readonly Pick<CallAnswer, "id">[]): Objection[] {
-  return objections.filter((objection) => objection.status === "open" && !answers.some((answer) => answer.id === objection.id));
+/**
+ * The objections the architect answers each time it follows the call: those still open, and those
+ * the call covered. Changes asked for at the check can then correct a decision, a "Your call" tag or a note.
+ */
+export function dueAnswers(objections: readonly Objection[], call: DesignCall): Objection[] {
+  return objections.filter((objection) => objection.status === "open" || call.open.includes(objection.id));
 }
 
-/** Record the architect's answers. Those the call decided carry the coordinator's words. No objection gets a status by default. */
+/** Objections the architect owes an answer and has not given one yet. After a call, none may be left. */
+export function unanswered(objections: readonly Objection[], call: DesignCall, answers: readonly Pick<CallAnswer, "id">[]): Objection[] {
+  return dueAnswers(objections, call).filter((objection) => !answers.some((answer) => answer.id === objection.id));
+}
+
+/** Record the architect's answers, replacing earlier ones. Those the call decided carry the coordinator's words. No objection gets a status by default. */
 export function answerByCall(objections: readonly Objection[], call: DesignCall, answers: readonly CallAnswer[]): Objection[] {
+  const due = new Set(dueAnswers(objections, call).map((objection) => objection.id));
   return objections.map((objection) => {
     const answer = answers.find((entry) => entry.id === objection.id);
-    if (!answer || objection.status !== "open") return objection;
-    return { ...objection, status: answer.status, answer: answer.answer, ...(answer.byCall ? { call: call.text } : {}) };
+    if (!answer || !due.has(objection.id)) return objection;
+    const next: Objection = { ...objection, status: answer.status, answer: answer.answer, call: call.text };
+    if (!answer.byCall) delete next.call;
+    return next;
   });
 }
 
@@ -77,6 +88,6 @@ export function callCheckBody(task: Pick<Task, "call" | "objections">): string |
   const own = answered.length - byCall.length;
   return [
     `Your call settled ${byCall.length} objection${byCall.length === 1 ? "" : "s"} (${accepted} accepted, ${byCall.length - accepted} rejected). The architect answered ${own === 0 ? "none" : own} on its own.`,
-    "Read the updated brief, then approve it or request changes. Changes go to the architect only, with no review round.",
+    "Read the updated brief and its answers in the Design tab, then approve it or request changes. Changes go to the architect only, with no review round, and it can correct any answer it gave.",
   ].join(" ");
 }

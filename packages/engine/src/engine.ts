@@ -11,6 +11,7 @@ import {
   callCheckBody,
   deliveryStages,
   designStageForChanges,
+  dueAnswers,
   pickStarts,
   queueOf,
   slotUses,
@@ -731,8 +732,8 @@ export class Engine {
       status: CALL_WORDS.following,
       check: (value) => {
         for (const answer of value.answers) answers.set(answer.id, answer);
-        const missing = unanswered(task.objections as Task["objections"], [...answers.values()]);
-        return missing.length ? `every objection still open needs an answer by id, and these have none:\n${formatObjections(missing)}` : undefined;
+        const missing = unanswered(task.objections as Task["objections"], call as DesignCall, [...answers.values()]);
+        return missing.length ? `every objection listed for an answer needs one by id, and these have none:\n${formatObjections(missing)}` : undefined;
       },
     });
     task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks };
@@ -865,11 +866,15 @@ export class Engine {
       });
     }
     if (roleId === "architect" && task.call) {
-      const open = task.objections.filter((objection) => objection.status === "open");
-      const answered = task.objections.filter((objection) => objection.status !== "open");
+      const due = dueAnswers(task.objections as Task["objections"], task.call as DesignCall);
+      const open = due.filter((objection) => objection.status === "open");
+      const settled = due.filter((objection) => objection.status !== "open");
+      const earlier = task.objections.filter((objection) => !due.some((entry) => entry.id === objection.id));
       sections.push({ title: "The coordinator's call (final, exact words)", body: task.call.text });
-      sections.push({ title: "Objections still open (answer every one by id)", body: open.length ? formatObjections(open as Task["objections"]) : "None. Every objection already has an answer." });
-      if (answered.length) sections.push({ title: "Objections already answered", body: formatObjections(answered as Task["objections"]) });
+      if (open.length || !settled.length) sections.push({ title: "Objections still open (answer every one by id)", body: open.length ? formatObjections(open) : "None. Every objection already has an answer." });
+      // After changes asked for at the check, the architect answers these again, so it can correct a decision or a note.
+      if (settled.length) sections.push({ title: "Objections answered after the call (answer every one again by id)", body: formatObjections(settled) });
+      if (earlier.length) sections.push({ title: "Objections answered before the call", body: formatObjections(earlier as Task["objections"]) });
     } else if ((roleId === "architect" || roleId === "design-reviewer") && task.objections.length) {
       sections.push({ title: "Objections so far", body: formatObjections(task.objections as Task["objections"]) });
     }

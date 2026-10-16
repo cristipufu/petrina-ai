@@ -1,13 +1,14 @@
 // A scripted ACP agent for tests. It reads which role it is from the prompt and answers
 // like that role would, so the engine can be tested end to end without spending tokens.
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
-// "[no-check]" leaves the design check out of the plan.
+// "[no-check]" leaves the design check out of the plan. With "--hold=<file>", the architect stops
+// halfway through following a call for as long as that file exists.
 const sessions = new Map<string, { cwd: string; turns: number }>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
 const brief = { summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [] };
@@ -26,6 +27,7 @@ function section(text: string, title: string): string | undefined {
 }
 
 const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
+const hold = process.argv.find((arg) => arg.startsWith("--hold="))?.slice("--hold=".length);
 
 let currentRole = "";
 
@@ -53,7 +55,17 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return block({ ...brief, answers: objectionIds(text).map((id) => ({ id, status: "accepted", byCall: false, answer: "Added it to the brief." })) });
       }
       const call = section(text, "The coordinator's call (final, exact words)");
+      const settled = section(text, "Objections answered after the call (answer every one again by id)");
+      if (call !== undefined && settled !== undefined) {
+        // Changes asked for at the check: the note says the call was misread, so the first answer loses its
+        // "Your call" tag and the others get it. Every note is rewritten to match the updated brief.
+        const ids = objectionIds(settled);
+        const answers = ids.map((id, index) => (index === 0 ? { id, status: "accepted", byCall: false, answer: "Kept it in the brief after your note." } : { id, status: "accepted", byCall: true, answer: "Added it to the brief, as the call says." }));
+        return block({ ...brief, answers }, `Revising: ${ids.join(", ")}. Notes: ${section(text, "Notes from the coordinator") ?? "none"}`);
+      }
       if (call !== undefined) {
+        await say("Reading your call");
+        while (hold && existsSync(hold)) await Bun.sleep(50);
         // Following the call: the first open objection is the call's to reject; the last one is left out on purpose.
         const open = objectionIds(section(text, "Objections still open (answer every one by id)") ?? "");
         const answers = open.slice(0, open.length > 1 ? -1 : undefined).map((id, index) => (index === 0 ? { id, status: "rejected", byCall: true, answer: "Removed it from the brief, as the call says." } : { id, status: "accepted", byCall: false, answer: "Added it to the brief." }));

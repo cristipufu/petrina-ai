@@ -90,7 +90,9 @@ describe("The coordinator's call on a design disagreement", () => {
   const CALL = "Show the greeting to everyone, in English only.";
   const repo = makeRepo("call-repo");
   const data = join(temp, "call-data");
-  const start = () => new Engine(data, { agentCommand: () => ["bun", fake] });
+  // While this file exists, the architect stops halfway through following a call.
+  const hold = join(temp, "hold-call");
+  const start = () => new Engine(data, { agentCommand: () => ["bun", fake, `--hold=${hold}`] });
   let engine = start();
 
   afterAll(() => engine.shutdown());
@@ -160,6 +162,12 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(revised.rounds[design.id]).toBe(rounds);
     expect(revised.timeline.map((entry) => entry.text)).toContain(CALL_WORDS.revised);
     expect(itemOf(state, taskId, "disagreement")).toBeUndefined();
+    // It got the note and every objection the call covered, and could correct its decisions, tags and notes.
+    expect(revised.session.some((line) => line.from === "agent" && line.text === `Revising: ${open.map((objection) => objection.id).join(", ")}. Notes: - Say where the greeting shows.`)).toBe(true);
+    expect(revised.objections.find((objection) => objection.id === open[0]!.id)).toMatchObject({ status: "accepted", answer: "Kept it in the brief after your note." });
+    expect(revised.objections.find((objection) => objection.id === open[0]!.id)?.call).toBeUndefined();
+    expect(revised.objections.find((objection) => objection.id === open[1]!.id)).toMatchObject({ status: "accepted", call: CALL, answer: "Added it to the brief, as the call says." });
+    expect(itemOf(state, taskId, "design")?.body).toContain("Your call settled 1 objection (1 accepted, 0 rejected). The architect answered 1 on its own.");
 
     // Approving moves on to the build.
     engine.approve(itemOf(state, taskId, "design")!.id);
@@ -206,7 +214,7 @@ describe("The coordinator's call on a design disagreement", () => {
     engine.cancel(taskId);
   });
 
-  it("follows the call after a restart and a pause, adding the design check the plan did not have", async () => {
+  it("follows the call after a restart halfway through and a pause, adding the design check the plan did not have", async () => {
     const taskId = engine.addTask({ productId, title: "Pick a farewell", description: "A farewell file. [disagree] [no-check]" });
     let state = await waitFor(taskId, "disagreement");
     const before = taskOf(state, taskId);
@@ -214,10 +222,17 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(before.plan!.stages[before.stageIndex + 1]?.kind).not.toBe("gate");
     const reviews = reviewerRuns(before);
 
-    // The call is written while nothing can start, then Petrina restarts and the task is paused and resumed.
-    engine.setPoolPaused(true);
+    // Petrina restarts while the architect is halfway through following the call, then the task is paused and resumed.
+    writeFileSync(hold, "");
     engine.requestChanges(itemOf(state, taskId, "disagreement")!.id, CALL);
+    state = await until(engine, (current) => taskOf(current, taskId).timeline.some((entry) => entry.roleId === "architect" && entry.text === "Reading your call"), coordinator);
+    const halfway = taskOf(state, taskId);
+    expect(halfway.state).toBe("running");
+    expect(halfway.statusLine).toBe(CALL_WORDS.following);
+    const architects = architectRuns(halfway);
+    engine.setPoolPaused(true);
     engine.shutdown();
+    rmSync(hold);
     engine = start();
     expect(taskOf(engine.getState(), taskId).call?.text).toBe(CALL);
     engine.pause(taskId);
@@ -227,6 +242,8 @@ describe("The coordinator's call on a design disagreement", () => {
     state = await waitFor(taskId, "design");
     const after = taskOf(state, taskId);
     expect(after.error).toBeUndefined();
+    // The architect picked up following the call: one more run, and still no reviewer.
+    expect(architectRuns(after)).toBe(architects + 1);
     expect(reviewerRuns(after)).toBe(reviews);
     expect(after.timeline.map((entry) => entry.text)).toContain(CALL_WORDS.updated);
     expect(after.plan!.stages[after.stageIndex]).toMatchObject({ kind: "gate", gate: "design", id: `${design.id}:call-check` });

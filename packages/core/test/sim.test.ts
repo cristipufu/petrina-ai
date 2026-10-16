@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CALL_WORDS } from "../src/call.js";
+import { answerByCall, CALL_WORDS, dueAnswers, unanswered } from "../src/call.js";
 import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS } from "../src/demo.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
-import type { State, Task } from "../src/model.js";
+import type { DesignCall, Objection, State, Task } from "../src/model.js";
 import { slotUses, startsNextCount } from "../src/scheduler.js";
 import { Simulator } from "../src/sim.js";
 
@@ -126,6 +126,33 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(after.rounds).toEqual(rounds);
     expect(inboxItem(sim, "disagreement")).toBeUndefined();
     expect(after.timeline.some((entry) => entry.text === CALL_WORDS.revised)).toBe(true);
+    // The architect answered every objection the call covered again, so its notes follow the updated brief.
+    for (const objection of after.objections.filter((entry) => after.call!.open.includes(entry.id))) {
+      expect(objection.status).not.toBe("open");
+      expect(objection.answer).toContain("your note");
+    }
+  });
+
+  it("lets the architect correct a decision, a 'Your call' tag or a note when changes are asked for after a call", () => {
+    const call: DesignCall = { text: CALL, stageId: "design", open: ["a", "b"], at: 0 };
+    const objection = (id: string, extra: Partial<Objection>): Objection => ({ id, round: 2, text: `Objection ${id}`, blocking: true, raisedBy: "sol-xhigh", status: "open", ...extra });
+    const answered = [
+      objection("a", { status: "rejected", answer: "Removed it, as the call says.", call: CALL }),
+      objection("b", { status: "accepted", answer: "Added it." }),
+      objection("c", { status: "accepted", answer: "Settled before the call." }),
+    ];
+    // Every objection the call covered is due again; one answered before the call is not.
+    expect(dueAnswers(answered, call).map((entry) => entry.id)).toEqual(["a", "b"]);
+    expect(unanswered(answered, call, [{ id: "a" }]).map((entry) => entry.id)).toEqual(["b"]);
+
+    const corrected = answerByCall(answered, call, [
+      { id: "a", status: "accepted", byCall: false, answer: "The call does not decide it. Kept it in the brief." },
+      { id: "b", status: "rejected", byCall: true, answer: "Left it out of the brief, as the call says." },
+      { id: "c", status: "rejected", byCall: true, answer: "Not due." },
+    ]);
+    expect(corrected[0]).toEqual(objection("a", { status: "accepted", answer: "The call does not decide it. Kept it in the brief." }));
+    expect(corrected[1]).toEqual(objection("b", { status: "rejected", answer: "Left it out of the brief, as the call says.", call: CALL }));
+    expect(corrected[2]).toBe(answered[2]);
   });
 
   it("adds a design check after a call when the plan has none right after the design, and moves on from it", () => {

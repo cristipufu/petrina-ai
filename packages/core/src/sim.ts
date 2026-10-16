@@ -3,7 +3,7 @@
 // request permissions, raise objections and findings, and wait at gates.
 // The UI uses it today; the tests use it to pin down scheduling and gate rules.
 
-import { answerByCall, CALL_WORDS, callCheckBody, designStageForChanges, startCall, type CallAnswer } from "./call.js";
+import { answerByCall, CALL_WORDS, callCheckBody, designStageForChanges, dueAnswers, startCall, type CallAnswer } from "./call.js";
 import { composePlan } from "./library.js";
 import type {
   ActiveAgent,
@@ -709,14 +709,13 @@ export class Simulator {
     if (stage.kind === "converge") {
       if (task.call && this.following(task)) {
         // The call settles the blocking objections; the architect answers the rest itself. None is left open.
+        // After changes asked for at the check, it answers them all again, so the notes match the updated brief.
         const revising = !task.objections.some((objection) => objection.status === "open");
-        const answers: CallAnswer[] = task.objections
-          .filter((objection) => objection.status === "open")
-          .map((objection) =>
-            objection.blocking
-              ? { id: objection.id, status: "accepted", byCall: true, answer: `Changed the ${task.area} flow in the brief to follow your call.` }
-              : { id: objection.id, status: "rejected", byCall: false, answer: "Out of scope for this task. Added to risks." },
-          );
+        const answers: CallAnswer[] = dueAnswers(task.objections as Task["objections"], task.call as DesignCall).map((objection) =>
+          objection.blocking
+            ? { id: objection.id, status: "accepted", byCall: true, answer: revising ? `Changed the ${task.area} flow in the brief to your note, still following your call.` : `Changed the ${task.area} flow in the brief to follow your call.` }
+            : { id: objection.id, status: "rejected", byCall: false, answer: revising ? "Still out of scope after your note. Kept in risks." : "Out of scope for this task. Added to risks." },
+        );
         task.objections = answerByCall(task.objections as Task["objections"], task.call as DesignCall, answers) as DraftTask["objections"];
         task.brief = briefFor(task);
         this.log(d, task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, agent.roleId, agent.profileId);
