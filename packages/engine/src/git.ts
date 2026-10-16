@@ -26,9 +26,29 @@ function emptyDir(name: "hooks" | "gh"): string {
   return dir;
 }
 
+/** Settings that can make a credentialed fetch run a program: only normal https and ssh remotes. */
+const SAFE_TRANSPORT: readonly (readonly [string, string])[] = [
+  ["protocol.allow", "never"],
+  ["protocol.https.allow", "always"],
+  ["protocol.ssh.allow", "always"],
+  ["protocol.ext.allow", "never"],
+  ["protocol.file.allow", "never"],
+  ["protocol.git.allow", "never"],
+  ["remote.origin.uploadpack", "git-upload-pack"],
+];
+
 function gitEnv(credentials: boolean): NodeJS.ProcessEnv {
   const base = credentials ? process.env : agentEnv(process.env, emptyDir("gh"));
-  return { ...withGitConfig(base, [["core.hooksPath", emptyDir("hooks")], ["core.fsmonitor", "false"]]), GIT_TERMINAL_PROMPT: "0" };
+  const settings = [["core.hooksPath", emptyDir("hooks")], ["core.fsmonitor", "false"], ...(credentials ? SAFE_TRANSPORT : [])] as const;
+  return { ...withGitConfig(base, settings), GIT_TERMINAL_PROMPT: "0" };
+}
+
+const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/** gh with the coordinator's login, pinned to the product's repository and run outside any working copy. */
+async function gh(repo: string, args: readonly string[]): Promise<RunResult | undefined> {
+  if (!REPO.test(repo)) return undefined;
+  return run(["gh", ...args, "--repo", repo], tmpdir(), undefined, { credentials: true });
 }
 
 export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean } = {}): Promise<RunResult> {
@@ -155,17 +175,17 @@ export async function tamperCheck(path: string, base: string): Promise<string[]>
   return [...new Set(problems)];
 }
 
-export async function prState(path: string, number: number): Promise<"open" | "merged" | "closed" | undefined> {
-  const result = await run(["gh", "pr", "view", String(number), "--json", "state", "--jq", ".state"], path, undefined, { credentials: true });
-  if (result.code !== 0) return undefined;
+export async function prState(repo: string, number: number): Promise<"open" | "merged" | "closed" | undefined> {
+  const result = await gh(repo, ["pr", "view", String(number), "--json", "state", "--jq", ".state"]);
+  if (!result || result.code !== 0) return undefined;
   const state = result.stdout.toLowerCase();
   return state === "merged" ? "merged" : state === "closed" ? "closed" : "open";
 }
 
 /** Verify a pull request the shipper says it opened. */
-export async function findPr(path: string, branch: string): Promise<{ number: number; url: string } | undefined> {
-  const result = await run(["gh", "pr", "view", branch, "--json", "number,url"], path, undefined, { credentials: true });
-  if (result.code !== 0) return undefined;
+export async function findPr(repo: string, branch: string): Promise<{ number: number; url: string } | undefined> {
+  const result = await gh(repo, ["pr", "view", branch, "--json", "number,url"]);
+  if (!result || result.code !== 0) return undefined;
   try {
     const parsed = JSON.parse(result.stdout) as { number?: unknown; url?: unknown };
     return typeof parsed.number === "number" && typeof parsed.url === "string" ? { number: parsed.number, url: parsed.url } : undefined;
@@ -175,10 +195,10 @@ export async function findPr(path: string, branch: string): Promise<{ number: nu
 }
 
 /** Verify a release the shipper says it published. */
-export async function findRelease(path: string, tag: string): Promise<{ tag: string; url: string } | undefined> {
-  if (!/^[A-Za-z0-9._\-/]+$/.test(tag)) return undefined;
-  const result = await run(["gh", "release", "view", tag, "--json", "tagName,url"], path, undefined, { credentials: true });
-  if (result.code !== 0) return undefined;
+export async function findRelease(repo: string, tag: string): Promise<{ tag: string; url: string } | undefined> {
+  if (!/^[A-Za-z0-9._\-/]+$/.test(tag) || tag.startsWith("-")) return undefined;
+  const result = await gh(repo, ["release", "view", tag, "--json", "tagName,url"]);
+  if (!result || result.code !== 0) return undefined;
   try {
     const parsed = JSON.parse(result.stdout) as { tagName?: unknown; url?: unknown };
     return typeof parsed.tagName === "string" && typeof parsed.url === "string" ? { tag: parsed.tagName, url: parsed.url } : undefined;

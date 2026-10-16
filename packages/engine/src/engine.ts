@@ -781,7 +781,7 @@ export class Engine {
     delete task.agent;
     task.holdsSlot = false;
     if (task.delivery === "pull-request") {
-      const pr = await git.findPr(task.worktree!, task.branch!);
+      const pr = await git.findPr(product.repo, task.branch!);
       if (!pr) throw new Error("The shipper finished, but no pull request exists for this branch");
       task.pr = { number: pr.number, url: pr.url, state: "open", openedAt: Date.now() };
       task.state = "pr-open";
@@ -789,7 +789,7 @@ export class Engine {
       task.statusLine = `Pull request #${pr.number} is open. Merge it on GitHub when you are happy`;
       this.log(task, "done", `Opened pull request #${pr.number}`, "shipper", SHIPPER_PROFILE);
     } else if (task.delivery === "release") {
-      const release = result.tag ? await git.findRelease(task.worktree!, result.tag) : undefined;
+      const release = result.tag ? await git.findRelease(product.repo, result.tag) : undefined;
       if (!release) throw new Error("The shipper finished, but the release could not be found on GitHub");
       task.release = release;
       task.state = "done";
@@ -1075,7 +1075,8 @@ export class Engine {
 
   private async pollPullRequests(): Promise<void> {
     for (const task of this.s.tasks.filter((entry) => entry.state === "pr-open" && entry.pr && entry.worktree)) {
-      const state = await git.prState(task.worktree!, task.pr!.number).catch(() => undefined);
+      const repo = this.productOf(task)?.repo;
+      const state = repo ? await git.prState(repo, task.pr!.number).catch(() => undefined) : undefined;
       if (state === "merged" || state === "closed") {
         task.pr!.state = state === "merged" ? "merged" : "open";
         task.state = "done";
