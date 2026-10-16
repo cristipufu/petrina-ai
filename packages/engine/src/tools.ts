@@ -11,8 +11,8 @@ export interface ToolAdapter {
   cli: string;
   /** Session config option ids the adapter exposes. */
   options: { model: string; effort: string; mode: string };
-  /** Mode values: read-only roles never get to write; editing roles ask through Petrina's policy. */
-  modes: { readOnly: string; edit: string };
+  /** The tool's own automatic safety mode: its checker decides, and only what it flags reaches the coordinator. */
+  mode: string;
   models: readonly string[];
 }
 
@@ -23,8 +23,8 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     entry: "@agentclientprotocol/claude-agent-acp/dist/index.js",
     cli: "claude",
     options: { model: "model", effort: "effort", mode: "mode" },
-    // "default" asks before every edit and command, so each one goes through Petrina's policy.
-    modes: { readOnly: "default", edit: "default" },
+    // Auto: Claude Code's own classifier makes the permission decisions.
+    mode: "auto",
     models: ["Opus 5.5"],
   },
   codex: {
@@ -33,7 +33,8 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     entry: "@agentclientprotocol/codex-acp/dist/index.js",
     cli: "codex",
     options: { model: "model", effort: "reasoning_effort", mode: "mode" },
-    modes: { readOnly: "read-only", edit: "agent" },
+    // Auto review: Codex's own reviewer approves, and asks only about actions it finds unsafe.
+    mode: "agent",
     models: ["sol"],
   },
 };

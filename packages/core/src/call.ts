@@ -1,5 +1,6 @@
-// The coordinator's call on a design disagreement. It is final: the architect follows it once,
-// nobody reviews the design again, and the coordinator checks the brief before anything is built.
+// The coordinator's call on a design disagreement. It is final: the architect follows it,
+// nobody reviews that design again, and the coordinator checks the brief before anything is built.
+// The call stays on the task, so no later design check can reopen the design it settled.
 // The engine and the simulator share these rules and words so the demo cannot drift from the real thing.
 
 import type { DesignCall, Id, Objection, Stage, Task } from "./model.js";
@@ -29,28 +30,46 @@ export function designStageIndex(stages: readonly Stage[], stageIndex: number): 
 }
 
 /**
- * Write the coordinator's call on a disagreement. The task goes back to the design stage that
- * raised it, and a design check follows that stage (added for this time if the plan has none).
+ * The design check that belongs to the design stage at `designIndex`: the first one after it, with only
+ * steps such as Screens in between. A check after the build, or after another design stage, is not its own.
+ */
+export function designCheckIndex(stages: readonly Stage[], designIndex: number): number {
+  for (let index = designIndex + 1; index < stages.length; index += 1) {
+    const stage = stages[index]!;
+    if (stage.kind === "gate" && stage.gate === "design") return index;
+    if (stage.kind !== "do" || stage.roleId === "builder") return -1;
+  }
+  return -1;
+}
+
+/**
+ * Write the coordinator's call on a disagreement. The task goes back to the design stage that raised it.
+ * The plan's own design check for that stage is the one the coordinator answers; one is added right after
+ * the stage only if the plan has none before the build.
  */
 export function startCall(task: Pick<Task, "plan" | "stageIndex" | "objections">, text: string, at: number): { stages: Stage[]; stageIndex: number; call: DesignCall } | undefined {
   const stages = task.plan?.stages ?? [];
   const index = designStageIndex(stages, task.stageIndex);
   const stage = stages[index];
   if (!stage) return undefined;
-  const next = stages[index + 1];
   const check: Stage = { id: `${stage.id}:call-check`, kind: "gate", title: "Your design check", roleId: stage.roleId, profileIds: [], gate: "design" };
   return {
-    stages: next?.kind === "gate" && next.gate === "design" ? [...stages] : [...stages.slice(0, index + 1), check, ...stages.slice(index + 1)],
+    stages: designCheckIndex(stages, index) >= 0 ? [...stages] : [...stages.slice(0, index + 1), check, ...stages.slice(index + 1)],
     stageIndex: index,
     call: { text, stageId: stage.id, open: task.objections.filter((objection) => objection.status === "open").map((objection) => objection.id), at },
   };
 }
 
-/** Where changes asked for at a design check go: the call's design stage, or the design stage before the check. */
-export function designStageForChanges(task: Pick<Task, "plan" | "stageIndex" | "call">): number {
+/** The call that settled the design the stage at `stageIndex` belongs to (that design stage, or a check after it), if there is one. */
+export function callOn(task: Pick<Task, "plan" | "call">, stageIndex: number): DesignCall | undefined {
   const stages = task.plan?.stages ?? [];
-  const called = task.call ? stages.findIndex((stage) => stage.id === task.call!.stageId) : -1;
-  return called >= 0 ? called : designStageIndex(stages, task.stageIndex);
+  const design = stages[designStageIndex(stages, stageIndex)];
+  return design && task.call?.stageId === design.id ? task.call : undefined;
+}
+
+/** The call the architect follows: set while the task is at the very design stage the call settled. */
+export function followingCall(task: Pick<Task, "plan" | "stageIndex" | "call">): DesignCall | undefined {
+  return task.plan?.stages[task.stageIndex]?.kind === "converge" ? callOn(task, task.stageIndex) : undefined;
 }
 
 /**
@@ -78,9 +97,9 @@ export function answerByCall(objections: readonly Objection[], call: DesignCall,
   });
 }
 
-/** What the design check after a call says: how many objections the call settled, and how many the architect answered. */
-export function callCheckBody(task: Pick<Task, "call" | "objections">): string | undefined {
-  const call = task.call;
+/** What a design check on a design the call settled says: how many objections the call settled, and how many the architect answered. */
+export function callCheckBody(task: Pick<Task, "plan" | "stageIndex" | "call" | "objections">): string | undefined {
+  const call = callOn(task, task.stageIndex);
   if (!call) return undefined;
   const answered = task.objections.filter((objection) => call.open.includes(objection.id) && objection.status !== "open");
   const byCall = answered.filter((objection) => objection.call !== undefined);

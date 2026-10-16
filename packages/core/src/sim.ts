@@ -3,7 +3,7 @@
 // request permissions, raise objections and findings, and wait at gates.
 // The UI uses it today; the tests use it to pin down scheduling and gate rules.
 
-import { answerByCall, CALL_WORDS, callCheckBody, designStageForChanges, dueAnswers, startCall, type CallAnswer } from "./call.js";
+import { answerByCall, CALL_WORDS, callCheckBody, callOn, designStageIndex, dueAnswers, followingCall, startCall, type CallAnswer } from "./call.js";
 import { composePlan } from "./library.js";
 import type {
   ActiveAgent,
@@ -148,7 +148,7 @@ function laterObjections(area: string, round: number): { text: string; blocking:
 
 function briefFor(task: DraftTask): DeepMutable<DesignBrief> {
   return {
-    summary: task.call ? `How ${task.area} should work after this change, following your call.` : `How ${task.area} should work after this change, agreed by both architects.`,
+    summary: callOn(task as unknown as Task, task.stageIndex) ? `How ${task.area} should work after this change, following your call.` : `How ${task.area} should work after this change, agreed by both architects.`,
     forUsers: [`${capitalize(task.area)} works the way the task describes`, "Nothing changes for people who do not use it"],
     areas: [capitalize(task.area), "Settings"],
     acceptance: [
@@ -224,10 +224,9 @@ export class Simulator {
     });
   }
 
-  allow(itemId: Id, scope: "once" | "always"): void {
+  allow(itemId: Id, _scope: "once" | "always"): void {
     this.resolve(itemId, (d, task, item) => {
-      const product = d.products.find((entry) => entry.id === task.productId)?.name ?? "this product";
-      this.log(d, task, "you", scope === "always" ? `You allowed it from now on in ${product}: ${item.title}` : `You allowed: ${item.title}`);
+      this.log(d, task, "you", `You allowed: ${item.title}`);
       this.say(d, task, "agent", "Thanks, continuing.", item.roleId, item.profileId);
       this.unblock(task);
     });
@@ -252,7 +251,6 @@ export class Simulator {
           break;
         case "design":
           this.log(d, task, "you", "You approved the design");
-          delete task.call;
           this.continueAfterGate(d, task);
           break;
         case "disagreement":
@@ -288,12 +286,12 @@ export class Simulator {
       } else if (item.kind === "plan") {
         task.stageIndex = -1;
       } else if (item.kind === "design") {
-        const index = designStageForChanges(task as unknown as Task);
+        const index = designStageIndex(stages, task.stageIndex);
         if (index >= 0) {
           const stage = stages[index]!;
+          // On a design the call settled, changes go to the architect alone and come back to the same check.
+          if (!callOn(task as unknown as Task, index)) task.rounds[stage.id] = (task.rounds[stage.id] ?? 1) + 1;
           task.stageIndex = index;
-          // After a call, changes go to the architect alone and come back to the same check.
-          if (!task.call) task.rounds[stage.id] = (task.rounds[stage.id] ?? 1) + 1;
         }
       } else if (item.kind === "delivery") {
         const index = lastIndexWhere(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
@@ -544,10 +542,9 @@ export class Simulator {
     return stage ? (task.rounds[stage.id] ?? 1) : 1;
   }
 
-  /** The architect is at work on the design stage the coordinator made the call on. */
-  private following(task: DraftTask): boolean {
-    const stage = this.stage(task);
-    return !!stage && stage.kind === "converge" && task.call?.stageId === stage.id && task.sub === 0;
+  /** The call the architect is following, while it works on the design stage the call settled. */
+  private following(task: DraftTask): DesignCall | undefined {
+    return task.sub === 0 ? followingCall(task as unknown as Task) : undefined;
   }
 
   private columnFor(d: Draft, task: DraftTask): Column {
@@ -610,7 +607,7 @@ export class Simulator {
 
     const product = d.products.find((entry) => entry.id === task.productId)?.name ?? "the product";
     const round = this.round(task);
-    const following = this.following(task);
+    const following = !!this.following(task);
     const lines = scriptFor(agent.roleId, { area: task.area, product, round, fixing: task.fixing, delivery: task.delivery, following, objecting: this.disagree.has(task.id) });
     const line = lines[agent.step];
     if (line === undefined) {
@@ -707,16 +704,17 @@ export class Simulator {
     }
 
     if (stage.kind === "converge") {
-      if (task.call && this.following(task)) {
+      const call = this.following(task);
+      if (call) {
         // The call settles the blocking objections; the architect answers the rest itself. None is left open.
         // After changes asked for at the check, it answers them all again, so the notes match the updated brief.
         const revising = !task.objections.some((objection) => objection.status === "open");
-        const answers: CallAnswer[] = dueAnswers(task.objections as Task["objections"], task.call as DesignCall).map((objection) =>
+        const answers: CallAnswer[] = dueAnswers(task.objections as Task["objections"], call).map((objection) =>
           objection.blocking
             ? { id: objection.id, status: "accepted", byCall: true, answer: revising ? `Changed the ${task.area} flow in the brief to your note, still following your call.` : `Changed the ${task.area} flow in the brief to follow your call.` }
             : { id: objection.id, status: "rejected", byCall: false, answer: revising ? "Still out of scope after your note. Kept in risks." : "Out of scope for this task. Added to risks." },
         );
-        task.objections = answerByCall(task.objections as Task["objections"], task.call as DesignCall, answers) as DraftTask["objections"];
+        task.objections = answerByCall(task.objections as Task["objections"], call, answers) as DraftTask["objections"];
         task.brief = briefFor(task);
         this.log(d, task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, agent.roleId, agent.profileId);
         this.log(d, task, "done", CALL_WORDS.settled);
@@ -827,7 +825,7 @@ export class Simulator {
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
     delete task.agent;
     task.holdsSlot = false;
-    task.statusLine = gate === "design" && task.call ? CALL_WORDS.waiting : GATE_STATUS[gate];
+    task.statusLine = gate === "design" && callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : GATE_STATUS[gate];
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
     this.raise(d, task, gate, GATE_TITLES[gate](task.title), false, body ? { body } : {});
     task.column = this.columnFor(d, task);

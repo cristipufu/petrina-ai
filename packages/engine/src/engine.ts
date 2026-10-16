@@ -9,9 +9,11 @@ import {
   BUILT_IN_ROLES,
   CALL_WORDS,
   callCheckBody,
+  callOn,
   deliveryStages,
-  designStageForChanges,
+  designStageIndex,
   dueAnswers,
+  followingCall,
   pickStarts,
   queueOf,
   slotUses,
@@ -38,7 +40,7 @@ import {
 import type { z } from "zod";
 import { AgentRun, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
-import { agentEnv, decide, ruleFor } from "./policy.js";
+import { agentEnv } from "./env.js";
 import {
   BriefResult,
   BuildResult,
@@ -56,7 +58,7 @@ import {
   TestResult,
 } from "./prompts.js";
 import { Store } from "./store.js";
-import { detectTools, ENGINE_PROFILES } from "./tools.js";
+import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 
 type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
 type MState = DeepMutable<State>;
@@ -118,8 +120,10 @@ export class Engine {
   };
 
   shutdown(): void {
+    // Closed first: stopping agents still changes state, and nothing may save after the store closes.
     this.closed = true;
     clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
     for (const controller of this.drivers.values()) controller.abort();
     for (const run of this.runs.values()) run.close();
@@ -145,7 +149,6 @@ export class Engine {
       defaultBranch: info.defaultBranch,
       delivery: "pull-request",
       approveDelivery: true,
-      allowed: [],
     });
     this.commit();
     return id;
@@ -241,6 +244,14 @@ export class Engine {
     this.schedule();
   }
 
+  /** How many agents of one tool may run at once (keeps one subscription from being exhausted). */
+  setToolCap(toolId: Id, cap: number): void {
+    if (!this.s.tools.some((tool) => tool.id === toolId)) throw new Error("Unknown tool");
+    this.s.pool.toolCaps = { ...this.s.pool.toolCaps, [toolId]: Math.max(1, Math.min(12, Math.round(cap))) };
+    this.commit();
+    this.schedule();
+  }
+
   setPoolPaused(paused: boolean): void {
     this.s.pool.paused = paused;
     this.commit();
@@ -309,6 +320,7 @@ export class Engine {
     const task = this.task(taskId);
     const trimmed = text.trim();
     if (!task || !trimmed) return;
+    this.remember(task, trimmed);
     const message = { id: this.id(taskId), text: trimmed, at: Date.now() };
     const run = this.runs.get(taskId);
     if (mode === "interrupt" && run) {
@@ -373,15 +385,12 @@ export class Engine {
     this.answer(itemId, item.options?.[0] ?? "Use your best judgment.");
   }
 
-  allow(itemId: Id, scope: "once" | "always"): void {
+  allow(itemId: Id, _scope: "once" | "always" = "once"): void {
     const item = this.takeItem(itemId);
     if (!item) return;
     const task = this.task(item.taskId);
     if (task) {
-      const product = this.productOf(task);
-      const rule = scope === "always" && item.detail ? ruleFor(item.detail) : undefined;
-      if (rule && product) product.allowed = [...new Set([...(product.allowed ?? []), rule])];
-      this.log(task, "you", scope === "always" ? `You allowed it from now on in ${product?.name ?? "this product"}: ${item.title}` : `You allowed: ${item.title}`);
+      this.log(task, "you", `You allowed: ${item.title}`);
       this.unblock(task);
     }
     this.waiting.get(itemId)?.resolve("allow");
@@ -395,6 +404,7 @@ export class Engine {
     const task = this.task(item.taskId);
     if (task) {
       this.log(task, "you", note ? `You said no: ${note}` : `You said no to: ${item.title}`);
+      if (note) this.remember(task, note);
       if (note) task.queued.push({ id: this.id(task.id), text: note, at: Date.now() });
       this.unblock(task);
     }
@@ -418,7 +428,6 @@ export class Engine {
         break;
       case "design":
         this.log(task, "you", "You approved the design");
-        delete task.call;
         task.stageIndex += 1;
         break;
       case "delivery":
@@ -447,6 +456,7 @@ export class Engine {
     const call = item.kind === "disagreement" ? startCall(task as unknown as Task, note, Date.now()) : undefined;
     this.log(task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
     this.say(task, "you", note);
+    this.remember(task, note);
     // The call reaches the architect in a section of its own; any other note goes to the next agent.
     if (!call) task.queued.push({ id: this.id(task.id), text: note, at: Date.now() });
     if (call && task.plan) {
@@ -458,11 +468,11 @@ export class Engine {
       task.stageIndex = -1;
       delete task.plan;
     } else if (item.kind === "design" || item.kind === "disagreement") {
-      const index = designStageForChanges(task as unknown as Task);
+      const index = designStageIndex(stages, task.stageIndex);
       if (index >= 0) {
+        // On a design the call settled, changes go to the architect alone and come back to the same check.
+        if (!callOn(task as unknown as Task, index)) task.rounds[stages[index]!.id] = (task.rounds[stages[index]!.id] ?? 1) + 1;
         task.stageIndex = index;
-        // After a call, changes go to the architect alone and come back to the same check.
-        if (!task.call) task.rounds[stages[index]!.id] = (task.rounds[stages[index]!.id] ?? 1) + 1;
       }
     } else if (item.kind === "delivery") {
       const index = lastIndex(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
@@ -572,7 +582,9 @@ export class Engine {
     if (!product?.path) throw new Error(`${product?.name ?? "This product"} has no local copy`);
     const branch = task.branch ?? git.branchName(task.title, task.id);
     const worktree = task.worktree ?? join(this.dataDir, "worktrees", product.id, task.id);
-    const { base } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
+    const { base, skippedFetch, fetchTimedOut } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
+    if (fetchTimedOut) this.log(task, "warn", "GitHub did not answer in time, so this task starts from the local copy");
+    if (skippedFetch) this.log(task, "warn", `Did not update from GitHub: the repository's git settings include ${skippedFetch.slice(0, 3).join(", ")}, which could misuse your GitHub login. Working from the local copy.`);
     if (!task.branch) this.log(task, "milestone", "Set up a fresh working copy");
     task.branch = branch;
     task.worktree = worktree;
@@ -670,7 +682,7 @@ export class Engine {
   }
 
   private async runConverge(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
-    if (task.call?.stageId === stage.id) return this.followCall(task, stage, signal);
+    if (followingCall(task as unknown as Task)) return this.followCall(task, stage, signal);
     const round = task.rounds[stage.id] ?? 1;
     if (task.sub === 0) {
       const profileId = stage.profileIds[0] ?? "opus-xhigh";
@@ -741,7 +753,7 @@ export class Engine {
     this.log(task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, profileId);
     await this.undoReadOnly(task, stage.roleId);
     this.log(task, "done", CALL_WORDS.settled);
-    // The next stage is the design check: the call made sure there is one.
+    // The design check comes next, maybe after steps such as Screens: the call made sure there is one.
     task.stageIndex += 1;
     task.sub = 0;
     this.commit();
@@ -823,7 +835,7 @@ export class Engine {
     delete task.agent;
     task.holdsSlot = false;
     if (task.delivery === "pull-request") {
-      const pr = await git.findPr(task.worktree!, task.branch!);
+      const pr = await git.findPr(product.repo, task.branch!);
       if (!pr) throw new Error("The shipper finished, but no pull request exists for this branch");
       task.pr = { number: pr.number, url: pr.url, state: "open", openedAt: Date.now() };
       task.state = "pr-open";
@@ -831,7 +843,7 @@ export class Engine {
       task.statusLine = `Pull request #${pr.number} is open. Merge it on GitHub when you are happy`;
       this.log(task, "done", `Opened pull request #${pr.number}`, "shipper", SHIPPER_PROFILE);
     } else if (task.delivery === "release") {
-      const release = result.tag ? await git.findRelease(task.worktree!, result.tag) : undefined;
+      const release = result.tag ? await git.findRelease(product.repo, result.tag) : undefined;
       if (!release) throw new Error("The shipper finished, but the release could not be found on GitHub");
       task.release = release;
       task.state = "done";
@@ -857,20 +869,23 @@ export class Engine {
   private sectionsFor(task: MTask, roleId: Id): { title: string; body: string }[] {
     const sections: { title: string; body: string }[] = [];
     const brief = task.brief;
-    const notes = task.queued.splice(0).map((message) => `- ${message.text}`);
-    if (notes.length) sections.push({ title: "Notes from the coordinator", body: notes.join("\n") });
+    task.queued.splice(0);
+    // Every agent on the task sees all of the coordinator's notes, reviewers included.
+    const notes = (task.notes ?? []).map((note) => `- ${note.text}`);
+    if (notes.length) sections.push({ title: "The coordinator's notes on this task (follow them; where they conflict with the brief or each other, the latest wins)", body: notes.join("\n\n") });
     if (brief && roleId !== "planner") {
       sections.push({
         title: "Design brief",
         body: [brief.summary, brief.forUsers.length ? `What changes for users:\n${brief.forUsers.map((line) => `- ${line}`).join("\n")}` : "", `Acceptance checklist:\n${brief.acceptance.map((item) => `- ${item.text}`).join("\n")}`, brief.risks.length ? `Risks:\n${brief.risks.map((line) => `- ${line}`).join("\n")}` : ""].filter(Boolean).join("\n\n"),
       });
     }
-    if (roleId === "architect" && task.call) {
-      const due = dueAnswers(task.objections as Task["objections"], task.call as DesignCall);
+    const call = roleId === "architect" ? followingCall(task as unknown as Task) : undefined;
+    if (call) {
+      const due = dueAnswers(task.objections as Task["objections"], call);
       const open = due.filter((objection) => objection.status === "open");
       const settled = due.filter((objection) => objection.status !== "open");
       const earlier = task.objections.filter((objection) => !due.some((entry) => entry.id === objection.id));
-      sections.push({ title: "The coordinator's call (final, exact words)", body: task.call.text });
+      sections.push({ title: "The coordinator's call (final, exact words)", body: call.text });
       if (open.length || !settled.length) sections.push({ title: "Objections still open (answer every one by id)", body: open.length ? formatObjections(open) : "None. Every objection already has an answer." });
       // After changes asked for at the check, the architect answers these again, so it can correct a decision or a note.
       if (settled.length) sections.push({ title: "Objections answered after the call (answer every one again by id)", body: formatObjections(settled) });
@@ -926,10 +941,9 @@ export class Engine {
     const run = await AgentRun.start({
       profile,
       ...(command ? { command } : {}),
-      // Only the shipper has GitHub credentials; everyone else cannot push even if the policy misses something.
-      ...(roleId === "shipper" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
+      // GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none.
+      ...(roleId === "shipper" && task.delivery !== "local" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
       cwd: task.worktree!,
-      readOnly: !role.canEdit,
       signal,
       callbacks: {
         onActivity: (line) => {
@@ -946,7 +960,7 @@ export class Engine {
           if (current.timeline.at(-1)?.text !== line) this.log(current, "status", line, roleId, profileId);
           this.commit();
         },
-        onPermission: (info) => this.permission(taskId, role, info, signal),
+        onPermission: (info) => this.permission(taskId, info, signal),
         onLog: (text) => void this.agentLog(taskId, text),
       },
     });
@@ -987,26 +1001,26 @@ export class Engine {
     } finally {
       this.runs.delete(taskId);
       run.close();
-      // A read-only role must leave the branch where it found it, commits included.
+      // A read-only role runs in its tool's automatic mode, so it could change things: leave the
+      // working copy exactly as it found it, commits and uncommitted changes alike.
       if (headBefore && task.worktree && (await git.head(task.worktree).catch(() => headBefore)) !== headBefore) {
         await git.resetTo(task.worktree, headBefore);
         this.log(task, "warn", `Undid commits from ${role.name}, which is read-only`);
       }
+      if (!role.canEdit && task.worktree && !(await git.isClean(task.worktree).catch(() => true))) {
+        await git.discardChanges(task.worktree);
+        this.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
+      }
     }
   }
 
-  private async permission(taskId: Id, role: Role, info: PermissionInfo, signal: AbortSignal): Promise<"allow" | "deny"> {
+  /** The tool's own safety check flagged something: the coordinator decides. Petrina adds no rules of its own. */
+  private async permission(taskId: Id, info: PermissionInfo, signal: AbortSignal): Promise<"allow" | "deny"> {
     const task = this.task(taskId);
-    const product = task && this.productOf(task);
-    if (!task || !product || !task.worktree) return "deny";
-    const decision = decide(info, { role, worktree: task.worktree, allowed: product.allowed ?? [] });
-    if (decision.decision === "allow") return "allow";
-    if (decision.decision === "deny") {
-      this.say(task, "system", `Petrina blocked: ${info.title}. ${decision.reason}`);
-      this.commit();
-      return "deny";
-    }
-    const answer = await this.wait(task, "permission", decision.title, true, { body: decision.body, ...(decision.detail ? { detail: decision.detail } : {}) }, signal, "Waiting for your permission");
+    if (!task) return "deny";
+    const tool = ADAPTERS[this.s.profiles.find((profile) => profile.id === task.agent?.profileId)?.toolId ?? ""]?.name ?? "The agent's tool";
+    const detail = info.command ?? info.paths.join("\n");
+    const answer = await this.wait(task, "permission", info.title, true, { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) }, signal, "Waiting for your permission");
     return answer === "allow" ? "allow" : "deny";
   }
 
@@ -1038,7 +1052,7 @@ export class Engine {
     };
     const status: Record<GateKind, string> = {
       plan: "Plan ready. Waiting for your OK",
-      design: task.call ? CALL_WORDS.waiting : "Design settled. Waiting for your check",
+      design: callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check",
       delivery: "Reviews done. Waiting for your OK to ship",
     };
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
@@ -1080,6 +1094,10 @@ export class Engine {
     task.state = "failed";
     this.log(task, "warn", `Stuck: ${message.slice(0, 300)}`);
     this.commit();
+  }
+
+  private remember(task: MTask, text: string): void {
+    task.notes = [...(task.notes ?? []), { at: Date.now(), text }];
   }
 
   private toWaiting(task: MTask): void {
@@ -1137,7 +1155,8 @@ export class Engine {
 
   private async pollPullRequests(): Promise<void> {
     for (const task of this.s.tasks.filter((entry) => entry.state === "pr-open" && entry.pr && entry.worktree)) {
-      const state = await git.prState(task.worktree!, task.pr!.number).catch(() => undefined);
+      const repo = this.productOf(task)?.repo;
+      const state = repo ? await git.prState(repo, task.pr!.number).catch(() => undefined) : undefined;
       if (state === "merged" || state === "closed") {
         task.pr!.state = state === "merged" ? "merged" : "open";
         task.state = "done";
@@ -1231,7 +1250,7 @@ export class Engine {
     if (!this.saveTimer && !this.closed) {
       this.saveTimer = setTimeout(() => {
         this.saveTimer = undefined;
-        this.store.save(this.getState());
+        if (!this.closed) this.store.save(this.getState());
       }, 400);
     }
   }

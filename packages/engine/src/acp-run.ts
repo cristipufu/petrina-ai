@@ -88,8 +88,8 @@ export class AgentRun {
     private readonly state: { text: string; lastActivity: string },
   ) {}
 
-  static async start(options: { profile: AgentProfile; cwd: string; readOnly: boolean; callbacks: RunCallbacks; signal: AbortSignal; command?: readonly string[]; env?: NodeJS.ProcessEnv }): Promise<AgentRun> {
-    const { profile, cwd, readOnly, callbacks, signal } = options;
+  static async start(options: { profile: AgentProfile; cwd: string; callbacks: RunCallbacks; signal: AbortSignal; command?: readonly string[]; env?: NodeJS.ProcessEnv }): Promise<AgentRun> {
+    const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
     if (!adapter) throw new Error(`No adapter for tool ${profile.toolId}`);
 
@@ -121,9 +121,9 @@ export class AgentRun {
             paths: (merged.locations ?? []).map((location) => location.path),
           };
           const decision = await callbacks.onPermission(info);
-          // Always prefer the one-time option, whatever order the agent lists them in: "always" is
-          // Petrina's decision to remember, never the agent's.
-          const order = decision === "allow" ? ["allow_once", "allow_always"] : ["reject_once", "reject_always"];
+          // One-time answers only: a tool's "always" options write settings into the working copy
+          // or switch modes, so Petrina never picks them.
+          const order = decision === "allow" ? ["allow_once"] : ["reject_once", "reject_always"];
           const option = order.map((kind) => params.options.find((entry) => entry.kind === kind)).find((entry) => entry !== undefined);
           if (!option) return { outcome: { outcome: "cancelled" } };
           return { outcome: { outcome: "selected", optionId: option.optionId } };
@@ -165,15 +165,17 @@ export class AgentRun {
       await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
       const session = await connection.newSession({ cwd, mcpServers: [] });
       const options = (session as { configOptions?: { id: string; options?: { value: string }[] }[] }).configOptions ?? [];
-      const set = async (configId: string, value: string | undefined) => {
-        if (!value) return;
+      const set = async (configId: string, value: string | undefined): Promise<boolean> => {
+        if (!value) return false;
         const option = options.find((entry) => entry.id === configId);
-        if (!option || !option.options?.some((entry) => entry.value === value)) return;
+        if (!option || !option.options?.some((entry) => entry.value === value)) return false;
         await connection.setSessionConfigOption({ sessionId: session.sessionId, configId, value });
+        return true;
       };
       await set(adapter.options.model, profile.modelId);
       await set(adapter.options.effort, profile.effort);
-      await set(adapter.options.mode, readOnly ? adapter.modes.readOnly : adapter.modes.edit);
+      // Mode last: Claude Code drops Auto when the model changes after it.
+      if (!(await set(adapter.options.mode, adapter.mode))) callbacks.onLog?.(`${adapter.name}'s automatic safety mode is not available here, so it will ask you before acting`);
       return session.sessionId;
     })();
 

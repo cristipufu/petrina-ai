@@ -17,6 +17,7 @@ export interface Actions {
   retry(itemId: Id): void;
   setPoolLimit(limit: number): void;
   setPoolPaused(paused: boolean): void;
+  setToolCap(toolId: Id, cap: number): void;
   moveInQueue(taskId: Id, index: number): void;
   moveToTop(taskId: Id): void;
   setHeld(taskId: Id, held: boolean): void;
@@ -168,6 +169,7 @@ class EngineClient implements Store {
   retry = (itemId: Id) => this.fire("retry", itemId);
   setPoolLimit = (limit: number) => this.fire("setPoolLimit", limit);
   setPoolPaused = (paused: boolean) => this.fire("setPoolPaused", paused);
+  setToolCap = (toolId: Id, cap: number) => this.fire("setToolCap", toolId, cap);
   moveInQueue = (taskId: Id, index: number) => this.fire("moveInQueue", taskId, index);
   moveToTop = (taskId: Id) => this.fire("moveToTop", taskId);
   setHeld = (taskId: Id, held: boolean) => this.fire("setHeld", taskId, held);
@@ -196,6 +198,7 @@ class DemoStore implements Store {
   retry = (itemId: Id) => this.simulator.approve(itemId);
   setPoolLimit = (limit: number) => this.simulator.setPoolLimit(limit);
   setPoolPaused = (paused: boolean) => this.simulator.setPoolPaused(paused);
+  setToolCap = () => undefined;
   moveInQueue = (taskId: Id, index: number) => this.simulator.moveInQueue(taskId, index);
   moveToTop = (taskId: Id) => this.simulator.moveToTop(taskId);
   setHeld = (taskId: Id, held: boolean) => this.simulator.setHeld(taskId, held);

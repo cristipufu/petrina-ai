@@ -7,8 +7,9 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
-// "[no-check]" leaves the design check out of the plan. With "--hold=<file>", the architect stops
-// halfway through following a call for as long as that file exists.
+// "[no-check]" leaves the design check out of the plan, "[screens]" puts Screens between the design and
+// its check, and "[two-checks]" adds Screens and a second design check after the first. With "--hold=<file>",
+// the architect stops halfway through following a call for as long as that file exists.
 const sessions = new Map<string, { cwd: string; turns: number }>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
 const brief = { summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [] };
@@ -26,6 +27,9 @@ function section(text: string, title: string): string | undefined {
   return (end < 0 ? body : body.slice(0, end)).trim();
 }
 
+const NOTES = "The coordinator's notes on this task (follow them; where they conflict with the brief or each other, the latest wins)";
+const check = { kind: "gate", title: "Your design check", roleId: "architect", gate: "design" };
+const screens = { kind: "do", title: "Screens", roleId: "ux-designer", profileIds: ["opus-high"] };
 const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
 const hold = process.argv.find((arg) => arg.startsWith("--hold="))?.slice("--hold=".length);
 
@@ -44,7 +48,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         rationale: "A small feature: agree on a design, build it, two reviewers.",
         stages: [
           { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
-          ...(text.includes("[no-check]") ? [] : [{ kind: "gate", title: "Your design check", roleId: "architect", gate: "design" }]),
+          ...(text.includes("[no-check]") ? [] : text.includes("[screens]") ? [screens, check] : text.includes("[two-checks]") ? [check, screens, check] : [check]),
           { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
           { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 },
         ],
@@ -61,7 +65,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         // "Your call" tag and the others get it. Every note is rewritten to match the updated brief.
         const ids = objectionIds(settled);
         const answers = ids.map((id, index) => (index === 0 ? { id, status: "accepted", byCall: false, answer: "Kept it in the brief after your note." } : { id, status: "accepted", byCall: true, answer: "Added it to the brief, as the call says." }));
-        return block({ ...brief, answers }, `Revising: ${ids.join(", ")}. Notes: ${section(text, "Notes from the coordinator") ?? "none"}`);
+        return block({ ...brief, answers }, `Revising: ${ids.join(", ")}. Latest note: ${section(text, NOTES)?.split("\n").at(-1) ?? "none"}`);
       }
       if (call !== undefined) {
         await say("Reading your call");

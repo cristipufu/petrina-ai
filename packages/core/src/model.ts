@@ -206,7 +206,7 @@ export interface Task {
   queued: readonly QueuedMessage[];
   brief?: DesignBrief;
   objections: readonly Objection[];
-  /** Set from the coordinator's call on a disagreement until they approve the brief that follows it. */
+  /** The coordinator's call on a disagreement. It stays, so no later design check reopens the design it settled. */
   call?: DesignCall;
   findings: readonly Finding[];
   pr?: PullRequest;
@@ -224,6 +224,8 @@ export interface Task {
   release?: { tag: string; url: string };
   /** Set when a `local` product committed this task onto its default branch. */
   landed?: { branch: string; sha: string };
+  /** Everything the coordinator said about this task, kept for every later agent (latest wins). */
+  notes?: readonly { at: number; text: string }[];
 }
 
 export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck";
@@ -261,8 +263,6 @@ export interface Product {
   /** The local clone Petrina makes worktrees from. */
   path?: string;
   defaultBranch?: string;
-  /** Command prefixes the coordinator chose to always allow in this product. */
-  allowed?: readonly string[];
   delivery?: DeliveryMode;
   /** Ask the coordinator before delivering. Defaults to true. */
   approveDelivery?: boolean;

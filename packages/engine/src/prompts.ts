@@ -2,7 +2,7 @@
 // A stage only counts as done when its block parses and validates.
 
 import { z } from "zod";
-import type { AgentProfile, Finding, Objection, Product, Role, Task } from "@petrina/core";
+import { followingCall, type AgentProfile, type Finding, type Objection, type Product, type Role, type Task } from "@petrina/core";
 
 export const NeedsInput = z.object({
   needsInput: z.object({
@@ -183,13 +183,15 @@ Rules:
     case "researcher":
       return "Research what users expect from this and how good products solve it. Look at the repository to understand the current state. Do not change any files.";
     case "architect":
-      if (task.call) return CALL_INSTRUCTIONS;
+      if (followingCall(task)) return CALL_INSTRUCTIONS;
       return `Design how this should work, for users and in the product. Read the code you need. Do not change any files: your output is the design brief.
 Write it for a product person: plain language, no code. The acceptance list is what the builder must satisfy and the reviewers will check.
-If objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason.`;
+Keep the design as small as the task allows. Do not add mechanisms the task did not ask for (new security layers, sandboxes, settings, background services): if you see a need, put it in risks as a follow-up instead.
+If objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason. Rejecting an objection that would grow the task beyond what was asked is a good reason.`;
     case "design-reviewer":
       return `Challenge the design brief below. Look for gaps, contradictions, missing edge cases, and things that will not work in this codebase. Do not change any files.
-Mark an objection blocking only if building the design as written would be a mistake. If nothing blocking is left, return an empty or non-blocking list.`;
+Mark an objection blocking only if building the design as written would be a mistake. Rare, recoverable edge cases and ideas that would grow the task beyond what was asked (new security layers, sandboxes, settings) are non-blocking: list them for follow-up. Prefer objections that make the design simpler.
+If nothing blocking is left, return an empty or non-blocking list.${task.objections.some((objection) => objection.call !== undefined) ? "\nObjections settled by the coordinator's call are final: do not raise them again." : ""}`;
     case "ux-designer":
       return "Shape the screens, layout and words users will see for this change, following the product's existing design. Do not change any files: describe the design in your notes.";
     case "builder":
@@ -217,7 +219,7 @@ Update the design brief so it follows the call. Read the code you need. Do not c
 Answer every objection listed as still open, or as answered after the call, by its id. Leave none out:
 - If the call decides it, set "byCall" to true, set "status" to what the call says (accepted or rejected), and in "answer" say what you changed in the brief to follow the call.
 - If the call does not speak to it, set "byCall" to false and answer it yourself: accept it and change the brief, or reject it with a reason.
-If notes from the coordinator are listed below, they come from checking the brief that follows the call: change the brief to cover them too, still following the call. Then answer every objection answered after the call again: keep or correct its status and "byCall" (the notes may say you read the call wrong), and make "answer" match the updated brief. Your new answers replace the old ones.`;
+If objections are listed as answered after the call, the coordinator checked the brief that follows the call and asked for changes in their latest note: change the brief to cover it too, still following the call. Then answer every objection answered after the call again: keep or correct its status and "byCall" (the notes may say you read the call wrong), and make "answer" match the updated brief. Your new answers replace the old ones.`;
 
 function shipperInstructions(ctx: PromptContext, defaultBranch: string): string {
   const { task, branch } = ctx;
@@ -259,7 +261,7 @@ ${roleInstructions(ctx)}
 ${sections}
 
 Keep a short to-do list as you work, written in plain language: the coordinator watches it live.
-${RESULT_FOOTER(SHAPES[role.id === "architect" && task.call ? "architect-call" : role.id] ?? SHAPES["researcher"]!)}`;
+${RESULT_FOOTER(SHAPES[role.id === "architect" && followingCall(task) ? "architect-call" : role.id] ?? SHAPES["researcher"]!)}`;
 }
 
 export function repairPrompt(error: string): string {

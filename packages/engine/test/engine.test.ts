@@ -68,21 +68,14 @@ describe("Engine with a fake ACP agent", () => {
     expect(task.landed?.branch).toBe("main");
     // The coordinator was asked a question, a permission and two checkpoints.
     expect(task.timeline.some((entry) => entry.text.startsWith("You answered: Formal"))).toBe(true);
-    expect(task.timeline.some((entry) => entry.text.includes("You allowed: Add a new package: left-pad"))).toBe(true);
+    // The tool's own safety check asked; Petrina passed it on unchanged.
+    expect(task.timeline.some((entry) => entry.text.includes("You allowed: Installing packages"))).toBe(true);
     expect(task.timeline.some((entry) => entry.text === "You approved the design")).toBe(true);
     expect(task.timeline.some((entry) => entry.text === "You approved the delivery")).toBe(true);
     // The work is on main, with the permission granted.
     expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
     expect(existsSync(task.worktree!)).toBe(true);
-  });
-
-  it("refuses to push from any role but the shipper", async () => {
-    const { decide } = await import("../src/policy.js");
-    const role = engine.getState().roles.find((entry) => entry.id === "builder")!;
-    expect(decide({ title: "Push", kind: "execute", command: "git push origin main", paths: [] }, { role, worktree: repo, allowed: [] }).decision).toBe("deny");
-    const reviewer = engine.getState().roles.find((entry) => entry.id === "code-reviewer")!;
-    expect(decide({ title: "Edit", kind: "edit", paths: [join(repo, "a.ts")] }, { role: reviewer, worktree: repo, allowed: [] }).decision).toBe("deny");
   });
 });
 
@@ -163,16 +156,96 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(revised.timeline.map((entry) => entry.text)).toContain(CALL_WORDS.revised);
     expect(itemOf(state, taskId, "disagreement")).toBeUndefined();
     // It got the note and every objection the call covered, and could correct its decisions, tags and notes.
-    expect(revised.session.some((line) => line.from === "agent" && line.text === `Revising: ${open.map((objection) => objection.id).join(", ")}. Notes: - Say where the greeting shows.`)).toBe(true);
+    expect(revised.session.some((line) => line.from === "agent" && line.text === `Revising: ${open.map((objection) => objection.id).join(", ")}. Latest note: - Say where the greeting shows.`)).toBe(true);
     expect(revised.objections.find((objection) => objection.id === open[0]!.id)).toMatchObject({ status: "accepted", answer: "Kept it in the brief after your note." });
     expect(revised.objections.find((objection) => objection.id === open[0]!.id)?.call).toBeUndefined();
     expect(revised.objections.find((objection) => objection.id === open[1]!.id)).toMatchObject({ status: "accepted", call: CALL, answer: "Added it to the brief, as the call says." });
     expect(itemOf(state, taskId, "design")?.body).toContain("Your call settled 1 objection (1 accepted, 0 rejected). The architect answered 1 on its own.");
 
-    // Approving moves on to the build.
+    // Approving moves on to the build. The call stays, so nothing later can reopen the design it settled.
     engine.approve(itemOf(state, taskId, "design")!.id);
     state = await until(engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
-    expect(taskOf(state, taskId).call).toBeUndefined();
+    expect(taskOf(state, taskId).call?.text).toBe(CALL);
+    engine.cancel(taskId);
+  });
+
+  it("answers the plan's own design check after Screens: no second check, and approving it keeps the call", async () => {
+    const taskId = engine.addTask({ productId, title: "Pick a slogan", description: "A slogan file. [disagree] [screens]" });
+    let state = await waitFor(taskId, "disagreement");
+    const before = taskOf(state, taskId);
+    const stages = before.plan!.stages.map((stage) => stage.id);
+    const design = before.plan!.stages[before.stageIndex]!;
+    expect(before.plan!.stages[before.stageIndex + 1]?.roleId).toBe("ux-designer");
+    const reviews = reviewerRuns(before);
+    const rounds = before.rounds[design.id];
+
+    engine.requestChanges(itemOf(state, taskId, "disagreement")!.id, CALL);
+    expect(taskOf(engine.getState(), taskId).plan!.stages.map((stage) => stage.id)).toEqual(stages);
+    state = await waitFor(taskId, "design");
+    const at = taskOf(state, taskId);
+    expect(at.error).toBeUndefined();
+    // Screens ran after the architect followed the call; the check is the plan's own, with the call's words.
+    expect(at.stageIndex).toBe(stages.indexOf(design.id) + 2);
+    expect(at.timeline.findIndex((entry) => entry.roleId === "ux-designer")).toBeGreaterThan(at.timeline.findIndex((entry) => entry.text === CALL_WORDS.settled));
+    expect(at.statusLine).toBe(CALL_WORDS.waiting);
+    const check = itemOf(state, taskId, "design")!;
+    expect(check.body).toContain("Your call settled 1 objection (0 accepted, 1 rejected).");
+
+    // Changes there go to the architect alone and come back, through Screens, to the same check.
+    engine.requestChanges(check.id, "Say where the slogan shows.");
+    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
+    const after = taskOf(state, taskId);
+    expect(after.stageIndex).toBe(at.stageIndex);
+    expect(after.plan!.stages.map((stage) => stage.id)).toEqual(stages);
+    expect(reviewerRuns(after)).toBe(reviews);
+    expect(after.rounds[design.id]).toBe(rounds);
+    expect(itemOf(state, taskId, "disagreement")).toBeUndefined();
+    expect(after.statusLine).toBe(CALL_WORDS.waiting);
+    expect(itemOf(state, taskId, "design")?.body).toContain("Your call settled");
+
+    // Approving it moves on to the build, and the call stays.
+    engine.approve(itemOf(state, taskId, "design")!.id);
+    state = await until(engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
+    expect(taskOf(state, taskId).call?.text).toBe(CALL);
+    engine.cancel(taskId);
+  });
+
+  it("never lets a later design check reopen the design the call settled", async () => {
+    const taskId = engine.addTask({ productId, title: "Pick a tagline", description: "A tagline file. [disagree] [two-checks]" });
+    let state = await waitFor(taskId, "disagreement");
+    // The engine's state is live: keep what it was before the call.
+    const before = taskOf(state, taskId);
+    const designIndex = before.stageIndex;
+    const design = before.plan!.stages[designIndex]!;
+    const stages = before.plan!.stages.length;
+    const reviews = reviewerRuns(before);
+    const rounds = before.rounds[design.id];
+
+    engine.requestChanges(itemOf(state, taskId, "disagreement")!.id, CALL);
+    state = await waitFor(taskId, "design");
+    const first = itemOf(state, taskId, "design")!;
+    expect(taskOf(state, taskId).stageIndex).toBe(designIndex + 1);
+    engine.approve(first.id);
+    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== first.id, coordinator);
+    const at = taskOf(state, taskId);
+    expect(at.stageIndex).toBe(designIndex + 3);
+    expect(at.call?.text).toBe(CALL);
+    expect(at.statusLine).toBe(CALL_WORDS.waiting);
+    const later = itemOf(state, taskId, "design")!;
+    expect(later.body).toContain("Your call settled");
+
+    // Changes at the later check go to the architect alone: no review round, no new disagreement.
+    engine.requestChanges(later.id, "Say where the tagline shows.");
+    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== later.id, coordinator);
+    const after = taskOf(state, taskId);
+    expect(after.error).toBeUndefined();
+    expect(reviewerRuns(after)).toBe(reviews);
+    expect(after.rounds[design.id]).toBe(rounds);
+    expect(after.plan!.stages).toHaveLength(stages);
+    expect(itemOf(state, taskId, "disagreement")).toBeUndefined();
+    expect(after.timeline.map((entry) => entry.text)).toContain(CALL_WORDS.revised);
+    expect(itemOf(state, taskId, "design")?.body).toContain("Your call settled");
+    expect(after.objections.some((objection) => objection.status === "open")).toBe(false);
     engine.cancel(taskId);
   });
 
