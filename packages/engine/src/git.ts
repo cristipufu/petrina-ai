@@ -35,6 +35,7 @@ const SAFE_TRANSPORT: readonly (readonly [string, string])[] = [
   ["protocol.file.allow", "never"],
   ["protocol.git.allow", "never"],
   ["remote.origin.uploadpack", "git-upload-pack"],
+  ["fetch.recurseSubmodules", "false"],
 ];
 
 function gitEnv(credentials: boolean): NodeJS.ProcessEnv {
@@ -103,19 +104,38 @@ export function branchName(title: string, taskId: string): string {
   return `petrina/${slug || "task"}-${suffix}`;
 }
 
-/** Repository settings that could start a program or redirect a connection made with the coordinator's login. */
-const RISKY_SETTING = /^(include|includeif)\.|^credential\.|^core\.(sshcommand|askpass|gitproxy)$|^url\..*\.(insteadof|pushinsteadof)$|^https?\.(.*\.)?proxy$|^remote\.[^.]+\.(uploadpack|receivepack|proxy)$/i;
+/**
+ * The repository-level settings a fetch with the coordinator's login may run under. An allowlist:
+ * anything else (agents can change these settings) means no credentialed fetch. Hooks are listed
+ * because Petrina's git steps switch them off anyway.
+ */
+const SAFE_SETTING = new RegExp(
+  [
+    "core\\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks|autocrlf|eol|hookspath)",
+    "extensions\\.(worktreeconfig|objectformat)",
+    "remote\\.[^.]+\\.(url|fetch|pushurl|tagopt|prune)",
+    "branch\\..+\\.(remote|merge|rebase|pushremote|description)",
+    "submodule\\..+\\.(url|active)",
+    "user\\.(name|email)",
+    "(gc\\.auto|gc\\.autodetach|pull\\.rebase|pull\\.ff|push\\.default|push\\.autosetupremote|fetch\\.prune|fetch\\.prunetags|lfs\\.repositoryformatversion)",
+  ]
+    .map((pattern) => `^${pattern}$`)
+    .join("|"),
+  "i",
+);
 
-/** The repository's own settings (agents can change them) that make a credentialed fetch unsafe. */
+/** The repository's own settings (agents can change them) that are not known to be safe for a credentialed fetch. */
 export async function riskySettings(root: string): Promise<string[]> {
-  const listed = await run(["git", "config", "--list", "--show-scope", "--name-only"], root);
+  const listed = await run(["git", "config", "--list", "--show-scope", "--name-only", "-z"], root);
   if (listed.code !== 0) return ["unreadable git settings"];
-  const keys = listed.stdout
-    .split("\n")
-    .map((line) => line.split("\t"))
-    .filter(([scope]) => scope === "local" || scope === "worktree")
-    .map(([, key]) => key ?? "");
-  return [...new Set(keys.filter((key) => RISKY_SETTING.test(key)))];
+  // -z: scope and key alternate, each ending in NUL, so no key can be misread.
+  const fields = listed.stdout.split("\0");
+  const risky: string[] = [];
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const [scope, key] = [fields[index]!, fields[index + 1]!];
+    if ((scope === "local" || scope === "worktree") && !SAFE_SETTING.test(key)) risky.push(key);
+  }
+  return [...new Set(risky)];
 }
 
 /** Create (or reuse) the task's worktree on its own branch, based on the latest default branch. */
