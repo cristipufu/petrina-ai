@@ -32,6 +32,8 @@ interface Segment {
   script?: string;
   /** Environment variables the command sets for itself (FOO=1 cmd, env FOO=1 cmd, export FOO=1). */
   assigns?: string[];
+  /** The segment's standard input comes from the previous segment through a pipe. */
+  pipedIn?: boolean;
 }
 
 interface Analysis {
@@ -240,14 +242,17 @@ export function analyze(command: string, depth = 0): Analysis {
 
   let current: string[] = [];
   let stdin: Heredoc[] = [];
-  const flush = () => {
+  let piped = false;
+  const flush = (nextPiped: boolean) => {
     if (current.length) {
       const inner = unwrap(current, depth, stdin);
       if (inner.opaque && !analysis.opaque) analysis.opaque = inner.opaque;
-      analysis.segments.push(...inner.segments);
+      const [first, ...rest] = inner.segments;
+      if (first) analysis.segments.push(piped ? { ...first, pipedIn: true } : first, ...rest);
     }
     current = [];
     stdin = [];
+    piped = nextPiped;
   };
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!;
@@ -257,7 +262,7 @@ export function analyze(command: string, depth = 0): Analysis {
       continue;
     }
     if (OPERATORS.has(token)) {
-      flush();
+      flush(token === "|");
       continue;
     }
     if (token === ">" || token === "<") {
@@ -266,7 +271,7 @@ export function analyze(command: string, depth = 0): Analysis {
     }
     current.push(token);
   }
-  flush();
+  flush(false);
 
   for (const inner of substitutions) {
     const nested = analyze(inner, depth + 1);
@@ -571,9 +576,10 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
   if (program === "sudo" || program === "doas") effects.push({ kind: "ask", title: "Run a command as administrator", body: "It asked for administrator rights." });
   if (["ssh", "scp", "rsync", "sftp"].includes(program)) effects.push({ kind: "ask", title: "Connect to another machine", body: "It wants to open a connection to a remote machine." });
   if (CLOUD.has(program) || (program === "docker" && ["push", "login"].includes(argv[1] ?? ""))) effects.push({ kind: "ask", title: `Use ${program}`, body: "This can change cloud resources, which may cost money." });
-  if (segment.interpreterFromStdin && segments.some((other) => ["curl", "wget"].includes(basename(other.argv[0] ?? "")))) {
+  // Only an interpreter that actually receives piped input runs it as a script (bun --version does not).
+  if (segment.interpreterFromStdin && segment.pipedIn && segments.some((other) => ["curl", "wget"].includes(basename(other.argv[0] ?? "")))) {
     effects.push({ kind: "ask", title: "Run a script from the internet", body: "It wants to download a script and run it." });
-  } else if (segment.interpreterFromStdin && segments.length > 1) {
+  } else if (segment.interpreterFromStdin && segment.pipedIn) {
     effects.push({ kind: "opaque", reason: "a script fed to an interpreter through a pipe" });
   }
   if (["cat", "less", "more", "head", "tail", "source", "."].includes(program) && argv.slice(1).some((arg) => /(^|\/)\.env(\.|$)/.test(arg))) {
