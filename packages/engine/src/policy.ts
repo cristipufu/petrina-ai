@@ -426,7 +426,7 @@ const GIT_NETWORK_SAFE = new Set([
   "--shallow-exclude", "--shallow-since", "--show-forced-updates", "--single-branch", "--no-single-branch", "--sort", "--squash",
   "--no-squash", "--stat", "--no-stat", "--symref", "--tags", "--unshallow", "--update-shallow", "--verbose", "--write-fetch-head",
   "--no-write-fetch-head", "--commit", "--no-commit", "--edit", "--no-edit", "--sparse", "--bare", "--local", "--no-local",
-  "--shared", "--template-dir-not-allowed",
+  "--shared",
 ]);
 /** Long options on `git push` that neither force, delete nor run anything. */
 const GIT_PUSH_SAFE = new Set(["--set-upstream", "--tags", "--follow-tags", "--no-follow-tags", "--atomic", "--no-atomic", "--porcelain", "--quiet", "--verbose", "--dry-run", "--progress", "--no-progress", "--no-verify", "--verify", "--signed", "--no-signed", "--ipv4", "--ipv6"]);
