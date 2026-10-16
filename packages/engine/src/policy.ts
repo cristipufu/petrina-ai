@@ -545,6 +545,18 @@ const PACKAGE_MANAGERS: Record<string, readonly string[]> = {
   composer: ["require"],
 };
 
+/** Flags that only print a version or help, per interpreter (sh -v is verbose, not version). */
+const VERSION_FLAGS: Record<string, readonly string[]> = {
+  node: ["--version", "-v", "--help", "-h"],
+  bun: ["--version", "--help"],
+  deno: ["--version", "--help"],
+  python: ["--version", "-V", "--help", "-h"],
+  ruby: ["--version", "--help"],
+  perl: ["--version", "--help"],
+  bash: ["--version", "--help"],
+  zsh: ["--version", "--help"],
+};
+
 const CLOUD = new Set(["aws", "az", "gcloud", "terraform", "pulumi", "kubectl", "helm", "vercel", "netlify", "fly", "flyctl", "heroku", "railway", "wrangler"]);
 
 function effectsOf(segment: Segment, segments: Segment[], worktree: string): Effect[] {
@@ -615,7 +627,7 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
   if (CLOUD.has(program) || (program === "docker" && ["push", "login"].includes(argv[1] ?? ""))) effects.push({ kind: "ask", title: `Use ${program}`, body: "This can change cloud resources, which may cost money." });
   // Fail closed: an interpreter without a script argument in a multi-part command (or with any
   // input redirected) may be reading code from somewhere. Only a bare --version/--help is exempt.
-  const versionOnly = argv.length === 2 && ["--version", "-v", "-V", "--help", "-h"].includes(argv[1] ?? "");
+  const versionOnly = !segment.pipedIn && argv.length === 2 && (VERSION_FLAGS[program.replace(/[0-9.]+$/, "")] ?? []).includes(argv[1] ?? "");
   const fedSomehow = segment.interpreterFromStdin && !versionOnly && (segments.length > 1 || segment.pipedIn);
   if (fedSomehow && segments.some((other) => ["curl", "wget"].includes(basename(other.argv[0] ?? "")))) {
     effects.push({ kind: "ask", title: "Run a script from the internet", body: "It wants to download a script and run it." });

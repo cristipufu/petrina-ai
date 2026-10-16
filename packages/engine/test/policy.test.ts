@@ -224,4 +224,11 @@ describe("permission policy", () => {
     expect(run('npm install "2">/dev/null')).toBe("ask");
     expect(run("bun install --frozen-lockfile 2>&1 | tail -5")).toBe("allow");
   });
+
+  it("exempts only real version and help flags, and never piped input", () => {
+    expect(run("which bun; bun --version")).toBe("allow");
+    expect(run("echo 'rm -rf ~' | sh -v")).not.toBe("allow");
+    expect(run("echo 'print(1)' | python3 --version")).toBe("ask");
+    expect(run("ls; python3 -V")).toBe("allow");
+  });
 });
