@@ -128,4 +128,29 @@ describe("permission policy", () => {
     expect(run("python3 <<'EOF'\nprint(1)\nEOF")).toBe("allow");
     expect(run("cat <<'EOF'\nunterminated")).toBe("ask");
   });
+
+  it("fails closed on the fourth review's cases", () => {
+    for (const command of [
+      "(( x <<EOF ))\ngit push origin x\nEOF",
+      "git config get alias.p push",
+      "git config --get alias.p push extra",
+      "git config alias.p push",
+      "git rebase -ix make main",
+      "git rebase --exe=make main",
+      "git fetch --upload-pack='sh -c x' origin",
+      "git -c diff.x.textconv=sh diff",
+      "git -c protocol.ext.allow=always fetch",
+      "GIT_SSH_COMMAND+=x git fetch",
+      "EDITOR=evil git commit",
+      "find . -name a -exec ls {} \\; -exec git push \\;",
+      "find . -exec git push",
+      "sh /dev/stdin",
+    ]) {
+      expect(`${JSON.stringify(command)} → ${run(command)}`).not.toBe(`${JSON.stringify(command)} → allow`);
+    }
+    expect(run("git config get user.name")).toBe("allow");
+    expect(run("git config list")).toBe("allow");
+    expect(run("git config --global --get user.email")).toBe("allow");
+    expect(run("find . -name '*.ts' -exec wc -l {} \\;")).toBe("allow");
+  });
 });

@@ -152,6 +152,18 @@ docs/                   This document and the UX brainstorm
 - `@petrina/core` never imports Tauri. It talks to a host interface, so the whole engine runs under Node in tests with fake agents.
 - **State** is an append-only event log per task in SQLite. The UI and the engine read the same state, so tasks pick up where they left off after a restart.
 
+## Security model
+
+Agents start with full permissions inside their own working copy; the coordinator asked for that, and it keeps the squad fast. What stops them doing harm is layered, and it is important to know which layer is the boundary:
+
+| Layer | What it guarantees | Boundary? |
+|---|---|---|
+| **Credentials** | Only the shipper's process gets GitHub credentials and an SSH agent. Every other agent runs with no tokens, an empty gh config, git credential helpers reset and SSH for git disabled. | Yes: whatever a non-shipper runs, it cannot push or write to GitHub |
+| **OS sandbox** (in progress) | Each agent runs inside a sandbox that only reaches its own worktree and scratch folder. | Yes, once shipped |
+| **Gates** | Plan, design and delivery checks live in the engine. No agent can skip them, and only the shipper runs after delivery approval. | Yes |
+| **Permission policy** | Reads every tool call and command: allows, denies, or asks the coordinator. Parses shells, pipelines, substitutions, here-documents and git/gh options, and fails closed when unsure. | No: an agent can write a script and run it, and no reading of command strings sees inside. It is a seatbelt and the coordinator's "ask me" experience |
+| **Read-only roles** | Edits are refused, and any change or commit a read-only role leaves behind is undone. | Within the worktree |
+
 ## Security notes
 
 - Agent output is untrusted. The UI renders it as text only (no HTML, no `dangerouslySetInnerHTML`). Links are opened only when they are `https://` and only through the host.

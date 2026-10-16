@@ -2,10 +2,20 @@
 // that). This policy decides, for every permission request, whether to allow it, deny it, or
 // ask the coordinator. It runs in code: no prompt can talk its way past it.
 //
+// Threat model. This policy is a seatbelt and the coordinator's "ask me" experience, NOT the
+// security boundary: an agent can always write a script file and run it, and no reading of
+// command strings can see inside that. The boundaries are:
+//   1. Credentials: only the shipper's process has GitHub credentials or an SSH agent
+//      (see agentEnv), so nothing else can push or write to GitHub whatever it runs.
+//   2. The OS sandbox around each agent (being built), which keeps it inside its worktree.
+//   3. Gates in the engine (plan, design, delivery) that no agent can skip.
+// Within that, the parser fails closed: anything it cannot read with confidence is asked
+// about or denied, never allowed.
+//
 // Commands are parsed, not pattern-matched: they are split into pipeline segments, nested
-// shells and substitutions are analysed too, and git's global options are skipped before the
-// subcommand is read. Role gates run first, so nothing the coordinator allowed earlier can
-// let a non-shipper push. Full containment still needs an OS sandbox around the agent.
+// shells, substitutions and here-documents are analysed too, and git's global options are
+// skipped before the subcommand is read. Role gates run first, so nothing the coordinator
+// allowed earlier can let a non-shipper push.
 
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
@@ -56,6 +66,7 @@ interface Heredoc {
 }
 
 const HEREDOC_MARK = "\u0000heredoc:";
+const LITERAL = "\u0001";
 
 /** Split a command line into words and operators, honouring quotes and here-documents. */
 function tokenize(input: string): { tokens: string[]; substitutions: string[]; heredocs: Heredoc[]; opaque?: string } {
@@ -66,7 +77,8 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
   let word = "";
   let inWord = false;
   const push = () => {
-    if (inWord) tokens.push(word);
+    // A quoted or escaped operator (find's \;) is a word, not an operator.
+    if (inWord) tokens.push(OPERATORS.has(word) || word === ">" || word === "<" ? `${LITERAL}${word}` : word);
     word = "";
     inWord = false;
   };
@@ -207,7 +219,10 @@ const OPERATORS = new Set([";", "&&", "||", "|", "&", "(", ")", ";;"]);
 
 export function analyze(command: string, depth = 0): Analysis {
   if (depth > 4) return { segments: [], opaque: "deeply nested commands", compound: true };
+  // Arithmetic contexts reuse << as a shift; the tokenizer would read it as a here-document.
+  if (/\(\(|\$\[/.test(command)) return { segments: [], opaque: "arithmetic that Petrina does not parse", compound: true };
   const { tokens, substitutions, heredocs, opaque } = tokenize(command);
+  if (heredocs.some((doc) => !doc.quoted && /\\$/m.test(doc.body))) return { segments: [], opaque: "a here-document with line continuations", compound: true };
   const compound = substitutions.length > 0 || heredocs.length > 0 || tokens.some((token) => OPERATORS.has(token) || token === ">" || token === "<");
   const analysis: Analysis = { segments: [], compound, ...(opaque ? { opaque } : {}) };
 
@@ -266,7 +281,7 @@ function unwrap(argv: string[], depth: number, stdin: readonly Heredoc[] = []): 
 function unwrapCommand(argv: string[], depth: number, stdin: readonly Heredoc[]): { segments: Segment[]; opaque?: string } {
   let args = [...argv];
   const assigns: string[] = [];
-  const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/;
+  const assignment = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
   for (;;) {
     while (args.length && (assignment.test(args[0]!) || RESERVED.has(args[0]!))) {
       const name = assignment.exec(args[0]!)?.[1];
@@ -281,7 +296,8 @@ function unwrapCommand(argv: string[], depth: number, stdin: readonly Heredoc[])
         const name = assignment.exec(args[0]!)?.[1];
         if (name) assigns.push(name);
         if (args[0] === "-u" || args[0] === "--unset") assigns.push(args[1] ?? "");
-        args = args.slice(args[0] === "-u" || args[0] === "--unset" ? 2 : 1);
+        const takesValue = ["-u", "--unset", "-C", "--chdir", "-P", "-S", "--split-string", "--block-signal", "--default-signal", "--ignore-signal"].includes(args[0]!);
+        args = args.slice(takesValue ? 2 : 1);
       }
       continue;
     }
@@ -304,19 +320,30 @@ function unwrapCommand(argv: string[], depth: number, stdin: readonly Heredoc[])
   const withAssigns = (segment: Segment): Segment => (assigns.length ? { ...segment, assigns } : segment);
   if (!args.length) return { segments: assigns.length ? [{ argv: [], interpreterFromStdin: false, assigns }] : [] };
   // A program name built from a variable or a substitution cannot be read: fail closed.
-  if (/[$`]|…/.test(args[0]!)) return { segments: [withAssigns({ argv: args, interpreterFromStdin: false })], opaque: "a program name built at run time" };
+  if (/[$`=]|…/.test(args[0]!)) return { segments: [withAssigns({ argv: args, interpreterFromStdin: false })], opaque: "a program name built at run time" };
   const program = basename(args[0]!);
   if (["export", "declare", "typeset", "readonly", "unset", "set"].includes(program)) {
-    const names = args.slice(1).filter((arg) => !arg.startsWith("-")).map((arg) => arg.split("=")[0]!);
+    const names = args.slice(1).filter((arg) => !arg.startsWith("-")).map((arg) => arg.split("=")[0]!.replace(/\+$/, ""));
     return { segments: [{ argv: args, interpreterFromStdin: false, assigns: [...assigns, ...names] }] };
   }
   if (program === "find") {
-    const at = args.findIndex((arg) => ["-exec", "-execdir", "-ok", "-okdir"].includes(arg));
-    if (at >= 0) {
-      const end = args.findIndex((arg, index) => index > at && (arg === ";" || arg === "+"));
-      const nested = unwrap(args.slice(at + 1, end < 0 ? undefined : end).filter((arg) => arg !== "{}"), depth + 1);
-      return { segments: [withAssigns({ argv: args.slice(0, at), interpreterFromStdin: false }), ...nested.segments], ...(nested.opaque ? { opaque: nested.opaque } : {}) };
+    const segments: Segment[] = [];
+    let opaque: string | undefined;
+    let rest = 0;
+    for (let at = 0; at < args.length; at += 1) {
+      if (!["-exec", "-execdir", "-ok", "-okdir"].includes(args[at]!)) continue;
+      const end = args.findIndex((arg, index) => index > at && (arg === `${LITERAL};` || arg === ";" || arg === "+"));
+      if (end < 0) return { segments: [], opaque: "find -exec without an end" };
+      const nested = unwrap(args.slice(at + 1, end).filter((arg) => arg !== "{}"), depth + 1);
+      segments.push(...nested.segments);
+      opaque = opaque ?? nested.opaque;
+      if (rest === 0) rest = at;
+      at = end;
     }
+    if (segments.length || opaque) return { segments: [withAssigns({ argv: args.slice(0, rest || args.length), interpreterFromStdin: false }), ...segments], ...(opaque ? { opaque } : {}) };
+  }
+  if (args.slice(1).some((arg) => ["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"].includes(arg))) {
+    return { segments: [withAssigns({ argv: args, interpreterFromStdin: true })], opaque: "a program reading its instructions from standard input" };
   }
   if (/^(g|m|n)?awk$/.test(program) && args.some((arg) => /\bsystem\s*\(|\|\s*getline|\|&|print\s*[^;]*\|/.test(arg))) {
     return { segments: [withAssigns({ argv: args, interpreterFromStdin: false })], opaque: "awk running commands" };
@@ -378,7 +405,7 @@ function ghApiReads(argv: readonly string[]): boolean {
 }
 
 /** Environment a non-shipper must not touch: credentials and where tools look for them. */
-const CREDENTIAL_ENV = /^(GH_|GITHUB_|GIT_|SSH_|GCM_|HOME$|XDG_CONFIG_HOME$|GNUPGHOME$|NETRC$|CURL_HOME$)/;
+const CREDENTIAL_ENV = /^(GH_|GITHUB_|GIT_|SSH_|GCM_|DYLD_|HOME$|XDG_CONFIG_HOME$|GNUPGHOME$|NETRC$|CURL_HOME$|EDITOR$|VISUAL$|PAGER$|BASH_ENV$|ENV$|PROMPT_COMMAND$|LD_PRELOAD$|LD_LIBRARY_PATH$|NODE_OPTIONS$|PYTHONSTARTUP$)/;
 
 /** git's subcommand, after its global options, and any `-c` settings that change what it does. */
 function gitCommand(argv: string[]): { sub: string; rest: string[]; risky: string[] } {
@@ -388,7 +415,7 @@ function gitCommand(argv: string[]): { sub: string; rest: string[]; risky: strin
     const arg = argv[i]!;
     if (arg === "-c" || arg === "--config-env") {
       const setting = argv[i + 1] ?? "";
-      if (/^(alias|credential|remote|url|push|core\.(sshcommand|hookspath|fsmonitor|editor|pager|askpass)|include|sequence\.editor|diff\.external|gpg\.program|filter\.)/i.test(setting)) risky.push(setting.split("=")[0]!);
+      if (/^(alias|credential|remote|url|push|core\.(sshcommand|hookspath|fsmonitor|editor|pager|askpass|gitproxy)|include|sequence\.editor|diff\.external|diff\..*\.(textconv|command)|merge\..*\.driver|gpg\.|protocol\.|uploadpack\.|receivepack\.|filter\.)/i.test(setting)) risky.push(setting.split("=")[0]!);
       i += 1;
       continue;
     }
@@ -452,14 +479,25 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
   if (program === "git") {
     const { sub, rest, risky } = gitCommand(argv);
     if (risky.length) effects.push({ kind: "git-risky-config", settings: risky });
-    const flags = normalizeFlags(rest);
-    if (sub === "rebase" && flags.some((arg) => arg === "-x" || arg === "--exec")) effects.push({ kind: "git-exec", what: "git rebase --exec" });
+    if (sub === "rebase" && rest.some((arg) => (/^-[A-Za-z]+/.test(arg) && !arg.startsWith("--") && arg.includes("x")) || (arg.startsWith("--ex") && "--exec".startsWith(arg.split("=")[0]!)))) effects.push({ kind: "git-exec", what: "git rebase --exec" });
+    if (["fetch", "pull", "clone", "ls-remote", "archive", "push"].includes(sub) && rest.some((arg) => /^--(upload-pack|receive-pack|exec)\b/.test(arg) || (sub !== "push" && (arg === "-u" || /^-u./.test(arg))))) effects.push({ kind: "git-exec", what: `git ${sub} with a custom pack program` });
     if (sub === "bisect" && rest[0] === "run") effects.push({ kind: "git-exec", what: "git bisect run" });
     if (sub === "submodule" && rest.includes("foreach")) effects.push({ kind: "git-exec", what: "git submodule foreach" });
     if (["difftool", "mergetool", "filter-branch", "filter-repo"].includes(sub)) effects.push({ kind: "git-exec", what: `git ${sub}` });
     if (sub === "config") {
-      const reading = flags.some((arg) => ["--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--show-scope", "--name-only", "get", "list"].includes(arg)) || (rest.filter((arg) => !arg.startsWith("-")).length <= 1 && !flags.some((arg) => /^--(unset|add|replace-all|rename-section|remove-section|edit)$|^-e$/.test(arg)));
-      if (!reading) effects.push({ kind: "git-risky-config", settings: [rest.find((arg) => !arg.startsWith("-")) ?? "config"] });
+      // Reads are recognised by structure; every other form counts as a write.
+      const positional = rest.filter((arg) => !arg.startsWith("-"));
+      const options = rest.filter((arg) => arg.startsWith("-"));
+      const harmless = new Set(["--global", "--local", "--system", "--worktree", "--show-origin", "--show-scope", "--name-only", "--null", "-z", "--includes", "--no-includes"]);
+      const readFlag = options.find((arg) => ["--get", "--get-all", "--get-regexp", "--list", "-l"].includes(arg));
+      const onlyHarmless = options.every((arg) => harmless.has(arg) || arg === readFlag);
+      const reading = onlyHarmless && (
+        (positional[0] === "get" && positional.length === 2) ||
+        (positional[0] === "list" && positional.length === 1) ||
+        (readFlag !== undefined && (readFlag === "--list" || readFlag === "-l" ? positional.length === 0 : positional.length >= 1 && positional.length <= 2)) ||
+        (readFlag === undefined && positional.length === 1 && positional[0] !== "get" && positional[0] !== "list")
+      );
+      if (!reading) effects.push({ kind: "git-risky-config", settings: [positional[0] ?? "config"] });
     }
     if (sub === "push") {
       // Short option clusters (-uf), long forms (--force-with-lease, --mirror…) and +/: refspecs all rewrite or delete.
