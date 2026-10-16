@@ -32,7 +32,7 @@ interface Segment {
   script?: string;
   /** Environment variables the command sets for itself (FOO=1 cmd, env FOO=1 cmd, export FOO=1). */
   assigns?: string[];
-  /** The segment's standard input comes from the previous segment through a pipe. */
+  /** Something supplies the segment's standard input: a pipe (| or |&), a < redirection or a here-string. */
   pipedIn?: boolean;
 }
 
@@ -198,11 +198,28 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
     } else if (ch === "\n" || ch === ";" || ch === "|" || ch === "&" || ch === "(" || ch === ")") {
       if (ch === "(" && input[i + 1] === "(") arithmetic = true;
       push();
+      if (ch === "|" && input[i + 1] === "&") {
+        tokens.push("|");
+        i += 1;
+        continue;
+      }
       const two = input.slice(i, i + 2);
       if (two === "&&" || two === "||" || two === ";;") {
         tokens.push(two);
         i += 1;
       } else tokens.push(ch === "\n" ? ";" : ch);
+    } else if ((ch === "<" || ch === ">") && input[i + 1] === "(") {
+      // Process substitution runs a command: analyse it like $(…).
+      const close = matchParen(input, i + 1);
+      if (close < 0) return { tokens, substitutions, heredocs, arithmetic, opaque: "an unbalanced process substitution" };
+      substitutions.push(input.slice(i + 2, close));
+      word += `${ch}(…)`;
+      inWord = true;
+      i = close;
+    } else if (ch === "<" && input[i + 1] === "<" && input[i + 2] === "<") {
+      push();
+      tokens.push("<<<");
+      i += 2;
     } else if (ch === ">" || ch === "<") {
       // `2>&1`: the digits are a file descriptor, not an argument.
       if (inWord && /^\d+$/.test(word)) {
@@ -248,16 +265,18 @@ export function analyze(command: string, depth = 0): Analysis {
   let current: string[] = [];
   let stdin: Heredoc[] = [];
   let piped = false;
+  let redirected = false;
   const flush = (nextPiped: boolean) => {
     if (current.length) {
       const inner = unwrap(current, depth, stdin);
       if (inner.opaque && !analysis.opaque) analysis.opaque = inner.opaque;
       const [first, ...rest] = inner.segments;
-      if (first) analysis.segments.push(piped ? { ...first, pipedIn: true } : first, ...rest);
+      if (first) analysis.segments.push(piped || redirected ? { ...first, pipedIn: true } : first, ...rest);
     }
     current = [];
     stdin = [];
     piped = nextPiped;
+    redirected = false;
   };
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!;
@@ -270,7 +289,16 @@ export function analyze(command: string, depth = 0): Analysis {
       flush(token === "|");
       continue;
     }
+    if (token === "<<<") {
+      // A here-string is the command's input: data, or a script for an interpreter.
+      const body = tokens[i + 1] ?? "";
+      stdin.push({ body: body.startsWith(LITERAL) ? body.slice(1) : body, quoted: true });
+      redirected = true;
+      i += 1;
+      continue;
+    }
     if (token === ">" || token === "<") {
+      if (token === "<") redirected = true;
       i += 1; // skip the redirection target
       continue;
     }

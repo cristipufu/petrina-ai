@@ -229,6 +229,14 @@ export class Engine {
     this.schedule();
   }
 
+  /** How many agents of one tool may run at once (keeps one subscription from being exhausted). */
+  setToolCap(toolId: Id, cap: number): void {
+    if (!this.s.tools.some((tool) => tool.id === toolId)) throw new Error("Unknown tool");
+    this.s.pool.toolCaps = { ...this.s.pool.toolCaps, [toolId]: Math.max(1, Math.min(12, Math.round(cap))) };
+    this.commit();
+    this.schedule();
+  }
+
   setPoolPaused(paused: boolean): void {
     this.s.pool.paused = paused;
     this.commit();

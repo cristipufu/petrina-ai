@@ -206,4 +206,14 @@ describe("permission policy", () => {
     expect(run("bun install --frozen-lockfile 2>&1 | tail -15")).toBe("allow");
     expect(run("npm install left-pad 2>/dev/null")).toBe("ask");
   });
+
+  it("tracks every way an interpreter gets its input, and process substitutions", () => {
+    expect(run("echo hi; python3 < evil.py")).toBe("ask");
+    expect(run("ls |& python3")).toBe("ask");
+    expect(run("python3 <<< \"import os; os.system('git push')\"")).toBe("deny");
+    expect(run("python3 <<< \"print(1)\"")).toBe("allow");
+    expect(run("diff <(git push origin x) notes.txt")).toBe("deny");
+    expect(run("diff <(git push --force origin x) notes.txt", "shipper")).toBe("ask");
+    expect(run("diff <(ls src) <(ls dist)")).toBe("allow");
+  });
 });
