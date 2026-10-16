@@ -17,6 +17,7 @@
 
 - **A board for your products.** Every task is a card that moves from the queue through planning, design, build and review to a pull request. Each card says, in plain language, who is working on it and what they are doing.
 - **A queue you control.** Drag tasks to set priority. The top of the queue starts first, as soon as a slot is free. Hold a task to keep it from starting.
+- **Many products.** A searchable product switcher (⌘P) and a Products page that shows every product's pipeline and what waits on you, so twenty products stay as calm as two.
 - **A pool of agents.** Choose how many agents may run at once, with caps per tool so one subscription is not exhausted. See who is in each slot.
 - **Roles, not tools.** Planner, Researcher, Architect, Design reviewer, UX designer, Builder, Tester and Code reviewer are first-class. Any role can run on any tool, model and effort: Claude Code with Opus 5.5 as the architect, Codex at xhigh effort as its reviewer.
 - **A plan per task.** The planner composes the stages for each task: a bug fix might be one builder and two reviewers, something new gets research, a design both architects agree on, screens, tests and three reviewers. You can change the plan before it runs.

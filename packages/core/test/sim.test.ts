@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDemoState } from "../src/demo.js";
+import { createDemoState, createPortfolioDemo } from "../src/demo.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
 import type { State, Task } from "../src/model.js";
 import { slotUses, startsNextCount } from "../src/scheduler.js";
@@ -136,5 +136,13 @@ describe("Simulator", () => {
     expect(state.inbox.map((item) => item.kind).sort()).toEqual(["delivery", "permission", "plan", "question"]);
     expect(slotUses(state)).toHaveLength(3);
     expect(startsNextCount(state)).toBe(1);
+  });
+
+  it("builds a twenty-product portfolio that fits in its pool", () => {
+    const { state } = createPortfolioDemo(1_000_000_000);
+    expect(state.products).toHaveLength(20);
+    expect(slotUses(state).length).toBeLessThanOrEqual(state.pool.limit);
+    expect(new Set(state.inbox.map((item) => item.id)).size).toBe(state.inbox.length);
+    expect(new Set(state.tasks.map((task) => task.productId)).size).toBe(16);
   });
 });

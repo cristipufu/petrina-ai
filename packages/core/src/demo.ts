@@ -3,7 +3,7 @@
 
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
 import type { InboxItem, Product, State, Task, TaskKind } from "./model.js";
-import { Simulator, type Triggers } from "./sim.js";
+import { Simulator, type Trigger, type Triggers } from "./sim.js";
 
 export const DEMO_PRODUCTS: readonly Product[] = [
   { id: "shop", name: "Shop", repo: "acme/shop", tone: "blue" },
@@ -118,9 +118,14 @@ function queuedTask(spec: Spec, priority: number, now: number): Task {
  * Run one task alone through the simulator until `until` holds, settling everything that
  * needs the coordinator on the way (first option, allow once, approve).
  */
-function fastForward(spec: Spec, until: (task: Task, inbox: readonly InboxItem[]) => boolean): { task: Task; inbox: InboxItem[] } {
+function fastForward(
+  spec: Spec,
+  until: (task: Task, inbox: readonly InboxItem[]) => boolean,
+  triggers: Triggers = DEMO_TRIGGERS,
+  products: readonly Product[] = DEMO_PRODUCTS,
+): { task: Task; inbox: InboxItem[] } {
   const start = 0;
-  const sim = new Simulator(baseState(start, [queuedTask(spec, 0, start)]), { triggers: DEMO_TRIGGERS, prMergeAfter: 3, tickMs: TICK });
+  const sim = new Simulator({ ...baseState(start, [queuedTask(spec, 0, start)]), products }, { triggers, prMergeAfter: 3, tickMs: TICK });
   for (let tick = 0; tick < 400; tick += 1) {
     sim.tick();
     const state = sim.getState();
@@ -188,4 +193,106 @@ export function createDemoState(now: number): State {
   });
 
   return { ...baseState(now, tasks, inbox), seq: 10_000 };
+}
+
+// ── A portfolio: twenty products, to see how the app holds up at scale ───────────────────
+
+const PORTFOLIO_NAMES = [
+  "Shop", "Notes", "Site", "Billing", "Mobile app", "Admin console", "Docs", "Blog", "CRM", "Analytics",
+  "Help desk", "Status page", "Marketplace", "Payments API", "Search", "Auth service", "Email", "Data pipeline", "Design system", "Partner portal",
+];
+
+const TONES: readonly Product["tone"][] = ["blue", "green", "orange", "violet", "pink", "teal", "indigo", "purple", "amber", "slate"];
+
+const PORTFOLIO_WORK: readonly { title: string; area: string; kind: TaskKind; description: string }[] = [
+  { title: "Saved carts", area: "saved carts", kind: "feature", description: "Keep a cart for a week so people can come back to it." },
+  { title: "Fix slow first load", area: "first load", kind: "bug", description: "The first page takes four seconds on phones." },
+  { title: "Yearly plans", area: "yearly plans", kind: "feature", description: "Offer a yearly plan with two months free." },
+  { title: "Team invites", area: "team invites", kind: "feature", description: "Invite teammates by email with a role." },
+  { title: "Fix broken CSV export", area: "CSV export", kind: "bug", description: "Exports cut off after a thousand rows." },
+  { title: "Two-factor sign-in", area: "two-factor sign-in", kind: "feature", description: "Optional codes from an authenticator app." },
+  { title: "Update the brand colours", area: "brand colours", kind: "chore", description: "Use the new palette everywhere." },
+  { title: "Usage dashboard", area: "the usage dashboard", kind: "new", description: "A page that shows usage per month and per teammate." },
+  { title: "Refund flow", area: "refunds", kind: "feature", description: "Let support refund an order in two clicks." },
+  { title: "Fix timezone bug in reports", area: "reports", kind: "bug", description: "Reports use UTC instead of the account's timezone." },
+  { title: "Dark mode", area: "dark mode", kind: "feature", description: "A dark theme everywhere." },
+  { title: "Webhook retries", area: "webhooks", kind: "bug", description: "Retry failed webhooks with backoff." },
+];
+
+type Target =
+  | "queued" | "held" | "design-running" | "build-running" | "review-running" | "question" | "permission"
+  | "plan-gate" | "design-gate" | "delivery-gate" | "pr-open" | "done";
+
+/** What each task in the portfolio is doing when the app opens. At most eight hold a slot. */
+const PORTFOLIO_TARGETS: readonly Target[] = [
+  "build-running", "review-running", "design-running", "question", "build-running", "permission", "review-running",
+  "plan-gate", "design-gate", "delivery-gate", "delivery-gate", "design-gate", "plan-gate", "delivery-gate",
+  "pr-open", "pr-open", "pr-open", "done", "done", "done", "done", "done", "done",
+  "queued", "queued", "queued", "queued", "queued", "held", "queued", "queued", "queued", "queued", "queued", "held", "queued", "queued",
+];
+
+const reach: Record<Exclude<Target, "queued" | "held">, (task: Task, inbox: readonly InboxItem[]) => boolean> = {
+  "design-running": (task) => task.column === "designing" && task.state === "running" && (task.agent?.step ?? 0) >= 1,
+  "build-running": (task) => task.column === "building" && task.state === "running" && (task.agent?.step ?? 0) >= 2,
+  "review-running": (task) => task.column === "reviewing" && task.state === "running" && (task.agent?.step ?? 0) >= 1,
+  question: (_task, inbox) => inbox.some((item) => item.kind === "question"),
+  permission: (_task, inbox) => inbox.some((item) => item.kind === "permission"),
+  "plan-gate": (_task, inbox) => inbox.some((item) => item.kind === "plan"),
+  "design-gate": (_task, inbox) => inbox.some((item) => item.kind === "design"),
+  "delivery-gate": (_task, inbox) => inbox.some((item) => item.kind === "delivery"),
+  "pr-open": (task) => task.state === "pr-open",
+  done: (task) => task.state === "done",
+};
+
+export interface Demo {
+  state: State;
+  triggers: Triggers;
+}
+
+/** Twenty made-up products with work spread across them. Products 16 to 19 are quiet. */
+export function createPortfolioDemo(now: number): Demo {
+  const products: Product[] = PORTFOLIO_NAMES.map((name, index) => ({
+    id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    name,
+    repo: `acme/${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    tone: TONES[index % TONES.length]!,
+  }));
+  const triggers: Record<string, Trigger> = {};
+  const tasks: Task[] = [];
+  const inbox: InboxItem[] = [];
+  let queuePosition = 0;
+
+  PORTFOLIO_TARGETS.forEach((target, index) => {
+    const product = products[(index * 7) % 16]!;
+    const work = PORTFOLIO_WORK[index % PORTFOLIO_WORK.length]!;
+    const id = `p${index}`;
+    const kind: TaskKind = target === "design-running" || target === "design-gate" || target === "question" ? "feature" : work.kind;
+    const spec: Spec = { id, productId: product.id, title: work.title, description: work.description, area: work.area, kind, approvePlan: target === "plan-gate" };
+
+    if (target === "question") {
+      triggers[`${id}|architect|1|1`] = { kind: "question", title: `Should ${work.area} be on for everyone, or opt-in first?`, options: ["Opt-in first, then everyone", "Everyone", "Opt-in only"] };
+    }
+    if (target === "permission") {
+      triggers[`${id}|builder|1|2`] = { kind: "permission", title: "Add a new package: date-fns", body: "Formatting dates in the user's timezone.", detail: "npm install date-fns" };
+    }
+
+    if (target === "queued" || target === "held") {
+      const task = queuedTask(spec, queuePosition, now - (90 - index) * MINUTE);
+      queuePosition += 1;
+      tasks.push(target === "held" ? { ...task, held: true, statusLine: "On hold" } : task);
+      return;
+    }
+
+    const reached = fastForward(spec, reach[target], triggers, products);
+    const endedAt = Math.max(reached.task.timeline.at(-1)?.at ?? 0, ...reached.inbox.map((item) => item.at));
+    const ago = target === "done" ? (index + 2) * 60 * MINUTE : (index % 9) * 3 * MINUTE;
+    const shifted = shift({ ...reached.task, priority: 100 + index }, reached.inbox, endedAt, now, ago);
+    tasks.push(shifted.task);
+    inbox.push(...shifted.inbox);
+  });
+
+  return {
+    state: { ...baseState(now, tasks, inbox), products, seq: 10_000, pool: { limit: 8, paused: false, toolCaps: { "claude-code": 5, codex: 4 } } },
+    triggers,
+  };
 }

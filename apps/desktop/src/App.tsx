@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Bot, Hand, LayoutGrid, Library, Moon, Plus, Search, Sun, X } from "lucide-react";
+import { Bell, Boxes, Bot, Hand, LayoutGrid, Library, Moon, Plus, Search, Sun, X } from "lucide-react";
 import type { Task } from "@petrina/core";
 import { startClock, useSim } from "./engine";
 import { blockingCount, lookup } from "./lib";
@@ -9,11 +9,12 @@ import { Inbox } from "./components/Inbox";
 import { NewTaskDialog } from "./components/NewTask";
 import { AgentsPage, LibraryPage } from "./components/Pages";
 import { PoolButton } from "./components/Pool";
+import { ProductsPage, ProductSwitcher } from "./components/Products";
 import type { SheetTab } from "./components/TaskCard";
 import { TaskSheet } from "./components/TaskSheet";
 import { applyTheme, initialTheme, type Theme } from "./theme";
 
-type View = "board" | "agents" | "library";
+type View = "board" | "products" | "agents" | "library";
 
 interface Toast {
   id: number;
@@ -74,6 +75,7 @@ export function App() {
       } else if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
         if (event.key === "i") setInboxOpen((on) => !on);
         if (event.key === "b") setView("board");
+        if (event.key === "p") setView("products");
         if (event.key === "a") setView("agents");
         if (event.key === "l") setView("library");
       }
@@ -97,19 +99,7 @@ export function App() {
           <Logo />
           Petrina
         </div>
-        <div className="segmented" role="radiogroup" aria-label="Product">
-          <button className={product === "all" ? "on" : ""} onClick={() => setProduct("all")}>
-            All products
-          </button>
-          {state.products.map((entry) => (
-            <button key={entry.id} className={product === entry.id ? "on" : ""} onClick={() => setProduct(entry.id)}>
-              <span className={`product-chip tone-${entry.tone}`}>
-                <i />
-              </span>
-              {entry.name}
-            </button>
-          ))}
-        </div>
+        <ProductSwitcher state={state} find={find} value={product} onChange={setProduct} />
         <label className="search">
           <Search size={14} />
           <input ref={searchRef} placeholder="Find a task" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -148,6 +138,10 @@ export function App() {
           <LayoutGrid size={19} />
           Board
         </button>
+        <button className={view === "products" ? "on" : ""} onClick={() => setView("products")} title="Products (P)">
+          <Boxes size={19} />
+          Products
+        </button>
         <button className={view === "agents" ? "on" : ""} onClick={() => setView("agents")} title="Agents (A)">
           <Bot size={19} />
           Agents
@@ -162,6 +156,15 @@ export function App() {
 
       <main className="main">
         {view === "board" && <Board state={state} find={find} visible={visible} selectedId={sheet?.taskId} onOpen={open} />}
+        {view === "products" && (
+          <ProductsPage
+            state={state}
+            onPick={(productId) => {
+              setProduct(productId);
+              setView("board");
+            }}
+          />
+        )}
         {view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {view === "library" && <LibraryPage state={state} find={find} />}
       </main>

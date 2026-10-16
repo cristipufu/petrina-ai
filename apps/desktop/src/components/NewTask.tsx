@@ -47,16 +47,26 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
     <>
       <div className="dialog-scrim" onClick={onClose} />
       <div className="dialog" role="dialog" aria-label="New task">
-        <div className="segmented" style={{ marginBottom: 8 }}>
-          {state.products.map((product) => (
-            <button key={product.id} className={productId === product.id ? "on" : ""} onClick={() => setProductId(product.id)}>
-              <span className={`product-chip tone-${product.tone}`}>
-                <i />
-              </span>
-              {product.name}
-            </button>
-          ))}
-        </div>
+        {state.products.length <= 5 ? (
+          <div className="segmented" style={{ marginBottom: 8 }}>
+            {state.products.map((product) => (
+              <button key={product.id} className={productId === product.id ? "on" : ""} onClick={() => setProductId(product.id)}>
+                <span className={`product-chip tone-${product.tone}`}>
+                  <i />
+                </span>
+                {product.name}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <select className="field" style={{ marginBottom: 8, flex: "none" }} aria-label="Product" value={productId} onChange={(event) => setProductId(event.target.value)}>
+            {[...state.products].sort((a, b) => a.name.localeCompare(b.name)).map((product) => (
+              <option key={product.id} value={product.id}>
+                {product.name}
+              </option>
+            ))}
+          </select>
+        )}
         <input
           ref={titleRef}
           autoFocus

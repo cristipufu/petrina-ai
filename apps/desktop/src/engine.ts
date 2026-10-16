@@ -1,11 +1,20 @@
 import { useSyncExternalStore } from "react";
-import { createDemoState, DEMO_TRIGGERS, Simulator, type State } from "@petrina/core";
+import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type State } from "@petrina/core";
 
-// Until the ACP engine lands (M2), the app runs on the simulated squad with synthetic data.
+// Until the ACP engine lands, the app runs on the simulated squad with synthetic data.
+// `?demo=portfolio` opens twenty products instead of three.
 const TICK_MS = 2_200;
 
-export const sim = new Simulator(createDemoState(Date.now()), {
-  triggers: DEMO_TRIGGERS,
+function demo() {
+  const now = Date.now();
+  if (new URLSearchParams(window.location.search).get("demo") === "portfolio") return createPortfolioDemo(now);
+  return { state: createDemoState(now), triggers: DEMO_TRIGGERS };
+}
+
+const initial = demo();
+
+export const sim = new Simulator(initial.state, {
+  triggers: initial.triggers,
   prMergeAfter: 45,
   tickMs: TICK_MS,
 });

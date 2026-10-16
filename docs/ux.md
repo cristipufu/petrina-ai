@@ -98,6 +98,15 @@ The run state is shown on the card, not as a column, so a task never jumps aroun
 
 Hover shows quick actions: Message, Pause or Resume, Join session, and a menu (Move to top, Hold, Cancel).
 
+## Many products
+
+A coordinator may run twenty products or more, so nothing assumes a handful.
+
+- **Product switcher** (⌘P) in the top bar: a search field, then products grouped as *Needs you*, *Active* and *Quiet*, each with badges for what waits on you, agents working and tasks queued. The board keeps its full width.
+- **Products page:** the portfolio on one screen. One row per product with its pipeline (queue, plan, design, build, review, ready), what shipped, and what waits on you. Products that need you sort first; clicking one filters the board to it.
+- The queue and the pool stay global: priority is across products, because the pool of agents is shared.
+- Cards always carry their product, so an all-products board stays readable.
+
 ## The pool
 
 How many agents may run at once.

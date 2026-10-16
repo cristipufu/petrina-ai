@@ -906,3 +906,46 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ── Products: switcher and portfolio ─────────────────────────────── */
+
+.btn.switcher { min-width: 170px; justify-content: space-between; }
+.switcher-pop { width: 330px; top: 42px; padding: 10px; }
+.switcher-list { max-height: min(520px, 70vh); overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+.switcher-group { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); padding: 10px 8px 4px; }
+.switcher-row { width: 100%; display: flex; align-items: center; gap: 9px; border: 0; background: transparent; padding: 7px 8px; border-radius: 8px; font-size: 13px; color: var(--text); text-align: left; }
+.switcher-row:hover { background: var(--bg-hover); }
+.switcher-row.on { background: var(--accent-soft); color: var(--accent-text); }
+.switcher-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 560; }
+.badges { display: inline-flex; gap: 4px; }
+.badges .b { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--slate-soft); color: var(--slate); font-variant-numeric: tabular-nums; }
+.badges .b.amber { background: var(--amber-soft); color: var(--amber); }
+.badges .b.blue { background: var(--blue-soft); color: var(--blue); }
+
+.portfolio { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--bg-elev); }
+.portfolio-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(200px, 1.6fr) repeat(6, minmax(56px, 0.6fr)) minmax(64px, 0.6fr) minmax(72px, 0.6fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+}
+.portfolio-row:hover:not(.head) { background: var(--bg-hover); }
+.portfolio-row.head { border-top: 0; background: var(--bg-sunken); color: var(--text-3); font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; cursor: default; }
+.portfolio-row.quiet { color: var(--text-3); }
+.portfolio-row .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.portfolio-row .name { display: block; font-weight: 620; color: var(--text); }
+.portfolio-row.quiet .name { color: var(--text-2); }
+.portfolio-row .repo { display: block; font-size: 11.5px; color: var(--text-3); }
+.portfolio-row .c { text-align: center; }
+.portfolio-row .muted { color: var(--text-3); }
+.cell { display: inline-grid; place-items: center; min-width: 26px; height: 22px; padding: 0 6px; border-radius: 7px; color: var(--text-3); font-variant-numeric: tabular-nums; font-weight: 600; }
+.cell.on { background: var(--blue-soft); color: var(--blue); }
+.cell.on.queue { background: var(--slate-soft); color: var(--slate); }
+.cell.on.ready { background: var(--green-soft); color: var(--green); }
