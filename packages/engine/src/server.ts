@@ -94,8 +94,13 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
       if (origin && !selfOrigins.has(origin)) return new Response("Forbidden", { status: 403 });
 
       if (url.pathname === "/ws") {
-        if (!tokenOk(url.searchParams.get("token"))) return new Response("Unauthorized", { status: 401 });
-        return server.upgrade(request, { data: { authed: true } }) ? undefined : new Response("Upgrade failed", { status: 400 });
+        // Browsers always send Origin on WebSocket handshakes: a missing one is not a browser we know.
+        if (!origin) return new Response("Forbidden", { status: 403 });
+        // The token travels as a subprotocol, so it never appears in a URL or a log line.
+        const offered = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((entry) => entry.trim());
+        const presented = offered.find((entry) => entry.startsWith("petrina.token."))?.slice("petrina.token.".length);
+        if (!offered.includes("petrina.v1") || !tokenOk(presented)) return new Response("Unauthorized", { status: 401 });
+        return server.upgrade(request, { data: { authed: true }, headers: { "Sec-WebSocket-Protocol": "petrina.v1" } }) ? undefined : new Response("Upgrade failed", { status: 400 });
       }
 
       if (url.pathname.startsWith("/api/")) {
@@ -113,10 +118,11 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
         return new Response("Not found", { status: 404 });
       }
 
-      if (ui) return serveUi(ui, url.pathname, port, token);
+      if (ui) return serveUi(ui, url.pathname);
       return new Response("Petrina engine", { status: 200 });
     },
     websocket: {
+      maxPayloadLength: 1 << 20,
       open(socket) {
         sockets.add(socket);
         socket.send(JSON.stringify({ type: "state", state: engine.getState() }));
@@ -139,16 +145,14 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
   });
 }
 
-/** Serve the built UI with the connection details in a meta tag (no inline script, so the CSP holds). */
-async function serveUi(root: string, pathname: string, port: number, token: string): Promise<Response> {
+/**
+ * Serve the built UI. It carries no secret: `petrina open` hands the token to the page in the
+ * URL fragment, which never reaches a server or a log.
+ */
+async function serveUi(root: string, pathname: string): Promise<Response> {
   const base = resolve(root);
   const target = normalize(join(base, pathname === "/" ? "index.html" : pathname));
   if (!target.startsWith(base + sep) && target !== base) return new Response("Not found", { status: 404 });
   const file = existsSync(target) ? target : join(base, "index.html");
-  if (file.endsWith("index.html")) {
-    const html = await Bun.file(file).text();
-    const meta = `<meta name="petrina-engine" content="${JSON.stringify({ url: `ws://127.0.0.1:${port}/ws`, token }).replace(/"/g, "&quot;")}" />`;
-    return new Response(html.replace("<head>", `<head>\n    ${meta}`), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
-  }
-  return new Response(Bun.file(file));
+  return new Response(Bun.file(file), file.endsWith("index.html") ? { headers: { "cache-control": "no-store" } } : undefined);
 }

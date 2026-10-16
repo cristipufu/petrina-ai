@@ -29,7 +29,7 @@ import {
 import type { z } from "zod";
 import { AgentRun, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
-import { decide, ruleFor } from "./policy.js";
+import { decide, noPushEnv, ruleFor } from "./policy.js";
 import {
   BriefResult,
   BuildResult,
@@ -367,9 +367,8 @@ export class Engine {
     const task = this.task(item.taskId);
     if (task) {
       const product = this.productOf(task);
-      if (scope === "always" && product && item.detail) {
-        product.allowed = [...new Set([...(product.allowed ?? []), ruleFor(item.detail)])];
-      }
+      const rule = scope === "always" && item.detail ? ruleFor(item.detail) : undefined;
+      if (rule && product) product.allowed = [...new Set([...(product.allowed ?? []), rule])];
       this.log(task, "you", scope === "always" ? `You allowed it from now on in ${product?.name ?? "this product"}: ${item.title}` : `You allowed: ${item.title}`);
       this.unblock(task);
     }
@@ -855,6 +854,8 @@ export class Engine {
     const run = await AgentRun.start({
       profile,
       ...(command ? { command } : {}),
+      // Only the shipper can push; for everyone else git itself refuses (defence in depth).
+      ...(roleId === "shipper" ? {} : { env: noPushEnv(process.env) }),
       cwd: task.worktree!,
       readOnly: !role.canEdit,
       signal,

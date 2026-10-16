@@ -11,6 +11,7 @@
     "dev": "bun run --cwd apps/desktop dev",
     "engine": "bun packages/engine/src/cli.ts serve",
     "petrina": "bun packages/engine/src/cli.ts",
+    "open": "bun packages/engine/src/cli.ts open --dev",
     "tauri": "bun run --cwd apps/desktop tauri",
     "build": "bun run --cwd apps/desktop build",
     "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/engine typecheck && bun run --cwd apps/desktop typecheck",

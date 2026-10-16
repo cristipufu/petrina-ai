@@ -39,16 +39,47 @@ interface Store extends Actions {
 
 const TICK_MS = 2_200;
 
+const SESSION_KEY = "petrina.engine";
+
+function validAddress(raw: unknown): { url: string; token: string } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const { url, token } = raw as { url?: unknown; token?: unknown };
+  if (typeof url !== "string" || typeof token !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(token)) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "ws:" || parsed.hostname !== "127.0.0.1" || parsed.pathname !== "/ws") return undefined;
+  } catch {
+    return undefined;
+  }
+  return { url, token };
+}
+
+/**
+ * `petrina open` passes the engine's address in the URL fragment (never sent to a server).
+ * It is kept for this tab only and removed from the address bar right away.
+ */
 function engineAddress(): { url: string; token: string } | undefined {
   if (new URLSearchParams(window.location.search).has("demo")) return undefined;
-  const meta = document.querySelector<HTMLMetaElement>('meta[name="petrina-engine"]');
-  if (!meta?.content) return undefined;
+  const hash = new URLSearchParams(window.location.hash.slice(1)).get("engine");
+  if (hash) {
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    try {
+      const decoded = validAddress(JSON.parse(atob(hash.replace(/-/g, "+").replace(/_/g, "/"))));
+      if (decoded) {
+        try {
+          sessionStorage.setItem(SESSION_KEY, JSON.stringify(decoded));
+        } catch {
+          // Without storage the tab still works; a reload just needs `petrina open` again.
+        }
+        return decoded;
+      }
+    } catch {
+      return undefined;
+    }
+  }
   try {
-    const parsed = JSON.parse(meta.content) as { url?: unknown; token?: unknown };
-    if (typeof parsed.url !== "string" || typeof parsed.token !== "string") return undefined;
-    const url = new URL(parsed.url);
-    if (url.protocol !== "ws:" || url.hostname !== "127.0.0.1") return undefined;
-    return { url: parsed.url, token: parsed.token };
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    return saved ? validAddress(JSON.parse(saved)) : undefined;
   } catch {
     return undefined;
   }
@@ -75,7 +106,7 @@ class EngineClient implements Store {
   }
 
   private connect(): void {
-    const socket = new WebSocket(`${this.address.url}?token=${encodeURIComponent(this.address.token)}`);
+    const socket = new WebSocket(this.address.url, ["petrina.v1", `petrina.token.${this.address.token}`]);
     this.socket = socket;
     socket.onopen = () => {
       this.connected = true;
