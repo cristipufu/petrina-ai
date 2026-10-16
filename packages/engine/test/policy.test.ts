@@ -216,4 +216,12 @@ describe("permission policy", () => {
     expect(run("diff <(git push --force origin x) notes.txt", "shipper")).toBe("ask");
     expect(run("diff <(ls src) <(ls dist)")).toBe("allow");
   });
+
+  it("keeps interpreters in multi-part commands fail-closed, and only plain digits are file descriptors", () => {
+    expect(run("which bun; bun --version")).toBe("allow");
+    expect(run("echo x | (python3)")).toBe("ask");
+    expect(run("echo hi; python3")).toBe("ask");
+    expect(run('npm install "2">/dev/null')).toBe("ask");
+    expect(run("bun install --frozen-lockfile 2>&1 | tail -5")).toBe("allow");
+  });
 });

@@ -81,11 +81,14 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
   const pending: { delimiter: string; quoted: boolean; strip: boolean; index: number }[] = [];
   let word = "";
   let inWord = false;
+  /** Where the current word started in the raw input, to tell `2>` from `"2">` or `\2>`. */
+  let wordStart = -1;
   const push = () => {
     // A quoted or escaped operator (find's \;) is a word, not an operator.
     if (inWord) tokens.push(OPERATORS.has(word) || word === ">" || word === "<" ? `${LITERAL}${word}` : word);
     word = "";
     inWord = false;
+    wordStart = -1;
   };
   for (let i = 0; i < input.length; i += 1) {
     const ch = input[i]!;
@@ -221,8 +224,8 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
       tokens.push("<<<");
       i += 2;
     } else if (ch === ">" || ch === "<") {
-      // `2>&1`: the digits are a file descriptor, not an argument.
-      if (inWord && /^\d+$/.test(word)) {
+      // `2>&1`: the digits are a file descriptor, not an argument, but only as plain raw digits.
+      if (inWord && wordStart >= 0 && /^\d+$/.test(input.slice(wordStart, i))) {
         word = "";
         inWord = false;
       }
@@ -230,6 +233,7 @@ function tokenize(input: string): { tokens: string[]; substitutions: string[]; h
       tokens.push(ch);
       if (input[i + 1] === ch || input[i + 1] === "&") i += 1;
     } else {
+      if (!inWord) wordStart = i;
       word += ch;
       inWord = true;
     }
@@ -609,10 +613,13 @@ function effectsOf(segment: Segment, segments: Segment[], worktree: string): Eff
   if (program === "sudo" || program === "doas") effects.push({ kind: "ask", title: "Run a command as administrator", body: "It asked for administrator rights." });
   if (["ssh", "scp", "rsync", "sftp"].includes(program)) effects.push({ kind: "ask", title: "Connect to another machine", body: "It wants to open a connection to a remote machine." });
   if (CLOUD.has(program) || (program === "docker" && ["push", "login"].includes(argv[1] ?? ""))) effects.push({ kind: "ask", title: `Use ${program}`, body: "This can change cloud resources, which may cost money." });
-  // Only an interpreter that actually receives piped input runs it as a script (bun --version does not).
-  if (segment.interpreterFromStdin && segment.pipedIn && segments.some((other) => ["curl", "wget"].includes(basename(other.argv[0] ?? "")))) {
+  // Fail closed: an interpreter without a script argument in a multi-part command (or with any
+  // input redirected) may be reading code from somewhere. Only a bare --version/--help is exempt.
+  const versionOnly = argv.length === 2 && ["--version", "-v", "-V", "--help", "-h"].includes(argv[1] ?? "");
+  const fedSomehow = segment.interpreterFromStdin && !versionOnly && (segments.length > 1 || segment.pipedIn);
+  if (fedSomehow && segments.some((other) => ["curl", "wget"].includes(basename(other.argv[0] ?? "")))) {
     effects.push({ kind: "ask", title: "Run a script from the internet", body: "It wants to download a script and run it." });
-  } else if (segment.interpreterFromStdin && segment.pipedIn) {
+  } else if (fedSomehow) {
     effects.push({ kind: "opaque", reason: "a script fed to an interpreter through a pipe" });
   }
   if (["cat", "less", "more", "head", "tail", "source", "."].includes(program) && argv.slice(1).some((arg) => /(^|\/)\.env(\.|$)/.test(arg))) {
