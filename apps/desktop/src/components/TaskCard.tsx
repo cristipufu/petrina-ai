@@ -97,6 +97,8 @@ export function TaskCard({ task, state, find, selected, queuePosition, onOpen, o
               <GitPullRequest size={11} />#{task.pr.number}
             </span>
           )}
+          {task.release && <span className="pill done">{task.release.tag}</span>}
+          {task.landed && <span className="pill done">on {task.landed.branch}</span>}
         </span>
       </div>
 

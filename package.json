@@ -3,12 +3,17 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "bun run --cwd apps/desktop dev",
+    "engine": "bun packages/engine/src/cli.ts serve",
+    "petrina": "bun packages/engine/src/cli.ts",
     "tauri": "bun run --cwd apps/desktop tauri",
     "build": "bun run --cwd apps/desktop build",
-    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd apps/desktop typecheck",
-    "test": "bun run --cwd packages/core test"
+    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/engine typecheck && bun run --cwd apps/desktop typecheck",
+    "test": "bun run --cwd packages/core test && bun run --cwd packages/engine test"
   }
 }

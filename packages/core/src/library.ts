@@ -1,4 +1,4 @@
-import type { AgentProfile, Plan, Role, Stage, Task, Tool } from "./model.js";
+import type { AgentProfile, DeliveryMode, Plan, Role, Stage, Task, Tool } from "./model.js";
 
 /** The roles every product starts with. They are data, so the coordinator can edit them. */
 export const BUILT_IN_ROLES: readonly Role[] = [
@@ -80,6 +80,17 @@ export const BUILT_IN_ROLES: readonly Role[] = [
     column: "building",
   },
   {
+    id: "shipper",
+    name: "Shipper",
+    icon: "rocket",
+    tone: "green",
+    purpose: "Delivers approved work the way the task asks: opens a pull request, publishes a release, or commits to main.",
+    canEdit: true,
+    sees: "The finished change, the builder's report and the reviews.",
+    handsBack: "A link to the pull request or release, or the commit on main.",
+    column: "ready",
+  },
+  {
     id: "code-reviewer",
     name: "Code reviewer",
     icon: "search",
@@ -147,21 +158,26 @@ const designStages = (taskId: string): Stage[] => [
   { id: `${taskId}:design-ok`, kind: "gate", title: "Your design check", roleId: "planner", profileIds: [], gate: "design" },
 ];
 
-const deliveryGate = (taskId: string): Stage => ({
-  id: `${taskId}:delivery`,
-  kind: "gate",
-  title: "Your delivery check",
-  roleId: "code-reviewer",
-  profileIds: [],
-  gate: "delivery",
-});
+export const DELIVERY_LABEL: Record<DeliveryMode, string> = {
+  "pull-request": "Open a pull request",
+  release: "Publish a release",
+  local: "Commit to main",
+};
+
+/** The end of every plan: the coordinator's check (when asked for), then the shipper. */
+export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDelivery">, shipperProfileId: string = "opus-high"): Stage[] {
+  const ship: Stage = { id: `${task.id}:ship`, kind: "do", title: DELIVERY_LABEL[task.delivery], roleId: "shipper", profileIds: [shipperProfileId] };
+  if (!task.approveDelivery) return [ship];
+  return [{ id: `${task.id}:delivery`, kind: "gate", title: "Your delivery check", roleId: "shipper", profileIds: [], gate: "delivery" }, ship];
+}
 
 /**
  * What the planner proposes for a task. The real planner is an agent; this is the
  * deterministic stand-in the simulator and the tests use.
  */
-export function composePlan(task: Pick<Task, "id" | "kind">): Plan {
+export function composePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery">): Plan {
   const id = task.id;
+  const deliveryGate = () => deliveryStages(task, "sonnet-medium");
   switch (task.kind) {
     case "bug":
       return {
@@ -170,7 +186,7 @@ export function composePlan(task: Pick<Task, "id" | "kind">): Plan {
         stages: [
           { id: `${id}:build`, kind: "do", title: "Fix", roleId: "builder", profileIds: ["opus-high"] },
           { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["codex-xhigh", "sonnet-medium"], maxRounds: 2 },
-          deliveryGate(id),
+          ...deliveryGate(),
         ],
       };
     case "chore":
@@ -180,7 +196,7 @@ export function composePlan(task: Pick<Task, "id" | "kind">): Plan {
         stages: [
           { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["sonnet-medium"] },
           { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["codex-high"], maxRounds: 2 },
-          deliveryGate(id),
+          ...deliveryGate(),
         ],
       };
     case "new":
@@ -195,7 +211,7 @@ export function composePlan(task: Pick<Task, "id" | "kind">): Plan {
           { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
           { id: `${id}:test`, kind: "do", title: "Test", roleId: "tester", profileIds: ["sonnet-medium"] },
           { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sonnet-medium", "codex-xhigh"], maxRounds: 2 },
-          deliveryGate(id),
+          ...deliveryGate(),
         ],
       };
     case "feature":
@@ -206,7 +222,7 @@ export function composePlan(task: Pick<Task, "id" | "kind">): Plan {
           ...designStages(id),
           { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["codex-high"] },
           { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "codex-xhigh"], maxRounds: 2 },
-          deliveryGate(id),
+          ...deliveryGate(),
         ],
       };
   }

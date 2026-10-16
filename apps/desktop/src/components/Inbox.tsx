@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
-import type { InboxItem, InboxKind, State, Tone } from "@petrina/core";
+import { DELIVERY_LABEL, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, type Lookup } from "../lib";
 import { ProductChip, ProfileChip, RoleAvatar } from "./bits";
@@ -226,11 +226,25 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
+      {item.kind === "stuck" && (
+        <div className="ask-actions">
+          <button className="btn small primary" onClick={() => sim.retry(item.id)}>
+            Try again
+          </button>
+          <button className="btn small" onClick={() => onOpen(item.taskId, "session")}>
+            See what happened
+          </button>
+          <button className="btn small ghost danger" onClick={() => sim.cancel(item.taskId)}>
+            Cancel task
+          </button>
+        </div>
+      )}
+
       {item.kind === "delivery" && (
         <div className="ask-actions">
           <button className="btn small primary" onClick={() => sim.approve(item.id)}>
             <GitPullRequest size={13} />
-            Open pull request
+            {task ? DELIVERY_LABEL[task.delivery] : "Ship it"}
           </button>
           <button className="btn small" onClick={() => onOpen(item.taskId, "review")}>
             See the reviews

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Boxes, Bot, Hand, LayoutGrid, Library, Moon, Plus, Search, Sun, X } from "lucide-react";
 import type { Task } from "@petrina/core";
-import { startClock, useSim } from "./engine";
+import { engineStatus, mode, startClock, useSim } from "./engine";
+import { AddProductDialog } from "./components/AddProduct";
 import { blockingCount, lookup } from "./lib";
 import { Logo } from "./components/bits";
 import { Board } from "./components/Board";
@@ -32,6 +33,7 @@ export function App() {
   const [inboxOpen, setInboxOpen] = useState(true);
   const [sheet, setSheet] = useState<{ taskId: string; tab: SheetTab }>();
   const [creating, setCreating] = useState(false);
+  const [addingProduct, setAddingProduct] = useState(false);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -112,6 +114,10 @@ export function App() {
           )}
         </label>
         <div className="spacer" />
+        <span className="engine-pill" title={mode === "engine" ? "Connected to the Petrina engine on this machine" : "Running on a simulated squad"}>
+          <span className={`dot ${mode === "demo" ? "" : engineStatus().connected ? "done" : "failed"}`} />
+          {mode === "demo" ? "Demo" : engineStatus().connected ? "Live" : "Reconnecting…"}
+        </span>
         {blocking > 0 && (
           <button className="blocking-pill" style={{ cursor: "pointer" }} onClick={() => setInboxOpen(true)}>
             <Hand size={13} />
@@ -159,6 +165,7 @@ export function App() {
         {view === "products" && (
           <ProductsPage
             state={state}
+            {...(mode === "engine" ? { onAdd: () => setAddingProduct(true) } : {})}
             onPick={(productId) => {
               setProduct(productId);
               setView("board");
@@ -173,6 +180,16 @@ export function App() {
 
       {sheetTask && sheet && (
         <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ taskId: sheetTask.id, tab })} onClose={close} onToast={(title, detail) => toast(title, detail)} />
+      )}
+
+      {addingProduct && (
+        <AddProductDialog
+          onClose={() => setAddingProduct(false)}
+          onAdded={(productId) => {
+            setAddingProduct(false);
+            setProduct(productId);
+          }}
+        />
       )}
 
       {creating && (

@@ -926,7 +926,7 @@ kbd {
 .portfolio-row {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(200px, 1.6fr) repeat(6, minmax(56px, 0.6fr)) minmax(64px, 0.6fr) minmax(72px, 0.6fr);
+  grid-template-columns: minmax(180px, 1.5fr) repeat(6, minmax(48px, 0.5fr)) minmax(56px, 0.5fr) minmax(64px, 0.5fr) minmax(200px, 1.2fr);
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
@@ -949,3 +949,7 @@ kbd {
 .cell.on { background: var(--blue-soft); color: var(--blue); }
 .cell.on.queue { background: var(--slate-soft); color: var(--slate); }
 .cell.on.ready { background: var(--green-soft); color: var(--green); }
+
+.delivery-cell { display: flex; align-items: center; gap: 8px; }
+.delivery-cell select { border: 1px solid var(--line); background: var(--bg); border-radius: 7px; padding: 3px 6px; font-size: 12px; color: var(--text-2); }
+.engine-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }

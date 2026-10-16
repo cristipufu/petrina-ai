@@ -55,7 +55,7 @@ export const STATE_LABEL: Record<RunState, string> = {
   paused: "Paused",
   failed: "Failed",
   "pr-open": "Pull request open",
-  done: "Merged",
+  done: "Done",
   cancelled: "Cancelled",
 };
 

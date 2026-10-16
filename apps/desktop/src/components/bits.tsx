@@ -5,6 +5,7 @@ import {
   Hammer,
   Map as MapIcon,
   Palette,
+  Rocket,
   Scale,
   Search,
   type LucideIcon,
@@ -21,6 +22,7 @@ export const ROLE_ICONS: Record<RoleIcon, LucideIcon> = {
   hammer: Hammer,
   flask: FlaskConical,
   search: Search,
+  rocket: Rocket,
 };
 
 export function Logo({ size = 24 }: { size?: number }) {

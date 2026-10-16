@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
-import type { Column, Product, State } from "@petrina/core";
+import { DELIVERY_LABEL, type Column, type DeliveryMode, type Product, type State } from "@petrina/core";
+import { sim } from "../engine";
 import type { Lookup } from "../lib";
 
 /** Per-product numbers the switcher and the Products page both show. */
@@ -158,7 +159,7 @@ const PIPE: readonly { column: Column; label: string }[] = [
 ];
 
 /** The portfolio: every product on one screen, what is in flight and what waits on you. */
-export function ProductsPage({ state, onPick }: { state: State; onPick: (productId: string) => void }) {
+export function ProductsPage({ state, onPick, onAdd }: { state: State; onPick: (productId: string) => void; onAdd?: () => void }) {
   const stats = productStats(state).sort(
     (a, b) => b.needsYou - a.needsYou || Number(b.active) - Number(a.active) || b.working - a.working || a.product.name.localeCompare(b.product.name),
   );
@@ -173,7 +174,19 @@ export function ProductsPage({ state, onPick }: { state: State; onPick: (product
             {state.products.length} products · {active} with work in flight · {stats.reduce((sum, entry) => sum + entry.needsYou, 0)} things waiting on you
           </p>
         </div>
+        {onAdd && (
+          <div className="tools">
+            <button className="btn primary" onClick={onAdd}>
+              Add product
+            </button>
+          </div>
+        )}
       </div>
+      {state.products.length === 0 && (
+        <div className="empty-state" style={{ marginBottom: 16 }}>
+          No products yet. Add a local clone of a GitHub repository to give the squad something to work on.
+        </div>
+      )}
       <div className="portfolio">
         <div className="portfolio-row head">
           <span>Product</span>
@@ -184,6 +197,7 @@ export function ProductsPage({ state, onPick }: { state: State; onPick: (product
           ))}
           <span className="c">Shipped</span>
           <span className="c">Needs you</span>
+          <span>When ready</span>
         </div>
         {stats.map((entry) => (
           <button key={entry.product.id} className={`portfolio-row ${entry.active ? "" : "quiet"}`} onClick={() => onPick(entry.product.id)}>
@@ -206,6 +220,23 @@ export function ProductsPage({ state, onPick }: { state: State; onPick: (product
             })}
             <span className="c num">{entry.shipped || "·"}</span>
             <span className="c">{entry.needsYou > 0 ? <span className="pill needs-you">{entry.needsYou}</span> : <span className="muted">·</span>}</span>
+            <span onClick={(event) => event.stopPropagation()} className="delivery-cell">
+              <select
+                aria-label={`What happens when ${entry.product.name} work is ready`}
+                value={entry.product.delivery ?? "pull-request"}
+                onChange={(event) => sim.setProductDelivery(entry.product.id, event.target.value as DeliveryMode, entry.product.approveDelivery ?? true)}
+              >
+                {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
+                  <option key={mode} value={mode}>
+                    {DELIVERY_LABEL[mode]}
+                  </option>
+                ))}
+              </select>
+              <label className="toggle" title="Ask me before shipping">
+                <input type="checkbox" checked={entry.product.approveDelivery ?? true} onChange={(event) => sim.setProductDelivery(entry.product.id, entry.product.delivery ?? "pull-request", event.target.checked)} />
+                ask me
+              </label>
+            </span>
           </button>
         ))}
       </div>

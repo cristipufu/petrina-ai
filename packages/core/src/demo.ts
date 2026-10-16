@@ -2,13 +2,13 @@
 // Tasks are fast-forwarded through the real simulator, so their histories are consistent.
 
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
-import type { InboxItem, Product, State, Task, TaskKind } from "./model.js";
+import type { DeliveryMode, InboxItem, Product, State, Task, TaskKind } from "./model.js";
 import { Simulator, type Trigger, type Triggers } from "./sim.js";
 
 export const DEMO_PRODUCTS: readonly Product[] = [
-  { id: "shop", name: "Shop", repo: "acme/shop", tone: "blue" },
-  { id: "notes", name: "Notes", repo: "acme/notes", tone: "green" },
-  { id: "site", name: "Site", repo: "acme/site", tone: "orange" },
+  { id: "shop", name: "Shop", repo: "acme/shop", tone: "blue", delivery: "pull-request", approveDelivery: true },
+  { id: "notes", name: "Notes", repo: "acme/notes", tone: "green", delivery: "release", approveDelivery: true },
+  { id: "site", name: "Site", repo: "acme/site", tone: "orange", delivery: "local", approveDelivery: false },
 ];
 
 export const DEMO_TRIGGERS: Triggers = {
@@ -57,6 +57,8 @@ interface Spec {
   area: string;
   kind: TaskKind;
   approvePlan?: boolean;
+  delivery?: DeliveryMode;
+  approveDelivery?: boolean;
 }
 
 const SPECS: readonly Spec[] = [
@@ -64,7 +66,7 @@ const SPECS: readonly Spec[] = [
   { id: "login-loop", productId: "shop", title: "Fix login loop on Safari", description: "Some Safari users get sent back to the login page after signing in.", area: "login", kind: "bug" },
   { id: "dark-mode", productId: "notes", title: "Dark mode", description: "A dark theme for the whole app.", area: "dark mode", kind: "feature" },
   { id: "weekly-digest", productId: "notes", title: "Weekly email digest", description: "Every Monday, email people a summary of the notes they changed last week.", area: "the digest", kind: "feature", approvePlan: true },
-  { id: "pricing-refresh", productId: "site", title: "Refresh the pricing page", description: "New plan names and the yearly discount.", area: "pricing", kind: "chore" },
+  { id: "pricing-refresh", productId: "shop", title: "Refresh the pricing page", description: "New plan names and the yearly discount.", area: "pricing", kind: "chore" },
   { id: "sentry", productId: "shop", title: "Report errors to Sentry", description: "Send crashes and slow pages to Sentry.", area: "error reporting", kind: "chore" },
   { id: "footer-typo", productId: "site", title: "Fix the footer links", description: "Two footer links go to old pages.", area: "footer", kind: "bug" },
   { id: "export-pdf", productId: "notes", title: "Export notes to PDF", description: "A button that exports a note, or a whole folder, as a PDF.", area: "PDF export", kind: "feature" },
@@ -90,9 +92,12 @@ function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): St
   };
 }
 
-function queuedTask(spec: Spec, priority: number, now: number): Task {
+function queuedTask(spec: Spec, priority: number, now: number, products: readonly Product[] = DEMO_PRODUCTS): Task {
+  const product = products.find((entry) => entry.id === spec.productId);
   return {
     ...spec,
+    delivery: spec.delivery ?? product?.delivery ?? "pull-request",
+    approveDelivery: spec.approveDelivery ?? product?.approveDelivery ?? true,
     priority,
     held: false,
     state: "queued",
@@ -125,7 +130,7 @@ function fastForward(
   products: readonly Product[] = DEMO_PRODUCTS,
 ): { task: Task; inbox: InboxItem[] } {
   const start = 0;
-  const sim = new Simulator({ ...baseState(start, [queuedTask(spec, 0, start)]), products }, { triggers, prMergeAfter: 3, tickMs: TICK });
+  const sim = new Simulator({ ...baseState(start, [queuedTask(spec, 0, start, products)]), products }, { triggers, prMergeAfter: 3, tickMs: TICK });
   for (let tick = 0; tick < 400; tick += 1) {
     sim.tick();
     const state = sim.getState();
@@ -256,6 +261,8 @@ export function createPortfolioDemo(now: number): Demo {
     name,
     repo: `acme/${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
     tone: TONES[index % TONES.length]!,
+    delivery: index % 3 === 0 ? "pull-request" : index % 3 === 1 ? "release" : "local",
+    approveDelivery: index % 3 !== 2,
   }));
   const triggers: Record<string, Trigger> = {};
   const tasks: Task[] = [];
@@ -267,7 +274,17 @@ export function createPortfolioDemo(now: number): Demo {
     const work = PORTFOLIO_WORK[index % PORTFOLIO_WORK.length]!;
     const id = `p${index}`;
     const kind: TaskKind = target === "design-running" || target === "design-gate" || target === "question" ? "feature" : work.kind;
-    const spec: Spec = { id, productId: product.id, title: work.title, description: work.description, area: work.area, kind, approvePlan: target === "plan-gate" };
+    const spec: Spec = {
+      id,
+      productId: product.id,
+      title: work.title,
+      description: work.description,
+      area: work.area,
+      kind,
+      approvePlan: target === "plan-gate",
+      ...(target === "delivery-gate" ? { approveDelivery: true } : {}),
+      ...(target === "pr-open" ? { delivery: "pull-request" as const } : {}),
+    };
 
     if (target === "question") {
       triggers[`${id}|architect|1|1`] = { kind: "question", title: `Should ${work.area} be on for everyone, or opt-in first?`, options: ["Opt-in first, then everyone", "Everyone", "Opt-in only"] };
@@ -277,7 +294,7 @@ export function createPortfolioDemo(now: number): Demo {
     }
 
     if (target === "queued" || target === "held") {
-      const task = queuedTask(spec, queuePosition, now - (90 - index) * MINUTE);
+      const task = queuedTask(spec, queuePosition, now - (90 - index) * MINUTE, products);
       queuePosition += 1;
       tasks.push(target === "held" ? { ...task, held: true, statusLine: "On hold" } : task);
       return;

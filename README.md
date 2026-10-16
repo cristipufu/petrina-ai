@@ -38,7 +38,7 @@ Petrina talks to agents through the [Agent Client Protocol](https://agentclientp
 
 ## Status
 
-Early. The app runs on a simulated squad with made-up products, so the whole experience can be shaped before real agents are wired in. Next up is the engine on real worktrees, then Claude Code and Codex over ACP.
+Early, and working: the engine runs real Claude Code and Codex agents over ACP in their own git worktrees, with the planner, design convergence, review chain, permissions, questions and delivery (pull request, release, or a commit to main) wired end to end. Without the engine running, the app opens on a simulated squad (`?demo` or `?demo=portfolio`).
 
 ## Develop
 
@@ -46,16 +46,20 @@ You need [Bun](https://bun.sh) 1.4, and for the desktop shell, Rust and the [Tau
 
 ```bash
 bun install
-bun run dev          # the UI in a browser at http://localhost:1430
+bun run engine       # the engine on 127.0.0.1:4317 (data in ~/.petrina)
+bun run dev          # the UI at http://localhost:1430, connected to the engine
 bun run tauri dev    # the desktop app
-bun run test         # engine tests
+bun run test         # core and engine tests (the engine test uses a fake ACP agent)
 bun run typecheck
 ```
+
+`bun run petrina state` prints the engine's state, and `bun run petrina do '<action json>'` runs an action, for scripts.
 
 | Path | What lives there |
 |---|---|
 | `apps/desktop` | The Tauri app: React UI in `src/`, the Rust host in `src-tauri/` |
 | `packages/core` | Domain model, scheduler, plans and the simulated squad |
+| `packages/engine` | The engine: ACP agents, worktrees, permission policy, prompts, SQLite, the local API |
 | `docs` | Design and UX |
 
 ## License

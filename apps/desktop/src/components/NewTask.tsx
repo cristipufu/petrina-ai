@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { State, TaskKind } from "@petrina/core";
+import { DELIVERY_LABEL, type DeliveryMode, type State, type TaskKind } from "@petrina/core";
 import { sim } from "../engine";
 
 const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
@@ -9,13 +9,21 @@ const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
   { id: "chore", label: "Small change", hint: "Quick build, one reviewer" },
 ];
 
-export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { state: State; defaultProduct?: string; onClose: () => void; onCreated: (taskId: string) => void }) {
+export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { state: State; defaultProduct?: string; onClose: () => void; onCreated: () => void }) {
   const [productId, setProductId] = useState(defaultProduct ?? state.products[0]?.id ?? "");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<TaskKind>("feature");
   const [position, setPosition] = useState<"bottom" | "top">("bottom");
   const [approvePlan, setApprovePlan] = useState(false);
+  const productOf = (id: string) => state.products.find((product) => product.id === id);
+  const [delivery, setDelivery] = useState<DeliveryMode>(productOf(productId)?.delivery ?? "pull-request");
+  const [approveDelivery, setApproveDelivery] = useState(productOf(productId)?.approveDelivery ?? true);
+  const pickProduct = (id: string) => {
+    setProductId(id);
+    setDelivery(productOf(id)?.delivery ?? "pull-request");
+    setApproveDelivery(productOf(id)?.approveDelivery ?? true);
+  };
   // A pasted list becomes one task per line: the first line stays editable, the rest ride along.
   const [batch, setBatch] = useState<string[]>([]);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -31,15 +39,14 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
   const add = (another: boolean) => {
     if (!title.trim()) return;
     const titles = [title.trim(), ...batch.slice(1)];
-    let last = "";
-    for (const entry of titles) last = sim.addTask({ productId, title: entry, description, kind, position, approvePlan });
+    for (const entry of titles) void Promise.resolve(sim.addTask({ productId, title: entry, description, kind, position, approvePlan, delivery, approveDelivery })).catch(() => undefined);
     if (another) {
       setTitle("");
       setDescription("");
       setBatch([]);
       titleRef.current?.focus();
     } else {
-      onCreated(last);
+      onCreated();
     }
   };
 
@@ -50,7 +57,7 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
         {state.products.length <= 5 ? (
           <div className="segmented" style={{ marginBottom: 8 }}>
             {state.products.map((product) => (
-              <button key={product.id} className={productId === product.id ? "on" : ""} onClick={() => setProductId(product.id)}>
+              <button key={product.id} className={productId === product.id ? "on" : ""} onClick={() => pickProduct(product.id)}>
                 <span className={`product-chip tone-${product.tone}`}>
                   <i />
                 </span>
@@ -59,7 +66,7 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
             ))}
           </div>
         ) : (
-          <select className="field" style={{ marginBottom: 8, flex: "none" }} aria-label="Product" value={productId} onChange={(event) => setProductId(event.target.value)}>
+          <select className="field" style={{ marginBottom: 8, flex: "none" }} aria-label="Product" value={productId} onChange={(event) => pickProduct(event.target.value)}>
             {[...state.products].sort((a, b) => a.name.localeCompare(b.name)).map((product) => (
               <option key={product.id} value={product.id}>
                 {product.name}
@@ -107,6 +114,16 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
             </div>
           </div>
           <div className="opt">
+            <label>When it's ready</label>
+            <div className="segmented">
+              {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
+                <button key={mode} className={delivery === mode ? "on" : ""} onClick={() => setDelivery(mode)}>
+                  {DELIVERY_LABEL[mode]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="opt">
             <label>Queue</label>
             <div className="segmented">
               <button className={position === "bottom" ? "on" : ""} onClick={() => setPosition("bottom")}>
@@ -122,7 +139,11 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
           <span className="left">
             <label className="toggle">
               <input type="checkbox" checked={approvePlan} onChange={(event) => setApprovePlan(event.target.checked)} />
-              Show me the plan before it starts
+              Show me the plan first
+            </label>
+            <label className="toggle">
+              <input type="checkbox" checked={approveDelivery} onChange={(event) => setApproveDelivery(event.target.checked)} />
+              Ask me before shipping
             </label>
           </span>
           <button className="btn ghost" onClick={() => add(true)} disabled={!title.trim()}>

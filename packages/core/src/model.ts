@@ -21,11 +21,14 @@ export interface Tool {
 export interface AgentProfile {
   id: Id;
   toolId: Id;
+  /** What people read, e.g. "Opus 5.5". */
   model: string;
+  /** The value the tool's ACP adapter takes, e.g. "opus" or "gpt-6.1-sol". */
+  modelId?: string;
   effort: Effort;
 }
 
-export type RoleIcon = "map" | "book" | "compass" | "scale" | "palette" | "hammer" | "flask" | "search";
+export type RoleIcon = "map" | "book" | "compass" | "scale" | "palette" | "hammer" | "flask" | "search" | "rocket";
 
 export type Tone = "indigo" | "orange" | "violet" | "purple" | "pink" | "blue" | "green" | "teal" | "slate" | "amber";
 
@@ -167,6 +170,10 @@ export interface Task {
   /** Whether the task currently occupies a pool slot. */
   holdsSlot: boolean;
   approvePlan: boolean;
+  /** What happens once the work is ready. Defaults to the product's setting. */
+  delivery: DeliveryMode;
+  /** Ask the coordinator before the shipper delivers. */
+  approveDelivery: boolean;
   plan?: Plan;
   /** -1 while the planner runs, then the index into `plan.stages`. */
   stageIndex: number;
@@ -190,6 +197,18 @@ export interface Task {
   pr?: PullRequest;
   /** Ticks spent with the pull request open (simulator only). */
   prAge: number;
+  /** The task's own branch and working copy. */
+  branch?: string;
+  worktree?: string;
+  base?: string;
+  /** What the builder reported, in plain language. Goes into the pull request. */
+  report?: { summary: string; changes: readonly string[]; tests?: string };
+  /** Why the task failed, when it did. */
+  error?: string;
+  /** Set when a `release` product published this task. */
+  release?: { tag: string; url: string };
+  /** Set when a `local` product committed this task onto its default branch. */
+  landed?: { branch: string; sha: string };
 }
 
 export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck";
@@ -210,11 +229,30 @@ export interface InboxItem {
   blocking: boolean;
 }
 
+/**
+ * What "ready" means for a product.
+ * - `pull-request`: open a pull request (never merged by Petrina).
+ * - `release`: merge into the default branch, push, and publish a GitHub release.
+ * - `local`: commit onto the local default branch. Nothing is pushed.
+ */
+export type DeliveryMode = "pull-request" | "release" | "local";
+
 export interface Product {
   id: Id;
   name: string;
+  /** owner/name on GitHub. */
   repo: string;
   tone: Tone;
+  /** The local clone Petrina makes worktrees from. */
+  path?: string;
+  defaultBranch?: string;
+  /** Command prefixes the coordinator chose to always allow in this product. */
+  allowed?: readonly string[];
+  delivery?: DeliveryMode;
+  /** Ask the coordinator before delivering. Defaults to true. */
+  approveDelivery?: boolean;
+  /** Which part of the version a release bumps. Defaults to patch. */
+  releaseBump?: "patch" | "minor" | "major";
 }
 
 export interface Pool {

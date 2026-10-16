@@ -7,6 +7,7 @@ import { composePlan } from "./library.js";
 import type {
   ActiveAgent,
   Column,
+  DeliveryMode,
   DesignBrief,
   GateKind,
   Id,
@@ -56,6 +57,8 @@ export interface NewTask {
   area?: string;
   position?: "top" | "bottom";
   approvePlan?: boolean;
+  delivery?: DeliveryMode;
+  approveDelivery?: boolean;
 }
 
 export type MessageMode = "queue" | "interrupt";
@@ -79,12 +82,19 @@ interface ScriptContext {
   product: string;
   round: number;
   fixing: boolean;
+  delivery: DeliveryMode;
 }
 
 /** What each role says while it works, in plain language. */
 function scriptFor(roleId: Id, ctx: ScriptContext): string[] {
-  const { area, product, round, fixing } = ctx;
+  const { area, product, round, fixing, delivery } = ctx;
   switch (roleId) {
+    case "shipper":
+      return delivery === "release"
+        ? ["Merging into main", "Bumping the version", "Writing the release notes", "Published the release"]
+        : delivery === "local"
+          ? ["Merging into main", "Committed on main"]
+          : ["Pushing the branch", "Writing the pull request description", "Opened the pull request"];
     case "planner":
       return ["Reading the task", `Looking at how ${product} is organised`, "Choosing who should work on this", "Writing the plan"];
     case "researcher":
@@ -227,7 +237,8 @@ export class Simulator {
           this.advance(d, task);
           break;
         case "delivery":
-          this.openPullRequest(d, task);
+          this.log(d, task, "you", "You approved the delivery");
+          this.continueAfterGate(d, task);
           break;
         default:
           break;
@@ -261,6 +272,16 @@ export class Simulator {
       task.state = "waiting";
       task.statusLine = "Waiting for a free slot";
       task.column = this.columnFor(d, task);
+    });
+  }
+
+  /** Change what "ready" means for a product, and whether the coordinator checks first. */
+  setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void {
+    this.update((d) => {
+      const product = d.products.find((entry) => entry.id === productId);
+      if (!product) return;
+      product.delivery = delivery;
+      product.approveDelivery = approveDelivery;
     });
   }
 
@@ -399,6 +420,7 @@ export class Simulator {
       const id = this.id(d, "task");
       created = id;
       const top = input.position === "top";
+      const product = d.products.find((entry) => entry.id === input.productId);
       d.tasks.push({
         id,
         productId: input.productId,
@@ -412,6 +434,8 @@ export class Simulator {
         column: "queue",
         holdsSlot: false,
         approvePlan: input.approvePlan ?? false,
+        delivery: input.delivery ?? product?.delivery ?? "pull-request",
+        approveDelivery: input.approveDelivery ?? product?.approveDelivery ?? true,
         stageIndex: -1,
         rounds: {},
         sub: 0,
@@ -546,7 +570,7 @@ export class Simulator {
 
     const product = d.products.find((entry) => entry.id === task.productId)?.name ?? "the product";
     const round = this.round(task);
-    const lines = scriptFor(agent.roleId, { area: task.area, product, round, fixing: task.fixing });
+    const lines = scriptFor(agent.roleId, { area: task.area, product, round, fixing: task.fixing, delivery: task.delivery });
     const line = lines[agent.step];
     if (line === undefined) {
       this.finish(d, task);
@@ -623,6 +647,11 @@ export class Simulator {
     const stage = this.stage(task);
     if (!stage) return;
     const round = this.round(task);
+
+    if (stage.kind === "do" && agent.roleId === "shipper") {
+      this.ship(d, task);
+      return;
+    }
 
     if (stage.kind === "do") {
       if (agent.roleId === "builder" && task.fixing) {
@@ -777,6 +806,31 @@ export class Simulator {
     task.statusLine = `Pull request #${number} is open. Merge it on GitHub when you are happy`;
     task.column = "ready";
     this.log(d, task, "done", `Opened pull request #${number}`);
+  }
+
+  /** The shipper finished: what that means depends on the task's delivery mode. */
+  private ship(d: Draft, task: DraftTask): void {
+    if (task.delivery === "pull-request") {
+      this.openPullRequest(d, task);
+      return;
+    }
+    const product = d.products.find((entry) => entry.id === task.productId);
+    delete task.agent;
+    task.holdsSlot = false;
+    task.state = "done";
+    task.column = "done";
+    task.finishedAt = d.now;
+    if (task.delivery === "release") {
+      const tag = `v1.${(d.seq % 40) + 1}.0`;
+      task.release = { tag, url: `https://github.com/${product?.repo ?? "owner/repo"}/releases/tag/${tag}` };
+      task.statusLine = `Released ${tag}`;
+      this.log(d, task, "done", `Published release ${tag}`);
+    } else {
+      const sha = (d.seq * 2654435761).toString(16).slice(0, 7);
+      task.landed = { branch: product?.defaultBranch ?? "main", sha };
+      task.statusLine = `Committed to ${task.landed.branch} (${sha})`;
+      this.log(d, task, "done", `Committed to ${task.landed.branch}`);
+    }
   }
 
   private agePullRequest(d: Draft, task: DraftTask): void {
