@@ -170,10 +170,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         <>
           <div className="ask-actions">
             <button className="btn small primary" onClick={() => sim.allow(item.id, "once")}>
-              Allow once
-            </button>
-            <button className="btn small" onClick={() => sim.allow(item.id, "always")}>
-              Always in {product?.name ?? "this product"}
+              Allow
             </button>
             <button className="btn small ghost danger" onClick={() => sim.deny(item.id)}>
               Deny

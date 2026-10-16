@@ -69,20 +69,13 @@ describe("Engine with a fake ACP agent", () => {
     expect(task.landed?.branch).toBe("main");
     // The coordinator was asked a question, a permission and two checkpoints.
     expect(task.timeline.some((entry) => entry.text.startsWith("You answered: Formal"))).toBe(true);
-    expect(task.timeline.some((entry) => entry.text.includes("You allowed: Add a new package: left-pad"))).toBe(true);
+    // The tool's own safety check asked; Petrina passed it on unchanged.
+    expect(task.timeline.some((entry) => entry.text.includes("You allowed: Installing packages"))).toBe(true);
     expect(task.timeline.some((entry) => entry.text === "You approved the design")).toBe(true);
     expect(task.timeline.some((entry) => entry.text === "You approved the delivery")).toBe(true);
     // The work is on main, with the permission granted.
     expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
     expect(existsSync(task.worktree!)).toBe(true);
-  });
-
-  it("refuses to push from any role but the shipper", async () => {
-    const { decide } = await import("../src/policy.js");
-    const role = engine.getState().roles.find((entry) => entry.id === "builder")!;
-    expect(decide({ title: "Push", kind: "execute", command: "git push origin main", paths: [] }, { role, worktree: repo, allowed: [] }).decision).toBe("deny");
-    const reviewer = engine.getState().roles.find((entry) => entry.id === "code-reviewer")!;
-    expect(decide({ title: "Edit", kind: "edit", paths: [join(repo, "a.ts")] }, { role: reviewer, worktree: repo, allowed: [] }).decision).toBe("deny");
   });
 });

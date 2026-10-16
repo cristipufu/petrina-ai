@@ -59,7 +59,7 @@ bun run typecheck
 |---|---|
 | `apps/desktop` | The Tauri app: React UI in `src/`, the Rust host in `src-tauri/` |
 | `packages/core` | Domain model, scheduler, plans and the simulated squad |
-| `packages/engine` | The engine: ACP agents, worktrees, permission policy, prompts, SQLite, the local API |
+| `packages/engine` | The engine: ACP agents, worktrees, credentials, prompts, SQLite, the local API |
 | `docs` | Design and UX |
 
 ## License

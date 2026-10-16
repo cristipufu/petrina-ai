@@ -248,8 +248,6 @@ export interface Product {
   /** The local clone Petrina makes worktrees from. */
   path?: string;
   defaultBranch?: string;
-  /** Command prefixes the coordinator chose to always allow in this product. */
-  allowed?: readonly string[];
   delivery?: DeliveryMode;
   /** Ask the coordinator before delivering. Defaults to true. */
   approveDelivery?: boolean;

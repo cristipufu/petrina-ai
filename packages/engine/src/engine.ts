@@ -29,7 +29,7 @@ import {
 import type { z } from "zod";
 import { AgentRun, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
-import { agentEnv, decide, ruleFor } from "./policy.js";
+import { agentEnv } from "./env.js";
 import {
   BriefResult,
   BuildResult,
@@ -47,7 +47,7 @@ import {
   TestResult,
 } from "./prompts.js";
 import { Store } from "./store.js";
-import { detectTools, ENGINE_PROFILES } from "./tools.js";
+import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 
 type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
 type MState = DeepMutable<State>;
@@ -133,7 +133,6 @@ export class Engine {
       defaultBranch: info.defaultBranch,
       delivery: "pull-request",
       approveDelivery: true,
-      allowed: [],
     });
     this.commit();
     return id;
@@ -370,15 +369,12 @@ export class Engine {
     this.answer(itemId, item.options?.[0] ?? "Use your best judgment.");
   }
 
-  allow(itemId: Id, scope: "once" | "always"): void {
+  allow(itemId: Id, _scope: "once" | "always" = "once"): void {
     const item = this.takeItem(itemId);
     if (!item) return;
     const task = this.task(item.taskId);
     if (task) {
-      const product = this.productOf(task);
-      const rule = scope === "always" && item.detail ? ruleFor(item.detail) : undefined;
-      if (rule && product) product.allowed = [...new Set([...(product.allowed ?? []), rule])];
-      this.log(task, "you", scope === "always" ? `You allowed it from now on in ${product?.name ?? "this product"}: ${item.title}` : `You allowed: ${item.title}`);
+      this.log(task, "you", `You allowed: ${item.title}`);
       this.unblock(task);
     }
     this.waiting.get(itemId)?.resolve("allow");
@@ -867,10 +863,9 @@ export class Engine {
     const run = await AgentRun.start({
       profile,
       ...(command ? { command } : {}),
-      // Only the shipper has GitHub credentials; everyone else cannot push even if the policy misses something.
+      // Only the shipper has GitHub credentials, so nothing else can push or publish whatever it runs.
       ...(roleId === "shipper" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
       cwd: task.worktree!,
-      readOnly: !role.canEdit,
       signal,
       callbacks: {
         onActivity: (line) => {
@@ -887,7 +882,7 @@ export class Engine {
           if (current.timeline.at(-1)?.text !== line) this.log(current, "status", line, roleId, profileId);
           this.commit();
         },
-        onPermission: (info) => this.permission(taskId, role, info, signal),
+        onPermission: (info) => this.permission(taskId, info, signal),
         onLog: (text) => void this.agentLog(taskId, text),
       },
     });
@@ -935,18 +930,13 @@ export class Engine {
     }
   }
 
-  private async permission(taskId: Id, role: Role, info: PermissionInfo, signal: AbortSignal): Promise<"allow" | "deny"> {
+  /** The tool's own safety check flagged something: the coordinator decides. Petrina adds no rules of its own. */
+  private async permission(taskId: Id, info: PermissionInfo, signal: AbortSignal): Promise<"allow" | "deny"> {
     const task = this.task(taskId);
-    const product = task && this.productOf(task);
-    if (!task || !product || !task.worktree) return "deny";
-    const decision = decide(info, { role, worktree: task.worktree, allowed: product.allowed ?? [] });
-    if (decision.decision === "allow") return "allow";
-    if (decision.decision === "deny") {
-      this.say(task, "system", `Petrina blocked: ${info.title}. ${decision.reason}`);
-      this.commit();
-      return "deny";
-    }
-    const answer = await this.wait(task, "permission", decision.title, true, { body: decision.body, ...(decision.detail ? { detail: decision.detail } : {}) }, signal, "Waiting for your permission");
+    if (!task) return "deny";
+    const tool = ADAPTERS[this.s.profiles.find((profile) => profile.id === task.agent?.profileId)?.toolId ?? ""]?.name ?? "The agent's tool";
+    const detail = info.command ?? info.paths.join("\n");
+    const answer = await this.wait(task, "permission", info.title, true, { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) }, signal, "Waiting for your permission");
     return answer === "allow" ? "allow" : "deny";
   }
 

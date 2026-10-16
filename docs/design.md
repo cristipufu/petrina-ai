@@ -77,7 +77,7 @@ ACP gives Petrina what it needs without per-tool code:
 | Send a message | `session/prompt` (one turn at a time, which is what makes queued messages natural) |
 | Interrupt | `session/cancel` |
 | Live activity for the status line | `session/update` notifications (messages, tool calls, plans) |
-| Permission prompts | `session/request_permission`, answered by Petrina's policy or by the coordinator |
+| Permission prompts | `session/request_permission`, sent only when the tool's own safety check flags something; the coordinator answers |
 | Resume | `session/load`, when the agent supports it |
 
 So a tool is mostly configuration:
@@ -108,10 +108,16 @@ The bridge is a small stdio process started by the agent. It connects back to th
 
 ## Permissions
 
-- Agents start with full permissions inside their own working copy.
-- Petrina answers every `session/request_permission` with its policy: allow, deny, or ask the coordinator.
-- The default ask-me list: dependency changes, deleting outside the working copy, new network hosts, pushes, secrets and `.env` files, paid APIs, and stages over their time limit.
-- Decisions can be remembered per product ("Always allow in Shop").
+Petrina relies on each tool's own safety checker instead of building one:
+
+| Tool | Mode | Who decides |
+|---|---|---|
+| Claude Code | Auto | Claude Code's classifier allows or blocks each action |
+| Codex | Auto review | Codex's reviewer approves, inside Codex's own workspace sandbox |
+
+- Petrina reads no commands. When a tool's checker flags something and asks, the question goes to the inbox unchanged, with the exact command or paths, and the coordinator allows or denies it once.
+- Petrina never picks a tool's "always" option: those write settings into the working copy or switch modes.
+- If a tool's automatic mode is not available for a model, the session log says so and that tool asks before acting.
 - Approval gates and round limits are enforced by the engine, never by prompting a model to stop.
 
 ## Messages to a running agent
@@ -156,13 +162,14 @@ docs/                   This document and the UX brainstorm
 
 Agents start with full permissions inside their own working copy; the coordinator asked for that, and it keeps the squad fast. What stops them doing harm is layered, and it is important to know which layer is the boundary:
 
-| Layer | What it guarantees | Boundary? |
-|---|---|---|
-| **Credentials** | Only the shipper's process gets GitHub credentials and an SSH agent. Every other agent runs with no tokens, an empty gh config, git credential helpers reset and SSH for git disabled. | Yes: whatever a non-shipper runs, it cannot push or write to GitHub |
-| **OS sandbox** (in progress) | Each agent runs inside a sandbox that only reaches its own worktree and scratch folder. | Yes, once shipped |
-| **Gates** | Plan, design and delivery checks live in the engine. No agent can skip them, and only the shipper runs after delivery approval. | Yes |
-| **Permission policy** | Reads every tool call and command: allows, denies, or asks the coordinator. Parses shells, pipelines, substitutions, here-documents and git/gh options, and fails closed when unsure. | No: an agent can write a script and run it, and no reading of command strings sees inside. It is a seatbelt and the coordinator's "ask me" experience |
-| **Read-only roles** | Edits are refused, and any change or commit a read-only role leaves behind is undone. | Within the worktree |
+| Layer | What it guarantees |
+|---|---|
+| **The tools' own checkers** | Claude Code's Auto mode and Codex's Auto review decide what is safe to run; Codex also keeps its own workspace sandbox. Petrina does not second-guess them or re-implement them. |
+| **Credentials** | Only the shipper's process gets GitHub credentials and an SSH agent. Every other agent runs with no tokens, an empty gh config, git credential helpers reset and SSH for git disabled, so it has nothing to push or publish with. |
+| **Gates** | Plan, design and delivery checks live in the engine. No agent can skip them, and only the shipper runs after delivery approval. |
+| **Read-only roles** | Any change or commit a read-only role leaves behind is undone when its stage ends. |
+
+Known limit: credentials are kept out of agents' environment, not locked away. Agents run as the coordinator's user, so a GitHub login saved on disk or in the keychain is only as protected as the tools' checkers keep it.
 
 ## Security notes
 

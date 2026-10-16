@@ -200,10 +200,9 @@ export class Simulator {
     });
   }
 
-  allow(itemId: Id, scope: "once" | "always"): void {
+  allow(itemId: Id, _scope: "once" | "always"): void {
     this.resolve(itemId, (d, task, item) => {
-      const product = d.products.find((entry) => entry.id === task.productId)?.name ?? "this product";
-      this.log(d, task, "you", scope === "always" ? `You allowed it from now on in ${product}: ${item.title}` : `You allowed: ${item.title}`);
+      this.log(d, task, "you", `You allowed: ${item.title}`);
       this.say(d, task, "agent", "Thanks, continuing.", item.roleId, item.profileId);
       this.unblock(task);
     });
