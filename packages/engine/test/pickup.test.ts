@@ -5,7 +5,7 @@ import { Engine } from "../src/engine.js";
 import { EARLIER_ATTEMPT, formatWhereYouWere, WHERE_YOU_WERE } from "../src/prompts.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
-import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, tempDir, waitFor } from "./support.js";
+import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -370,7 +370,9 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
         silentNext = false;
         return [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(silent ? ["--silent"] : [])];
       };
-      const options = { agentCommand, reopenTimeoutMs: 1500 };
+      // The missing-conversation case must hear the agent's error before the deadline; the two
+      // silent-agent cases deliberately exercise the short deadline itself.
+      const options = { agentCommand, reopenTimeoutMs: trouble === "conversation gone" ? 12_000 * SLOW : 1500 };
       let engine = new Engine(join(root, "data"), options);
       const productId = await engine.addProduct(product);
       engine.setProductDelivery(productId, "local", false);

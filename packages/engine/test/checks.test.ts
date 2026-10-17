@@ -50,30 +50,32 @@ describe("a product's checks", () => {
     expect(checksFingerprint(dir)).not.toBe(first);
   });
 
-  it("reports what really happened: passed, failed, too slow, or could not start", async () => {
+  it("reports what really happened: passed, failed, or could not start", async () => {
     const dir = root("petrina-checks-run-");
-    // The limit stretches with the machine's load: a quick check must still count as quick on a busy Mac.
-    const limit = 2000 * SLOW;
+    // These commands test exit results, so allow time for process startup on a busy machine.
     const results = await runChecks(
       dir,
       [
         { name: "Passes", argv: ["git", "--version"] },
         { name: "Fails", argv: ["git", "no-such-subcommand-petrina"] },
-        { name: "Too slow", argv: ["sleep", "120"] },
         { name: "Missing", argv: ["petrina-no-such-program"] },
       ],
       process.env,
-      limit,
+      30_000 * SLOW,
     );
     expect(results.map((run) => [run.name, run.ok])).toEqual([
       ["Passes", true],
       ["Fails", false],
-      ["Too slow", false],
       ["Missing", false],
     ]);
     expect(results[0]!.output).toContain("git version");
-    expect(results[2]!.timedOut).toBe(true);
-    expect(results[3]!.output).toStartWith("Could not start");
+    expect(results[2]!.output).toStartWith("Could not start");
+  });
+
+  it("reports a check that exceeds its deadline as timed out", async () => {
+    const [run] = await runChecks(root("petrina-checks-timeout-"), [{ name: "Too slow", argv: ["sleep", "120"] }], process.env, 200 * SLOW);
+    expect(run!.ok).toBe(false);
+    expect(run!.timedOut).toBe(true);
   });
 });
 

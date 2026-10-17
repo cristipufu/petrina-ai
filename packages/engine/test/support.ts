@@ -18,6 +18,11 @@ import { readGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
 // the tests as a product's check, say) would stop the tests' own pushes, so they do not apply.
 for (const key of Object.keys(process.env)) if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(key)) delete process.env[key];
 
+// Bun scans a script's ancestors on startup. The default macOS temp folder can hold tens of
+// thousands of entries; keep test fixtures and their child processes out of that crowded folder.
+// Leave an explicitly chosen temporary folder alone.
+if (process.platform === "darwin" && tmpdir().startsWith("/var/folders/")) process.env.TMPDIR = "/tmp";
+
 /**
  * How much longer the time limits are on this machine. A Windows runner takes several times longer to start
  * every engine, agent and git process these tests drive, and so does a machine busy with other work. The limits
