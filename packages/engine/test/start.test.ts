@@ -15,14 +15,15 @@ describe("a tool that never answers when it starts", () => {
     fakes.scenario({});
     // The first agent process never answers its handshake; the ones after it do.
     let silent = true;
-    const engine = new Engine(join(root, "data"), {
-      startTimeoutMs: 12_000 * SLOW, // Short enough for the test, long enough for a healthy agent to start on a busy machine or a slow runner.
+    const options = {
+      startTimeoutMs: 1000, // The first process deliberately never answers; its deadline can be short.
       agentCommand: () => {
         const command = [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(silent ? ["--silent"] : [])];
         silent = false;
         return command;
       },
-    });
+    };
+    const engine = new Engine(join(root, "data"), options);
     try {
       const productId = await engine.addProduct(makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
@@ -33,6 +34,8 @@ describe("a tool that never answers when it starts", () => {
       // No slot held by a tool that never answered.
       expect(task()!.holdsSlot).toBe(false);
       const stuck = engine.getState().inbox.find((item) => item.taskId === taskId && item.kind === "stuck")!;
+      // The retry tests a healthy process, so allow for real startup time on a busy machine.
+      options.startTimeoutMs = 12_000 * SLOW;
       engine.retry(stuck.id);
       await waitFor(() => engine.getState().inbox.some((item) => item.taskId === taskId && item.kind === "plan") || task()?.stageIndex! >= 0, "the planner to answer after Try again", 120_000);
     } finally {
