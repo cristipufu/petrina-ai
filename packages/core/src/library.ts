@@ -110,7 +110,7 @@ export const BUILT_IN_ROLES: readonly Role[] = [
     name: "Verifier",
     icon: "scale",
     tone: "teal",
-    purpose: "Checks Important review findings with fresh eyes on the other tool before they can send work back.",
+    purpose: "Votes on Important review findings with fresh eyes, one voter per tool, before they can send work back.",
     canEdit: false,
     sees: "The change, the findings to check and the reviewers' evidence.",
     handsBack: "For each finding: real, not a bug, only a nit, or older than the change, with why.",

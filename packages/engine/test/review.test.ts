@@ -8,14 +8,22 @@ import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-/** One task through design, build and two reviewers, with the coordinator approving as it goes, up to the delivery check. */
-async function untilDelivery(scenario: Scenario) {
+/**
+ * One task through design, build and two reviewers, with the coordinator approving as it goes, up to the
+ * delivery check. `atOnce` is the most agents that ever worked on it at the same time.
+ */
+async function untilDelivery(scenario: Scenario, poolLimit?: number) {
   const root = tempDir("petrina-review-");
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+  let atOnce = 0;
+  const unsubscribe = engine.subscribe(() => {
+    for (const task of engine.getState().tasks) if (task.holdsSlot && task.agent) atOnce = Math.max(atOnce, 1 + (task.helpers?.length ?? 0));
+  });
   try {
+    if (poolLimit) engine.setPoolLimit(poolLimit);
     const productId = await engine.addProduct(makeProduct(root));
     engine.setProductDelivery(productId, "local", true);
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
@@ -31,8 +39,9 @@ async function untilDelivery(scenario: Scenario) {
       if (found?.state === "failed") throw new Error(`The task failed: ${found.error}`);
       return found && state.inbox.some((item) => item.taskId === taskId && item.kind === "delivery") && found;
     }, "the delivery check", 60_000);
-    return { task, fakes };
+    return { task, fakes, atOnce };
   } finally {
+    unsubscribe();
     engine.shutdown();
   }
 }
@@ -40,18 +49,21 @@ async function untilDelivery(scenario: Scenario) {
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("reviews that converge", () => {
-  it("checks an Important finding with a fresh agent, has the builder answer it, and reviews only what changed next round", async () => {
-    const { task, fakes } = await untilDelivery({ reviewer: "important" });
+  it("has fresh agents vote on an Important finding, the builder answer it, and reviews only what changed next round", async () => {
+    const { task, fakes, atOnce } = await untilDelivery({ reviewer: "important" });
 
-    // The second reviewer said the same thing in other words: it is one finding.
     const important = task.findings.filter((finding) => finding.severity === "blocking");
     expect(important.map((finding) => finding.text)).toEqual(["The greeting is missing on the welcome page."]);
+    // Raised on one tool only, so one fresh agent per tool voted on it, and both said it is real.
+    expect(important[0]!.votes?.map((vote) => vote.verdict)).toEqual(["real", "real"]);
     expect(important[0]!.verification).toMatchObject({ verdict: "real" });
     expect(important[0]!.answer).toMatchObject({ fixed: true, text: "Fixed it." });
     expect(important[0]!.status).toBe("fixed");
     expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(1);
 
-    expect(fakes.openings("verifier")).toHaveLength(1);
+    expect(fakes.openings("verifier")).toHaveLength(2);
+    // The two reviewers looked at the change at once, and so did the two voters.
+    expect(atOnce).toBe(2);
     expect(lines(task)).toContain("Sent back to the builder: 1 important");
     expect(fakes.openings("builder")[1]).toContain("Review findings (answer every one by id; fix every Important one)");
 
@@ -76,6 +88,66 @@ describe.concurrent("reviews that converge", () => {
     expect(fakes.openings("builder")).toHaveLength(1);
     expect(lines(task).some((line) => line.startsWith("Sent back to the builder"))).toBe(false);
     expect(lines(task)).toContain("1 checked: 0 real, 1 not holding the work back");
+  });
+});
+
+describe.concurrent("reviewers at once, then a vote", () => {
+  it("counts the same finding from a reviewer on another tool as backing it, so nobody needs to vote on it", async () => {
+    const { task, fakes } = await untilDelivery({ reviewer: "important-twice" });
+    const important = task.findings.filter((finding) => finding.text.toLowerCase().includes("greeting is missing"));
+    expect(important).toHaveLength(1);
+    expect(important[0]).toMatchObject({ raisedBy: expect.any(String), status: "fixed" });
+    expect(important[0]!.confirmedBy).toHaveLength(1);
+    expect(fakes.openings("verifier")).toHaveLength(0);
+    expect(lines(task)).toContain("Sent back to the builder: 1 important");
+  });
+
+  it("after a restart, runs again only the reviewer that had not reported", async () => {
+    const root = tempDir("petrina-review-restart-");
+    roots.push(root);
+    const fakes = new Fakes(join(root, "fake"));
+    fakes.scenario({ reviewer: "work" });
+    const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] };
+    let engine = new Engine(join(root, "data"), options);
+    const productId = await engine.addProduct(makeProduct(root));
+    engine.setProductDelivery(productId, "local", true);
+    const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+    const coordinate = (current: Engine) => {
+      for (const item of current.getState().inbox) {
+        if (item.kind === "plan") current.approve(item.id);
+        else if (item.kind === "permission") current.allow(item.id, "once");
+        else if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
+      }
+      return current.getState().tasks.find((entry) => entry.id === taskId) as Task | undefined;
+    };
+    // One reviewer reported; the other is still at work when Petrina stops.
+    await waitFor(() => {
+      const task = coordinate(engine);
+      return fakes.marked("reviewer-working") && Object.keys(task?.hunt?.reported ?? {}).length === 1 && task;
+    }, "one reviewer to report while the other works", 60_000);
+    engine.shutdown();
+
+    engine = new Engine(join(root, "data"), options);
+    try {
+      const task = await waitFor(() => {
+        const found = coordinate(engine);
+        if (found?.state === "failed") throw new Error(`The task failed: ${found.error}`);
+        return engine.getState().inbox.some((item) => item.taskId === taskId && item.kind === "delivery") && found;
+      }, "the delivery check", 60_000);
+      // Two reviewers at first, then only the one that had not reported.
+      expect(fakes.openings("code reviewer")).toHaveLength(3);
+      expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(1);
+      expect(task.hunt).toBeUndefined();
+    } finally {
+      engine.shutdown();
+    }
+  });
+
+  it("takes turns when the pool has one slot, and still gets every review and vote", async () => {
+    const { task, fakes, atOnce } = await untilDelivery({ reviewer: "important" }, 1);
+    expect(atOnce).toBe(1);
+    expect(fakes.openings("verifier")).toHaveLength(2);
+    expect(task.findings.find((finding) => finding.severity === "blocking" || finding.status === "fixed")?.verification).toMatchObject({ verdict: "real" });
   });
 });
 

@@ -254,8 +254,10 @@ export interface Finding {
   confirmedBy: readonly Id[];
   /** Later reviewers who think it is wrong, and why. */
   disputes?: readonly FindingDispute[];
-  /** A fresh agent on the other tool checked an Important finding before it could send work back. */
+  /** The outcome of checking an Important finding before it could send work back: the majority's verdict. */
   verification?: FindingVerification;
+  /** Each voter's verdict, when fresh agents voted on it. */
+  votes?: readonly Vote[];
   /** The builder's answer when the finding came back to it. */
   answer?: { fixed: boolean; text: string; at: number };
   status: "open" | "fixed" | "dismissed";
@@ -271,6 +273,23 @@ export interface GuideLine {
   fromTask: Id;
   /** The task whose branch adds it to REVIEW.md. */
   writtenOn?: Id;
+}
+
+/** One review round's parallel work: each reviewer's findings as they arrive, then each voter's verdicts. */
+export interface Hunt {
+  stageId: Id;
+  round: number;
+  /** Per reviewer profile, what it reported. */
+  reported: Readonly<Record<Id, true>>;
+  /** Per voter profile, the findings it gave a verdict on. */
+  voted?: Readonly<Record<Id, true>>;
+}
+
+/** One voter's verdict on an Important finding. */
+export interface Vote {
+  by: Id;
+  verdict: FindingVerification["verdict"];
+  reason: string;
 }
 
 export interface FindingVerification {
@@ -346,6 +365,10 @@ export interface Task {
   /** How many times the coordinator sent a delivery back after every reviewer had passed it. */
   sentBack?: number;
   agent?: ActiveAgent;
+  /** Agents working on the same step at the same time as `agent` (reviewers hunting at once, voters). Each holds a slot of its own. */
+  helpers?: readonly ActiveAgent[];
+  /** A review round's parallel work so far, so a restart only redoes what had not finished. */
+  hunt?: Hunt;
   statusLine: string;
   createdAt: number;
   startedAt?: number;

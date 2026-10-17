@@ -65,10 +65,7 @@ export class Turns {
 
     const live = () => this.k.task(taskId);
     const command = this.k.options.agentCommand?.(profile);
-    // GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none.
-    const base = roleId === "shipper" && task.delivery !== "local" ? process.env : agentEnv(process.env, await this.k.emptyGhConfig());
-    // Agents work in the background: tools that would pop a browser tab stay quiet, and Petrina's own `open` refuses.
-    const env = { ...base, BROWSER: "none", PETRINA_AGENT: "1" };
+    const env = await this.envFor(task, roleId);
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
     const start = (sessionId?: string) =>
@@ -96,7 +93,7 @@ export class Turns {
             if (current.timeline.at(-1)?.text !== line) this.k.log(current, "status", line, roleId, profileId);
             this.k.commit();
           },
-          onPermission: (info) => this.permission(taskId, info, signal),
+          onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }),
           onLog: (text) => void this.k.agentLog(taskId, text),
         },
       });
@@ -164,41 +161,7 @@ export class Turns {
       }
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
       this.k.commitNow();
-      let reply = await run.prompt(opening);
-      this.briefed(task);
-      for (let repairs = 0; ; ) {
-        if (signal.aborted) throw new Aborted();
-        const current = live();
-        if (!current) throw new Aborted();
-        const prose = proseOf(reply.text);
-        if (prose) this.k.say(current, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, roleId, profileId);
-        const message = current.queued.shift();
-        if (message) {
-          this.k.say(current, "you", message.text);
-          this.k.log(current, "you", `You said: ${message.text}`);
-          this.k.commitNow();
-          reply = await run.prompt(`Message from the coordinator: ${message.text}\n\nTake it into account. When you are done, end with the result block again.`);
-          continue;
-        }
-        if (reply.stopReason === "cancelled") {
-          reply = await run.prompt("Continue where you left off. When you are done, end with the result block.");
-          continue;
-        }
-        const parsed = parseResult(reply.text, schema);
-        if (parsed.ok === "input") {
-          const answer = await this.ask(current, role, profileId, parsed.question, parsed.options, signal);
-          // Heard from here on: a restart does not hand the answer over again.
-          if (current.conversation) delete current.conversation.asked;
-          this.k.commitNow();
-          reply = await run.prompt(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`);
-          continue;
-        }
-        const error = parsed.ok === true ? options.check?.(parsed.value) : parsed.error;
-        if (parsed.ok === true && !error) return parsed.value;
-        repairs += 1;
-        if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${error}`);
-        reply = await run.prompt(repairPrompt(error ?? ""));
-      }
+      return await this.converse(task, run, opening, role, profileId, schema, signal, { ...options, main: true });
     } finally {
       this.k.runs.delete(taskId);
       run.close();
@@ -215,26 +178,132 @@ export class Turns {
     }
   }
 
+  /**
+   * One agent working beside others on the same step (reviewers looking at once, voters): always a fresh
+   * conversation, never reopened after a restart, so the caller saves what it hands back as it arrives.
+   * It keeps no notes on the task, leaves the status line to its group, and the group cleans up after it.
+   */
+  async parallel<T>(
+    task: MTask,
+    roleId: Id,
+    profileId: Id,
+    given: () => { title: string; body: string }[],
+    schema: z.ZodType<T>,
+    signal: AbortSignal,
+    options: { check?: (value: T) => string | undefined } = {},
+  ): Promise<T> {
+    const role = this.k.role(roleId);
+    const profile = this.k.profile(profileId);
+    const product = this.k.productOf(task);
+    if (!role || !profile || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profileId}`);
+    if (signal.aborted) throw new Aborted();
+    const taskId = task.id;
+    this.k.say(task, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+    this.k.log(task, "milestone", `${role.name} started`, roleId, profileId);
+    this.k.commit();
+    const command = this.k.options.agentCommand?.(profile);
+    const run = await AgentRun.start({
+      profile,
+      ...(command ? { command } : {}),
+      env: await this.envFor(task, roleId),
+      cwd: task.worktree!,
+      signal,
+      callbacks: {
+        onActivity: (line) => {
+          const current = this.k.task(taskId);
+          if (!current) return;
+          this.k.say(current, "activity", line, roleId, profileId);
+          this.k.commit();
+        },
+        onPlanStep: (line) => {
+          const current = this.k.task(taskId);
+          if (current && !current.timeline.slice(-5).some((entry) => entry.text === line && entry.profileId === profileId)) this.k.log(current, "status", line, roleId, profileId);
+          this.k.commit();
+        },
+        onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }),
+        onLog: (text) => void this.k.agentLog(taskId, text),
+      },
+    });
+    const runs = this.k.helperRuns.get(taskId) ?? new Set();
+    this.k.helperRuns.set(taskId, runs.add(run));
+    try {
+      if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
+      const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections: given() });
+      return await this.converse(task, run, opening, role, profileId, schema, signal, { ...options, main: false });
+    } finally {
+      runs.delete(run);
+      run.close();
+    }
+  }
+
+  /**
+   * Turns until the agent hands back a valid result: its words go to the session, its questions to the
+   * coordinator, and an unusable result back to it twice at most. Only the step's main agent hears the
+   * coordinator's messages as they come and keeps its open question across a restart.
+   */
+  private async converse<T>(task: MTask, run: AgentRun, opening: string, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: (value: T) => string | undefined; main: boolean }): Promise<T> {
+    const by = { roleId: role.id, profileId };
+    let reply = await run.prompt(opening);
+    if (options.main) this.briefed(task);
+    for (let repairs = 0; ; ) {
+      if (signal.aborted) throw new Aborted();
+      const current = this.k.task(task.id);
+      if (!current) throw new Aborted();
+      const prose = proseOf(reply.text);
+      if (prose) this.k.say(current, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, role.id, profileId);
+      const message = options.main ? current.queued.shift() : undefined;
+      if (message) {
+        this.k.say(current, "you", message.text);
+        this.k.log(current, "you", `You said: ${message.text}`);
+        this.k.commitNow();
+        reply = await run.prompt(`Message from the coordinator: ${message.text}\n\nTake it into account. When you are done, end with the result block again.`);
+        continue;
+      }
+      if (reply.stopReason === "cancelled") {
+        reply = await run.prompt("Continue where you left off. When you are done, end with the result block.");
+        continue;
+      }
+      const parsed = parseResult(reply.text, schema);
+      if (parsed.ok === "input") {
+        this.k.say(current, "agent", parsed.question, role.id, profileId);
+        this.k.log(current, "warn", `Asked you: ${parsed.question}`, role.id, profileId);
+        const answer = await this.wait(current, "question", parsed.question, true, { options: parsed.options }, signal, "Waiting for your answer", by, options.main);
+        // Heard from here on: a restart does not hand the answer over again.
+        if (options.main && current.conversation) delete current.conversation.asked;
+        this.k.commitNow();
+        reply = await run.prompt(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`);
+        continue;
+      }
+      const error = parsed.ok === true ? options.check?.(parsed.value) : parsed.error;
+      if (parsed.ok === true && !error) return parsed.value;
+      repairs += 1;
+      if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${error}`);
+      reply = await run.prompt(repairPrompt(error ?? ""));
+    }
+  }
+
+  /** What an agent runs with. GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none. */
+  private async envFor(task: MTask, roleId: Id): Promise<NodeJS.ProcessEnv> {
+    const base = roleId === "shipper" && task.delivery !== "local" ? process.env : agentEnv(process.env, await this.k.emptyGhConfig());
+    // Agents work in the background: tools that would pop a browser tab stay quiet, and Petrina's own `open` refuses.
+    return { ...base, BROWSER: "none", PETRINA_AGENT: "1" };
+  }
+
   /** The tool's own safety check flagged something: the coordinator decides. Petrina adds no rules of its own. */
-  private async permission(taskId: Id, info: PermissionInfo, signal: AbortSignal): Promise<"allow" | "deny"> {
+  private async permission(taskId: Id, info: PermissionInfo, signal: AbortSignal, by: { roleId: Id; profileId: Id }): Promise<"allow" | "deny"> {
     const task = this.k.task(taskId);
     if (!task) return "deny";
-    const tool = ADAPTERS[this.k.s.profiles.find((profile) => profile.id === task.agent?.profileId)?.toolId ?? ""]?.name ?? "The agent's tool";
+    const tool = ADAPTERS[this.k.profile(by.profileId)?.toolId ?? ""]?.name ?? "The agent's tool";
     const detail = info.command ?? info.paths.join("\n");
-    const answer = await this.wait(task, "permission", info.title, true, { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) }, signal, "Waiting for your permission");
+    const main = task.agent?.profileId === by.profileId && task.agent.roleId === by.roleId;
+    const answer = await this.wait(task, "permission", info.title, true, { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) }, signal, "Waiting for your permission", by, main);
     return answer === "allow" ? "allow" : "deny";
   }
 
-  private ask(task: MTask, role: Role, _profileId: Id, question: string, options: string[], signal: AbortSignal): Promise<string> {
-    this.k.say(task, "agent", question, role.id, task.agent?.profileId);
-    this.k.log(task, "warn", `Asked you: ${question}`, role.id, task.agent?.profileId);
-    return this.wait(task, "question", question, true, { options }, signal, "Waiting for your answer");
-  }
-
-  private wait(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string }, signal: AbortSignal, status: string): Promise<string> {
-    const id = this.k.raise(task, kind, title, blocking, extra);
+  private wait(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string }, signal: AbortSignal, status: string, by: { roleId: Id; profileId: Id }, main: boolean): Promise<string> {
+    const id = this.k.raise(task, kind, title, blocking, extra, by);
     task.statusLine = status;
-    if (kind === "question" && task.conversation) {
+    if (kind === "question" && main && task.conversation) {
       // A question survives a restart for the conversation that asked it.
       task.conversation.asked = { itemId: id, question: title };
       this.k.commitNow();
@@ -260,7 +329,7 @@ export class Turns {
     const stage = task.plan?.stages[task.stageIndex];
     if (!stage) return "this step";
     if (stage.kind === "converge") return `${stage.title}, round ${task.rounds[stage.id] ?? 1}`;
-    if (stage.kind === "review-chain") return `${stage.title}, reviewer ${task.sub + 1} of ${stage.profileIds.length}`;
+    if (stage.kind === "review-chain") return `${stage.title}, round ${task.rounds[stage.id] ?? 1}`;
     return task.fixing ? `${stage.title}, fixing review findings` : stage.title;
   }
 

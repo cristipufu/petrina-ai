@@ -35,7 +35,10 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
       {finding.verification && (
         <div className="issue-response">
           <b>
-            {VERDICT[finding.verification.verdict]}, by {profileText(find.profile(finding.verification.by), find, true)}
+            {VERDICT[finding.verification.verdict]}
+            {finding.votes?.length
+              ? `: ${finding.votes.filter((vote) => vote.verdict === "real").length} of ${finding.votes.length} voter${finding.votes.length === 1 ? "" : "s"} said it is real`
+              : `, by ${profileText(find.profile(finding.verification.by), find, true)}`}
           </b>
           {finding.verification.reason}
         </div>

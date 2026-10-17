@@ -1,11 +1,12 @@
-// Review chains: Petrina's tamper check and the product's checks first, then reviewers one after another,
-// Important findings verified on another tool, and the round closing back to the builder or on to delivery.
+// Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
+// fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { type DeepMutable, findingCount, type AgentProfile, type Finding, type Id, type Task, reviewRoundEnd, type Stage } from "@petrina/core";
+import { extraSlot, findingCount, reviewRoundEnd, slotWait, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import type { z } from "zod";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { VerifyResult, ReviewResult } from "./roles.js";
-import { Kernel, type MStage, type MTask, PLANNER_PROFILE } from "./kernel.js";
+import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
@@ -26,6 +27,14 @@ export function recordDisputes(findings: DeepMutable<Finding>[], disputes: reado
 /** What a reviewer's tag means for the finding. */
 const SEVERITY = { important: "blocking", nit: "suggestion", "pre-existing": "pre-existing" } as const;
 
+/** The verdict most voters gave, the mildest first on a tie: a nit, then older than the change, then not a bug. */
+function mostCommon(votes: readonly Vote[]): Vote | undefined {
+  const order: Vote["verdict"][] = ["nit", "pre-existing", "not-a-bug"];
+  const count = (verdict: Vote["verdict"]) => votes.filter((vote) => vote.verdict === verdict).length;
+  const best = [...order].sort((a, b) => count(b) - count(a) || order.indexOf(a) - order.indexOf(b))[0]!;
+  return votes.find((vote) => vote.verdict === best);
+}
+
 /** The same finding, however it is spaced or capitalised. */
 function sameFinding(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -34,137 +43,285 @@ function sameFinding(text: string): string {
 export class Reviews {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly checks: ProductChecks) {}
 
+  /**
+   * A review round: Petrina's own checks first; then every reviewer looks at the change at once, each on
+   * its own; then fresh agents vote on the Important findings no second tool has backed yet; then the round
+   * ends. What each reviewer and voter hands back is saved as it arrives, so a restart only redoes the rest.
+   */
   async runReview(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const round = task.rounds[stage.id] ?? 1;
-    // After the last reviewer, Important findings are checked on the other tool before the round closes.
-    if (task.sub >= stage.profileIds.length) return this.runVerify(task, stage, round, signal);
-    if (task.sub === 0) {
-      // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
-      delete task.handChanges;
-      const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
-      // Petrina's own findings settle on what it sees now, whatever anyone answered.
-      for (const finding of task.findings) {
-        if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && !problems.includes(finding.text)) finding.status = "fixed";
-      }
-      for (const problem of problems) {
-        if (!task.findings.some((finding) => finding.text === problem && finding.status === "open")) {
-          task.findings.push({ id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
-        }
-      }
-      this.k.log(task, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
-      // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
-      // A later chain on the same commit (a security review) goes by the run that just passed.
-      const head = await git.head(task.worktree!).catch(() => undefined);
-      const passed = !!head && task.checks?.sha === head && task.checks.results.every((run) => run.ok);
-      const checks = passed ? [] : await this.checks.ensureChecks(task, signal);
-      if ((await this.checks.runProductChecks(task, checks, signal)) > 0) {
-        this.k.log(task, "warn", "Reviewers wait until the checks pass");
-        return this.closeReviewRound(task, stage, round, false);
+    if (task.hunt?.stageId !== stage.id || task.hunt.round !== round) {
+    // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
+    delete task.handChanges;
+    const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
+    // Petrina's own findings settle on what it sees now, whatever anyone answered.
+    for (const finding of task.findings) {
+      if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && !problems.includes(finding.text)) finding.status = "fixed";
+    }
+    for (const problem of problems) {
+      if (!task.findings.some((finding) => finding.text === problem && finding.status === "open")) {
+        task.findings.push({ id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
       }
     }
-    const profileId = stage.profileIds[task.sub] ?? stage.profileIds[0] ?? "sol-xhigh";
-    const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal);
+    this.k.log(task, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
+    // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
+    // A later chain on the same commit (a security review) goes by the run that just passed.
+    const head = await git.head(task.worktree!).catch(() => undefined);
+    const passed = !!head && task.checks?.sha === head && task.checks.results.every((run) => run.ok);
+    const checks = passed ? [] : await this.checks.ensureChecks(task, signal);
+    if ((await this.checks.runProductChecks(task, checks, signal)) > 0) {
+      this.k.log(task, "warn", "Reviewers wait until the checks pass");
+      return this.closeReviewRound(task, stage, round, false);
+    }
+      task.hunt = { stageId: stage.id, round, reported: {} };
+      this.k.commit();
+    }
+    const reviewers = this.pendingReviewers(task, stage);
+    if (reviewers.length) {
+      await this.hunt(task, stage, reviewers, signal);
+      this.k.finishStep(task);
+      this.k.rerun(task);
+      // The voters' first slot qualifies again, maybe on another tool: back to the driver.
+      return "continue";
+    }
+    const vote = this.pendingVote(task, stage);
+    if (vote?.voters.length) {
+      await this.vote(task, vote.findings, vote.voters, signal);
+      return "continue";
+    }
+    if (vote) this.tally(task, vote.findings);
+    delete task.hunt;
+    return this.closeReviewRound(task, stage, round, true);
+  }
+
+  /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */
+  nextAgent(task: MTask, stage: MStage): { roleId: Id; profileId: Id } | undefined {
+    const reviewer = this.pendingReviewers(task, stage)[0];
+    if (reviewer) return { roleId: stage.roleId, profileId: reviewer.profileId };
+    const voter = this.pendingVote(task, stage)?.voters[0];
+    return voter ? { roleId: "verifier", profileId: voter } : undefined;
+  }
+
+  /** The stage's reviewers who have not reported this round, by their place in the stage. */
+  private pendingReviewers(task: MTask, stage: MStage): { key: string; profileId: Id }[] {
+    const reported = task.hunt?.stageId === stage.id && task.hunt.round === (task.rounds[stage.id] ?? 1) ? task.hunt.reported : {};
+    return stage.profileIds.map((profileId, index) => ({ key: String(index), profileId })).filter((entry) => !reported[entry.key]);
+  }
+
+  /**
+   * Every reviewer at once, each blind to what the others find this round, so they find things on their own.
+   * A stage with one reviewer runs it as usual instead: it can pick up its conversation, or be taken over.
+   */
+  private async hunt(task: MTask, stage: MStage, reviewers: readonly { key: string; profileId: Id }[], signal: AbortSignal): Promise<void> {
+    const reported = (key: string) => {
+      task.hunt = { ...task.hunt!, reported: { ...task.hunt!.reported, [key]: true } };
+      this.k.commit();
+    };
+    if (stage.profileIds.length === 1) {
+      const { key, profileId } = reviewers[0]!;
+      const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal);
+      this.applyReview(task, stage, result, profileId);
+      reported(key);
+      return;
+    }
+    const role = this.k.role(stage.roleId)?.name ?? "Reviewer";
+    await this.together(
+      task,
+      reviewers.map(({ key, profileId }) => ({
+        roleId: stage.roleId,
+        profileId,
+        work: async () => {
+          const result = await this.turns.parallel(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal);
+          this.applyReview(task, stage, result, profileId);
+          reported(key);
+        },
+      })),
+      (running, waiting) => `${running} ${role.toLowerCase()}${running === 1 ? "" : "s"} looking at the change at once${waiting ? `, ${waiting} waiting for a slot` : ""}`,
+      stage.roleId,
+    );
+  }
+
+  /** What one reviewer reported: its confirmations and disputes of earlier findings, and its own. */
+  private applyReview(task: MTask, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id): void {
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
     recordDisputes(task.findings, result.disputes, profileId, Date.now());
-    // A finding is raised once: a repeat of any earlier one, open or settled, is dropped.
-    const known = new Set(task.findings.map((finding) => sameFinding(finding.text)));
-    const raised = result.findings.filter((finding) => !known.has(sameFinding(finding.text)) && known.add(sameFinding(finding.text)));
-    for (const finding of raised) {
-      task.findings.push({
-        id: this.k.id(task.id),
-        text: finding.text,
-        ...(finding.where ? { where: finding.where } : {}),
-        ...(finding.evidence ? { evidence: finding.evidence } : {}),
-        severity: SEVERITY[finding.severity],
-        raisedBy: profileId,
-        confirmedBy: [],
-        status: "open",
-      });
+    // A finding is raised once. Another reviewer raising an open one backs it; a repeat of a settled one is dropped.
+    const raised: typeof result.findings = [];
+    let backed = 0;
+    for (const finding of result.findings) {
+      const same = task.findings.find((entry) => sameFinding(entry.text) === sameFinding(finding.text));
+      if (!same) {
+        raised.push(finding);
+        task.findings.push({
+          id: this.k.id(task.id),
+          text: finding.text,
+          ...(finding.where ? { where: finding.where } : {}),
+          ...(finding.evidence ? { evidence: finding.evidence } : {}),
+          severity: SEVERITY[finding.severity],
+          raisedBy: profileId,
+          confirmedBy: [],
+          status: "open",
+        });
+      } else if (same.status === "open" && same.raisedBy !== profileId && !same.confirmedBy.includes(profileId)) {
+        same.confirmedBy.push(profileId);
+        backed += 1;
+      }
     }
-    await this.k.undoReadOnly(task, stage.roleId);
-    this.k.finishStep(task);
     const important = raised.some((finding) => finding.severity === "important");
-    const also = [result.confirms.length ? `confirmed ${result.confirms.length}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
+    const confirmed = result.confirms.length + backed;
+    const also = [confirmed ? `confirmed ${confirmed}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
     this.k.log(task, important ? "warn" : "done", `${findingCount(raised.map((finding) => ({ severity: SEVERITY[finding.severity] })))}${also ? `; ${also}` : ""}`, stage.roleId, profileId);
-    if (this.k.rerun(task)) return "continue";
-
-    if (task.sub + 1 < stage.profileIds.length) {
-      task.sub += 1;
-      this.k.commit();
-      return "continue";
-    }
-    // Every reviewer has looked: on to checking Important findings, or the round closes.
-    task.sub = stage.profileIds.length;
-    this.k.commit();
-    return "continue";
   }
 
   /**
-   * An Important finding sends work back only once a fresh agent on another tool agrees. One turn
-   * checks the findings raised on one tool; the step repeats until none is left unchecked.
+   * The Important findings still to vote on (raised by a reviewer, and not yet backed on a second tool),
+   * and the voters who have not voted yet: one fresh agent per tool.
    */
-  private async runVerify(task: MTask, stage: MStage, round: number, signal: AbortSignal): Promise<"continue" | "stop"> {
-    const next = this.nextVerification(task, stage);
-    if (!next) return this.closeReviewRound(task, stage, round, true);
-    const ids = new Set(next.findings.map((finding) => finding.id));
-    const result = await this.turns.turn(
-      task,
-      "verifier",
-      next.profileId,
-      () => [...this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(next.findings) }],
-      VerifyResult,
-      signal,
-      {
-        status: `Checking ${next.findings.length} important finding${next.findings.length === 1 ? "" : "s"} with fresh eyes`,
-        check: (value) => {
-          const missing = next.findings.filter((finding) => !value.verdicts.some((verdict) => verdict.id === finding.id));
-          return missing.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(missing)}` : undefined;
-        },
-      },
-    );
-    const at = Date.now();
-    for (const verdict of result.verdicts) {
-      const finding = task.findings.find((entry) => entry.id === verdict.id && ids.has(entry.id));
-      if (!finding) continue;
-      finding.verification = { by: next.profileId, verdict: verdict.verdict, reason: verdict.reason, at };
-      if (verdict.verdict === "not-a-bug") finding.status = "dismissed";
-      else if (verdict.verdict === "nit") finding.severity = "suggestion";
-      else if (verdict.verdict === "pre-existing") finding.severity = "pre-existing";
-    }
-    await this.k.undoReadOnly(task, "verifier");
-    this.k.finishStep(task);
-    const verdicts = result.verdicts.filter((verdict) => ids.has(verdict.id));
-    const real = verdicts.filter((verdict) => verdict.verdict === "real").length;
-    this.k.log(task, real ? "warn" : "done", `${verdicts.length} checked: ${real} real${verdicts.length > real ? `, ${verdicts.length - real} not holding the work back` : ""}`, "verifier", next.profileId);
-    if (this.k.rerun(task)) return "continue";
-    this.k.commit();
-    return "continue";
-  }
-
-  /**
-   * The next Important findings to check: those raised on one tool that nobody on another tool has
-   * confirmed or checked yet. Petrina's own findings (checks, tamper check) are evidence already.
-   */
-  nextVerification(task: MTask, stage: MStage): { profileId: Id; findings: Task["findings"] } | undefined {
+  private pendingVote(task: MTask, stage: MStage): { findings: Task["findings"]; voters: Id[] } | undefined {
     const toolOf = (profileId: Id) => this.k.profile(profileId)?.toolId;
-    const pending = task.findings.filter(
-      (finding) =>
-        finding.status === "open" &&
-        finding.severity === "blocking" &&
-        finding.raisedBy !== "petrina" &&
-        !finding.verification &&
-        !finding.confirmedBy.some((by) => toolOf(by) !== toolOf(finding.raisedBy)),
+    const findings = task.findings.filter(
+      (finding) => finding.status === "open" && finding.severity === "blocking" && finding.raisedBy !== "petrina" && !finding.verification && new Set([finding.raisedBy, ...finding.confirmedBy].map(toolOf)).size < 2,
     );
-    if (!pending.length) return undefined;
-    const tool = toolOf(pending[0]!.raisedBy);
-    const ready = (profile: AgentProfile) => this.k.s.tools.some((entry) => entry.id === profile.toolId && entry.status === "ready");
-    const other = this.k.s.profiles.filter((profile) => profile.toolId !== tool && ready(profile as AgentProfile));
-    // The stage's own reviewers on another tool first; with only one tool working, a fresh agent on the same tool.
-    const profileId = stage.profileIds.find((id) => other.some((profile) => profile.id === id)) ?? other[0]?.id ?? stage.profileIds[0] ?? PLANNER_PROFILE;
-    return { profileId, findings: pending.filter((finding) => toolOf(finding.raisedBy) === tool) as Task["findings"] };
+    if (!findings.length) return undefined;
+    const voted = task.hunt?.voted ?? {};
+    const voters = this.voters(stage).filter((profileId) => !voted[profileId]);
+    return { findings: findings as Task["findings"], voters };
+  }
+
+  /** One voter per tool that can run: the stage's own reviewer on that tool when it has one, else that tool's most thorough profile. */
+  private voters(stage: MStage): Id[] {
+    const ready = new Set(this.k.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id));
+    // With no tool found ready (tests stand in for the tools), the tools the stage's reviewers use.
+    const tools = ready.size ? [...ready] : [...new Set(stage.profileIds.map((id) => this.k.profile(id)?.toolId).filter((id): id is Id => !!id))];
+    return tools
+      .map((toolId) => {
+        const own = stage.profileIds.find((id) => this.k.profile(id)?.toolId === toolId);
+        const profiles = this.k.s.profiles.filter((profile) => profile.toolId === toolId);
+        return own ?? (profiles.find((profile) => profile.effort === "xhigh") ?? profiles[0])?.id;
+      })
+      .filter((id): id is Id => !!id);
+  }
+
+  /**
+   * Fresh agents vote on each Important finding, all at once. A finding stands when at least half of them
+   * say it is real; otherwise the most common other verdict settles it (see tally). Every vote is kept.
+   */
+  private async vote(task: MTask, findings: Task["findings"], voters: readonly Id[], signal: AbortSignal): Promise<void> {
+    const ids = new Set(findings.map((finding) => finding.id));
+    await this.together(
+      task,
+      voters.map((profileId) => ({
+        roleId: "verifier",
+        profileId,
+        work: async () => {
+          const result = await this.turns.parallel(task, "verifier", profileId, () => [...this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(findings) }], VerifyResult, signal, {
+            check: (value) => {
+              const missing = findings.filter((finding) => !value.verdicts.some((verdict) => verdict.id === finding.id));
+              return missing.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(missing)}` : undefined;
+            },
+          });
+          for (const verdict of result.verdicts) {
+            const finding = task.findings.find((entry) => entry.id === verdict.id && ids.has(entry.id));
+            if (finding) finding.votes = [...(finding.votes ?? []).filter((vote) => vote.by !== profileId), { by: profileId, verdict: verdict.verdict, reason: verdict.reason }];
+          }
+          task.hunt = { ...task.hunt!, voted: { ...task.hunt?.voted, [profileId]: true } };
+          this.k.commit();
+        },
+      })),
+      (running, waiting) => `${running} fresh agent${running === 1 ? "" : "s"} voting on ${findings.length} important finding${findings.length === 1 ? "" : "s"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
+      "verifier",
+    );
+  }
+
+  /** Every voter has voted: each finding stands or falls by its votes. */
+  private tally(task: MTask, findings: Task["findings"]): void {
+    const ids = new Set(findings.map((finding) => finding.id));
+    const at = Date.now();
+    let real = 0;
+    for (const finding of task.findings.filter((entry) => ids.has(entry.id))) {
+      const votes = finding.votes ?? [];
+      const yes = votes.filter((vote) => vote.verdict === "real");
+      const outcome = yes.length * 2 >= votes.length ? (yes[0] ?? votes[0]) : mostCommon(votes.filter((vote) => vote.verdict !== "real"));
+      if (!outcome) continue;
+      const verdict = yes.length * 2 >= votes.length ? "real" : outcome.verdict;
+      finding.verification = { by: outcome.by, verdict, reason: outcome.reason, at };
+      if (verdict === "real") real += 1;
+      else if (verdict === "not-a-bug") finding.status = "dismissed";
+      else if (verdict === "nit") finding.severity = "suggestion";
+      else finding.severity = "pre-existing";
+    }
+    this.k.log(task, real ? "warn" : "done", `${ids.size} checked: ${real} real${ids.size > real ? `, ${ids.size - real} not holding the work back` : ""}`);
+    this.k.commit();
+  }
+
+  /**
+   * Several agents on one step at once. The first takes the task's own slot; each other one starts when a
+   * slot of its own is free, so the pool and every tool's cap still hold. One that cannot get a slot by the
+   * time the others finish is left for the driver, which waits for one. A failure stops the rest.
+   * Read-only agents leave the working copy as the group found it.
+   */
+  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; work: () => Promise<void> }[], status: (running: number, waiting: number) => string, roleId: Id): Promise<void> {
+    const headBefore = task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined;
+    const pending = [...members];
+    const running = new Map<number, { agent: ActiveAgent; done: Promise<void> }>();
+    let failure: unknown;
+    let next = 0;
+    const show = () => {
+      const agents = [...running.values()].map((entry) => entry.agent);
+      if (agents.length) task.agent = agents[0]!;
+      if (agents.length > 1) task.helpers = agents.slice(1);
+      else delete task.helpers;
+      task.statusLine = status(running.size, pending.length);
+    };
+    const start = () => {
+      while (pending.length && failure === undefined) {
+        const member = pending[0]!;
+        const toolId = this.k.profile(member.profileId)?.toolId ?? "unknown";
+        // The task's own slot was taken for one tool: another agent qualifies for it like anyone else.
+        const free = running.size === 0 ? !slotWait(this.k.getState(), { taskId: task.id, toolId }) : extraSlot(this.k.getState(), toolId);
+        if (!free) break;
+        pending.shift();
+        const id = next++;
+        const agent = { roleId: member.roleId, profileId: member.profileId, since: Date.now(), step: 0 };
+        const done = member
+          .work()
+          .catch((error: unknown) => {
+            failure ??= error;
+          })
+          .finally(() => {
+            running.delete(id);
+            show();
+            this.k.commit();
+            // A slot came free: other tasks may start in it.
+            this.k.schedule();
+          });
+        running.set(id, { agent, done });
+        show();
+      }
+      this.k.commit();
+    };
+    try {
+      start();
+      while (running.size) {
+        await Promise.race([...running.values()].map((entry) => entry.done));
+        if (failure !== undefined) break;
+        start();
+      }
+      if (failure !== undefined) throw failure;
+    } finally {
+      this.k.stopHelpers(task.id);
+      delete task.helpers;
+      if (!this.k.role(roleId)?.canEdit && task.worktree) {
+        if (headBefore && (await git.head(task.worktree).catch(() => headBefore)) !== headBefore) {
+          await git.resetTo(task.worktree, headBefore);
+          this.k.log(task, "warn", `Undid commits from ${this.k.role(roleId)?.name ?? roleId}, which is read-only`);
+        }
+        await this.k.undoReadOnly(task, roleId);
+      }
+    }
   }
 
   /** The end of a review round: back to the builder with what is Important, or on towards delivery. */

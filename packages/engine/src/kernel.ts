@@ -96,6 +96,9 @@ export abstract class Kernel {
 
   readonly runs = new Map<Id, AgentRun>();
 
+  /** Agents working beside a task's main one on the same step (reviewers hunting at once, voters). */
+  readonly helperRuns = new Map<Id, Set<AgentRun>>();
+
   readonly waiting = new Map<Id, { resolve: (value: string) => void; reject: (error: Error) => void }>();
 
   saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -142,6 +145,7 @@ export abstract class Kernel {
     task.stageIndex = index;
     task.sub = 0;
     task.fixing = false;
+    delete task.hunt;
     this.log(task, "milestone", "Reviewing your changes: the review starts again from the first reviewer");
     this.commit();
     return true;
@@ -158,7 +162,8 @@ export abstract class Kernel {
     this.commitNow();
   }
 
-  raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string } = {}): Id {
+  /** `by`: the agent asking, when it is not the task's main one (a reviewer working beside others). */
+  raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string } = {}, by: { roleId: Id; profileId: Id } | undefined = task.agent): Id {
     const id = this.id("inbox");
     task.state = "needs-you";
     this.s.inbox.push({
@@ -168,7 +173,7 @@ export abstract class Kernel {
       title,
       at: Date.now(),
       blocking,
-      ...(task.agent ? { roleId: task.agent.roleId, profileId: task.agent.profileId } : {}),
+      ...(by ? { roleId: by.roleId, profileId: by.profileId } : {}),
       ...(extra.body ? { body: extra.body } : {}),
       ...(extra.options ? { options: extra.options } : {}),
       ...(extra.detail ? { detail: extra.detail } : {}),
@@ -179,6 +184,8 @@ export abstract class Kernel {
   fail(taskId: Id, error: unknown): void {
     const task = this.task(taskId);
     if (!task) return;
+    this.stopHelpers(taskId);
+    delete task.helpers;
     const message = error instanceof Error ? error.message : String(error);
     delete task.agent;
     delete task.conversation;
@@ -248,6 +255,13 @@ export abstract class Kernel {
     this.drivers.delete(taskId);
     this.runs.get(taskId)?.close();
     this.runs.delete(taskId);
+    this.stopHelpers(taskId);
+  }
+
+  /** Stop every agent working beside the task's main one. */
+  stopHelpers(taskId: Id): void {
+    for (const run of this.helperRuns.get(taskId) ?? []) run.close();
+    this.helperRuns.delete(taskId);
   }
 
   async undoReadOnly(task: MTask, roleId: Id): Promise<void> {

@@ -20,10 +20,12 @@ export function LimitStepper({ limit }: { limit: number }) {
   );
 }
 
-function holdersOf(state: State, find: Lookup): Task[] {
-  return slotUses(state)
-    .map((use) => find.task(use.taskId))
-    .filter((task) => task !== undefined);
+/** Who is in each slot in use: the task, and the agent in that slot (several reviewers at once each have one). */
+function holdersOf(state: State, find: Lookup): { task: Task; roleId?: string; key: string }[] {
+  return slotUses(state).flatMap((use, index) => {
+    const task = find.task(use.taskId);
+    return task ? [{ task, ...(use.roleId ? { roleId: use.roleId } : {}), key: `${use.taskId}:${use.profileId ?? index}` }] : [];
+  });
 }
 
 /** The pool's controls and who is in each slot: in the pool popover, or in the top bar's More menu. */
@@ -50,17 +52,18 @@ export function PoolPanel({ state, find, onOpen, onDone }: { state: State; find:
       </p>
       <div className="divider" />
       <div className="slot-list">
-        {slots.map((task, index) => {
-          if (!task)
+        {slots.map((holder, index) => {
+          if (!holder)
             return (
               <div key={`free-${index}`} className="slot-row free">
                 Free slot{next ? ` · next up: ${next.title}` : ""}
               </div>
             );
-          const role = find.role(task.agent?.roleId);
+          const { task } = holder;
+          const role = find.role(holder.roleId ?? task.agent?.roleId);
           return (
             <button
-              key={task.id}
+              key={holder.key}
               className="slot-row"
               onClick={() => {
                 onDone();
@@ -99,10 +102,10 @@ export function PoolButton({ state, find, onOpen, compact }: { state: State; fin
         {state.pool.paused ? <Pause size={14} aria-hidden="true" /> : null}
         {!compact && (
           <span className="slots" aria-hidden="true">
-            {slots.map((task, index) => {
-              const role = find.role(task?.agent?.roleId);
-              const waiting = task?.state === "needs-you";
-              return <span key={index} className={`slot ${task ? (waiting ? "waiting" : `used tone-${role?.tone ?? "slate"}`) : ""}`} />;
+            {slots.map((holder, index) => {
+              const role = find.role(holder?.roleId ?? holder?.task.agent?.roleId);
+              const waiting = holder?.task.state === "needs-you";
+              return <span key={index} className={`slot ${holder ? (waiting ? "waiting" : `used tone-${role?.tone ?? "slate"}`) : ""}`} />;
             })}
           </span>
         )}

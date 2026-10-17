@@ -311,6 +311,7 @@ export class Engine extends Kernel {
     task.state = "paused";
     task.holdsSlot = false;
     delete task.agent;
+    delete task.helpers;
     // Resuming starts the step fresh, with everything said in it so far.
     delete task.conversation;
     task.statusLine = "Paused by you";
@@ -340,6 +341,7 @@ export class Engine extends Kernel {
     task.column = "done";
     task.holdsSlot = false;
     delete task.agent;
+    delete task.helpers;
     delete task.conversation;
     task.finishedAt = Date.now();
     task.statusLine = "Cancelled";

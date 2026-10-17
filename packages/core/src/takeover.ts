@@ -13,6 +13,7 @@ export const TAKE_OVER_WORDS = {
   unsupported: "This agent's tool can't be opened in a terminal",
   missing: (tool: string) => `${tool} isn't installed on this machine`,
   driving: "You're driving it already",
+  several: "Several agents are working on this step at once. Take over when one is working alone",
   handBackFirst: "Hand back first",
   status: "You're driving in your terminal",
   inCharge: (tool: string) =>
@@ -71,6 +72,7 @@ export function takeOverBlock(task: Task, state: Pick<State, "profiles" | "tools
   const agent = task.agent;
   if (!agent || !task.holdsSlot || (task.state !== "running" && task.state !== "needs-you")) return TAKE_OVER_WORDS.noAgent;
   if (agent.roleId === "shipper") return TAKE_OVER_WORDS.shipper;
+  if (task.helpers?.length) return TAKE_OVER_WORDS.several;
   const toolId = state.profiles.find((profile) => profile.id === agent.profileId)?.toolId;
   if (!toolId || !TAKE_OVER_TOOLS[toolId]) return TAKE_OVER_WORDS.unsupported;
   if (state.tools.find((tool) => tool.id === toolId)?.status !== "ready") return TAKE_OVER_WORDS.missing(toolName(toolId));

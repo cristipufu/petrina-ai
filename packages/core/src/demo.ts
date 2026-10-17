@@ -106,7 +106,7 @@ function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): St
     profiles: DEFAULT_PROFILES,
     tasks,
     inbox,
-    pool: { limit: 4, paused: false, toolCaps: { "claude-code": 3, codex: 2 } },
+    pool: { limit: 5, paused: false, toolCaps: { "claude-code": 3, codex: 2 } },
   };
 }
 

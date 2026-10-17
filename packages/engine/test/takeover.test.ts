@@ -83,7 +83,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(task.state).toBe("needs-you");
     expect(task.holdsSlot).toBe(true);
     expect(task.statusLine).toBe(TAKE_OVER_WORDS.status);
-    expect(slotUses(engine.getState())).toEqual([{ taskId: run.taskId, toolId: "codex" }]);
+    expect(slotUses(engine.getState())).toEqual([{ taskId: run.taskId, toolId: "codex", roleId: "builder", profileId: "sol-xhigh" }]);
     const item = engine.getState().inbox.find((entry) => entry.taskId === run.taskId)!;
     expect(item).toMatchObject({ kind: "driving", blocking: false, roleId: "builder" });
     // The builder's unfinished work was saved as its own commit before the terminal opened.

@@ -23,7 +23,7 @@ import type {
   Task,
   TaskKind,
 } from "./model.js";
-import { pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
+import { extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
 import { afterChangesAsked, columnOf, designRoundEnd, GATE_TITLE, gateStatus, reviewRoundEnd, type DeepMutable } from "./flow.js";
 import { findingCount } from "./findings.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
@@ -613,12 +613,22 @@ export class Simulator {
       task.state = "waiting";
       task.holdsSlot = false;
       delete task.agent;
+      delete task.helpers;
       task.column = this.columnFor(d, task);
       task.statusLine = waiting;
       return;
     }
     const agent: ActiveAgent = { ...next, since: d.now, step: 0 };
     task.agent = agent;
+    // Reviewers look at the change together, as the engine's do: the ones still to report work beside this
+    // one, each in a slot of its own while the pool and its tool allow.
+    delete task.helpers;
+    const current = this.stage(task);
+    for (const profileId of current?.kind === "review-chain" ? current.profileIds.slice(task.sub + 1) : []) {
+      const tool = d.profiles.find((profile) => profile.id === profileId)?.toolId ?? "unknown";
+      if (!extraSlot(d as State, tool)) break;
+      task.helpers = [...(task.helpers ?? []), { roleId: current!.roleId, profileId, since: d.now, step: 0 }];
+    }
     task.state = "running";
     task.holdsSlot = true;
     task.column = this.columnFor(d, task);
@@ -859,6 +869,7 @@ export class Simulator {
   }
 
   private advance(d: Draft, task: DraftTask): void {
+    delete task.helpers;
     task.stageIndex += 1;
     task.sub = 0;
     delete task.agent;
@@ -876,6 +887,7 @@ export class Simulator {
 
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
     delete task.agent;
+    delete task.helpers;
     task.holdsSlot = false;
     task.statusLine = gateStatus(task as unknown as Task, gate);
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;

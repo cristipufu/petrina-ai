@@ -8,11 +8,12 @@ import { ReviewsPanel } from "./Reviews";
 import { drivingText, openHandBack } from "./TakeOver";
 import type { SheetTab } from "./TaskCard";
 
-/** One tile per pool slot: who is in it, what they are doing, and a way in. */
+/** One tile per pool slot: who is in it, what they are doing, and a way in. Several reviewers at once have a tile each. */
 export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void }) {
-  const holders = slotUses(state)
-    .map((use) => find.task(use.taskId))
-    .filter((task) => task !== undefined);
+  const holders = slotUses(state).flatMap((use, index) => {
+    const task = find.task(use.taskId);
+    return task ? [{ task, roleId: use.roleId ?? task.agent?.roleId, profileId: use.profileId ?? task.agent?.profileId, key: `${use.taskId}:${use.profileId ?? index}` }] : [];
+  });
   const free = Math.max(0, state.pool.limit - holders.length);
   const upNext = queueOf(state.tasks).filter((task) => !task.held);
 
@@ -35,18 +36,18 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
         </div>
       </div>
       <div className="grid">
-        {holders.map((task) => {
-          const role = find.role(task.agent?.roleId);
+        {holders.map(({ task, roleId, profileId, key }) => {
+          const role = find.role(roleId);
           const waiting = task.state === "needs-you";
           const driving = task.driving !== undefined;
           return (
-            <div key={task.id} className={`tile ${waiting ? "waiting" : ""}`}>
+            <div key={key} className={`tile ${waiting ? "waiting" : ""}`}>
               <div className="row">
                 <RoleAvatar role={role} size={32} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 600 }}>{role?.name}</div>
                   <div className="quiet-text" style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>
-                    {profileText(find.profile(task.agent?.profileId), find, true)}
+                    {profileText(find.profile(profileId), find, true)}
                   </div>
                 </div>
               </div>

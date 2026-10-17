@@ -58,6 +58,8 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
   const flag = flagOf(task, state.now);
   const delivery = deliveryText(task);
   const showAgent = role && profile && (task.state === "running" || task.state === "needs-you" || task.state === "paused");
+  // Reviewers looking at once, or voters: one line for all of them.
+  const together = 1 + (task.helpers?.length ?? 0);
 
   const classes = ["card", task.state];
   if (task.held) classes.push("held");
@@ -114,10 +116,10 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
           {showAgent && (
             <span className="agent">
               <RoleAvatar role={role} size={16} />
-              {role.name}
+              {together > 1 ? `${together} ${role.name.toLowerCase()}s at once` : role.name}
             </span>
           )}
-          {showAgent && <ProfileText profile={profile} find={find} />}
+          {showAgent && together === 1 && <ProfileText profile={profile} find={find} />}
           {task.startedAt !== undefined && !queued && !finished && (
             <span className="num" title="Time since the work started">
               <Clock3 size={12} aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: 4 }} />

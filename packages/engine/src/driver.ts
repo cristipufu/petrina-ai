@@ -82,11 +82,8 @@ export class Driver {
         return task.sub === 0
           ? { roleId: stage.roleId, profileId: stage.profileIds[0] ?? PLANNER_PROFILE }
           : { roleId: stage.reviewerRoleId ?? "design-reviewer", profileId: stage.reviewerProfileIds?.[0] ?? "sol-xhigh" };
-      case "review-chain": {
-        if (task.sub < stage.profileIds.length) return { roleId: stage.roleId, profileId: stage.profileIds[task.sub] ?? stage.profileIds[0] ?? PLANNER_PROFILE };
-        const verify = this.reviews.nextVerification(task, stage);
-        return verify ? { roleId: "verifier", profileId: verify.profileId } : undefined;
-      }
+      case "review-chain":
+        return this.reviews.nextAgent(task, stage);
       case "gate":
         return undefined;
     }
@@ -123,6 +120,7 @@ export class Driver {
             current.stageIndex = chain;
             current.sub = 0;
             current.fixing = false;
+            delete current.hunt;
             this.k.log(current, "milestone", "Reviewing your changes before anything ships: the review starts again from the first reviewer");
             this.k.commit();
             continue;
@@ -250,6 +248,8 @@ export class Driver {
         delete task.agent;
       }
       task.holdsSlot = false;
+      // Nothing runs after a restart: agents that worked beside the main one are gone too.
+      delete task.helpers;
     }
   }
 

@@ -183,7 +183,7 @@ ${profiles}
 Stage kinds:
 - "do": one role on one profile (researcher, ux-designer, builder, tester).
 - "converge": an architect and a design-reviewer on different tools iterate until no blocking objection is left. Set maxRounds (2 or 3).
-- "review-chain": code-reviewers run one after another on the change. Use at least two, on different tools. Set maxRounds (usually 2).
+- "review-chain": code-reviewers look at the change at the same time, each on its own, then fresh agents vote on what they found. Use at least two, on different tools. Set maxRounds (usually 2).
 - "gate": the coordinator checks. Use gate "design" after a converge stage when the change affects what users see.
 
 Rules:

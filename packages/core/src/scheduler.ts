@@ -1,9 +1,11 @@
 import type { Id, Pool, State, Task } from "./model.js";
 
-/** A pool slot in use: which task holds it and on which tool. */
+/** A pool slot in use: which task holds it, on which tool, and the agent in it when there is one. */
 export interface SlotUse {
   taskId: Id;
   toolId: Id;
+  roleId?: Id;
+  profileId?: Id;
 }
 
 /** A task that could start (or continue) if a slot were free. */
@@ -45,12 +47,24 @@ export function pickStarts({ candidates, inUse, pool }: PickInput): Id[] {
   return starts;
 }
 
-/** The tasks holding a slot, with the tool their current agent uses. */
+/** The slots in use: one per task holding a slot, and one more for each agent working beside its main one. */
 export function slotUses(state: State): SlotUse[] {
   const toolOf = new Map(state.profiles.map((profile) => [profile.id, profile.toolId]));
   return state.tasks
     .filter((task) => task.holdsSlot)
-    .map((task) => ({ taskId: task.id, toolId: (task.agent && toolOf.get(task.agent.profileId)) ?? "unknown" }));
+    .flatMap((task) => [
+      { taskId: task.id, toolId: (task.agent && toolOf.get(task.agent.profileId)) ?? "unknown", ...(task.agent ? { roleId: task.agent.roleId, profileId: task.agent.profileId } : {}) },
+      ...(task.helpers ?? []).map((helper) => ({ taskId: task.id, toolId: toolOf.get(helper.profileId) ?? "unknown", roleId: helper.roleId, profileId: helper.profileId })),
+    ]);
+}
+
+/** Whether a task that already holds its slot may start one more agent on this tool now: every slot in use counts. */
+export function extraSlot(state: State, toolId: Id): boolean {
+  if (state.pool.paused) return false;
+  const uses = slotUses(state);
+  if (uses.length >= state.pool.limit) return false;
+  const cap = state.pool.toolCaps[toolId];
+  return cap === undefined || uses.filter((use) => use.toolId === toolId).length < cap;
 }
 
 /** Rechecked for every agent, including one on the same tool. The task's old slot does not count. */

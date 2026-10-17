@@ -26,8 +26,11 @@ export interface Scenario {
    * "commit": commit a stray file, read-only as it is, then work until the step restarts.
    * "work": the first reviewer to start works until the coordinator takes over and hands back; later ones pass.
    */
-  /** "important": the first round's reviewers raise one Important finding (the second in other words); later rounds pass. */
-  reviewer?: "commit" | "work" | "important";
+  /**
+   * "important": in the first round the reviewer on Opus raises one Important finding, the others a nit.
+   * "important-twice": every reviewer raises it, each in its own words. Later rounds pass.
+   */
+  reviewer?: "commit" | "work" | "important" | "important-twice";
   /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. */
   guide?: "change of mind";
   /** How the planner rates the task's risk (unrated by default). */
@@ -61,6 +64,8 @@ interface Conversation {
   history: acp.SessionNotification["update"][];
   /** Turns the coordinator added in the tool's own app, in their terminal (see fake-cli.ts). */
   terminal?: number;
+  /** The model Petrina chose for it ("opus", "gpt-6.1-sol"). */
+  model?: string;
 }
 
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
@@ -294,7 +299,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     }
     case "code reviewer":
       if (handedBack) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] }, terminal);
-      if (plan.reviewer === "work" && !marked("reviewer-worked")) {
+      // Only the reviewer on Opus: with reviewers starting at once, which one works on stays certain.
+      if (plan.reviewer === "work" && session.model === "opus" && !marked("reviewer-worked")) {
         mark("reviewer-worked");
         await say("Reading the change");
         return hang(sessionId, "reviewer-working");
@@ -305,10 +311,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         run(session.cwd, "commit", "--quiet", "-m", "A stray commit");
         return hang(sessionId, "reviewer-committed");
       }
-      if (plan.reviewer === "important" && !text.includes("This is review round")) {
-        // The second reviewer repeats the first one's finding in other words: Petrina keeps it once.
-        const again = text.includes("Findings so far");
-        return done({ verdict: "fail", findings: [{ text: again ? "The GREETING is missing on the welcome page!" : "The greeting is missing on the welcome page.", where: "greeting.txt", severity: "important", evidence: "Opened the welcome page" }], confirms: [], disputes: [] });
+      if ((plan.reviewer === "important" || plan.reviewer === "important-twice") && !text.includes("This is review round")) {
+        const opus = session.model === "opus";
+        if (plan.reviewer === "important" && !opus) return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
+        return done({ verdict: "fail", findings: [{ text: opus ? "The greeting is missing on the welcome page." : "The GREETING is missing on the welcome page!", where: "greeting.txt", severity: "important", evidence: "Opened the welcome page" }], confirms: [], disputes: [] });
       }
       return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
     case "security reviewer":
@@ -404,6 +410,8 @@ acp
     return { configOptions: configOptions() };
   })
   .onRequest("session/set_config_option", (ctx) => {
+    const session = sessions.get(ctx.params.sessionId);
+    if (session && ctx.params.configId === "model") session.model = String(ctx.params.value);
     if (dir) appendFileSync(join(dir, "config.jsonl"), `${JSON.stringify({ session: ctx.params.sessionId, configId: ctx.params.configId, value: ctx.params.value })}\n`);
     return { configOptions: configOptions() };
   })
