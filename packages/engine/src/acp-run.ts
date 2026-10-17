@@ -27,7 +27,12 @@ export interface RunCallbacks {
   onLog?(text: string): void;
   /** The tool said how much of a usage limit is used (every report, whether or not it is close). */
   onUsage?(info: UsageInfo): void;
+  /** What the tool says it is logged in with, when it says: "none" means not logged in. */
+  onAuthStatus?(kind: string): void;
 }
+
+/** The notification Claude Code's and Codex's connectors send, unasked, with the login they run on. */
+const AUTH_STATUS_UPDATE = "_auth/status_update";
 
 /** What the tool confirmed the session runs on. A missing value: not confirmed. */
 export interface SessionSettings {
@@ -130,6 +135,19 @@ export function reroutedTo(text: string): string | undefined {
 const REOPEN_TIMEOUT_MS = 60_000;
 /** How long a tool gets to start a fresh conversation: handshake, new session and its settings. */
 const START_TIMEOUT_MS = 2 * 60_000;
+
+/** How long a tool that gave up starting gets to stop by itself before it is forced to. */
+const FORCE_AFTER_MS = 2_000;
+
+/** Stop an agent's process: asked first, then forced, so one that ignores being asked never stays behind. */
+function end(child: ChildProcess): void {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill();
+  const force = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }, FORCE_AFTER_MS);
+  child.once("exit", () => clearTimeout(force));
+}
 
 /** The tool could not reopen the conversation. The message says why, in plain words. */
 export class ReopenFailed extends Error {}
@@ -243,7 +261,9 @@ export class AgentRun {
   /**
    * With `reopen`, pick up that conversation: by the tool's resume, which replays nothing, or by
    * load when that is all it offers. Anything that keeps it from reopening within the time limit
-   * (no support, an error, no answer) throws ReopenFailed, and the agent process is gone.
+   * (no support, an error, no answer) throws ReopenFailed, and the agent process is gone. A tool that
+   * does not start within `startTimeoutMs` is stopped and throws, so a step never waits forever.
+   * Aborted while starting, it throws at once. `onGone` hears when the agent's process has exited.
    */
   static async start(options: {
     profile: AgentProfile;
@@ -255,6 +275,7 @@ export class AgentRun {
     reopen?: string;
     reopenTimeoutMs?: number;
     startTimeoutMs?: number;
+    onGone?: (gone: Promise<void>) => void;
   }): Promise<AgentRun> {
     const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
@@ -266,6 +287,10 @@ export class AgentRun {
     // windowsHide: no console window flashes up on Windows when an agent starts.
     const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env, windowsHide: true });
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
+    options.onGone?.(new Promise<void>((done) => {
+      child.once("exit", () => done());
+      child.once("error", () => done());
+    }));
     const killed = new Promise<never>((_, reject) => {
       child.once("exit", (code) => reject(new Error(`${adapter.name} stopped (exit ${code ?? "signal"})`)));
       child.once("error", (error) => reject(error));
@@ -273,6 +298,9 @@ export class AgentRun {
     killed.catch(() => undefined);
     const abort = () => child.kill();
     signal.addEventListener("abort", abort, { once: true });
+    // Stopped while starting: give up at once, without waiting for a tool that ignores being stopped.
+    const stopped = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("Stopped before the agent started")), { once: true }));
+    stopped.catch(() => undefined);
 
     // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
     // already in the session view and timeline.
@@ -377,6 +405,11 @@ export class AgentRun {
               break;
           }
         },
+        async extNotification(method, params) {
+          if (method !== AUTH_STATUS_UPDATE && method !== AUTH_STATUS_UPDATE.slice(1)) return;
+          const kind = (params as { authStatus?: { kind?: unknown } }).authStatus?.kind;
+          if (typeof kind === "string") callbacks.onAuthStatus?.(kind);
+        },
       }),
       stream,
     );
@@ -447,14 +480,14 @@ export class AgentRun {
     ready.catch(() => undefined);
 
     try {
-      const session = await Promise.race([ready, killed, deadline]);
+      const session = await Promise.race([ready, killed, deadline, stopped]);
       clearTimeout(whole);
       return new AgentRun(child, connection, session.sessionId, state, profile, session.how);
     } catch (error) {
       clearTimeout(whole);
-      // No agent left running behind a conversation that did not open.
+      // No agent left running behind a conversation that did not open, even one that ignores being stopped.
       signal.removeEventListener("abort", abort);
-      if (child.exitCode === null) child.kill();
+      end(child);
       if (options.reopen !== undefined && !(error instanceof ReopenFailed) && !signal.aborted) throw new ReopenFailed(`${adapter.name} could not reopen the conversation`);
       throw error;
     }
@@ -508,13 +541,13 @@ export class AgentRun {
   }
 
   /** Stop the agent's process and wait until it has exited; forced after a few seconds. */
-  async stop(): Promise<void> {
+  async stop(graceMs = 5000): Promise<void> {
     const gone = (ms: number) =>
       this.child.exitCode !== null || this.child.signalCode !== null
         ? Promise.resolve(true)
         : Promise.race([new Promise<boolean>((resolve) => this.child.once("exit", () => resolve(true))), Bun.sleep(ms).then(() => false)]);
     this.close();
-    if (await gone(5000)) return;
+    if (await gone(graceMs)) return;
     this.child.kill("SIGKILL");
     await gone(3000);
   }

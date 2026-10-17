@@ -7,13 +7,17 @@
 //
 // Engine is the thin front: the coordinator's commands live here. Each part of the work lives in a
 // module of its own (driver, planning, design, work, review, shipping, take-over, product checks,
-// review guide, turns, context), and they share state and bookkeeping through the kernel.
+// review guide, tools check, turns, context), and they share state and bookkeeping through the kernel.
 
-import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, afterChangesAsked, type AskAnswer, type Commands, type NewTaskInput, type SaidContext, type UsageRequest, type UsageViewFor } from "@petrina/core";
+import { realpathSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, afterChangesAsked, type AskAnswer, type Commands, type NewTaskInput, type SaidContext, type UsageRequest, type UsageViewFor, fixFor, isGuide, SETUP_STEPS, type Clone, type SetupStep } from "@petrina/core";
 import * as git from "./git.js";
 import { parseCommand } from "./checks.js";
 import { CODEX_USAGE_EVERY_MS } from "./codex-usage.js";
 import { Kernel, TONES, type EngineOptions } from "./kernel.js";
+import { browserCommand, expandPath, findClones } from "./setup.js";
+import { ToolChecks } from "./tool-checks.js";
 import { Turns } from "./turn.js";
 import { GuideKeeper } from "./guide-keeper.js";
 import { Context } from "./context.js";
@@ -35,6 +39,7 @@ export { recordDisputes } from "./review.js";
 
 /** The engine: every command the window can send (Commands) is a method here. */
 export class Engine extends Kernel implements Commands {
+  private readonly tools: ToolChecks;
   private readonly turns: Turns;
   private readonly guide: GuideKeeper;
   private readonly context: Context;
@@ -52,13 +57,14 @@ export class Engine extends Kernel implements Commands {
 
   constructor(dataDir: string, options: EngineOptions = {}) {
     super(dataDir, options);
-    this.turns = new Turns(this);
+    this.tools = new ToolChecks(this);
+    this.turns = new Turns(this, this.tools);
     this.guide = new GuideKeeper(this, this.turns);
     this.context = new Context(this, this.guide);
     this.checks = new ProductChecks(this, this.turns, this.context);
     this.connections = new Connections(this);
     this.updates = new Updates(this, this.connections);
-    this.shipping = new Shipping(this, this.turns, this.updates, this.checks, this.connections);
+    this.shipping = new Shipping(this, this.turns, this.updates, this.checks, this.connections, this.tools);
     this.learnings = new Learnings(this);
     this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings, this.updates);
     this.design = new Design(this, this.turns, this.context);
@@ -115,8 +121,29 @@ export class Engine extends Kernel implements Commands {
     return this.tracking.usage(request);
   }
 
-  async addProduct(path: string, name?: string): Promise<Id> {
-    const info = await git.repoInfo(path);
+  /**
+   * Add a product from its local clone: the clone's folder or any folder inside it, ~ for the home
+   * folder. Every refusal is one plain sentence. Adding a clone that is already there opens it. A
+   * clone not linked to GitHub keeps its finished work on this machine instead of opening pull requests.
+   */
+  async addProduct(input: string, name?: string): Promise<Id> {
+    const shown = input.trim();
+    const path = expandPath(shown, this.options.home);
+    const found = await stat(path).catch(() => undefined);
+    if (!found) throw new Error(`There is no folder at ${shown}.`);
+    if (!found.isDirectory()) throw new Error(`${shown} is a file, so pick the folder you cloned the product into.`);
+    // Checked without running Git, so a Mac without Apple's developer tools never opens their installer.
+    if (this.tools.status("git") !== "ready") await this.tools.check("git");
+    if (this.tools.status("git") === "not-installed") {
+      const platform = this.s.setup?.platform ?? "linux";
+      throw new Error(`Petrina needs Git to add a product, and Git isn't installed: run ${fixFor("git", "not-installed", platform)!.command} in ${platform === "win32" ? "a terminal" : "Terminal"}, then try again.`);
+    }
+    let info: git.RepoInfo;
+    try {
+      info = await git.repoInfo(path);
+    } catch {
+      throw new Error("That folder isn't a copy of a repository, so pick the folder you cloned the product into.");
+    }
     const existing = this.s.products.find((product) => product.path === info.root);
     if (existing) return existing.id;
     const displayName = productName(name ?? suggestProductName(info.root), this.s.products);
@@ -134,10 +161,10 @@ export class Engine extends Kernel implements Commands {
       tone: TONES[this.s.products.length % TONES.length]!,
       path: info.root,
       defaultBranch: info.defaultBranch,
-      delivery: "pull-request",
+      delivery: info.github ? "pull-request" : "local",
       approveDelivery: true,
     });
-    this.commit();
+    this.commitNow();
     return id;
   }
 
@@ -193,7 +220,76 @@ export class Engine extends Kernel implements Commands {
     this.commit();
   }
 
+  // ── First run and the tools check ──────────────────────────────────────
+
+  /** Check every tool again, each on its own, so a slow one never holds up the others. */
+  checkTools(): Promise<void> {
+    return this.tools.checkAll();
+  }
+
+  /** GitHub clones in the usual code folders, most recently changed first, without the ones already added. */
+  async findClones(): Promise<Clone[]> {
+    const added = new Set(this.s.products.map((product) => product.path).filter((path): path is string => !!path));
+    const real = (path: string) => {
+      try {
+        return realpathSync(path);
+      } catch {
+        return path;
+      }
+    };
+    return findClones({ ...(this.options.home ? { home: this.options.home } : {}), skip: (path) => added.has(path) || added.has(real(path)) });
+  }
+
+  /** The furthest first-run screen reached, so closing Petrina partway reopens there. */
+  setSetupStep(step: SetupStep): void {
+    const setup = this.s.setup;
+    const order = (value: SetupStep | undefined) => SETUP_STEPS.findIndex((entry) => entry.id === (value ?? "welcome"));
+    if (!setup || setup.done || order(step) <= order(setup.step)) return;
+    setup.step = step;
+    this.commitNow();
+  }
+
+  /** "Skip setup": first run never comes back. */
+  skipSetup(): void {
+    if (!this.s.setup || this.s.setup.done) return;
+    this.s.setup.done = true;
+    this.commitNow();
+  }
+
+  /**
+   * First run's Start: add the task and finish setup together, saved before the window hears back.
+   * Sent again after a lost reply, it finds the same task.
+   */
+  startFirstTask(input: NewTaskInput & { clientId: Id }): Id {
+    const id = this.addTask(input);
+    const setup = this.s.setup;
+    if (setup) {
+      setup.done = true;
+      setup.firstTaskId ??= id;
+    }
+    this.commitNow();
+    return id;
+  }
+
+  /** The board's one-time tip about the first task. */
+  dismissTip(): void {
+    if (!this.s.setup || this.s.setup.tipDismissed) return;
+    this.s.setup.tipDismissed = true;
+    this.commit();
+  }
+
+  /** Open one of the official guides a fix links to, in the default browser. No other page. */
+  openGuide(url: string): void {
+    if (!isGuide(url)) throw new Error("Petrina only opens the guides it links to.");
+    Bun.spawn(browserCommand(url), { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
+  }
+
+  // ── The queue and the pool ─────────────────────────────────────────────
+
   addTask(input: NewTaskInput): Id {
+    // Sent again after its reply was lost: the task is already there.
+    const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId) : undefined;
+    if (known) return known.id;
     const product = this.s.products.find((entry) => entry.id === input.productId);
     if (!product) throw new Error("Unknown product");
     const title = input.title.trim();
@@ -228,6 +324,7 @@ export class Engine extends Kernel implements Commands {
       objections: [],
       findings: [],
       prAge: 0,
+      ...(input.clientId ? { clientId: input.clientId } : {}),
     });
     this.renumberQueue();
     this.commit();
@@ -382,9 +479,14 @@ export class Engine extends Kernel implements Commands {
     this.schedule();
   }
 
-  /** Start a failed task again from the stage it failed in. */
-  retry(itemId: Id): void {
+  /**
+   * Start a failed task again from the stage it failed in. Stuck on a tool: check the tool again
+   * first, and while it is still not installed or not logged in, the item stays with its fix.
+   */
+  async retry(itemId: Id): Promise<void> {
     this.takeover.notDrivingItem(itemId);
+    const stuck = this.s.inbox.find((entry) => entry.id === itemId);
+    if (stuck?.toolId && (await this.tools.stillNotReady(stuck.toolId, this.task(stuck.taskId)))) return;
     const item = this.s.inbox.find((entry) => entry.id === itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
@@ -529,7 +631,7 @@ export class Engine extends Kernel implements Commands {
     this.takeover.notDrivingItem(itemId);
     const kind = this.s.inbox.find((entry) => entry.id === itemId)?.kind;
     if (kind === "stuck") {
-      this.retry(itemId);
+      void this.retry(itemId);
       return;
     }
     if (kind === "shipping") {

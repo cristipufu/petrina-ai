@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { readConnection } from "./instance.js";
 import { launch } from "./launch.js";
+import { browserCommand } from "./setup.js";
 
 const home = process.env.PETRINA_HOME || join(homedir(), ".petrina");
 const ui = resolve(import.meta.dir, "../../../apps/desktop/dist");
@@ -46,8 +47,7 @@ async function open(dev: boolean): Promise<void> {
     process.exit(1);
   }
   const page = `${useDev ? DEV_UI : `${api}/`}#engine=${fragment}`;
-  const opener = process.platform === "darwin" ? ["open", page] : process.platform === "win32" ? ["cmd", "/c", "start", "", page] : ["xdg-open", page];
-  Bun.spawn(opener, { stdout: "ignore", stderr: "ignore", windowsHide: true });
+  Bun.spawn(browserCommand(page), { stdout: "ignore", stderr: "ignore", windowsHide: true });
   console.log(`Opened Petrina${useDev ? " (dev UI)" : ""}.`);
 }
 

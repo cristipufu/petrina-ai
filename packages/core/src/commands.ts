@@ -6,6 +6,7 @@
 
 import type { DeliveryMode, Id, TaskKind } from "./model.js";
 import type { ProductSettings } from "./products.js";
+import type { Clone, SetupStep } from "./setup.js";
 import type { HandBackPreview, Launched } from "./takeover.js";
 import type { UsageRequest, UsageViewFor } from "./analytics.js";
 
@@ -19,6 +20,8 @@ export interface NewTaskInput {
   approvePlan?: boolean;
   delivery?: DeliveryMode;
   approveDelivery?: boolean;
+  /** The window's id for this request: sending it again after a lost reply finds the task instead of adding another. */
+  clientId?: Id;
 }
 
 /** What the window adds to an answer, so it still counts when the question is gone (a restart dropped it). */
@@ -37,6 +40,21 @@ export interface Commands {
   updateProduct(productId: Id, settings: ProductSettings): void;
   setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void;
   setProductChecks(productId: Id, checks: { name: string; command: string }[] | null): void;
+  // First run and the tools check
+  /** Check every tool again, each on its own. The answers arrive in the state, one by one. */
+  checkTools(): Promise<void>;
+  /** GitHub clones on this machine that are not added yet, most recently changed first. */
+  findClones(): Promise<Clone[]>;
+  /** The furthest first-run screen reached, so closing Petrina partway reopens there. */
+  setSetupStep(step: SetupStep): void;
+  /** "Skip setup": first run never comes back. */
+  skipSetup(): void;
+  /** First run's Start: the task and the end of setup, saved together. Sent again after a lost reply, it finds the same task. */
+  startFirstTask(input: NewTaskInput & { clientId: Id }): Id;
+  /** The board's one-time tip about the first task. */
+  dismissTip(): void;
+  /** Open one of the official guides a fix links to, outside the app. No other page. */
+  openGuide(url: string): void;
   // The queue and the pool
   addTask(input: NewTaskInput): Id;
   moveInQueue(taskId: Id, index: number): void;
@@ -91,6 +109,13 @@ export const COMMAND_NAMES = [
   "updateProduct",
   "setProductDelivery",
   "setProductChecks",
+  "checkTools",
+  "findClones",
+  "setSetupStep",
+  "skipSetup",
+  "startFirstTask",
+  "dismissTip",
+  "openGuide",
   "addTask",
   "moveInQueue",
   "moveToTop",

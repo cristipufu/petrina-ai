@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // A stand-in for `gh`, for tests: pull requests and releases kept in a JSON file, branches and tags
-// read from a folder standing in for GitHub's copy of the repository. No login, no network.
+// read from a folder standing in for GitHub's copy of the repository. No network; `gh auth status` says
+// it is logged in, unless the state says otherwise.
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -31,6 +32,10 @@ export interface FakeGitHub {
   repo: string;
   /** Every call fails like GitHub being unreachable. */
   offline?: boolean;
+  /** The GitHub CLI is installed but not logged in. */
+  loggedOut?: boolean;
+  /** How many times Petrina checked the login (gh auth status). Those calls are about the coordinator, not the repository, so they are not in `calls`. */
+  logins?: number;
   /** The login cannot see the repository: GitHub answers "not found" for everything in it. */
   hidden?: boolean;
   /** Commands ("pr list", "release create", …) that fail the next N times. */
@@ -70,6 +75,20 @@ export function writeGitHub(path: string, state: FakeGitHub): void {
 function main(): void {
   const [statePath, remote, ...args] = process.argv.slice(2);
   const state = readGitHub(statePath!);
+  if (args[0] === "auth" && args[1] === "status") {
+    state.logins = (state.logins ?? 0) + 1;
+    writeGitHub(statePath!, state);
+    if (state.offline) {
+      process.stderr.write("error connecting to api.github.com\n");
+      process.exit(1);
+    }
+    if (state.loggedOut) {
+      process.stderr.write("You are not logged into any GitHub hosts. To log in, run: gh auth login\n");
+      process.exit(1);
+    }
+    process.stdout.write("github.com\n  ✓ Logged in to github.com account octocat (keyring)\n");
+    process.exit(0);
+  }
   state.calls.push(args);
   state.cwds = [...(state.cwds ?? []), process.cwd()];
   const save = () => writeGitHub(statePath!, state);

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, repoInfo, riskySettings, sameRepo } from "../src/git.js";
+import { commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { removeDir } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
@@ -89,6 +89,23 @@ describe("Petrina's own git steps", () => {
     expect(githubRepoOf("ssh://git@github.com:22/acme/shop.git")).toBe("acme/shop");
     expect(githubRepoOf("https://evil.example/acme/shop.git")).toBeUndefined();
     expect(githubRepoOf("--upload-pack=sh:acme/shop")).toBeUndefined();
+    // http and git:// on github.com are GitHub too: discovery already listed them, and adding one
+    // used to keep the work on this machine because only https counted.
+    for (const url of [
+      "http://github.com/acme/shop.git",
+      "http://www.github.com/acme/shop",
+      "git://github.com/acme/shop.git",
+      "git://github.com:9418/acme/shop.git",
+      "https://github.com:443/acme/shop.git",
+      "https://ssh.github.com/acme/shop.git",
+    ]) {
+      expect(githubRepoOf(url)).toBe("acme/shop");
+      expect(githubRepo(url)).toBe("acme/shop");
+      expect(sameRepo(url, "acme/shop")).toBe(true);
+    }
+    expect(githubRepoOf("http://gitlab.com/acme/shop.git")).toBeUndefined();
+    expect(githubRepoOf("git://gitlab.com/acme/shop.git")).toBeUndefined();
+    expect(githubRepoOf("http://github.com.evil/acme/shop.git")).toBeUndefined();
     expect(sameRepo("git@github-work:Acme/Shop.git", "acme/shop")).toBe(true);
     expect(sameRepo("git@github.com:evil/shop.git", "acme/shop")).toBe(false);
   });

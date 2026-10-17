@@ -4,11 +4,12 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, nextExpiry, queueOf, UNKNOWN_LIMIT_MS, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable } from "@petrina/core";
+import { BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, nextExpiry, queueOf, UNKNOWN_LIMIT_MS, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { agentEnv } from "./env.js";
 import * as git from "./git.js";
+import type { Which } from "./setup.js";
 import { Store } from "./store.js";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
@@ -88,9 +89,40 @@ export interface EngineOptions {
   /** How many tasks' checks run at the same time on this machine (default: one per six cores, at least one). */
   checkRuns?: number;
   checkTimeoutMs?: number;
+  /** Tests: where programs are found, instead of the PATH. */
+  which?: Which;
+  /** Tests: how long one tool check may take. */
+  toolCheckTimeoutMs?: number;
+  /** Tests: where Apple's developer tools are, instead of asking xcode-select. */
+  developerTools?: () => Promise<string | undefined>;
+  /** Tests: the home folder: where the clone finder looks, and what ~ means in a pasted path. */
+  home?: string;
 }
 
 export class Aborted extends Error {}
+
+/** A step's tool is not installed, not logged in, or would not start: the coordinator gets its fix and a Retry. */
+export class ToolProblem extends Error {
+  constructor(
+    readonly toolId: CheckId,
+    readonly status: CheckStatus | "wont-start",
+    detail?: string,
+  ) {
+    super(detail || `${CHECK_NAMES[toolId]} is not ready`);
+  }
+}
+
+/** Not installed or not logged in: a tool Petrina does not start. */
+export const notReady = (status: CheckStatus) => status === "not-installed" || status === "logged-out";
+
+/** First run's record. An install that already has products or tasks never sees first run. */
+function setupOf(loaded: State | undefined): DeepMutable<NonNullable<State["setup"]>> {
+  const platform: Platform = process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux";
+  const saved = loaded?.setup;
+  if (!saved) return { done: !!loaded && (loaded.products.length > 0 || loaded.tasks.length > 0), platform, checks: [] };
+  // Nothing is being checked right after a start.
+  return { ...(saved as DeepMutable<NonNullable<State["setup"]>>), platform, checks: saved.checks.map(({ checking: _, ...check }) => check) };
+}
 
 export const RISK_WORD: Record<RiskLevel, string> = { low: "Low", medium: "Medium", high: "High" };
 
@@ -127,6 +159,7 @@ export abstract class Kernel {
     this.s.profiles = ENGINE_PROFILES as MState["profiles"];
     // Tests stand in the tools' own apps: those count as installed.
     this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
+    this.s.setup = setupOf(loaded) as MState["setup"];
     this.found = options.terminals?.() ?? detectTerminals(this.machine);
     this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
     this.tracking = new Tracking(this);
@@ -263,7 +296,7 @@ export abstract class Kernel {
   }
 
   /** `by`: the agent asking, when it is not the task's main one (a reviewer working beside others). */
-  raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string } = {}, by: { roleId: Id; profileId: Id } | undefined = task.agent): Id {
+  raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string; toolId?: CheckId; toolProblem?: InboxItem["toolProblem"] } = {}, by: { roleId: Id; profileId: Id } | undefined = task.agent): Id {
     const id = this.id("inbox");
     task.state = "needs-you";
     this.s.inbox.push({
@@ -277,6 +310,8 @@ export abstract class Kernel {
       ...(extra.body ? { body: extra.body } : {}),
       ...(extra.options ? { options: extra.options } : {}),
       ...(extra.detail ? { detail: extra.detail } : {}),
+      ...(extra.toolId ? { toolId: extra.toolId } : {}),
+      ...(extra.toolProblem ? { toolProblem: extra.toolProblem } : {}),
     });
     this.tracking.asked(task, this.s.inbox.at(-1)!);
     return id;
@@ -296,10 +331,40 @@ export abstract class Kernel {
     task.error = message;
     task.statusLine = "Stuck. Needs you";
     this.dropBlockingItems(taskId);
-    this.raise(task, "stuck", `“${task.title}” is stuck`, false, { body: message.slice(0, 600) });
+    if (error instanceof ToolProblem) {
+      // Named, with its fix in one sentence; what the tool said stays behind Details.
+      const name = CHECK_NAMES[error.toolId];
+      const kind = notReady(error.status as CheckStatus) ? (error.status as "not-installed" | "logged-out") : "wont-start";
+      const problem = kind === "not-installed" ? `${name} isn't installed` : kind === "logged-out" ? `${name} isn't logged in` : `${name} wouldn't start`;
+      const platform = this.s.setup?.platform ?? "linux";
+      const fix = kind === "wont-start" ? wontStartFix(error.toolId, platform) : fixFor(error.toolId, kind, platform);
+      task.statusLine = `Stuck: ${problem}`;
+      this.raise(task, "stuck", `${problem}, so “${task.title}” is stuck`, false, { ...(fix ? { body: fix.sentence } : {}), ...(kind === "wont-start" ? { detail: message.slice(0, 600) } : {}), toolId: error.toolId, toolProblem: kind });
+      this.log(task, "warn", `Stuck: ${problem}`);
+    } else {
+      this.raise(task, "stuck", `“${task.title}” is stuck`, false, { body: message.slice(0, 600) });
+      this.log(task, "warn", `Stuck: ${message.slice(0, 300)}`);
+    }
     task.state = "failed";
-    this.log(task, "warn", `Stuck: ${message.slice(0, 300)}`);
     this.commit();
+  }
+
+  /** The agent tools the squad uses now: Ready ones, or if none is, those Petrina couldn't check. */
+  usableTools(): CheckId[] {
+    if (!this.s.setup?.checks.some((check) => ["claude-code", "codex", "grok"].includes(check.id))) {
+      const installed = this.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id as CheckId);
+      if (installed.length) return installed;
+    }
+    return usableAgentTools(this.s.setup?.checks);
+  }
+
+  /** The same kind of profile on a tool the squad can use. Unchanged when its tool is usable, or when none is. */
+  onUsable(profileId: Id): Id {
+    const profile = this.profile(profileId);
+    const usable = this.usableTools();
+    if (!profile || !usable.length || usable.includes(profile.toolId as CheckId)) return profileId;
+    const others = this.s.profiles.filter((entry) => entry.toolId === usable[0]);
+    return (others.find((entry) => entry.effort === profile.effort) ?? others[0])?.id ?? profileId;
   }
 
   remember(task: MTask, text: string, id?: Id): void {
@@ -416,7 +481,17 @@ export abstract class Kernel {
     // Reviews keep their planned tools; security reviews follow the tool that actually built the change.
     const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
     const made = roleId === "security-reviewer" ? (task?.builderSession ? { toolId: task.builderSession.toolId, modelId: task.builderSession.model } : builder ? this.profile(builder) : undefined) : undefined;
-    return chooseWithRoom(this.getState(), planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
+    const state = this.getState();
+    const checked = state.setup?.checks.some((check) => check.id === "claude-code" || check.id === "codex" || check.id === "grok");
+    const usable = this.usableTools() as Id[];
+    // Usage stand-ins follow the same login checks as the plan: Ready tools first, otherwise the
+    // ones we couldn't check. Before checks have run, keep the existing installed-tool selection.
+    const candidates = checked ? {
+      ...state,
+      profiles: state.profiles.filter((profile) => usable.includes(profile.toolId)),
+      tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
+    } : state;
+    return chooseWithRoom(candidates, planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
   }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */

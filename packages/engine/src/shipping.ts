@@ -14,6 +14,7 @@ import { ReleaseNotesResult, TEXT_LIMITS } from "./roles.js";
 import { Aborted, type Kernel, type MStage, type MTask, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import { type Connections, Unreachable } from "./connection.js";
 import type { ProductChecks } from "./product-checks.js";
+import type { ToolChecks } from "./tool-checks.js";
 import type { Turns } from "./turn.js";
 import type { Updates } from "./update.js";
 import { declaredVersion, isVersionFile, lockWithVersion, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, ownCrates, parseVersion, withVersion } from "./version.js";
@@ -70,6 +71,7 @@ export class Shipping {
     private readonly updates: Updates,
     private readonly checks: ProductChecks,
     private readonly connections: Connections,
+    private readonly tools: ToolChecks,
   ) {}
 
   /**
@@ -81,6 +83,9 @@ export class Shipping {
   async deliver(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     if (signal.aborted) throw new Aborted();
     if (!task.shipping?.step) {
+      // Nothing starts shipping to GitHub without a GitHub login: no half-done delivery.
+      if (task.delivery !== "local") await this.tools.needGitHub(task);
+      if (signal.aborted) throw new Aborted();
       if (!task.shipping?.prepared) {
         if ((await this.readyToShip(task, signal)) === "back") return "continue";
         const prepared = await this.prepare(task, stage, signal);

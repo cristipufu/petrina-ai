@@ -18,7 +18,7 @@ import {
   Undo2,
   type LucideIcon,
 } from "lucide-react";
-import { inboxOrder, DELIVERY_LABEL, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
+import { CHECK_NAMES, checkOf, DELIVERY_LABEL, fixFor, inboxOrder, inboxSummary, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
 import { desktop, sim, useEngineStatus, useUnsent } from "../engine";
 import { useBrowserPermission } from "../notify/channels";
 import { finishOffer, useNotifySettings } from "../notify/settings";
@@ -27,6 +27,7 @@ import { ago, type Lookup } from "../lib";
 import { ProductName, ProfileText, RoleAvatar } from "./bits";
 import { UnsentNote } from "./EngineState";
 import { openHandBack, ReopenButton } from "./TakeOver";
+import { FixSteps } from "./Tools";
 import type { SheetTab } from "./TaskCard";
 
 const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> = {
@@ -69,9 +70,6 @@ const NOTE_MS = 6000;
 
 export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state, find, overlay, landing, onOpenItem, onClose, selectedId, onFocus }, ref) {
   const items = inboxOrder(state);
-  const blocking = items.filter((item) => item.blocking).length;
-  // A stuck task holds no agent, so it is not "blocking", but it is the first thing to say.
-  const stuck = items.filter((item) => item.kind === "stuck").length;
   const connected = useEngineStatus().link === "live";
   // Answers whose question is gone (a restart dropped it): still shown until the engine has them.
   const orphans = useUnsent().filter((entry) => entry.itemId && !state.inbox.some((item) => item.id === entry.itemId));
@@ -101,27 +99,7 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state,
           <PanelRightClose size={18} />
         </button>
       </div>
-      <p className="inbox-sub">
-        {items.length === 0 ? (
-          "You're not blocking anyone."
-        ) : blocking > 0 || stuck > 0 ? (
-          <>
-            {blocking > 0 && (
-              <>
-                <span className="num">{blocking}</span> agent{blocking === 1 ? " is" : "s are"} waiting on you.{" "}
-              </>
-            )}
-            {stuck > 0 && (
-              <>
-                <span className="num">{stuck}</span> task{stuck === 1 ? " is" : "s are"} stuck.{" "}
-              </>
-            )}
-            The rest wait at checkpoints.
-          </>
-        ) : (
-          "Nobody is stuck. These wait at checkpoints."
-        )}
-      </p>
+      <p className="inbox-sub num">{inboxSummary(items)}</p>
       {note && (
         <p className="inbox-note" role="status">
           {note}
@@ -263,7 +241,10 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       <h3 className="ask-title" id={titleId}>
         {item.title}
       </h3>
-      {item.body &&
+      {item.toolId ? (
+        <ToolFix item={item} state={state} />
+      ) : (
+        item.body &&
         (item.kind === "learnings" ? (
           <ul className="ask-body ask-lessons">
             {lessons.map((line, index) => (
@@ -277,7 +258,8 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
           </ul>
         ) : (
           <p className="ask-body">{item.body}</p>
-        ))}
+        ))
+      )}
       <div className="ask-context">
         <ProductName product={product} />
         <span aria-hidden="true">·</span>
@@ -399,8 +381,8 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {item.kind === "stuck" && (
         <div className="ask-actions">
-          <button className="btn lead" onClick={() => sim.retry(item.id)}>
-            Try again
+          <button className="btn lead" onClick={() => sim.retry(item.id)} title={item.toolId ? `Checks ${CHECK_NAMES[item.toolId]} again, then tries` : undefined}>
+            {item.toolId ? "Retry" : "Try again"}
           </button>
           <button className="btn" onClick={() => onOpen(item.taskId, "session")}>
             See what happened
@@ -495,4 +477,23 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       )}
     </article>
   );
+}
+
+/**
+ * A Stuck item about a tool: the same fix first run and the Library show, for the tool's status now.
+ * A tool that wouldn't start keeps its fix and what it said, even when its check now passes: the
+ * check opening a conversation is no proof the real start works. A tool that was missing or logged
+ * out and now checks out says so, and Retry carries on.
+ */
+function ToolFix({ item, state }: { item: InboxItem; state: State }) {
+  const toolId = item.toolId!;
+  const status = checkOf(state.setup?.checks, toolId).status;
+  const platform = state.setup?.platform ?? "darwin";
+  const name = CHECK_NAMES[toolId];
+  if (!state.setup) return item.body ? <p className="ask-body">{item.body}</p> : null;
+  const now = status === "not-installed" || status === "logged-out" ? status : undefined;
+  if (!now && item.toolProblem !== "wont-start" && status === "ready") return <p className="ask-body">{name} is ready now, so Retry carries on.</p>;
+  const problem = now ?? item.toolProblem;
+  const fix = problem === "not-installed" || problem === "logged-out" ? fixFor(toolId, problem, platform) : wontStartFix(toolId, platform);
+  return fix ? <FixSteps fix={fix} detail={item.detail} name={name} /> : null;
 }

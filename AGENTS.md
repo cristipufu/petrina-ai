@@ -25,7 +25,7 @@ Do not add security or sandboxing mechanisms of Petrina's own unless the task is
 ## Checks
 
 - `bun run typecheck` and `bun run test` must pass.
-- UI changes: check light and dark, and the demo (`?demo`, `?demo=portfolio`).
+- UI changes: check light and dark, and the demo (`?demo`, `?demo=portfolio`, `?demo=first-run`).
 
 ## Learnings
 

@@ -217,9 +217,13 @@ export class Reviews {
     return { findings: findings as Task["findings"], voters };
   }
 
-  /** One voter per tool that can run: the stage's own reviewer on that tool when it has one, else that tool's most thorough profile. */
+  /**
+   * One voter per tool that can run and the squad can use: the stage's own reviewer on that tool when it has
+   * one, else that tool's most thorough profile.
+   */
   private voters(stage: MStage): Id[] {
-    const ready = new Set(this.k.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id));
+    const usable = this.k.usableTools() as Id[];
+    const ready = new Set(this.k.s.tools.filter((tool) => tool.status === "ready" && (!usable.length || usable.includes(tool.id))).map((tool) => tool.id));
     // With no tool found ready (tests stand in for the tools), the tools the stage's reviewers use.
     const tools = ready.size ? [...ready] : [...new Set(stage.profileIds.map((id) => this.k.profile(id)?.toolId).filter((id): id is Id => !!id))];
     return tools

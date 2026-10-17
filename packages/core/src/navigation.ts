@@ -34,6 +34,22 @@ export function inboxOrder(state: State): InboxItem[] {
   return [...state.inbox].sort((a, b) => Number(b.blocking) - Number(a.blocking) || (started.get(a.taskId) ?? 0) - (started.get(b.taskId) ?? 0) || a.at - b.at);
 }
 
+/**
+ * The line under "Needs you": agents waiting on the coordinator, tasks stuck until they act, and what
+ * waits at a checkpoint. "Nobody is stuck" only when nothing is.
+ */
+export function inboxSummary(items: readonly InboxItem[]): string {
+  if (items.length === 0) return "You're not blocking anyone.";
+  const waiting = items.filter((item) => item.blocking).length;
+  const stuck = items.filter((item) => !item.blocking && item.kind === "stuck").length;
+  const rest = items.length - waiting - stuck;
+  const parts: string[] = [];
+  if (waiting) parts.push(`${waiting} agent${waiting === 1 ? " is" : "s are"} waiting on you.`);
+  if (stuck) parts.push(`${stuck} task${stuck === 1 ? " is" : "s are"} stuck until you act on ${stuck === 1 ? "it" : "them"}.`);
+  if (rest) parts.push(parts.length ? "The rest wait at checkpoints." : "Nobody is stuck. These wait at checkpoints.");
+  return parts.join(" ");
+}
+
 export function inboxTab(kind: InboxItem["kind"]): "plan" | "design" | "review" | "session" {
   if (kind === "plan") return "plan";
   if (kind === "design" || kind === "disagreement") return "design";

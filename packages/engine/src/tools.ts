@@ -17,6 +17,13 @@ export interface ToolAdapter {
   mode: string;
   /** Sent on `session/new`, `session/resume` and `session/load`. Grok's auto mode lives here, not in a config option. */
   sessionMeta?: Readonly<Record<string, unknown>>;
+  /**
+   * How the tool says whether it is logged in, without a message to the AI. "report": its connector sends
+   * the login it runs on (`_auth/status_update`), and opens conversations either way. "open": it checks its
+   * login as a conversation opens and refuses with ACP's "log in first" error when there is none, so a
+   * conversation that opens is its own word.
+   */
+  login: "report" | "open";
   models: readonly string[];
 }
 
@@ -29,6 +36,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     options: { model: "model", effort: "effort", mode: "mode" },
     // Auto: Claude Code's own classifier makes the permission decisions.
     mode: "auto",
+    login: "report",
     models: ["Opus 5.5", "Fable 5.1", "Sonnet 5.5"],
   },
   codex: {
@@ -39,6 +47,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     options: { model: "model", effort: "reasoning_effort", mode: "mode" },
     // Auto review: Codex's own reviewer approves, and asks only about actions it finds unsafe.
     mode: "agent",
+    login: "report",
     models: ["sol", "astra"],
   },
   grok: {
@@ -51,6 +60,8 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     options: { model: "model", effort: "reasoning_effort" },
     mode: "auto",
     sessionMeta: { autoMode: true },
+    // Grok sends no login report: it signs in as a conversation opens (its "auth" setup step).
+    login: "open",
     models: ["Grok 4.7"],
   },
 };
@@ -79,6 +90,15 @@ export function adapterEntry(adapter: ToolAdapter): string {
   return require.resolve(adapter.entry);
 }
 
+/**
+ * Where a program is on the PATH as it is now, or null. Bun.which reads the PATH the process started
+ * with unless told otherwise; app mode merges in the login shell's PATH later, so a Petrina opened
+ * from the Dock still finds what Terminal finds. The Library and first run's checks both look here.
+ */
+export function findProgram(name: string): string | null {
+  return Bun.which(name, { PATH: process.env.PATH ?? "" });
+}
+
 /** Which tools are usable on this machine: the CLI is installed and the adapter resolves. */
 export function detectTools(): Tool[] {
   return Object.values(ADAPTERS).map((adapter) => {
@@ -91,8 +111,7 @@ export function detectTools(): Tool[] {
         resolved = false;
       }
     }
-    // Bun.which reads the PATH the process started with unless told otherwise; app mode merges in the login shell's PATH later.
-    const installed = resolved && Bun.which(adapter.cli, { PATH: process.env.PATH ?? "" }) !== null;
+    const installed = resolved && findProgram(adapter.cli) !== null;
     return {
       id: adapter.id,
       name: adapter.name,

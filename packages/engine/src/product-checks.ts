@@ -80,12 +80,14 @@ export class ProductChecks {
       else task.conversation = conversation;
     };
     const why = !product.checks ? "first time" : unstartable ? "a check could not start" : "the CI, build or hook files changed";
-    let ran: Id = CHECK_FINDER_PROFILE;
+    // On a tool the squad can use, like every other step.
+    const finder = this.k.onUsable(CHECK_FINDER_PROFILE);
+    let ran: Id = finder;
     try {
       const result = await this.turns.turn(
         task,
         "check-finder",
-        CHECK_FINDER_PROFILE,
+        finder,
         () => [
           ...this.context.sectionsFor(task, "check-finder"),
           ...(product.checks ? [{ title: "The checks used until now", body: product.checks.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") }] : []),
@@ -97,7 +99,7 @@ export class ProductChecks {
       );
       restore();
       product.checks = result.checks.map((check) => ({ name: check.name, argv: check.argv, why: check.why }));
-      this.k.log(task, "done", `Found how to check ${product.name} (${why}): ${product.checks.map((check) => check.name).join(", ")}`, "check-finder", CHECK_FINDER_PROFILE);
+      this.k.log(task, "done", `Found how to check ${product.name} (${why}): ${product.checks.map((check) => check.name).join(", ")}`, "check-finder", ran);
     } catch (error) {
       if (signal.aborted || error instanceof Aborted) throw error;
       restore();

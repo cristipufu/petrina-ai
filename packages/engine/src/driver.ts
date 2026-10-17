@@ -68,7 +68,7 @@ export class Driver {
       if (task.held || blocked(task as MTask)) continue;
       // What it waited for landed or was cancelled: back to plain queue words.
       if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) (task as MTask).statusLine = "In the queue";
-      const seat = this.seatOf({ roleId: "planner", profileId: PLANNER_PROFILE });
+      const seat = this.seatOf({ roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) });
       if (seat.waiting) {
         (task as MTask).statusLine = seat.waiting;
         continue;
@@ -130,7 +130,7 @@ export class Driver {
   }
 
   private nextAgent(task: MTask): { roleId: Id; profileId: Id } | undefined {
-    if (task.stageIndex < 0) return { roleId: "planner", profileId: PLANNER_PROFILE };
+    if (task.stageIndex < 0) return { roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) };
     const stage = task.plan?.stages[task.stageIndex];
     if (!stage) return undefined;
     switch (stage.kind) {

@@ -1,13 +1,13 @@
 import { useSyncExternalStore } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { COMMAND_NAMES, createDemo, createPortfolioDemo, Simulator, type CommandName, type Commands, type HandBackPreview, type Id, type Launched, type State, type WindowCommands } from "@petrina/core";
+import { COMMAND_NAMES, createDemo, createPortfolioDemo, Simulator, type CommandName, type Commands, type HandBackPreview, type Id, type Launched, type State, type WindowCommands, createFirstRunDemo, DEMO_PRODUCTS, demoClones, type NewTaskInput } from "@petrina/core";
 
 // Where the UI finds the real engine:
 // - In the desktop app, it asks the shell over the app's internal channel. The shell starts the
 //   engine, or the engine it starts finds one already running. The address and key stay in
 //   memory only, and the key goes to the engine when the connection opens, never in an address.
 // - In a browser opened by `petrina open`, from the URL fragment, kept for this tab only.
-// Otherwise, or with ?demo, it runs on the simulated squad.
+// Otherwise, or with ?demo, it runs on the simulated squad (?demo=first-run shows first run on it).
 
 type Mode = "engine" | "demo";
 
@@ -41,6 +41,8 @@ interface Store extends Actions {
 /** How the window is connected to its engine. */
 export interface EngineStatus {
   link: "starting" | "live" | "reconnecting" | "failed";
+  /** The engine's real state has arrived at least once: until then the window knows nothing about products or tasks. */
+  synced: boolean;
   /** Inside the desktop app. */
   desktop: boolean;
   /** Desktop: the app started this engine (quitting stops it), or found one already running. */
@@ -61,6 +63,10 @@ interface Address {
 
 const TICK_MS = 2_200;
 const SESSION_KEY = "petrina.engine";
+/** What was not sent yet when the coordinator opened the demo: sent once the window is back on the engine. */
+const UNSENT_KEY = "petrina.unsent";
+/** How long first run's Start waits for the engine to confirm the task is saved. */
+const START_TIMEOUT_MS = 10_000;
 /** The desktop app gives up starting an engine after this many failures in a row, and asks. */
 const MAX_FAILURES = 3;
 
@@ -111,14 +117,28 @@ const EMPTY: State = { now: Date.now(), seq: 0, products: [], roles: [], tools: 
 const NOTHING_UNSENT: readonly Unsent[] = [];
 
 /** The connection closed before the engine answered: worth sending again. */
-class Lost extends Error {}
+export class Lost extends Error {}
+
+/** The engine did not answer in time. */
+export class Late extends Error {}
 
 /** The engine's reason when it is plain words; its checks of what was sent are not, so they get a plain line. */
-function plainReason(error: string): string {
+export function plainReason(error: string): string {
   return error.length <= 160 && !/[{}[\]<>"`]/.test(error) ? error : "Petrina's engine could not take it.";
 }
 
-function clientId(): string {
+/** Why something sent to the engine failed, in one plain sentence. */
+export function failureText(failure: unknown): string {
+  if (failure instanceof Lost) return "Petrina isn't connected to its engine right now, so try again once it's back.";
+  if (failure instanceof Late) return "Petrina's engine didn't answer in time, so try again.";
+  return plainReason(failure instanceof Error ? failure.message : String(failure));
+}
+
+/** First run's Start, as the window sends it: its id makes a resend after a lost reply find the same task. */
+export type FirstTask = NewTaskInput & { clientId: string };
+
+/** An id for something the window sends, so a resend after a lost reply counts once. */
+export function newClientId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -126,7 +146,6 @@ function clientId(): string {
 /** The connection to the real engine, and the outbox for what the coordinator says until the engine saves it. */
 class EngineClient {
   private state: State = EMPTY;
-  private received = false;
   private status: EngineStatus;
   private outbox: readonly Unsent[] = NOTHING_UNSENT;
   /** How to send each unsent entry, by its client id. */
@@ -146,13 +165,14 @@ class EngineClient {
   private readonly calls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 
   constructor(private readonly source: { desktop: true } | { desktop: false; address: Address }) {
-    this.status = { link: "starting", desktop: source.desktop };
+    this.status = { link: "starting", desktop: source.desktop, synced: false };
     if (!source.desktop) this.browserDisconnected();
     if (!source.desktop) this.address = source.address;
+    this.restoreUnsent();
     void this.attempt(false);
     // Hidden windows get slow timers: the moment the window shows again, retry instead of waiting.
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && this.status.link !== "live" && this.status.link !== "failed" && !this.socket) void this.attempt(this.failures > 0);
+      if (document.visibilityState === "visible" && this.status.link !== "live" && this.status.link !== "failed" && !this.status.restarted && !this.socket) void this.attempt(this.failures > 0);
     });
     // The engine only sends state when something changes; keep "3m ago" honest in between.
     setInterval(() => {
@@ -198,14 +218,14 @@ class EngineClient {
       opened = true;
       this.failures = 0;
       this.wasLive = true;
-      this.setStatus({ link: "live", desktop: this.source.desktop, ...(this.owned === undefined ? {} : { owned: this.owned }) });
+      this.setStatus({ link: "live", desktop: this.source.desktop, synced: this.status.synced, ...(this.owned === undefined ? {} : { owned: this.owned }) });
       for (const entry of this.outbox) if (!entry.refused) this.deliver(entry);
     };
     socket.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as { type: string; state?: State; id?: number; ok?: boolean; result?: unknown; error?: string };
       if (message.type === "state" && message.state) {
         this.state = message.state;
-        this.received = true;
+        if (!this.status.synced) this.status = { ...this.status, synced: true };
         this.emit();
       } else if (message.type === "result" && typeof message.id === "number") {
         const call = this.calls.get(message.id);
@@ -232,10 +252,12 @@ class EngineClient {
   }
 
   private failed(problem: string): void {
+    // A refused saved key never starts working. Another try would keep this tab on "Starting Petrina…".
+    if (!this.source.desktop && this.status.restarted) return;
     this.failures += 1;
     if (this.source.desktop && this.failures >= MAX_FAILURES) {
       // Never switch to the demo on its own: the coordinator chooses.
-      this.setStatus({ link: "failed", desktop: true, problem });
+      this.setStatus({ link: "failed", desktop: true, synced: this.status.synced, problem });
       return;
     }
     const browserWaiting = !this.source.desktop && this.disconnectedAt !== undefined && Date.now() - this.disconnectedAt >= 3000;
@@ -270,15 +292,46 @@ class EngineClient {
     } catch {
       // Nothing answers, or the window cannot tell: the general hint covers both.
     }
-    if (this.status.link !== "live" && this.disconnectedAt === disconnectedAt) this.setStatus({ ...this.status, restarted });
+    if (this.status.link === "live" || this.disconnectedAt !== disconnectedAt) return;
+    if (restarted || this.status.restarted) {
+      clearTimeout(this.retryTimer);
+      // Starting the engine cannot fix this tab's old key. Stop trying, and say how to open a fresh window.
+      this.setStatus({ ...this.status, restarted: true, recovery: true, link: "reconnecting", problem: undefined });
+      return;
+    }
+    this.setStatus({ ...this.status, restarted: false });
   }
 
   /** "Try again" on the couldn't-start message. */
   retryEngine = (): void => {
     this.failures = 0;
-    this.setStatus({ link: this.wasLive ? "reconnecting" : "starting", desktop: this.source.desktop });
+    this.setStatus({ link: this.wasLive ? "reconnecting" : "starting", desktop: this.source.desktop, synced: this.status.synced });
     void this.attempt(true);
   };
+
+  /** Opening the demo reloads the window: keep what is not sent yet, to send once it is back on the engine. */
+  keepUnsent = (): void => {
+    if (!this.outbox.length) return;
+    try {
+      localStorage.setItem(UNSENT_KEY, JSON.stringify(this.outbox.map((entry) => ({ entry, send: this.sends.get(entry.clientId) }))));
+    } catch {
+      // Without storage it cannot be kept; the couldn't-start screen says what is waiting.
+    }
+  };
+
+  private restoreUnsent(): void {
+    try {
+      const saved = localStorage.getItem(UNSENT_KEY);
+      localStorage.removeItem(UNSENT_KEY);
+      for (const { entry, send } of saved ? (JSON.parse(saved) as { entry: Unsent; send?: { name: string; args: unknown[] } }[]) : []) {
+        if (!send || this.sends.has(entry.clientId)) continue;
+        this.sends.set(entry.clientId, send);
+        this.outbox = [...this.outbox, entry];
+      }
+    } catch {
+      // Nothing kept, or nothing readable.
+    }
+  }
 
   private setStatus(status: EngineStatus): void {
     this.status = status;
@@ -290,18 +343,36 @@ class EngineClient {
   }
 
   private call(name: string, ...args: unknown[]): Promise<unknown> {
+    return this.callWithin(undefined, name, ...args);
+  }
+
+  /** With a time limit, the call fails with Late when the engine has not answered by then. */
+  private callWithin(timeoutMs: number | undefined, name: string, ...args: unknown[]): Promise<unknown> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Lost("Petrina is not connected to its engine"));
     const id = (this.next += 1);
+    // Arguments left out are left out, never sent as null, which the engine would refuse.
+    while (args.length && args.at(-1) === undefined) args.pop();
     return new Promise((resolve, reject) => {
-      this.calls.set(id, { resolve, reject });
+      const timer =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              this.calls.delete(id);
+              reject(new Late("Petrina's engine did not answer in time"));
+            }, timeoutMs);
+      const settle = (done: () => void) => {
+        clearTimeout(timer);
+        done();
+      };
+      this.calls.set(id, { resolve: (value) => settle(() => resolve(value)), reject: (error) => settle(() => reject(error)) });
       socket.send(JSON.stringify({ id, action: { name, args } }));
     });
   }
 
   /** Kept, and shown as unsent, until the engine confirms it saved it. */
   private durable(entry: Omit<Unsent, "clientId">, name: string, args: (id: string) => unknown[]): void {
-    const unsent: Unsent = { ...entry, clientId: clientId() };
+    const unsent: Unsent = { ...entry, clientId: newClientId() };
     this.sends.set(unsent.clientId, { name, args: args(unsent.clientId) });
     this.outbox = [...this.outbox, unsent];
     this.emit();
@@ -352,7 +423,7 @@ class EngineClient {
   }
 
   getState = (): State => this.state;
-  synced = (): boolean => this.received;
+  synced = (): boolean => this.status.synced;
   getStatus = (): EngineStatus => this.status;
   unsent = (): readonly Unsent[] => this.outbox;
   subscribe = (listener: () => void): (() => void) => {
@@ -396,6 +467,9 @@ class EngineClient {
     void sent.catch(() => undefined);
     return sent;
   };
+
+  /** First run's Start: settles only once the engine has saved the task, and fails after 10 seconds without an answer. */
+  startFirstTask = (input: FirstTask): Promise<Id> => this.callWithin(START_TIMEOUT_MS, "startFirstTask", input) as Promise<Id>;
 }
 
 /** The real engine: every command over the local API, what the coordinator says through the outbox. */
@@ -408,6 +482,7 @@ function engineStore(client: EngineClient): Store {
     deny: client.deny,
     requestChanges: client.requestChanges,
     sendMessage: client.sendMessage,
+    startFirstTask: client.startFirstTask,
     getState: client.getState,
     subscribe: client.subscribe,
     synced: client.synced,
@@ -426,9 +501,17 @@ const DEMO_OWN = {
   setAfter: () => () => undefined,
   setTerminal: () => () => undefined,
   setProductChecks: () => async () => undefined,
-  addProduct: () => async (): Promise<Id> => {
-    throw new Error("The demo has fixed products");
+  /** Only first run's demo adds products: the made-up clones it "found". */
+  addProduct: (simulator: Simulator) => async (path: string): Promise<Id> => {
+    const setup = simulator.getState().setup;
+    const product = setup && DEMO_PRODUCTS.find((entry) => path.trim().replace(/\/+$/, "").endsWith(`/${entry.repo.split("/")[1]}`));
+    if (!product) throw new Error(!setup ? "The demo has fixed products" : setup.done ? `In the demo, add one of its made-up clones, such as ${demoClones(0)[0]!.path}.` : "In the demo, pick one of the clones above.");
+    simulator.addProduct(product);
+    return product.id;
   },
+  checkTools: () => async () => undefined,
+  findClones: (simulator: Simulator) => async () => demoClones(Date.now()).filter((clone) => !simulator.getState().products.some((product) => product.repo === clone.repo)),
+  openGuide: () => () => undefined,
   takeOver: () => async (): Promise<Launched> => {
     throw new Error(NOT_IN_DEMO);
   },
@@ -468,7 +551,9 @@ const NOT_IN_DEMO = "Take over works with real agents, not in the demo";
 
 function demo() {
   const now = Date.now();
-  if (new URLSearchParams(window.location.search).get("demo") === "portfolio") return createPortfolioDemo(now);
+  const variant = new URLSearchParams(window.location.search).get("demo");
+  if (variant === "portfolio") return createPortfolioDemo(now);
+  if (variant === "first-run") return createFirstRunDemo(now);
   return createDemo(now);
 }
 
@@ -501,7 +586,7 @@ export function useSim(): State {
   return useSyncExternalStore(sim.subscribe, sim.getState);
 }
 
-const DEMO_STATUS: EngineStatus = { link: "live", desktop };
+const DEMO_STATUS: EngineStatus = { link: "live", desktop, synced: true };
 const getStatus = () => client?.getStatus() ?? DEMO_STATUS;
 
 export function useEngineStatus(): EngineStatus {
@@ -518,8 +603,9 @@ export function retryEngine(): void {
   client?.retryEngine();
 }
 
-/** "Open the demo": only ever the coordinator's choice. */
+/** "Open the demo": only ever the coordinator's choice. What is not sent yet is kept for when the window is back on the engine. */
 export function openDemo(): void {
+  client?.keepUnsent();
   window.location.replace(`${window.location.pathname}?demo`);
 }
 

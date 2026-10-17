@@ -194,7 +194,10 @@ export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
 ], "risk": {"level": "medium", "why": "What it touches, in plain words"}}`,
     instructions: (ctx) => {
       const roles = ctx.roles.filter((entry) => !entry.internal).map((entry) => `- ${entry.id}: ${entry.purpose}`).join("\n");
-      const profiles = ctx.profiles.filter((profile) => !profile.standby).map((profile) => `- ${profile.id}: ${ADAPTERS[profile.toolId]?.name ?? profile.toolId} running ${profile.model} at ${profile.effort} effort`).join("\n");
+      const toolName = (toolId: string) => ADAPTERS[toolId]?.name ?? toolId;
+      const profiles = ctx.profiles.filter((profile) => !profile.standby).map((profile) => `- ${profile.id}: ${toolName(profile.toolId)} running ${profile.model} at ${profile.effort} effort`).join("\n");
+      const tools = [...new Set(ctx.profiles.map((profile) => profile.toolId))];
+      const oneTool = tools.length === 1 ? `\n- Only ${toolName(tools[0]!)} is set up on this machine: put every stage on its profiles, reviewers included, even where a rule above asks for different tools.` : "";
       return `Compose the plan for this task: which roles work on it, on which profiles, in what order. Read the repository enough to judge the size of the work, but change nothing.
 
 Roles you can use:
@@ -213,7 +216,7 @@ Rules:
 - Size the plan to the task. A small fix can be a builder and two reviewers. Something new deserves research, a converge design, a design gate, a builder, maybe a tester, and a review chain.
 - Always include exactly one builder stage before the review chain.
 - Prefer putting the reviewer of a piece of work on a different tool than its author.
-- Do not add delivery stages; Petrina adds them.
+- Do not add delivery stages; Petrina adds them.${oneTool}
 - Rate the task's risk from what it touches, and say why in plain words:
   - "low": words, styles, docs, tests, or a small change inside one screen that cannot lose data or open access;
   - "medium": new behaviour or logic in one part of the product;

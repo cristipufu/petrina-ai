@@ -1,7 +1,7 @@
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { limitOf, slotWait, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason } from "@petrina/core";
+import { limitOf, slotWait, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason, type CheckId } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
@@ -9,9 +9,11 @@ import { agentEnv } from "./env.js";
 import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
 import { ADAPTERS } from "./tools.js";
-import { Kernel, Aborted, type MTask } from "./kernel.js";
+import { Kernel, Aborted, notReady, ToolProblem, type MTask } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "./worklog.js";
+import { isAuthRequired } from "./setup.js";
+import type { ToolChecks } from "./tool-checks.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
@@ -25,7 +27,10 @@ interface TurnOptions<T> {
 }
 
 export class Turns {
-  constructor(private readonly k: Kernel) {}
+  constructor(
+    private readonly k: Kernel,
+    private readonly tools: ToolChecks,
+  ) {}
 
   /**
    * One agent, one stage: run turns until it hands back a valid result. `status` keeps the task's
@@ -106,6 +111,7 @@ export class Turns {
     const taskId = task.id;
     // Paused, cancelled or stopped while getting here: no agent starts, and the task stays as the coordinator left it.
     if (signal.aborted) throw new Aborted();
+    this.mustBeReady(profile);
 
     // A conversation noted before a restart: the same step and role carry on from where it was. Only the
     // same tool and model reopen it, and never the Release Manager: interrupted shipping is checked first.
@@ -146,7 +152,7 @@ export class Turns {
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
-    const start = (sessionId?: string, command = this.k.options.agentCommand?.(profile)) =>
+    const start = (sessionId?: string, command = this.k.options.agentCommand?.(profile)): Promise<AgentRun> =>
       AgentRun.start({
         profile,
         ...(command ? { command } : {}),
@@ -176,6 +182,10 @@ export class Turns {
           onLog: (text) => void this.k.agentLog(taskId, text),
           onUsage: (info) => this.k.recordUsage(info),
         },
+      }).catch(async (error: unknown) => {
+        // A fresh conversation that does not open is the tool's problem: name it, with its fix.
+        if (sessionId !== undefined || signal.aborted) throw error;
+        throw await this.tools.problem(profile.toolId, error);
       });
     let run: AgentRun | undefined;
     let notBack: string | undefined;
@@ -231,7 +241,7 @@ export class Turns {
       let opening: string;
       if (wentBack) {
         // Its job as it stands now and the context, from the same sections a fresh conversation gets.
-        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections: given() });
+        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections: given() });
       } else if (picked) {
         // One line about the restart (or the hand back), then only what the conversation has not heard: the answer to its open question, and messages still in line.
         const answer = asked?.answer !== undefined ? { question: asked.question, text: asked.answer } : undefined;
@@ -257,12 +267,16 @@ export class Turns {
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt)) });
         else if (where) sections.push({ title: WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "") });
-        opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
+        opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       }
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
       this.k.commitNow();
       // A reopened conversation carries on after the interruption; a fresh one gets its first instructions.
       return await this.converse(task, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: true });
+    } catch (error) {
+      // Logged out in the middle of a step: the same fix as any other login problem.
+      if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);
+      throw error;
     } finally {
       this.k.runs.delete(taskId);
       run.close();
@@ -345,6 +359,7 @@ export class Turns {
     const product = this.k.productOf(task);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
     const profileId = profile.id;
+    this.mustBeReady(profile);
     const taskId = task.id;
     if (options.took) {
       const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ran out of usage`;
@@ -380,6 +395,9 @@ export class Turns {
         onLog: (text) => void this.k.agentLog(taskId, text),
         onUsage: (info) => this.k.recordUsage(info),
       },
+    }).catch(async (error: unknown) => {
+      if (signal.aborted) throw error;
+      throw await this.tools.problem(profile.toolId, error);
     });
     const runs = this.k.helperRuns.get(taskId) ?? new Set();
     this.k.helperRuns.set(taskId, runs.add(run));
@@ -388,8 +406,11 @@ export class Turns {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
       const sections = [...given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
       if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words) });
-      const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: copy, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
+      const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       return await this.converse(task, run, agent, opening, "first", role, profileId, schema, signal, { ...options, main: false });
+    } catch (error) {
+      if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);
+      throw error;
     } finally {
       runs.delete(run);
       run.close();
@@ -443,6 +464,18 @@ export class Turns {
       this.k.tracking.redo(current, role.id, agent.profile);
       reply = await send(repairPrompt(error ?? ""), "redo");
     }
+  }
+
+  /** A tool known to be missing or logged out is not started: the coordinator gets its fix instead. */
+  private mustBeReady(profile: AgentProfile): void {
+    const known = this.tools.status(profile.toolId as CheckId);
+    if (notReady(known)) throw new ToolProblem(profile.toolId as CheckId, known);
+  }
+
+  /** The profiles agents hear about (the planner picks from them): only those on tools the squad can use. */
+  private usableProfiles(): AgentProfile[] {
+    const usable = this.k.usableTools() as Id[];
+    return (this.k.s.profiles as AgentProfile[]).filter((entry) => !usable.length || usable.includes(entry.toolId));
   }
 
   /**

@@ -2,6 +2,7 @@
 // Everything here is plain data so it can be stored, diffed and rendered.
 
 import type { WorkInfo } from "./worklog.js";
+import type { CheckId, Setup } from "./setup.js";
 
 export type Id = string;
 
@@ -487,6 +488,8 @@ export interface Task {
   rereview?: Id;
   /** Ids the window gave what it sent lately, so a resend after a lost confirmation counts once. */
   received?: readonly Id[];
+  /** The window's id for the request that added it: sending it again after a lost reply finds this task instead of adding another. */
+  clientId?: Id;
 }
 
 /**
@@ -509,6 +512,10 @@ export interface InboxItem {
   at: number;
   /** The asking agent keeps its slot while it waits. */
   blocking: boolean;
+  /** A Stuck item about a tool that is not ready or would not start: the item shows that tool's fix, and Retry checks it again first. */
+  toolId?: CheckId;
+  /** With `toolId`: what was wrong with the tool when the item was raised. */
+  toolProblem?: "not-installed" | "logged-out" | "wont-start";
 }
 
 /**
@@ -641,6 +648,8 @@ export interface State {
   tasks: readonly Task[];
   inbox: readonly InboxItem[];
   pool: Pool;
+  /** First run and the tools check. Absent in the demo and from older engines: no first run. */
+  setup?: Setup;
   /** The terminals found on this machine, the usual one first. Unset in the demo. */
   terminals?: readonly Terminal[];
   /** The terminal the coordinator chose for take-overs. Unset: the usual one. */

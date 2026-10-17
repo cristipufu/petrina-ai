@@ -130,6 +130,8 @@ export async function launch(options: LaunchOptions): Promise<void> {
     const connection: Connection = { url: `ws://127.0.0.1:${server.port}/ws`, api: `http://127.0.0.1:${server.port}`, token, pid: process.pid };
     // Scripts keep reading engine.json, whoever started the engine.
     writeConnection(home, connection);
+    // Which tools are ready, in the background: first run and the squad read the answers as they come.
+    void engine.checkTools();
     console.log(`Petrina engine on ${connection.api} (data in ${home})`);
     if (app) {
       tell({ type: "ready", owned: true, url: connection.url, token });

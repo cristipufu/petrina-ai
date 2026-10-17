@@ -10,13 +10,65 @@ const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
   { id: "chore", label: "Small change", hint: "Quick build, one reviewer" },
 ];
 
+export type Position = "bottom" | "top";
+
+interface TaskOptionsProps {
+  kind: TaskKind;
+  delivery: DeliveryMode;
+  position: Position;
+  onKind: (kind: TaskKind) => void;
+  onDelivery: (delivery: DeliveryMode) => void;
+  onPosition: (position: Position) => void;
+  /** While the task is being saved: what is on screen is what was sent. */
+  disabled?: boolean;
+}
+
+/** The kind of work, what happens when it is ready, and its place in the queue: the same in this dialog and in first run's More options. */
+export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPosition, disabled = false }: TaskOptionsProps) {
+  return (
+    <div className="options">
+      <div className="opt">
+        <span id="new-kind">Kind of work</span>
+        <div className="segmented" role="radiogroup" aria-labelledby="new-kind">
+          {KINDS.map((entry) => (
+            <button key={entry.id} role="radio" aria-checked={kind === entry.id} className={kind === entry.id ? "on" : ""} onClick={() => onKind(entry.id)} title={entry.hint} disabled={disabled}>
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="opt">
+        <span id="new-delivery">When it's ready</span>
+        <div className="segmented" role="radiogroup" aria-labelledby="new-delivery">
+          {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
+            <button key={mode} role="radio" aria-checked={delivery === mode} className={delivery === mode ? "on" : ""} onClick={() => onDelivery(mode)} disabled={disabled}>
+              {DELIVERY_LABEL[mode]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="opt">
+        <span id="new-position">Place in the queue</span>
+        <div className="segmented" role="radiogroup" aria-labelledby="new-position">
+          <button role="radio" aria-checked={position === "bottom"} className={position === "bottom" ? "on" : ""} onClick={() => onPosition("bottom")} disabled={disabled}>
+            Bottom
+          </button>
+          <button role="radio" aria-checked={position === "top"} className={position === "top" ? "on" : ""} onClick={() => onPosition("top")} disabled={disabled}>
+            Top
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** `waiting`: a notification's item that opens once this dialog closes. */
 export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waiting, onClose, onCreated }: { state: State; defaultProduct?: string; initialTitle?: string; waiting?: string; onClose: () => void; onCreated: () => void }) {
   const [productId, setProductId] = useState(defaultProduct ?? "");
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<TaskKind>("feature");
-  const [position, setPosition] = useState<"bottom" | "top">("bottom");
+  const [position, setPosition] = useState<Position>("bottom");
   const [approvePlan, setApprovePlan] = useState(false);
   const productOf = (id: string) => state.products.find((product) => product.id === id);
   const [delivery, setDelivery] = useState<DeliveryMode>(productOf(productId)?.delivery ?? "pull-request");
@@ -102,39 +154,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
           </div>
         )}
         <textarea className="details" aria-label="Details" placeholder="Add details, links or how you'll judge it's done (optional)" value={description} onChange={(event) => setDescription(event.target.value)} />
-        <div className="options">
-          <div className="opt">
-            <span id="new-kind">Kind of work</span>
-            <div className="segmented" role="radiogroup" aria-labelledby="new-kind">
-              {KINDS.map((entry) => (
-                <button key={entry.id} role="radio" aria-checked={kind === entry.id} className={kind === entry.id ? "on" : ""} onClick={() => setKind(entry.id)} title={entry.hint}>
-                  {entry.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="opt">
-            <span id="new-delivery">When it's ready</span>
-            <div className="segmented" role="radiogroup" aria-labelledby="new-delivery">
-              {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
-                <button key={mode} role="radio" aria-checked={delivery === mode} className={delivery === mode ? "on" : ""} onClick={() => setDelivery(mode)}>
-                  {DELIVERY_LABEL[mode]}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="opt">
-            <span id="new-position">Place in the queue</span>
-            <div className="segmented" role="radiogroup" aria-labelledby="new-position">
-              <button role="radio" aria-checked={position === "bottom"} className={position === "bottom" ? "on" : ""} onClick={() => setPosition("bottom")}>
-                Bottom
-              </button>
-              <button role="radio" aria-checked={position === "top"} className={position === "top" ? "on" : ""} onClick={() => setPosition("top")}>
-                Top
-              </button>
-            </div>
-          </div>
-        </div>
+        <TaskOptions kind={kind} delivery={delivery} position={position} onKind={setKind} onDelivery={setDelivery} onPosition={setPosition} />
         <div className="foot">
           <span className="left">
             <label className="toggle">

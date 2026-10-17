@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { boardOrder, draftFor, inboxOrder, inboxTab, keyArea, matchesWords, reconcileHighlight, stepHighlight, withDraft, type KeyArea, type Page, type Task, type TaskList } from "@petrina/core";
-import { sim, mode, startClock, useEngineStatus, useSim } from "./engine";
+import { boardOrder, draftFor, inboxOrder, inboxTab, keyArea, matchesWords, reconcileHighlight, stepHighlight, withDraft, type KeyArea, type Page, type State, type Task, type TaskList } from "@petrina/core";
+import { sim, mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
 import { AnalyticsPage } from "./components/Analytics";
 import { CouldNotStart, EngineRecovery, StartingScreen } from "./components/EngineState";
+import { clearFirstTaskDraft, FirstRun } from "./components/FirstRun";
 import { blockingCount, lookup } from "./lib";
 import { useViewport, viewportSize } from "./components/bits";
 import { Board } from "./components/Board";
@@ -37,9 +38,37 @@ type Sheet = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string };
 /** Below this width the inbox opens over the board instead of beside it. */
 const DOCKED_INBOX = 1200;
 
+/**
+ * What the window shows. Until the engine's real state has arrived: "Starting Petrina…", so nobody
+ * sees an empty board, or first run, by mistake. A browser tab whose saved key the engine refuses
+ * is the exception: it says how to open a fresh window, because starting the engine cannot fix
+ * that key. Then first run while setup is not done (never over the demo, except its own variant),
+ * or the workspace. The couldn't-start message goes over either.
+ */
 export function App() {
   const state = useSim();
   const status = useEngineStatus();
+  const failed = mode === "engine" && status.link === "failed" && <CouldNotStart problem={status.problem} />;
+  if (mode === "engine" && !status.synced) {
+    return (
+      <>
+        <StartingScreen status={status} />
+        {failed}
+      </>
+    );
+  }
+  if (state.setup && !state.setup.done) {
+    return (
+      <>
+        <FirstRun state={state} status={status} />
+        {failed}
+      </>
+    );
+  }
+  return <Workspace state={state} status={status} />;
+}
+
+function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const find = useMemo(() => lookup(state), [state]);
   const viewport = useViewport();
   const [view, setView] = useState<Page>("board");
@@ -62,6 +91,8 @@ export function App() {
   const [sheet, setSheet] = useState<Sheet>();
   const [creating, setCreating] = useState(false);
   const [addingProduct, setAddingProduct] = useState(false);
+  // The engine adds any clone. Of the demos, only first run's has clones to add, Skip setup included.
+  const canAddProduct = mode === "engine" || state.setup !== undefined;
   // The product open in Settings' Products section.
   const [productSettings, setProductSettings] = useState<string>();
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -85,6 +116,9 @@ export function App() {
   const inboxLabel = width >= 640;
 
   useEffect(() => startClock(), []);
+  // Setup is done: a first task draft left behind (its reply was lost) has nothing to come back to.
+  // Only this mode's draft: the demo never clears one still being written for the real engine.
+  useEffect(() => clearFirstTaskDraft(), []);
 
   useEffect(() => applyTheme(theme), [theme]);
 
@@ -282,12 +316,28 @@ export function App() {
 
       <Rail view={view} blocking={blocking} onGo={go} />
       <main className="main">
-        {view === "board" && <Board state={state} find={find} visible={visible} selectedId={area === "board" ? currentBoardId : undefined} onOpen={openBoard} onFocus={(id) => { setOwner("board"); if (id) setBoardId(id); }} showDone={showDone} onShowDone={setShowDone} drafts={drafts} onPlace={place} />}
+        {view === "board" && (
+          <Board
+            state={state}
+            find={find}
+            visible={visible}
+            selectedId={area === "board" ? currentBoardId : undefined}
+            onOpen={openBoard}
+            onFocus={(id) => { setOwner("board"); if (id) setBoardId(id); }}
+            showDone={showDone}
+            onShowDone={setShowDone}
+            drafts={drafts}
+            onPlace={place}
+            onNewTask={() => newTask()}
+            onShowInbox={openInbox}
+            {...(canAddProduct ? { onAddProduct: () => setAddingProduct(true) } : {})}
+          />
+        )}
         {view === "products" && (
           <ProductsPage
             state={state}
             onSettings={openSettings}
-            {...(mode === "engine" ? { onAdd: () => setAddingProduct(true) } : {})}
+            {...(canAddProduct ? { onAdd: () => setAddingProduct(true) } : {})}
             onPick={pickProduct}
           />
         )}
@@ -341,7 +391,6 @@ export function App() {
       {shortcuts && <KeyboardShortcuts onClose={() => setShortcuts(false)} />}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{focusedTask ? `${focusedTask.title}, ${taskState(focusedTask, state)}${area === "inbox" && highlightedItem ? `, ${highlightedItem.title}` : ""}` : ""}</div>
 
-      {mode === "engine" && status.desktop && status.link === "starting" && <StartingScreen />}
       {mode === "engine" && status.link === "failed" && <CouldNotStart problem={status.problem} />}
 
       <Toasts

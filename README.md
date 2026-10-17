@@ -44,7 +44,7 @@ Petrina talks to agents through the [Agent Client Protocol](https://agentclientp
 
 ## Status
 
-Early, and working: the engine runs real Claude Code, Codex and Grok agents over ACP in their own git worktrees, with the planner, design convergence, review chain, permissions, questions and delivery (pull request, release, or a commit to main) wired end to end. The desktop app starts its engine by itself. Opened in a browser any other way than `bun run open`, the screens run on a simulated squad (`?demo` or `?demo=portfolio`).
+Early, and working: the engine runs real Claude Code, Codex and Grok agents over ACP in their own git worktrees, with the planner, design convergence, review chain, permissions, questions and delivery (pull request, release, or a commit to main) wired end to end. The desktop app starts its engine by itself, and a fresh install opens on a short first run: a tools check with a fix for anything missing, a product picked from the GitHub clones on your machine, and a first task. Opened in a browser any other way than `bun run open`, the screens run on a simulated squad (`?demo`, `?demo=portfolio`, or `?demo=first-run`).
 
 ## Develop
 

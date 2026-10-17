@@ -17,6 +17,7 @@ import type {
   Id,
   InboxItem,
   InboxKind,
+  Product,
   Role,
   Stage,
   State,
@@ -30,6 +31,7 @@ import type { NewTaskInput } from "./commands.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js";
 import { askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type TurnReport, type WorkMoment, type WorkStageKind } from "./worklog.js";
+import { SETUP_STEPS, type SetupStep } from "./setup.js";
 
 type Draft = DeepMutable<State>;
 type DraftTask = DeepMutable<Task>;
@@ -376,6 +378,54 @@ export class Simulator {
       task.statusLine = "Waiting for a free slot";
       task.column = this.columnFor(d, task);
     }, "changes");
+  }
+
+  /** First run's demo: a product picked from the made-up clones. */
+  addProduct(product: Product): void {
+    this.update((d) => {
+      if (d.products.some((entry) => entry.id === product.id)) return;
+      d.products.push(JSON.parse(JSON.stringify(product)) as Draft["products"][number]);
+      this.work.recordProduct({ id: product.id, name: product.name, repo: product.repo, addedAt: d.now });
+      this.wrote(d);
+    });
+  }
+
+  /** First run's demo: the furthest screen reached. */
+  setSetupStep(step: SetupStep): void {
+    const order = (value: SetupStep | undefined) => SETUP_STEPS.findIndex((entry) => entry.id === (value ?? "welcome"));
+    this.update((d) => {
+      if (d.setup && !d.setup.done && order(step) > order(d.setup.step)) d.setup.step = step;
+    });
+  }
+
+  /** First run's demo: "Skip setup". */
+  skipSetup(): void {
+    this.update((d) => {
+      if (d.setup) d.setup.done = true;
+    });
+  }
+
+  /** First run's demo: Start adds the task and finishes setup. Sent again, it finds the same task. */
+  startFirstTask(input: NewTask & { clientId: Id }): Id {
+    const known = this.state.tasks.find((task) => task.clientId === input.clientId);
+    if (known) return known.id;
+    const id = this.addTask(input);
+    this.update((d) => {
+      const task = d.tasks.find((entry) => entry.id === id);
+      if (task) task.clientId = input.clientId;
+      if (d.setup) {
+        d.setup.done = true;
+        d.setup.firstTaskId ??= id;
+      }
+    });
+    return id;
+  }
+
+  /** First run's demo: the board's one-time tip. */
+  dismissTip(): void {
+    this.update((d) => {
+      if (d.setup) d.setup.tipDismissed = true;
+    });
   }
 
   /** Change what "ready" means for a product, and whether the coordinator checks first. */

@@ -150,6 +150,8 @@ export interface RepoInfo {
   defaultBranch: string;
   /** The origin address exactly as configured, with no address rewrites applied. */
   remote?: string;
+  /** Its origin is a repository on GitHub. */
+  github: boolean;
 }
 
 const REMOTE = /^(?:(?:ssh|git|https?):\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[:/](.+?)(?:\.git)?\/?$/;
@@ -161,15 +163,16 @@ export async function remoteAddress(root: string): Promise<string | undefined> {
 }
 
 /**
- * The owner/name a GitHub address points to. HTTPS must be github.com; SSH may use a host
+ * The owner/name a GitHub address points to. Web and git-protocol addresses must be github.com
+ * (http and git:// as well as https, the same ones clone discovery accepts). SSH may use a host
  * nickname from the coordinator's SSH settings (git@github-work:owner/name).
  */
 export function githubRepoOf(address: string): string | undefined {
   if (address.startsWith("-")) return undefined;
-  const https = /^https:\/\/(?:[^@/]+@)?(?:www\.)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(address);
+  const web = /^(?:https?|git):\/\/(?:[^@/]+@)?(?:(?:www|ssh)\.)?github\.com(?::\d+)?\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(address);
   const ssh = /^ssh:\/\/(?:[^@/]+@)?[^/:@]+(?::\d+)?\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(address);
   const scp = /^(?:[^@/:]+@)?[^/:@]+:([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(address);
-  const match = https ?? ssh ?? (address.includes("://") ? null : scp);
+  const match = web ?? ssh ?? (address.includes("://") ? null : scp);
   if (!match) return undefined;
   const repo = `${match[1]}/${match[2]}`;
   return REPO.test(repo) ? repo : undefined;
@@ -180,7 +183,15 @@ export function sameRepo(address: string, repo: string): boolean {
   return githubRepoOf(address)?.toLowerCase() === repo.toLowerCase();
 }
 
-/** Read what Petrina needs about a local clone. */
+/** owner/name when a remote's address is a repository on github.com. */
+export function githubRepo(url: string): string | undefined {
+  const match = REMOTE.exec(url.trim());
+  if (!match || !/^(www\.|ssh\.)?github\.com(:\d+)?$/i.test(match[1]!)) return undefined;
+  const repo = match[2]!.split("/").filter(Boolean).join("/");
+  return REPO.test(repo) ? repo : undefined;
+}
+
+/** Read what Petrina needs about a local clone, from the folder or any folder inside it. */
 export async function repoInfo(path: string): Promise<RepoInfo> {
   const root = await must(["git", "rev-parse", "--show-toplevel"], path);
   const remote = await remoteAddress(root);
@@ -192,7 +203,7 @@ export async function repoInfo(path: string): Promise<RepoInfo> {
   const owner = segments.slice(0, -1).join("/") || "local";
   const head = (await run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root)).stdout;
   const defaultBranch = head.startsWith("origin/") ? head.slice("origin/".length) : (await run(["git", "rev-parse", "--abbrev-ref", "HEAD"], root)).stdout || "main";
-  return { root, owner, name, defaultBranch, ...(remote ? { remote } : {}) };
+  return { root, owner, name, defaultBranch, ...(remote ? { remote } : {}), github: !local && remote !== undefined && githubRepoOf(remote) !== undefined };
 }
 
 /** Branch names come from an allowlist, never from raw task text. */

@@ -1,12 +1,13 @@
 import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { queueOf, slotUses, type State } from "@petrina/core";
-import { sim } from "../engine";
+import { mode, sim } from "../engine";
 import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
 import { ProductName, RoleAvatar, ROLE_ICONS } from "./bits";
 import { LimitStepper } from "./Pool";
 import { UsageList } from "./Usage";
 import { ReviewsPanel } from "./Reviews";
 import { drivingText, openHandBack } from "./TakeOver";
+import { CheckAgain, shownChecks, ToolList, useCheckOnReturn } from "./Tools";
 import type { SheetTab } from "./TaskCard";
 
 /** One tile per pool slot: who is in it, what they are doing, and a way in. Several reviewers at once have a tile each. */
@@ -124,6 +125,8 @@ const TOOL_STATUS = { ready: "Ready", "logged-out": "Needs you to log in", "not-
 
 /** The squad's roles, the tools found on this machine, and the profiles built from them. */
 export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
+  // Back from running a fix in Terminal: the tools are checked again by themselves.
+  useCheckOnReturn(mode === "engine");
   const usage = (profileId: string) =>
     state.tasks.reduce(
       (count, task) =>
@@ -171,6 +174,12 @@ export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
       </div>
 
       <h2 className="section-title">Tools on this machine</h2>
+      {state.setup ? (
+        <div className="library-tools">
+          <ToolList checks={shownChecks(state.setup.checks)} platform={state.setup.platform} />
+          <CheckAgain checks={state.setup.checks} />
+        </div>
+      ) : (
       <div className="grid">
         {state.tools.map((tool) => (
           <div key={tool.id} className="tile" style={{ minHeight: 0 }}>
@@ -187,6 +196,7 @@ export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
           </div>
         ))}
       </div>
+      )}
 
       {state.terminals && <TerminalPicker state={state} />}
 

@@ -1,6 +1,7 @@
 import { useState, type DragEvent } from "react";
-import { ChevronDown, ChevronRight, Hand } from "lucide-react";
-import { boardSections, queueOf, startsNextCount, type State, type Task } from "@petrina/core";
+import { ArrowRight, ChevronDown, ChevronRight, Hand, Lightbulb, X } from "lucide-react";
+import { boardSections, firstTaskTip, queueOf, startsNextCount, type State, type Task } from "@petrina/core";
+import { sim } from "../engine";
 import { alt, mod } from "../keyboard";
 import { ago, deliveryText, STATE_LABEL, type Lookup } from "../lib";
 import { ProductName } from "./bits";
@@ -17,6 +18,10 @@ interface BoardProps {
   onShowDone: (show: boolean) => void;
   drafts: Readonly<Record<string, string>>;
   onPlace: (taskId: string, anchorId: string, side: "before" | "after") => void;
+  onNewTask: () => void;
+  onShowInbox: () => void;
+  /** Only where products can be added (not in the demo). */
+  onAddProduct?: () => void;
 }
 
 function finishedAgo(task: Task, now: number): string {
@@ -36,7 +41,7 @@ const SECTIONS = [
  * come first, then working ones, then waiting ones, then the queue in priority order (drag to
  * reorder), with finished work folded away at the end.
  */
-export function Board({ state, find, visible, selectedId, onOpen, onFocus, showDone, onShowDone, drafts, onPlace }: BoardProps) {
+export function Board({ state, find, visible, selectedId, onOpen, onFocus, showDone, onShowDone, drafts, onPlace, onNewTask, onShowInbox, onAddProduct }: BoardProps) {
   const [dragId, setDragId] = useState<string>();
   const [dropIndex, setDropIndex] = useState<number>();
   const sections = boardSections(state.tasks, visible);
@@ -94,9 +99,25 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, showD
 
   return (
     <div className="board" tabIndex={-1} onMouseDown={(event) => { if (!(event.target as HTMLElement).closest("[data-task-id]")) onFocus(); }} onFocus={(event) => { if (!(event.target as HTMLElement).closest("[data-task-id]")) onFocus(); }}>
-      {nothing && (
-        <div className="board-empty">{state.tasks.length === 0 ? `No tasks yet. New task (${mod}N) adds the first one.` : "No tasks match this product or search."}</div>
-      )}
+      <FirstTaskTip state={state} onShowInbox={onShowInbox} />
+      {nothing &&
+        (state.tasks.length === 0 ? (
+          <div className="board-empty start">
+            <p>{state.products.length ? "No tasks yet. Write the first one and the squad starts on it." : "No tasks yet. Add a product, then write a task for the squad."}</p>
+            <div className="row" style={{ gap: 8 }}>
+              {onAddProduct && (
+                <button className={`btn ${state.products.length ? "" : "lead"}`} onClick={onAddProduct}>
+                  Add a product
+                </button>
+              )}
+              <button className={`btn ${state.products.length ? "lead" : ""}`} onClick={onNewTask} disabled={!state.products.length} title={state.products.length ? `New task (${mod}N)` : "Add a product first"}>
+                New task
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="board-empty">No tasks match this product or search.</div>
+        ))}
 
       {SECTIONS.map((section) =>
         sections[section.id].length === 0 ? null : (
@@ -188,5 +209,26 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, showD
         </section>
       )}
     </div>
+  );
+}
+
+/** Once, after first run: what happens next with the first task, as it is now. Dismissed, it never comes back. */
+function FirstTaskTip({ state, onShowInbox }: { state: State; onShowInbox: () => void }) {
+  const tip = firstTaskTip(state);
+  if (!tip) return null;
+  return (
+    <aside className="tip" aria-label="What happens next">
+      <Lightbulb size={20} aria-hidden="true" />
+      <p>{tip.text}</p>
+      {tip.toInbox && (
+        <button className="btn small" onClick={onShowInbox}>
+          Show Needs you
+          <ArrowRight size={16} aria-hidden="true" />
+        </button>
+      )}
+      <button className="btn small quiet icon" aria-label="Dismiss this tip" title="Dismiss" onClick={() => sim.dismissTip()}>
+        <X size={16} aria-hidden="true" />
+      </button>
+    </aside>
   );
 }

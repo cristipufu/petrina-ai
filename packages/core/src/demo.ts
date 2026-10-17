@@ -6,6 +6,7 @@ import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
 import type { DeliveryMode, Id, InboxItem, Product, State, Task, TaskKind, UsageReport } from "./model.js";
 import { Simulator, type SimOpenWork, type SimQuirk, type Trigger, type Triggers } from "./sim.js";
 import { askMomentId, MemoryWorkLog } from "./worklog.js";
+import type { Clone } from "./setup.js";
 
 export const DEMO_PRODUCTS: readonly Product[] = [
   {
@@ -635,4 +636,38 @@ function buildPortfolioDemo(now: number): Demo {
     open: builder.openWork(),
     quirks,
   };
+}
+
+/**
+ * First run on the simulated squad (?demo=first-run): nothing added yet, Claude Code ready, Codex
+ * not installed and the GitHub CLI not logged in. The demo products stand in for clones found on disk.
+ */
+export function createFirstRunDemo(now: number): Demo {
+  const state = baseState(now);
+  return {
+    state: {
+      ...state,
+      products: [],
+      setup: {
+        done: false,
+        platform: "darwin",
+        checks: [
+          { id: "claude-code", status: "ready", at: now },
+          { id: "codex", status: "not-installed", at: now },
+          { id: "gh", status: "logged-out", at: now },
+          { id: "git", status: "ready", at: now },
+          { id: "node", status: "ready", at: now },
+        ],
+      },
+    },
+    triggers: DEMO_TRIGGERS,
+    log: new MemoryWorkLog(now),
+    open: { turns: [], stages: [], runs: [] },
+    quirks: {},
+  };
+}
+
+/** The clones first run's demo "finds": the demo products, newest first. */
+export function demoClones(now: number): Clone[] {
+  return DEMO_PRODUCTS.map((product, index) => ({ path: `~/code/${product.repo.split("/")[1]}`, repo: product.repo, changedAt: now - index * 3_600_000 }));
 }

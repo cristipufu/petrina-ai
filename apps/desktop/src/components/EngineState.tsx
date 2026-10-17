@@ -1,14 +1,22 @@
+import { useRef } from "react";
 import { CloudOff, User } from "lucide-react";
-import { desktop, leaveDemo, mode, openDemo, retryEngine, sim, type EngineStatus, type Unsent } from "../engine";
-import { Logo } from "./bits";
+import { desktop, leaveDemo, mode, openDemo, retryEngine, sim, useUnsent, type EngineStatus, type Unsent } from "../engine";
+import { Logo, useFocusTrap } from "./bits";
+
+/** What a browser tab can do about a connection it cannot repair itself. The same words in both places. */
+export function RecoveryLine({ status }: { status: EngineStatus }) {
+  return status.restarted ? (
+    <>The Petrina engine restarted. Run <code>bun run open</code> for a fresh window, then close this one.</>
+  ) : (
+    <>Can't reach the Petrina engine. In a terminal, run <code>bun run engine</code> and leave it running, then run <code>bun run open</code> in another terminal.</>
+  );
+}
 
 /** Browser windows need a terminal; desktop recovery belongs to the app's own engine screen. */
 export function EngineRecovery({ status }: { status: EngineStatus }) {
   return (
     <div className="engine-recovery" role="status">
-      {status.restarted
-        ? <>The Petrina engine restarted. Run <code>bun run open</code> for a fresh window, then close this one.</>
-        : <>Can't reach the Petrina engine. In a terminal, run <code>bun run engine</code> and leave it running, then run <code>bun run open</code> in another terminal.</>}
+      <RecoveryLine status={status} />
     </div>
   );
 }
@@ -50,26 +58,48 @@ export function EnginePill({ status, compact = false }: { status: EngineStatus; 
   );
 }
 
-/** While the desktop app starts its engine, before anything else shows. */
-export function StartingScreen() {
+/**
+ * Until the engine's real state arrives, before anything else shows: the desktop app starting its
+ * engine, or a browser tab connecting to one. A browser tab whose saved key the engine refuses
+ * stops here and says how to open a fresh window. Starting the engine cannot fix that key, so the
+ * tab does not keep saying it is starting.
+ */
+export function StartingScreen({ status }: { status: EngineStatus }) {
+  const refused = !status.desktop && status.restarted === true;
   return (
     <div className="engine-screen" role="status" aria-live="polite">
       <div className="engine-card">
-        <span className="mark starting">
-          <Logo size={48} />
-        </span>
-        <h1 className="t">Starting Petrina…</h1>
-        <p className="s">Getting the engine ready. The first start can take a few seconds.</p>
+        {refused ? (
+          <span className="mark avatar tone-slate" aria-hidden="true">
+            <CloudOff size={24} />
+          </span>
+        ) : (
+          <span className="mark starting">
+            <Logo size={48} />
+          </span>
+        )}
+        <h1 className="t">{refused ? "Petrina needs a fresh window" : "Starting Petrina…"}</h1>
+        <p className="s">
+          {refused ? <RecoveryLine status={status} /> : status.desktop ? "Getting the engine ready. The first start can take a few seconds." : "Connecting to Petrina's engine on this machine."}
+        </p>
+        {!refused && !status.desktop && status.problem && <p className="problem">Still trying: {status.problem} If the engine isn't running, start it with bun run engine.</p>}
       </div>
     </div>
   );
 }
 
-/** After three failed attempts in a row. The demo opens only when the coordinator picks it. */
+/**
+ * After three failed attempts in a row. The demo opens only when the coordinator picks it, and what
+ * is not sent yet is kept through it, to go out once the window is back on the engine.
+ */
 export function CouldNotStart({ problem }: { problem: string | undefined }) {
+  const waiting = useUnsent().length;
+  // It covers the whole window: the keyboard stays on it, never on what is hidden behind it.
+  const card = useRef<HTMLDivElement>(null);
+  useFocusTrap(card);
   return (
     <div className="engine-screen" role="alertdialog" aria-labelledby="engine-failed-title" aria-describedby="engine-failed-text">
-      <div className="engine-card">
+      <div className="engine-card" ref={card} tabIndex={-1}>
         <span className="mark avatar tone-slate" aria-hidden="true">
           <CloudOff size={24} />
         </span>
@@ -78,10 +108,11 @@ export function CouldNotStart({ problem }: { problem: string | undefined }) {
         </h1>
         <p className="s" id="engine-failed-text">
           It tried three times. Your products and tasks are safe, and come back as soon as the engine starts.
+          {waiting > 0 && ` ${waiting === 1 ? "One thing you said is" : `${waiting} things you said are`} waiting to be sent: ${waiting === 1 ? "it goes" : "they go"} out once the engine is back, even if you open the demo first.`}
         </p>
         {problem && <p className="problem">{problem}</p>}
         <div className="actions">
-          <button className="btn lead" onClick={retryEngine}>
+          <button className="btn lead" onClick={retryEngine} autoFocus>
             Try again
           </button>
           <button className="btn" onClick={openDemo}>

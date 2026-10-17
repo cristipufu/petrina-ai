@@ -16,29 +16,36 @@ const ClientId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const Said = z.object({ taskId: z.string().optional(), about: z.string().max(4000).optional(), clientId: ClientId.optional() });
 const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
+const NewTask = z.object({
+  productId: z.string(),
+  title: z.string().min(1).max(200),
+  description: z.string().max(8000).optional(),
+  kind: z.enum(["new", "feature", "bug", "chore"]).optional(),
+  position: z.enum(["top", "bottom"]).optional(),
+  approvePlan: z.boolean().optional(),
+  delivery: z.enum(["pull-request", "release", "local"]).optional(),
+  approveDelivery: z.boolean().optional(),
+  clientId: ClientId.optional(),
+});
 
 /**
  * What each command's arguments may be, checked before the engine sees them. The compiler holds this to
  * the command table (Commands in @petrina/core): every command, nothing else, arguments the engine takes.
  */
 const ARGS = {
-  addProduct: z.tuple([z.string().min(1), z.string().optional()]),
+  addProduct: z.tuple([z.string().min(1).max(4096), z.string().max(200).optional()]),
   removeProduct: z.tuple([z.string()]),
   setProductChecks: z.tuple([z.string(), z.union([z.null(), z.array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) })).max(12)])]),
   updateProduct: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean(), shipLowRisk: z.boolean().optional() })]),
   setProductDelivery: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]),
-  addTask: z.tuple([
-      z.object({
-        productId: z.string(),
-        title: z.string().min(1).max(200),
-        description: z.string().max(8000).optional(),
-        kind: z.enum(["new", "feature", "bug", "chore"]).optional(),
-        position: z.enum(["top", "bottom"]).optional(),
-        approvePlan: z.boolean().optional(),
-        delivery: z.enum(["pull-request", "release", "local"]).optional(),
-        approveDelivery: z.boolean().optional(),
-      }),
-    ]),
+  addTask: z.tuple([NewTask]),
+  checkTools: z.tuple([]),
+  findClones: z.tuple([]),
+  setSetupStep: z.tuple([z.enum(["welcome", "tools", "product", "task"])]),
+  skipSetup: z.tuple([]),
+  startFirstTask: z.tuple([NewTask.extend({ clientId: ClientId })]),
+  dismissTip: z.tuple([]),
+  openGuide: z.tuple([z.string().max(300)]),
   moveInQueue: z.tuple([z.string(), z.number().int()]),
   placeInQueue: z.tuple([z.string(), z.string(), z.enum(["before", "after"])]),
   moveVisibleInQueue: z.tuple([z.string(), z.array(z.string()).max(100000), z.union([z.literal(-1), z.literal(1)])]),

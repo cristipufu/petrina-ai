@@ -275,7 +275,7 @@ Cards, board columns, the Agents page and the inbox show no usage numbers, so th
 ## Library
 
 - **Roles:** cards with icon, purpose, permissions and what each one hands back. Edited in a plain-language form.
-- **Tools and models:** the agents found on this machine (installed, logged in), their models and effort levels, and a Test button.
+- **Tools on this machine:** Claude Code, Codex and the GitHub CLI, plus Grok when installed (Git and Node.js when missing), with the same statuses and fixes as first run, and Check again.
 - **Your terminal:** where Take over in terminal opens, the usual one on this machine unless you pick another. When Petrina finds none, it says so: take over still works by copying a command.
 - **Templates:** example plans the planner learns from.
 
@@ -291,10 +291,14 @@ One page for the whole app, from the bottom of the rail or with ⌘, (Ctrl+, on 
 
 ## First run
 
-1. Welcome: "Petrina runs a squad of AI agents on your products. You set priorities and make the calls."
-2. Tools check: Claude Code, Codex and the GitHub CLI, with installed or logged-in status and a fix for anything missing.
-3. Add your first product, from GitHub or a local folder.
-4. Write your first task. The planner shows its plan. Go.
+Four short screens in one window, with a step indicator, Back, and **Skip setup** on every screen. It shows only on a fresh install (no products, no tasks), and only once Petrina has its engine's real state: until then it says "Starting Petrina…". Someone who already uses Petrina never sees it. Closing Petrina partway reopens at the first unfinished screen; a lost connection keeps the screen and everything typed, says it is reconnecting, and carries on.
+
+1. **Welcome:** "Petrina runs a squad of AI agents on your products. You set priorities and make the calls." Everything runs on this machine. Get started (or Enter).
+2. **Tools:** Claude Code, Codex and the GitHub CLI, each Checking, Ready, Not installed, Not logged in, or Couldn't check (the GitHub CLI says which account). Grok gets a row only when it is installed, and Git and Node.js only when missing. Anything not Ready shows one sentence, one command with Copy, and the official guide; what the tool said is behind Details. The check runs again when you come back to the window, and with Check again. Continue needs Git, Node.js and one agent tool (Claude Code, Codex, or Grok when installed) that is Ready or couldn't be checked. Notes say when agents will review on one tool, when Petrina will only try a tool, and that the GitHub CLI is needed before the first pull request.
+3. **Product:** up to six GitHub clones found in the usual code folders, newest first, one click each, or paste a folder (~ and subfolders work). The scan never follows a shortcut, on the way to a code folder or inside one. On a Mac it stays out of Documents, Desktop and Downloads, which would bring up a system permission window; a clone there is pasted. Refusals are one plain sentence. A folder already added says so. A clone not linked to GitHub keeps its finished work on this machine, and the screen says so, here and in Add a product.
+4. **First task:** the product picked, a title, three starter ideas, optional details, "Show me the plan first" on, and More options with the New task dialog's choices. Start (or Enter) shows Starting… and keeps everything until Petrina confirms the task is saved; a refusal, no answer in 10 seconds or a lost connection gives a plain message and Try again, never a second card.
+
+Then the board, with the first card on its Plan step and a one-time tip that follows "Show me the plan first": the plan will arrive in Needs you for approval, or the squad has started and the card shows the plan. While the first task is stuck, the tip says so and points at Needs you instead of promising a plan. Skip setup leads to a board whose empty state offers Add a product and New task. `?demo=first-run` shows first run on the simulated squad.
 
 ## Visual language
 
@@ -371,7 +375,8 @@ P pauses or resumes; on queued tasks it holds or releases them. Products is in t
 ## Edge cases
 
 - **No tools installed:** first run stops at the tools check with the fix for each one.
-- **A tool logs out mid-run:** a "Stuck" inbox item says which tool needs a login.
+- **Only one agent tool:** every step runs on it, reviews included, and first run says so.
+- **A tool is not ready, logs out or won't start:** a "Stuck" inbox item names the tool, with its fix and Retry, which checks the tool again first. A tool that hangs as it starts counts as not starting after a minute. A tool that wouldn't start keeps its fix and what it said behind Details, even when its check passes again. The same for the GitHub CLI before a pull request or release ships.
 - **A usage limit is hit:** the agent pauses with "Resumes at 14:00" and offers to switch tool.
 - **Closing the app with agents running:** asks whether to keep running in the background or pause everything.
 - **Two tasks touching the same area:** the planner warns ("Might overlap with Checkout revamp").

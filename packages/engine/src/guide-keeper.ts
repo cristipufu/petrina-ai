@@ -56,13 +56,15 @@ export class GuideKeeper {
       if (conversation === undefined) delete task.conversation;
       else task.conversation = conversation;
     };
-    let ran: Id = GUIDE_KEEPER_PROFILE;
+    // On a tool the squad can use, like every other step.
+    const keeper = this.k.onUsable(GUIDE_KEEPER_PROFILE);
+    let ran: Id = keeper;
     try {
       const guide = this.reviewGuide(task);
       const result = await this.turns.turn(
         task,
         "guide-keeper",
-        GUIDE_KEEPER_PROFILE,
+        keeper,
         () => [
           { title: "The coordinator's note when sending the delivery back", body: miss.note },
           { title: `The review guide now (${GUIDE_FILE})`, body: guide || "There is none yet." },
@@ -73,14 +75,14 @@ export class GuideKeeper {
         { status: "Looking for what the reviewers missed", used: (id) => (ran = id) },
       );
       restore();
-      if (!result.missed || !result.line) this.k.log(task, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", GUIDE_KEEPER_PROFILE);
-      else if (hasPoint(guide, result.line)) this.k.log(task, "done", "The review guide already has that point", "guide-keeper", GUIDE_KEEPER_PROFILE);
+      if (!result.missed || !result.line) this.k.log(task, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", ran);
+      else if (hasPoint(guide, result.line)) this.k.log(task, "done", "The review guide already has that point", "guide-keeper", ran);
       else {
         // An offer, not a stop: the task carries on while the coordinator decides.
         const state = task.state;
         this.k.raise(task, "guide", `Add a point to ${product.name}'s review guide?`, false, { body: result.line, detail: `${result.why} It goes into ${GUIDE_FILE}, which AGENTS.md points every agent to, in Petrina or in your own sessions.` });
         task.state = state;
-        this.k.log(task, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", GUIDE_KEEPER_PROFILE);
+        this.k.log(task, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", ran);
       }
     } catch (error) {
       if (signal.aborted || error instanceof Aborted) throw error;

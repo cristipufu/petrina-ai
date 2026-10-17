@@ -100,6 +100,12 @@ interface ConfigOption {
   options: { value: string; name: string }[];
 }
 
+// Like the real tools' connectors, it reports the login it runs on right after it starts.
+// "--logged-out": it reports no login, and every new conversation is refused until the tool is logged in.
+// "--not-logged-in": it reports no login but opens conversations, and asks for a login only at the first
+// message, as Claude Code does. "--silent-login": it never says whether it is logged in.
+// "--wont-start": it exits at once. "--hang": it starts but never opens a conversation. "--stubborn": it
+// ignores being told to stop, and writes its process id to "pids".
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
 // "[no-check]" leaves the design check out of the plan, "[screens]" puts Screens between the design and
 // its check, and "[two-checks]" adds Screens and a second design check after the first. "[quick]" plans just a
@@ -211,6 +217,17 @@ const check = { kind: "gate", title: "Your design check", roleId: "architect", g
 const screens = { kind: "do", title: "Screens", roleId: "ux-designer", profileIds: ["opus-high"] };
 const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
 const hold = process.argv.find((arg) => arg.startsWith("--hold="))?.slice("--hold=".length);
+const loggedOut = process.argv.includes("--logged-out");
+const notLoggedIn = loggedOut || process.argv.includes("--not-logged-in");
+const silentLogin = process.argv.includes("--silent-login");
+const hangs = process.argv.includes("--hang");
+const stubborn = process.argv.includes("--stubborn");
+if (stubborn) {
+  process.on("SIGTERM", () => undefined);
+  setInterval(() => undefined, 1000);
+  if (dir) appendFileSync(join(dir, "pids"), `${process.pid}\n`);
+}
+if (process.argv.includes("--wont-start")) process.exit(3);
 const scriptPath = process.argv.find((arg) => arg.startsWith("--script="))?.slice("--script=".length);
 
 /** What the fake agents do for one test, read before every run. */
@@ -654,12 +671,16 @@ function responseFor(reply: Reply, session: Conversation) {
 
 acp
   .agent({ name: "fake-agent" })
-  .onRequest("initialize", async () => {
+  .onRequest("initialize", async (ctx) => {
+    // After the answer, never before it: the login it runs on, or "none".
+    if (!silentLogin) setImmediate(() => void ctx.client.notify("_auth/status_update", { authStatus: notLoggedIn ? { kind: "none", label: "Not logged in" } : { kind: "account", label: "Fake plan" } }).catch(() => undefined));
     const how = scenario().reopen;
     if (silent) await new Promise(() => undefined);
     return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: how === "resume" || how === "load", ...(how === "resume" || how === "stall" ? { sessionCapabilities: { resume: {} } } : {}) } };
   })
-  .onRequest("session/new", (ctx) => {
+  .onRequest("session/new", async (ctx) => {
+    if (loggedOut) throw acp.RequestError.authRequired();
+    if (hangs) await new Promise(() => undefined);
     const sessionId = crypto.randomUUID();
     sessions.set(sessionId, { cwd: ctx.params.cwd, role: "", turns: 0, restarts: 0, history: [], options: configOptions() });
     keep(sessionId);
@@ -689,6 +710,7 @@ acp
     return (process.env.FAKE_BARE_ACK ? {} : { configOptions: session.options }) as acp.SetSessionConfigOptionResponse;
   })
   .onRequest("session/prompt", async (ctx) => {
+    if (notLoggedIn) throw acp.RequestError.authRequired();
     const { sessionId } = ctx.params;
     const text = ctx.params.prompt.map((part) => (part.type === "text" ? part.text : "")).join("\n");
     sessions.get(sessionId)?.history.push({ sessionUpdate: "user_message_chunk", content: { type: "text", text } });
@@ -706,5 +728,7 @@ acp
   })
   .connect(acp.ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>, Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>));
 
-// The engine went away (quit, or killed): so does the agent.
-process.stdin.on("end", () => process.exit(0));
+// The engine went away (quit, or killed): so does the agent, unless it is stubborn.
+process.stdin.on("end", () => {
+  if (!stubborn) process.exit(0);
+});
