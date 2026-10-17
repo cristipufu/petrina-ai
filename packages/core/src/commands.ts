@@ -63,7 +63,8 @@ export interface Commands {
   allow(itemId: Id, scope?: "once" | "always"): void;
   deny(itemId: Id, note?: string, context?: SaidContext): void;
   approve(itemId: Id): void;
-  declineGuide(itemId: Id): void;
+  /** "Not this time" on an offer: a point for the review guide, or lessons for LEARNINGS.md. */
+  decline(itemId: Id): void;
   requestChanges(itemId: Id, note: string): void;
   checkShipping(itemId: Id): void;
   shipAgain(itemId: Id): void;
@@ -108,7 +109,7 @@ export const COMMAND_NAMES = [
   "allow",
   "deny",
   "approve",
-  "declineGuide",
+  "decline",
   "requestChanges",
   "checkShipping",
   "shipAgain",

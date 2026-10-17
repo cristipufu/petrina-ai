@@ -37,7 +37,7 @@ export function inboxOrder(state: State): InboxItem[] {
 export function inboxTab(kind: InboxItem["kind"]): "plan" | "design" | "review" | "session" {
   if (kind === "plan") return "plan";
   if (kind === "design" || kind === "disagreement") return "design";
-  if (kind === "delivery" || kind === "guide") return "review";
+  if (kind === "delivery" || kind === "guide" || kind === "learnings") return "review";
   return "session";
 }
 

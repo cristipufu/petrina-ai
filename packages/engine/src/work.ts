@@ -11,9 +11,10 @@ import type { Context } from "./context.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import type { Shipping } from "./shipping.js";
 import type { Updates } from "./update.js";
+import type { Learnings } from "./learnings.js";
 
 export class Work {
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly shipping: Shipping, private readonly updates: Updates) {}
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly shipping: Shipping, private readonly updates: Updates, private readonly learnings: Learnings) {}
 
   async runDo(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const roleId = stage.roleId;
@@ -40,6 +41,7 @@ export class Work {
         ...(back ? { resume: { sessionId: back.sessionId, toolId: back.toolId, model: back.model } } : {}),
       });
       task.report = { summary: result.summary, changes: result.changes, ...(result.tests ? { tests: result.tests } : {}), ...(result.title ? { title: result.title } : {}) };
+      this.learnings.note(task, result.learnings, roleId, profileId);
       // One commit per task: the builder's work joins the branch's one commit, under its title.
       const sha = await git.commitAll(task.worktree!, this.updates.message(task));
       if (updating) {
@@ -74,6 +76,7 @@ export class Work {
       return "stop";
     } else if (roleId === "tester") {
       const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal);
+      this.learnings.note(task, result.learnings, roleId, profileId);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => ({ ...item, met: result.checks.find((check) => check.text === item.text)?.pass ?? item.met }));
       const failed = result.checks.filter((check) => !check.pass);
       for (const check of failed) task.findings.push({ id: this.k.id(task.id), text: `Failed acceptance check: ${check.text}`, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });

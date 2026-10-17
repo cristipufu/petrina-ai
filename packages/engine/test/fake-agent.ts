@@ -57,6 +57,8 @@ export interface Scenario {
   leak?: boolean;
   /** The builder's commit title. */
   title?: string;
+  /** The builder and the code reviewers pass on what they learned about the repository (one lesson twice). */
+  learnings?: boolean;
 }
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
@@ -177,7 +179,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   keep(sessionId);
   if (dir) appendFileSync(join(dir, "prompts.jsonl"), `${JSON.stringify({ role: session.role, session: sessionId, text })}\n`);
   const say = (line: string) => send(client, sessionId, { sessionUpdate: "plan", entries: [{ content: line, status: "in_progress", priority: "medium" }] });
-  const done = (value: unknown, prose?: string): Reply => ({ text: block(value, prose) });
+  const learned = scenario().learnings ? (session.role === "builder" ? ["Run the tests with bun test: they take a second.", "Greetings live at the repository root."] : session.role === "code reviewer" ? ["Greetings live at the repository root!"] : []) : [];
+  const done = (value: unknown, prose?: string): Reply => ({ text: block(learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value, prose) });
   const plan = scenario();
   if (plan.controlled && session.turns === 1 && dir) {
     await say(`${session.role} is working`);

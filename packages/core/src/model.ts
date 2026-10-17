@@ -266,13 +266,22 @@ export interface Finding {
 export type RiskLevel = "low" | "medium" | "high";
 
 /** A point reviewers missed once, now in the product's review guide. */
+/** A line the coordinator accepted for one of the repository's points files (REVIEW.md, LEARNINGS.md). */
 export interface GuideLine {
   text: string;
   at: number;
-  /** The task whose delivery the coordinator sent back for it. */
+  /** The task it came from. */
   fromTask: Id;
-  /** The task whose branch adds it to REVIEW.md. */
+  /** The task whose branch adds it to the file. */
   writtenOn?: Id;
+}
+
+/** Something an agent learned about working in the repository, waiting for the coordinator at the delivery check. */
+export interface Lesson {
+  text: string;
+  roleId: Id;
+  profileId: Id;
+  at: number;
 }
 
 /** One review round's parallel work: each reviewer's findings as they arrive, then each voter's verdicts. */
@@ -372,6 +381,8 @@ export interface Task {
    * change applied and these files conflicting, until the builder brings it up to date.
    */
   updating?: { from: string; onto: string; files: readonly string[]; notes?: readonly string[] };
+  /** What agents learned about working in the repository during this task, offered to the coordinator at the delivery check. */
+  lessons?: readonly Lesson[];
   /** Petrina is running the repository's pre-commit hook, with the working copy's HEAD detached at the base: a restart puts it back. */
   hooking?: boolean;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
@@ -433,7 +444,7 @@ export interface Task {
 }
 
 /** `shipping`: a delivery was interrupted and Petrina could not confirm it went out. `driving`: the coordinator took over a step in their terminal. */
-export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide";
+export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide" | "learnings";
 
 export interface InboxItem {
   id: Id;
@@ -477,6 +488,8 @@ export interface Product {
   shipLowRisk?: boolean;
   /** Lines the coordinator accepted for the review guide (REVIEW.md). Reviewers see them at once; Petrina adds them to the file. */
   reviewGuide?: readonly GuideLine[];
+  /** Lessons the coordinator accepted for LEARNINGS.md, until a delivery adds them. */
+  learnings?: readonly GuideLine[];
   /** The commands that prove this product works. Petrina runs them itself; unset until found. */
   checks?: readonly ProductCheck[];
   /** Who set the checks: the Check finder agent, or the coordinator by hand (never replaced on its own). */

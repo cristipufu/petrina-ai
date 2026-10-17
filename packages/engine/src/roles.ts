@@ -46,6 +46,9 @@ export const NotesResult = z.object({
   notes: z.array(z.string()).default([]),
 });
 
+/** What an agent learned about working in the repository, offered to the coordinator for AGENTS.md. */
+const LEARNED = z.array(z.string()).max(5).default([]);
+
 export const BuildResult = z.object({
   summary: z.string().min(3),
   // One line for the commit that carries the whole change, in the repository's own style.
@@ -54,6 +57,7 @@ export const BuildResult = z.object({
   tests: z.string().optional(),
   // In a fix round: one answer per finding, by id.
   answers: z.array(z.object({ id: z.string(), fixed: z.boolean(), text: z.string().min(3) })).default([]),
+  learnings: LEARNED,
 });
 
 export const CheckFinderResult = z.object({
@@ -73,6 +77,7 @@ export const GuideResult = z.object({
 export const TestResult = z.object({
   summary: z.string().min(3),
   checks: z.array(z.object({ text: z.string(), pass: z.boolean() })).default([]),
+  learnings: LEARNED,
 });
 
 export const ReviewResult = z.object({
@@ -90,6 +95,7 @@ export const ReviewResult = z.object({
   confirms: z.array(z.string()).default([]),
   // A dispute always says why: the coordinator reads it next to the finding.
   disputes: z.array(z.object({ id: z.string(), reason: z.string().min(10) })).default([]),
+  learnings: LEARNED,
 });
 
 export const VerifyResult = z.object({
@@ -125,6 +131,9 @@ export function reviewRound(task: Task): number {
   const stage = task.plan?.stages.find((entry, index) => entry.kind === "review-chain" && index >= task.stageIndex) ?? task.plan?.stages.findLast((entry) => entry.kind === "review-chain");
   return (stage && task.rounds[stage.id]) || 1;
 }
+
+/** Roles that work in the repository pass on what they learned about working there, for AGENTS.md. */
+const LEARN = `If you learned something about working in this repository that would have saved you time or a mistake (how to build, run or test it, a trap, a convention nobody wrote down), add it to "learnings": one plain line each, at most three, true for any future task in this repository and not about this one. Leave it empty otherwise, and skip anything AGENTS.md already says. The coordinator approves every line before it joins the Learnings section of AGENTS.md.`;
 
 /** After three rounds of review the builder is asked to step back instead of patching again, in a fresh conversation. */
 export function stepBack(task: Task): boolean {
@@ -247,28 +256,29 @@ If nothing blocking is left, return an empty or non-blocking list.${task.objecti
   "builder": {
     result: BuildResult,
     reads: ["notes", "brief", "checks", "findings-to-answer", "review-guide", "report"],
-    shape: `{"summary": "What you built, in plain language", "title": "One line for the commit, in the repository's own style", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result", "answers": [{"id": "<finding id, in a fix round>", "fixed": true, "text": "What you changed, or why you did not"}]}`,
+    shape: `{"summary": "What you built, in plain language", "title": "One line for the commit, in the repository's own style", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result", "answers": [{"id": "<finding id, in a fix round>", "fixed": true, "text": "What you changed, or why you did not"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: ({ task, defaultBranch }) => {
       return `${task.updating ? `${updateInstructions(task.updating, defaultBranch)}\n` : ""}Implement the task in this working copy. Follow the design brief and acceptance checklist below when there is one.
 Keep the code consistent with the codebase and add or update tests.
 Before you finish, run the product's full checks (every one listed below, or else its whole type check, lint, test suite and build), not just the tests you touched, and fix whatever fails. ${task.fixing || task.updating ? "This holds after fixing review findings or bringing the work up to date too: the work goes back to review only with every check passing." : "The work goes to review only with every check passing."} Petrina runs them again itself after you finish, and failures come straight back to you.
 ${task.fixing ? `You are fixing the review findings listed below. Fix every Important one, unless you can show it is wrong. Answer every finding by id in "answers": fixed and what you changed, or not fixed and why.${stepBack(task) ? `\nThis is fix round ${reviewRound(task) - 1} and the findings keep coming. Step back before patching again: reconsider the approach, and if a simpler design removes the whole class of problem, take it.` : ""}` : ""}
 Give "title": one line for the commit that carries this whole change, in the repository's own style (look at \`git log\` and any commit-message rules it has). Petrina keeps the branch as one commit with that title.
+${LEARN}
 Do not commit, push or open pull requests: Petrina commits your work.`;
     },
   },
   "tester": {
     result: TestResult,
     reads: ["notes", "brief", "report", "check-results"],
-    shape: `{"summary": "How it went", "checks": [{"text": "An acceptance item", "pass": true}]}`,
+    shape: `{"summary": "How it went", "checks": [{"text": "An acceptance item", "pass": true}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: () => {
-      return "Run the product and check every acceptance item like a user would. Do not change files. Report each check as pass or fail.";
+      return `Run the product and check every acceptance item like a user would. Do not change files. Report each check as pass or fail.\n${LEARN}`;
     },
   },
   "code-reviewer": {
     result: ReviewResult,
     reads: ["notes", "brief", "review-guide", "report", "check-results", "findings"],
-    shape: `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}]}`,
+    shape: `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: ({ task, base, branch }) => {
       return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it. Your job is to try to prove that it is NOT done.${
         reviewRound(task) > 1 && task.reviewedSha
@@ -280,17 +290,19 @@ Petrina already ran the product's checks on this exact commit (results below): d
 Each finding says where it is and the evidence; never give a score. Tag it "important" only if the change should not ship with it, "nit" for anything smaller, and "pre-existing" for a problem the change did not cause: that becomes a follow-up and never holds the work back.
 When you find a bug, look for the whole class of it in the change and report it once, listing every place. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead.
 If earlier reviewers' findings are listed below, confirm the ones you agree with by id. Dispute the ones you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.
+${LEARN}
 Do not change any files.`;
     },
   },
   "security-reviewer": {
     result: ReviewResult,
     reads: ["notes", "brief", "review-guide", "report", "check-results", "findings"],
-    shape: `{"verdict": "pass", "findings": [{"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": [], "disputes": []}`,
+    shape: `{"verdict": "pass", "findings": [{"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": [], "disputes": [], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: ({ task, base, branch }) => {
       return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`) for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
 Each finding says where it is and how someone could misuse it. Tag it "important" only if the change should not ship with it, "nit" for hardening that can wait, and "pre-existing" for a problem the change did not cause. Report a whole class of problem once, listing every place. Never repeat a finding listed below: confirm or dispute it by id instead.
+${LEARN}
 Do not change any files.`;
     },
   },

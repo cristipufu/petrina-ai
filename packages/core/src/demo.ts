@@ -229,6 +229,23 @@ export function createDemoState(now: number): State {
     });
   }
 
+  // What agents learned on the way, offered for the Learnings section of AGENTS.md.
+  const pricing = tasks.find((task) => task.title === "Refresh the pricing page");
+  if (pricing) {
+    inbox.push({
+      id: "learnings-offer",
+      taskId: pricing.id,
+      kind: "learnings",
+      title: "What agents learned about Shop",
+      body: "- Run the checkout tests with STRIPE_MOCK=1: without it they call the real test API and take minutes.\n- Prices come from config/plans.yml; never hard-code them in components.",
+      detail: "From the Builder and the Code reviewer. What you add joins the Learnings section of AGENTS.md with the next delivery. Claude Code and Codex both read that file by themselves, whether Petrina starts them or you do.",
+      roleId: "builder",
+      profileId: "opus-xhigh",
+      at: now - 25 * MINUTE,
+      blocking: false,
+    });
+  }
+
   ["export-pdf", "onboarding", "tag-search", "stripe-retries"].forEach((id, priority) => {
     const task = queuedTask(byId(id), priority, now - (40 - priority * 7) * MINUTE);
     tasks.push(id === "stripe-retries" ? { ...task, held: true, statusLine: "On hold" } : task);

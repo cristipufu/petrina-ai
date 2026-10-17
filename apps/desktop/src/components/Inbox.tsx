@@ -6,6 +6,7 @@ import {
   Compass,
   GitPullRequest,
   Hand,
+  Lightbulb,
   Map as MapIcon,
   PackageSearch,
   PanelRightClose,
@@ -39,6 +40,7 @@ const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> =
   shipping: { label: "Shipping was interrupted", icon: PackageSearch, tone: "amber" },
   driving: { label: "You're driving", icon: SquareTerminal, tone: "blue" },
   guide: { label: "Review guide", icon: BookOpen, tone: "teal" },
+  learnings: { label: "Learnings", icon: Lightbulb, tone: "teal" },
 };
 
 /** Where the inbox opens after a click on a notification: at an item, or at its top with a note. */
@@ -243,7 +245,16 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       <h3 className="ask-title" id={titleId}>
         {item.title}
       </h3>
-      {item.body && <p className="ask-body">{item.body}</p>}
+      {item.body &&
+        (item.kind === "learnings" ? (
+          <ul className="ask-body ask-lessons">
+            {item.body.split("\n").map((line) => (
+              <li key={line}>{line.replace(/^- /, "")}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="ask-body">{item.body}</p>
+        ))}
       <div className="ask-context">
         <ProductName product={product} />
         <span aria-hidden="true">·</span>
@@ -415,7 +426,21 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
             <button className="btn lead" onClick={() => sim.approve(item.id)} title="Reviewers check it from now on, and Petrina adds it to REVIEW.md">
               Add it
             </button>
-            <button className="btn quiet" onClick={() => sim.declineGuide(item.id)}>
+            <button className="btn quiet" onClick={() => sim.decline(item.id)}>
+              Not this time
+            </button>
+          </div>
+        </>
+      )}
+
+      {item.kind === "learnings" && (
+        <>
+          {item.detail && <p className="ask-note">{item.detail}</p>}
+          <div className="ask-actions">
+            <button className="btn lead" onClick={() => sim.approve(item.id)} title="They join the Learnings section of AGENTS.md with the next delivery">
+              Add them
+            </button>
+            <button className="btn quiet" onClick={() => sim.decline(item.id)}>
               Not this time
             </button>
           </div>

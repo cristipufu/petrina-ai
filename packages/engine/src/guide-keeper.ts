@@ -1,11 +1,11 @@
 // The review guide that learns from misses: the Guide keeper's proposals, the coordinator's yes or no,
-// and accepted points reaching REVIEW.md. Reading and writing the file is in guide.ts.
+// and accepted points reaching REVIEW.md. Reading and writing the file is in points.ts.
 
 import { type DeepMutable, type Id, type GuideLine, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { GuideResult } from "./roles.js";
-import { appendToGuide, cleanPoint, GUIDE_FILE, guideText, inGuide, localGuide } from "./guide.js";
+import { appendPoints, cleanPoint, GUIDE, GUIDE_FILE, hasPoint, localPoints, pointsText } from "./points.js";
 import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 
@@ -68,7 +68,7 @@ export class GuideKeeper {
       );
       restore();
       if (!result.missed || !result.line) this.k.log(task, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", GUIDE_KEEPER_PROFILE);
-      else if (inGuide(guide, result.line)) this.k.log(task, "done", "The review guide already has that point", "guide-keeper", GUIDE_KEEPER_PROFILE);
+      else if (hasPoint(guide, result.line)) this.k.log(task, "done", "The review guide already has that point", "guide-keeper", GUIDE_KEEPER_PROFILE);
       else {
         // An offer, not a stop: the task carries on while the coordinator decides.
         const state = task.state;
@@ -95,10 +95,10 @@ export class GuideKeeper {
     const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || ["cancelled", "failed"].includes(this.k.task(line.writtenOn)?.state ?? "cancelled");
     let due: DeepMutable<GuideLine>[];
     try {
-      const file = localGuide(task.worktree);
-      due = product.reviewGuide.filter((line) => !inGuide(file, line.text) && free(line));
+      const file = localPoints(task.worktree, GUIDE_FILE);
+      due = product.reviewGuide.filter((line) => !hasPoint(file, line.text) && free(line));
       if (!due.length) return;
-      appendToGuide(task.worktree, due.map((line) => line.text));
+      appendPoints(task.worktree, GUIDE, due.map((line) => line.text));
     } catch (error) {
       this.k.log(task, "warn", `The review guide was not updated: ${error instanceof Error ? error.message : String(error)}`);
       return;
@@ -114,6 +114,6 @@ export class GuideKeeper {
     const product = this.k.productOf(task);
     const ref = task.baseSha ?? task.base;
     const base = ref && (product?.path ?? task.worktree) ? (git.fileAt((product?.path ?? task.worktree)!, ref, GUIDE_FILE) ?? "") : "";
-    return guideText(base, product?.reviewGuide ?? []);
+    return pointsText(GUIDE, base, product?.reviewGuide ?? []);
   }
 }

@@ -175,9 +175,12 @@ if [ -n "$hits" ]; then echo "pre-commit: staged changes contain internal names;
     expect(task.hooking).toBeUndefined();
   });
 
-  it("runs a commit-msg hook on the task's one commit message, with the builder's title", async () => {
-    const { task, repo, before } = await ship({ title: "feat: add a greeting" }, { setup: (repo) => hook(repo, "commit-msg", `head -1 "$1" | grep -qE '^(feat|fix|chore): ' || { echo "commit-msg: use a conventional title" >&2; exit 1; }`) });
+  it("runs a commit-msg hook on the task's one commit message, with the builder's title, and undoes what it changes", async () => {
+    const check = `echo "changed by a hook" >> README.md
+head -1 "$1" | grep -qE '^(feat|fix|chore): ' || { echo "commit-msg: use a conventional title" >&2; exit 1; }`;
+    const { task, repo, before } = await ship({ title: "feat: add a greeting" }, { setup: (repo) => hook(repo, "commit-msg", check) });
     expect(task.checks?.results.find((run) => run.name === "Commit message hook")).toMatchObject({ ok: true, command: "git hook run commit-msg" });
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("feat: add a greeting");
+    expect(git(repo, "show", "main:README.md")).toBe("# Demo");
   });
 });

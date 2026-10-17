@@ -97,7 +97,11 @@ export class ProductChecks {
       }
       results = [...ran, ...(await this.runHooks(task, hooks, env, signal))];
     } finally {
-      if (!task.hooking && (await git.head(task.worktree).catch(() => "")) !== before) await git.resetTo(task.worktree, before);
+      // The hooks too: whatever they committed or changed in files git tracks is put back.
+      if (!task.hooking) {
+        if ((await git.head(task.worktree).catch(() => "")) !== before) await git.resetTo(task.worktree, before);
+        else if (await git.trackedChanged(task.worktree)) await git.restoreTracked(task.worktree);
+      }
     }
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
     task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), results };

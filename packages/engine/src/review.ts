@@ -11,6 +11,7 @@ import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
+import type { Learnings } from "./learnings.js";
 
 /**
  * A later reviewer thinks findings are wrong: each dispute is kept with who and why. One reviewer's
@@ -42,7 +43,7 @@ function sameFinding(text: string): string {
 }
 
 export class Reviews {
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly checks: ProductChecks) {}
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly checks: ProductChecks, private readonly learnings: Learnings) {}
 
   /**
    * A review round: Petrina's own checks first; then every reviewer looks at the change at once, each on
@@ -141,6 +142,7 @@ export class Reviews {
 
   /** What one reviewer reported: its confirmations and disputes of earlier findings, and its own. */
   private applyReview(task: MTask, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id): void {
+    this.learnings.note(task, result.learnings, stage.roleId, profileId);
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);

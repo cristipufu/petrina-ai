@@ -1,0 +1,139 @@
+// What agents learned about working in a product's repository, kept where every agent already looks: the
+// "Learnings" section of the repository's AGENTS.md, which Claude Code and Codex both load by themselves, in
+// a session Petrina starts or one the coordinator starts by hand. Petrina adds nothing to their prompts.
+// Agents pass lessons on with their results, the coordinator accepts or declines them at the delivery check,
+// and accepted ones reach AGENTS.md with a delivery.
+
+import { renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { DeepMutable, GuideLine, Id } from "@petrina/core";
+import * as git from "./git.js";
+import { cleanPoint, hasPoint, localPoints } from "./points.js";
+import type { Kernel, MTask } from "./kernel.js";
+
+export const AGENTS_FILE = "AGENTS.md";
+const SECTION = "## Learnings";
+const INTRO = "What agents learned about working in this repository, added with the coordinator's OK.";
+
+/** The most lessons one task offers: the bar is high, so a few is plenty. */
+const MAX_LESSONS = 8;
+
+export class Learnings {
+  constructor(private readonly k: Kernel) {}
+
+  /** An agent's lessons, kept on the task until the delivery check. Repeats, and ones AGENTS.md already has, are left out. */
+  note(task: MTask, lessons: readonly string[], roleId: Id, profileId: Id): void {
+    const known = [this.baseFile(task), ...(this.k.productOf(task)?.learnings ?? []).map((line) => line.text)].join("\n");
+    for (const raw of lessons) {
+      const text = cleanPoint(raw).slice(0, 240);
+      if (text.length < 8 || hasPoint(known, text) || (task.lessons ?? []).some((lesson) => hasPoint(lesson.text, text))) continue;
+      if ((task.lessons?.length ?? 0) >= MAX_LESSONS) break;
+      task.lessons = [...(task.lessons ?? []), { text, roleId, profileId, at: Date.now() }];
+    }
+  }
+
+  /** At the delivery check: the task's lessons offered to the coordinator in one inbox item, without holding anything up. */
+  offer(task: MTask): void {
+    const product = this.k.productOf(task);
+    const lessons = task.lessons ?? [];
+    delete task.lessons;
+    if (!product || !lessons.length) return;
+    const from = [...new Set(lessons.map((lesson) => this.k.role(lesson.roleId)?.name ?? lesson.roleId))];
+    const state = task.state;
+    this.k.raise(
+      task,
+      "learnings",
+      `What agents learned about ${product.name}`,
+      false,
+      {
+        body: lessons.map((lesson) => `- ${lesson.text}`).join("\n"),
+        detail: `From the ${from.join(" and the ")}. What you add joins the Learnings section of ${AGENTS_FILE} with the next delivery. Claude Code and Codex both read that file by themselves, whether Petrina starts them or you do.`,
+      },
+      { roleId: lessons[0]!.roleId, profileId: lessons[0]!.profileId },
+    );
+    task.state = state;
+    this.k.log(task, "done", `Agents passed on ${lessons.length === 1 ? "a lesson" : `${lessons.length} lessons`} about working in this repository: offered to you`);
+  }
+
+  /** "Add them": the lessons wait for the next delivery, which writes them into AGENTS.md. */
+  accept(itemId: Id): void {
+    const item = this.k.takeItem(itemId);
+    const task = item && this.k.task(item.taskId);
+    const product = task && this.k.productOf(task);
+    if (!item || !task || !product) return;
+    const lessons = (item.body ?? "").split("\n").map((line) => cleanPoint(line.replace(/^- /, ""))).filter(Boolean);
+    const added = lessons.filter((text) => !product.learnings?.some((line) => hasPoint(line.text, text)));
+    product.learnings = [...(product.learnings ?? []), ...added.map((text) => ({ text, at: Date.now(), fromTask: task.id }))];
+    this.k.log(task, "you", `You added ${added.length === 1 ? "a lesson" : `${added.length} lessons`} to ${AGENTS_FILE}`);
+    this.k.commit();
+  }
+
+  /** "Not this time": AGENTS.md stays as it is. */
+  decline(itemId: Id): void {
+    const item = this.k.s.inbox.find((entry) => entry.id === itemId && entry.kind === "learnings");
+    if (!item) return;
+    this.k.takeItem(itemId);
+    const task = this.k.task(item.taskId);
+    if (task) this.k.log(task, "you", `You left ${AGENTS_FILE} as it is`);
+    this.k.commit();
+  }
+
+  /**
+   * Accepted lessons reach AGENTS.md's Learnings section on a branch that ships: the task they came from, or
+   * else the next one to reach its delivery check. Nothing is running in the working copy at this point.
+   */
+  async write(task: MTask): Promise<void> {
+    const product = this.k.productOf(task);
+    if (!product?.learnings?.length || !task.worktree) return;
+    const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || ["cancelled", "failed"].includes(this.k.task(line.writtenOn)?.state ?? "cancelled");
+    let due: DeepMutable<GuideLine>[];
+    try {
+      const file = localPoints(task.worktree, AGENTS_FILE);
+      due = product.learnings.filter((line) => !hasPoint(file, line.text) && free(line));
+      if (!due.length) return;
+      addLearnings(task.worktree, due.map((line) => line.text));
+    } catch (error) {
+      this.k.log(task, "warn", `${AGENTS_FILE} was not updated: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await git.commitAll(task.worktree, `Learnings: ${due.length === 1 ? "one more lesson" : `${due.length} more lessons`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina with the coordinator's OK.`);
+    for (const line of due) line.writtenOn = task.id;
+    this.k.log(task, "done", `Added to ${AGENTS_FILE}: ${due.map((line) => line.text).join("; ")}`);
+    this.k.commit();
+  }
+
+  /** AGENTS.md as the base branch has it. */
+  private baseFile(task: MTask): string {
+    const product = this.k.productOf(task);
+    const ref = task.baseSha ?? task.base;
+    const root = product?.path ?? task.worktree;
+    return ref && root ? (git.fileAt(root, ref, AGENTS_FILE) ?? "") : "";
+  }
+}
+
+/**
+ * Lessons added at the end of AGENTS.md's Learnings section, starting the section (or the file) when there is
+ * none. Only a plain file is written, and it is replaced in one step.
+ */
+export function addLearnings(root: string, lessons: readonly string[]): void {
+  const current = localPoints(root, AGENTS_FILE);
+  const lines = lessons.map((lesson) => `- ${cleanPoint(lesson)}`);
+  const text = current.replace(/\s*$/, "");
+  const start = text.split("\n").findIndex((line) => line.trim() === SECTION);
+  let next: string;
+  if (start < 0) {
+    next = `${text ? `${text}\n\n` : ""}${SECTION}\n\n${INTRO}\n\n${lines.join("\n")}\n`;
+  } else {
+    // At the end of the section: before the next heading of the same or a higher level, or at the end of the file.
+    const all = text.split("\n");
+    let end = all.findIndex((line, index) => index > start && /^#{1,2} /.test(line));
+    if (end < 0) end = all.length;
+    let last = end;
+    while (last > start + 1 && all[last - 1]!.trim() === "") last -= 1;
+    next = `${[...all.slice(0, last), ...lines, ...(end < all.length ? ["", ...all.slice(end)] : [])].join("\n")}\n`;
+  }
+  const path = join(root, AGENTS_FILE);
+  const draft = `${path}.petrina-${process.pid}`;
+  writeFileSync(draft, next, { flag: "wx" });
+  renameSync(draft, path);
+}

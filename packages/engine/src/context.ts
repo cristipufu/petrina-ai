@@ -4,7 +4,7 @@
 import { dueAnswers, followingCall, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { commandText } from "./checks.js";
-import { GUIDE_FILE } from "./guide.js";
+import { GUIDE_FILE } from "./points.js";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel, MTask } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";

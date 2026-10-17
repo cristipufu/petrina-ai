@@ -19,6 +19,7 @@ import { Context } from "./context.js";
 import { ProductChecks } from "./product-checks.js";
 import { Shipping } from "./shipping.js";
 import { Updates } from "./update.js";
+import { Learnings } from "./learnings.js";
 import { Reviews } from "./review.js";
 import { Design } from "./design.js";
 import { Planning } from "./planning.js";
@@ -38,6 +39,7 @@ export class Engine extends Kernel implements Commands {
   private readonly checks: ProductChecks;
   private readonly shipping: Shipping;
   private readonly updates: Updates;
+  private readonly learnings: Learnings;
   private readonly reviews: Reviews;
   private readonly design: Design;
   private readonly planning: Planning;
@@ -53,12 +55,13 @@ export class Engine extends Kernel implements Commands {
     this.checks = new ProductChecks(this, this.turns, this.context);
     this.shipping = new Shipping(this);
     this.updates = new Updates(this);
-    this.reviews = new Reviews(this, this.turns, this.context, this.checks);
+    this.learnings = new Learnings(this);
+    this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings);
     this.design = new Design(this, this.turns, this.context);
     this.planning = new Planning(this, this.turns);
-    this.work = new Work(this, this.turns, this.context, this.guide, this.shipping, this.updates);
+    this.work = new Work(this, this.turns, this.context, this.guide, this.shipping, this.updates, this.learnings);
     this.takeover = new TakeOver(this);
-    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates);
+    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings);
     this.driver.recover();
     this.timers.push(setInterval(() => void this.shipping.pollPullRequests(), 60_000));
     this.schedule();
@@ -491,6 +494,10 @@ export class Engine extends Kernel implements Commands {
       this.guide.acceptGuideLine(itemId);
       return;
     }
+    if (kind === "learnings") {
+      this.learnings.accept(itemId);
+      return;
+    }
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
@@ -582,7 +589,8 @@ export class Engine extends Kernel implements Commands {
     return this.shipping.markDone(itemId);
   }
 
-  declineGuide(itemId: Id): void {
+  decline(itemId: Id): void {
+    if (this.s.inbox.find((entry) => entry.id === itemId)?.kind === "learnings") return this.learnings.decline(itemId);
     return this.guide.declineGuide(itemId);
   }
 }

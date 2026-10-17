@@ -12,9 +12,10 @@ import type { Reviews } from "./review.js";
 import type { ProductChecks } from "./product-checks.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import type { Updates } from "./update.js";
+import type { Learnings } from "./learnings.js";
 
 export class Driver {
-  constructor(private readonly k: Kernel, private readonly planning: Planning, private readonly work: Work, private readonly design: Design, private readonly reviews: Reviews, private readonly checks: ProductChecks, private readonly guide: GuideKeeper, private readonly updates: Updates) {}
+  constructor(private readonly k: Kernel, private readonly planning: Planning, private readonly work: Work, private readonly design: Design, private readonly reviews: Reviews, private readonly checks: ProductChecks, private readonly guide: GuideKeeper, private readonly updates: Updates, private readonly learnings: Learnings) {}
 
   schedule(): void {
     if (this.k.stopped) return;
@@ -159,6 +160,7 @@ export class Driver {
           delete current.returnToCheck;
           if (stage.gate === "delivery") {
             await this.guide.writeGuide(current);
+            await this.learnings.write(current);
             // What the coordinator checks is the work as it would land: one commit on top of the latest main.
             if ((await this.updates.upToDate(current)) === "conflict") continue;
             // Right before the coordinator is asked to ship, the checks run again on what would ship.
@@ -167,6 +169,8 @@ export class Driver {
             if (head) current.checkedSha = head;
             const patch = await this.updates.patch(current);
             if (patch) current.checkedPatch = patch;
+            // What agents learned on the way: offered to the coordinator without holding the delivery up.
+            this.learnings.offer(current);
             if (this.shipsUnasked(current)) {
               if (head) current.approvedSha = head;
               if (patch) current.approvedPatch = patch;

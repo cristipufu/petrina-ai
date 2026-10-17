@@ -61,7 +61,7 @@ const ARGS = {
   allow: z.tuple([z.string(), z.enum(["once", "always"])]),
   deny: z.tuple([z.string(), z.string().max(4000).optional(), Said.optional()]),
   approve: z.tuple([z.string()]),
-  declineGuide: z.tuple([z.string()]),
+  decline: z.tuple([z.string()]),
   requestChanges: z.tuple([z.string(), z.string().min(1).max(4000)]),
   checkShipping: z.tuple([z.string()]),
   shipAgain: z.tuple([z.string()]),
