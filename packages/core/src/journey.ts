@@ -185,10 +185,10 @@ function placeOf(task: Omit<JourneyTask, "journey">): Pick<StepKey, "stageId" | 
 
 /**
  * The reviewer who looks at a port of an already reviewed change, by place in the stage's reviewers: the first on a
- * tool other than the builder's, or else the first.
+ * tool other than the latest builder's, or else the first. The engine then substitutes for unavailable tools.
  */
-export function portReviewerIndex(task: Pick<Task, "plan">, profileIds: readonly Id[], toolOf: (profileId: Id) => Id | undefined): number {
-  const builder = toolOf(task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "");
+export function portReviewerIndex(task: Pick<Task, "plan" | "builderSession">, profileIds: readonly Id[], toolOf: (profileId: Id) => Id | undefined): number {
+  const builder = task.builderSession?.toolId ?? toolOf(task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "");
   return Math.max(0, profileIds.findIndex((profileId) => toolOf(profileId) !== builder));
 }
 

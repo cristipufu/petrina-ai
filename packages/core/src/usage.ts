@@ -150,15 +150,23 @@ export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile } |
  */
 /**
  * Rules a role's choice keeps. `keep`: never swap the planned profile for being near a limit (reviews were
- * planned on their tools for independence). `awayFrom`: the builder's tool and model, which a security
- * review's stand-in stays as far from as it can: another tool first, then another model on that tool, and
+ * planned on their tools for independence). `awayFrom`: the actual author or builder's tool and model,
+ * which a reviewer stays as far from as it can: another tool first, then another model on that tool, and
  * only as a last resort the same model. It never waits for that.
  */
 export interface ChoiceRules {
   keep?: boolean;
   awayFrom?: { toolId: Id; modelId?: string };
+  /** The tools reserved by the other reviewers, including reviews already reported this round. */
+  awayFromTools?: readonly Id[];
   /** Stand-in tools that cannot take a seat right now. The planned profile is never skipped for this. */
   skipTools?: ReadonlySet<Id>;
+}
+
+function sameness(profile: AgentProfile, rules: ChoiceRules): number {
+  const away = rules.awayFrom;
+  return (rules.awayFromTools?.filter((toolId) => toolId === profile.toolId).length ?? 0) * 3
+    + (!away || profile.toolId !== away.toolId ? 0 : profile.modelId !== away.modelId ? 1 : 2);
 }
 
 export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">, planned: AgentProfile, now: number, rules: ChoiceRules = {}): Choice {
@@ -168,19 +176,17 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   const ready = state.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id);
   const skipped = rules.skipTools;
   // With no tool found ready (tests stand in for the tools), every tool in the list counts.
-  const usable = (profile: AgentProfile) => free(profile) && (!ready.length || ready.includes(profile.toolId)) && !skipped?.has(profile.toolId);
-  // How close a stand-in is to the work it must judge: 0 another tool, 1 another model on that tool, 2 the same model.
-  const away = rules.awayFrom;
-  const sameness = (profile: AgentProfile) => (!away || profile.toolId !== away.toolId ? 0 : profile.modelId !== away.modelId ? 1 : 2);
+  const available = (profile: AgentProfile) => free(profile) && (!ready.length || ready.includes(profile.toolId));
+  const usable = (profile: AgentProfile) => available(profile) && !skipped?.has(profile.toolId);
   // The most independent first, then not near a limit, then the same effort, then the tool with more of its limit
   // left (one that said nothing ties with the roomiest), then the list's order.
   const closest = (profiles: AgentProfile[]) =>
-    byRoom(profiles, (profile) => headroom(pool, profile, now)).sort((a, b) => sameness(a) - sameness(b) || Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
+    byRoom(profiles, (profile) => headroom(pool, profile, now)).sort((a, b) => sameness(a, rules) - sameness(b, rules) || Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
 
-  if (free(planned)) {
+  if (available(planned)) {
     // A builder may have switched tools since the plan was made. Keep this review independent
     // of the tool that actually built the change, even when its planned reviewer is still free.
-    const independent = away && planned.toolId === away.toolId ? closest(state.profiles.filter((profile) => profile.toolId !== away.toolId && usable(profile))) : undefined;
+    const independent = closest(state.profiles.filter((profile) => sameness(profile, rules) < sameness(planned, rules) && usable(profile)));
     if (independent) return { kind: "substitute", profile: independent };
     if (!near(planned) || rules.keep) return { kind: "planned", profile: planned };
     const equal = closest(state.profiles.filter((profile) => profile.toolId !== planned.toolId && profile.effort === planned.effort && usable(profile) && !near(profile) && !profile.standby));
@@ -189,7 +195,7 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   const sameTool = closest(state.profiles.filter((profile) => profile.id !== planned.id && profile.toolId === planned.toolId && usable(profile)));
   const other = closest(state.profiles.filter((profile) => profile.toolId !== planned.toolId && usable(profile)));
   // Another model on the planned tool first, unless that is less independent than what another tool offers.
-  const pick = sameTool && (!other || sameness(sameTool) <= sameness(other)) ? sameTool : other;
+  const pick = sameTool && (!other || sameness(sameTool, rules) <= sameness(other, rules)) ? sameTool : other;
   if (pick) return { kind: "substitute", profile: pick };
   return { kind: "none", waiting: waitingWords(state, now) };
 }
@@ -205,6 +211,8 @@ export function chooseWithRoom(state: Pick<State, "profiles" | "tools" | "pool">
   let held: Choice | undefined;
   for (;;) {
     const choice = chooseProfile(state, planned, now, skip.size ? { ...rules, skipTools: skip } : rules);
+    // A full independent tool waits for a seat. Falling back to its partner's tool would defeat the review.
+    if (held?.kind === "substitute" && choice.kind !== "none" && sameness(choice.profile, rules) > sameness(held.profile, rules)) return held;
     if (!room || choice.kind !== "substitute" || room(choice.profile.toolId)) {
       if (choice.kind === "none" && held?.kind === "substitute") return held;
       return choice;

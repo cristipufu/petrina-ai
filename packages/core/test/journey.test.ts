@@ -451,6 +451,21 @@ describe("recorded the way the engine records", () => {
     expect(journeyProblems({ ...task, state: "running" })).toEqual([]);
   });
 
+  it("names the port reviewer away from the latest builder's actual tool", () => {
+    const task = atBuild();
+    const state = emptyState();
+    const build = task.plan!.stages[task.stageIndex]!;
+    const planned = state.profiles.find((profile) => profile.id === build.profileIds[0])!;
+    const actual = state.profiles.find((profile) => profile.toolId !== planned.toolId)!;
+    endAgentStep(task, { outcome: W.broughtUpToDate, reason: W.upToDate }, task.journey!.at(-1)!.startedAt + 1);
+    task.builderSession = { stageId: build.id, profileId: actual.id, toolId: actual.toolId, model: actual.modelId ?? actual.model, sessionId: "latest-port" };
+    task.portReview = { from: "a", head: "c", onto: "b", files: ["greeting.txt"] };
+    task.stageIndex = task.plan!.stages.findIndex((stage) => stage.kind === "review-chain");
+    const port = journeyView(task, contextOf(state)).nodes.find((node) => node.name === "Code reviewer (port)")!;
+    expect(state.profiles.find((profile) => profile.id === port.profileId)?.toolId).toBe(planned.toolId);
+    expect(port.team).toBeUndefined();
+  });
+
   it("picking up the same step continues its box", () => {
     const task = atBuild();
     const open = task.journey!.at(-1)!;

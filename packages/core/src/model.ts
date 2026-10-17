@@ -393,8 +393,10 @@ export interface Lesson {
 export interface Hunt {
   stageId: Id;
   round: number;
-  /** Per reviewer profile, what it reported. */
+  /** Per reviewer position in the stage, what it reported. */
   reported: Readonly<Record<Id, true>>;
+  /** The profile reserved or actually used at each position, kept after reporting and across restarts. */
+  profiles?: Readonly<Record<Id, Id>>;
   /** Per voter profile, the findings it gave a verdict on. */
   voted?: Readonly<Record<Id, true>>;
   /** How many findings the task had when the round began: what the round's reviewers raise comes after. */

@@ -24,6 +24,7 @@ interface TurnOptions<T> {
   check?: Check<T>;
   resume?: { sessionId: string; toolId: Id; model: string };
   used?: (profileId: Id) => void;
+  reviewerKey?: string;
 }
 
 export class Turns {
@@ -48,7 +49,7 @@ export class Turns {
     if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     let stopped: { profileId: Id; error: UsageLimited } | undefined;
     for (;;) {
-      const choice = this.k.choose(plannedId, task, roleId, (toolId) => !slotWait(this.k.getState(), { taskId: task.id, toolId }))!;
+      const choice = this.k.choose(plannedId, task, roleId, (toolId) => !slotWait(this.k.getState(), { taskId: task.id, toolId }), options.reviewerKey)!;
       if (choice.kind === "none") {
         // Stopped by a limit and waiting for the reset: the step's next attempt is a retry.
         if (stopped) this.k.tracking.owesRetry(task, roleId, plannedId);
@@ -58,14 +59,13 @@ export class Turns {
       const { profile } = choice;
       // The tool said it was out while running something it should not have limited: the step cannot go on.
       if (stopped?.profileId === profile.id) throw stopped.error;
-      if (stopped && this.k.profile(stopped.profileId)?.toolId !== profile.toolId) {
-        // Another tool's seat: it qualifies for a slot like any agent.
-        const wait = slotWait(this.k.getState(), { taskId: task.id, toolId: profile.toolId });
-        if (wait) {
-          this.k.tracking.owesRetry(task, roleId, plannedId);
-          this.k.waitForUsage(task, wait);
-          throw new WaitingForUsage(wait);
-        }
+      // Every actual tool qualifies, including an internal errand before a reviewer, and a handoff
+      // to another model on the same tool. The task's old seat is the one being replaced.
+      const wait = slotWait(this.k.getState(), { taskId: task.id, toolId: profile.toolId });
+      if (wait) {
+        if (stopped) this.k.tracking.owesRetry(task, roleId, plannedId);
+        this.k.waitForUsage(task, wait);
+        throw new WaitingForUsage(wait);
       }
       this.k.tracking.attempt(task, roleId, plannedId, profile, stopped !== undefined);
       options.used?.(profile.id);
@@ -314,7 +314,7 @@ export class Turns {
     given: () => { title: string; body: string }[],
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id } = {},
+    options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string } = {},
   ): Promise<T> {
     if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     if (signal.aborted) throw new Aborted();
@@ -330,7 +330,7 @@ export class Turns {
       let profile: AgentProfile;
       if (accepted) profile = accepted;
       else {
-        const choice = this.k.choose(plannedId, task, roleId, options.room);
+        const choice = this.k.choose(plannedId, task, roleId, options.room, options.reviewerKey);
         if (!choice) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
         if (choice.kind === "none") {
           // The group waits, and this agent is started again after: that attempt is a retry.

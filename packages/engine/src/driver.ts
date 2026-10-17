@@ -106,11 +106,11 @@ export class Driver {
     return this.seatOf(this.nextAgent(task), task);
   }
 
-  private seatOf(next: { roleId: Id; profileId: Id } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
+  private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
     if (!next) return { toolId: "none" };
     // This task's own slot does not count: it is the seat being filled. A stand-in whose tool is full yields.
     const room = task ? (toolId: Id) => !slotWait(this.k.getState(), { taskId: task.id, toolId }) : undefined;
-    const choice = this.k.choose(next.profileId, task, next.roleId, room);
+    const choice = this.k.choose(next.profileId, task, next.roleId, room, next.reviewerKey);
     if (!choice) return { agent: next, toolId: this.k.profile(next.profileId)?.toolId ?? "unknown" };
     if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting };
     return { agent: { roleId: next.roleId, profileId: choice.profile.id }, toolId: choice.profile.toolId };
@@ -137,7 +137,7 @@ export class Driver {
     return true;
   }
 
-  private nextAgent(task: MTask): { roleId: Id; profileId: Id } | undefined {
+  private nextAgent(task: MTask): { roleId: Id; profileId: Id; reviewerKey?: string } | undefined {
     if (task.stageIndex < 0) return { roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) };
     const stage = task.plan?.stages[task.stageIndex];
     if (!stage) return undefined;

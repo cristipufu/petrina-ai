@@ -484,12 +484,41 @@ export abstract class Kernel {
    * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
    * yields to another tool that has one, so a cap kept for a tool that is out does not idle a pool slot.
    */
-  choose(plannedId: Id, task?: MTask, roleId?: Id, room?: (toolId: Id) => boolean): Choice | undefined {
+  choose(plannedId: Id, task?: MTask, roleId?: Id, room?: (toolId: Id) => boolean, reviewerKey?: string): Choice | undefined {
     const planned = this.profile(plannedId);
     if (!planned) return undefined;
-    // Reviews keep their planned tools; security reviews follow the tool that actually built the change.
+    const stage = task?.plan?.stages[task.stageIndex];
+    const round = task && stage ? task.rounds[stage.id] ?? 1 : 1;
+    // Security and port reviews follow the latest builder, including a replacement that did the port.
     const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
-    const made = roleId === "security-reviewer" ? (task?.builderSession ? { toolId: task.builderSession.toolId, modelId: task.builderSession.model } : builder ? this.profile(builder) : undefined) : undefined;
+    let made: { toolId: Id; modelId?: string } | undefined = roleId === "security-reviewer" || (task?.portReview && roleId === stage?.roleId)
+      ? (task?.builderSession ? { toolId: task.builderSession.toolId, modelId: task.builderSession.model } : builder ? this.profile(builder) : undefined)
+      : undefined;
+    if (task && stage?.kind === "converge" && task.sub === 1 && roleId === (stage.reviewerRoleId ?? "design-reviewer")) {
+      const author = this.tracking.log.turns({ taskId: task.id }).filter((turn) => turn.stageId === stage.id && turn.round === round && turn.roleId === stage.roleId && turn.end === "finished").at(-1);
+      const legacy = task.session.findLast((line) => line.from === "agent" && line.roleId === stage.roleId)?.profileId;
+      made = author ? { toolId: author.toolId, modelId: author.modelRan ?? author.modelAsked } : this.profile(legacy ?? stage.profileIds[0] ?? "");
+    }
+    let peers: Id[] = [];
+    if (task && stage?.kind === "review-chain" && stage.roleId === roleId && !task.portReview) {
+      const hunt = task.hunt?.stageId === stage.id && task.hunt.round === round ? task.hunt : undefined;
+      const key = reviewerKey ?? String(stage.profileIds.indexOf(plannedId));
+      // Older rounds saved reports without the profiles at their positions. Their latest verdicts
+      // name the actual reviewers; replace the reported positions' planned tools with those tools.
+      const legacy = hunt && Object.keys(hunt.reported).some((key) => !hunt.profiles?.[key])
+        ? this.tracking.log.moments({ taskId: task.id, kinds: ["verdict"] })
+          .filter((entry) => entry.stageId === stage.id && entry.round === round && entry.roleId === roleId)
+          .slice(-Object.keys(hunt.reported).length)
+          .flatMap((entry) => { const profile = this.profile(entry.profileId ?? ""); return profile ? [profile.toolId] : []; })
+        : [];
+      peers = stage.profileIds.flatMap((id, index) => {
+        if (String(index) === key) return [];
+        if (legacy.length && hunt?.reported[String(index)]) return [];
+        const peer = this.profile(hunt?.profiles?.[String(index)] ?? id);
+        return peer ? [peer.toolId] : [];
+      });
+      peers.push(...legacy);
+    }
     const state = this.getState();
     const checked = state.setup?.checks.some((check) => check.id === "claude-code" || check.id === "codex" || check.id === "grok");
     const usable = this.usableTools() as Id[];
@@ -500,7 +529,7 @@ export abstract class Kernel {
       profiles: state.profiles.filter((profile) => usable.includes(profile.toolId)),
       tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
     } : state;
-    return chooseWithRoom(candidates, planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
+    return chooseWithRoom(candidates, planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
   }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */

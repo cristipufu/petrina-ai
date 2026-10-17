@@ -228,6 +228,28 @@ describe("a window that is used up", () => {
 });
 
 describe("reviews keep their independence", () => {
+  const grok: AgentProfile = { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" };
+  const withGrok = { profiles: [...profiles, grok], tools: [...tools, { id: "grok", name: "Grok", command: [], status: "ready" as const, models: [] }] };
+
+  it("keeps a replacement on a different tool from its partner, including when its independent seat is busy", () => {
+    const state = { ...withGrok, pool: pool({ limited: [out("claude-code", now + HOUR)] }) };
+    const rules = { keep: true, awayFromTools: ["codex"] };
+    expect(chooseProfile(state, opus, now, rules)).toEqual({ kind: "substitute", profile: grok });
+    // A full pool (including a one-seat pool) waits; it must not collapse the pair onto Codex.
+    expect(chooseWithRoom(state, opus, now, rules, () => false)).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseWithRoom(state, sol, now, rules, (tool) => tool === "codex")).toEqual({ kind: "substitute", profile: grok });
+    // The partner's actual replacement matters even when our planned tool still works.
+    expect(chooseProfile(state, sol, now, rules)).toEqual({ kind: "substitute", profile: grok });
+  });
+
+  it("uses the best remaining tool when every independent tool is out or unavailable", () => {
+    const rules = { keep: true, awayFromTools: ["codex"] };
+    const state = { ...withGrok, pool: pool({ limited: [out("claude-code", now + HOUR), out("grok", now + HOUR)] }) };
+    expect(chooseProfile(state, opus, now, rules)).toEqual({ kind: "substitute", profile: sol });
+    const unavailable = { ...withGrok, tools: withGrok.tools.map((tool) => tool.id === "grok" ? { ...tool, status: "not-installed" as const } : tool), pool: pool({ limited: [out("claude-code", now + HOUR)] }) };
+    expect(chooseProfile(unavailable, grok, now, rules)).toEqual({ kind: "substitute", profile: sol });
+  });
+
   it("moves a still-available planned reviewer away from a builder that changed tools", () => {
     const rules = { keep: true, awayFrom: { toolId: "codex", modelId: solX.modelId! } };
     expect(chooseProfile({ profiles, tools, pool: pool() }, solX, now, rules)).toEqual({ kind: "substitute", profile: opusX });

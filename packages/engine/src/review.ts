@@ -1,7 +1,7 @@
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { endAgentStep, extraSlot, findingCount, JOURNEY_WORDS as W, noteRoundEnd, openStep, portReviewerIndex, reviewRoundEnd, slotWait, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { endAgentStep, findingCount, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, reviewRoundEnd, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -116,9 +116,9 @@ export class Reviews {
   }
 
   /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */
-  nextAgent(task: MTask, stage: MStage): { roleId: Id; profileId: Id } | undefined {
+  nextAgent(task: MTask, stage: MStage): { roleId: Id; profileId: Id; reviewerKey?: string } | undefined {
     const reviewer = this.pendingReviewers(task, stage)[0];
-    if (reviewer) return { roleId: stage.roleId, profileId: reviewer.profileId };
+    if (reviewer) return { roleId: stage.roleId, profileId: reviewer.profileId, reviewerKey: reviewer.key };
     const voter = this.pendingVote(task, stage)?.voters[0];
     return voter ? { roleId: "verifier", profileId: voter } : undefined;
   }
@@ -126,15 +126,16 @@ export class Reviews {
   /** The stage's reviewers who have not reported this round, by their place in the stage. */
   private pendingReviewers(task: MTask, stage: MStage): { key: string; profileId: Id }[] {
     const reported = task.hunt?.stageId === stage.id && task.hunt.round === (task.rounds[stage.id] ?? 1) ? task.hunt.reported : {};
+    if (task.portReview && Object.keys(reported).length) return [];
     const planned = stage.profileIds.map((profileId, index) => ({ key: String(index), profileId }));
-    // A port of an already reviewed change gets one reviewer, on a tool other than the builder's where the stage has one.
-    const reviewers = task.portReview ? [this.portReviewer(task, planned)] : planned;
+    // The journey and the engine share the port reviewer's position; tool choice follows the latest builder.
+    const reviewers = task.portReview ? [planned[portReviewerIndex(task as unknown as Task, stage.profileIds, (id) => this.k.profile(id)?.toolId)]!] : planned;
     return reviewers.filter((entry) => !reported[entry.key]);
   }
 
-  private portReviewer(task: MTask, planned: { key: string; profileId: Id }[]): { key: string; profileId: Id } {
-    // The journey's faint step ahead names the same reviewer.
-    return planned[portReviewerIndex(task as unknown as Task, planned.map((entry) => entry.profileId), (id) => this.k.profile(id)?.toolId)]!;
+  private rememberReviewer(task: MTask, key: string, profileId: Id): void {
+    task.hunt = { ...task.hunt!, profiles: { ...task.hunt!.profiles, [key]: profileId } };
+    this.k.commitNow();
   }
 
   /**
@@ -149,7 +150,7 @@ export class Reviews {
     if (stage.profileIds.length === 1) {
       const { key, profileId } = reviewers[0]!;
       let by = profileId;
-      const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { used: (id) => (by = id) });
+      const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
       this.applyReview(task, stage, result, by);
       reported(key);
       return;
@@ -160,9 +161,10 @@ export class Reviews {
       reviewers.map(({ key, profileId }) => ({
         roleId: stage.roleId,
         profileId,
-        work: async (copy, room, seat) => {
+        reviewerKey: key,
+        work: async (copy, room, seat, used) => {
           let by = profileId;
-          const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { used: (id) => (by = id), room, seat });
+          const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { reviewerKey: key, used: (id) => { by = id; used(id); }, room, seat });
           this.applyReview(task, stage, result, by);
           reported(key);
         },
@@ -255,10 +257,11 @@ export class Reviews {
       voters.map((profileId) => ({
         roleId: "verifier",
         profileId,
-        work: async (copy, room, seat) => {
+        work: async (copy, room, seat, used) => {
           const result = await this.turns.parallel(task, "verifier", profileId, copy, () => [...this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(findings) }], VerifyResult, signal, {
             room,
             seat,
+            used,
             check: (value) => {
               const missing = findings.filter((finding) => !value.verdicts.some((verdict) => verdict.id === finding.id));
               return missing.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(missing)}` : undefined;
@@ -306,7 +309,7 @@ export class Reviews {
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
-  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; work: (copy: string, room: (toolId: Id) => boolean, seat: Id) => Promise<void> }[], status: (running: number, waiting: number) => string): Promise<void> {
+  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id) => boolean, seat: Id, used: (profileId: Id) => void) => Promise<void> }[], status: (running: number, waiting: number) => string): Promise<void> {
     const root = this.k.productOf(task)!.path!;
     const folder = join(this.k.dataDir, "worktrees", task.productId, `${task.id}.copies`);
     const sha = await git.head(task.worktree!);
@@ -329,13 +332,20 @@ export class Reviews {
         // Petrina is stopping: members not started yet run after the restart, with their copies made then.
         if (this.k.draining) break;
         const member = pending[0]!;
-        // The first member fills the task's own slot. Each later one needs a seat of its own. That is fixed
-        // here, before this member is counted: work() runs only after the copies are made, by which time
-        // several members may already be in the pool.
-        const extra = running.size > 0;
-        const room = (toolId: Id) => (extra ? extraSlot(this.k.getState(), toolId) : !slotWait(this.k.getState(), { taskId: task.id, toolId }));
+        // Before reserving, the first member replaces the task's old seat. After reserving, only this
+        // member's seat is replaced: its partners and other tasks still count during a usage handoff.
+        let agent: DeepMutable<ActiveAgent> | undefined;
+        const room = (toolId: Id) => {
+          const state = this.k.getState();
+          let uses = slotUses(state);
+          if (agent) {
+            const own = uses.findIndex((use) => use.taskId === task.id && use.profileId === agent!.profileId && use.roleId === agent!.roleId);
+            uses = uses.filter((_, index) => index !== own);
+          } else if (!running.size) uses = uses.filter((use) => use.taskId !== task.id);
+          return pickStarts({ candidates: [{ taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
+        };
         // Whoever would really work it: its planned profile, or a stand-in. A stand-in whose tool is full yields.
-        const choice = this.k.choose(member.profileId, task, member.roleId, room);
+        const choice = this.k.choose(member.profileId, task, member.roleId, room, member.reviewerKey);
         if (choice?.kind === "none") {
           noOne ??= new WaitingForUsage(choice.waiting);
           pending.shift();
@@ -346,11 +356,18 @@ export class Reviews {
         if (!room(toolId)) break;
         pending.shift();
         const id = next++;
-        const agent = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0 };
+        agent = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0 };
+        if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, seat);
+        const used = (profileId: Id) => {
+          agent!.profileId = profileId;
+          if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, profileId);
+          show();
+          this.k.commitNow();
+        };
         const copy = join(folder, `${member.roleId}-${id}-${member.profileId}`);
         const done = git
           .addCopy(root, copy, sha)
-          .then(() => member.work(copy, room, seat))
+          .then(() => member.work(copy, room, seat, used))
           .catch((error: unknown) => {
             if (error instanceof WaitingForUsage) noOne ??= error;
             else failure ??= error;
