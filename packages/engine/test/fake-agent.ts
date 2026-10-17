@@ -2,9 +2,11 @@
 // like that role would, so the engine can be tested end to end without spending tokens.
 //
 // bun fake-agent.ts [dir]: with a dir (the restart tests), it records every prompt it gets in
-// dir/prompts.jsonl, follows dir/scenario.json, drops marker files there at the moments a test
+// dir/prompts.jsonl, keeps its conversations in dir/conversations so the next engine can reopen
+// them, notes how each was opened in dir/opens.jsonl and every setting it was given in
+// dir/config.jsonl, follows dir/scenario.json, drops marker files there at the moments a test
 // waits for, and uses the fake GitHub in dir/github.json.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -13,10 +15,33 @@ import * as acp from "@agentclientprotocol/sdk";
 export interface Scenario {
   /** "short": build and one reviewer. */
   planner?: "short";
-  /** "restart": ask a question, then work until cancelled, then finish once the step restarts. "plain": no questions. */
-  builder?: "restart" | "plain";
+  /**
+   * "restart": ask a question, then work until cancelled, then finish once the step restarts. "plain": no questions.
+   * "work": draft a file and work (through interruptions) until the step restarts `restarts` times.
+   */
+  builder?: "restart" | "plain" | "work";
+  /** "commit": commit a stray file, read-only as it is, then work until the step restarts. */
+  reviewer?: "commit";
   /** How the shipper behaves until the engine tells it an earlier attempt was interrupted. */
   shipper?: "finish" | "hang" | "deliver-then-hang" | "push-then-hang" | "bad-tag";
+  /**
+   * How it reopens a conversation: "resume" (it offers load too), "load" (it replays the conversation
+   * first), or "stall" (it offers resume and never answers). Unset: it cannot reopen conversations.
+   */
+  reopen?: "resume" | "load" | "stall";
+  /** "work" builder: how many restarts it works through before it finishes (default 1). */
+  restarts?: number;
+}
+
+/** A conversation, kept on disk so a fake started by the next engine can reopen it. */
+interface Conversation {
+  cwd: string;
+  role: string;
+  turns: number;
+  /** How many times it was told Petrina restarted. */
+  restarts: number;
+  /** Everything it sent and was sent, for load to replay. */
+  history: acp.SessionNotification["update"][];
 }
 
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
@@ -24,7 +49,7 @@ export interface Scenario {
 // its check, and "[two-checks]" adds Screens and a second design check after the first. With "--hold=<file>",
 // the architect stops halfway through following a call for as long as that file exists.
 const dir = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
-const sessions = new Map<string, { cwd: string; turns: number }>();
+const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
 const brief = { summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [] };
@@ -34,6 +59,41 @@ const run = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd,
 const gh = (cwd: string, ...args: string[]) => execFileSync(process.execPath, [join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json"), ...args], { cwd }).toString().trim();
 
 type Reply = { text: string; stop?: "cancelled" };
+
+const conversationFile = (sessionId: string) => dir && join(dir, "conversations", `${sessionId}.json`);
+
+function keep(sessionId: string): void {
+  const file = conversationFile(sessionId);
+  if (!file) return;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(sessions.get(sessionId)));
+}
+
+/** A conversation from this process or an earlier one, or an error like a tool that lost it. */
+function reopen(sessionId: string, how: "resume" | "load"): Conversation {
+  const file = conversationFile(sessionId);
+  const found = sessions.get(sessionId) ?? (file && existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Conversation) : undefined);
+  if (!found) throw new Error(`No conversation ${sessionId}`);
+  sessions.set(sessionId, found);
+  opened(sessionId, how);
+  return found;
+}
+
+function opened(sessionId: string, how: "new" | "resume" | "load"): void {
+  // Whether this agent got the coordinator's GitHub login (only a shipper delivering to GitHub does).
+  if (dir) appendFileSync(join(dir, "opens.jsonl"), `${JSON.stringify({ session: sessionId, how, github: process.env.GIT_SSH_COMMAND !== "petrina-ssh-disabled" })}\n`);
+}
+
+/** Send an update and keep it in the conversation's history. */
+async function send(client: acp.AgentContext, sessionId: string, update: acp.SessionNotification["update"]): Promise<void> {
+  sessions.get(sessionId)?.history.push(update);
+  keep(sessionId);
+  await client.notify(acp.methods.client.session.update, { sessionId, update });
+}
+
+/** The settings Petrina sets: model, effort (each tool's name for it) and the automatic safety mode. */
+const select = (id: string, values: string[]) => ({ type: "select" as const, id, name: id, currentValue: values[0]!, options: values.map((value) => ({ value, name: value })) });
+const configOptions = () => [select("model", ["default", "opus", "gpt-6.1-sol"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("mode", ["default", "auto", "agent"])];
 
 /** A turn that only ends when the engine cancels it, or the engine goes away. */
 function hang(sessionId: string, marker: string): Promise<Reply> {
@@ -60,18 +120,22 @@ const screens = { kind: "do", title: "Screens", roleId: "ux-designer", profileId
 const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
 const hold = process.argv.find((arg) => arg.startsWith("--hold="))?.slice("--hold=".length);
 
-let currentRole = "";
-
 async function answer(sessionId: string, text: string, client: acp.AgentContext): Promise<Reply> {
   const session = sessions.get(sessionId)!;
   session.turns += 1;
-  if (roleOf(text)) currentRole = roleOf(text);
-  if (dir) appendFileSync(join(dir, "prompts.jsonl"), `${JSON.stringify({ role: currentRole, text })}\n`);
-  const say = (line: string) => client.notify(acp.methods.client.session.update, { sessionId, update: { sessionUpdate: "plan", entries: [{ content: line, status: "in_progress", priority: "medium" }] } });
+  if (roleOf(text)) session.role = roleOf(text);
+  // The restart line of a reopened conversation, or the summary a fresh one starts with.
+  const restarted = text.includes("Petrina restarted");
+  if (restarted) session.restarts += 1;
+  // Saved before it works on the turn: the engine may stop while it does.
+  keep(sessionId);
+  if (dir) appendFileSync(join(dir, "prompts.jsonl"), `${JSON.stringify({ role: session.role, session: sessionId, text })}\n`);
+  const say = (line: string) => send(client, sessionId, { sessionUpdate: "plan", entries: [{ content: line, status: "in_progress", priority: "medium" }] });
   const done = (value: unknown, prose?: string): Reply => ({ text: block(value, prose) });
   const plan = scenario();
+  const earlierAttempt = text.includes("in an earlier attempt at this step");
 
-  switch (currentRole) {
+  switch (session.role) {
     case "planner":
       await say("Sizing the work");
       if (plan.planner === "short")
@@ -122,10 +186,20 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       return done({ objections: [] });
     case "builder": {
-      if (plan.builder === "restart" && !text.includes("in an earlier attempt at this step")) {
+      if (plan.builder === "restart" && !earlierAttempt && !restarted) {
         if (roleOf(text)) return done({ needsInput: { question: "Which colour should the greeting be?", options: ["Blue", "Green"] } });
         if (text.includes("The coordinator answered")) return hang(sessionId, "builder-answered");
         return hang(sessionId, "builder-interrupted");
+      }
+      if (plan.builder === "work" && !earlierAttempt && session.restarts < (plan.restarts ?? 1)) {
+        if (roleOf(text)) {
+          writeFileSync(join(session.cwd, "notes.txt"), "A first draft\n");
+          await send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: `edit-${session.turns}`, title: "Edit notes.txt", kind: "edit", status: "completed", locations: [{ path: join(session.cwd, "notes.txt") }] });
+          await Bun.sleep(20);
+          await say("Drafting the greeting");
+          return hang(sessionId, "builder-working");
+        }
+        return hang(sessionId, session.restarts ? `builder-restart-${session.restarts}` : "builder-heard");
       }
       await say("Writing the greeting");
       let allowed = true;
@@ -144,6 +218,12 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed" });
     }
     case "code reviewer":
+      if (plan.reviewer === "commit" && !restarted && !earlierAttempt) {
+        writeFileSync(join(session.cwd, "stray.txt"), "Not for this task\n");
+        run(session.cwd, "add", "stray.txt");
+        run(session.cwd, "commit", "--quiet", "-m", "A stray commit");
+        return hang(sessionId, "reviewer-committed");
+      }
       return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "suggestion" }], confirms: [], disputes: [] });
     case "shipper":
       return ship(sessionId, session.cwd, text, plan.shipper ?? "finish");
@@ -186,20 +266,43 @@ async function ship(sessionId: string, cwd: string, text: string, plan: NonNulla
 
 acp
   .agent({ name: "fake-agent" })
-  .onRequest("initialize", () => ({ protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: false } }))
+  .onRequest("initialize", () => {
+    const how = scenario().reopen;
+    return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: how === "resume" || how === "load", ...(how === "resume" || how === "stall" ? { sessionCapabilities: { resume: {} } } : {}) } };
+  })
   .onRequest("session/new", (ctx) => {
     const sessionId = crypto.randomUUID();
-    sessions.set(sessionId, { cwd: ctx.params.cwd, turns: 0 });
-    return { sessionId };
+    sessions.set(sessionId, { cwd: ctx.params.cwd, role: "", turns: 0, restarts: 0, history: [] });
+    keep(sessionId);
+    opened(sessionId, "new");
+    return { sessionId, configOptions: configOptions() };
+  })
+  .onRequest("session/resume", async (ctx) => {
+    // A tool that never answers: Petrina gives up and starts a fresh conversation.
+    if (scenario().reopen === "stall") await new Promise(() => undefined);
+    reopen(ctx.params.sessionId, "resume");
+    return { configOptions: configOptions() };
+  })
+  .onRequest("session/load", async (ctx) => {
+    const conversation = reopen(ctx.params.sessionId, "load");
+    // Load streams the whole conversation back before it answers.
+    for (const update of conversation.history) await ctx.client.notify(acp.methods.client.session.update, { sessionId: ctx.params.sessionId, update });
+    return { configOptions: configOptions() };
+  })
+  .onRequest("session/set_config_option", (ctx) => {
+    if (dir) appendFileSync(join(dir, "config.jsonl"), `${JSON.stringify({ session: ctx.params.sessionId, configId: ctx.params.configId, value: ctx.params.value })}\n`);
+    return { configOptions: configOptions() };
   })
   .onRequest("session/prompt", async (ctx) => {
+    const { sessionId } = ctx.params;
     const text = ctx.params.prompt.map((part) => (part.type === "text" ? part.text : "")).join("\n");
-    const reply = await answer(ctx.params.sessionId, text, ctx.client).catch((error: Error & { stderr?: Buffer }) => {
+    sessions.get(sessionId)?.history.push({ sessionUpdate: "user_message_chunk", content: { type: "text", text } });
+    const reply = await answer(sessionId, text, ctx.client).catch((error: Error & { stderr?: Buffer }) => {
       // Kept for whoever debugs a test: the engine only sees "Internal error".
       if (dir) appendFileSync(join(dir, "errors.log"), `${error.stack}\n${error.stderr?.toString() ?? ""}\n`);
       throw error;
     });
-    if (reply.text) await ctx.client.notify(acp.methods.client.session.update, { sessionId: ctx.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply.text } } });
+    if (reply.text) await send(ctx.client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply.text } });
     return { stopReason: reply.stop ?? "end_turn" };
   })
   .onNotification("session/cancel", (ctx) => {

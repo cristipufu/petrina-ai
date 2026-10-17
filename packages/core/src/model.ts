@@ -135,6 +135,29 @@ export interface StepNote {
 }
 
 /**
+ * The conversation an agent has open for a step. Saved the moment it opens, so after a restart the
+ * agent picks up its own conversation. Removed when the step finishes or fails, or the coordinator
+ * pauses, cancels or asks for changes; Petrina stopping keeps it. The shipper never has one.
+ */
+export interface ConversationNote {
+  /** The step: its stage (or the plan), the design round and the reviewer position. */
+  step: string;
+  roleId: Id;
+  profileId: Id;
+  toolId: Id;
+  /** The model, as the tool takes it. */
+  model: string;
+  /** The tool's id for the conversation. */
+  sessionId: string;
+  /** The working copy's commit when the step first started. */
+  head?: string;
+  /** When the step first started. */
+  startedAt: number;
+  /** The question the agent is waiting on in this conversation, with the coordinator's answer once there is one. */
+  asked?: { itemId: Id; question: string; answer?: string };
+}
+
+/**
  * Written before the shipper gets any work, so a delivery interrupted by a quit or a crash is
  * checked, never repeated blindly.
  */
@@ -270,6 +293,8 @@ export interface Task {
   stepNotes?: readonly StepNote[];
   /** How many times the current step has started. */
   stepAttempts?: number;
+  /** The conversation the current step's agent has open, so it can pick it up after a restart. */
+  conversation?: ConversationNote;
   /** Set while the task is being shipped. */
   shipping?: ShippingRecord;
   /** Ids the window gave what it sent lately, so a resend after a lost confirmation counts once. */

@@ -1,8 +1,9 @@
 // The real engine: the same state the UI renders, driven by real agents over ACP.
 // Each task runs as one async driver while it holds a pool slot. Gates and the queue
 // live in state; questions and permissions wait on the coordinator in code.
-// Two rules make restarts safe: what the coordinator says during a step is on disk before any
-// agent sees it, and kept until the step finishes; and shipping is never repeated blindly.
+// Three rules make restarts safe: what the coordinator says during a step is on disk before any
+// agent sees it, and kept until the step finishes; each step's conversation is noted the moment it
+// opens, so its agent picks it up after a restart; and shipping is never repeated blindly.
 
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
@@ -42,7 +43,7 @@ import {
   type Tone,
 } from "@petrina/core";
 import type { z } from "zod";
-import { AgentRun, type PermissionInfo } from "./acp-run.js";
+import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
 import {
@@ -53,15 +54,20 @@ import {
   formatFindings,
   formatObjections,
   formatStepNotes,
+  formatWhereYouWere,
+  MAX_DONE,
   NotesResult,
   ObjectionsResult,
   parseResult,
   PlanResult,
   proseOf,
   repairPrompt,
+  restartPrompt,
   ReviewResult,
   ShipResult,
   TestResult,
+  WHERE_YOU_WERE,
+  type WhereYouWere,
 } from "./prompts.js";
 import { Store } from "./store.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
@@ -95,6 +101,8 @@ export interface EngineOptions {
   agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
   /** Tests: a fake GitHub instead of `gh`. */
   gh?: readonly string[];
+  /** Tests: how long a tool gets to reopen a conversation. */
+  reopenTimeoutMs?: number;
 }
 
 /** What the window adds to an answer, so it still counts when the question is gone (a restart dropped it). */
@@ -326,6 +334,8 @@ export class Engine {
     task.state = "paused";
     task.holdsSlot = false;
     delete task.agent;
+    // Resuming starts the step fresh, with everything said in it so far.
+    delete task.conversation;
     task.statusLine = "Paused by you";
     this.dropBlockingItems(taskId);
     this.log(task, "you", "You paused it");
@@ -352,6 +362,7 @@ export class Engine {
     task.column = "done";
     task.holdsSlot = false;
     delete task.agent;
+    delete task.conversation;
     task.finishedAt = Date.now();
     task.statusLine = "Cancelled";
     this.dropBlockingItems(taskId);
@@ -429,8 +440,10 @@ export class Engine {
   // ── Inbox ──────────────────────────────────────────────────────────────
 
   /**
-   * Answer an agent's question. On disk before the agent gets it. When the question is gone (a
-   * restart dropped it before the answer arrived), the answer still reaches the step.
+   * Answer an agent's question. On disk before the agent gets it. A question asked before a restart
+   * is answered the same way: its conversation hears the answer when it picks up. When the question
+   * is gone (a pause dropped it before the answer arrived, or a restart did on a step with no
+   * conversation to pick up), the answer still reaches the step.
    */
   answer(itemId: Id, answer: string, context: SaidContext = {}): void {
     const item = this.s.inbox.find((entry) => entry.id === itemId);
@@ -442,11 +455,16 @@ export class Engine {
     this.stepNote(task, "answer", answer, { ...(about ? { about } : {}) });
     this.say(task, "you", answer);
     this.log(task, "you", `You answered: ${answer}`);
+    const asked = task.conversation?.asked;
+    if (item && asked?.itemId === itemId) asked.answer = answer;
     if (item) this.unblock(task);
     else task.queued.push({ id: this.id(task.id), text: `About your question “${about}”: ${answer}`, at: Date.now() });
     this.commitNow();
-    this.waiting.get(itemId)?.resolve(answer);
+    const waiter = this.waiting.get(itemId);
     this.waiting.delete(itemId);
+    waiter?.resolve(answer);
+    // Asked before a restart: no agent holds a slot for it, so the step waits for one.
+    if (item && !waiter) this.schedule();
   }
 
   decideForMe(itemId: Id): void {
@@ -727,7 +745,7 @@ export class Engine {
   }
 
   private async runPlanner(task: MTask, signal: AbortSignal): Promise<void> {
-    const result = await this.turn(task, "planner", PLANNER_PROFILE, [], PlanResult, signal);
+    const result = await this.turn(task, "planner", PLANNER_PROFILE, () => [], PlanResult, signal);
     task.plan = this.normalizePlan(task, result);
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
     this.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", PLANNER_PROFILE);
@@ -782,7 +800,7 @@ export class Engine {
     const sections = () => this.sectionsFor(task, roleId);
 
     if (roleId === "builder") {
-      const result = await this.turn(task, roleId, profileId, sections(), BuildResult, signal);
+      const result = await this.turn(task, roleId, profileId, sections, BuildResult, signal);
       const label = this.describe(roleId, profileId);
       const sha = await git.commitAll(task.worktree!, `${task.title}${task.fixing ? " (review fixes)" : ""}\n\n${result.summary}\n\n${result.changes.map((change) => `- ${change}`).join("\n")}\n\nBuilt by Petrina: ${label}`);
       task.report = { summary: result.summary, changes: result.changes, ...(result.tests ? { tests: result.tests } : {}) };
@@ -795,17 +813,17 @@ export class Engine {
       // Shipping is never repeated blindly: after an interruption, look for the delivery first.
       if (task.shipping && !task.shipping.again) return this.checkDelivery(task, signal);
       await this.startShipping(task, signal);
-      const result = await this.turn(task, roleId, profileId, sections(), ShipResult, signal);
+      const result = await this.turn(task, roleId, profileId, sections, ShipResult, signal);
       await this.verifyDelivery(task, result);
       return "stop";
     } else if (roleId === "tester") {
-      const result = await this.turn(task, roleId, profileId, sections(), TestResult, signal);
+      const result = await this.turn(task, roleId, profileId, sections, TestResult, signal);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => ({ ...item, met: result.checks.find((check) => check.text === item.text)?.pass ?? item.met }));
       const failed = result.checks.filter((check) => !check.pass);
       for (const check of failed) task.findings.push({ id: this.id(task.id), text: `Failed acceptance check: ${check.text}`, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });
       this.log(task, failed.length ? "warn" : "done", failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, profileId);
     } else {
-      const result = await this.turn(task, roleId, profileId, sections(), NotesResult, signal);
+      const result = await this.turn(task, roleId, profileId, sections, NotesResult, signal);
       this.say(task, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, profileId);
       this.log(task, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, profileId);
     }
@@ -825,7 +843,7 @@ export class Engine {
     const round = task.rounds[stage.id] ?? 1;
     if (task.sub === 0) {
       const profileId = stage.profileIds[0] ?? "opus-xhigh";
-      const result = await this.turn(task, stage.roleId, profileId, this.sectionsFor(task, stage.roleId), BriefResult, signal);
+      const result = await this.turn(task, stage.roleId, profileId, () => this.sectionsFor(task, stage.roleId), BriefResult, signal);
       task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks };
       for (const answer of result.answers) {
         const objection = task.objections.find((entry) => entry.id === answer.id);
@@ -844,7 +862,7 @@ export class Engine {
     }
     const reviewerRole = stage.reviewerRoleId ?? "design-reviewer";
     const reviewerProfile = stage.reviewerProfileIds?.[0] ?? "sol-xhigh";
-    const result = await this.turn(task, reviewerRole, reviewerProfile, this.sectionsFor(task, reviewerRole), ObjectionsResult, signal);
+    const result = await this.turn(task, reviewerRole, reviewerProfile, () => this.sectionsFor(task, reviewerRole), ObjectionsResult, signal);
     for (const objection of result.objections) {
       task.objections.push({ id: this.id(`${task.id}-obj`), round, text: objection.text, blocking: objection.blocking, raisedBy: reviewerProfile, status: "open" });
     }
@@ -881,7 +899,7 @@ export class Engine {
     const revising = !task.objections.some((objection) => objection.status === "open");
     // Answers add up across repairs, so the architect can hand back just the ones it left out.
     const answers = new Map<Id, CallAnswer>();
-    const result = await this.turn(task, stage.roleId, profileId, this.sectionsFor(task, stage.roleId), BriefResult, signal, {
+    const result = await this.turn(task, stage.roleId, profileId, () => this.sectionsFor(task, stage.roleId), BriefResult, signal, {
       status: CALL_WORDS.following,
       check: (value) => {
         for (const answer of value.answers) answers.set(answer.id, answer);
@@ -914,7 +932,7 @@ export class Engine {
       this.log(task, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
     }
     const profileId = stage.profileIds[task.sub] ?? stage.profileIds[0] ?? "sol-xhigh";
-    const result = await this.turn(task, "code-reviewer", profileId, this.sectionsFor(task, "code-reviewer"), ReviewResult, signal);
+    const result = await this.turn(task, "code-reviewer", profileId, () => this.sectionsFor(task, "code-reviewer"), ReviewResult, signal);
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
@@ -1145,6 +1163,7 @@ export class Engine {
   private sectionsFor(task: MTask, roleId: Id): { title: string; body: string }[] {
     const sections: { title: string; body: string }[] = [];
     const brief = task.brief;
+    // The opening instructions hold every note, so nothing waits in line behind them.
     task.queued.splice(0);
     // Every agent on the task sees all of the coordinator's notes, reviewers included.
     const notes = (task.notes ?? []).map((note) => `- ${note.text}`);
@@ -1193,12 +1212,14 @@ export class Engine {
   /**
    * One agent, one stage: run turns until it hands back a valid result. `status` keeps the task's
    * status line fixed while the agent works; `check` turns a valid but incomplete result into a repair.
+   * `given` builds the opening instructions' sections, only when a fresh conversation gets them.
+   * After a restart, the step's agent picks up its own conversation when the tool can reopen it.
    */
   private async turn<T>(
     task: MTask,
     roleId: Id,
     profileId: Id,
-    given: { title: string; body: string }[],
+    given: () => { title: string; body: string }[],
     schema: z.ZodType<T>,
     signal: AbortSignal,
     options: { status?: string; check?: (value: T) => string | undefined } = {},
@@ -1211,55 +1232,117 @@ export class Engine {
     // Paused, cancelled or stopped while getting here: no agent starts, and the task stays as the coordinator left it.
     if (signal.aborted) throw new Aborted();
 
-    // Starting the step again: everything the coordinator said in it so far, in order.
+    // A conversation noted before a restart: the same step and role carry on from where it was. Only the
+    // same tool and model reopen it, and never the shipper: interrupted shipping is checked first.
+    const step = this.stepKey(task);
+    const model = profile.modelId ?? profile.model;
+    const saved = task.conversation;
+    const same = saved && saved.step === step && saved.roleId === roleId ? saved : undefined;
+    const reopen = same && roleId !== "shipper" && same.toolId === profile.toolId && same.model === model ? same : undefined;
+    let again = saved && !reopen ? (same ? "it now runs on a different tool or model" : "the saved conversation was for another step") : undefined;
+    const startedAt = same?.startedAt ?? Date.now();
     task.stepAttempts = (task.stepAttempts ?? 0) + 1;
-    const earlier = task.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
-    const sections = earlier.length ? [...given, { title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) }] : given;
-    if (earlier.length) this.log(task, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
 
     task.agent = { roleId, profileId, since: Date.now(), step: 0 };
     task.state = "running";
     task.holdsSlot = true;
     task.column = this.columnFor(task);
-    task.statusLine = options.status ?? `${role.name} is starting`;
-    this.say(task, "system", `${role.name} joined · ${this.describe(roleId, profileId)}`, roleId, profileId);
-    this.log(task, "milestone", `${role.name} started`, roleId, profileId);
+    if (saved) {
+      task.statusLine = options.status ?? `${role.name} is getting back to work`;
+    } else {
+      task.statusLine = options.status ?? `${role.name} is starting`;
+      this.say(task, "system", `${role.name} joined · ${this.describe(roleId, profileId)}`, roleId, profileId);
+      this.log(task, "milestone", `${role.name} started`, roleId, profileId);
+    }
     this.commitNow();
 
     const live = () => this.task(taskId);
     const command = this.options.agentCommand?.(profile);
-    const run = await AgentRun.start({
-      profile,
-      ...(command ? { command } : {}),
-      // GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none.
-      ...(roleId === "shipper" && task.delivery !== "local" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
-      cwd: task.worktree!,
-      signal,
-      callbacks: {
-        onActivity: (line) => {
-          const current = live();
-          if (!current || current.state !== "running") return;
-          current.statusLine = options.status ?? line;
-          this.say(current, "activity", line, roleId, profileId);
-          this.commit();
+    // GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none.
+    const env = roleId === "shipper" && task.delivery !== "local" ? undefined : agentEnv(process.env, await this.emptyGhConfig());
+    // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
+    const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
+    const start = (sessionId?: string) =>
+      AgentRun.start({
+        profile,
+        ...(command ? { command } : {}),
+        ...(env ? { env } : {}),
+        cwd: task.worktree!,
+        signal,
+        ...(sessionId ? { reopen: sessionId, ...(this.options.reopenTimeoutMs ? { reopenTimeoutMs: this.options.reopenTimeoutMs } : {}) } : {}),
+        callbacks: {
+          onActivity: (line) => {
+            const current = live();
+            if (!current || current.state !== "running") return;
+            current.statusLine = options.status ?? line;
+            this.say(current, "activity", line, roleId, profileId);
+            this.commit();
+          },
+          onPlanStep: (line) => {
+            const current = live();
+            if (!current) return;
+            if (current.state === "running") current.statusLine = options.status ?? line;
+            if (current.timeline.at(-1)?.text !== line) this.log(current, "status", line, roleId, profileId);
+            this.commit();
+          },
+          onPermission: (info) => this.permission(taskId, info, signal),
+          onLog: (text) => void this.agentLog(taskId, text),
         },
-        onPlanStep: (line) => {
-          const current = live();
-          if (!current) return;
-          if (current.state === "running") current.statusLine = options.status ?? line;
-          if (current.timeline.at(-1)?.text !== line) this.log(current, "status", line, roleId, profileId);
-          this.commit();
-        },
-        onPermission: (info) => this.permission(taskId, info, signal),
-        onLog: (text) => void this.agentLog(taskId, text),
-      },
-    });
+      });
+    let run: AgentRun | undefined;
+    if (reopen) {
+      try {
+        run = await start(reopen.sessionId);
+      } catch (error) {
+        if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
+        again = error.message;
+      }
+    }
+    run ??= await start();
     this.runs.set(taskId, run);
-    const headBefore = !role.canEdit && task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined;
+    const picked = run.reopened !== undefined;
+    const where = saved ? this.whereYouWere(task, role, startedAt) : undefined;
+    if (picked) {
+      this.say(task, "system", `${role.name} picked up where it left off · ${this.describe(roleId, profileId)}`, roleId, profileId);
+      this.log(task, "milestone", "Picked up where it left off", roleId, profileId);
+    } else if (saved) {
+      this.say(task, "system", `${role.name} started this step again · ${this.describe(roleId, profileId)}`, roleId, profileId);
+      this.log(task, "milestone", `Started this step again: ${again}`, roleId, profileId);
+    }
+    // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
+    // the old note; a reopened one keeps the open question until the conversation hears the answer.
+    const asked = picked ? reopen?.asked : undefined;
+    if (roleId !== "shipper") task.conversation = { step, roleId, profileId, toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}) };
+    this.commitNow();
+    const headBefore = !role.canEdit ? head : undefined;
     try {
       // The last moment to notice a pause before the agent gets any work.
       if (signal.aborted || !live()) throw new Aborted();
-      let reply = await run.prompt(buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.s.roles as Role[], profiles: this.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.base!, defaultBranch: product.defaultBranch ?? "main", sections }));
+      let opening: string;
+      if (picked) {
+        // One line about the restart, then only what the conversation has not heard: the answer to its open question, and messages still in line.
+        const answer = asked?.answer !== undefined ? { question: asked.question, text: asked.answer } : undefined;
+        if (task.conversation) delete task.conversation.asked;
+        const messages = task.queued.splice(0);
+        for (const message of messages) {
+          this.say(task, "you", message.text);
+          this.log(task, "you", `You said: ${message.text}`);
+        }
+        opening = restartPrompt(where!, { ...(answer ? { answer } : {}), messages: messages.map((message) => message.text) });
+      } else {
+        // Starting the step again: everything the coordinator said in it so far, in order, and after a restart, where it was.
+        const files = where && head && task.worktree ? await git.changedSince(task.worktree, head) : [];
+        if (signal.aborted || !live()) throw new Aborted();
+        const earlier = task.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
+        if (earlier.length) this.log(task, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
+        const sections = [...given()];
+        if (earlier.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
+        if (where) sections.push({ title: WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "") });
+        opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.s.roles as Role[], profiles: this.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
+      }
+      // What it is about to hear is on disk first: a restart after this does not hand it over again.
+      this.commitNow();
+      let reply = await run.prompt(opening);
       for (let repairs = 0; ; ) {
         if (signal.aborted) throw new Aborted();
         const current = live();
@@ -1270,7 +1353,7 @@ export class Engine {
         if (message) {
           this.say(current, "you", message.text);
           this.log(current, "you", `You said: ${message.text}`);
-          this.commit();
+          this.commitNow();
           reply = await run.prompt(`Message from the coordinator: ${message.text}\n\nTake it into account. When you are done, end with the result block again.`);
           continue;
         }
@@ -1281,6 +1364,9 @@ export class Engine {
         const parsed = parseResult(reply.text, schema);
         if (parsed.ok === "input") {
           const answer = await this.ask(current, role, profileId, parsed.question, parsed.options, signal);
+          // Heard from here on: a restart does not hand the answer over again.
+          if (current.conversation) delete current.conversation.asked;
+          this.commitNow();
           reply = await run.prompt(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`);
           continue;
         }
@@ -1294,7 +1380,7 @@ export class Engine {
       this.runs.delete(taskId);
       run.close();
       // A read-only role runs in its tool's automatic mode, so it could change things: leave the
-      // working copy exactly as it found it, commits and uncommitted changes alike.
+      // working copy exactly as the step first found it, commits and uncommitted changes alike.
       if (headBefore && task.worktree && (await git.head(task.worktree).catch(() => headBefore)) !== headBefore) {
         await git.resetTo(task.worktree, headBefore);
         this.log(task, "warn", `Undid commits from ${role.name}, which is read-only`);
@@ -1325,7 +1411,13 @@ export class Engine {
   private wait(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string }, signal: AbortSignal, status: string): Promise<string> {
     const id = this.raise(task, kind, title, blocking, extra);
     task.statusLine = status;
-    this.commit();
+    if (kind === "question" && task.conversation) {
+      // A question survives a restart for the conversation that asked it.
+      task.conversation.asked = { itemId: id, question: title };
+      this.commitNow();
+    } else {
+      this.commit();
+    }
     return new Promise<string>((resolve, reject) => {
       this.waiting.set(id, { resolve, reject });
       signal.addEventListener("abort", () => reject(new Aborted()), { once: true });
@@ -1377,6 +1469,7 @@ export class Engine {
     if (!task) return;
     const message = error instanceof Error ? error.message : String(error);
     delete task.agent;
+    delete task.conversation;
     task.holdsSlot = false;
     task.state = "failed";
     task.error = message;
@@ -1397,10 +1490,40 @@ export class Engine {
     task.stepNotes = [...(task.stepNotes ?? []), { id: extra.id ?? this.id(task.id), at: Date.now(), kind, text, ...(extra.about ? { about: extra.about } : {}) }];
   }
 
-  /** The step handed back its result: the next step starts clean. */
+  /** The step handed back its result: the next step starts clean, in a new conversation. */
   private finishStep(task: MTask): void {
     delete task.stepNotes;
     delete task.stepAttempts;
+    delete task.conversation;
+  }
+
+  /** Which step a task is on: its stage (or the plan), the design round and the reviewer position. */
+  private stepKey(task: MTask): string {
+    if (task.stageIndex < 0) return "plan";
+    const stage = task.plan?.stages[task.stageIndex];
+    return `${stage?.id ?? task.stageIndex} round ${stage ? (task.rounds[stage.id] ?? 1) : 1} position ${task.sub}${task.fixing ? " fixing" : ""}`;
+  }
+
+  /** The step in the coordinator's words, for an agent coming back to it. */
+  private stepTitle(task: MTask): string {
+    if (task.stageIndex < 0) return "Planning";
+    const stage = task.plan?.stages[task.stageIndex];
+    if (!stage) return "this step";
+    if (stage.kind === "converge") return `${stage.title}, round ${task.rounds[stage.id] ?? 1}`;
+    if (stage.kind === "review-chain") return `${stage.title}, reviewer ${task.sub + 1} of ${stage.profileIds.length}`;
+    return task.fixing ? `${stage.title}, fixing review findings` : stage.title;
+  }
+
+  /** Where an agent was in its step: the stage, its role, and its last activity and plan steps since the step started. */
+  private whereYouWere(task: MTask, role: Role, since: number): WhereYouWere {
+    const done = [
+      ...task.session.filter((line) => line.from === "activity" && line.roleId === role.id && line.at >= since),
+      ...task.timeline.filter((entry) => entry.tone === "status" && entry.roleId === role.id && entry.at >= since),
+    ]
+      .sort((a, b) => a.at - b.at)
+      .map((entry) => entry.text)
+      .filter((text, index, all) => text !== all[index - 1]);
+    return { stage: this.stepTitle(task), role: role.name, done: done.slice(-MAX_DONE) };
   }
 
   /** False for a resend of something already received (its confirmation was lost on the way back). */
@@ -1482,11 +1605,26 @@ export class Engine {
     }
   }
 
-  /** After a restart, nothing is running: put interrupted work back in line. */
+  /**
+   * After a restart, nothing is running: put interrupted work back in line. A question stays in the
+   * inbox for the conversation that asked it, without a slot; an open permission request goes.
+   */
   private recover(): void {
-    this.s.inbox = this.s.inbox.filter((item) => !item.blocking);
+    const keep = (item: InboxItem) => {
+      if (!item.blocking) return true;
+      const task = this.task(item.taskId);
+      return item.kind === "question" && task?.state === "needs-you" && task.conversation?.asked?.itemId === item.id;
+    };
+    for (const item of this.s.inbox.filter((entry) => entry.kind === "permission" && !keep(entry))) {
+      const task = this.task(item.taskId);
+      if (task) this.log(task, "warn", `Petrina restarted before you answered “${item.title}”, so it left your inbox. The agent will ask again if it still needs to`, item.roleId, item.profileId);
+    }
+    this.s.inbox = this.s.inbox.filter(keep);
     for (const task of this.s.tasks) {
-      if (["running", "waiting"].includes(task.state) || (task.state === "needs-you" && !this.s.inbox.some((item) => item.taskId === task.id))) {
+      if (this.s.inbox.some((item) => item.taskId === task.id && item.blocking)) {
+        task.statusLine = "Waiting for your answer";
+        delete task.agent;
+      } else if (["running", "waiting"].includes(task.state) || (task.state === "needs-you" && !this.s.inbox.some((item) => item.taskId === task.id))) {
         task.state = "waiting";
         task.statusLine = "Waiting for a free slot";
         delete task.agent;

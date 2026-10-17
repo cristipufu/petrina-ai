@@ -1,5 +1,6 @@
 // One agent session over ACP: start the tool's adapter, open a session in the task's
-// worktree, pin model, effort and mode, then send turns and report what happens.
+// worktree (or reopen an earlier one), pin model, effort and mode, then send turns and report
+// what happens.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
@@ -30,6 +31,14 @@ export interface TurnResult {
   text: string;
   tokens?: number;
 }
+
+/** How long Petrina waits for a tool to reopen a conversation before it starts a fresh one. */
+const REOPEN_TIMEOUT_MS = 60_000;
+
+/** The tool could not reopen the conversation. The message says why, in plain words. */
+export class ReopenFailed extends Error {}
+
+const duration = (ms: number): string => (ms === 60_000 ? "a minute" : `${Math.max(1, Math.round(ms / 1000))} seconds`);
 
 const humanizeCommand = (command: string): string => {
   const c = command.toLowerCase();
@@ -84,11 +93,28 @@ export class AgentRun {
   private constructor(
     private readonly child: ChildProcess,
     private readonly connection: acp.ClientSideConnection,
-    private readonly sessionId: string,
-    private readonly state: { text: string; lastActivity: string },
+    /** The tool's id for the conversation. */
+    readonly sessionId: string,
+    private readonly state: { text: string; lastActivity: string; quiet: boolean },
+    /** How an earlier conversation was reopened; unset for a new one. */
+    readonly reopened?: "resume" | "load",
   ) {}
 
-  static async start(options: { profile: AgentProfile; cwd: string; callbacks: RunCallbacks; signal: AbortSignal; command?: readonly string[]; env?: NodeJS.ProcessEnv }): Promise<AgentRun> {
+  /**
+   * With `reopen`, pick up that conversation: by the tool's resume, which replays nothing, or by
+   * load when that is all it offers. Anything that keeps it from reopening within the time limit
+   * (no support, an error, no answer) throws ReopenFailed, and the agent process is gone.
+   */
+  static async start(options: {
+    profile: AgentProfile;
+    cwd: string;
+    callbacks: RunCallbacks;
+    signal: AbortSignal;
+    command?: readonly string[];
+    env?: NodeJS.ProcessEnv;
+    reopen?: string;
+    reopenTimeoutMs?: number;
+  }): Promise<AgentRun> {
     const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
     if (!adapter) throw new Error(`No adapter for tool ${profile.toolId}`);
@@ -107,13 +133,16 @@ export class AgentRun {
     const abort = () => child.kill();
     signal.addEventListener("abort", abort, { once: true });
 
-    const state = { text: "", lastActivity: "" };
+    // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
+    // already in the session view and timeline.
+    const state = { text: "", lastActivity: "", quiet: options.reopen !== undefined };
     const titles = new Map<string, { title?: string | null; kind?: string | null; locations?: { path: string }[] | null; rawInput?: unknown }>();
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
 
     const connection = new acp.ClientSideConnection(
       () => ({
         async requestPermission(params) {
+          if (state.quiet) return { outcome: { outcome: "cancelled" } };
           const call = params.toolCall;
           const known = titles.get(call.toolCallId) ?? {};
           const merged = { ...known, ...call };
@@ -132,6 +161,7 @@ export class AgentRun {
           return { outcome: { outcome: "selected", optionId: option.optionId } };
         },
         async sessionUpdate(params) {
+          if (state.quiet) return;
           const update = params.update;
           switch (update.sessionUpdate) {
             case "agent_message_chunk":
@@ -164,13 +194,33 @@ export class AgentRun {
       stream,
     );
 
+    const open = async (): Promise<{ sessionId: string; configOptions?: unknown; how?: "resume" | "load" }> => {
+      const init = await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+      const sessionId = options.reopen;
+      if (sessionId === undefined) return connection.newSession({ cwd, mcpServers: [] });
+      const how = init.agentCapabilities?.sessionCapabilities?.resume ? "resume" : init.agentCapabilities?.loadSession ? "load" : undefined;
+      if (!how) throw new ReopenFailed(`${adapter.name} cannot reopen conversations`);
+      const limit = options.reopenTimeoutMs ?? REOPEN_TIMEOUT_MS;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new ReopenFailed(`${adapter.name} did not reopen the conversation within ${duration(limit)}`)), limit)));
+      const params = { sessionId, cwd, mcpServers: [] };
+      try {
+        const opened = await Promise.race([how === "resume" ? connection.resumeSession(params) : connection.loadSession(params), late]);
+        return { ...opened, sessionId, how };
+      } catch (error) {
+        throw error instanceof ReopenFailed ? error : new ReopenFailed(`${adapter.name} could not reopen the conversation`);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    // The same rules for a new and a reopened conversation: model, effort, then the automatic safety mode.
     const ready = (async () => {
-      await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
-      const session = await connection.newSession({ cwd, mcpServers: [] });
-      const options = (session as { configOptions?: { id: string; options?: { value: string }[] }[] }).configOptions ?? [];
+      const session = await open();
+      const configOptions = (session.configOptions ?? []) as { id: string; options?: { value: string }[] }[];
       const set = async (configId: string, value: string | undefined): Promise<boolean> => {
         if (!value) return false;
-        const option = options.find((entry) => entry.id === configId);
+        const option = configOptions.find((entry) => entry.id === configId);
         if (!option || !option.options?.some((entry) => entry.value === value)) return false;
         await connection.setSessionConfigOption({ sessionId: session.sessionId, configId, value });
         return true;
@@ -179,15 +229,25 @@ export class AgentRun {
       await set(adapter.options.effort, profile.effort);
       // Mode last: Claude Code drops Auto when the model changes after it.
       if (!(await set(adapter.options.mode, adapter.mode))) callbacks.onLog?.(`${adapter.name}'s automatic safety mode is not available here, so it will ask you before acting`);
-      return session.sessionId;
+      return session;
     })();
+    ready.catch(() => undefined);
 
-    const sessionId = await Promise.race([ready, killed]);
-    return new AgentRun(child, connection, sessionId, state);
+    try {
+      const session = await Promise.race([ready, killed]);
+      return new AgentRun(child, connection, session.sessionId, state, session.how);
+    } catch (error) {
+      // No agent left running behind a conversation that did not open.
+      signal.removeEventListener("abort", abort);
+      if (child.exitCode === null) child.kill();
+      if (options.reopen !== undefined && !(error instanceof ReopenFailed) && !signal.aborted) throw new ReopenFailed(`${adapter.name} could not reopen the conversation`);
+      throw error;
+    }
   }
 
   /** Send one turn and wait for it to end. Returns everything the agent said in it. */
   async prompt(text: string): Promise<TurnResult> {
+    this.state.quiet = false;
     this.state.text = "";
     const exited = new Promise<never>((_, reject) => this.child.once("exit", (code) => reject(new Error(`The agent stopped (exit ${code ?? "signal"})`))));
     exited.catch(() => undefined);

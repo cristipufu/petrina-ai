@@ -279,6 +279,50 @@ export function formatFindings(findings: readonly Finding[]): string {
   return findings.map((finding) => `- [${finding.id}] ${finding.severity} (${finding.status}): ${finding.text}${finding.where ? ` at ${finding.where}` : ""}`).join("\n");
 }
 
+/** Where an agent was in a step when Petrina restarted: for the restart line and the fresh start's summary. */
+export interface WhereYouWere {
+  /** The stage, in the coordinator's words ("Build", "Design, round 2"). */
+  stage: string;
+  role: string;
+  /** What the agent did in this step, oldest first. */
+  done: readonly string[];
+  /** Files added, changed or removed in the working copy since the step started. */
+  files?: readonly { change: string; file: string }[];
+}
+
+export const MAX_DONE = 10;
+export const MAX_FILES = 30;
+
+/** The one line a reopened conversation gets, followed by what it has not heard yet. */
+export function restartPrompt(where: WhereYouWere, unheard: { answer?: { question: string; text: string }; messages: readonly string[] }): string {
+  const last = where.done.at(-1);
+  const parts = [
+    `Petrina restarted while you were on “${where.stage}” as the ${where.role}. ${last ? `The last thing you were doing: ${last}.` : "You had just started this step."} Your last action may not have finished, so check the working copy, then continue where you left off.`,
+  ];
+  if (unheard.answer) parts.push(`The coordinator answered your question “${unheard.answer.question}”: ${unheard.answer.text}`);
+  if (unheard.messages.length) parts.push(`Messages from the coordinator you have not seen yet, in order:\n${unheard.messages.map((text) => `- ${text}`).join("\n")}`);
+  parts.push(`${unheard.answer || unheard.messages.length ? "Take them into account. " : ""}When you are done, end with the result block.`);
+  return parts.join("\n\n");
+}
+
+export const WHERE_YOU_WERE = "Where you were when Petrina restarted";
+
+/** For a fresh conversation on a step whose conversation could not be reopened. */
+export function formatWhereYouWere(where: WhereYouWere, reason: string): string {
+  const files = where.files ?? [];
+  const lines = [
+    `Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`,
+    where.done.length ? `What you did last in this step, oldest first:\n${where.done.map((line) => `- ${line}`).join("\n")}` : "Nothing was recorded of what you did in this step.",
+    files.length
+      ? `Files added, changed or removed in the working copy since this step started:\n${files
+          .slice(0, MAX_FILES)
+          .map((entry) => `- ${entry.change}: ${entry.file}`)
+          .join("\n")}${files.length > MAX_FILES ? `\n- and ${files.length - MAX_FILES} more` : ""}`
+      : "No files were added, changed or removed in the working copy since this step started.",
+  ];
+  return lines.join("\n\n");
+}
+
 export const EARLIER_ATTEMPT = "What the coordinator said in an earlier attempt at this step";
 
 /** Everything said during a step that started before and was cut short, in order, each marked as earlier. */

@@ -184,14 +184,38 @@ export class Fakes {
 
   /** Every prompt the fake agents received, in order. */
   prompts(role?: string): string[] {
-    const path = join(this.dir, "prompts.jsonl");
+    return this.received(role).map((entry) => entry.text);
+  }
+
+  /** Every prompt the fake agents received, in order, with the conversation it went to. */
+  received(role?: string): { role: string; session: string; text: string }[] {
+    return this.lines<{ role: string; session: string; text: string }>("prompts.jsonl").filter((entry) => !role || entry.role === role);
+  }
+
+  /** How each conversation was opened, and whether its agent had the coordinator's GitHub login. */
+  opens(): { session: string; how: "new" | "resume" | "load"; github: boolean }[] {
+    return this.lines("opens.jsonl");
+  }
+
+  /** Every setting Petrina gave a conversation, in order. */
+  settings(session: string): string[] {
+    return this.lines<{ session: string; configId: string; value: string }>("config.jsonl")
+      .filter((entry) => entry.session === session)
+      .map((entry) => `${entry.configId}=${entry.value}`);
+  }
+
+  /** The tool loses every conversation it had (cleared history, a tool update). */
+  forgetConversations(): void {
+    removeDir(join(this.dir, "conversations"));
+  }
+
+  private lines<T>(name: string): T[] {
+    const path = join(this.dir, name);
     if (!existsSync(path)) return [];
     return readFileSync(path, "utf8")
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { role: string; text: string })
-      .filter((entry) => !role || entry.role === role)
-      .map((entry) => entry.text);
+      .map((line) => JSON.parse(line) as T);
   }
 
   /** The opening prompt of each agent of a role (the ones that say who they are). */

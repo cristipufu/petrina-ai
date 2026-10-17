@@ -237,6 +237,31 @@ export async function head(path: string): Promise<string> {
   return must(["git", "rev-parse", "HEAD"], path);
 }
 
+export interface FileChange {
+  change: "added" | "changed" | "removed";
+  file: string;
+}
+
+/** Files added, changed or removed in the working copy since a commit, committed or not. */
+export async function changedSince(path: string, sha: string): Promise<FileChange[]> {
+  if (!SHA.test(sha)) return [];
+  const [tracked, untracked] = await Promise.all([
+    run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-status", "-z", sha], path),
+    run(["git", "ls-files", "--others", "--exclude-standard", "-z"], path),
+  ]);
+  const changes: FileChange[] = [];
+  const fields = tracked.code === 0 ? tracked.stdout.split("\0") : [];
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const status = fields[index]!;
+    const file = fields[index + 1]!;
+    if (file) changes.push({ change: status.startsWith("A") ? "added" : status.startsWith("D") ? "removed" : "changed", file });
+  }
+  for (const file of untracked.code === 0 ? untracked.stdout.split("\0") : []) {
+    if (file && !changes.some((entry) => entry.file === file)) changes.push({ change: "added", file });
+  }
+  return changes;
+}
+
 export async function diffStat(path: string, base: string): Promise<{ files: number; additions: number; deletions: number }> {
   const out = (await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--numstat", `${base}...HEAD`], path)).stdout;
   let files = 0;
