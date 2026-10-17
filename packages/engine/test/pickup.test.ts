@@ -16,6 +16,8 @@ type Stop = "quit" | "kill";
 const QUESTION = "Should the greeting be formal?";
 const named = (reopen: Reopen) => (reopen ? `reopening by ${reopen}` : "with no reopen support");
 const after = (stop: Stop) => (stop === "quit" ? "an ordinary quit" : "a forced kill");
+/** The engine heard the builder at work: its conversation is noted as briefed, and its first step is on the timeline. */
+const heardWorking = (task: Task | undefined) => !!task?.conversation?.briefed && task.timeline.some((entry) => entry.text === "Drafting the greeting");
 
 /** A product delivering locally with no checks, a task on it, and an engine on fake agents. */
 async function start(scenario: Scenario, description = "") {
@@ -36,7 +38,12 @@ async function start(scenario: Scenario, description = "") {
     return EngineProcess.harness(home, fakes.dir);
   };
   const finished = async (engine: EngineProcess) => find(await engine.until((state) => find(state).state === "done", "the task to finish", 60_000));
-  return { product, home, fakes, engine, taskId, find, restart, finished };
+  // The fake marks the moment it starts working; the engine reads what it said a moment later.
+  const working = async (engine: EngineProcess) => {
+    await waitFor(() => fakes.marked("builder-working"), "the builder to start working");
+    await engine.until((state) => heardWorking(find(state)), "the engine to hear the builder at work");
+  };
+  return { product, home, fakes, engine, taskId, find, restart, finished, working };
 }
 
 describe.concurrent("an agent waiting on a question when Petrina restarts", () => {
@@ -116,7 +123,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     it(`${named(reopen)}, after ${after(stop)}: a message still in line arrives once, and nothing is heard twice`, async () => {
       const run = await start({ planner: "short", builder: "work", ...(reopen ? { reopen } : {}) });
       let engine = run.engine;
-      await waitFor(() => run.fakes.marked("builder-working"), "the builder to start working");
+      await run.working(run.engine);
       // Heard before the restart: an interruption.
       await engine.act("sendMessage", run.taskId, "Use a friendly tone", "interrupt", "message-1");
       await waitFor(() => run.fakes.marked("builder-heard"), "the builder to hear the interruption");
@@ -181,7 +188,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
   it("keeps the same conversation through several restarts in a row", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume", restarts: 2 });
     let engine = run.engine;
-    await waitFor(() => run.fakes.marked("builder-working"), "the builder to start working");
+    await run.working(run.engine);
     engine = await run.restart(engine, "kill");
     await waitFor(() => run.fakes.marked("builder-restart-1"), "the builder to pick up");
     engine = await run.restart(engine, "quit");
@@ -196,7 +203,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
 
   it("starts fresh after a pause and resume, as before", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
-    await waitFor(() => run.fakes.marked("builder-working"), "the builder to start working");
+    await run.working(run.engine);
     await run.engine.act("sendMessage", run.taskId, "Keep it short", "queue", "message-1");
     await run.engine.act("pause", run.taskId);
     expect(run.find(await run.engine.state()).conversation).toBeUndefined();
@@ -213,7 +220,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
 
   it("starts the step again when the saved conversation was on another model", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
-    await waitFor(() => run.fakes.marked("builder-working"), "the builder to start working");
+    await run.working(run.engine);
     await run.engine.kill();
     const store = new Store(join(run.home, "petrina.db"));
     const saved = store.load()!;
@@ -230,7 +237,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
 
   it("starts the step again when Petrina stopped before the agent got its instructions", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
-    await waitFor(() => run.fakes.marked("builder-working"), "the builder to start working");
+    await run.working(run.engine);
     await run.engine.kill();
     const store = new Store(join(run.home, "petrina.db"));
     const saved = store.load()!;
@@ -249,7 +256,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
 
   it("starts the step again as before for a task an older Petrina saved, with no conversation note", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
-    await waitFor(() => run.fakes.marked("builder-working"), "the builder to start working");
+    await run.working(run.engine);
     await run.engine.act("sendMessage", run.taskId, "Keep it short", "queue", "message-1");
     await run.engine.kill();
     const store = new Store(join(run.home, "petrina.db"));
@@ -350,6 +357,7 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
       engine.setProductDelivery(productId, "local", false);
       const taskId = engine.addTask({ productId, title: "Add a greeting" });
       await waitFor(() => fakes.marked("builder-working"), "the builder to start working");
+      await waitFor(() => heardWorking(engine.getState().tasks.find((entry) => entry.id === taskId)), "the engine to hear the builder at work");
       engine.shutdown();
 
       if (trouble === "no answer") fakes.scenario({ planner: "short", builder: "work", reopen: "stall" });

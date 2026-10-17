@@ -137,7 +137,9 @@ const REMOTE = /^(?:(?:ssh|git|https?):\/\/)?(?:[^@/]+@)?([^/:]+)[:/](.+?)(?:\.g
 export async function repoInfo(path: string): Promise<RepoInfo> {
   const root = await must(["git", "rev-parse", "--show-toplevel"], path);
   const remote = (await run(["git", "remote", "get-url", "origin"], root)).stdout;
-  const match = REMOTE.exec(remote);
+  // A folder on this computer (C:\ or C:/ on Windows included) has no host: the product goes by its own folder.
+  const local = /^(?:[A-Za-z]:[\\/]|[\\/]|file:)/.test(remote);
+  const match = local ? null : REMOTE.exec(remote);
   const segments = match?.[2]?.split("/").filter(Boolean) ?? [];
   const name = segments.at(-1) ?? root.split("/").at(-1) ?? "repo";
   const owner = segments.slice(0, -1).join("/") || "local";

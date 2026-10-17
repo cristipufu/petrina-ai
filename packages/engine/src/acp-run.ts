@@ -52,7 +52,8 @@ const humanizeCommand = (command: string): string => {
   return "Running a command";
 };
 
-const baseName = (path: string): string => path.split("/").filter(Boolean).at(-1) ?? path;
+// Windows tools report paths with backslashes.
+const baseName = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 
 export function describeTool(update: { title?: string | null; kind?: string | null; locations?: { path: string }[] | null; rawInput?: unknown }): string {
   const kind = update.kind ?? "other";

@@ -51,6 +51,9 @@ describe("disputed findings", () => {
   it("says what a command is for, and hides the tools' own plumbing", () => {
     expect(describeTool({ kind: "execute", rawInput: { command: "rg -n stage src", description: "find where the engine records stage changes" } })).toBe("Find where the engine records stage changes");
     expect(describeTool({ kind: "execute", rawInput: { command: "bun test" } })).toBe("Running the tests");
+    // Only the file's name, however the tool writes its path.
+    expect(describeTool({ kind: "edit", locations: [{ path: "/Users/ana/shop/notes.txt" }] })).toBe("Editing notes.txt");
+    expect(describeTool({ kind: "edit", locations: [{ path: "C:\\Users\\ana\\shop\\notes.txt" }] })).toBe("Editing notes.txt");
     expect(isPlumbing({ kind: "other", title: "ToolSearch" })).toBe(true);
     expect(isPlumbing({ kind: "other", title: "TodoWrite" })).toBe(true);
     expect(isPlumbing({ kind: "read", title: "Read notes.txt" })).toBe(false);

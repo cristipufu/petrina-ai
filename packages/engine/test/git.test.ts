@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitAll, ensureWorktree, isClean, riskySettings } from "../src/git.js";
+import { commitAll, ensureWorktree, isClean, repoInfo, riskySettings } from "../src/git.js";
 import { removeDir } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
@@ -30,6 +30,18 @@ describe("Petrina's own git steps", () => {
     expect(await isClean(repo)).toBe(false);
     expect(await commitAll(repo, "Add a")).toMatch(/^[0-9a-f]{40}$/);
     expect(existsSync(marker)).toBe(false);
+  });
+
+  it("names the product's repository from its origin, and one cloned from a folder on this computer by the clone's own folder", async () => {
+    const repo = join(temp, "named");
+    mkdirSync(repo, { recursive: true });
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "remote", "add", "origin", "git@github.com:acme/shop.git");
+    expect(await repoInfo(repo)).toMatchObject({ owner: "acme", name: "shop" });
+    for (const folder of ["C:\\Users\\ana\\origin.git", "C:/Users/ana/origin.git", "/home/ana/origin.git", "file:///home/ana/origin.git"]) {
+      git(repo, "remote", "set-url", "origin", folder);
+      expect(await repoInfo(repo)).toMatchObject({ owner: "local", name: "named" });
+    }
   });
 
   it("will not fetch with the coordinator's login when the repository's settings could misuse it", async () => {

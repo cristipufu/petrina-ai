@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import type { SessionState } from "@petrina/core";
 
 export type Platform = "darwin" | "win32" | "linux";
@@ -91,7 +91,8 @@ export function detectTerminals(probe: Probe): FoundTerminal[] {
   if (probe.platform === "darwin") {
     const found: FoundTerminal[] = [];
     for (const app of MAC_APPS) {
-      const path = ["/System/Applications/Utilities", "/Applications/Utilities", "/Applications", join(probe.home, "Applications")].map((dir) => join(dir, app.bundle)).find((candidate) => probe.exists(candidate));
+      // macOS paths, joined the same way whichever system works them out.
+      const path = ["/System/Applications/Utilities", "/Applications/Utilities", "/Applications", posix.join(probe.home, "Applications")].map((dir) => posix.join(dir, app.bundle)).find((candidate) => probe.exists(candidate));
       if (!path) continue;
       const args = app.args;
       found.push({ id: app.id, name: app.name, open: args ? (launcher) => ["open", "-na", path, "--args", ...args(launcher)] : (launcher) => ["open", "-a", path, launcher] });
