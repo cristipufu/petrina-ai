@@ -17,7 +17,7 @@ Competitive research (October 2026) found the building blocks in other tools, bu
 1. **A planner composes each task's plan from roles,** choosing tool, model and effort per stage, shown as an editable plan before anything runs.
 2. **Roles are separate from tools:** instructions, permissions, what they see, and what they must hand back.
 3. **Design convergence:** two architects on different tools iterate until no blocking objection is open, with a disagreement log and a round limit.
-4. **A sequential review chain:** each reviewer sees earlier verdicts (never the builder's transcript); findings are merged and attributed.
+4. **Reviews that converge:** reviewers on different tools, each seeing earlier verdicts (never the builder's transcript); Petrina's own checks as evidence; Important findings verified on another tool before they send work back; and review depth and the delivery check set by the task's risk.
 5. **A light, live board** instead of an IDE.
 
 Mechanics borrowed and credited:
@@ -26,6 +26,7 @@ Mechanics borrowed and credited:
 - Stage kinds with loops, caps and approval gates (Archon).
 - Reviewers in fresh sessions, told to prove "done" wrong; pass/fail findings with file:line, never scores; a mechanical tamper check for deleted or skipped tests (no_human).
 - One generic agent protocol for many tools (Kandev).
+- From "Solving code review at Anthropic": checks the agent cannot talk its way past, findings tagged Important, Nit or Pre-existing, a finding verified before it counts, every finding answered, convergence rules (no repeats, whole classes of bug, diff-only re-review, a step back after three rounds), approval by risk set from the change, an approval that covers one commit, a per-repository REVIEW.md that learns from misses, and measuring rounds to pass.
 
 ## Concepts
 
@@ -33,12 +34,16 @@ Mechanics borrowed and credited:
 |---|---|
 | **Product** | A GitHub repository and its local clone |
 | **Task** | What the coordinator wants. Has a priority (its place in the queue) |
-| **Role** | Data: name, purpose, instructions, permissions, what it sees, output contract |
+| **Role** | Data: name, purpose, permissions, what it sees, and whether only Petrina runs it (internal: the planner never hears of it) |
+| **Role contract** | What a role is told, which parts of the context it reads, and the result it must hand back (`packages/engine/src/roles.ts`) |
 | **Agent profile** | Tool × model × effort, for example Claude Code · Opus 5.5 · high |
 | **Tool** | Something that can run an agent. Usually an ACP command line |
 | **Plan** | Ordered stages. Each stage: kind, role, profiles, round limit, checkpoint |
 | **Stage run** | One execution of a stage: rounds, agent sessions, events, result |
 | **Inbox item** | Anything waiting on the coordinator |
+| **Product checks** | The commands that prove a product works (type check, lint, tests, build), run by Petrina itself |
+| **Review guide** | `REVIEW.md` in the repository, plus points the coordinator accepted after a miss |
+| **Risk** | Low, Medium or High, rated by the planner from what the task touches |
 
 ### Stage kinds
 
@@ -46,7 +51,7 @@ Mechanics borrowed and credited:
 |---|---|
 | `do` | One role on one profile produces its result |
 | `converge` | Author and reviewer (different profiles) alternate until the reviewer has no open blocking objection, or the round limit is reached and the coordinator decides |
-| `review-chain` | Reviewers run one after another on the same change. Blocking findings send the change back to the builder as one list, then the chain runs again, up to the round limit |
+| `review-chain` | Petrina's tamper check and the product's checks first, then reviewers one after another on the same change, then Important findings verified on another tool. Important findings send the change back to the builder as one list, then the chain runs again on what changed, up to the round limit |
 | `gate` | Waits for the coordinator (design approval, delivery approval) |
 
 ### Task lifecycle
@@ -94,17 +99,9 @@ So a tool is mostly configuration:
 
 A dedicated adapter is written only when a tool needs something ACP does not expose (for example reading usage limits). Things to verify per tool before relying on them: model and effort selection through ACP, use of the user's existing login, and `session/resume` or `session/load` support.
 
-## The Petrina bridge
+## Results and questions
 
-Every agent session gets one extra MCP server attached: the Petrina bridge. It gives the agent a few tools that turn agent behaviour into structured events:
-
-| Tool | Purpose |
-|---|---|
-| `petrina_status(text)` | A plain-language status line for the board ("Adding the guest email step") |
-| `petrina_ask(question, options, blocking)` | Creates an inbox Question. Blocks until answered when `blocking` |
-| `petrina_submit(result)` | The stage's result, validated against the role's output contract. Invalid results come back as a tool error naming what is wrong, so the agent fixes them. A stage is complete only when this succeeds |
-
-The bridge is a small stdio process started by the agent. It connects back to the app over a local socket (a Unix domain socket with `0600` permissions, a named pipe on Windows) and authenticates with a random per-session secret passed in its environment. It never listens on TCP.
+An agent hands back its result as one fenced `petrina` block of JSON at the end of its last message, in the shape its role contract shows it. A stage finishes only when that block parses and passes the role's schema; otherwise the agent is told exactly what is wrong, twice at most. An agent that cannot go on without a decision ends with a `needsInput` block instead: the question goes to the inbox, and the answer comes back to the same conversation. The status line comes from the agent's own plan and tool activity over ACP. Agents get no extra MCP servers.
 
 ## Permissions
 
@@ -126,6 +123,14 @@ Petrina relies on each tool's own safety checker instead of building one:
 - Messages queue per task. When the agent's current turn ends, the next queued message is sent with `session/prompt`.
 - Interrupt sends `session/cancel`, then the message.
 - Every delivered message and reply is written to the session transcript the Session tab shows.
+
+## Checks, reviews and risk
+
+- **Product checks.** The Check finder (an internal role) works out once per product, from its CI first, which commands prove it works; it looks again when the CI or build files change. The coordinator can set them by hand. Petrina runs them itself, side by side, as argument arrays without a shell, before the first reviewer of every round and again right before the delivery check when the code changed (`packages/engine/src/checks.ts`, `product-checks.ts`). A failing check is an Important finding with the real output, and the work goes straight back to the builder. The builder is told to run every check in full before it hands back; reviewers read Petrina's results instead of running the suite again.
+- **Findings.** Reviewers tag each finding Important, Nit or Pre-existing (a follow-up that never blocks), report a whole class of bug once, and never repeat a finding; Petrina drops repeats itself. From round two they review only what changed since the last round, and after round three the builder is asked to step back and reconsider. Before an Important finding sends work back, a fresh agent on another tool (the Verifier) checks it, unless a reviewer on another tool already confirmed it, and can mark it real, not a bug, a nit or pre-existing. In a fix round the builder answers every finding by id. Summaries start with a count, or say "Nothing to fix".
+- **Risk.** The planner rates every task Low, Medium or High from what it touches; unrated work counts as Medium. High-risk work gets a Security review on a tool other than the builder's. Where a product opts in, low-risk work with passing checks and nothing Important open ships without the delivery check. An approval covers one commit: if the work changes before the shipper starts, the coordinator is asked again.
+- **Review guide.** Reviewers, the Verifier and the builder read `REVIEW.md` as the base branch has it (never as the change has it), plus points the coordinator accepted. When the coordinator sends back a delivery every reviewer passed, the Guide keeper proposes one point; accepted, reviewers check it from their next turn, and it is committed to `REVIEW.md` on the branch that ships.
+- **Measuring.** The Agents page shows how reviews are going: rounds to pass, what became of each finding, deliveries sent back, and how each reviewer profile's Important findings held up (`packages/core/src/reviews.ts`).
 
 ## Scheduling
 
@@ -150,16 +155,32 @@ The scheduler is a pure function in `@petrina/core` (`pickStarts`), tested witho
 
 ```
 apps/desktop            Tauri 2 shell + React UI
-  src/                  UI (board, inbox, task sheet, session, pool)
-  src-tauri/            Rust host: processes, worktrees, SQLite, sockets
-packages/core           Domain model, scheduler, plan engine, simulator
-docs/                   This document and the UX brainstorm
+  src/                  UI (board, inbox, task sheet, session, agents, library, settings)
+  src-tauri/            Rust host: starts the engine, notifications, single instance
+packages/core           Domain model, scheduler, the flow rules, review numbers, demo simulator
+packages/engine         The engine process (Bun): agents over ACP, git, SQLite, the local API
+docs/                   This document and the UX notes
 ```
+
+Inside the engine, `Engine` (`engine.ts`) is a thin front with the coordinator's commands. Each part of the work is a module of its own, sharing state and bookkeeping (lookups, the timeline, the inbox, saving) through the kernel (`kernel.ts`):
+
+| Module | Owns |
+|---|---|
+| `driver.ts` | Scheduling, the task loop, checkpoints, recovery after a restart |
+| `planning.ts`, `design.ts`, `work.ts`, `review.ts` | The stage kinds: plan, converge, do, review chain with verification |
+| `turn.ts` | One agent working one step: its conversation, instructions, result and questions |
+| `roles.ts`, `context.ts`, `prompts.ts` | Role contracts, what each role is shown, and the prompt around them |
+| `product-checks.ts`, `checks.ts` | The product's checks and running them |
+| `guide-keeper.ts`, `guide.ts` | The review guide |
+| `shipping.ts` | Delivery, never repeated blindly, and pull request polling |
+| `take-over.ts`, `terminal.ts` | Take over in the terminal |
+
+Adding a role is one entry in `roles.ts` (and its data in `@petrina/core`'s library); a role the coordinator makes, with no entry, is told its purpose and hands back notes. The rules a task's run follows (board column, checkpoint wording, where a request for changes goes, how rounds end) live in `@petrina/core`'s `flow.ts`, shared by the engine and the demo simulator.
 
 - **Rust is a thin host.** It starts the engine, passes the engine's address and key to the window, and stops the engine it started when the app quits. It also shows the window's notifications, sets the count on the Dock or taskbar icon, and keeps Petrina to one running copy, with Tauri's own notification and single-instance plugins. The window gets none of those plugins' commands: only the shell's own three (the engine's details, show a notification, set the count), each refused to any window but the main one. No web client, no other plugins.
 - **TypeScript holds everything domain-specific:** roles, plans, the scheduler, the engine, ACP handling, worktrees, SQLite, and the UI.
 - `@petrina/core` never imports Tauri. It talks to a host interface, so the whole engine runs under Node in tests with fake agents.
-- **State** is an append-only event log per task in SQLite. The UI and the engine read the same state, so tasks pick up where they left off after a restart.
+- **State** is one snapshot in SQLite, saved shortly after every change and at once for anything the coordinator says. The UI and the engine read the same state, so tasks pick up where they left off after a restart.
 
 ## The engine process
 
@@ -212,6 +233,7 @@ Known limits: anything done in a take-over session (a push, a pull request, a co
 ## Security notes
 
 - Agent output is untrusted. The UI renders it as text only (no HTML, no `dangerouslySetInnerHTML`). Links are opened only when they are `https://` and only through the host.
+- Petrina runs each product's checks itself, outside the tools' safety checkers (see `AGENTS.md`). Reviews, the tamper check and the review guide compare against the base commit pinned when the working copy was made, never a ref an agent could move.
 - Agents get the repository's content as context. Treat it as untrusted input to the model: approval gates and permission decisions are enforced in code, not by prompting.
 - Every result from an agent is validated against a schema before it changes state. IDs coming from agents are validated before use.
 - Round limits and time limits cap every loop.
