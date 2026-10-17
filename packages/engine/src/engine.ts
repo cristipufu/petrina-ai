@@ -5,15 +5,26 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  answerByCall,
   BUILT_IN_ROLES,
+  CALL_WORDS,
+  callCheckBody,
+  callOn,
   deliveryStages,
+  designStageIndex,
+  dueAnswers,
+  followingCall,
   pickStarts,
   queueOf,
   slotUses,
+  startCall,
+  unanswered,
   type AgentProfile,
+  type CallAnswer,
   type Candidate,
   type Column,
   type DeliveryMode,
+  type DesignCall,
   type GateKind,
   type Id,
   type InboxItem,
@@ -81,6 +92,7 @@ export class Engine {
   private readonly runs = new Map<Id, AgentRun>();
   private readonly waiting = new Map<Id, { resolve: (value: string) => void; reject: (error: Error) => void }>();
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
+  private closed = false;
   private readonly timers: ReturnType<typeof setInterval>[] = [];
 
   constructor(
@@ -108,6 +120,10 @@ export class Engine {
   };
 
   shutdown(): void {
+    // Closed first: stopping agents still changes state, and nothing may save after the store closes.
+    this.closed = true;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
     for (const controller of this.drivers.values()) controller.abort();
     for (const run of this.runs.values()) run.close();
@@ -220,6 +236,35 @@ export class Engine {
     this.log(task, "you", held ? "You put it on hold" : "You released the hold");
     this.commit();
     this.schedule();
+  }
+
+  /** Start this task only after the given tasks have landed. An empty list removes the wait. */
+  setAfter(taskId: Id, after: readonly Id[]): void {
+    const task = this.task(taskId);
+    if (!task) throw new Error("Unknown task");
+    const ids = [...new Set(after)];
+    for (const id of ids) {
+      if (id === taskId) throw new Error("A task cannot wait for itself");
+      if (!this.task(id)) throw new Error(`Unknown task: ${id}`);
+    }
+    // No loops: none of the tasks it waits for may (indirectly) wait for it.
+    const reaches = (from: Id, seen = new Set<Id>()): boolean => {
+      if (from === taskId) return true;
+      if (seen.has(from)) return false;
+      seen.add(from);
+      return (this.task(from)?.after ?? []).some((next) => reaches(next, seen));
+    };
+    if (ids.some((id) => reaches(id))) throw new Error("That would make tasks wait for each other");
+    task.after = ids;
+    const names = ids.map((id) => `“${this.task(id)!.title}”`).join(" and ");
+    this.log(task, "you", ids.length ? `It starts after ${names} land${ids.length === 1 ? "s" : ""}` : "It no longer waits for other tasks");
+    this.commit();
+    this.schedule();
+  }
+
+  /** The tasks this one still waits for. */
+  private blockers(task: MTask): MTask[] {
+    return (task.after ?? []).map((id) => this.task(id)).filter((other): other is MTask => !!other && other.state !== "done" && other.state !== "cancelled");
   }
 
   setPoolLimit(limit: number): void {
@@ -436,19 +481,27 @@ export class Engine {
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
-    this.log(task, "you", `You asked for changes: ${note}`);
+    const stages = task.plan?.stages ?? [];
+    const call = item.kind === "disagreement" ? startCall(task as unknown as Task, note, Date.now()) : undefined;
+    this.log(task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
     this.say(task, "you", note);
     this.remember(task, note);
-    task.queued.push({ id: this.id(task.id), text: note, at: Date.now() });
-    const stages = task.plan?.stages ?? [];
-    if (item.kind === "plan") {
+    // The call reaches the architect in a section of its own; any other note goes to the next agent.
+    if (!call) task.queued.push({ id: this.id(task.id), text: note, at: Date.now() });
+    if (call && task.plan) {
+      // The call is final: the architect follows it once, then the coordinator checks the brief. No review round.
+      task.plan.stages = call.stages as MStage[];
+      task.stageIndex = call.stageIndex;
+      task.call = call.call as MTask["call"];
+    } else if (item.kind === "plan") {
       task.stageIndex = -1;
       delete task.plan;
     } else if (item.kind === "design" || item.kind === "disagreement") {
-      const index = stages.findIndex((stage) => stage.kind === "converge");
+      const index = designStageIndex(stages, task.stageIndex);
       if (index >= 0) {
+        // On a design the call settled, changes go to the architect alone and come back to the same check.
+        if (!callOn(task as unknown as Task, index)) task.rounds[stages[index]!.id] = (task.rounds[stages[index]!.id] ?? 1) + 1;
         task.stageIndex = index;
-        task.rounds[stages[index]!.id] = (task.rounds[stages[index]!.id] ?? 1) + 1;
       }
     } else if (item.kind === "delivery") {
       const index = lastIndex(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
@@ -468,11 +521,21 @@ export class Engine {
   private schedule(): void {
     const candidates: Candidate[] = [];
     const tool = (profileId: Id) => this.profile(profileId)?.toolId ?? "unknown";
+    // A task waiting for others to land stays out of the running and says what it waits for.
+    const blocked = (task: MTask): boolean => {
+      const waitingFor = this.blockers(task);
+      if (!waitingFor.length) return false;
+      const line = `Waiting for “${waitingFor[0]!.title}”${waitingFor.length > 1 ? ` and ${waitingFor.length - 1} more` : ""} to land`;
+      if (task.statusLine !== line) task.statusLine = line;
+      return true;
+    };
     for (const task of this.s.tasks.filter((entry) => entry.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
+      if (blocked(task)) continue;
+      if (task.statusLine.startsWith("Waiting for “")) task.statusLine = "Waiting for a free slot";
       const next = this.nextAgent(task);
       candidates.push({ taskId: task.id, toolId: next ? tool(next.profileId) : "none" });
     }
-    for (const task of queueOf(this.s.tasks as Task[])) if (!task.held) candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
+    for (const task of queueOf(this.s.tasks as Task[])) if (!task.held && !blocked(task as MTask)) candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
 
     for (const taskId of pickStarts({ candidates, inUse: slotUses(this.getState()), pool: this.s.pool })) {
       const task = this.task(taskId);
@@ -558,7 +621,9 @@ export class Engine {
     if (!product?.path) throw new Error(`${product?.name ?? "This product"} has no local copy`);
     const branch = task.branch ?? git.branchName(task.title, task.id);
     const worktree = task.worktree ?? join(this.dataDir, "worktrees", product.id, task.id);
-    const { base } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
+    const { base, skippedFetch, fetchTimedOut } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
+    if (fetchTimedOut) this.log(task, "warn", "GitHub did not answer in time, so this task starts from the local copy");
+    if (skippedFetch) this.log(task, "warn", `Did not update from GitHub: the repository's git settings include ${skippedFetch.slice(0, 3).join(", ")}, which could misuse your GitHub login. Working from the local copy.`);
     if (!task.branch) this.log(task, "milestone", "Set up a fresh working copy");
     task.branch = branch;
     task.worktree = worktree;
@@ -656,6 +721,7 @@ export class Engine {
   }
 
   private async runConverge(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+    if (followingCall(task as unknown as Task)) return this.followCall(task, stage, signal);
     const round = task.rounds[stage.id] ?? 1;
     if (task.sub === 0) {
       const profileId = stage.profileIds[0] ?? "opus-xhigh";
@@ -696,11 +762,38 @@ export class Engine {
       delete task.agent;
       task.holdsSlot = false;
       task.statusLine = "The architects disagree. Your call";
-      this.raise(task, "disagreement", `The architects disagree on “${task.title}”`, false, { body: "Read both sides in the Design tab, then side with the architect or write your call." });
+      this.raise(task, "disagreement", `The architects disagree on “${task.title}”`, false, { body: CALL_WORDS.disagreement });
       this.commit();
       return "stop";
     }
     task.rounds[stage.id] = round + 1;
+    task.sub = 0;
+    this.commit();
+    return "continue";
+  }
+
+  /** The coordinator made the call: the architect updates the brief to follow it, then the design goes to the coordinator's check. */
+  private async followCall(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue"> {
+    const call = task.call!;
+    const profileId = stage.profileIds[0] ?? "opus-xhigh";
+    const revising = !task.objections.some((objection) => objection.status === "open");
+    // Answers add up across repairs, so the architect can hand back just the ones it left out.
+    const answers = new Map<Id, CallAnswer>();
+    const result = await this.turn(task, stage.roleId, profileId, this.sectionsFor(task, stage.roleId), BriefResult, signal, {
+      status: CALL_WORDS.following,
+      check: (value) => {
+        for (const answer of value.answers) answers.set(answer.id, answer);
+        const missing = unanswered(task.objections as Task["objections"], call as DesignCall, [...answers.values()]);
+        return missing.length ? `every objection listed for an answer needs one by id, and these have none:\n${formatObjections(missing)}` : undefined;
+      },
+    });
+    task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks };
+    task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as MTask["objections"];
+    this.log(task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, profileId);
+    await this.undoReadOnly(task, stage.roleId);
+    this.log(task, "done", CALL_WORDS.settled);
+    // The design check comes next, maybe after steps such as Screens: the call made sure there is one.
+    task.stageIndex += 1;
     task.sub = 0;
     this.commit();
     return "continue";
@@ -781,7 +874,7 @@ export class Engine {
     delete task.agent;
     task.holdsSlot = false;
     if (task.delivery === "pull-request") {
-      const pr = await git.findPr(task.worktree!, task.branch!);
+      const pr = await git.findPr(product.repo, task.branch!);
       if (!pr) throw new Error("The shipper finished, but no pull request exists for this branch");
       task.pr = { number: pr.number, url: pr.url, state: "open", openedAt: Date.now() };
       task.state = "pr-open";
@@ -789,7 +882,7 @@ export class Engine {
       task.statusLine = `Pull request #${pr.number} is open. Merge it on GitHub when you are happy`;
       this.log(task, "done", `Opened pull request #${pr.number}`, "shipper", SHIPPER_PROFILE);
     } else if (task.delivery === "release") {
-      const release = result.tag ? await git.findRelease(task.worktree!, result.tag) : undefined;
+      const release = result.tag ? await git.findRelease(product.repo, result.tag) : undefined;
       if (!release) throw new Error("The shipper finished, but the release could not be found on GitHub");
       task.release = release;
       task.state = "done";
@@ -825,7 +918,20 @@ export class Engine {
         body: [brief.summary, brief.forUsers.length ? `What changes for users:\n${brief.forUsers.map((line) => `- ${line}`).join("\n")}` : "", `Acceptance checklist:\n${brief.acceptance.map((item) => `- ${item.text}`).join("\n")}`, brief.risks.length ? `Risks:\n${brief.risks.map((line) => `- ${line}`).join("\n")}` : ""].filter(Boolean).join("\n\n"),
       });
     }
-    if ((roleId === "architect" || roleId === "design-reviewer") && task.objections.length) sections.push({ title: "Objections so far", body: formatObjections(task.objections as Task["objections"]) });
+    const call = roleId === "architect" ? followingCall(task as unknown as Task) : undefined;
+    if (call) {
+      const due = dueAnswers(task.objections as Task["objections"], call);
+      const open = due.filter((objection) => objection.status === "open");
+      const settled = due.filter((objection) => objection.status !== "open");
+      const earlier = task.objections.filter((objection) => !due.some((entry) => entry.id === objection.id));
+      sections.push({ title: "The coordinator's call (final, exact words)", body: call.text });
+      if (open.length || !settled.length) sections.push({ title: "Objections still open (answer every one by id)", body: open.length ? formatObjections(open) : "None. Every objection already has an answer." });
+      // After changes asked for at the check, the architect answers these again, so it can correct a decision or a note.
+      if (settled.length) sections.push({ title: "Objections answered after the call (answer every one again by id)", body: formatObjections(settled) });
+      if (earlier.length) sections.push({ title: "Objections answered before the call", body: formatObjections(earlier as Task["objections"]) });
+    } else if ((roleId === "architect" || roleId === "design-reviewer") && task.objections.length) {
+      sections.push({ title: "Objections so far", body: formatObjections(task.objections as Task["objections"]) });
+    }
     if (roleId === "builder" && task.fixing) {
       const open = task.findings.filter((finding) => finding.status === "open");
       if (open.length) sections.push({ title: "Review findings to fix", body: formatFindings(open as Task["findings"]) });
@@ -841,8 +947,19 @@ export class Engine {
     return sections;
   }
 
-  /** One agent, one stage: run turns until it hands back a valid result. */
-  private async turn<T>(task: MTask, roleId: Id, profileId: Id, sections: { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal): Promise<T> {
+  /**
+   * One agent, one stage: run turns until it hands back a valid result. `status` keeps the task's
+   * status line fixed while the agent works; `check` turns a valid but incomplete result into a repair.
+   */
+  private async turn<T>(
+    task: MTask,
+    roleId: Id,
+    profileId: Id,
+    sections: { title: string; body: string }[],
+    schema: z.ZodType<T>,
+    signal: AbortSignal,
+    options: { status?: string; check?: (value: T) => string | undefined } = {},
+  ): Promise<T> {
     const role = this.role(roleId);
     const profile = this.profile(profileId);
     const product = this.productOf(task);
@@ -853,7 +970,7 @@ export class Engine {
     task.state = "running";
     task.holdsSlot = true;
     task.column = this.columnFor(task);
-    task.statusLine = `${role.name} is starting`;
+    task.statusLine = options.status ?? `${role.name} is starting`;
     this.say(task, "system", `${role.name} joined · ${this.describe(roleId, profileId)}`, roleId, profileId);
     this.log(task, "milestone", `${role.name} started`, roleId, profileId);
     this.commit();
@@ -863,22 +980,22 @@ export class Engine {
     const run = await AgentRun.start({
       profile,
       ...(command ? { command } : {}),
-      // Only the shipper has GitHub credentials, so nothing else can push or publish whatever it runs.
-      ...(roleId === "shipper" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
+      // GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none.
+      ...(roleId === "shipper" && task.delivery !== "local" ? {} : { env: agentEnv(process.env, await this.emptyGhConfig()) }),
       cwd: task.worktree!,
       signal,
       callbacks: {
         onActivity: (line) => {
           const current = live();
           if (!current || current.state !== "running") return;
-          current.statusLine = line;
+          current.statusLine = options.status ?? line;
           this.say(current, "activity", line, roleId, profileId);
           this.commit();
         },
         onPlanStep: (line) => {
           const current = live();
           if (!current) return;
-          if (current.state === "running") current.statusLine = line;
+          if (current.state === "running") current.statusLine = options.status ?? line;
           if (current.timeline.at(-1)?.text !== line) this.log(current, "status", line, roleId, profileId);
           this.commit();
         },
@@ -914,18 +1031,24 @@ export class Engine {
           reply = await run.prompt(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`);
           continue;
         }
-        if (parsed.ok === true) return parsed.value;
+        const error = parsed.ok === true ? options.check?.(parsed.value) : parsed.error;
+        if (parsed.ok === true && !error) return parsed.value;
         repairs += 1;
-        if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${parsed.error}`);
-        reply = await run.prompt(repairPrompt(parsed.error));
+        if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${error}`);
+        reply = await run.prompt(repairPrompt(error ?? ""));
       }
     } finally {
       this.runs.delete(taskId);
       run.close();
-      // A read-only role must leave the branch where it found it, commits included.
+      // A read-only role runs in its tool's automatic mode, so it could change things: leave the
+      // working copy exactly as it found it, commits and uncommitted changes alike.
       if (headBefore && task.worktree && (await git.head(task.worktree).catch(() => headBefore)) !== headBefore) {
         await git.resetTo(task.worktree, headBefore);
         this.log(task, "warn", `Undid commits from ${role.name}, which is read-only`);
+      }
+      if (!role.canEdit && task.worktree && !(await git.isClean(task.worktree).catch(() => true))) {
+        await git.discardChanges(task.worktree);
+        this.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
       }
     }
   }
@@ -968,10 +1091,11 @@ export class Engine {
     };
     const status: Record<GateKind, string> = {
       plan: "Plan ready. Waiting for your OK",
-      design: "Design settled. Waiting for your check",
+      design: callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check",
       delivery: "Reviews done. Waiting for your OK to ship",
     };
-    this.raise(task, gate, titles[gate], false);
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
+    this.raise(task, gate, titles[gate], false, body ? { body } : {});
     task.statusLine = status[gate];
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     this.commit();
@@ -1070,7 +1194,8 @@ export class Engine {
 
   private async pollPullRequests(): Promise<void> {
     for (const task of this.s.tasks.filter((entry) => entry.state === "pr-open" && entry.pr && entry.worktree)) {
-      const state = await git.prState(task.worktree!, task.pr!.number).catch(() => undefined);
+      const repo = this.productOf(task)?.repo;
+      const state = repo ? await git.prState(repo, task.pr!.number).catch(() => undefined) : undefined;
       if (state === "merged" || state === "closed") {
         task.pr!.state = state === "merged" ? "merged" : "open";
         task.state = "done";
@@ -1079,6 +1204,8 @@ export class Engine {
         task.statusLine = state === "merged" ? `Merged #${task.pr!.number} on GitHub` : `Closed #${task.pr!.number} without merging`;
         this.log(task, "done", task.statusLine);
         this.commit();
+        // Tasks waiting for this one to land can start now.
+        this.schedule();
       }
     }
   }
@@ -1161,10 +1288,10 @@ export class Engine {
   private commit(): void {
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
-    if (!this.saveTimer) {
+    if (!this.saveTimer && !this.closed) {
       this.saveTimer = setTimeout(() => {
         this.saveTimer = undefined;
-        this.store.save(this.getState());
+        if (!this.closed) this.store.save(this.getState());
       }, 400);
     }
   }

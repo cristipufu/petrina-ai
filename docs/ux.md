@@ -105,7 +105,7 @@ The run state is written on the card, never shown by dimming it:
 └────────────────────────────────────────────┘
 ```
 
-- The pipeline comes from the task's plan, for example Plan, Design, Your check, Build, Review, Ship. Stages the plan does not have are absent. Hovering or focusing any step names it in a small tooltip ("Plan, done", "Build, now", "Review, next"), so the whole pipeline is readable without opening the task. The strip is one tab stop; the arrow keys move between its steps. The task sheet lists every step by name too.
+- The pipeline comes from the task's plan, for example Plan, Design, Your check, Build, Review, Ship. Stages the plan does not have are absent. Hovering or focusing any step names it in a small tooltip ("Plan, done", "Build, now", "Review, next"), so the whole pipeline is readable without opening the task. The strip is one tab stop; the arrow keys move between its steps. It always fits on one line: on long plans (seven steps or more) the gaps tighten and the finished steps fold into one check with a count ("✓ 4", named in its tooltip: "Plan, Research, Design and Screens, done"); a very long plan also folds its furthest steps into "+N". The task sheet lists every step by name too.
 - Delivery shows in the footer in words: "Pull request #237 · awaiting merge", "Released v1.4.0", "Delivered locally to main".
 - Shortcuts (Message, Pause or Resume, Move to top, and More: Open, Join the session, Hold, Cancel) appear on hover and on keyboard focus, in space the footer always keeps for them, so nothing moves or gets covered.
 
@@ -144,8 +144,8 @@ Everything waiting on you: items that keep an agent waiting first, then by task 
 | **Question** | "Should dark mode follow the system setting, or be a manual toggle?" | The agent's answers as equal choices, its own recommendation first and marked "Agent's suggestion". "Decide for me" (only when there are choices) picks that first answer, and says so. Or answer in your own words |
 | **Permission** | "Add a new package: Stripe.js" | **Allow** (once) or **Deny**. "Show the exact command" reveals what the tool asked to run |
 | **Plan** | The planner's plan, if you asked to approve plans | **Approve plan**, See the plan, Re-plan with a note |
-| **Design check** | The design brief and the disagreement log | **Approve design**, Read the brief, Request changes with a note |
-| **Disagreement** | The architects did not agree after the round limit | **Read both sides** leads; "Side with the architect" and "Write my call" are equally quiet |
+| **Design check** | The design brief and the disagreement log | **Approve design**, Read the brief, Request changes with a note. After your call it says how many objections the call settled, and changes go to the architect only, who answers those objections again and can correct a decision, a "Your call" tag or a note. The call stays: no later check reopens the design it settled |
+| **Disagreement** | The architects did not agree after the round limit | **Read both sides** leads; "Side with the architect" and "Write my call" are equally quiet. Your call is final: the architect updates the brief to follow it with no further review round, and you check the brief before building (at the plan's own design check, after steps such as Screens; one is added only if the plan has none before the build) |
 | **Ready to ship** | Acceptance checklist and review summary | **Open a pull request** (or publish, or commit), See the reviews, Send back with a note |
 | **Stuck** | A stage failed, or a tool needs you to log in | **Try again**, See what happened, Cancel task |
 
@@ -174,7 +174,7 @@ Agents start with full permissions inside their own working copy, so they rarely
 
 - **Overview:** what you asked for, who is on it right now (role, tool, model and effort in words), and the timeline: one row per event with its time aligned on the left, and a clear break at each stage change.
 - **Plan:** why this plan, then the stages as a spacious numbered list. Stages that have not started can change tool or model, and a review can gain a reviewer. "Re-plan" sends a note to the planner.
-- **Design:** the brief in one reading column (what changes for users, which parts of the product, the acceptance checklist, risks), then the disagreements. Each one separates the issue, its status, who raised it and the architect's answer, with open blockers first.
+- **Design:** the brief in one reading column (what changes for users, which parts of the product, the acceptance checklist, risks), then the disagreements. Each one separates the issue, its status, who raised it and the architect's answer, with open blockers first. Objections your call settled carry a "Your call" tag, your words, and the architect's note on how the brief follows them.
 - **Review:** the tamper check, then the findings: open blockers first, each with its status, who raised it and who confirmed it.
 - **Session:** join the agent that is working right now (below).
 
@@ -204,6 +204,7 @@ This is the "open in terminal" experience, made friendly.
 - **Ask me before starting:** off by default.
 - Attachments: screenshots and links.
 - "Add another" keeps the dialog open for brain dumps. Pasting a list creates one task per line.
+- New task and Add product open centred and stay inside the window at every size and at 200% zoom; when there is not enough room, the dialog scrolls inside itself.
 
 ## Library
 
@@ -257,7 +258,7 @@ Inter, bundled with the app (the window's security policy only loads fonts from 
 | Page and task titles | 28 / 36 | Semibold |
 
 - Sentence case everywhere. Nothing essential is smaller than 12px.
-- Counts, durations, timestamps and pool usage use equal-width digits.
+- Every number uses equal-width digits, so counts, durations, timestamps and pool usage never shift as they change ("You're blocking 2 agents", "2 agents are waiting on you").
 - Sizes follow enlarged text: at 200% the layout gives up space the same way a narrower window does.
 
 ### Spacing

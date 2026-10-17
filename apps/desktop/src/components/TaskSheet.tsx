@@ -451,12 +451,19 @@ function ObjectionItem({ objection, find }: { objection: Objection; find: Lookup
         <span>{objection.blocking ? "Blocking" : "Not blocking"}</span>
         <span aria-hidden="true">·</span>
         <span className="num">Round {objection.round}</span>
+        {objection.call !== undefined && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="label accent">Your call</span>
+          </>
+        )}
       </div>
       <p className="issue-text">{objection.text}</p>
       <p className="issue-who">Raised by {profileText(find.profile(objection.raisedBy), find, true)}</p>
+      {objection.call !== undefined && <CallWords text={objection.call} />}
       {objection.answer && (
         <div className="issue-response">
-          <b>The architect's answer</b>
+          <b>{objection.call !== undefined ? "The architect's note" : "The architect's answer"}</b>
           {objection.answer}
         </div>
       )}
@@ -549,6 +556,28 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
         {finding.confirmedBy.length > 0 && `. Confirmed by ${finding.confirmedBy.map((profileId) => profileText(find.profile(profileId), find, true)).join(" and ")}`}
       </p>
     </li>
+  );
+}
+
+const CALL_PREVIEW = 140;
+
+/** The coordinator's call on an objection it settled: shortened, with a way to read it all. */
+function CallWords({ text }: { text: string }) {
+  const [all, setAll] = useState(false);
+  const long = text.length > CALL_PREVIEW;
+  return (
+    <div className="issue-response">
+      <b>Your call</b>
+      {all || !long ? text : `${text.slice(0, CALL_PREVIEW).trimEnd()}…`}
+      {long && (
+        <>
+          {" "}
+          <button className="linkish" onClick={() => setAll((on) => !on)}>
+            {all ? "Show less" : "Read all"}
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 

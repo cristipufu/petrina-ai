@@ -161,7 +161,13 @@ export function App() {
         {blocking > 0 && (
           <button className="blocking-pill" onClick={openInbox} aria-label={`You're blocking ${blocking} agent${blocking === 1 ? "" : "s"}. Open the inbox`}>
             <Hand size={16} strokeWidth={2.2} aria-hidden="true" />
-            {roomy ? `You're blocking ${blocking} agent${blocking === 1 ? "" : "s"}` : <span className="num">{blocking}</span>}
+            {roomy ? (
+              <span>
+                You're blocking <span className="num">{blocking}</span> agent{blocking === 1 ? "" : "s"}
+              </span>
+            ) : (
+              <span className="num">{blocking}</span>
+            )}
           </button>
         )}
         {barExtras && <PoolButton state={state} find={find} onOpen={open} compact={!poolSquares} />}

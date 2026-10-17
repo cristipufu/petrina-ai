@@ -12,7 +12,7 @@ import {
   Search,
   type LucideIcon,
 } from "lucide-react";
-import { pipelineOf, stepTip, type AgentProfile, type Product, type Role, type RoleIcon, type Task } from "@petrina/core";
+import { LONG_PIPELINE, pipelineOf, stepTip, stripOf, type AgentProfile, type Product, type Role, type RoleIcon, type Task } from "@petrina/core";
 import { profileText, type Lookup } from "../lib";
 
 export const ROLE_ICONS: Record<RoleIcon, LucideIcon> = {
@@ -83,13 +83,15 @@ function progressLabel(task: Task): string {
 
 /**
  * A card's own pipeline, quiet: done steps checked, the current one named, skipped ones absent.
+ * It stays on one line: long plans tighten and fold finished steps into one check with a count.
  * Every step is named in a tooltip on hover and on keyboard focus ("Review, next"). The strip is
  * one tab stop; the arrow keys move between its steps, and Enter or a click opens the task.
  */
 export function Pipeline({ task, onActivate }: { task: Task; onActivate?: () => void }) {
   const [focused, setFocused] = useState<number>();
-  const steps = pipelineOf(task);
-  if (steps.length === 0) return null;
+  const all = pipelineOf(task);
+  if (all.length === 0) return null;
+  const steps = stripOf(all);
   const tabStop = focused ?? Math.max(0, steps.findIndex((step) => step.state === "current"));
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLOListElement>) => {
@@ -105,20 +107,35 @@ export function Pipeline({ task, onActivate }: { task: Task; onActivate?: () => 
   };
 
   return (
-    <ol className="pipeline" aria-label="Progress" onClick={onActivate} onKeyDown={onKeyDown} onBlur={(event) => !event.currentTarget.contains(event.relatedTarget) && setFocused(undefined)}>
+    <ol className={`pipeline ${all.length >= LONG_PIPELINE ? "long" : ""}`} aria-label="Progress" onClick={onActivate} onKeyDown={onKeyDown} onBlur={(event) => !event.currentTarget.contains(event.relatedTarget) && setFocused(undefined)}>
       {steps.map((step, index) => (
         <li
           key={`${step.label}-${index}`}
-          className={step.state === "current" ? `current ${task.state}` : step.state}
+          className={`${step.state === "current" ? `current ${task.state}` : step.state} ${step.folded ? "folded" : ""}`}
           tabIndex={index === tabStop ? 0 : -1}
           aria-label={stepTip(step)}
           data-tip={stepTip(step)}
           onFocus={() => setFocused(index)}
         >
-          <span className="mark" aria-hidden="true">
-            {step.state === "done" && <Check size={10} strokeWidth={3} />}
-          </span>
-          {step.state === "current" && <span aria-hidden="true">{step.label}</span>}
+          {step.folded && step.state === "next" ? (
+            <span className="count" aria-hidden="true">
+              +{step.folded.length}
+            </span>
+          ) : (
+            <span className="mark" aria-hidden="true">
+              {step.state === "done" && <Check size={10} strokeWidth={3} />}
+            </span>
+          )}
+          {step.folded && step.state === "done" && (
+            <span className="count" aria-hidden="true">
+              {step.folded.length}
+            </span>
+          )}
+          {step.state === "current" && (
+            <span className="name" aria-hidden="true">
+              {step.label}
+            </span>
+          )}
         </li>
       ))}
     </ol>

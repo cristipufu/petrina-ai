@@ -50,6 +50,9 @@ export const DEMO_TRIGGERS: Triggers = {
   },
 };
 
+/** Demo tasks whose architects end up disagreeing, so the coordinator can make the call. */
+const DEMO_DISAGREE: readonly string[] = ["gift-cards"];
+
 interface Spec {
   id: string;
   productId: string;
@@ -74,6 +77,7 @@ const SPECS: readonly Spec[] = [
   { id: "onboarding", productId: "shop", title: "Onboarding checklist", description: "A short checklist for new store owners: add a product, set up payments, share the store.", area: "onboarding", kind: "new" },
   { id: "tag-search", productId: "notes", title: "Search by tag", description: "Type #tag in search to see every note with that tag.", area: "tag search", kind: "feature" },
   { id: "stripe-retries", productId: "shop", title: "Retry failed Stripe webhooks", description: "When a webhook fails, retry it a few times before giving up.", area: "webhooks", kind: "bug" },
+  { id: "gift-cards", productId: "shop", title: "Gift cards", description: "Sell gift cards people can send by email and spend at checkout.", area: "gift cards", kind: "feature" },
 ];
 
 const MINUTE = 60_000;
@@ -131,7 +135,7 @@ function fastForward(
   products: readonly Product[] = DEMO_PRODUCTS,
 ): { task: Task; inbox: InboxItem[] } {
   const start = 0;
-  const sim = new Simulator({ ...baseState(start, [queuedTask(spec, 0, start, products)]), products }, { triggers, prMergeAfter: 3, tickMs: TICK });
+  const sim = new Simulator({ ...baseState(start, [queuedTask(spec, 0, start, products)]), products }, { triggers, prMergeAfter: 3, tickMs: TICK, disagree: DEMO_DISAGREE });
   for (let tick = 0; tick < 400; tick += 1) {
     sim.tick();
     const state = sim.getState();
@@ -188,6 +192,7 @@ export function createDemoState(now: number): State {
   place("guest-checkout", 2 * MINUTE, (_task, items) => items.some((item) => item.kind === "permission"), 100);
   place("login-loop", 0, (task) => task.column === "reviewing" && task.sub === 0 && (task.agent?.step ?? 0) === 2, 101);
   place("dark-mode", 4 * MINUTE, (_task, items) => items.some((item) => item.kind === "question"), 102);
+  place("gift-cards", 6 * MINUTE, (_task, items) => items.some((item) => item.kind === "disagreement"), 107);
   place("weekly-digest", 9 * MINUTE, (_task, items) => items.some((item) => item.kind === "plan"), 103);
   place("pricing-refresh", 26 * MINUTE, (_task, items) => items.some((item) => item.kind === "delivery"), 104);
   place("sentry", 3 * 60 * MINUTE, (task) => task.state === "done", 105);

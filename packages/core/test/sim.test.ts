@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createDemoState, createPortfolioDemo } from "../src/demo.js";
+import { answerByCall, CALL_WORDS, dueAnswers, unanswered } from "../src/call.js";
+import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS } from "../src/demo.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
-import type { State, Task } from "../src/model.js";
+import type { DesignCall, Objection, Stage, State, Task } from "../src/model.js";
 import { slotUses, startsNextCount } from "../src/scheduler.js";
 import { Simulator } from "../src/sim.js";
 
@@ -36,6 +37,284 @@ function runUntil(sim: Simulator, done: () => boolean, limit = 300): void {
     }
   }
 }
+
+/** A task whose design reviewer keeps objecting, ticked until the architects disagree. */
+function disagreeing(kind: Task["kind"] = "feature", limit = 2): { sim: Simulator; id: string } {
+  const seed = new Simulator(emptyState(limit), { prMergeAfter: 1_000 });
+  const id = seed.addTask({ productId: "p", title: "Saved carts", kind });
+  const sim = new Simulator(seed.getState(), { prMergeAfter: 1_000, disagree: [id] });
+  for (let tick = 0; tick < 300 && !inboxItem(sim, "disagreement"); tick += 1) sim.tick();
+  if (!inboxItem(sim, "disagreement")) throw new Error("the architects never disagreed");
+  return { sim, id };
+}
+
+/** The same simulator, with the disagreeing task's plan reshaped around its design stage. */
+function reshaped(sim: Simulator, id: string, reshape: (stages: Stage[], design: number) => Stage[]): Simulator {
+  const state = JSON.parse(JSON.stringify(sim.getState())) as { tasks: { id: string; stageIndex: number; plan: { stages: Stage[] } }[] };
+  const draft = state.tasks.find((entry) => entry.id === id)!;
+  draft.plan.stages = reshape(draft.plan.stages, draft.stageIndex);
+  return new Simulator(state as unknown as State, { prMergeAfter: 1_000, disagree: [id] });
+}
+
+function inboxItem(sim: Simulator, kind: string) {
+  return sim.getState().inbox.find((item) => item.kind === kind);
+}
+
+/** Tick until an inbox item of `kind` shows up. */
+function tickUntil(sim: Simulator, kind: string, limit = 300) {
+  for (let tick = 0; tick < limit && !inboxItem(sim, kind); tick += 1) sim.tick();
+  const item = inboxItem(sim, kind);
+  if (!item) throw new Error(`no ${kind} item`);
+  return item;
+}
+
+const reviewerRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "design-reviewer" && entry.tone === "milestone").length;
+
+describe("The coordinator's call on a design disagreement", () => {
+  const CALL = "Keep the confirmation step, but only for existing accounts.";
+
+  it("settles the design: the architect follows it once, no review round, then a design check", () => {
+    const { sim, id } = disagreeing();
+    const before = task(sim, id);
+    const open = before.objections.filter((objection) => objection.status === "open");
+    expect(open.length).toBeGreaterThan(1);
+    const stage = before.plan!.stages[before.stageIndex]!;
+    const rounds = before.rounds[stage.id];
+    const reviews = reviewerRuns(before);
+
+    sim.requestChanges(inboxItem(sim, "disagreement")!.id, CALL);
+    expect(task(sim, id).call?.text).toBe(CALL);
+    sim.tick();
+    expect(task(sim, id).agent?.roleId).toBe("architect");
+    expect(task(sim, id).statusLine).toBe(CALL_WORDS.following);
+
+    const check = tickUntil(sim, "design");
+    const after = task(sim, id);
+    expect(inboxItem(sim, "disagreement")).toBeUndefined();
+    expect(reviewerRuns(after)).toBe(reviews);
+    expect(after.rounds[stage.id]).toBe(rounds);
+    expect(after.statusLine).toBe(CALL_WORDS.waiting);
+    // Every objection that was open has an answer; the blocking one as the call says, the other in the architect's own name.
+    for (const objection of open) {
+      const answered = after.objections.find((entry) => entry.id === objection.id)!;
+      expect(answered.status).not.toBe("open");
+      expect(answered.answer).toBeTruthy();
+      expect(answered.call).toBe(objection.blocking ? CALL : undefined);
+    }
+    expect(after.objections.some((objection) => objection.status === "open")).toBe(false);
+    expect(check.body).toContain("Your call settled 1 objection (1 accepted, 0 rejected). The architect answered 1 on its own.");
+    const texts = after.timeline.map((entry) => entry.text);
+    const made = texts.indexOf(CALL_WORDS.made(CALL));
+    expect(made).toBeGreaterThanOrEqual(0);
+    expect(texts.indexOf(CALL_WORDS.updated)).toBeGreaterThan(made);
+    expect(texts.indexOf(CALL_WORDS.settled)).toBeGreaterThan(texts.indexOf(CALL_WORDS.updated));
+    expect(texts.some((text) => text.startsWith("You asked for changes"))).toBe(false);
+
+    // Approving moves on to the build. The call stays, so nothing later can reopen the design it settled.
+    sim.approve(check.id);
+    sim.tick();
+    expect(task(sim, id).call?.text).toBe(CALL);
+    expect(task(sim, id).agent?.roleId).toBe("builder");
+  });
+
+  it("sends changes asked for at the check after a call to the architect only, back to the same check", () => {
+    const { sim, id } = disagreeing();
+    sim.requestChanges(inboxItem(sim, "disagreement")!.id, CALL);
+    const check = tickUntil(sim, "design");
+    const before = task(sim, id);
+    const reviews = reviewerRuns(before);
+    const rounds = { ...before.rounds };
+
+    sim.requestChanges(check.id, "Say what the confirmation step looks like on phones.");
+    const again = tickUntil(sim, "design");
+    const after = task(sim, id);
+    expect(again.id).not.toBe(check.id);
+    expect(after.stageIndex).toBe(before.stageIndex);
+    expect(reviewerRuns(after)).toBe(reviews);
+    expect(after.rounds).toEqual(rounds);
+    expect(inboxItem(sim, "disagreement")).toBeUndefined();
+    expect(after.timeline.some((entry) => entry.text === CALL_WORDS.revised)).toBe(true);
+    // The architect answered every objection the call covered again, so its notes follow the updated brief.
+    for (const objection of after.objections.filter((entry) => after.call!.open.includes(entry.id))) {
+      expect(objection.status).not.toBe("open");
+      expect(objection.answer).toContain("your note");
+    }
+  });
+
+  it("lets the architect correct a decision, a 'Your call' tag or a note when changes are asked for after a call", () => {
+    const call: DesignCall = { text: CALL, stageId: "design", open: ["a", "b"], at: 0 };
+    const objection = (id: string, extra: Partial<Objection>): Objection => ({ id, round: 2, text: `Objection ${id}`, blocking: true, raisedBy: "sol-xhigh", status: "open", ...extra });
+    const answered = [
+      objection("a", { status: "rejected", answer: "Removed it, as the call says.", call: CALL }),
+      objection("b", { status: "accepted", answer: "Added it." }),
+      objection("c", { status: "accepted", answer: "Settled before the call." }),
+    ];
+    // Every objection the call covered is due again; one answered before the call is not.
+    expect(dueAnswers(answered, call).map((entry) => entry.id)).toEqual(["a", "b"]);
+    expect(unanswered(answered, call, [{ id: "a" }]).map((entry) => entry.id)).toEqual(["b"]);
+
+    const corrected = answerByCall(answered, call, [
+      { id: "a", status: "accepted", byCall: false, answer: "The call does not decide it. Kept it in the brief." },
+      { id: "b", status: "rejected", byCall: true, answer: "Left it out of the brief, as the call says." },
+      { id: "c", status: "rejected", byCall: true, answer: "Not due." },
+    ]);
+    expect(corrected[0]).toEqual(objection("a", { status: "accepted", answer: "The call does not decide it. Kept it in the brief." }));
+    expect(corrected[1]).toEqual(objection("b", { status: "rejected", answer: "Left it out of the brief, as the call says.", call: CALL }));
+    expect(corrected[2]).toBe(answered[2]);
+  });
+
+  it("answers the plan's own design check after Screens: no second check, and approving it keeps the call", () => {
+    const { sim, id } = disagreeing("new");
+    const before = task(sim, id);
+    const design = before.plan!.stages[before.stageIndex]!;
+    const stages = before.plan!.stages.map((stage) => stage.id);
+    expect(before.plan!.stages[before.stageIndex + 1]!.roleId).toBe("ux-designer");
+    const reviews = reviewerRuns(before);
+    const rounds = { ...before.rounds };
+
+    sim.requestChanges(inboxItem(sim, "disagreement")!.id, CALL);
+    expect(task(sim, id).plan!.stages.map((stage) => stage.id)).toEqual(stages);
+    const check = tickUntil(sim, "design");
+    const at = task(sim, id);
+    // Screens ran after the architect followed the call, and the check is the plan's own, with the call's words.
+    expect(at.plan!.stages[at.stageIndex]).toMatchObject({ kind: "gate", gate: "design" });
+    expect(at.plan!.stages[at.stageIndex]!.id).not.toBe(`${design.id}:call-check`);
+    expect(at.timeline.findIndex((entry) => entry.roleId === "ux-designer")).toBeGreaterThan(at.timeline.findIndex((entry) => entry.text === CALL_WORDS.settled));
+    expect(at.statusLine).toBe(CALL_WORDS.waiting);
+    expect(check.body).toContain("Your call settled 1 objection (1 accepted, 0 rejected). The architect answered 1 on its own.");
+
+    // Changes there go to the architect alone and come back, through Screens, to the same check.
+    sim.requestChanges(check.id, "Say what the confirmation step looks like on phones.");
+    const again = tickUntil(sim, "design");
+    const after = task(sim, id);
+    expect(after.stageIndex).toBe(at.stageIndex);
+    expect(after.plan!.stages.map((stage) => stage.id)).toEqual(stages);
+    expect(reviewerRuns(after)).toBe(reviews);
+    expect(after.rounds).toEqual(rounds);
+    expect(inboxItem(sim, "disagreement")).toBeUndefined();
+    expect(after.statusLine).toBe(CALL_WORDS.waiting);
+    expect(again.body).toContain("Your call settled");
+
+    // Approving it moves on to the build, and the call stays.
+    sim.approve(again.id);
+    sim.tick();
+    expect(task(sim, id).call?.text).toBe(CALL);
+    expect(task(sim, id).agent?.roleId).toBe("builder");
+    expect(task(sim, id).plan!.stages.filter((stage) => stage.kind === "gate" && stage.gate === "design")).toHaveLength(1);
+  });
+
+  it("adds a design check after a call when the plan has none before the build, and moves on from it", () => {
+    const seed = disagreeing();
+    const id = seed.id;
+    const sim = reshaped(seed.sim, id, (stages) => stages.filter((stage) => !(stage.kind === "gate" && stage.gate === "design")));
+    const design = task(sim, id).plan!.stages[task(sim, id).stageIndex]!;
+    expect(task(sim, id).plan!.stages[task(sim, id).stageIndex + 1]!.roleId).toBe("builder");
+
+    sim.requestChanges(inboxItem(sim, "disagreement")!.id, CALL);
+    const check = tickUntil(sim, "design");
+    const at = task(sim, id);
+    expect(at.plan!.stages[at.stageIndex]).toMatchObject({ kind: "gate", gate: "design", id: `${design.id}:call-check` });
+    expect(at.plan!.stages[at.stageIndex - 1]!.id).toBe(design.id);
+    expect(check.body).toContain("Your call settled");
+
+    sim.approve(check.id);
+    sim.tick();
+    expect(task(sim, id).agent?.roleId).toBe("builder");
+  });
+
+  it("never lets a later design check reopen the design the call settled", () => {
+    const seed = disagreeing();
+    const id = seed.id;
+    // Design, its check, Screens, then a second design check on the same design.
+    const sim = reshaped(seed.sim, id, (stages, design) => {
+      const screens: Stage = { id: `${stages[design]!.id}:ux`, kind: "do", title: "Screens", roleId: "ux-designer", profileIds: ["opus-high"] };
+      const later: Stage = { id: `${stages[design]!.id}:later-check`, kind: "gate", title: "Your design check", roleId: "architect", profileIds: [], gate: "design" };
+      return [...stages.slice(0, design + 2), screens, later, ...stages.slice(design + 2)];
+    });
+    const before = task(sim, id);
+    const reviews = reviewerRuns(before);
+    const rounds = { ...before.rounds };
+    const stages = before.plan!.stages.length;
+
+    sim.requestChanges(inboxItem(sim, "disagreement")!.id, CALL);
+    sim.approve(tickUntil(sim, "design").id);
+    const later = tickUntil(sim, "design");
+    expect(task(sim, id).plan!.stages[task(sim, id).stageIndex]!.id).toContain(":later-check");
+    expect(task(sim, id).statusLine).toBe(CALL_WORDS.waiting);
+    expect(later.body).toContain("Your call settled");
+
+    // Changes at the later check go to the architect alone: no review round, no new disagreement.
+    sim.requestChanges(later.id, "Say what the confirmation step looks like on phones.");
+    const checks: string[] = [];
+    for (let tick = 0; tick < 300 && task(sim, id).agent?.roleId !== "builder"; tick += 1) {
+      sim.tick();
+      for (const item of sim.getState().inbox.filter((entry) => entry.taskId === id)) {
+        expect(item.kind).toBe("design");
+        expect(item.body).toContain("Your call settled");
+        checks.push(item.id);
+        sim.approve(item.id);
+      }
+    }
+    const after = task(sim, id);
+    expect(after.agent?.roleId).toBe("builder");
+    expect(checks.length).toBeGreaterThan(0);
+    expect(reviewerRuns(after)).toBe(reviews);
+    expect(after.rounds).toEqual(rounds);
+    expect(after.plan!.stages).toHaveLength(stages);
+    expect(after.timeline.some((entry) => entry.text === CALL_WORDS.revised)).toBe(true);
+    expect(after.objections.some((objection) => objection.status === "open")).toBe(false);
+  });
+
+  it("leaves siding with the architect as it was", () => {
+    const { sim, id } = disagreeing();
+    const before = task(sim, id);
+    const open = before.objections.filter((objection) => objection.status === "open").map((objection) => objection.id);
+    const stages = before.plan!.stages.length;
+
+    sim.approve(inboxItem(sim, "disagreement")!.id);
+    const after = task(sim, id);
+    expect(after.timeline.at(-1)?.text).toBe("You sided with the architect");
+    for (const objectionId of open) {
+      const objection = after.objections.find((entry) => entry.id === objectionId)!;
+      expect(objection.status).toBe("rejected");
+      expect(objection.call).toBeUndefined();
+    }
+    expect(after.call).toBeUndefined();
+    expect(after.plan!.stages).toHaveLength(stages);
+    expect(inboxItem(sim, "design")?.body).toBeUndefined();
+  });
+
+  it("sends the design back for a full round when changes are asked for at a check with no call", () => {
+    const sim = new Simulator(emptyState(), { prMergeAfter: 1_000 });
+    const id = sim.addTask({ productId: "p", title: "Saved carts", kind: "feature" });
+    const check = tickUntil(sim, "design");
+    const before = task(sim, id);
+    const reviews = reviewerRuns(before);
+
+    sim.requestChanges(check.id, "Keep carts for a month.");
+    tickUntil(sim, "design");
+    const after = task(sim, id);
+    expect(reviewerRuns(after)).toBe(reviews + 1);
+    expect(after.timeline.some((entry) => entry.text === "You asked for changes: Keep carts for a month.")).toBe(true);
+  });
+
+  it("lets the demo coordinator make the call on the demo disagreement", () => {
+    const sim = new Simulator(createDemoState(1_000_000_000), { triggers: DEMO_TRIGGERS, prMergeAfter: 1_000 });
+    const item = inboxItem(sim, "disagreement")!;
+    expect(item.body).toBe(CALL_WORDS.disagreement);
+    sim.requestChanges(item.id, CALL);
+    for (let tick = 0; tick < 100 && !sim.getState().inbox.some((entry) => entry.kind === "design" && entry.taskId === item.taskId); tick += 1) {
+      sim.tick();
+      for (const entry of sim.getState().inbox) if (entry.taskId !== item.taskId && entry.kind === "question") sim.answer(entry.id, entry.options?.[0] ?? "Yes");
+    }
+    const check = sim.getState().inbox.find((entry) => entry.kind === "design" && entry.taskId === item.taskId);
+    expect(check?.body).toContain("Your call settled");
+    const settled = task(sim, item.taskId);
+    expect(settled.brief?.summary).toContain("following your call");
+    expect(settled.objections.some((objection) => objection.call === CALL)).toBe(true);
+    expect(settled.objections.some((objection) => objection.status === "open")).toBe(false);
+  });
+});
 
 describe("Simulator", () => {
   it("takes a bug from the queue to an open pull request without ever merging it itself", () => {
@@ -133,7 +412,7 @@ describe("Simulator", () => {
     const columns = new Set(state.tasks.map((entry) => entry.column));
     for (const column of ["queue", "planning", "designing", "building", "reviewing", "ready", "done"]) expect(columns.has(column as Task["column"])).toBe(true);
     expect(new Set(state.inbox.map((item) => item.id)).size).toBe(state.inbox.length);
-    expect(state.inbox.map((item) => item.kind).sort()).toEqual(["delivery", "permission", "plan", "question"]);
+    expect(state.inbox.map((item) => item.kind).sort()).toEqual(["delivery", "disagreement", "permission", "plan", "question"]);
     expect(slotUses(state)).toHaveLength(3);
     expect(startsNextCount(state)).toBe(1);
   });

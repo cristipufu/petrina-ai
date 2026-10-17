@@ -61,11 +61,15 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state,
         </button>
       </div>
       <p className="inbox-sub">
-        {items.length === 0
-          ? "You're not blocking anyone."
-          : blocking > 0
-            ? `${blocking} agent${blocking === 1 ? " is" : "s are"} waiting on you. The rest wait at checkpoints.`
-            : "Nobody is stuck. These wait at checkpoints."}
+        {items.length === 0 ? (
+          "You're not blocking anyone."
+        ) : blocking > 0 ? (
+          <>
+            <span className="num">{blocking}</span> agent{blocking === 1 ? " is" : "s are"} waiting on you. The rest wait at checkpoints.
+          </>
+        ) : (
+          "Nobody is stuck. These wait at checkpoints."
+        )}
       </p>
       <div className="inbox-list">
         {items.length === 0 && (
@@ -99,7 +103,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const titleId = `ask-${item.id}`;
 
   // The quiet "send it back with a note" action every checkpoint has.
-  const sendBack = (label: string): ReactNode =>
+  const sendBack = (label: string, placeholder = "What should change?", send = "Send"): ReactNode =>
     noting ? (
       <form
         className="reply"
@@ -111,8 +115,8 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       >
         <input
           autoFocus
-          aria-label="What should change?"
-          placeholder="What should change?"
+          aria-label={placeholder}
+          placeholder={placeholder}
           value={note}
           onChange={(event) => setNote(event.target.value)}
           onKeyDown={(event) => {
@@ -123,7 +127,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
           }}
         />
         <button className="btn" type="submit" disabled={!note.trim()}>
-          Send
+          {send}
         </button>
       </form>
     ) : (
@@ -247,15 +251,18 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       )}
 
       {item.kind === "disagreement" && (
-        <div className="ask-actions">
-          <button className="btn lead" onClick={() => onOpen(item.taskId, "design")}>
-            Read both sides
-          </button>
-          <button className="btn quiet" onClick={() => sim.approve(item.id)}>
-            Side with the architect
-          </button>
-          {sendBack("Write my call…")}
-        </div>
+        <>
+          <p className="ask-body">Your call settles the design: the architect follows it, with no further review round, and you check the brief before anything is built.</p>
+          <div className="ask-actions">
+            <button className="btn lead" onClick={() => onOpen(item.taskId, "design")}>
+              Read both sides
+            </button>
+            <button className="btn quiet" onClick={() => sim.approve(item.id)}>
+              Side with the architect
+            </button>
+            {sendBack("Write my call…", "Your call: what should the design do?", "Make the call")}
+          </div>
+        </>
       )}
 
       {item.kind === "stuck" && (

@@ -43,6 +43,11 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
   const queued = task.state === "queued";
+  // A queued task that starts after others says what it waits for until they land.
+  const waitsOnOthers = queued && (task.after ?? []).some((id) => {
+    const other = find.task(id);
+    return other !== undefined && other.state !== "done" && other.state !== "cancelled";
+  });
   const finished = task.state === "done" || task.state === "cancelled";
   const rounds = task.plan?.stages.reduce((max, stage) => Math.max(max, task.rounds[stage.id] ?? 1), 1) ?? 1;
   const canPause = task.state === "running" || task.state === "needs-you" || task.state === "waiting";
@@ -96,7 +101,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
         </button>
       </h3>
 
-      {queued ? (
+      {queued && !waitsOnOthers ? (
         task.description && (
           <p className="card-desc" id={`status-${task.id}`}>
             {task.description}

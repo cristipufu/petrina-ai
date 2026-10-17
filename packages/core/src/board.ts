@@ -70,9 +70,39 @@ export function pipelineOf(task: Task): PipelineStep[] {
   });
 }
 
-/** A step named with where the task stands on it, for its tooltip: "Plan, done", "Build, now", "Review, next". */
-export function stepTip(step: PipelineStep): string {
-  return `${step.label}, ${step.state === "current" ? "now" : step.state}`;
+/** One mark on a card's strip: a step, or several folded into one. */
+export interface StripItem extends PipelineStep {
+  /** The steps this mark stands for, when several are folded into one. */
+  folded?: readonly string[];
+}
+
+/** From this many steps a card's strip tightens and folds, so it always fits on one line. */
+export const LONG_PIPELINE = 7;
+/** The most marks a long strip shows. */
+const STRIP_MARKS = 9;
+
+/**
+ * The marks a card shows for its pipeline. Short plans show every step. Long ones fold the
+ * finished steps into one check with a count, and, if still too many, the furthest upcoming
+ * steps into one "+N", so the strip never wraps. Folded steps stay named in their tooltip.
+ */
+export function stripOf(steps: readonly PipelineStep[]): StripItem[] {
+  if (steps.length < LONG_PIPELINE) return [...steps];
+  let done = 0;
+  while (done < steps.length && steps[done]!.state === "done") done += 1;
+  const items: StripItem[] = done >= 2 ? [{ label: `${done} done`, state: "done", folded: steps.slice(0, done).map((step) => step.label) }] : steps.slice(0, done);
+  const rest = steps.slice(done);
+  if (items.length + rest.length <= STRIP_MARKS) return [...items, ...rest];
+  const shown = rest.slice(0, STRIP_MARKS - items.length - 1);
+  const later = rest.slice(shown.length);
+  return [...items, ...shown, { label: `${later.length} more`, state: "next", folded: later.map((step) => step.label) }];
+}
+
+const listOf = (labels: readonly string[]) => (labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : (labels[0] ?? ""));
+
+/** A step named with where the task stands on it, for its tooltip: "Plan, done", "Build, now", "Review, next", "Plan, Design and Screens, done". */
+export function stepTip(step: StripItem): string {
+  return `${step.folded ? listOf(step.folded) : step.label}, ${step.state === "current" ? "now" : step.state}`;
 }
 
 /** The step the task is on, for a card's "Build · 4 of 6". */
