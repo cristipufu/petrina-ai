@@ -4,7 +4,7 @@
 import { setDefaultTimeout } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpus, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InboxKind, State, Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
@@ -20,10 +20,21 @@ for (const key of Object.keys(process.env)) if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALU
 
 /**
  * How much longer the time limits are on this machine. A Windows runner takes several times longer to start
- * every engine, agent and git process these tests drive. The limits only catch hangs, so they stretch there;
- * what a test asserts about time (the engine stopping within 10 seconds, say) stays as it is.
+ * every engine, agent and git process these tests drive, and so does a machine busy with other work. The limits
+ * only catch hangs, so they stretch there; what a test asserts about time (the engine stopping within 10
+ * seconds, say) stays as it is.
  */
-export const SLOW = process.platform === "win32" ? 3 : 1;
+export const SLOW = Math.max(process.platform === "win32" ? 3 : 1, busy());
+
+/**
+ * How much busier than its cores this machine is right now, as a factor for deadlines (1 to 4). Petrina builds
+ * itself, so its tests often run while its own agents work on the same machine: a deadline that only holds on
+ * an idle machine would fail them for nothing. Windows reports no load, and has its own factor above.
+ */
+function busy(): number {
+  const [load] = loadavg();
+  return Math.min(4, Math.max(1, Math.ceil((load ?? 0) / Math.max(1, cpus().length))));
+}
 // Every test that drives real processes imports this file: one limit for all of them, stretched like the waits.
 setDefaultTimeout(90_000 * SLOW);
 
