@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { DELIVERY_LABEL, type Column, type Product, type State } from "@petrina/core";
-import { ProductSettingsDialog } from "./ProductSettings";
+import { mod } from "../keyboard";
 import { useDismiss } from "./bits";
 
 /** Per-product numbers the switcher and the Products page both show. */
@@ -60,7 +60,7 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p" && !document.querySelector('.command-palette, .dialog, .sheet')) {
         event.preventDefault();
         setOpen(true);
       }
@@ -86,7 +86,7 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
 
   return (
     <div style={{ position: "relative", minWidth: 0, flex: "0 1 auto" }} ref={box}>
-      <button className="btn switcher" onClick={() => setOpen((on) => !on)} aria-expanded={open} aria-haspopup="dialog" title="Switch product (⌘P)">
+      <button className="btn switcher" onClick={() => setOpen((on) => !on)} aria-expanded={open} aria-haspopup="dialog" title={`Switch product (${mod}P)`}>
         <span className="label-text">
           {current ? (
             <span className={`tone-${current.tone}`} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -115,7 +115,7 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
                 if (event.key === "Enter" && first) pick(first.product.id);
               }}
             />
-            <kbd>⌘P</kbd>
+            <kbd>{mod}P</kbd>
           </label>
           <div className="switcher-list">
             {!query.trim() && (
@@ -157,9 +157,7 @@ const PIPE: readonly { column: Column; label: string }[] = [
 ];
 
 /** The portfolio: every product on one screen, what is in flight and what waits on you. */
-export function ProductsPage({ state, onPick, onAdd, onRemoved }: { state: State; onPick: (productId: string) => void; onAdd?: () => void; onRemoved: (productId: string) => void }) {
-  const [settings, setSettings] = useState<string>();
-  const editing = state.products.find((product) => product.id === settings);
+export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: State; onPick: (productId: string) => void; onAdd?: () => void; onSettings: (productId: string) => void }) {
   const stats = productStats(state).sort(
     (a, b) => b.needsYou - a.needsYou || Number(b.active) - Number(a.active) || b.working - a.working || a.product.name.localeCompare(b.product.name),
   );
@@ -239,13 +237,12 @@ export function ProductsPage({ state, onPick, onAdd, onRemoved }: { state: State
                 <td>
                   <span className="delivery-summary">{DELIVERY_LABEL[entry.product.delivery ?? "pull-request"]} · {(entry.product.approveDelivery ?? true) ? "asks first" : "ships automatically"}</span>
                 </td>
-                <td><button className="btn small" aria-label={`Settings for ${entry.product.name}`} onClick={() => setSettings(entry.product.id)}>Settings</button></td>
+                <td><button className="btn small" aria-label={`Settings for ${entry.product.name}`} title="Opens in Settings" onClick={() => onSettings(entry.product.id)}>Settings</button></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {editing && <ProductSettingsDialog key={editing.id} product={editing} state={state} onClose={() => setSettings(undefined)} onRemoved={() => { setSettings(undefined); onRemoved(editing.id); }} />}
     </div>
   );
 }

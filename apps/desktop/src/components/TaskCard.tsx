@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useCallback, useRef, useState, type DragEvent } from "react";
 import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
@@ -13,7 +13,8 @@ export interface CardProps {
   selected: boolean;
   /** Index in the whole queue, for queued cards. */
   queuePosition?: number;
-  queueLength?: number;
+  hasDraft?: boolean;
+  onFocus: () => void;
   /** One of the cards that start as soon as a slot frees. */
   startsNext?: boolean;
   onOpen: (taskId: string, tab?: SheetTab) => void;
@@ -36,7 +37,7 @@ function flagOf(task: Task, now: number): { text: string; tone: string } | undef
   return { text: STATE_LABEL[task.state], tone: task.state === "pr-open" ? "" : task.state };
 }
 
-export function TaskCard({ task, state, find, selected, queuePosition, queueLength = 0, startsNext, onOpen, onDragStart, onDragEnd, dragging, drop }: CardProps) {
+export function TaskCard({ task, state, find, selected, queuePosition, hasDraft, onFocus, startsNext, onOpen, onDragStart, onDragEnd, dragging, drop }: CardProps) {
   const [menu, setMenu] = useState(false);
   const menuBox = useRef<HTMLSpanElement>(null);
   const closeMenu = useCallback(() => setMenu(false), []);
@@ -64,25 +65,13 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
   if (dragging) classes.push("dragging");
   if (drop) classes.push(`drop-${drop}`);
 
-  // ⌥↑ and ⌥↓ move a queued card, like dragging it.
-  const onKey = (event: KeyboardEvent) => {
-    if (!queued || queuePosition === undefined || !event.altKey) return;
-    if (event.key === "ArrowUp" && queuePosition > 0) {
-      event.preventDefault();
-      sim.moveInQueue(task.id, queuePosition - 1);
-    } else if (event.key === "ArrowDown" && queuePosition < queueLength - 1) {
-      event.preventDefault();
-      sim.moveInQueue(task.id, queuePosition + 1);
-    }
-  };
-
   const act = (action: () => void) => () => {
     setMenu(false);
     action();
   };
 
   return (
-    <article className={classes.join(" ")} draggable={queued} onDragStart={(event) => onDragStart?.(event, task.id)} onDragEnd={onDragEnd} aria-label={task.title}>
+    <article className={classes.join(" ")} draggable={queued} onDragStart={(event) => onDragStart?.(event, task.id)} onDragEnd={onDragEnd} aria-label={`${task.title}, ${task.held ? "On hold" : STATE_LABEL[task.state]}`} data-task-id={task.id} tabIndex={-1} onFocus={onFocus} onMouseDown={onFocus}>
       <div className="card-meta">
         <span className="where">
           {queued && <GripVertical size={14} className="grip" aria-hidden="true" />}
@@ -99,7 +88,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
       </div>
 
       <h3 className="card-title">
-        <button className="card-open" onClick={() => onOpen(task.id)} onKeyDown={onKey} aria-describedby={`status-${task.id}`}>
+        <button className="card-open" onClick={() => onOpen(task.id)} aria-describedby={`status-${task.id}`}>
           {task.title}
         </button>
       </h3>
@@ -121,6 +110,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
 
       <div className="card-foot">
         <div className="card-info">
+          {hasDraft && <span className="draft-mark" aria-label="Unsent message" title="Unsent message" />}
           {showAgent && (
             <span className="agent">
               <RoleAvatar role={role} size={16} />

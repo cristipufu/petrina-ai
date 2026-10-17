@@ -19,7 +19,7 @@ import {
 import { TAKE_OVER_WORDS, type Finding, type Objection, type Role, type Stage, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, deliveryText, duration, profileText, safeUrl, STATE_LABEL, type Lookup } from "../lib";
-import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport } from "./bits";
+import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
 import { Session } from "./Session";
 import type { SheetTab } from "./TaskCard";
 
@@ -31,6 +31,13 @@ interface SheetProps {
   onTab: (tab: SheetTab) => void;
   onClose: () => void;
   onToast: (title: string, detail?: string) => void;
+  /** A notification's item that opens once the sheet closes, because something typed in it is not sent yet. */
+  waiting?: string;
+  draft: string;
+  onDraft: (text: string) => void;
+  messageFocus: boolean;
+  onMessageFocused: () => void;
+  onMessage: () => void;
 }
 
 const TABS: readonly { id: SheetTab; label: string }[] = [
@@ -41,7 +48,7 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
   { id: "session", label: "Session" },
 ];
 
-export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: SheetProps) {
+export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, waiting }: SheetProps) {
   const [menu, setMenu] = useState(false);
   const [titleGone, setTitleGone] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -112,6 +119,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
     <>
       <div className="scrim" onClick={onClose} />
       <section ref={sheet} className={`sheet ${compact ? "compact" : ""} ${short ? "short" : ""}`} role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabIndex={-1}>
+        <WaitingLine text={waiting} />
         <div className={`sheet-bar ${scrolled ? "scrolled" : ""}`}>
           {compact || titleGone ? (
             <div className="compact-title" title={task.title}>
@@ -132,7 +140,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
                 <ExternalLink size={14} aria-hidden="true" />
               </a>
             )}
-            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={() => onTab("session")}>
+            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={onMessage}>
               <MessageSquare size={16} aria-hidden="true" />
               {!compact && "Message"}
             </button>
@@ -215,6 +223,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
                 onClick={() => onTab(entry.id)}
               >
                 {entry.label}
+                {entry.id === "session" && draft && <span className="draft-mark" aria-label="Unsent message" title="Unsent message" />}
                 {counts[entry.id] ? <span className="count">{counts[entry.id]}</span> : null}
               </button>
             ))}
@@ -229,7 +238,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
           </div>
         </div>
 
-        {tab === "session" && <Session.Composer task={task} find={find} />}
+        {tab === "session" && <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} onFocused={onMessageFocused} />}
       </section>
     </>
   );
@@ -561,10 +570,23 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
         <span>{finding.severity === "blocking" ? "Blocking" : "Suggestion"}</span>
       </div>
       <p className="issue-text">{finding.text}</p>
+      {finding.evidence && <p className="issue-evidence">{finding.evidence}</p>}
       <p className="issue-who">
         Raised by {profileText(find.profile(finding.raisedBy), find, true)}
         {finding.confirmedBy.length > 0 && `. Confirmed by ${finding.confirmedBy.map((profileId) => profileText(find.profile(profileId), find, true)).join(" and ")}`}
       </p>
+      {(finding.disputes ?? []).map((dispute, index) => (
+        <div key={index} className="issue-response">
+          <b>{finding.status === "dismissed" ? "Dismissed by" : "Disputed by"} {profileText(find.profile(dispute.by), find, true)}</b>
+          {dispute.reason}
+        </div>
+      ))}
+      {finding.status === "dismissed" && !finding.disputes?.length && (
+        <div className="issue-response">
+          <b>Dismissed by a later reviewer</b>
+          The reason was not recorded: reviewers did not have to give one before this change.
+        </div>
+      )}
     </li>
   );
 }

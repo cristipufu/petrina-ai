@@ -140,7 +140,8 @@ describe("a builder working when Petrina restarts", () => {
       const done = await run.finished(engine);
 
       const builder = run.fakes.received("builder");
-      expect(builder.filter((entry) => entry.text.includes("Keep it short"))).toHaveLength(1);
+      // Heard exactly once in all, not just in one prompt: a fresh opening must not carry it in two sections.
+      expect(builder.reduce((count, entry) => count + entry.text.split("Keep it short").length - 1, 0)).toBe(1);
       for (const id of new Set(builder.map((entry) => entry.session))) {
         expect(builder.filter((entry) => entry.session === id && entry.text.includes("Use a friendly tone"))).toHaveLength(1);
       }
@@ -336,8 +337,8 @@ describe("where you were, for a fresh conversation", () => {
 });
 
 describe("a tool that cannot reopen the conversation after all", () => {
-  for (const trouble of ["no answer", "conversation gone"] as const) {
-    it(`starts the step again when there is ${trouble === "no answer" ? "no answer in time" : "no such conversation any more"}`, async () => {
+  for (const trouble of ["no answer", "no answer at all", "conversation gone"] as const) {
+    it(`starts the step again when there is ${trouble === "no answer" ? "no answer in time" : trouble === "no answer at all" ? "no answer even to the first handshake" : "no such conversation any more"}`, async () => {
       const root = tempDir("petrina-pickup-");
       roots.push(root);
       const product = makeProduct(root);
@@ -352,6 +353,7 @@ describe("a tool that cannot reopen the conversation after all", () => {
       engine.shutdown();
 
       if (trouble === "no answer") fakes.scenario({ planner: "short", builder: "work", reopen: "stall" });
+      else if (trouble === "no answer at all") fakes.scenario({ planner: "short", builder: "work", reopen: "silent" });
       else fakes.forgetConversations();
       engine = new Engine(join(root, "data"), options);
       const done = await waitFor(() => {
@@ -360,7 +362,7 @@ describe("a tool that cannot reopen the conversation after all", () => {
       }, "the task to finish", 60_000);
       engine.shutdown();
       expect(done.timeline.filter((entry) => entry.text.startsWith("Started this step again")).map((entry) => entry.text)).toEqual([
-        trouble === "no answer" ? "Started this step again: Codex did not reopen the conversation within 2 seconds" : "Started this step again: Codex could not reopen the conversation",
+        trouble === "conversation gone" ? "Started this step again: Codex could not reopen the conversation" : "Started this step again: Codex did not reopen the conversation within 2 seconds",
       ]);
       const fresh = fakes.openings("builder")[1]!;
       expect(fresh).toContain("- added: notes.txt");

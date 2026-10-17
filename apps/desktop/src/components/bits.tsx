@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import {
+  Bell,
   BookOpen,
   Check,
   Compass,
@@ -158,9 +159,16 @@ export function Stepper({ task }: { task: Task }) {
   );
 }
 
+/** Sent when every open menu and popover should close: a notification's item is being opened. */
+const DISMISS = "petrina:dismiss";
+
+export function dismissPopovers(): void {
+  window.dispatchEvent(new Event(DISMISS));
+}
+
 /**
- * Close a popover or menu on a click outside it or on Escape. Escape from inside it hands focus
- * back to the button that opens it, the first in `ref`.
+ * Close a popover or menu on a click outside it, on Escape, or when a notification's item opens.
+ * Escape from inside it hands focus back to the button that opens it, the first in `ref`.
  */
 export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void): void {
   useEffect(() => {
@@ -170,18 +178,47 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, cl
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        event.stopPropagation();
+        const top = traps.at(-1);
+        if (top && ref.current && !top.contains(ref.current)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
         if (ref.current?.contains(document.activeElement)) ref.current.querySelector("button")?.focus();
         close();
       }
     };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey, true);
+    window.addEventListener(DISMISS, close);
     return () => {
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener(DISMISS, close);
     };
   }, [ref, open, close]);
+}
+
+/** Something typed and not sent yet, in any text field inside `root`. */
+export function hasTyping(root: Element | null): boolean {
+  if (!root) return false;
+  return Array.from(root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("textarea, input")).some(
+    (field) => (field instanceof HTMLTextAreaElement || ["text", "search", "url", "email"].includes(field.type)) && field.value.trim() !== "",
+  );
+}
+
+/**
+ * At the top of a dialog or task sheet while a notification's item waits for it to close: what
+ * is waiting, and that it opens next. Nothing typed in the dialog is lost.
+ */
+export function WaitingLine({ text }: { text: string | undefined }) {
+  if (!text) return null;
+  return (
+    <p className="waiting-line" role="status">
+      <Bell size={16} aria-hidden="true" />
+      <span>
+        <strong>{text}.</strong> It opens when you're done here.
+      </span>
+    </p>
+  );
 }
 
 const TABBABLE = "a[href], button, input, select, textarea, [tabindex]";

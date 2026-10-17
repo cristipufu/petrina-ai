@@ -60,8 +60,12 @@ export async function loginShellPath(env: NodeJS.ProcessEnv = process.env, timeo
 
 /** The PATH line between the markers of `env` output. */
 export function pathFromEnv(output: string): string | undefined {
-  const [, inside] = output.split(MARK);
-  const line = inside?.split("\n").find((entry) => entry.startsWith("PATH="));
+  // Whole marker lines only: an interactive dash exports `_=__petrina_env__`, which must not count.
+  const lines = output.split("\n").map((entry) => entry.replace(/\r$/, ""));
+  const start = lines.indexOf(MARK);
+  const end = lines.lastIndexOf(MARK);
+  if (start < 0 || end <= start) return undefined;
+  const line = lines.slice(start + 1, end).find((entry) => entry.startsWith("PATH="));
   const value = line?.slice("PATH=".length).trim();
   return value ? value : undefined;
 }

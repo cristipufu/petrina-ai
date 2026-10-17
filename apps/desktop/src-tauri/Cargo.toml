@@ -15,7 +15,15 @@ tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
 tauri = { version = "2.12.3", features = [] }
+# System notifications that report clicks, and one Petrina at a time. Both from Tauri's own plugins.
+tauri-plugin-notification = "2.7.0"
+tauri-plugin-single-instance = "2.5.4"
+# Already part of Tauri's build: reads what a notification is about.
+serde = { version = "1", features = ["derive"] }
 
 # Already part of Tauri's build: used only to read how tall the macOS title bar is.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSResponder", "NSWindow"] }
+
+[dev-dependencies]
+serde_json = "1"

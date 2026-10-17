@@ -177,8 +177,11 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
 }
 
 /** Messages queue until the agent finishes its step, or interrupt it. */
-function Composer({ task, find }: { task: Task; find: Lookup }) {
-  const [text, setText] = useState("");
+function Composer({ task, find, text, onText, focusRequest, onFocused }: { task: Task; find: Lookup; text: string; onText: (text: string) => void; focusRequest: boolean; onFocused: () => void }) {
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (focusRequest) { textarea.current?.focus(); onFocused(); }
+  }, [focusRequest, onFocused]);
   const [mode, setMode] = useState<MessageMode>("queue");
   const role = find.role(task.agent?.roleId);
   const live = task.state === "running";
@@ -186,18 +189,19 @@ function Composer({ task, find }: { task: Task; find: Lookup }) {
   const send = () => {
     if (!text.trim()) return;
     sim.sendMessage(task.id, text, live ? mode : "queue");
-    setText("");
+    onText("");
   };
 
   return (
     <div className="composer">
       <div className="composer-row">
         <textarea
+          ref={textarea}
           rows={1}
           aria-label="Message"
           placeholder={live || task.driving ? `Message the ${role?.name.toLowerCase() ?? "agent"}…` : "Message the next agent on this task…"}
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => onText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();

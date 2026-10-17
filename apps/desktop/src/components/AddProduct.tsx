@@ -2,10 +2,10 @@ import { useRef, useState } from "react";
 import { FolderGit2 } from "lucide-react";
 import { suggestProductName } from "@petrina/core";
 import { sim, useEngineStatus } from "../engine";
-import { useFocusTrap } from "./bits";
+import { useFocusTrap, WaitingLine } from "./bits";
 
-/** Add a product from a local clone of its GitHub repository. */
-export function AddProductDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (productId: string) => void }) {
+/** Add a product from a local clone of its GitHub repository. `waiting`: a notification's item that opens once this closes. */
+export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: string; onClose: () => void; onAdded: (productId: string) => void }) {
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
   const status = useEngineStatus();
@@ -33,6 +33,7 @@ export function AddProductDialog({ onClose, onAdded }: { onClose: () => void; on
     <>
       <div className="dialog-scrim" onClick={onClose} />
       <div ref={box} className="dialog" role="dialog" aria-modal="true" aria-labelledby="add-product-title" tabIndex={-1}>
+        <WaitingLine text={waiting} />
         <div className="row" style={{ gap: 12, marginBottom: 8 }}>
           <span className="avatar tone-violet" style={{ width: 40, height: 40, borderRadius: 12 }} aria-hidden="true">
             <FolderGit2 size={20} />

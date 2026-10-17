@@ -65,7 +65,8 @@ export function detectTools(): Tool[] {
     } catch {
       resolved = false;
     }
-    const installed = resolved && Bun.which(adapter.cli) !== null;
+    // Bun.which reads the PATH the process started with unless told otherwise; app mode merges in the login shell's PATH later.
+    const installed = resolved && Bun.which(adapter.cli, { PATH: process.env.PATH ?? "" }) !== null;
     return {
       id: adapter.id,
       name: adapter.name,

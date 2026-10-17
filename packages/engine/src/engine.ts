@@ -22,6 +22,8 @@ import {
   productHistory,
   productName,
   queueOf,
+  queueNeighbour,
+  queuePlacement,
   slotWait,
   slotUses,
   startCall,
@@ -38,6 +40,7 @@ import {
   type Column,
   type DeliveryMode,
   type DesignCall,
+  type Finding,
   type GateKind,
   type HandBackPreview,
   type Id,
@@ -307,6 +310,21 @@ export class Engine {
 
   moveToTop(taskId: Id): void {
     this.moveInQueue(taskId, 0);
+  }
+
+  placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number {
+    const queue = queueOf(this.s.tasks).map((task) => task.id);
+    const index = queuePlacement(queue, taskId, anchorId, side);
+    if (index === undefined) return -1;
+    const hidden = Math.max(0, Math.abs(queue.indexOf(taskId) - queue.indexOf(anchorId)) - 1);
+    this.moveInQueue(taskId, index);
+    return hidden;
+  }
+
+  moveVisibleInQueue(taskId: Id, visibleIds: Id[], direction: -1 | 1): number {
+    const queue = queueOf(this.s.tasks).map((task) => task.id);
+    const anchor = queueNeighbour(queue, visibleIds, taskId, direction);
+    return anchor ? this.placeInQueue(taskId, anchor, direction < 0 ? "before" : "after") : -1;
   }
 
   setHeld(taskId: Id, held: boolean): void {
@@ -607,6 +625,8 @@ export class Engine {
   }
 
   requestChanges(itemId: Id, note: string): void {
+    // Refused, not dropped: the window keeps the note to send again.
+    if (!this.s.inbox.some((entry) => entry.id === itemId)) throw new Error("That check isn't waiting any more, so your note wasn't applied. Send it again on the task.");
     this.notDrivingItem(itemId);
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
@@ -631,6 +651,8 @@ export class Engine {
       task.stageIndex = -1;
       delete task.plan;
     } else if (item.kind === "design" || item.kind === "disagreement") {
+      // Back to this very check afterwards, not to an earlier one the coordinator already approved.
+      if (item.kind === "design") task.returnToCheck = task.stageIndex;
       const index = designStageIndex(stages, task.stageIndex);
       if (index >= 0) {
         // On a design the call settled, changes go to the architect alone and come back to the same check.
@@ -1100,6 +1122,15 @@ export class Engine {
         }
         // Checkpoints need no new agent, so a paused or full pool must not hold them back.
         if (stage?.kind === "gate") {
+          // On the way back to the check where changes were asked, earlier design checks are not asked again.
+          if (stage.gate === "design" && current.returnToCheck !== undefined && current.stageIndex < current.returnToCheck) {
+            this.log(current, "milestone", "Went past the earlier design check you already approved, back to the one where you asked for changes");
+            current.stageIndex += 1;
+            current.sub = 0;
+            this.commit();
+            continue;
+          }
+          delete current.returnToCheck;
           this.gate(current, stage.gate ?? "delivery");
           return;
         }
@@ -1291,7 +1322,7 @@ export class Engine {
       task.holdsSlot = false;
       task.statusLine = "The architects disagree. Your call";
       this.raise(task, "disagreement", `The architects disagree on “${task.title}”`, false, { body: CALL_WORDS.disagreement });
-      this.commit();
+      this.commitNow();
       return "stop";
     }
     task.rounds[stage.id] = round + 1;
@@ -1348,15 +1379,13 @@ export class Engine {
       const finding = task.findings.find((entry) => entry.id === id);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
-    for (const id of result.disputes) {
-      const finding = task.findings.find((entry) => entry.id === id);
-      if (finding && finding.status === "open" && finding.raisedBy !== "petrina") finding.status = "dismissed";
-    }
+    recordDisputes(task.findings, result.disputes, profileId, Date.now());
     for (const finding of result.findings) {
       task.findings.push({
         id: this.id(task.id),
         text: finding.text,
         ...(finding.where ? { where: finding.where } : {}),
+        ...(finding.evidence ? { evidence: finding.evidence } : {}),
         severity: finding.severity,
         raisedBy: profileId,
         confirmedBy: [],
@@ -1578,7 +1607,10 @@ export class Engine {
     // The opening instructions hold every note, so nothing waits in line behind them.
     task.queued.splice(0);
     // Every agent on the task sees all of the coordinator's notes, reviewers included.
-    const notes = (task.notes ?? []).map((note) => `- ${note.text}`);
+    // A step started again hears what was said in its earlier attempt in that section of its own,
+    // so those notes are left out here: nothing is heard twice.
+    const fromEarlier = (task.stepAttempts ?? 0) > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
+    const notes = (task.notes ?? []).filter((note) => !fromEarlier.some((said) => (note.id !== undefined && note.id === said.id) || note.text === said.text)).map((note) => `- ${note.text}`);
     if (notes.length) sections.push({ title: "The coordinator's notes on this task (follow them; where they conflict with the brief or each other, the latest wins)", body: notes.join("\n\n") });
     if (brief && roleId !== "planner") {
       sections.push({
@@ -1874,7 +1906,8 @@ export class Engine {
     this.raise(task, gate, titles[gate], false, body ? { body } : {});
     task.statusLine = status[gate];
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
-    this.commit();
+    // On disk before the window shows it: an answer to this check must find it after any restart.
+    this.commitNow();
   }
 
   private raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string } = {}): Id {
@@ -2159,6 +2192,19 @@ export class Engine {
     this.store.save(this.getState());
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
+  }
+}
+
+/**
+ * A later reviewer thinks findings are wrong: each dispute is kept with who and why. One reviewer's
+ * dispute dismisses a finding nobody else backed; Petrina's own checks and confirmed findings stay open.
+ */
+export function recordDisputes(findings: DeepMutable<Finding>[], disputes: readonly { id: string; reason: string }[], by: Id, at: number): void {
+  for (const dispute of disputes) {
+    const finding = findings.find((entry) => entry.id === dispute.id);
+    if (!finding || finding.status !== "open") continue;
+    finding.disputes = [...(finding.disputes ?? []), { by, reason: dispute.reason, at }];
+    if (finding.raisedBy !== "petrina" && finding.confirmedBy.length === 0) finding.status = "dismissed";
   }
 }
 
