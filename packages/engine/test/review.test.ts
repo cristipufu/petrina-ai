@@ -13,7 +13,7 @@ afterAll(() => roots.forEach(removeDir));
  * One task through design, build and two reviewers, with the coordinator approving as it goes, up to the
  * delivery check. `atOnce` is the most agents that ever worked on it at the same time.
  */
-async function untilDelivery(scenario: Scenario, poolLimit?: number) {
+async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = false) {
   const root = tempDir("petrina-review-");
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
@@ -25,7 +25,9 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number) {
   });
   try {
     if (poolLimit) engine.setPoolLimit(poolLimit);
-    const productId = await engine.addProduct(makeProduct(root));
+    const repo = makeProduct(root);
+    const before = git(repo, "rev-parse", "HEAD");
+    const productId = await engine.addProduct(repo);
     engine.setProductDelivery(productId, "local", true);
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
     const task = await waitFor(() => {
@@ -38,9 +40,14 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number) {
       }
       const found = state.tasks.find((entry) => entry.id === taskId) as Task | undefined;
       if (found?.state === "failed") throw new Error(`The task failed: ${found.error}`);
+      if (ship) {
+        const delivery = state.inbox.find((item) => item.taskId === taskId && item.kind === "delivery");
+        if (delivery) engine.approve(delivery.id);
+        return found?.state === "done" && found;
+      }
       return found && state.inbox.some((item) => item.taskId === taskId && item.kind === "delivery") && found;
-    }, "the delivery check", 60_000);
-    return { task, fakes, atOnce };
+    }, ship ? "the work to ship" : "the delivery check", 60_000);
+    return { task, fakes, atOnce, repo, before };
   } finally {
     unsubscribe();
     engine.shutdown();
@@ -165,6 +172,16 @@ describe.concurrent("reviewers at once, then a vote", () => {
     expect(atOnce).toBe(1);
     expect(fakes.openings("verifier")).toHaveLength(2);
     expect(task.findings.find((finding) => finding.severity === "blocking" || finding.status === "fixed")?.verification).toMatchObject({ verdict: "real" });
+  });
+});
+
+describe("a clean history", () => {
+  it("ships the task as one commit on top of main, however many commits its branch had", async () => {
+    const { task, repo, before } = await untilDelivery({ reviewer: "important", fixes: "change" }, undefined, true);
+    // A build and a round of review fixes: two commits on the branch, squashed before the shipper ran.
+    expect(task.timeline.map((entry) => entry.text)).toContain("Squashed 2 commits into one for delivery");
+    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
+    expect(git(repo, "log", "-1", "--format=%B", "main")).toContain("Built by Petrina");
   });
 });
 

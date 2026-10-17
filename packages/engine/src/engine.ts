@@ -55,7 +55,7 @@ export class Engine extends Kernel implements Commands {
     this.planning = new Planning(this, this.turns);
     this.work = new Work(this, this.turns, this.context, this.guide, this.shipping);
     this.takeover = new TakeOver(this);
-    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide);
+    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.shipping);
     this.driver.recover();
     this.timers.push(setInterval(() => void this.shipping.pollPullRequests(), 60_000));
     this.schedule();

@@ -74,8 +74,8 @@ export class ProductChecks {
     const env = { ...agentEnv(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
     const results = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal);
     if (signal.aborted) throw new Aborted();
-    const sha = await git.head(task.worktree).catch(() => undefined);
-    task.checks = { at: Date.now(), ...(sha ? { sha } : {}), results };
+    const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
+    task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), results };
     const failed = results.filter((run) => !run.ok);
     // An earlier failure settles on this run, whatever anyone answered about it.
     for (const finding of task.findings) {
@@ -91,6 +91,13 @@ export class ProductChecks {
     return failed.length;
   }
 
+  /** Whether the last run of the checks was on the code the task has now (its tree: a squash keeps it). */
+  async ranOn(task: MTask): Promise<boolean> {
+    if (!task.checks || !task.worktree) return false;
+    const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
+    return (!!tree && task.checks.tree === tree) || (!!sha && task.checks.sha === sha);
+  }
+
   /**
    * Right before the delivery check: the checks run again when the code changed since they last ran.
    * A failure sends the work back to the builder, twice at most; after that the coordinator sees it.
@@ -98,8 +105,7 @@ export class ProductChecks {
   async checksBeforeDelivery(task: MTask, signal: AbortSignal): Promise<boolean> {
     const product = this.k.productOf(task);
     if (!task.worktree || !product?.checks?.length) return false;
-    const sha = await git.head(task.worktree).catch(() => undefined);
-    if (sha && task.checks?.sha === sha && task.checks.results.every((run) => run.ok)) return false;
+    if ((await this.ranOn(task)) && task.checks!.results.every((run) => run.ok)) return false;
     if ((await this.runProductChecks(task, product.checks, signal)) === 0) return false;
     const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
     if (builder < 0 || (task.checkReturns ?? 0) >= 2) return false;

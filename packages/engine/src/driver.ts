@@ -11,9 +11,10 @@ import type { Design } from "./design.js";
 import type { Reviews } from "./review.js";
 import type { ProductChecks } from "./product-checks.js";
 import type { GuideKeeper } from "./guide-keeper.js";
+import type { Shipping } from "./shipping.js";
 
 export class Driver {
-  constructor(private readonly k: Kernel, private readonly planning: Planning, private readonly work: Work, private readonly design: Design, private readonly reviews: Reviews, private readonly checks: ProductChecks, private readonly guide: GuideKeeper) {}
+  constructor(private readonly k: Kernel, private readonly planning: Planning, private readonly work: Work, private readonly design: Design, private readonly reviews: Reviews, private readonly checks: ProductChecks, private readonly guide: GuideKeeper, private readonly shipping: Shipping) {}
 
   schedule(): void {
     if (this.k.stopped) return;
@@ -127,18 +128,22 @@ export class Driver {
           }
           delete current.handChanges;
         }
-        // What ships is what the coordinator approved: a change since then asks them again.
-        if (stage?.roleId === "shipper" && stage.kind !== "gate" && current.approvedSha && !current.shipping && current.worktree) {
-          const head = await git.head(current.worktree).catch(() => undefined);
-          const check = lastIndexWhere(current.plan!.stages, (entry, index) => index < current.stageIndex && entry.gate === "delivery");
-          if (head && head !== current.approvedSha && check >= 0) {
-            delete current.approvedSha;
-            current.stageIndex = check;
-            current.sub = 0;
-            this.k.log(current, "warn", "The work changed after you approved the delivery, so Petrina asks you again");
-            this.k.commit();
-            continue;
+        if (stage?.roleId === "shipper" && stage.kind !== "gate" && !current.shipping && current.worktree) {
+          // What ships is the code the coordinator approved (its tree: a squash keeps it). A change since asks them again.
+          if (current.approvedSha) {
+            const [now, approved] = await Promise.all([git.treeOf(current.worktree), git.treeOf(current.worktree, current.approvedSha)]);
+            const check = lastIndexWhere(current.plan!.stages, (entry, index) => index < current.stageIndex && entry.gate === "delivery");
+            if (now && now !== approved && check >= 0) {
+              delete current.approvedSha;
+              current.stageIndex = check;
+              current.sub = 0;
+              this.k.log(current, "warn", "The work changed after you approved the delivery, so Petrina asks you again");
+              this.k.commit();
+              continue;
+            }
           }
+          // One commit per task: the shipper rebases it onto the latest main, so the history stays clean.
+          await this.shipping.squash(current);
         }
         // Checkpoints need no new agent, so a paused or full pool must not hold them back.
         if (stage?.kind === "gate") {

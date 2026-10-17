@@ -136,25 +136,33 @@ Answer every objection listed as still open, or as answered after the call, by i
 - If the call does not speak to it, set "byCall" to false and answer it yourself: accept it and change the brief, or reject it with a reason.
 If objections are listed as answered after the call, the coordinator checked the brief that follows the call and asked for changes in their latest note: change the brief to cover it too, still following the call. Then answer every objection answered after the call again: keep or correct its status and "byCall" (the notes may say you read the call wrong), and make "answer" match the updated brief. Your new answers replace the old ones.`;
 
+/**
+ * Rebasing the task's one commit onto the default branch when it moved on: learn what changed there from
+ * its commits, then port this commit onto the code as it is now. The history stays one commit per task.
+ */
+function rebaseGuide(ref: string): string {
+  return `Petrina already made the branch one commit, so a conflict comes up once. If it conflicts, learn what changed on ${ref} before resolving anything, from the commits it gained since this branch forked (\`git log --stat $(git merge-base HEAD ${ref})..${ref}\` shows their messages and the files they moved), and read the code as ${ref} has it now. Port this commit's changes to where that code lives now, keep ${ref}'s version of everything this commit did not change, never bring back code ${ref} moved or removed, then \`git rebase --continue\`. Never merge ${ref} in and never add commits: the history stays one commit per task on top of ${ref}. Then run every check the product has, not only the tests this change touched.`;
+}
+
 function shipperInstructions(ctx: PromptContext, defaultBranch: string): string {
   const { task, branch } = ctx;
   switch (task.delivery) {
     case "pull-request":
       return `The coordinator approved this work. Deliver it as a pull request:
-1. If ${defaultBranch} moved on, merge origin/${defaultBranch} into ${branch} and resolve any conflicts, then run the tests.
-2. Push ${branch} to origin.
+1. If ${defaultBranch} moved on, bring ${branch} up to date by rebasing it: \`git fetch origin ${defaultBranch}\`, then \`git rebase origin/${defaultBranch}\`. ${rebaseGuide(`origin/${defaultBranch}`)}
+2. Push ${branch} to origin with \`git push --force-with-lease origin ${branch}\`.
 3. Open a pull request into ${defaultBranch} with \`gh pr create\`: a clear title, and a body in plain language that says what changed for users, the acceptance checklist, and what the reviewers checked.
 Never merge the pull request. Return its number and URL.`;
     case "release":
       return `The coordinator approved this work. Deliver it as a release:
-1. Merge ${branch} into ${defaultBranch} (merge origin/${defaultBranch} first and resolve conflicts if it moved on), and run the tests.
-2. Work out the next version from the latest release or tag (bump the ${ctx.product.releaseBump ?? "patch"} number) and update every version file in the project consistently (package.json, Cargo.toml, tauri.conf.json, and the like), then commit.
-3. Push ${defaultBranch}, then publish the release with \`gh release create <tag> --target ${defaultBranch}\`, with plain-language release notes.
+1. Rebase ${branch} onto the latest ${defaultBranch}: \`git fetch origin ${defaultBranch}\`, then \`git rebase origin/${defaultBranch}\`. ${rebaseGuide(`origin/${defaultBranch}`)}
+2. Work out the next version from the latest release or tag (bump the ${ctx.product.releaseBump ?? "patch"} number) and update every version file in the project consistently (package.json, Cargo.toml, tauri.conf.json, and the like), then commit it as one version commit.
+3. Bring ${defaultBranch} up to ${branch} with a fast-forward only (never a merge commit), push ${defaultBranch}, then publish the release with \`gh release create <tag> --target ${defaultBranch}\`, with plain-language release notes.
 Return the tag and the release URL.`;
     case "local":
       return `The coordinator approved this work. Commit it onto ${defaultBranch} locally:
-1. Merge ${defaultBranch} into ${branch} first if it moved on and resolve any conflicts, and run the tests.
-2. Bring ${defaultBranch} up to ${branch} in the main clone at ${ctx.product.path ?? "the repository root"}: if ${defaultBranch} is checked out there and clean, run \`git merge --ff-only ${branch}\` in that clone; if it is not checked out there, run \`git branch -f ${defaultBranch} ${branch}\`. If the clone has uncommitted changes, stop and ask the coordinator.
+1. If ${defaultBranch} moved on, rebase ${branch} onto it: \`git rebase ${defaultBranch}\`. ${rebaseGuide(defaultBranch)}
+2. Bring ${defaultBranch} up to ${branch} in the main clone at ${ctx.product.path ?? "the repository root"}, as a fast-forward only: if ${defaultBranch} is checked out there and clean, run \`git merge --ff-only ${branch}\` in that clone; if it is not checked out there, run \`git branch -f ${defaultBranch} ${branch}\`. If the clone has uncommitted changes, stop and ask the coordinator.
 Do not push anything. Return the commit sha now on ${defaultBranch}.`;
   }
 }

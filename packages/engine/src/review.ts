@@ -66,9 +66,8 @@ export class Reviews {
     }
     this.k.log(task, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
     // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
-    // A later chain on the same commit (a security review) goes by the run that just passed.
-    const head = await git.head(task.worktree!).catch(() => undefined);
-    const passed = !!head && task.checks?.sha === head && task.checks.results.every((run) => run.ok);
+    // A later chain on the same code (a security review) goes by the run that just passed.
+    const passed = (await this.checks.ranOn(task)) && task.checks!.results.every((run) => run.ok);
     const checks = passed ? [] : await this.checks.ensureChecks(task, signal);
     if ((await this.checks.runProductChecks(task, checks, signal)) > 0) {
       this.k.log(task, "warn", "Reviewers wait until the checks pass");

@@ -254,6 +254,28 @@ export async function commitAll(path: string, message: string): Promise<string |
   return must(["git", "rev-parse", "HEAD"], path);
 }
 
+/** The tree a commit holds: the same code, whichever commit carries it. */
+export async function treeOf(path: string, ref = "HEAD"): Promise<string | undefined> {
+  const result = await run(["git", "rev-parse", "--verify", "--quiet", `${ref}^{tree}`], path);
+  return result.code === 0 && SHA.test(result.stdout) ? result.stdout : undefined;
+}
+
+/**
+ * The branch's work as one commit on top of where it forked from `base`, with the same code. Returns how
+ * many commits it folded, or 0 when it already was one.
+ */
+export async function squash(path: string, base: string, message: string): Promise<number> {
+  const fork = (await run(["git", "merge-base", "HEAD", base], path)).stdout;
+  if (!SHA.test(fork)) return 0;
+  const count = Number((await run(["git", "rev-list", "--count", `${fork}..HEAD`], path)).stdout);
+  if (!(count > 1)) return 0;
+  // The commit is made first and the branch moves to it last, so a failure leaves the branch as it was.
+  const sha = await must(["git", "commit-tree", "HEAD^{tree}", "-p", fork, "-F", "-"], path, message);
+  if (!SHA.test(sha)) return 0;
+  await must(["git", "reset", "--soft", "--quiet", sha], path);
+  return count;
+}
+
 export async function resetTo(path: string, sha: string): Promise<void> {
   if (!SHA.test(sha)) return;
   await run(["git", "reset", "--hard", "--quiet", sha], path);

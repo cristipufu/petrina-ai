@@ -51,6 +51,8 @@ export interface Scenario {
   checks?: "pass" | "fail";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
   restarts?: number;
+  /** "change": fixing review findings changes the code (by default the fix leaves it as it was). */
+  fixes?: "change";
 }
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
@@ -295,6 +297,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         allowed = permission.outcome.outcome === "selected" && permission.outcome.optionId === "allow";
       }
       writeFileSync(join(session.cwd, "greeting.txt"), allowed ? "Hello (with left-pad)\n" : "Hello\n");
+      if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "welcome.txt"), "Hello\n");
       return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
     }
     case "code reviewer":

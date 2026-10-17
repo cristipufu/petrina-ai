@@ -348,7 +348,8 @@ export interface Task {
   /** Changes were asked at this design check: earlier checks of the same design pass by themselves on the way back to it. */
   returnToCheck?: number;
   /** The last time Petrina ran the product's checks on this task, and on which commit. */
-  checks?: { at: number; sha?: string; results: readonly CheckRun[] };
+  /** The tree is the code itself: a squash keeps it, so the checks still count. */
+  checks?: { at: number; sha?: string; tree?: string; results: readonly CheckRun[] };
   /** How many times failing checks sent the work back right before the delivery check. */
   checkReturns?: number;
   /** The base's commit when the working copy was made: reviews, the tamper check and the review guide go by it, whatever later happens to refs. */
