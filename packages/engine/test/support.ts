@@ -27,13 +27,13 @@ for (const key of Object.keys(process.env)) if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALU
 export const SLOW = Math.max(process.platform === "win32" ? 3 : 1, busy());
 
 /**
- * How much busier than its cores this machine is right now, as a factor for deadlines (1 to 4). Petrina builds
+ * How much busier than its cores this machine is right now, as a factor for deadlines (1 to 8). Petrina builds
  * itself, so its tests often run while its own agents work on the same machine: a deadline that only holds on
  * an idle machine would fail them for nothing. Windows reports no load, and has its own factor above.
  */
 function busy(): number {
   const [load] = loadavg();
-  return Math.min(4, Math.max(1, Math.ceil((load ?? 0) / Math.max(1, cpus().length))));
+  return Math.min(8, Math.max(1, Math.ceil((load ?? 0) / Math.max(1, cpus().length))));
 }
 // Every test that drives real processes imports this file: one limit for all of them, stretched like the waits.
 setDefaultTimeout(90_000 * SLOW);

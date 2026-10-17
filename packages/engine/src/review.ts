@@ -1,7 +1,7 @@
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { extraSlot, findingCount, reviewRoundEnd, slotWait, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { extraSlot, findingCount, noteRoundEnd, reviewRoundEnd, slotWait, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -337,6 +337,7 @@ export class Reviews {
   private async closeReviewRound(task: MTask, stage: MStage, round: number, reviewed: boolean): Promise<"continue" | "stop"> {
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
     const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
+    noteRoundEnd(task, stage.id, open.length);
     if (end.kind === "send back") {
       // The next round reviews only what changed since what the reviewers looked at in this one.
       const sha = reviewed ? await git.head(task.worktree!).catch(() => undefined) : undefined;

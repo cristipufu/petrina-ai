@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gateStatus, gateTitle } from "../src/flow.js";
+import { gateStatus, gateTitle, MAX_REVIEW_ROUNDS, reviewRoundEnd } from "../src/flow.js";
 import { answerByCall, CALL_WORDS, dueAnswers, unanswered } from "../src/call.js";
 import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS } from "../src/demo.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
@@ -515,5 +515,31 @@ describe("a delivery whose review rounds ran out", () => {
     const passed = { title: "Fix the focus", findings: [] } as unknown as Task;
     expect(gateTitle(passed, "delivery")).toBe("Ready to ship “Fix the focus”");
     expect(gateStatus(passed, "delivery")).toBe("Reviews done. Waiting for your OK to ship");
+  });
+});
+
+describe("review rounds that converge", () => {
+  const stage = { id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["a"], maxRounds: 2 } as unknown as Stage;
+  const task = (open: number, history?: number[]) =>
+    ({
+      stageIndex: 1,
+      plan: { stages: [{ id: "build", kind: "do", roleId: "builder", profileIds: ["b"] }, stage] },
+      findings: Array.from({ length: open }, () => ({ status: "open", severity: "blocking" })),
+      ...(history ? { blockingAfter: { review: history } } : {}),
+    }) as unknown as Task;
+
+  it("sends the work back within the planned rounds, whatever the count", () => {
+    expect(reviewRoundEnd(task(4), stage, 1).kind).toBe("send back");
+  });
+
+  it("keeps sending it back past them while each round leaves fewer blocking findings", () => {
+    expect(reviewRoundEnd(task(2, [4]), stage, 2).kind).toBe("send back");
+    expect(reviewRoundEnd(task(1, [4, 2]), stage, 3).kind).toBe("send back");
+  });
+
+  it("hands the coordinator a round that stopped making progress, and never goes past five rounds", () => {
+    expect(reviewRoundEnd(task(2, [2]), stage, 2).kind).toBe("used up");
+    expect(reviewRoundEnd(task(3, [2]), stage, 2).kind).toBe("used up");
+    expect(reviewRoundEnd(task(1, [5, 4, 3, 2]), stage, MAX_REVIEW_ROUNDS).kind).toBe("used up");
   });
 });

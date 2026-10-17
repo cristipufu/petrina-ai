@@ -103,10 +103,26 @@ export function designRoundEnd(blocking: number, round: number, stage: Stage): "
  */
 export type ReviewRoundEnd = { kind: "send back"; builder: number; open: number } | { kind: "passed" } | { kind: "used up"; open: number };
 
+/** The most review rounds a stage runs on its own, however well it converges: past it the coordinator decides. */
+export const MAX_REVIEW_ROUNDS = 5;
+
+/**
+ * Past its planned rounds, a review keeps sending the work back while it converges (each round leaves fewer
+ * Important findings than the one before), up to MAX_REVIEW_ROUNDS. Only a round that stops making progress
+ * hands the decision to the coordinator.
+ */
 export function reviewRoundEnd(task: Task, stage: Stage, round: number): ReviewRoundEnd {
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").length;
   if (open === 0) return { kind: "passed" };
   const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
-  if (builder >= 0 && round < (stage.maxRounds ?? 2)) return { kind: "send back", builder, open };
+  if (builder < 0) return { kind: "used up", open };
+  if (round < (stage.maxRounds ?? 2)) return { kind: "send back", builder, open };
+  const before = task.blockingAfter?.[stage.id]?.at(-1);
+  if (round < MAX_REVIEW_ROUNDS && before !== undefined && open < before) return { kind: "send back", builder, open };
   return { kind: "used up", open };
+}
+
+/** How many Important findings a review round ended with, for the next round's convergence check. */
+export function noteRoundEnd(task: DeepMutable<Task>, stageId: string, open: number): void {
+  task.blockingAfter = { ...(task.blockingAfter ?? {}), [stageId]: [...(task.blockingAfter?.[stageId] ?? []), open] };
 }

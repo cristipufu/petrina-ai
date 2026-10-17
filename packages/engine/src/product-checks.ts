@@ -5,7 +5,7 @@ import { lastIndexWhere, type ProductCheck } from "@petrina/core";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText } from "./checks.js";
@@ -15,7 +15,43 @@ import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 
 export class ProductChecks {
+  /**
+   * Tasks' checks take turns: a product's full test suite and build, several at once on one machine (with a
+   * security scanner looking at every process they start), is slower for each and times out for nothing.
+   */
+  private running = 0;
+  private readonly line: (() => void)[] = [];
+
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
+
+  private async turnToRun(task: MTask, signal: AbortSignal): Promise<() => void> {
+    const most = this.k.options.checkRuns ?? Math.max(1, Math.floor(cpus().length / 6));
+    if (this.running >= most) {
+      task.statusLine = "Waiting to run the checks: another task's run comes first";
+      this.k.commit();
+      await new Promise<void>((resolve, reject) => {
+        const go = () => {
+          signal.removeEventListener("abort", stop);
+          resolve();
+        };
+        const stop = () => {
+          const index = this.line.indexOf(go);
+          if (index >= 0) this.line.splice(index, 1);
+          reject(new Aborted());
+        };
+        this.line.push(go);
+        signal.addEventListener("abort", stop, { once: true });
+      });
+    }
+    this.running += 1;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      this.running -= 1;
+      this.line.shift()?.();
+    };
+  }
 
   /**
    * The product's checks. The Check finder works them out once per product, and again only when the
@@ -83,6 +119,16 @@ export class ProductChecks {
     if (!task.worktree) return 0;
     const hooks = await this.noteHooks(task);
     if (!checks.length && !hooks.length) return 0;
+    const finished = await this.turnToRun(task, signal);
+    try {
+      return await this.runAll(task, checks, hooks, signal);
+    } finally {
+      finished();
+    }
+  }
+
+  private async runAll(task: MTask, checks: readonly ProductCheck[], hooks: string[], signal: AbortSignal): Promise<number> {
+    if (!task.worktree) return 0;
     task.statusLine = "Running the product's checks";
     this.k.commit();
     // Checks and hooks are the repository's own code: whatever they commit or change, the work stays as it was.

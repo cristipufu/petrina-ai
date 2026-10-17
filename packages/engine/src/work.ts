@@ -65,6 +65,7 @@ export class Work {
         delete task.reviewedSha;
         delete task.hunt;
         for (const entry of task.plan?.stages ?? []) if (entry.kind === "review-chain") task.rounds[entry.id] = 1;
+        delete task.blockingAfter;
         this.k.log(task, "done", `Brought up to date with main: ${result.summary}`, roleId, profileId);
       }
       await this.updates.fold(task);

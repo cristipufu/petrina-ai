@@ -24,7 +24,7 @@ import type {
   TaskKind,
 } from "./model.js";
 import { extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
-import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, reviewRoundEnd, type DeepMutable } from "./flow.js";
+import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, noteRoundEnd, reviewRoundEnd, type DeepMutable } from "./flow.js";
 import { findingCount } from "./findings.js";
 import type { NewTaskInput } from "./commands.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
@@ -851,6 +851,7 @@ export class Simulator {
 
       const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
       const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
+      noteRoundEnd(task, stage.id, open.length);
       if (end.kind === "send back") {
         task.rounds[stage.id] = round + 1;
         task.stageIndex = end.builder;

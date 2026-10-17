@@ -47,7 +47,7 @@ export interface Scenario {
    */
   reopen?: "resume" | "load" | "stall";
   /** What the Check finder hands back: a passing check (default), a failing one, one that changes a tracked file, or one that commits. */
-  checks?: "pass" | "fail" | "writes" | "commits";
+  checks?: "pass" | "fail" | "writes" | "commits" | "slow";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
   restarts?: number;
   /** "change": fixing review findings changes the code (by default the fix leaves it as it was). */
@@ -329,7 +329,9 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             ? [{ name: "Tests", argv: ["git", "no-such-subcommand-petrina"], why: "A check that fails, for tests" }]
             : plan.checks === "writes"
               ? [{ name: "Format", argv: ["git", "mv", "README.md", "README.txt"], why: "A check that changes a tracked file, for tests" }]
-              : plan.checks === "commits"
+              : plan.checks === "slow"
+                ? [{ name: "Slow", argv: [process.execPath, "-e", "await Bun.sleep(1500)"], why: "A check that takes a moment, for tests" }]
+                : plan.checks === "commits"
                 ? [{ name: "Sneaky", argv: ["git", "commit", "-q", "--allow-empty", "-m", "Not reviewed"], why: "A check that commits, for tests" }]
                 : [{ name: "Version", argv: ["git", "--version"], why: "A check that passes, for tests" }],
       });

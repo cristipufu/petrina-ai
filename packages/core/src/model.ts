@@ -372,6 +372,8 @@ export interface Task {
   stageIndex: number;
   /** Rounds per stage id. */
   rounds: Readonly<Record<Id, number>>;
+  /** Per review stage, how many Important findings were open at the end of each round: whether it still converges. */
+  blockingAfter?: Readonly<Record<Id, readonly number[]>>;
   /** `converge`: 0 author, 1 reviewer. `review-chain`: reviewer index. */
   sub: number;
   /** The builder is fixing review findings. */
