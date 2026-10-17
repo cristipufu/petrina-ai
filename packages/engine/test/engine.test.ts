@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
-import { removeDir } from "./support.js";
+import { removeDir, SLOW } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));
@@ -31,7 +31,7 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
   for (;;) {
     const state = engine.getState();
     if (done(state)) return state;
-    if (Date.now() - started > ms) throw new Error(`Timed out. Tasks: ${JSON.stringify(state.tasks.map((task) => [task.state, task.statusLine, task.error]))} Inbox: ${JSON.stringify(state.inbox.map((item) => item.kind))}`);
+    if (Date.now() - started > ms * SLOW) throw new Error(`Timed out. Tasks: ${JSON.stringify(state.tasks.map((task) => [task.state, task.statusLine, task.error]))} Inbox: ${JSON.stringify(state.inbox.map((item) => item.kind))}`);
     respond(engine, state);
     await Bun.sleep(50);
   }

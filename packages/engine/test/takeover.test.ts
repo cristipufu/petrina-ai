@@ -1,7 +1,7 @@
 // Take over in the coordinator's terminal, and hand back, end to end on fake agents. The "terminal"
 // runs Petrina's real launcher with sh, and the launcher opens a fake of the agent's own app
 // (fake-cli.ts) that adds a turn to the conversation and changes the working copy like a person would.
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { slotUses, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
@@ -9,9 +9,10 @@ import { Engine, type EngineOptions } from "../src/engine.js";
 import { sessionState } from "../src/terminal.js";
 import type { CliScript } from "./fake-cli.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, newProgramsStart, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
+beforeAll(() => newProgramsStart());
 afterAll(() => roots.forEach(removeDir));
 
 const posix = process.platform !== "win32";

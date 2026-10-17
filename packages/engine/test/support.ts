@@ -81,6 +81,36 @@ export function makeProduct(root: string): string {
   return clone;
 }
 
+/**
+ * Stops at once, saying why, when this machine holds back programs written a moment ago. Take-over
+ * tests write small stand-ins for the launcher and the agent's app and run them. macOS checks each
+ * new program before its first run, and when that check hangs, every one of those tests would
+ * otherwise wait out its timeout.
+ */
+export function newProgramsStart(): Promise<void> {
+  return (checked ??= startsNewProgram(10_000 * SLOW));
+}
+
+let checked: Promise<void> | undefined;
+
+async function startsNewProgram(ms: number): Promise<void> {
+  if (process.platform === "win32") return;
+  const dir = tempDir("petrina-new-program-");
+  const file = join(dir, "new-program");
+  writeFileSync(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const proc = Bun.spawn([file], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  const started = await Promise.race([proc.exited.then(() => true), Bun.sleep(ms).then(() => false)]);
+  if (!started) proc.kill("SIGKILL");
+  removeDir(dir);
+  if (!started) {
+    throw new Error(
+      `This machine did not start a program written a moment ago within ${ms / 1000} seconds, so these tests can't run here. ` +
+        "On macOS that is its check of new programs not finishing: allow the app the tests run from (your terminal) in " +
+        "System Settings > Privacy & Security > Developer Tools, or restart the Mac, and run them again.",
+    );
+  }
+}
+
 export async function waitFor<T>(check: () => T | undefined | false | Promise<T | undefined | false>, what: string, ms = 30_000): Promise<T> {
   const started = Date.now();
   for (;;) {

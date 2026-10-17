@@ -1,9 +1,9 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dispatch } from "../src/server.js";
 import { askMode, clearEnded, detectTerminals, launchPlan, type LaunchInput, pickTerminal, type Platform, type Probe, sessionState, terminalEnv, toolArgs, UnsafeValue, writeLauncher } from "../src/terminal.js";
-import { removeDir, tempDir, waitFor } from "./support.js";
+import { newProgramsStart, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -202,6 +202,8 @@ describe.skipIf(process.platform === "win32")("whether the app Petrina opened is
 });
 
 describe.skipIf(process.platform === "win32")("the launcher runs one copy per task", () => {
+  beforeAll(() => newProgramsStart());
+
   /** A real launcher whose "tool" notes each start and stays open while the hold file exists. */
   async function launcher() {
     const root = tempDir("petrina-launcher-");
@@ -218,8 +220,29 @@ describe.skipIf(process.platform === "win32")("the launcher runs one copy per ta
     const plan = launchPlan({ platform, dir, worktree, tool: { id: "codex", name: "Codex", path: tool }, sessionId: SESSION, model: "gpt-6.1-sol", effort: "high" });
     await writeLauncher(plan, dir, true);
     const startCount = () => (existsSync(starts) ? readFileSync(starts, "utf8").split("\n").filter(Boolean).length : 0);
-    const run = () => Bun.spawn(["/bin/sh", "-c", plan.copy], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    return { dir, hold, plan, startCount, run };
+    const run = (env: Record<string, string> = {}) => Bun.spawn(["/bin/sh", "-c", plan.copy], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, ...env } });
+    /** The process ids of the tool's starts, in order. */
+    const toolPids = () => readFileSync(starts, "utf8").split("\n").filter(Boolean).map(Number);
+    return { root, dir, hold, plan, startCount, toolPids, run };
+  }
+
+  /** Four copies started at the same moment: every one but one stops at once, saying the tool is open already, and the tool opens once. */
+  async function together(it: Awaited<ReturnType<typeof launcher>>) {
+    const before = it.startCount();
+    const copies = Array.from({ length: 4 }, () => it.run());
+    const refused = copies.map((copy) => copy.exited.then((code) => code === 1));
+    await waitFor(async () => {
+      const done = await Promise.all(refused.map((result) => Promise.race([result, Bun.sleep(10).then(() => false)])));
+      return done.filter(Boolean).length === copies.length - 1 && it.startCount() === before + 1;
+    }, "all copies but one to refuse");
+    return copies;
+  }
+
+  /** A lock left by a copy that is gone: its process ended, and the start time is not its own. */
+  async function goneCopysLock(dir: string) {
+    const dead = Bun.spawn(["true"]);
+    await dead.exited;
+    writeFileSync(join(dir, "lock"), `pid=${dead.pid}\nstarted=Mon Jan  1 00:00:00 2001\n`);
   }
 
   it("refuses every copy but one, even when they all start at the same moment", async () => {
@@ -227,13 +250,7 @@ describe.skipIf(process.platform === "win32")("the launcher runs one copy per ta
     for (let round = 0; round < 8; round++) {
       writeFileSync(it.hold, "");
       const before = it.startCount();
-      const copies = Array.from({ length: 4 }, () => it.run());
-      const refused = copies.map((copy) => copy.exited.then((code) => code === 1));
-      // Every copy but one stops at once, saying the tool is open already.
-      await waitFor(async () => {
-        const done = await Promise.all(refused.map((result) => Promise.race([result, Bun.sleep(10).then(() => false)])));
-        return done.filter(Boolean).length === copies.length - 1 && it.startCount() === before + 1;
-      }, "all copies but one to refuse");
+      const copies = await together(it);
       expect(await sessionState(it.dir)).toBe("running");
       rmSync(it.hold);
       const codes = await Promise.all(copies.map((copy) => copy.exited));
@@ -241,16 +258,16 @@ describe.skipIf(process.platform === "win32")("the launcher runs one copy per ta
       for (const [index, copy] of copies.entries()) if (codes[index] === 1) expect(await new Response(copy.stdout).text()).toContain("Codex is already open in your terminal for this task. Use that window.");
       expect(it.startCount()).toBe(before + 1);
       expect(await sessionState(it.dir)).toBe("ended");
-      // Nothing is left behind but the launcher and the ended note.
-      expect(readdirSync(it.dir).filter((name) => !name.startsWith("open.")).sort()).toEqual(["status"]);
+      // Nothing is left behind but the launcher, the ended note and the locks: one for each time the tool opened.
+      const left = readdirSync(it.dir).filter((name) => !name.startsWith("open."));
+      expect(left.filter((name) => !name.startsWith("lock"))).toEqual(["status"]);
+      expect(left.filter((name) => name.startsWith("lock"))).toHaveLength(round + 1);
     }
   }, 60_000);
 
   it("takes over a lock left by a copy that is gone, and still refuses a second copy", async () => {
     const it = await launcher();
-    const dead = Bun.spawn(["true"]);
-    await dead.exited;
-    writeFileSync(join(it.dir, "lock"), `pid=${dead.pid}\nstarted=Mon Jan  1 00:00:00 2001\n`);
+    await goneCopysLock(it.dir);
     writeFileSync(it.hold, "");
     const first = it.run();
     await waitFor(() => it.startCount() === 1, "the first copy to open the tool");
@@ -260,8 +277,124 @@ describe.skipIf(process.platform === "win32")("the launcher runs one copy per ta
     rmSync(it.hold);
     expect(await first.exited).toBe(0);
     expect(it.startCount()).toBe(1);
-    expect(existsSync(join(it.dir, "lock"))).toBe(false);
+    // The gone copy's lock stays as it was, and so does this copy's, taken over after it, for the next copy to take over after this one.
+    expect(readFileSync(join(it.dir, "lock"), "utf8")).toStartWith("pid=");
+    expect(readdirSync(it.dir).filter((name) => !name.startsWith("open.")).sort()).toEqual(["lock", expect.stringMatching(/^lock\.after\.pid_\d+_started_/), "status"]);
   }, 30_000);
+
+  it("opens the app once when four copies start together on a lock left by a copy that is gone", async () => {
+    const it = await launcher();
+    await goneCopysLock(it.dir);
+    const bin = join(it.root, "barrier");
+    mkdirSync(bin);
+    const release = join(bin, "release");
+    const finished = join(bin, "finished");
+    const gap = join(bin, "gap");
+    const starts = join(it.root, "starts");
+    const lock = join(it.dir, "lock");
+    // Each cat reads the real lock before waiting: all four copies see the same dead owner,
+    // regardless of how the system schedules them after the barrier opens.
+    writeFileSync(join(bin, "cat"), `#!/bin/sh
+if [ "$1" = '${lock}' ] && [ ! -f '${bin}/read.'"$TAKEOVER_TEST_COPY" ]; then
+  '${Bun.which("cat")}' "$@" > '${bin}/record.'"$TAKEOVER_TEST_COPY" || exit $?
+  : > '${bin}/read.'"$TAKEOVER_TEST_COPY"
+  while [ ! -f '${release}' ]; do sleep 0.01; done
+  exec '${Bun.which("cat")}' '${bin}/record.'"$TAKEOVER_TEST_COPY"
+fi
+exec '${Bun.which("cat")}' "$@"
+`);
+    // The old launcher moves the lock away before trying to claim it. Force that race:
+    // copy 1 opens the tool, copy 2 moves its live lock away and pauses, then copy 3
+    // claims the gap and opens a second tool. The fixed launcher never moves a lock.
+    // These stand-ins only control timing; every cat and mv still does its real work.
+    writeFileSync(join(bin, "mv"), `#!/bin/sh
+if [ "$1" = '-f' ] && [ "$2" = '${lock}' ]; then
+  case "$TAKEOVER_TEST_COPY" in
+    2) while [ ! -s '${starts}' ] && [ ! -f '${finished}' ]; do sleep 0.01; done ;;
+    3) while [ ! -f '${gap}' ] && [ ! -f '${finished}' ]; do sleep 0.01; done ;;
+    4) while [ ! -f '${finished}' ]; do sleep 0.01; done ;;
+  esac
+  '${Bun.which("mv")}' "$@"
+  code=$?
+  if [ "$TAKEOVER_TEST_COPY" = 2 ] && [ "$code" = 0 ]; then
+    : > '${gap}'
+    while [ ! -f '${finished}' ]; do sleep 0.01; done
+  fi
+  exit "$code"
+fi
+exec '${Bun.which("mv")}' "$@"
+`);
+    for (const name of ["cat", "mv"]) chmodSync(join(bin, name), 0o755);
+    writeFileSync(it.hold, "");
+    const copies = Array.from({ length: 4 }, (_, index) => it.run({ PATH: `${bin}:${process.env.PATH}`, TAKEOVER_TEST_COPY: String(index + 1) }));
+    const codes: (number | undefined)[] = [];
+    const exits = copies.map((copy, index) => copy.exited.then((code) => (codes[index] = code)));
+    try {
+      await waitFor(() => copies.every((_, index) => existsSync(join(bin, `read.${index + 1}`))), "all four copies to read the dead owner's lock");
+      writeFileSync(release, "");
+      await waitFor(() => it.startCount() > 1 || (it.startCount() === 1 && codes.filter((code) => code === 1).length === 3), "one app and three refusals, or the old launcher's second app");
+      expect(it.startCount()).toBe(1);
+      expect(codes.filter((code) => code === 1)).toHaveLength(3);
+      expect(await sessionState(it.dir)).toBe("running");
+    } finally {
+      // Release every gate and close the fake apps even if an assertion fails against the old launcher.
+      writeFileSync(release, "");
+      writeFileSync(finished, "");
+      rmSync(it.hold, { force: true });
+      await Promise.all(exits);
+    }
+    expect([...codes].sort()).toEqual([0, 1, 1, 1]);
+    for (const [index, copy] of copies.entries()) if (codes[index] === 1) expect(await new Response(copy.stdout).text()).toContain("Codex is already open in your terminal for this task. Use that window.");
+    expect(it.startCount()).toBe(1);
+  });
+
+  /**
+   * A copy slow to check whether the copy holding the lock is still running: its ps, while the gate
+   * names the process it is asked about, notes that it is waiting and waits for the gate to go.
+   */
+  function slowCheck(root: string) {
+    const bin = join(root, "slow");
+    mkdirSync(bin, { recursive: true });
+    const gate = join(root, "gate");
+    const waiting = join(root, "waiting");
+    const ps = join(bin, "ps");
+    writeFileSync(ps, `#!/bin/sh\nif [ "$(cat '${gate}' 2>/dev/null)" = "$4" ]; then\n  : > '${waiting}'\n  while [ -f '${gate}' ]; do sleep 0.05; done\nfi\nexec '${Bun.which("ps")}' "$@"\n`);
+    chmodSync(ps, 0o755);
+    return { env: { PATH: `${bin}:${process.env.PATH}` }, gate, waiting };
+  }
+
+  for (const [what, gone] of [
+    ["from no lock", false],
+    ["from a lock left by a copy that is gone", true],
+  ] as const)
+    it(`refuses a copy slow to check on the open app once that app has closed and another copy opened it again, ${what}`, async () => {
+      const it = await launcher();
+      if (gone) await goneCopysLock(it.dir);
+      writeFileSync(it.hold, "");
+      const first = it.run();
+      await waitFor(() => it.startCount() === 1, "the first copy to open the tool");
+      const firstPid = Number(readdirSync(it.dir).find((name) => name.startsWith("run."))!.slice(4));
+      // The late copy finds the first one holding the lock, and is held while it checks that it still runs.
+      const slow = slowCheck(it.root);
+      writeFileSync(slow.gate, String(firstPid));
+      const late = it.run(slow.env);
+      await waitFor(() => existsSync(slow.waiting), "the late copy to check on the first one");
+      // Meanwhile the app closes, and another copy opens it again.
+      process.kill(it.toolPids()[0]!, "SIGTERM");
+      await first.exited;
+      const next = it.run();
+      await waitFor(() => it.startCount() === 2, "the next copy to open the tool");
+      rmSync(slow.gate);
+      const stopped = late.exited.then(() => true);
+      await waitFor(async () => it.startCount() > 2 || (await Promise.race([stopped, Bun.sleep(10).then(() => false)])), "the late copy to stop or open the tool");
+      expect(it.startCount()).toBe(2);
+      expect(await late.exited).toBe(1);
+      expect(await new Response(late.stdout).text()).toContain("Codex is already open in your terminal for this task. Use that window.");
+      expect(await sessionState(it.dir)).toBe("running");
+      rmSync(it.hold);
+      expect(await next.exited).toBe(0);
+      expect(it.startCount()).toBe(2);
+    }, 60_000);
 
   it("notes the end when the terminal window is closed", async () => {
     const it = await launcher();
@@ -279,6 +412,8 @@ describe.skipIf(process.platform === "win32")("the launcher runs one copy per ta
 });
 
 describe.skipIf(process.platform === "win32")("Claude Code's ask-before-acting mode", () => {
+  beforeAll(() => newProgramsStart());
+
   const help = (text: string) => {
     const dir = tempDir("petrina-help-");
     roots.push(dir);
