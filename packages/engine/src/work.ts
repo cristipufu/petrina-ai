@@ -2,7 +2,7 @@
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import type { Task } from "@petrina/core";
+import { lastIndexWhere, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, NotesResult, stepBack, TestResult, TEXT_LIMITS } from "./roles.js";
@@ -89,6 +89,25 @@ export class Work {
       const failed = result.checks.filter((check) => !check.pass);
       for (const check of failed) task.findings.push({ id: this.k.id(task.id), text: `Failed acceptance check: ${check.text}`, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });
       this.k.log(task, failed.length ? "warn" : "done", failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, profileId);
+      task.testedPatch = (await this.updates.patch(task)) ?? task.testedPatch;
+      if (task.retest) {
+        // The final pass before the delivery check: on to the check, or back to the builder with what failed.
+        delete task.retest;
+        this.k.finishStep(task);
+        const stages = task.plan?.stages ?? [];
+        const builder = lastIndexWhere(stages, (entry) => entry.roleId === "builder" && entry.kind === "do");
+        if (failed.length && builder >= 0) {
+          task.stageIndex = builder;
+          task.fixing = true;
+          this.k.log(task, "warn", `Sent back to the builder: ${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed on the final code`);
+        } else {
+          const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
+          task.stageIndex = gate >= 0 ? gate : task.stageIndex + 1;
+        }
+        task.sub = 0;
+        this.k.commit();
+        return "continue";
+      }
     } else {
       const result = await this.turns.turn(task, roleId, profileId, sections, NotesResult, signal);
       this.k.say(task, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, profileId);

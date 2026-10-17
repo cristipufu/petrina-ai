@@ -18,7 +18,7 @@ import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
   /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
-  planner?: "short" | "tester-after" | "limits" | "claude-build" | "two-opus";
+  planner?: "short" | "tester-after" | "tester-first" | "limits" | "claude-build" | "two-opus";
   /** Scheduling tests: each fresh agent waits for its own release file before answering. */
   controlled?: boolean;
   /**
@@ -42,7 +42,7 @@ export interface Scenario {
   /** The verifier's verdict on every finding it is given (default "real"). */
   verifier?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
-  tester?: "work";
+  tester?: "work" | "fail-once";
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
   releaseManager?: "hang";
   /**
@@ -348,6 +348,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           _meta: { "_claude/model": "claude-opus-5-5", "_claude/rateLimit": { status: "allowed", rateLimitType: "five_hour", utilization: 0.81, resetsAt: Math.round(Date.now() / 1000) + 7200 } },
         } as acp.SessionNotification["update"]);
       }
+      if (plan.planner === "tester-first")
+        return done({
+          rationale: "Build it, try it, then two reviewers.",
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-xhigh"] },
+            { kind: "do", title: "Try it like a user", roleId: "tester", profileIds: ["opus-high"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-xhigh", "sol-xhigh"], maxRounds: 2 },
+          ],
+        });
       if (plan.planner === "tester-after")
         return done({
           rationale: "Build it, one reviewer, then try it out.",
@@ -504,7 +513,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         allowed = permission.outcome.outcome === "selected" && permission.outcome.optionId === "allow";
       }
       writeFileSync(join(session.cwd, "greeting.txt"), allowed ? "Hello (with left-pad)\n" : "Hello\n");
-      if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "welcome.txt"), "Hello\n");
+      if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "welcome.txt"), `Hello ${Date.now()}\n`);
       if (plan.leak && !text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "greeting.txt"), "Hello from internal-db-07\n");
       if (plan.mergesMain && !text.includes("You are fixing the review findings")) {
         execFileSync("git", ["add", "-A"], { cwd: session.cwd });
@@ -592,7 +601,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         await say("Trying it out");
         return hang(sessionId, "tester-working");
       }
-      return done({ summary: "Tried it: it works.", checks: [] });
+      // "fail-once": the second tester pass (the one on the final code) fails an acceptance item, once.
+      if (plan.tester === "fail-once" && marked("tester-passed-once") && !marked("tester-failed-once")) {
+        mark("tester-failed-once");
+        return done({ summary: "Tried it: the greeting is missing on the welcome page.", checks: [{ text: "A greeting file exists", pass: false }] });
+      }
+      mark("tester-passed-once");
+      return done({ summary: "Tried it: it works.", checks: [{ text: "A greeting file exists", pass: true }] });
     case "release manager": {
       if (plan.releaseManager === "hang" && !marked("release-manager-started")) return hang(sessionId, "release-manager-started");
       await say("Writing the release notes");

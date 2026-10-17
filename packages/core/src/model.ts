@@ -423,6 +423,10 @@ export interface Task {
   lessons?: readonly Lesson[];
   /** Petrina is running the repository's pre-commit hook, with the working copy's HEAD detached at the base: a restart puts it back. */
   hooking?: boolean;
+  /** The change (its fingerprint) the tester last tried: fix rounds are reviewed, and the tester tries the final code once more before the delivery check. */
+  testedPatch?: string;
+  /** The tester is trying the final code right before the delivery check; the check follows, or the builder if it fails. */
+  retest?: boolean;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
   builderSession?: { stageId: Id; profileId: Id; toolId: Id; model: string; sessionId: string };
   /** The coordinator sent the delivery back with this note: the Guide keeper looks for what reviewers missed. */

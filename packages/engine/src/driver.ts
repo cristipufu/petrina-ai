@@ -189,6 +189,15 @@ export class Driver {
           }
           delete current.handChanges;
         }
+        // Acceptance was tried on this change already. Fixes are reviewed, and the final code is tried once more
+        // right before the delivery check, so a tester pass per fix round is spared.
+        if (stage?.kind === "do" && stage.roleId === "tester" && !current.retest && current.testedPatch !== undefined) {
+          this.k.log(current, "milestone", "Acceptance will be tried once more on the final code, right before your delivery check");
+          current.stageIndex += 1;
+          current.sub = 0;
+          this.k.commit();
+          continue;
+        }
         // Checkpoints need no new agent, so a paused or full pool must not hold them back.
         if (stage?.kind === "gate") {
           // On the way back to the check where changes were asked, earlier design checks are not asked again.
@@ -207,6 +216,16 @@ export class Driver {
             if ((await this.updates.upToDate(current, signal)) === "conflict") continue;
             // Right before the coordinator is asked to ship, the checks run again on what would ship.
             if (await this.checks.checksBeforeDelivery(current, signal)) continue;
+            // The tester tried an earlier version of the change: the final code gets one more pass first.
+            const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && entry.roleId === "tester");
+            if (tester >= 0 && current.testedPatch !== undefined && (await this.updates.patch(current)) !== current.testedPatch) {
+              current.retest = true;
+              current.stageIndex = tester;
+              current.sub = 0;
+              this.k.log(current, "milestone", "Trying the acceptance list once more on the final code");
+              this.k.commit();
+              continue;
+            }
             const head = await git.head(current.worktree!).catch(() => undefined);
             if (head) current.checkedSha = head;
             const patch = await this.updates.patch(current);
