@@ -332,6 +332,8 @@ export interface Task {
   checks?: { at: number; sha?: string; results: readonly CheckRun[] };
   /** How many times failing checks sent the work back right before the delivery check. */
   checkReturns?: number;
+  /** The base's commit when the working copy was made: reviews, the tamper check and the review guide go by it, whatever later happens to refs. */
+  baseSha?: string;
   /** The commit the last review round looked at: later rounds review only what changed since. */
   reviewedSha?: string;
   /** How much could go wrong, as the planner rated it from what the task touches. Sets review depth and the delivery check. */

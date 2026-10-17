@@ -57,7 +57,8 @@ const SAFE_TRANSPORT: readonly (readonly [string, string])[] = [
 function gitEnv(credentials: boolean): NodeJS.ProcessEnv {
   const base = credentials ? process.env : agentEnv(process.env, emptyDir("gh"));
   const settings = [["core.hooksPath", emptyDir("hooks")], ["core.fsmonitor", "false"], ...(credentials ? SAFE_TRANSPORT : [])] as const;
-  return { ...withGitConfig(base, settings), GIT_TERMINAL_PROMPT: "0" };
+  // Replace objects could make a commit Petrina pinned show different content.
+  return { ...withGitConfig(base, settings), GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" };
 }
 
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;

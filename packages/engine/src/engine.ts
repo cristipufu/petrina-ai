@@ -974,7 +974,7 @@ export class Engine {
    * they drove finishes, without using up a review round.
    */
   private async reviewHandChanges(task: MTask): Promise<void> {
-    const problems = await git.tamperCheck(task.worktree!, task.base!);
+    const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
     for (const problem of problems) {
       if (!task.findings.some((finding) => finding.text === problem && finding.status === "open")) {
         task.findings.push({ id: this.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
@@ -1275,6 +1275,8 @@ export class Engine {
     task.branch = branch;
     task.worktree = worktree;
     task.base = task.base ?? base;
+    // Pinned once, in the product's own clone: an agent moving a ref later changes nothing Petrina compares against.
+    task.baseSha = task.baseSha ?? (await git.revParse(product.path, task.base));
     this.commit();
   }
 
@@ -1500,7 +1502,7 @@ export class Engine {
     if (task.sub === 0) {
       // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
       delete task.handChanges;
-      const problems = await git.tamperCheck(task.worktree!, task.base!);
+      const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
       // Petrina's own findings settle on what it sees now, whatever anyone answered.
       for (const finding of task.findings) {
         if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && !problems.includes(finding.text)) finding.status = "fixed";
@@ -2042,7 +2044,7 @@ export class Engine {
         if (earlier.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where) sections.push({ title: WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "") });
-        opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.s.roles as Role[], profiles: this.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
+        opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.s.roles as Role[], profiles: this.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       }
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
       this.commitNow();
@@ -2372,8 +2374,10 @@ export class Engine {
 
   /** The guide as the base branch has it, never as the change under review has it, plus the points the coordinator accepted. */
   private reviewGuide(task: MTask): string {
-    const base = task.worktree && task.base ? (git.fileAt(task.worktree, task.base, GUIDE_FILE) ?? "") : "";
-    return guideText(base, this.productOf(task)?.reviewGuide ?? []);
+    const product = this.productOf(task);
+    const ref = task.baseSha ?? task.base;
+    const base = ref && (product?.path ?? task.worktree) ? (git.fileAt((product?.path ?? task.worktree)!, ref, GUIDE_FILE) ?? "") : "";
+    return guideText(base, product?.reviewGuide ?? []);
   }
 
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */

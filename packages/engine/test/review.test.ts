@@ -55,6 +55,10 @@ describe.concurrent("reviews that converge", () => {
     expect(lines(task)).toContain("Sent back to the builder: 1 important");
     expect(fakes.openings("builder")[1]).toContain("Review findings (answer every one by id; fix every Important one)");
 
+    // Reviews compare against the base commit pinned when the working copy was made, not a ref an agent could move.
+    expect(task.baseSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(fakes.openings("code reviewer")[0]).toContain(`git diff ${task.baseSha}...HEAD`);
+
     // Round two looks only at what changed since round one.
     expect(task.reviewedSha).toMatch(/^[0-9a-f]{40}$/);
     const second = fakes.openings("code reviewer").filter((text) => text.includes("This is review round 2"));
