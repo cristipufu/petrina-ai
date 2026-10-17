@@ -231,7 +231,8 @@ export class Engine extends Kernel implements Commands {
   async findClones(): Promise<Clone[]> {
     const real = (path: string) => {
       try {
-        return realpathSync(path);
+        // Native resolution also expands Windows short names, which Git reports in their full form.
+        return realpathSync.native(path);
       } catch {
         return path;
       }
