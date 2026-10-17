@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
-import { addLearnings } from "../src/learnings.js";
+import { addLearnings, Learnings } from "../src/learnings.js";
 import { samePointRoughly } from "../src/points.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
@@ -38,6 +38,33 @@ describe("the Learnings section of AGENTS.md", () => {
 });
 
 describe("lessons agents pass on", () => {
+  it("offers and saves a complete lesson, including the instructions beyond 240 characters", async () => {
+    const root = tempDir("petrina-lessons-complete-");
+    roots.push(root);
+    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    try {
+      engine.setPoolPaused(true);
+      const repo = makeProduct(root);
+      const productId = await engine.addProduct(repo);
+      const task = engine.task(engine.addTask({ productId, title: "Keep a complete instruction" }))!;
+      task.worktree = repo;
+      const learnings = new Learnings(engine);
+      const lesson = "The Claude Code connector and SDK sources can be read without installing anything, in ~/.bun/install/cache (@agentclientprotocol/claude-agent-acp dist/acp-agent.js, and @anthropic-ai/claude-agent-sdk sdk.d.ts for the full settings and sandbox options); check both sources before changing how sessions start.";
+      learnings.note(task, [lesson], "builder", "sol-xhigh");
+      learnings.offer(task);
+      const offer = engine.getState().inbox.find((item) => item.kind === "learnings")!;
+      expect(offer.body).toBe(`- ${lesson}`);
+      engine.addLessons(offer.id, [0]);
+      await learnings.write(task);
+      expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(`- ${lesson}`);
+      learnings.note(task, [lesson], "builder", "sol-xhigh");
+      learnings.offer(task);
+      expect(engine.getState().inbox.filter((item) => item.kind === "learnings")).toEqual([]);
+    } finally {
+      engine.shutdown();
+    }
+  });
+
   it("are offered at the delivery check once each, and the ones ticked join AGENTS.md with the next delivery", async () => {
     const root = tempDir("petrina-lessons-");
     roots.push(root);

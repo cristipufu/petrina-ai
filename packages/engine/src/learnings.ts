@@ -22,7 +22,8 @@ export class Learnings {
   note(task: MTask, lessons: readonly string[], roleId: Id, profileId: Id): void {
     const known = this.known(task);
     for (const raw of lessons) {
-      const text = cleanPoint(raw).slice(0, 240);
+      // The coordinator approves this instruction as written; cutting it can lose a path or a qualification.
+      const text = cleanPoint(raw);
       // Agents often say the same thing in other words: the first saying of a point is the one offered.
       if (text.length < 8 || hasPoint(known, text) || known.split("\n").some((line) => samePointRoughly(line, text)) || (task.lessons ?? []).some((lesson) => hasPoint(lesson.text, text) || samePointRoughly(lesson.text, text))) continue;
       if ((task.lessons?.length ?? 0) >= MAX_LESSONS) break;
