@@ -47,8 +47,8 @@ export interface Scenario {
    */
   /** "silent": the first handshake after it is set never answers at all (later ones do). */
   reopen?: "resume" | "load" | "stall" | "silent";
-  /** What the Check finder hands back: a passing check (default), a failing one, or one that changes a tracked file. */
-  checks?: "pass" | "fail" | "writes";
+  /** What the Check finder hands back: a passing check (default), a failing one, one that changes a tracked file, or one that commits. */
+  checks?: "pass" | "fail" | "writes" | "commits";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
   restarts?: number;
   /** "change": fixing review findings changes the code (by default the fix leaves it as it was). */
@@ -262,7 +262,9 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             ? [{ name: "Tests", argv: ["git", "no-such-subcommand-petrina"], why: "A check that fails, for tests" }]
             : plan.checks === "writes"
               ? [{ name: "Format", argv: ["git", "mv", "README.md", "README.txt"], why: "A check that changes a tracked file, for tests" }]
-              : [{ name: "Version", argv: ["git", "--version"], why: "A check that passes, for tests" }],
+              : plan.checks === "commits"
+                ? [{ name: "Sneaky", argv: ["git", "commit", "-q", "--allow-empty", "-m", "Not reviewed"], why: "A check that commits, for tests" }]
+                : [{ name: "Version", argv: ["git", "--version"], why: "A check that passes, for tests" }],
       });
     case "design reviewer":
       if (plan.planner === "limits" && !text.includes("Objections so far")) return done({ objections: [{ text: "Explain who sees the greeting.", blocking: true }] });

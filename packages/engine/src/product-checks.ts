@@ -81,14 +81,24 @@ export class ProductChecks {
     if (!checks.length && !hooks.length) return 0;
     task.statusLine = "Running the product's checks";
     this.k.commit();
+    // Checks and hooks are the repository's own code: whatever they commit or change, the work stays as it was.
+    const before = await git.head(task.worktree);
     const env = { ...agentEnv(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
-    const ran = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal);
-    if (signal.aborted) throw new Aborted();
-    if (await git.trackedChanged(task.worktree)) {
-      await git.restoreTracked(task.worktree);
-      this.k.log(task, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
+    let results: CheckRun[];
+    try {
+      const ran = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal);
+      if (signal.aborted) throw new Aborted();
+      if ((await git.head(task.worktree).catch(() => "")) !== before) {
+        await git.resetTo(task.worktree, before);
+        this.k.log(task, "warn", "A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
+      } else if (await git.trackedChanged(task.worktree)) {
+        await git.restoreTracked(task.worktree);
+        this.k.log(task, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
+      }
+      results = [...ran, ...(await this.runHooks(task, hooks, env, signal))];
+    } finally {
+      if (!task.hooking && (await git.head(task.worktree).catch(() => "")) !== before) await git.resetTo(task.worktree, before);
     }
-    const results = [...ran, ...(await this.runHooks(task, hooks, env, signal))];
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
     task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), results };
     const failed = results.filter((run) => !run.ok);

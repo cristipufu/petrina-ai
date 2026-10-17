@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitAll, ensureWorktree, isClean, repoInfo, riskySettings } from "../src/git.js";
+import { commitAll, commitTree, ensureWorktree, isClean, mergeTree, moveTo, patchId, repoInfo, riskySettings } from "../src/git.js";
 import { removeDir } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
@@ -78,5 +78,49 @@ describe("Petrina's own git steps", () => {
     expect(result.fetchTimedOut).toBe(true);
     expect(result.base).toBe("main");
     expect(existsSync(join(temp, "wt", "a.txt"))).toBe(true);
+  });
+});
+
+describe("the change's fingerprint", () => {
+  const folder = mkdtempSync(join(tmpdir(), "petrina-patch-"));
+  afterAll(() => removeDir(folder));
+
+  /** A repository with a task branch that changes one line in the middle of a file. */
+  function repo(): { path: string; run: (...args: string[]) => string } {
+    const path = mkdtempSync(join(folder, "repo-"));
+    const run = (...args: string[]) => execFileSync("git", args, { cwd: path, encoding: "utf8" }).trim();
+    run("init", "-q", "-b", "main");
+    run("config", "user.email", "t@example.com");
+    run("config", "user.name", "T");
+    writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n    return 2\n");
+    run("add", ".");
+    run("commit", "-q", "-m", "init");
+    run("checkout", "-q", "-b", "task");
+    writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n    return 3\n");
+    run("commit", "-qam", "task");
+    return { path, run };
+  }
+
+  it("stays the same when the change lands lower in a file that grew above it", async () => {
+    const { path, run } = repo();
+    const before = await patchId(path, run("rev-parse", "main"), "HEAD");
+    run("checkout", "-q", "main");
+    writeFileSync(join(path, "NEWS.md"), "News\n");
+    writeFileSync(join(path, "app.py"), "import os\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n");
+    run("add", ".");
+    run("commit", "-q", "-m", "main moved");
+    run("checkout", "-q", "task");
+    const merged = await mergeTree(path, run("rev-parse", "main"));
+    expect(merged?.conflicts).toEqual([]);
+    await moveTo(path, await commitTree(path, merged!.tree, run("rev-parse", "main"), "task"));
+    expect(await patchId(path, run("rev-parse", "main"), "HEAD")).toBe(before!);
+  });
+
+  it("changes when only whitespace differs, which is meaning in Python", async () => {
+    const { path, run } = repo();
+    const before = await patchId(path, run("rev-parse", "main"), "HEAD");
+    writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n        return 3\n");
+    run("commit", "-qam", "indented");
+    expect(await patchId(path, run("rev-parse", "main"), "HEAD")).not.toBe(before!);
   });
 });

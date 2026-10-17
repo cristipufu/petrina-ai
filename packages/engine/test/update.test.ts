@@ -146,6 +146,12 @@ describe.concurrent("checks only look", () => {
     expect(git(repo, "ls-tree", "--name-only", "main")).toContain("README.md");
     expect(git(repo, "ls-tree", "--name-only", "main")).not.toContain("README.txt");
   });
+
+  it("takes back a commit a check makes, so nothing the coordinator did not approve ships", async () => {
+    const { task, repo, before } = await ship({ checks: "commits" });
+    expect(lines(task)).toContain("A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
+    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
+  });
 });
 
 describe.concurrent.skipIf(!posix)("the repository's own commit hooks", () => {

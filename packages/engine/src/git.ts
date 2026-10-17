@@ -9,6 +9,7 @@
 // agent that rewrites a remote cannot change what Petrina reads. They take the `gh` command to run,
 // so tests can stand in a fake GitHub.
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -341,16 +342,17 @@ export async function mergeBase(path: string, a: string, b: string): Promise<str
 }
 
 /**
- * A fingerprint of the change from `from` to `to` (git's patch-id): the same lines added and removed give
- * the same fingerprint, whatever commit they sit on. "empty" for no change.
+ * An exact fingerprint of the change from `from` to `to`: its whole diff, every character and space of it,
+ * with only what moves when the same change sits on another commit left out (line numbers and blob ids).
+ * Unlike git's patch-id it never ignores whitespace, which is meaning in Python, YAML or a Makefile.
+ * "empty" for no change.
  */
 export async function patchId(path: string, from: string, to: string): Promise<string | undefined> {
-  const diff = await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--binary", "--full-index", from, to], path);
+  const diff = await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--binary", "--full-index", "-U3", "--src-prefix=a/", "--dst-prefix=b/", from, to], path);
   if (diff.code !== 0) return undefined;
   if (!diff.stdout) return "empty";
-  const id = await run(["git", "patch-id", "--stable"], path, `${diff.stdout}\n`);
-  const value = id.stdout.split(/\s+/)[0] ?? "";
-  return id.code === 0 && /^[0-9a-f]{40,64}$/.test(value) ? value : undefined;
+  const placed = diff.stdout.replace(/^index [0-9a-f]+\.\.[0-9a-f]+.*$/gm, "index").replace(/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/gm, "@@");
+  return createHash("sha256").update(placed).digest("hex");
 }
 
 /**
