@@ -56,7 +56,7 @@ export class Work {
         ...(result.title ? { title: result.title } : {}),
         ...(description ? { description } : {}),
       };
-      this.learnings.note(task, result.learnings, roleId, profileId);
+      await this.learnings.note(task, result.learnings, roleId, profileId);
       // One commit per task: the builder's work joins the branch's one commit, under its title.
       const sha = await git.commitAll(task.worktree!, this.updates.message(task));
       if (updating) {
@@ -92,7 +92,7 @@ export class Work {
       );
     } else if (roleId === "tester") {
       const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal);
-      this.learnings.note(task, result.learnings, roleId, profileId);
+      await this.learnings.note(task, result.learnings, roleId, profileId);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => ({ ...item, met: result.checks.find((check) => check.text === item.text)?.pass ?? item.met }));
       const failed = result.checks.filter((check) => !check.pass);
       for (const check of failed) task.findings.push({ id: this.k.id(task.id), text: `Failed acceptance check: ${check.text}`, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });

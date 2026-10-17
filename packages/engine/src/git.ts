@@ -98,7 +98,7 @@ async function gh(cmd: Gh, repo: string, args: readonly string[], input?: string
   return run([...cmd, ...args, "--repo", repo], tmpdir(), input, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
 }
 
-export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean; local?: boolean; timeoutMs?: number; ownHooks?: boolean; index?: string } = {}): Promise<RunResult> {
+export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean; local?: boolean; timeoutMs?: number; ownHooks?: boolean; index?: string; rawOutput?: boolean } = {}): Promise<RunResult> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     proc = Bun.spawn([...cmd], {
@@ -113,6 +113,14 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
     // The program is not installed (no gh, say): report it like a failed command.
     return { code: 127, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
   }
+  // Read while the process writes: a saved file can exceed the pipe's capacity before Git exits.
+  const stdout = proc.stdout as ReadableStream;
+  const stderr = proc.stderr as ReadableStream;
+  const output = Promise.all([
+    options.rawOutput ? new Response(stdout).arrayBuffer().then((bytes) => Buffer.from(bytes).toString("utf8")) : new Response(stdout).text(),
+    new Response(stderr).text(),
+  ]);
+  void output.catch(() => undefined);
   if (options.timeoutMs) {
     // Race the exit, not the output: git's network helpers can keep the pipes open after git is killed.
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -124,15 +132,17 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
       return { code: 124, stdout: "", stderr: "timed out", timedOut: true };
     }
   }
-  const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), new Response(proc.stderr as ReadableStream).text(), proc.exited]);
-  return { code, stdout: stdout.trim(), stderr: stderr.trim() };
+  const [[out, err], code] = await Promise.all([output, proc.exited]);
+  return { code, stdout: options.rawOutput ? out : out.trim(), stderr: err.trim() };
 }
 
 /** A file as committed at `ref`, read straight from git's objects: no filters, no links followed. Undefined when absent. */
-export function fileAt(root: string, ref: string, path: string): string | undefined {
+export async function fileAt(root: string, ref: string, path: string, timeoutMs = 30_000): Promise<string | undefined> {
   if (ref.startsWith("-") || path.startsWith("-")) return undefined;
-  const result = Bun.spawnSync(["git", "cat-file", "blob", `${ref}:${path}`], { cwd: root, env: gitEnv(false), stdin: "ignore", stdout: "pipe", stderr: "ignore", windowsHide: true });
-  return result.exitCode === 0 ? result.stdout.toString() : undefined;
+  const result = await run(["git", "cat-file", "blob", `${ref}:${path}`], root, undefined, { timeoutMs, rawOutput: true });
+  if (result.timedOut) throw new Error("Git did not finish reading the repository's saved files");
+  if (result.code === 127) throw new Error("Git could not read the repository's saved files");
+  return result.code === 0 ? result.stdout : undefined;
 }
 
 async function must(cmd: readonly string[], cwd: string, input?: string): Promise<string> {

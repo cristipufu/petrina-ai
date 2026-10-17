@@ -14,15 +14,14 @@ export interface Section {
 }
 
 export class Context {
-  private readonly parts: Record<ContextPart, (task: MTask, roleId: Id) => Section[]> = {
+  private readonly parts: Record<ContextPart, (task: MTask, roleId: Id, points: readonly string[]) => Section[]> = {
     notes: (task) => this.notes(task),
     brief: (task) => this.brief(task),
     objections: (task, roleId) => this.objections(task, roleId),
     checks: (task) => this.checks(task),
     "findings-to-answer": (task) => this.findingsToAnswer(task),
     // Task context, like the notes: points accepted during this task, before the delivery that writes them to REVIEW.md.
-    "guide-points": (task) => {
-      const points = this.guide.pendingPoints(task);
+    "guide-points": (task, _roleId, points) => {
       return points.length ? [{ title: `Points the coordinator accepted for the review guide, not in REVIEW.md on ${task.base ?? "the base branch"} yet (check them too)`, body: points.map((point) => `- ${point}`).join("\n") }] : [];
     },
     report: (task, roleId) => this.report(task, roleId),
@@ -35,12 +34,13 @@ export class Context {
     private readonly guide: GuideKeeper,
   ) {}
 
-  sectionsFor(task: MTask, roleId: Id): Section[] {
-    // The opening instructions hold every note, so nothing waits in line behind them.
-    task.queued.splice(0);
+  async sectionsFor(task: MTask, roleId: Id): Promise<Section[]> {
     const role = this.k.role(roleId);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
-    return CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId));
+    const points = reads.includes("guide-points") ? await this.guide.pendingPoints(task) : [];
+    // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
+    task.queued.splice(0);
+    return CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points));
   }
 
   /**

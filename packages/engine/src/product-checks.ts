@@ -88,8 +88,8 @@ export class ProductChecks {
         task,
         "check-finder",
         finder,
-        () => [
-          ...this.context.sectionsFor(task, "check-finder"),
+        async () => [
+          ...await this.context.sectionsFor(task, "check-finder"),
           ...(product.checks ? [{ title: "The checks used until now", body: product.checks.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") }] : []),
           ...(declared.length ? [{ title: "Commands the repository declares (a starting point, not the answer)", body: declared.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") }] : []),
         ],

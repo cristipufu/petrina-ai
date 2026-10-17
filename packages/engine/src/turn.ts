@@ -14,9 +14,11 @@ import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
+import type { Section } from "./context.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
+type Given = () => Section[] | Promise<Section[]>;
 
 /** `used` hears which profile worked each attempt: a stand-in when the planned one was out of usage. */
 interface TurnOptions<T> {
@@ -45,7 +47,7 @@ export class Turns {
    * told what the first one did and said; with no stand-in the task waits, and the first agent's conversation
    * is reopened when a limit ends.
    */
-  async turn<T>(task: MTask, roleId: Id, plannedId: Id, given: () => { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T> = {}): Promise<T> {
+  async turn<T>(task: MTask, roleId: Id, plannedId: Id, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T> = {}): Promise<T> {
     if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     let stopped: { profileId: Id; error: UsageLimited } | undefined;
     for (;;) {
@@ -103,7 +105,7 @@ export class Turns {
   }
 
   /** One attempt at the step by one agent on one profile. */
-  private async attempt<T>(task: MTask, roleId: Id, profile: AgentProfile, given: () => { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T>): Promise<T> {
+  private async attempt<T>(task: MTask, roleId: Id, profile: AgentProfile, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T>): Promise<T> {
     const role = this.k.role(roleId);
     const product = this.k.productOf(task);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
@@ -248,7 +250,7 @@ export class Turns {
       let opening: string;
       if (wentBack) {
         // Its job as it stands now and the context, from the same sections a fresh conversation gets.
-        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections: given() });
+        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections: await given() });
       } else if (picked) {
         // One line about the restart (or the hand back), then only what the conversation has not heard: the answer to its open question, and messages still in line.
         const answer = asked?.answer !== undefined ? { question: asked.question, text: asked.answer } : undefined;
@@ -269,7 +271,7 @@ export class Turns {
         if (signal.aborted || !live()) throw new Aborted();
         const earlier = task.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
         if (earlier.length) this.k.log(task, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
-        const sections = [...given()];
+        const sections = [...await given()];
         if (earlier.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt)) });
@@ -277,6 +279,7 @@ export class Turns {
         opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       }
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
+      if (signal.aborted || !live()) throw new Aborted();
       this.k.commitNow();
       // A reopened conversation carries on after the interruption; a fresh one gets its first instructions.
       return await this.converse(task, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: true });
@@ -311,7 +314,7 @@ export class Turns {
     roleId: Id,
     plannedId: Id,
     copy: string,
-    given: () => { title: string; body: string }[],
+    given: Given,
     schema: z.ZodType<T>,
     signal: AbortSignal,
     options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string } = {},
@@ -361,7 +364,7 @@ export class Turns {
   }
 
   /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
-  private async attemptTogether<T>(task: MTask, roleId: Id, profile: AgentProfile, copy: string, given: () => { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; took?: { from: string; words: string } }): Promise<T> {
+  private async attemptTogether<T>(task: MTask, roleId: Id, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; took?: { from: string; words: string } }): Promise<T> {
     const role = this.k.role(roleId);
     const product = this.k.productOf(task);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
@@ -415,7 +418,8 @@ export class Turns {
     this.k.readUsage(profile.toolId);
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
-      const sections = [...given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
+      const sections = [...await given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
+      if (signal.aborted) throw new Aborted();
       if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words) });
       const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       return await this.converse(task, run, agent, opening, "first", role, profileId, schema, signal, { ...options, main: false });

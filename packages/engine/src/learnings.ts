@@ -19,8 +19,9 @@ export class Learnings {
   constructor(private readonly k: Kernel) {}
 
   /** An agent's lessons, kept on the task until the delivery check. Repeats, and ones AGENTS.md already has, are left out. */
-  note(task: MTask, lessons: readonly string[], roleId: Id, profileId: Id): void {
-    const known = this.known(task);
+  async note(task: MTask, lessons: readonly string[], roleId: Id, profileId: Id): Promise<void> {
+    if (!lessons.length) return;
+    const known = await this.known(task);
     for (const raw of lessons) {
       // The coordinator approves this instruction as written; cutting it can lose a path or a qualification.
       const text = cleanPoint(raw);
@@ -36,15 +37,14 @@ export class Learnings {
    * file is read as the task's branch has it (what would land, main's latest lines included once the work is
    * brought up to date), or at the task's base before there is a branch.
    */
-  private known(task: MTask): string {
+  private async known(task: MTask): Promise<string> {
     const product = this.k.productOf(task);
-    const file = (task.worktree && git.fileAt(task.worktree, "HEAD", AGENTS_FILE)) || this.baseFile(task);
+    const file = (task.worktree && await git.fileAt(task.worktree, "HEAD", AGENTS_FILE)) || await this.baseFile(task);
     return [file, ...(product?.learnings ?? []).map((line) => line.text), ...(product?.learningsDeclined ?? [])].join("\n");
   }
 
   /** Lessons that AGENTS.md, or the coordinator's answers, have covered since they were noted. */
-  private covered(task: MTask, text: string): boolean {
-    const known = this.known(task);
+  private covered(known: string, text: string): boolean {
     return hasPoint(known, text) || known.split("\n").some((line) => samePointRoughly(line, text));
   }
 
@@ -52,9 +52,14 @@ export class Learnings {
    * At the delivery check: the task's lessons offered to the coordinator in one inbox item, without holding anything
    * up. A lesson AGENTS.md gained in the meantime (from another task, or the coordinator's own hand) is not offered.
    */
-  offer(task: MTask): void {
+  async offer(task: MTask): Promise<void> {
     const product = this.k.productOf(task);
-    const lessons = (task.lessons ?? []).filter((lesson) => !this.covered(task, lesson.text));
+    if (!product || !task.lessons?.length) {
+      delete task.lessons;
+      return;
+    }
+    const known = await this.known(task);
+    const lessons = task.lessons.filter((lesson) => !this.covered(known, lesson.text));
     delete task.lessons;
     if (!product || !lessons.length) return;
     const from = [...new Set(lessons.map((lesson) => this.k.role(lesson.roleId)?.name ?? lesson.roleId))];
@@ -138,11 +143,11 @@ export class Learnings {
   }
 
   /** AGENTS.md as the base branch has it. */
-  private baseFile(task: MTask): string {
+  private async baseFile(task: MTask): Promise<string> {
     const product = this.k.productOf(task);
     const ref = task.baseSha ?? task.base;
     const root = product?.path ?? task.worktree;
-    return ref && root ? (git.fileAt(root, ref, AGENTS_FILE) ?? "") : "";
+    return ref && root ? ((await git.fileAt(root, ref, AGENTS_FILE)) ?? "") : "";
   }
 }
 

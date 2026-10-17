@@ -271,11 +271,11 @@ export class Shipping {
     const stop = (why: string): never => {
       throw new Error(`Petrina could not set the version to ${version}: ${why}. It published nothing. Set it there yourself (only the version) in a task, or release by hand, then retry.`);
     };
-    const due = this.declaredVersions(worktree, start).filter((entry) => entry.version !== version);
+    const due = (await this.declaredVersions(worktree, start)).filter((entry) => entry.version !== version);
     if (!due.length) return start;
     const before = new Map<string, string>();
     for (const { file, version: from } of due) {
-      const text = git.fileAt(worktree, start, file)!;
+      const text = (await git.fileAt(worktree, start, file))!;
       const next = withVersion(file, text, from!, version);
       if (next === undefined) return stop(`${file} does not state it in a way Petrina can change on its own`);
       before.set(file, from!);
@@ -283,7 +283,7 @@ export class Shipping {
       // The product's own entries in the Cargo.lock beside it move with it.
       if (file.endsWith("Cargo.toml")) {
         const lockFile = join(dirname(file), "Cargo.lock").replace(/^\.\//, "");
-        const lock = git.fileAt(worktree, start, lockFile);
+        const lock = await git.fileAt(worktree, start, lockFile);
         if (lock !== undefined) {
           const moved = lockWithVersion(lock, ownCrates(text), from!, version);
           if (moved !== lock) {
@@ -299,8 +299,15 @@ export class Shipping {
     if (!tested) return start;
     // Checked like anyone's version commit: only the version, and every main version file says it.
     const changed = await git.changedFiles(worktree, start, tested);
-    const more = changed.filter((file) => !isVersionFile(file) || !onlyVersionChanged(file, git.fileAt(worktree, start, file), git.fileAt(worktree, tested, file), version, before.get(file)));
-    const wrong = this.declaredVersions(worktree, tested).filter((entry) => entry.version !== version);
+    const more: string[] = [];
+    for (const file of changed) {
+      if (!isVersionFile(file)) more.push(file);
+      else {
+        const [source, target] = await Promise.all([git.fileAt(worktree, start, file), git.fileAt(worktree, tested, file)]);
+        if (!onlyVersionChanged(file, source, target, version, before.get(file))) more.push(file);
+      }
+    }
+    const wrong = (await this.declaredVersions(worktree, tested)).filter((entry) => entry.version !== version);
     if (more.length || wrong.length) {
       await git.resetTo(worktree, start);
       stop(more.length ? `the change in ${more.join(", ")} would be more than the version` : `${says(wrong)}`);
@@ -316,7 +323,7 @@ export class Shipping {
     const latest = await this.connections.serial(product.id, () => git.latestRelease(product.repo, this.k.options.gh));
     if (!latest.ok) throw new Error(`Petrina could not read the latest release on GitHub (${latest.error}), so it published nothing. Retry when GitHub is reachable.`);
     // The product's main version files, on the work as it is now.
-    const declared = this.declaredVersions(task.worktree!, shipping.start!);
+    const declared = await this.declaredVersions(task.worktree!, shipping.start!);
     const unreadable = declared.filter((entry) => !entry.version);
     if (unreadable.length) throw new Error(`Petrina cannot read the version in ${unreadable.map((entry) => entry.file).join(", ")}, so it published nothing. Make it a version like 1.2.3, then retry.`);
     let next: { version: string; tag: string } | undefined;
@@ -344,10 +351,10 @@ export class Shipping {
   }
 
   /** What the product's main version files say at a commit: those that state a version, and those Petrina cannot read (no `version`). */
-  private declaredVersions(path: string, sha: string): { file: string; version?: string }[] {
+  private async declaredVersions(path: string, sha: string): Promise<{ file: string; version?: string }[]> {
     const found: { file: string; version?: string }[] = [];
     for (const file of MAIN_VERSION_FILES) {
-      const text = git.fileAt(path, sha, file);
+      const text = await git.fileAt(path, sha, file);
       if (text === undefined) continue;
       const declared = declaredVersion(file, text);
       if (declared === "unreadable") found.push({ file });

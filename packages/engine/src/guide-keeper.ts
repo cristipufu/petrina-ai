@@ -60,7 +60,7 @@ export class GuideKeeper {
     const keeper = this.k.onUsable(GUIDE_KEEPER_PROFILE);
     let ran: Id = keeper;
     try {
-      const guide = this.reviewGuide(task);
+      const guide = await this.reviewGuide(task);
       const result = await this.turns.turn(
         task,
         "guide-keeper",
@@ -126,18 +126,19 @@ export class GuideKeeper {
   }
 
   /** Points the coordinator accepted that the base branch's REVIEW.md does not have yet: reviewers get them with the task. */
-  pendingPoints(task: MTask): string[] {
+  async pendingPoints(task: MTask): Promise<string[]> {
     const product = this.k.productOf(task);
+    if (!product?.reviewGuide?.length) return [];
     const ref = task.baseSha ?? task.base;
-    const base = ref && (product?.path ?? task.worktree) ? (git.fileAt((product?.path ?? task.worktree)!, ref, GUIDE_FILE) ?? "") : "";
+    const base = ref && (product.path ?? task.worktree) ? ((await git.fileAt((product.path ?? task.worktree)!, ref, GUIDE_FILE)) ?? "") : "";
     return (product?.reviewGuide ?? []).filter((line) => !hasPoint(base, line.text)).map((line) => line.text);
   }
 
   /** The guide as the base branch has it, plus the points the coordinator accepted: what the Guide keeper weighs a new point against. */
-  reviewGuide(task: MTask): string {
+  async reviewGuide(task: MTask): Promise<string> {
     const product = this.k.productOf(task);
     const ref = task.baseSha ?? task.base;
-    const base = ref && (product?.path ?? task.worktree) ? (git.fileAt((product?.path ?? task.worktree)!, ref, GUIDE_FILE) ?? "") : "";
+    const base = ref && (product?.path ?? task.worktree) ? ((await git.fileAt((product?.path ?? task.worktree)!, ref, GUIDE_FILE)) ?? "") : "";
     return pointsText(GUIDE, base, product?.reviewGuide ?? []);
   }
 }

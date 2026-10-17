@@ -50,15 +50,15 @@ describe("lessons agents pass on", () => {
       task.worktree = repo;
       const learnings = new Learnings(engine);
       const lesson = "The Claude Code connector and SDK sources can be read without installing anything, in ~/.bun/install/cache (@agentclientprotocol/claude-agent-acp dist/acp-agent.js, and @anthropic-ai/claude-agent-sdk sdk.d.ts for the full settings and sandbox options); check both sources before changing how sessions start.";
-      learnings.note(task, [lesson], "builder", "sol-xhigh");
-      learnings.offer(task);
+      await learnings.note(task, [lesson], "builder", "sol-xhigh");
+      await learnings.offer(task);
       const offer = engine.getState().inbox.find((item) => item.kind === "learnings")!;
       expect(offer.body).toBe(`- ${lesson}`);
       engine.addLessons(offer.id, [0]);
       await learnings.write(task);
       expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(`- ${lesson}`);
-      learnings.note(task, [lesson], "builder", "sol-xhigh");
-      learnings.offer(task);
+      await learnings.note(task, [lesson], "builder", "sol-xhigh");
+      await learnings.offer(task);
       expect(engine.getState().inbox.filter((item) => item.kind === "learnings")).toEqual([]);
     } finally {
       engine.shutdown();

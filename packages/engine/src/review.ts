@@ -151,7 +151,7 @@ export class Reviews {
       const { key, profileId } = reviewers[0]!;
       let by = profileId;
       const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
-      this.applyReview(task, stage, result, by);
+      await this.applyReview(task, stage, result, by);
       reported(key);
       return;
     }
@@ -165,7 +165,7 @@ export class Reviews {
         work: async (copy, room, seat, used) => {
           let by = profileId;
           const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { reviewerKey: key, used: (id) => { by = id; used(id); }, room, seat });
-          this.applyReview(task, stage, result, by);
+          await this.applyReview(task, stage, result, by);
           reported(key);
         },
       })),
@@ -174,8 +174,8 @@ export class Reviews {
   }
 
   /** What one reviewer reported: its confirmations and disputes of earlier findings, and its own. */
-  private applyReview(task: MTask, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id): void {
-    this.learnings.note(task, result.learnings, stage.roleId, profileId);
+  private async applyReview(task: MTask, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id): Promise<void> {
+    await this.learnings.note(task, result.learnings, stage.roleId, profileId);
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
@@ -258,7 +258,7 @@ export class Reviews {
         roleId: "verifier",
         profileId,
         work: async (copy, room, seat, used) => {
-          const result = await this.turns.parallel(task, "verifier", profileId, copy, () => [...this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(findings) }], VerifyResult, signal, {
+          const result = await this.turns.parallel(task, "verifier", profileId, copy, async () => [...await this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(findings) }], VerifyResult, signal, {
             room,
             seat,
             used,

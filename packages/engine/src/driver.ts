@@ -242,7 +242,7 @@ export class Driver {
             const patch = await this.updates.patch(current);
             if (patch) current.checkedPatch = patch;
             // What agents learned on the way: offered to the coordinator without holding the delivery up.
-            this.learnings.offer(current);
+            await this.learnings.offer(current);
             if (this.shipsUnasked(current)) {
               if (head) current.approvedSha = head;
               if (patch) current.approvedPatch = patch;
