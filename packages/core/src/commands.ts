@@ -63,8 +63,10 @@ export interface Commands {
   allow(itemId: Id, scope?: "once" | "always"): void;
   deny(itemId: Id, note?: string, context?: SaidContext): void;
   approve(itemId: Id): void;
-  /** "Not this time" on an offer: a point for the review guide, or lessons for LEARNINGS.md. */
+  /** "Not this time" on an offer: a point for the review guide, or lessons for AGENTS.md. */
   decline(itemId: Id): void;
+  /** "Add the ticked ones": the lessons of an offer the coordinator keeps, by their place in it. */
+  addLessons(itemId: Id, keep: number[]): void;
   requestChanges(itemId: Id, note: string): void;
   checkShipping(itemId: Id): void;
   shipAgain(itemId: Id): void;
@@ -110,6 +112,7 @@ export const COMMAND_NAMES = [
   "deny",
   "approve",
   "decline",
+  "addLessons",
   "requestChanges",
   "checkShipping",
   "shipAgain",

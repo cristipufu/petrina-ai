@@ -88,3 +88,28 @@ export function addToSection(root: string, heading: string, intro: string, lines
   writeFileSync(draft, `${next.join("\n")}\n`, { flag: "wx" });
   renameSync(draft, path);
 }
+
+/** Words that say little about what a point is: left out when two points are compared. */
+const FILLER = new Set("a an and are as at be by can do does for from has have in into is it its no not of on one or so such than that the their then there this to too was when which while will with without you your".split(" "));
+
+/** A point's meaningful words, with common endings set aside ("installing" and "install" are one word). */
+function words(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length > 2 && !FILLER.has(word))
+      .map((word) => word.replace(/(ing|ed|es|s)$/, "")),
+  );
+}
+
+/** Two points that say mostly the same, in other words: most of the shorter one's meaningful words are in the other. */
+export function samePointRoughly(a: string, b: string): boolean {
+  const one = words(a);
+  const two = words(b);
+  const [small, large] = one.size <= two.size ? [one, two] : [two, one];
+  if (small.size < 4) return false;
+  let shared = 0;
+  for (const word of small) if (large.has(word)) shared += 1;
+  return shared / small.size >= 0.5;
+}

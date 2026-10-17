@@ -6,7 +6,7 @@
 
 import type { DeepMutable, GuideLine, Id } from "@petrina/core";
 import * as git from "./git.js";
-import { addToSection, AGENTS_FILE, cleanPoint, hasPoint, localPoints } from "./points.js";
+import { addToSection, AGENTS_FILE, cleanPoint, hasPoint, localPoints, samePointRoughly } from "./points.js";
 import type { Kernel, MTask } from "./kernel.js";
 
 const SECTION = "## Learnings";
@@ -20,10 +20,13 @@ export class Learnings {
 
   /** An agent's lessons, kept on the task until the delivery check. Repeats, and ones AGENTS.md already has, are left out. */
   note(task: MTask, lessons: readonly string[], roleId: Id, profileId: Id): void {
-    const known = [this.baseFile(task), ...(this.k.productOf(task)?.learnings ?? []).map((line) => line.text)].join("\n");
+    const product = this.k.productOf(task);
+    // What AGENTS.md says, what was accepted, and what the coordinator said no to: none of it is offered again.
+    const known = [this.baseFile(task), ...(product?.learnings ?? []).map((line) => line.text), ...(product?.learningsDeclined ?? [])].join("\n");
     for (const raw of lessons) {
       const text = cleanPoint(raw).slice(0, 240);
-      if (text.length < 8 || hasPoint(known, text) || (task.lessons ?? []).some((lesson) => hasPoint(lesson.text, text))) continue;
+      // Agents often say the same thing in other words: the first saying of a point is the one offered.
+      if (text.length < 8 || hasPoint(known, text) || known.split("\n").some((line) => samePointRoughly(line, text)) || (task.lessons ?? []).some((lesson) => hasPoint(lesson.text, text) || samePointRoughly(lesson.text, text))) continue;
       if ((task.lessons?.length ?? 0) >= MAX_LESSONS) break;
       task.lessons = [...(task.lessons ?? []), { text, roleId, profileId, at: Date.now() }];
     }
@@ -53,12 +56,20 @@ export class Learnings {
   }
 
   /** "Add them": the lessons wait for the next delivery, which writes them into AGENTS.md. */
-  accept(itemId: Id): void {
-    const item = this.k.takeItem(itemId);
-    const task = item && this.k.task(item.taskId);
+  accept(itemId: Id, keep?: readonly number[]): void {
+    const item = this.k.s.inbox.find((entry) => entry.id === itemId && entry.kind === "learnings");
+    if (!item) return;
+    this.k.takeItem(itemId);
+    const task = this.k.task(item.taskId);
     const product = task && this.k.productOf(task);
-    if (!item || !task || !product) return;
-    const lessons = (item.body ?? "").split("\n").map((line) => cleanPoint(line.replace(/^- /, ""))).filter(Boolean);
+    if (!task || !product) return;
+    // The ones the coordinator ticked, by their place in the offer; all of them when it says nothing.
+    const offered = (item.body ?? "")
+      .split("\n")
+      .map((line) => cleanPoint(line.replace(/^- /, "")))
+      .filter(Boolean);
+    const lessons = offered.filter((_, index) => !keep || keep.includes(index));
+    this.remember(product, offered.filter((text) => !lessons.includes(text)));
     const added = lessons.filter((text) => !product.learnings?.some((line) => hasPoint(line.text, text)));
     product.learnings = [...(product.learnings ?? []), ...added.map((text) => ({ text, at: Date.now(), fromTask: task.id }))];
     this.k.log(task, "you", `You added ${added.length === 1 ? "a lesson" : `${added.length} lessons`} to ${AGENTS_FILE}`);
@@ -71,8 +82,16 @@ export class Learnings {
     if (!item) return;
     this.k.takeItem(itemId);
     const task = this.k.task(item.taskId);
+    const product = task && this.k.productOf(task);
+    if (product) this.remember(product, (item.body ?? "").split("\n").map((line) => cleanPoint(line.replace(/^- /, ""))).filter(Boolean));
     if (task) this.k.log(task, "you", `You left ${AGENTS_FILE} as it is`);
     this.k.commit();
+  }
+
+  /** Lessons the coordinator said no to, so agents' later sayings of them are not offered again. */
+  private remember(product: NonNullable<ReturnType<Kernel["productOf"]>>, declined: readonly string[]): void {
+    if (!declined.length) return;
+    product.learningsDeclined = [...(product.learningsDeclined ?? []), ...declined].slice(-100);
   }
 
   /**

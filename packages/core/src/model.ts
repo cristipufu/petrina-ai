@@ -536,6 +536,8 @@ export interface Product {
   reviewGuide?: readonly GuideLine[];
   /** Lessons the coordinator accepted for AGENTS.md's Learnings section, until a delivery adds them. */
   learnings?: readonly GuideLine[];
+  /** Lessons the coordinator said no to (declined or left unticked): never offered again. */
+  learningsDeclined?: readonly string[];
   /** The commands that prove this product works. Petrina runs them itself; unset until found. */
   checks?: readonly ProductCheck[];
   /** Who set the checks: the Check finder agent, or the coordinator by hand (never replaced on its own). */

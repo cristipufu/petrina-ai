@@ -31,3 +31,5 @@ Do not add security or sandboxing mechanisms of Petrina's own unless the task is
 What agents learned about working in this repository, added with the coordinator's OK.
 
 - Desktop tests run in happy-dom at 1024px wide, where the inbox opens over the board: to test the docked inbox, widen the window to 1200px or more with `window.happyDOM.setViewport({ width: 1400 })` inside `act()`, and set it back afterwards.
+- Code in packages/core runs straight from source with Bun and needs nothing installed: to try one function, or drive the demo simulator, without the whole suite, write a small script outside the working copy that imports packages/core/src/*.ts by full path.
+- This Mac has no `timeout` command: to cap how long a command runs, use your tool's own time limit.

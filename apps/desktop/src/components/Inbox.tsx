@@ -182,6 +182,10 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const [note, setNote] = useState("");
   const [showDetail, setShowDetail] = useState(false);
   const [reopened, setReopened] = useState<string>();
+  // Lessons the coordinator unticked, by their place in the offer: the rest are added.
+  const [dropped, setDropped] = useState<number[]>([]);
+  const lessons = item.kind === "learnings" ? (item.body ?? "").split("\n").map((line) => line.replace(/^- /, "")).filter(Boolean) : [];
+  const kept = lessons.map((_, index) => index).filter((index) => !dropped.includes(index));
   const task = find.task(item.taskId);
   const product = find.product(task?.productId);
   // A delivery whose review rounds ran out with Important findings open is a decision, not "ready to ship".
@@ -250,8 +254,13 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       {item.body &&
         (item.kind === "learnings" ? (
           <ul className="ask-body ask-lessons">
-            {item.body.split("\n").map((line) => (
-              <li key={line}>{line.replace(/^- /, "")}</li>
+            {lessons.map((line, index) => (
+              <li key={line}>
+                <label>
+                  <input type="checkbox" checked={!dropped.includes(index)} onChange={(event) => setDropped((now) => (event.target.checked ? now.filter((entry) => entry !== index) : [...now, index]))} />
+                  <span>{line}</span>
+                </label>
+              </li>
             ))}
           </ul>
         ) : (
@@ -450,8 +459,8 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         <>
           {item.detail && <p className="ask-note">{item.detail}</p>}
           <div className="ask-actions">
-            <button className="btn lead" onClick={() => sim.approve(item.id)} title="They join the Learnings section of AGENTS.md with the next delivery">
-              Add them
+            <button className="btn lead" disabled={!kept.length} onClick={() => sim.addLessons(item.id, kept)} title="The ticked ones join the Learnings section of AGENTS.md with the next delivery">
+              {kept.length === lessons.length ? "Add them" : `Add ${kept.length} of ${lessons.length}`}
             </button>
             <button className="btn quiet" onClick={() => sim.decline(item.id)}>
               Not this time

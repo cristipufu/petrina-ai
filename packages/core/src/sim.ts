@@ -275,7 +275,21 @@ export class Simulator {
     });
   }
 
-  /** "Not this time" on an offer: the review guide, or LEARNINGS.md, stays as it is. */
+  /** "Add the ticked ones": the lessons of an offer the coordinator keeps, by their place in it. */
+  addLessons(itemId: Id, keep: number[]): void {
+    this.resolve(itemId, (d, task, item) => {
+      const product = d.products.find((entry) => entry.id === task.productId);
+      const lessons = (item.body ?? "")
+        .split("\n")
+        .map((line) => line.replace(/^- /, "").trim())
+        .filter(Boolean)
+        .filter((_, index) => keep.includes(index));
+      if (product) product.learnings = [...(product.learnings ?? []), ...lessons.map((text) => ({ text, at: d.now, fromTask: task.id }))];
+      this.log(d, task, "you", lessons.length ? `You added ${lessons.length === 1 ? "a lesson" : `${lessons.length} lessons`} to AGENTS.md` : "You left AGENTS.md as it is");
+    });
+  }
+
+  /** "Not this time" on an offer: the review guide, or AGENTS.md, stays as it is. */
   decline(itemId: Id): void {
     this.resolve(itemId, (d, task, item) => this.log(d, task, "you", item.kind === "learnings" ? "You left LEARNINGS.md as it is" : "You left the review guide as it is"));
   }

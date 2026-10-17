@@ -613,6 +613,10 @@ export class Engine extends Kernel implements Commands {
     return this.shipping.markDone(itemId);
   }
 
+  addLessons(itemId: Id, keep: number[]): void {
+    this.learnings.accept(itemId, keep);
+  }
+
   decline(itemId: Id): void {
     if (this.s.inbox.find((entry) => entry.id === itemId)?.kind === "learnings") return this.learnings.decline(itemId);
     return this.guide.declineGuide(itemId);

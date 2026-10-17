@@ -62,6 +62,7 @@ const ARGS = {
   deny: z.tuple([z.string(), z.string().max(4000).optional(), Said.optional()]),
   approve: z.tuple([z.string()]),
   decline: z.tuple([z.string()]),
+  addLessons: z.tuple([z.string(), z.array(z.number().int().min(0).max(50)).max(50)]),
   requestChanges: z.tuple([z.string(), z.string().min(1).max(4000)]),
   checkShipping: z.tuple([z.string()]),
   shipAgain: z.tuple([z.string()]),
