@@ -4,9 +4,9 @@
 // the previous release.
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Task } from "@petrina/core";
+import { slotUses, type DeliveryMode, type Task } from "@petrina/core";
 import { coordinator, finish, git, itemOf, makeWorld, removeDir, REPO, remoteRef, taskOf, until, type World } from "./support.js";
 
 const worlds: World[] = [];
@@ -50,7 +50,144 @@ function landed(w: World, title: string, change: string): void {
 /** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
+/** One task at its delivery check, while another task's builder fills the only agent slot. */
+async function busyDelivery(w: World, delivery: DeliveryMode) {
+  const engine = w.start();
+  try {
+    engine.setPoolLimit(1);
+    const productId = await engine.addProduct(w.clone);
+    engine.setProductDelivery(productId, delivery, true);
+    const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+    const state = await until(engine, (current) => !!itemOf(current, taskId, "delivery"), coordinator(["plan", "design"]));
+    const approvalId = itemOf(state, taskId, "delivery")!.id;
+    const hold = join(w.dir, "busy-builder");
+    writeFileSync(hold, "");
+    w.setScript((script) => (script.hold = { title: "Keep an agent busy", file: hold }));
+    const busyId = engine.addTask({ productId, title: "Keep an agent busy", description: "A greeting file. [quick]" });
+    await until(engine, () => existsSync(`${hold}.reached`), coordinator(["plan", "design"]));
+    expect(slotUses(engine.getState())).toHaveLength(1);
+    expect(taskOf(engine.getState(), busyId).agent?.roleId).toBe("builder");
+    return { engine, taskId, busyId, approvalId };
+  } catch (error) {
+    engine.shutdown();
+    throw error;
+  }
+}
+
 describe.concurrent("Petrina publishes deliveries itself", () => {
+  for (const mode of ["local", "pull-request"] as const) {
+    it(`publishes an approved ${mode} delivery while every agent slot is full`, async () => {
+      const w = world(`full-pool-${mode}`);
+      const { engine, taskId, busyId, approvalId } = await busyDelivery(w, mode);
+      try {
+        // Filling the pool neither approves the delivery nor publishes anything.
+        expect(itemOf(engine.getState(), taskId, "delivery")?.id).toBe(approvalId);
+        expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
+        expect(w.github().prs).toHaveLength(0);
+        engine.approve(approvalId);
+        const started = taskOf(engine.getState(), taskId);
+        expect(started.state).toBe("running");
+        expect(started.holdsSlot).toBe(false);
+        expect(started.agent).toBeUndefined();
+        const task = taskOf(await finish(engine, taskId), taskId);
+        expect(task.error).toBeUndefined();
+        expect(task.state).toBe(mode === "local" ? "done" : "pr-open");
+        expect(slotUses(engine.getState()).map((use) => use.taskId)).toEqual([busyId]);
+        expect(taskOf(engine.getState(), busyId).agent?.roleId).toBe("builder");
+        noReleaseManager(task);
+      } finally {
+        engine.shutdown();
+      }
+    });
+
+    it(`holds an approved ${mode} delivery while the pool is paused, then publishes with its agent slot still full`, async () => {
+      const w = world(`paused-pool-${mode}`);
+      const { engine, taskId, busyId, approvalId } = await busyDelivery(w, mode);
+      try {
+        engine.setPoolPaused(true);
+        engine.approve(approvalId);
+        const waiting = taskOf(engine.getState(), taskId);
+        expect(waiting.state).toBe("waiting");
+        expect(waiting.statusLine).toBe("Waiting for the pool to resume");
+        expect(waiting.holdsSlot).toBe(false);
+        expect(waiting.shipping).toBeUndefined();
+        expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
+        expect(w.github().prs).toHaveLength(0);
+        // A task's own pause still holds it after the pool resumes.
+        engine.pause(taskId);
+        engine.setPoolPaused(false);
+        expect(taskOf(engine.getState(), taskId).state).toBe("paused");
+        engine.resume(taskId);
+        const task = taskOf(await finish(engine, taskId), taskId);
+        expect(task.error).toBeUndefined();
+        expect(task.state).toBe(mode === "local" ? "done" : "pr-open");
+        expect(slotUses(engine.getState()).map((use) => use.taskId)).toEqual([busyId]);
+        noReleaseManager(task);
+      } finally {
+        engine.shutdown();
+      }
+    });
+  }
+
+  it("waits for agent capacity and an unpaused pool before writing release notes", async () => {
+    const w = world("notes-pool");
+    const { engine, taskId, busyId, approvalId } = await busyDelivery(w, "release");
+    const notesHold = join(w.dir, "busy-notes");
+    try {
+      engine.approve(approvalId);
+      expect(taskOf(engine.getState(), taskId).state).toBe("waiting");
+      expect(taskOf(engine.getState(), taskId).statusLine).toBe("Waiting for a free slot");
+      expect(w.script().releaseManagerPrompts).toBeUndefined();
+      expect(w.github().releases).toHaveLength(0);
+      engine.setPoolPaused(true);
+      engine.cancel(busyId);
+      expect(slotUses(engine.getState())).toHaveLength(0);
+      expect(taskOf(engine.getState(), taskId).statusLine).toBe("Waiting for the pool to resume");
+      writeFileSync(notesHold, "");
+      w.setScript((script) => (script.hold = { title: "Add a greeting", file: notesHold, role: "release manager" }));
+      engine.setPoolPaused(false);
+      await until(engine, () => existsSync(`${notesHold}.reached`));
+      expect(slotUses(engine.getState()).map((use) => use.roleId)).toEqual(["release-manager"]);
+      expect(w.github().releases).toHaveLength(0);
+      rmSync(notesHold);
+      const task = taskOf(await finish(engine, taskId), taskId);
+      expect(task.error).toBeUndefined();
+      expect(task.state).toBe("done");
+      expect(w.script().releaseManagerPrompts).toHaveLength(1);
+      expect(w.github().releases).toHaveLength(1);
+      expect(taskOf(engine.getState(), busyId).state).toBe("cancelled");
+    } finally {
+      engine.shutdown();
+    }
+  });
+
+  it("retries publishing a release with its notes already written while every agent slot is full", async () => {
+    const w = world("prepared-release-pool");
+    const { engine, taskId, busyId, approvalId } = await busyDelivery(w, "release");
+    try {
+      w.setGitHub((github) => (github.fail = { "release create": 1 }));
+      engine.approve(approvalId);
+      engine.pause(busyId);
+      const failed = taskOf(await finish(engine, taskId), taskId);
+      expect(failed.state).toBe("failed");
+      expect(failed.shipping?.prepared?.notes).toBeTruthy();
+      expect(w.script().releaseManagerPrompts).toHaveLength(1);
+      engine.resume(busyId);
+      expect(slotUses(engine.getState()).map((use) => use.taskId)).toEqual([busyId]);
+      engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
+      expect(taskOf(engine.getState(), taskId).state).toBe("running");
+      expect(taskOf(engine.getState(), taskId).holdsSlot).toBe(false);
+      const task = taskOf(await finish(engine, taskId), taskId);
+      expect(task.error).toBeUndefined();
+      expect(task.state).toBe("done");
+      expect(w.script().releaseManagerPrompts).toHaveLength(1);
+      expect(w.github().releases).toHaveLength(1);
+      expect(slotUses(engine.getState()).map((use) => use.taskId)).toEqual([busyId]);
+    } finally {
+      engine.shutdown();
+    }
+  });
+
   it("opens a pull request with no agent: the builder's title and description, as text, then Petrina's own part", async () => {
     const w = world("pr");
     const marker = join(w.dir, "pwned");

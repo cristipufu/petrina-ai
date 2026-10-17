@@ -58,6 +58,11 @@ export class Driver {
         task.statusLine = seat.waiting;
         continue;
       }
+      // Publishing with no agent needs no slot, but still waits for the pool to resume.
+      if (!seat.agent) {
+        if (!this.k.drivers.has(task.id) && this.reserveAgent(task)) this.startDriver(task.id);
+        continue;
+      }
       const candidate = { taskId: task.id, toolId: seat.toolId };
       task.statusLine = slotWait(this.k.getState(), candidate) ?? "Waiting for a free slot";
       continuing.push(candidate);
@@ -108,10 +113,10 @@ export class Driver {
     return { agent: { roleId: next.roleId, profileId: choice.profile.id }, toolId: choice.profile.toolId };
   }
 
-  /** Take the slot and name its agent together, before any working-copy or tool I/O. */
+  /** Take the slot and name its agent together, or start work needing no agent, before any I/O. */
   private reserveAgent(task: MTask): boolean {
     const { agent: next, toolId, waiting: noOne } = this.seatFor(task);
-    const waiting = noOne ?? slotWait(this.k.getState(), { taskId: task.id, toolId });
+    const waiting = noOne ?? (this.k.s.pool.paused ? "Waiting for the pool to resume" : next ? slotWait(this.k.getState(), { taskId: task.id, toolId }) : undefined);
     if (waiting) {
       task.state = "waiting";
       task.holdsSlot = false;
