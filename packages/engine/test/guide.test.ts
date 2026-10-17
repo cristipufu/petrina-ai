@@ -125,3 +125,16 @@ describe.concurrent("a review guide that learns from misses", () => {
     }
   });
 });
+
+describe.concurrent("a delivery sent back with blocking findings open", () => {
+  it("is not a miss: the reviewers had caught it, so the Guide keeper proposes nothing", async () => {
+    // One review round, whose Important finding stands: the delivery check comes with it still open.
+    const { engine, task, offers } = await sendBack({ planner: "tester-after", reviewer: "important" }, (engine, id) => engine.approve(id));
+    try {
+      expect(offers).toEqual([]);
+      expect(lines(task)).not.toContain("Guide keeper started");
+    } finally {
+      engine.shutdown();
+    }
+  });
+});

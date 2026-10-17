@@ -25,7 +25,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     options: { model: "model", effort: "effort", mode: "mode" },
     // Auto: Claude Code's own classifier makes the permission decisions.
     mode: "auto",
-    models: ["Opus 5.5", "Sonnet 5.5"],
+    models: ["Opus 5.5", "Fable 5.1", "Sonnet 5.5"],
   },
   codex: {
     id: "codex",
@@ -35,7 +35,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     options: { model: "model", effort: "reasoning_effort", mode: "mode" },
     // Auto review: Codex's own reviewer approves, and asks only about actions it finds unsafe.
     mode: "agent",
-    models: ["sol"],
+    models: ["sol", "astra"],
   },
 };
 
@@ -48,6 +48,8 @@ export const ENGINE_PROFILES: readonly AgentProfile[] = [
   { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" },
   { id: "sol-xhigh", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "xhigh" },
   { id: "sol-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
+  { id: "fable-xhigh", toolId: "claude-code", model: "Fable 5.1", modelId: "fable", effort: "xhigh" },
+  { id: "astra-xhigh", toolId: "codex", model: "astra", modelId: "gpt-6-astra", effort: "xhigh" },
   // Works only when Opus is out of usage and Claude Code is not (its weekly Opus limit); never planned.
   { id: "sonnet-high", toolId: "claude-code", model: "Sonnet 5.5", modelId: "sonnet", effort: "high", standby: true },
 ];
