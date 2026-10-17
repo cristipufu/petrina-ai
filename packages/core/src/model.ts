@@ -217,10 +217,21 @@ export interface Finding {
   id: Id;
   text: string;
   where?: string;
+  /** How the reviewer knows. */
+  evidence?: string;
   severity: "blocking" | "suggestion";
   raisedBy: Id;
   confirmedBy: readonly Id[];
+  /** Later reviewers who think it is wrong, and why. */
+  disputes?: readonly FindingDispute[];
   status: "open" | "fixed" | "dismissed";
+}
+
+export interface FindingDispute {
+  /** The profile of the reviewer who disputed it. */
+  by: Id;
+  reason: string;
+  at: number;
 }
 
 export interface PullRequest {
