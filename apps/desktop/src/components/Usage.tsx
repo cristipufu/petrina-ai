@@ -1,10 +1,72 @@
 import { useState, type ReactNode } from "react";
 import { useLimitClock } from "../usage";
 import { TOOL_COLORS } from "../lib";
-import { usageLines, agoText, limitWords, untilWords, count, figureText, tokenNumber, type AboutCounts, type Detail, type Figure, type WorkUsageLine, type State, type UsagePeriod } from "@petrina/core";
+import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, usageLines, agoText, limitWords, untilWords, count, figureText, tokenNumber, type AboutCounts, type Detail, type Figure, type WorkUsageLine, type State, type UsagePeriod } from "@petrina/core";
 
 /** Chart colours per tool: the app's tool colours, with their own step in dark mode. */
 export const toolColor = (toolId: string | undefined) => (toolId ? `var(--tool-${toolId}, var(--slate))` : "var(--slate)");
+
+/** Chart colours per provider (Anthropic, OpenAI, xAI, Google), with their own step in dark mode. */
+export const providerColor = (providerId: string | undefined) => (providerId ? `var(--provider-${providerId}, var(--slate))` : "var(--slate)");
+
+const tone = (name: string) => `var(--t-${name})`;
+const hashOf = (text: string) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 7);
+
+/** Model families with a colour of their own; any other model takes a stable one from the rest. */
+const MODEL_FAMILIES: readonly [RegExp, string][] = [
+  [/opus/i, "indigo"],
+  [/sonnet/i, "orange"],
+  [/haiku/i, "green"],
+  [/fable/i, "pink"],
+  [/gemini/i, "blue"],
+  [/grok/i, "teal"],
+];
+const MODEL_TONES = ["purple", "blue", "teal", "amber", "pink", "green", "orange", "indigo"];
+
+/**
+ * One fixed colour per model, so a model keeps its colour whatever else is on the chart. Models
+ * Petrina knows have their own; others take a stable colour from their name, moved to the next
+ * free one only when two models on the same chart would share it.
+ */
+export function modelColors(labels: readonly string[]): Map<string, string> {
+  const colors = new Map<string, string>();
+  const taken = new Set<string>();
+  const claim = (label: string, name: string) => {
+    colors.set(label, tone(name));
+    taken.add(name);
+  };
+  for (const label of labels) {
+    if (label === NOT_CONFIRMED_LABEL || label === "Model not reported") claim(label, "slate");
+    else if (label === CHANGED_LABEL) claim(label, "amber");
+    else {
+      const family = MODEL_FAMILIES.find(([pattern]) => pattern.test(label));
+      if (family) claim(label, family[1]);
+    }
+  }
+  for (const label of labels) {
+    if (colors.has(label)) continue;
+    const start = hashOf(label) % MODEL_TONES.length;
+    let pick = MODEL_TONES[start]!;
+    for (let offset = 0; offset < MODEL_TONES.length; offset += 1) {
+      const candidate = MODEL_TONES[(start + offset) % MODEL_TONES.length]!;
+      if (!taken.has(candidate)) {
+        pick = candidate;
+        break;
+      }
+    }
+    claim(label, pick);
+  }
+  return colors;
+}
+
+/** One fixed colour per kind of limit ("5-hour", "weekly", "weekly Opus"), the same for every tool. */
+const LIMIT_TONES: Readonly<Record<string, string>> = { "5-hour": "blue", weekly: "orange", "weekly Opus": "pink", "weekly Sonnet": "green", "extra usage": "purple", daily: "teal" };
+const OTHER_LIMIT_TONES = ["teal", "indigo", "amber", "purple"];
+
+export function limitColor(label: string): string {
+  const known = LIMIT_TONES[label] ?? LIMIT_TONES[label.split(",")[0]!];
+  return tone(known ?? OTHER_LIMIT_TONES[hashOf(label) % OTHER_LIMIT_TONES.length]!);
+}
 
 export function FigureText({ figure, kind, missing, bare }: { figure: Figure; kind: "tokens" | "time"; missing?: string; bare?: boolean }) {
   const text = figureText(figure, kind, { ...(missing ? { missing } : {}), ...(bare ? { bare } : {}) });

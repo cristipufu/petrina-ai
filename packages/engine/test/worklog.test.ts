@@ -178,6 +178,13 @@ describe("The work log of a real engine", () => {
     expect(limits.find((limit) => limit.toolId === "claude-code")).toMatchObject({ kind: "five_hour", utilization: 0.81, status: "allowed" });
     expect(limits.find((limit) => limit.toolId === "codex")).toMatchObject({ windowMinutes: 10_080, utilization: 0.16 });
     expect(JSON.stringify(limits)).not.toContain("not-for-petrina");
+    // Every reading also went into the thirty-day history, once per change, so Analytics can draw each limit over time.
+    const history = readLog((log) => log.usageHistory({}));
+    expect(history.filter((entry) => entry.toolId === "claude-code" && entry.kind === "five_hour")).toHaveLength(1);
+    expect(history.some((entry) => entry.toolId === "codex" && entry.utilization === 0.16)).toBe(true);
+    const limitsToday = engine.usage({ view: "analytics", period: "today" }).limits;
+    expect(limitsToday.tools.map((tool) => tool.toolId).sort()).toEqual(["claude-code", "codex"]);
+    expect(limitsToday.tools.find((tool) => tool.toolId === "claude-code")!.limits[0]!.readings.at(-1)!.used).toBe(0.81);
   });
 
   it("answers only the defined views and periods", async () => {

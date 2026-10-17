@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, Info } from "lucide-react";
-import { count, durationText, tokenNumber, type AnalyticsUsage, type SquadRow, type State, type WorkUsageLine, type UsagePeriod } from "@petrina/core";
-import { type Lookup } from "../lib";
+import { OVER_TIME_SPLITS, count, durationText, runningTotal, tokenNumber, type AnalyticsUsage, type OverTimeMeasure, type OverTimeSeries, type OverTimeSplit, type SquadRow, type State, type WorkUsageLine, type UsagePeriod } from "@petrina/core";
+import { TOOL_COLORS, type Lookup } from "../lib";
 import { useUsage } from "../usage";
-import { AboutNote, UsageList, ColumnChart, FigureText, SplitList, Stat, toolColor } from "./Usage";
+import { BarsOverTime, LinesOverTime, ViewToggle, dayWords, whenWords, type BarPoint, type ChartSeries } from "./Charts";
+import { AboutNote, UsageList, ColumnChart, FigureText, SplitList, Stat, limitColor, modelColors, providerColor, toolColor } from "./Usage";
 
 const PERIODS: readonly { id: UsagePeriod; label: string; words: string }[] = [
   { id: "today", label: "Today", words: "today" },
@@ -27,7 +28,7 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
   const [period, setPeriod] = useState<UsagePeriod>("7d");
   const [showAbout, setShowAbout] = useState(about);
   // Kept here, so they stay as chosen while another period's numbers load.
-  const [choices, setChoices] = useState<Choices>({ measure: "tokens", details: false, squadDetails: false });
+  const [choices, setChoices] = useState<Choices>({ measure: "tokens", split: "tool", table: false, limitsTable: false, details: false, squadDetails: false });
   const productId = product !== "all" && state.products.some((entry) => entry.id === product) ? product : undefined;
   const view = useUsage({ view: "analytics", period, ...(productId ? { productId } : {}) }, state);
   const noteRef = useRef<HTMLDivElement>(null);
@@ -67,6 +68,7 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
 
       <div className="section-title">Usage limits</div>
       <UsageList state={state} expanded />
+      {view && <LimitsOverTime view={view} words={words} table={choices.limitsTable} onTable={(limitsTable) => setChoices((all) => ({ ...all, limitsTable }))} />}
 
       {!view ? (
         <div className="empty-state">Adding up the work log…</div>
@@ -82,17 +84,80 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
 
 type Split = "tool" | "model" | "role" | "product" | "task";
 
-/** What the coordinator chose to see: the chart's measure, the details, and the extra split. */
+/** What the coordinator chose to see: the chart's measure and split, chart or table, the details, and the extra split. */
 interface Choices {
-  measure: "tokens" | "time";
+  measure: OverTimeMeasure;
+  split: OverTimeSplit;
+  table: boolean;
+  limitsTable: boolean;
   details: boolean;
   extra?: Split;
   squadDetails: boolean;
 }
 
+const MEASURE_WORDS: Record<OverTimeMeasure, string> = { tokens: "Tokens", input: "New input", cacheRead: "Reused input", output: "Output", time: "Agent time" };
+const SPLIT_WORDS: Record<OverTimeSplit, string> = { tool: "By tool", model: "By model", provider: "By provider" };
+
+/** Fixed colours per series: the tool's, the provider's, or one per model. */
+function seriesColors(split: OverTimeSplit, series: readonly OverTimeSeries[]): ChartSeries[] {
+  const models = split === "model" ? modelColors(series.map((entry) => entry.label)) : undefined;
+  return series.map((entry) => ({ key: entry.key, label: entry.label, color: models ? models.get(entry.label)! : split === "tool" ? toolColor(entry.toolId) : providerColor(entry.providerId) }));
+}
+
+/** How much of each limit was used over the period, one small chart per tool, with the resets marked. */
+function LimitsOverTime({ view, words, table, onTable }: { view: AnalyticsUsage; words: string; table: boolean; onTable: (on: boolean) => void }) {
+  const { limits, overTime } = view;
+  const ticks = overTime.splits.tool.points.map((point) => ({ at: point.start, label: point.label }));
+  const percent = (value: number) => `${Math.round(value * 100)}%`;
+  return (
+    <>
+      <div className="chart-head limits row between wrap">
+        <span className="muted small">How much of each limit was used {words}, with its resets marked</span>
+        <ViewToggle table={table} onTable={onTable} label="Limits as a chart or a table" />
+      </div>
+      {limits.tools.length === 0 ? (
+        <div className="muted small">No readings {words}. Claude Code reports its limits while it works; Petrina asks the installed Codex when this page opens.</div>
+      ) : (
+        <div className="limits-charts">
+          {limits.tools.map((tool) => (
+            <LinesOverTime
+              key={tool.toolId}
+              from={limits.from}
+              to={limits.to}
+              series={tool.limits.map((limit) => ({
+                key: limit.key,
+                label: limit.label,
+                color: limitColor(limit.label),
+                points: limit.readings.map((reading) => ({ at: reading.at, value: reading.used })),
+                resets: limit.resets,
+                ...(limit.nextReset !== undefined ? { nextReset: limit.nextReset } : {}),
+              }))}
+              ticks={ticks}
+              format={percent}
+              when={(at) => whenWords(at, overTime.hourly)}
+              label={`${tool.label}: how much of each limit was used ${words}`}
+              title={
+                <div className="row chart-title">
+                  <i className="tool-dot" style={{ background: TOOL_COLORS[tool.toolId] ?? "var(--slate)" }} />
+                  <strong>{tool.label}</strong>
+                </div>
+              }
+              table={table}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period, choices, onChoices }: { view: AnalyticsUsage; state: State; find: Lookup; showAbout: boolean; onAbout: () => void; noteRef: React.RefObject<HTMLDivElement | null>; onOpen: (taskId: string) => void; period: UsagePeriod; choices: Choices; onChoices: (update: (all: Choices) => Choices) => void }) {
-  const { measure, details, extra } = choices;
-  const setMeasure = (value: Choices["measure"]) => onChoices((all) => ({ ...all, measure: value }));
+  const { split, table, details, extra } = choices;
+  // A part the period's records don't carry falls back to all tokens.
+  const measure: OverTimeMeasure = view.overTime.measures.includes(choices.measure) ? choices.measure : "tokens";
+  const setMeasure = (value: OverTimeMeasure) => onChoices((all) => ({ ...all, measure: value }));
+  const setSplit = (value: OverTimeSplit) => onChoices((all) => ({ ...all, split: value }));
+  const setTable = (value: boolean) => onChoices((all) => ({ ...all, table: value }));
   const setDetails = (value: boolean) => onChoices((all) => ({ ...all, details: value }));
   const setExtra = (pick: (on: Split | undefined) => Split | undefined) =>
     onChoices((all) => {
@@ -102,16 +167,21 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
     });
   const { headline } = view;
 
-  const legend = view.chart.tools.map((tool) => ({ key: tool.toolId, label: tool.label, color: toolColor(tool.toolId) }));
-  const buckets = useMemo(
-    () =>
-      view.chart.buckets.map((bucket) => ({
-        key: String(bucket.start),
-        label: bucket.label,
-        segments: view.chart.tools.map((tool) => ({ key: tool.toolId, label: tool.label, color: toolColor(tool.toolId), value: (measure === "tokens" ? bucket.tokens : bucket.timeMs)[tool.toolId] ?? 0 })),
+  const { overTime } = view;
+  const shown = overTime.splits[split];
+  const series = useMemo(() => seriesColors(split, shown.series), [split, shown.series]);
+  const points = useMemo(
+    (): BarPoint[] =>
+      shown.points.map((point) => ({
+        key: String(point.start),
+        label: point.label,
+        title: overTime.hourly ? `${point.label}:00` : dayWords(point.start),
+        values: Object.fromEntries(Object.entries(point.values).map(([key, amounts]) => [key, amounts[measure]])),
       })),
-    [view, measure],
+    [shown, overTime.hourly, measure],
   );
+  const running = useMemo(() => runningTotal(shown.points, measure), [shown, measure]);
+  const format = measure === "time" ? shortDuration : tokenNumber;
 
   const roleColor = (line: WorkUsageLine) => `var(--t-${find.role(line.roleId)?.tone ?? "slate"})`;
   const productColor = (line: WorkUsageLine) => `var(--t-${find.product(line.productId)?.tone ?? "slate"})`;
@@ -144,18 +214,38 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
         </div>
       )}
 
-      <div className="chart-head row between">
-        <span className="muted small">{measure === "tokens" ? "Tokens" : "Agent time"} {view.chart.hourly ? "per hour, today" : "per day"}, by tool</span>
-        <div className="segmented small" role="tablist" aria-label="What the chart shows">
-          <button role="tab" aria-selected={measure === "tokens"} className={measure === "tokens" ? "on" : ""} onClick={() => setMeasure("tokens")}>
-            Tokens
-          </button>
-          <button role="tab" aria-selected={measure === "time"} className={measure === "time" ? "on" : ""} onClick={() => setMeasure("time")}>
-            Agent time
-          </button>
+      <div className="chart-head tokens row between wrap">
+        <span className="muted small">
+          {MEASURE_WORDS[measure]} {overTime.hourly ? "per hour, today" : "per day"}, {SPLIT_WORDS[split].toLowerCase()}, with the running total
+        </span>
+        <div className="chart-controls">
+          <div className="segmented small" role="tablist" aria-label="What the chart shows">
+            {overTime.measures.map((entry) => (
+              <button key={entry} role="tab" aria-selected={measure === entry} className={measure === entry ? "on" : ""} onClick={() => setMeasure(entry)}>
+                {MEASURE_WORDS[entry]}
+              </button>
+            ))}
+          </div>
+          <div className="segmented small" role="tablist" aria-label="How the chart is split">
+            {OVER_TIME_SPLITS.map((entry) => (
+              <button key={entry} role="tab" aria-selected={split === entry} className={split === entry ? "on" : ""} onClick={() => setSplit(entry)}>
+                {SPLIT_WORDS[entry]}
+              </button>
+            ))}
+          </div>
+          <ViewToggle table={table} onTable={setTable} label="Tokens as a chart or a table" />
         </div>
       </div>
-      <ColumnChart buckets={buckets} legend={legend} label={`${measure === "tokens" ? "Tokens" : "Agent time"} by tool`} format={measure === "tokens" ? tokenNumber : shortDuration} />
+      <BarsOverTime
+        points={points}
+        series={series}
+        format={format}
+        label={`${MEASURE_WORDS[measure]} ${overTime.hourly ? "per hour" : "per day"}, ${SPLIT_WORDS[split].toLowerCase()}`}
+        running={{ label: "Running total", values: running }}
+        table={table}
+        periodWord={overTime.hourly ? "Hour" : "Day"}
+        measureWord={MEASURE_WORDS[measure]}
+      />
 
       <div className="splits-head row between">
         <div className="row">

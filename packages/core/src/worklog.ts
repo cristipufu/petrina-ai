@@ -2,7 +2,8 @@
 // entry per notable moment. Only numbers, names and ids: never prompts, replies, commands
 // or file paths. The engine keeps it in SQLite; the simulator keeps it in memory.
 
-import type { Id, StageKind } from "./model.js";
+import type { Id, StageKind, UsageReport } from "./model.js";
+import { readingsIn, recordReading, type UsageHistoryFilter } from "./usage-history.js";
 
 /** Why a turn happened. */
 export type TurnReason = "first" | "message" | "answer" | "redo" | "continue";
@@ -223,6 +224,8 @@ export interface WorkLogReader {
   /** Tasks that had started before Petrina started keeping track. */
   untracked(): Map<Id, Id>;
   products(): ProductRecord[];
+  /** Readings of the tools' usage limits in a period, oldest first: the last thirty days are kept. */
+  usageHistory(filter: UsageHistoryFilter): UsageReport[];
 }
 
 export function emptyTally(): Tally {
@@ -355,6 +358,21 @@ export function sessionModelLabel(turn: Pick<WorkTurn, "modelRan" | "modelRanNam
   return modelLabel(turn.modelRan);
 }
 
+export const NOT_CONFIRMED_LABEL = "Model not confirmed";
+export const CHANGED_LABEL = "Changed model during a turn";
+
+/** The line a model's tokens land on: the model as reported, or "changed during a turn" when the tool rerouted. */
+export function lineModelLabel(line: Pick<TokenLine, "model" | "changed">): string {
+  return line.changed ? CHANGED_LABEL : modelLabel(line.model) || "Model not reported";
+}
+
+/** The line a turn's agent time lands on: the model the session ran on, not confirmed, or changed partway. */
+export function turnModelLabel(turn: Pick<WorkTurn, "modelRan" | "modelRanName" | "modelChangedTo">): string {
+  if (turn.modelRan === undefined) return NOT_CONFIRMED_LABEL;
+  if (turn.modelChangedTo !== undefined) return CHANGED_LABEL;
+  return sessionModelLabel(turn) || NOT_CONFIRMED_LABEL;
+}
+
 // ── The simulator's log ───────────────────────────────────────────────────
 
 const matches = (at: number, taskId: Id, productId: Id, filter: TurnFilter) =>
@@ -369,8 +387,18 @@ export class MemoryWorkLog implements WorkLogReader {
   private readonly momentList: WorkMoment[] = [];
   private readonly productList = new Map<Id, ProductRecord>();
   private readonly untrackedTasks = new Map<Id, Id>();
+  private readonly readings: UsageReport[] = [];
 
   constructor(private readonly start: number) {}
+
+  /** A tool said how much of a limit is used: kept in the thirty-day history unless it repeats the last reading. True when kept. */
+  recordUsage(report: UsageReport): boolean {
+    return recordReading(this.readings, report);
+  }
+
+  usageHistory(filter: UsageHistoryFilter): UsageReport[] {
+    return readingsIn(this.readings, filter);
+  }
 
   since(): number {
     return this.start;
@@ -443,6 +471,7 @@ export class MemoryWorkLog implements WorkLogReader {
     copy.turnList.push(...(JSON.parse(JSON.stringify(this.turnList)) as WorkTurn[]));
     copy.lineList.push(...(JSON.parse(JSON.stringify(this.lineList)) as TokenLine[]));
     copy.momentList.push(...(JSON.parse(JSON.stringify(this.momentList)) as WorkMoment[]));
+    copy.readings.push(...(JSON.parse(JSON.stringify(this.readings)) as UsageReport[]));
     for (const record of this.productList.values()) copy.recordProduct(record);
     for (const [taskId, productId] of this.untrackedTasks) copy.markUntracked(taskId, productId);
     return copy;

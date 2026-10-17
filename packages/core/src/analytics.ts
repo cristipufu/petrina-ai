@@ -1,9 +1,10 @@
 // What each view shows about the work log, worked out from the log itself. The app never
 // gets the log: it asks for one of these views and gets just its numbers.
 
+import { limitsOverTime, tokensOverTime, type LimitsOverTime, type OverTimeView } from "./charts.js";
 import type { AgentProfile, Id, State } from "./model.js";
 import { atLeastLine, count, durationText, type Figure, listWords } from "./numbers.js";
-import { emptyTally, addTurn, modelLabel, sessionModelLabel, type Tally, type TokenLine, type WorkLogReader, type WorkMoment, type WorkTurn } from "./worklog.js";
+import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, emptyTally, addTurn, lineModelLabel, modelLabel, sessionModelLabel, turnModelLabel, type Tally, type TokenLine, type WorkLogReader, type WorkMoment, type WorkTurn } from "./worklog.js";
 
 export type UsagePeriod = "today" | "7d" | "30d";
 
@@ -168,6 +169,10 @@ export interface AnalyticsUsage {
   headline: { tokens: Figure; time: Figure; turns: number; tasks: number };
   atLeast: string;
   chart: { hourly: boolean; tools: { toolId: Id; label: string }[]; buckets: ChartBucket[] };
+  /** Tokens and agent time per day (per hour for Today), split by tool, by model and by provider. */
+  overTime: OverTimeView;
+  /** Each usage limit's readings over the period, with its reset moments. */
+  limits: LimitsOverTime;
   byTool: WorkUsageLine[];
   byModel: WorkUsageLine[];
   byRole: WorkUsageLine[];
@@ -183,9 +188,6 @@ export type UsageView = TaskUsage | ProductsUsage | TodayUsage | AnalyticsUsage;
 export type UsageViewFor<R extends UsageRequest> = R extends { view: "task" } ? TaskUsage : R extends { view: "products" } ? ProductsUsage : R extends { view: "today" } ? TodayUsage : AnalyticsUsage;
 
 const TOOL_NAMES: Record<Id, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok" };
-
-export const NOT_CONFIRMED_LABEL = "Model not confirmed";
-export const CHANGED_LABEL = "Changed model during a turn";
 
 // ── Periods ────────────────────────────────────────────────────────────────
 
@@ -435,7 +437,7 @@ export function modelSplit(turns: readonly WorkTurn[], lines: readonly TokenLine
   for (const line of lines) {
     const owner = turnById.get(line.turnId);
     if (!owner) continue;
-    const entry = row(line.changed ? CHANGED_LABEL : modelLabel(line.model) || "Model not reported", owner.toolId);
+    const entry = row(lineModelLabel(line), owner.toolId);
     entry.tokens += line.total ?? 0;
     entry.hasTokens = true;
     for (const key of ["input", "cacheRead", "cacheWrite", "output"] as const) {
@@ -446,8 +448,7 @@ export function modelSplit(turns: readonly WorkTurn[], lines: readonly TokenLine
   }
   for (const turn of turns) {
     if (!turn.end) continue;
-    const label = turn.modelRan === undefined ? NOT_CONFIRMED_LABEL : turn.modelChangedTo !== undefined ? CHANGED_LABEL : sessionModelLabel(turn) || NOT_CONFIRMED_LABEL;
-    const entry = row(label, turn.toolId);
+    const entry = row(turnModelLabel(turn), turn.toolId);
     if (turn.workMs !== undefined) {
       entry.workMs += turn.workMs;
       entry.hasTime = true;
@@ -740,6 +741,8 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     headline: { ...figures(tally, before), turns: tally.turns, tasks: new Set(turns.map((turn) => turn.taskId)).size },
     atLeast: reasonsOf(tally, before),
     chart: { hourly: range.hourly, tools: toolIds.map((toolId) => ({ toolId, label: n.tool(toolId) })), buckets },
+    overTime: tokensOverTime(turns, lines, range.buckets, range.hourly, n.tool),
+    limits: limitsOverTime(log.usageHistory({ from: range.from, to: range.to }), ctx.state.pool.usage ?? [], range, ctx.now, n.tool, ctx.state.tools.map((tool) => tool.id)),
     byTool,
     byModel: modelSplit(turns, lines, before),
     byRole,

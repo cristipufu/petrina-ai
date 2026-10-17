@@ -1,0 +1,227 @@
+import { describe, expect, it } from "vitest";
+import { periodRange } from "../src/analytics.js";
+import { OTHER_PROVIDER, limitsOverTime, pointTotal, providerOf, runningTotal, tokensOverTime } from "../src/charts.js";
+import { createDemo } from "../src/demo.js";
+import type { UsageReport } from "../src/model.js";
+import { Simulator } from "../src/sim.js";
+import { USAGE_HISTORY_MS, readingsIn, recordReading, sameReading } from "../src/usage-history.js";
+import { CHANGED_LABEL, MemoryWorkLog, NOT_CONFIRMED_LABEL, type TokenLine, type WorkTurn } from "../src/worklog.js";
+
+const NOW = new Date(2026, 9, 17, 15, 0, 0).getTime();
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const toolName = (toolId: string) => ({ "claude-code": "Claude Code", codex: "Codex" })[toolId] ?? toolId;
+
+/** A finished turn: Claude Code on Opus unless told otherwise. */
+function turn(id: string, endedAt: number, extra: Partial<WorkTurn> = {}): WorkTurn {
+  return {
+    id,
+    taskId: "task",
+    productId: "shop",
+    stageId: "task:build",
+    stageTitle: "Build",
+    stageKind: "do",
+    round: 1,
+    fixing: false,
+    roleId: "builder",
+    toolId: "claude-code",
+    profileId: "opus-high",
+    modelRan: "claude-opus-5-5",
+    modelRanName: "Opus 5.5",
+    sessionId: "session",
+    reason: "first",
+    startedAt: endedAt - 10 * 60_000,
+    endedAt,
+    end: "finished",
+    mainOnly: false,
+    helpers: 0,
+    workMs: 9 * 60_000,
+    ...extra,
+  };
+}
+
+const line = (turnId: string, model: string, counts: Partial<TokenLine>): TokenLine => ({ turnId, model, ...counts });
+
+describe("Tokens over time", () => {
+  const week = periodRange("7d", NOW);
+  const today = periodRange("today", NOW);
+
+  it("puts each turn's tokens in its day, and in its hour for Today", () => {
+    const turns = [turn("a", NOW - 2 * DAY), turn("b", NOW - HOUR), turn("c", NOW - 10 * DAY), turn("running", NOW - 5 * 60_000, { end: undefined, endedAt: undefined })];
+    const lines = [line("a", "claude-opus-5-5", { total: 100 }), line("b", "claude-opus-5-5", { total: 10 }), line("c", "claude-opus-5-5", { total: 1000 }), line("running", "claude-opus-5-5", { total: 5 })];
+    const days = tokensOverTime(turns, lines, week.buckets, false, toolName).splits.tool.points;
+    expect(days).toHaveLength(7);
+    expect(days.map((point) => pointTotal(point, "tokens"))).toEqual([0, 0, 0, 0, 100, 0, 10]);
+    // Today, per hour: the turn that ended at 14:00 sits in the 14 bucket; a turn still running counts nowhere.
+    const hours = tokensOverTime(turns, lines, today.buckets, true, toolName).splits.tool.points;
+    expect(hours).toHaveLength(24);
+    expect(hours.map((point) => pointTotal(point, "tokens"))).toEqual(Array.from({ length: 24 }, (_, hour) => (hour === 14 ? 10 : 0)));
+    expect(hours[14]!.label).toBe("14");
+  });
+
+  it("splits the same tokens by tool, by model and by provider, largest first", () => {
+    const turns = [turn("claude", NOW - HOUR), turn("codex", NOW - 2 * HOUR, { toolId: "codex", profileId: "sol-high", modelRan: "gpt-6.1", modelRanName: "gpt-6.1" })];
+    const lines = [line("claude", "claude-opus-5-5", { input: 100, cacheRead: 800, output: 100, total: 1000 }), line("claude", "claude-haiku-5-5", { input: 50, cacheRead: 100, output: 50, total: 200 }), line("codex", "gpt-6.1", { input: 300, output: 200, total: 500, changed: true })];
+    const view = tokensOverTime(turns, lines, week.buckets, false, toolName);
+    const last = (split: "tool" | "model" | "provider") => view.splits[split].points.at(-1)!;
+    expect(view.splits.tool.series.map((entry) => [entry.label, entry.toolId])).toEqual([
+      ["Claude Code", "claude-code"],
+      ["Codex", "codex"],
+    ]);
+    expect(last("tool").values).toMatchObject({ "claude-code": { tokens: 1200, input: 150, cacheRead: 900, output: 150 }, codex: { tokens: 500, input: 300, cacheRead: 0, output: 200 } });
+    // Models exactly as reported; a Codex turn that rerouted can't be split between models, and its
+    // agent time sits with the model its session ran on.
+    expect(view.splits.model.series.map((entry) => entry.label)).toEqual(["Opus 5.5", CHANGED_LABEL, "Haiku 5.5", "gpt-6.1"]);
+    expect(last("model").values["Opus 5.5"]!.tokens).toBe(1000);
+    expect(last("model").values[CHANGED_LABEL]!.tokens).toBe(500);
+    expect(last("model").values["gpt-6.1"]).toMatchObject({ tokens: 0, time: 9 * 60_000 });
+    expect(view.splits.provider.series.map((entry) => [entry.label, entry.providerId])).toEqual([
+      ["Anthropic", "anthropic"],
+      ["OpenAI", "openai"],
+    ]);
+    expect(last("provider").values).toMatchObject({ anthropic: { tokens: 1200 }, openai: { tokens: 500 } });
+    // The three splits add up to the same total in every bucket.
+    for (let index = 0; index < 7; index += 1) {
+      const total = pointTotal(view.splits.tool.points[index]!, "tokens");
+      expect(pointTotal(view.splits.model.points[index]!, "tokens")).toBe(total);
+      expect(pointTotal(view.splits.provider.points[index]!, "tokens")).toBe(total);
+    }
+    expect(view.measures).toEqual(["tokens", "input", "cacheRead", "output", "time"]);
+  });
+
+  it("puts agent time with the model the session ran on, and offers only the parts the tools reported", () => {
+    const turns = [turn("confirmed", NOW - HOUR, { workMs: 60_000 }), turn("unconfirmed", NOW - 2 * HOUR, { modelRan: undefined, modelRanName: undefined, workMs: 30_000 }), turn("switched", NOW - 3 * HOUR, { modelChangedTo: "claude-sonnet-5-5", workMs: 10_000 })];
+    const lines = [line("confirmed", "claude-opus-5-5", { total: 100 }), line("unconfirmed", "claude-opus-5-5", { total: 100 }), line("switched", "claude-opus-5-5", { total: 100 })];
+    const view = tokensOverTime(turns, lines, week.buckets, false, toolName);
+    const todayPoint = view.splits.model.points.at(-1)!;
+    expect(todayPoint.values["Opus 5.5"]).toMatchObject({ tokens: 300, time: 60_000 });
+    expect(todayPoint.values[NOT_CONFIRMED_LABEL]).toMatchObject({ tokens: 0, time: 30_000 });
+    expect(todayPoint.values[CHANGED_LABEL]).toMatchObject({ tokens: 0, time: 10_000 });
+    expect(todayPoint.values["claude-code"]).toBeUndefined();
+    expect(view.splits.tool.points.at(-1)!.values["claude-code"]).toMatchObject({ tokens: 300, time: 100_000 });
+    // Only totals came, so new input, reused input and output are not on offer.
+    expect(view.measures).toEqual(["tokens", "time"]);
+  });
+
+  it("adds up the running total bucket by bucket, keeping empty days", () => {
+    const turns = [turn("a", NOW - 5 * DAY), turn("b", NOW - 3 * DAY), turn("c", NOW - 3 * DAY + HOUR), turn("d", NOW - HOUR)];
+    const lines = [line("a", "claude-opus-5-5", { total: 10 }), line("b", "claude-opus-5-5", { total: 20 }), line("c", "claude-opus-5-5", { total: 5 }), line("d", "claude-opus-5-5", { total: 1 })];
+    const { points } = tokensOverTime(turns, lines, week.buckets, false, toolName).splits.tool;
+    expect(points.map((point) => pointTotal(point, "tokens"))).toEqual([0, 10, 0, 25, 0, 0, 1]);
+    expect(runningTotal(points, "tokens")).toEqual([0, 10, 10, 35, 35, 35, 36]);
+    expect(runningTotal(points, "time")).toEqual([0, 540_000, 540_000, 1_620_000, 1_620_000, 1_620_000, 2_160_000]);
+  });
+
+  it("knows who runs the models behind each tool", () => {
+    expect(providerOf("claude-code")).toEqual({ id: "anthropic", label: "Anthropic" });
+    expect(providerOf("codex")).toEqual({ id: "openai", label: "OpenAI" });
+    expect(providerOf("grok")).toEqual({ id: "xai", label: "xAI" });
+    expect(providerOf("something-new")).toBe(OTHER_PROVIDER);
+  });
+});
+
+const report = (extra: Partial<UsageReport> & Pick<UsageReport, "at">): UsageReport => ({ toolId: "claude-code", kind: "seven_day", status: "allowed", utilization: 0.5, ...extra });
+
+describe("Usage limits over time", () => {
+  const week = periodRange("7d", NOW);
+  const range = { from: week.from, to: week.to };
+
+  it("draws each limit's readings in the period, named plainly, with its resets", () => {
+    const history = [
+      report({ at: NOW - 10 * DAY, utilization: 0.9 }),
+      report({ at: NOW - 3 * DAY, utilization: 0.4, resetsAt: NOW - 2 * DAY }),
+      report({ at: NOW - DAY, utilization: 0.1, resetsAt: NOW + 5 * DAY }),
+      report({ at: NOW - 2 * HOUR, kind: "seven_day_opus", model: "opus", utilization: 0.7, resetsAt: NOW + 4 * HOUR }),
+      report({ at: NOW - HOUR, toolId: "codex", kind: "codex:primary", windowMinutes: 300, utilization: 0.2, resetsAt: NOW + HOUR }),
+    ];
+    const view = limitsOverTime(history, [], range, NOW, toolName, ["claude-code", "codex"]);
+    expect(view.tools.map((tool) => tool.label)).toEqual(["Claude Code", "Codex"]);
+    const [claude, codex] = view.tools;
+    expect(claude!.limits.map((limit) => limit.label)).toEqual(["weekly", "weekly Opus"]);
+    const weekly = claude!.limits[0]!;
+    // The reading from ten days ago is outside the period.
+    expect(weekly.readings).toEqual([
+      { at: NOW - 3 * DAY, used: 0.4 },
+      { at: NOW - DAY, used: 0.1 },
+    ]);
+    expect(weekly.resets).toEqual([NOW - 2 * DAY]);
+    // The next reset is beyond this week, so it isn't marked; the Opus window's is still ahead today.
+    expect(weekly.nextReset).toBeUndefined();
+    expect(claude!.limits[1]!.nextReset).toBe(NOW + 4 * HOUR);
+    expect(claude!.limits[1]!.resets).toEqual([]);
+    expect(codex!.limits.map((limit) => limit.label)).toEqual(["5-hour"]);
+  });
+
+  it("ends each line on the pool's latest report when it is newer, and reads a reached limit as full", () => {
+    const history = [report({ at: NOW - DAY, utilization: 0.3 })];
+    const current = [report({ at: NOW - 60_000, utilization: 0.35 }), report({ at: NOW - 2 * DAY, utilization: 0.2 }), { toolId: "claude-code", kind: "overage", status: "rejected" as const, at: NOW - 30_000 }, { toolId: "codex", kind: "codex:primary", status: "allowed" as const, at: NOW - 30_000 }];
+    const view = limitsOverTime(history, current, range, NOW, toolName);
+    const claude = view.tools.find((tool) => tool.toolId === "claude-code")!;
+    expect(claude.limits.find((limit) => limit.label === "weekly")!.readings).toEqual([
+      { at: NOW - DAY, used: 0.3 },
+      { at: NOW - 60_000, used: 0.35 },
+    ]);
+    expect(claude.limits.find((limit) => limit.label === "extra usage")!.readings).toEqual([{ at: NOW - 30_000, used: 1 }]);
+    // A report with no percentage and nothing reached draws nothing.
+    expect(view.tools.some((tool) => tool.toolId === "codex")).toBe(false);
+  });
+});
+
+describe("The history of readings", () => {
+  it("keeps a reading only when it differs from the last one of its limit, and only thirty days", () => {
+    const history: UsageReport[] = [];
+    expect(recordReading(history, report({ at: NOW - 40 * DAY, utilization: 0.9 }))).toBe(true);
+    expect(recordReading(history, report({ at: NOW - 2 * HOUR }))).toBe(true);
+    expect(history).toHaveLength(1);
+    // The same percentage again: not written. The same percentage of another limit: written.
+    expect(recordReading(history, report({ at: NOW - HOUR }))).toBe(false);
+    expect(recordReading(history, report({ at: NOW - HOUR, kind: "seven_day_opus", model: "opus" }))).toBe(true);
+    expect(recordReading(history, report({ at: NOW, utilization: 0.51 }))).toBe(true);
+    expect(history.map((entry) => [entry.kind, entry.utilization, entry.at])).toEqual([
+      ["seven_day", 0.5, NOW - 2 * HOUR],
+      ["seven_day_opus", 0.5, NOW - HOUR],
+      ["seven_day", 0.51, NOW],
+    ]);
+    // A late report lands in its place in time.
+    expect(recordReading(history, report({ at: NOW - 90 * 60_000, utilization: 0.49 }))).toBe(true);
+    expect(history.map((entry) => entry.at)).toEqual([NOW - 2 * HOUR, NOW - 90 * 60_000, NOW - HOUR, NOW]);
+    expect(readingsIn(history, { from: NOW - HOUR, to: NOW }).map((entry) => entry.at)).toEqual([NOW - HOUR]);
+    expect(sameReading(report({ at: 1 }), report({ at: 2 }))).toBe(true);
+    expect(sameReading(report({ at: 1 }), report({ at: 1, resetsAt: 5 }))).toBe(false);
+    expect(USAGE_HISTORY_MS).toBe(30 * DAY);
+  });
+
+  it("is kept by the simulator's log and copied with it", () => {
+    const log = new MemoryWorkLog(NOW - DAY);
+    expect(log.recordUsage(report({ at: NOW - HOUR }))).toBe(true);
+    expect(log.recordUsage(report({ at: NOW }))).toBe(false);
+    expect(log.usageHistory({})).toHaveLength(1);
+    const copy = log.copy();
+    copy.recordUsage(report({ at: NOW, utilization: 0.6 }));
+    expect(copy.usageHistory({})).toHaveLength(2);
+    expect(log.usageHistory({})).toHaveLength(1);
+  });
+});
+
+describe("The demo's charts", () => {
+  it("shows plausible tokens per day with every split, and limits that fill up and reset", () => {
+    const demo = createDemo(NOW);
+    const sim = new Simulator(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
+    const week = sim.usage({ view: "analytics", period: "7d" });
+    expect(week.overTime.splits.tool.points.filter((point) => pointTotal(point, "tokens") > 0)).toHaveLength(7);
+    expect(week.overTime.splits.model.series.length).toBeGreaterThanOrEqual(4);
+    expect(week.overTime.splits.provider.series.map((entry) => entry.label)).toEqual(["Anthropic", "OpenAI"]);
+    expect(week.overTime.measures).toEqual(["tokens", "input", "cacheRead", "output", "time"]);
+    expect(runningTotal(week.overTime.splits.tool.points, "tokens").at(-1)).toBe(week.headline.tokens.value);
+    expect(week.limits.tools.map((tool) => tool.toolId)).toEqual(["claude-code", "codex"]);
+    const fiveHour = week.limits.tools[0]!.limits.find((limit) => limit.label === "5-hour")!;
+    expect(fiveHour.resets.length).toBeGreaterThan(3);
+    expect(fiveHour.readings.at(-1)).toEqual({ at: NOW, used: 0.35 });
+    const month = sim.usage({ view: "analytics", period: "30d" });
+    expect(month.overTime.splits.tool.points.filter((point) => pointTotal(point, "tokens") > 0).length).toBeGreaterThan(20);
+    expect(month.limits.tools[0]!.limits.find((limit) => limit.label === "weekly")!.resets).toHaveLength(4);
+    const today = sim.usage({ view: "analytics", period: "today" });
+    expect(today.overTime.hourly).toBe(true);
+    expect(today.limits.tools[0]!.limits.find((limit) => limit.label === "5-hour")!.nextReset).toBe(NOW + 90 * 60_000);
+  });
+});

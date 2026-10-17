@@ -4,8 +4,8 @@ import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js
 import type { State, Task } from "../src/model.js";
 import { agoText, atLeastLine, codexLimits, durationText, figureText, limitWords, nearestLimit, nearestLimitWords, nextReset, tokensText } from "../src/numbers.js";
 import { Simulator } from "../src/sim.js";
-import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, periodRange, usageView } from "../src/analytics.js";
-import { MemoryWorkLog, modelLabel, turnTokens, type TokenLine, type WorkMoment, type WorkTurn } from "../src/worklog.js";
+import { periodRange, usageView } from "../src/analytics.js";
+import { CHANGED_LABEL, MemoryWorkLog, NOT_CONFIRMED_LABEL, modelLabel, turnTokens, type TokenLine, type WorkMoment, type WorkTurn } from "../src/worklog.js";
 
 const NOW = new Date(2026, 9, 17, 15, 0, 0).getTime();
 const MIN = 60_000;
@@ -725,5 +725,24 @@ describe("Demos", () => {
     for (let tick = 0; tick < 30; tick += 1) sim.tick();
     expect(sim.usage({ view: "today" }).turns).toBeGreaterThan(before);
     expect(sim.getState().work!.version).toBeGreaterThan(version);
+  });
+});
+
+describe("A cancelled task's questions", () => {
+  it("stay in its work history unanswered, so Analytics still counts how often agents needed you", () => {
+    const demo = createDemo(NOW);
+    const sim = new Simulator(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
+    const question = demo.state.inbox.find((item) => item.kind === "question")!;
+    const open = () => demo.log.moments({ taskId: question.taskId, kinds: ["ask"] }).filter((moment) => moment.ask === "question" && moment.answer === undefined);
+    const before = sim.usage({ view: "analytics", period: "7d" }).squad;
+    expect(before.asks).toMatch(/unanswered/);
+    expect(open().length).toBeGreaterThan(0);
+    sim.cancel(question.taskId);
+    expect(sim.getState().tasks.find((task) => task.id === question.taskId)?.state).toBe("cancelled");
+    // The question is still there, still unanswered, and the squad's line reads the same.
+    expect(open().length).toBeGreaterThan(0);
+    const after = sim.usage({ view: "analytics", period: "7d" }).squad;
+    expect(after.asks).toBe(before.asks);
+    expect(after.cancelled).toBe(before.cancelled + 1);
   });
 });

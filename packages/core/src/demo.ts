@@ -3,7 +3,7 @@
 // log behind every usage number) are consistent.
 
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
-import type { DeliveryMode, Id, InboxItem, Product, State, Task, TaskKind } from "./model.js";
+import type { DeliveryMode, Id, InboxItem, Product, State, Task, TaskKind, UsageReport } from "./model.js";
 import { Simulator, type SimOpenWork, type SimQuirk, type Trigger, type Triggers } from "./sim.js";
 import { askMomentId, MemoryWorkLog } from "./worklog.js";
 
@@ -455,6 +455,7 @@ function buildDemo(now: number): Demo {
   });
 
   recordProducts(builder.log, DEMO_PRODUCTS, now);
+  recordUsageHistory(builder.log, now);
   const state: State = { ...baseState(now, builder.tasks, builder.inbox), seq: 10_000, work: { version: 1, since } };
   return { state, triggers: DEMO_TRIGGERS, log: builder.log, open: builder.openWork(), quirks };
 }
@@ -463,6 +464,31 @@ function buildDemo(now: number): Demo {
 function recordProducts(log: MemoryWorkLog, products: readonly Product[], now: number): void {
   for (const product of products) log.recordProduct({ id: product.id, name: product.name, repo: product.repo, addedAt: now - 40 * DAY });
   log.recordProduct({ id: REMOVED.id, name: REMOVED.name, repo: REMOVED.repo, addedAt: now - 60 * DAY, removedAt: now - 12 * DAY });
+}
+
+/**
+ * Thirty days of readings of each tool's limits, ending on the pool's current reports: every
+ * window fills up over its length and drops at each reset. Claude Code's weekly window climbs
+ * high each week, its 5-hour window saws through the day, and Codex's weekly window stays low.
+ */
+function recordUsageHistory(log: MemoryWorkLog, now: number): void {
+  const peaks: Record<string, readonly number[]> = { seven_day: [0.93, 0.78, 0.88, 0.71], five_hour: [0.55, 0.3, 0.7, 0.45, 0.6, 0.35, 0.5, 0.65, 0.4, 0.58], "codex:primary": [0.41, 0.27, 0.35, 0.22] };
+  const readings: UsageReport[] = [];
+  for (const current of demoUsage(now)) {
+    const length = current.kind === "five_hour" ? 5 * 60 * MINUTE : 7 * DAY;
+    const every = current.kind === "five_hour" ? 30 * MINUTE : 6 * 60 * MINUTE;
+    const from = current.kind === "five_hour" ? now - 2 * DAY : now - 30 * DAY;
+    const resetsAt = current.resetsAt!;
+    for (let at = from; at < now; at += every) {
+      // Which window the time falls in, counted back from the current one, and how far into it.
+      const back = Math.ceil((resetsAt - at) / length) - 1;
+      const start = resetsAt - (back + 1) * length;
+      const peak = back === 0 ? current.utilization! / ((now - start) / length) : peaks[current.kind]![back % peaks[current.kind]!.length]!;
+      const used = Math.round(peak * Math.pow((at - start) / length, 0.9) * 100) / 100;
+      readings.push({ ...current, utilization: used, status: used >= 0.8 ? "allowed_warning" : "allowed", resetsAt: start + length, at });
+    }
+  }
+  for (const reading of readings.sort((a, b) => a.at - b.at)) log.recordUsage(reading);
 }
 
 // ── Built once ────────────────────────────────────────────────────────────────────────
@@ -601,6 +627,7 @@ function buildPortfolioDemo(now: number): Demo {
   });
 
   recordProducts(builder.log, products, now);
+  recordUsageHistory(builder.log, now);
   return {
     state: { ...baseState(now, tasks, builder.inbox), products, seq: 10_000, pool: { limit: 8, paused: false, toolCaps: { "claude-code": 5, codex: 4 }, usage: demoUsage(now) }, work: { version: 1, since } },
     triggers,

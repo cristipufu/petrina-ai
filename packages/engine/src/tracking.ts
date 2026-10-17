@@ -368,7 +368,14 @@ export class Tracking {
   private setLimits(reports: readonly UsageReport[]): void {
     if (this.k.stopped) return;
     this.k.s.pool.usage = [...(this.k.s.pool.usage ?? []).filter((entry) => entry.toolId !== "codex"), ...reports];
+    for (const report of reports) this.usageReported(report);
     this.k.commitNow();
+  }
+
+  /** One reading of a limit goes into the thirty-day history; a changed reading has the window ask for its charts again. */
+  usageReported(report: UsageReport): void {
+    if (this.k.stopped) return;
+    if (this.log.recordUsage(report)) this.changed();
   }
 
   /** Ask the installed Codex for its limits, at most once per `gap`. A failed read means "not reported". */

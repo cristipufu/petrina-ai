@@ -411,9 +411,11 @@ export abstract class Kernel {
     return this.s.tools.find((tool) => tool.id === toolId)?.name ?? ADAPTERS[toolId ?? ""]?.name ?? toolId ?? "the tool";
   }
 
-  /** A tool said how much of a limit is used: kept as the latest for that tool and kind of limit. */
+  /** A tool said how much of a limit is used: kept as the latest for that tool and kind of limit, and in the thirty-day history. */
   recordUsage(info: UsageInfo): void {
-    this.s.pool.usage = withReport(this.s.pool.usage, { ...info, at: Date.now() }) as MState["pool"]["usage"];
+    const report = { ...info, at: Date.now() };
+    this.s.pool.usage = withReport(this.s.pool.usage, report) as MState["pool"]["usage"];
+    this.tracking.usageReported(report);
     this.commit();
   }
 

@@ -5,6 +5,8 @@
 import type { Database } from "bun:sqlite";
 import {
   emptyTally,
+  sameReading,
+  USAGE_HISTORY_MS,
   type Id,
   type MomentFilter,
   type ProductRecord,
@@ -12,6 +14,8 @@ import {
   type TokenCounts,
   type TokenLine,
   type TurnFilter,
+  type UsageHistoryFilter,
+  type UsageReport,
   type WorkLogReader,
   type WorkMoment,
   type WorkTurn,
@@ -82,7 +86,48 @@ const SCHEMA = [
   "CREATE INDEX IF NOT EXISTS work_moments_at ON work_moments (at)",
   "CREATE INDEX IF NOT EXISTS work_moments_task ON work_moments (task_id, kind)",
   "CREATE TABLE IF NOT EXISTS products_ever (id TEXT PRIMARY KEY, name TEXT, repo TEXT, added_at INTEGER, removed_at INTEGER)",
+  // Readings of the tools' usage limits: the last thirty days, one row per change of reading.
+  `CREATE TABLE IF NOT EXISTS usage_readings (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    utilization REAL,
+    window_minutes INTEGER,
+    name TEXT,
+    resets_at INTEGER,
+    at INTEGER NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS usage_readings_at ON usage_readings (at)",
+  "CREATE INDEX IF NOT EXISTS usage_readings_limit ON usage_readings (tool_id, kind, model, at)",
 ];
+
+interface ReadingRow {
+  tool_id: string;
+  kind: string;
+  model: string;
+  status: string;
+  utilization: number | null;
+  window_minutes: number | null;
+  name: string | null;
+  resets_at: number | null;
+  at: number;
+}
+
+function readingOf(row: ReadingRow): UsageReport {
+  return {
+    toolId: row.tool_id,
+    kind: row.kind,
+    ...(row.model ? { model: row.model } : {}),
+    status: row.status as UsageReport["status"],
+    ...opt("utilization", row.utilization),
+    ...opt("windowMinutes", row.window_minutes),
+    ...opt("name", row.name),
+    ...opt("resetsAt", row.resets_at),
+    at: row.at,
+  };
+}
 
 interface TurnRow {
   id: string;
@@ -323,6 +368,37 @@ export class WorkLog implements WorkLogReader {
          ON CONFLICT(id) DO UPDATE SET name = COALESCE(excluded.name, name), repo = COALESCE(excluded.repo, repo), added_at = COALESCE(added_at, excluded.added_at), removed_at = COALESCE(excluded.removed_at, removed_at)`,
       )
       .run(record.id, record.name ?? null, record.repo ?? null, record.addedAt ?? null, record.removedAt ?? null);
+  }
+
+  // ── Usage limits over time ─────────────────────────────────────────────
+
+  /**
+   * A tool said how much of a limit is used. Kept for thirty days; a reading identical to the latest
+   * one of its limit is not written again, so a tool repeating itself on every turn leaves one row.
+   * True when a row was written.
+   */
+  recordUsage(report: UsageReport): boolean {
+    if (this.closed) return false;
+    return this.db.transaction(() => {
+      this.db.query("DELETE FROM usage_readings WHERE at < ?").run(report.at - USAGE_HISTORY_MS);
+      const latest = this.db
+        .query<ReadingRow, [string, string, string]>("SELECT * FROM usage_readings WHERE tool_id = ? AND kind = ? AND model = ? ORDER BY at DESC, seq DESC LIMIT 1")
+        .get(report.toolId, report.kind, report.model ?? "");
+      if (latest && sameReading(readingOf(latest), report)) return false;
+      this.db
+        .query("INSERT INTO usage_readings (tool_id, kind, model, status, utilization, window_minutes, name, resets_at, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(report.toolId, report.kind, report.model ?? "", report.status, num(report.utilization), num(report.windowMinutes), report.name ?? null, num(report.resetsAt), report.at);
+      return true;
+    })();
+  }
+
+  usageHistory(filter: UsageHistoryFilter): UsageReport[] {
+    const parts: string[] = [];
+    const params: number[] = [];
+    if (filter.from !== undefined) parts.push("at >= ?"), params.push(filter.from);
+    if (filter.to !== undefined) parts.push("at < ?"), params.push(filter.to);
+    const sql = parts.length ? `WHERE ${parts.join(" AND ")}` : "";
+    return this.db.query<ReadingRow, number[]>(`SELECT * FROM usage_readings ${sql} ORDER BY at, seq`).all(...params).map(readingOf);
   }
 
   // ── Ids that are never handed out again ─────────────────────────────────

@@ -15,4 +15,6 @@ export * from "./commands.js";
 export * from "./worklog.js";
 export * from "./numbers.js";
 export * from "./usage.js";
+export * from "./usage-history.js";
+export * from "./charts.js";
 export * from "./analytics.js";

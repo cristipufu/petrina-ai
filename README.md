@@ -26,7 +26,7 @@
 - **A "Needs you" inbox.** Questions, permission requests, plan and design checks, and delivery approvals, each with one-click answers. It tells you when you are the one blocking agents.
 - **Join any agent.** Open the live session of the agent working on a task, read along, and message it. Messages queue until the agent finishes its current step, or interrupt it right away. Take over in your own terminal when you want to drive.
 - **No code in the app.** You see plans, briefs, checklists and verdicts. The code lives in the pull request. Petrina never merges.
-- **What work costs, in tokens and time.** Every agent turn is recorded with the tokens (per model, as each tool reports them) and the time it took. A task shows what each stage and agent used, the Products page what each product used, and the pool what today used. An Analytics page shows each tool's usage limits, tokens and agent time by tool, model, role, product and task, and how the squad works: send-backs, design rounds, questions, failures. No prices, and the cards stay calm.
+- **What work costs, in tokens and time.** Every agent turn is recorded with the tokens (per model, as each tool reports them) and the time it took. A task shows what each stage and agent used, the Products page what each product used, and the pool what today used. An Analytics page shows each tool's usage limits and how fast each one fills up and resets, tokens and agent time per day split by tool, model or provider with the running total, the splits by tool, model, role, product and task, and how the squad works: send-backs, design rounds, questions, failures. No prices, and the cards stay calm.
 
 <p align="center">
   <img src="docs/screenshots/sheet-plan.png" alt="A task's plan: design until both architects agree, your design check, the build, a chain of two reviewers and your delivery check, each stage with its tool, model and effort" width="49%" />
@@ -34,7 +34,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/analytics.png" alt="Analytics: each tool's usage limits with when they reset, then tokens and agent time for the last 7 days, and a column chart per day split by Claude Code and Codex" width="49%" />
+  <img src="docs/screenshots/analytics-usage-over-time.png" alt="Analytics: tokens per day for the last 7 days as stacked columns split by model, with a legend, the running total under them, and the splits by tool, model and role" width="49%" />
   <img src="docs/screenshots/sheet-usage.png" alt="A task's What it used section: total tokens and agent time, input reused from the cache, and each stage with its agents, including a design reviewer that was asked for sol at xhigh but ran gpt-6.1 at medium" width="49%" />
 </p>
 
