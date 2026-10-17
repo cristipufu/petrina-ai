@@ -6,6 +6,27 @@
 // And the PATH: an app opened from the Dock still finds the user's tools.
 
 const CREDENTIAL_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS"];
+/**
+ * What marks a process as part of another coding agent's session: an engine started from inside Claude Code
+ * or Codex would hand them on, and its agents would take themselves for that session's children (Claude Code
+ * then links to its messaging socket, and CLAUDE_EFFORT overrides the effort Petrina sets). The user's own
+ * settings for the tools (CLAUDE_CODE_USE_BEDROCK, say) are not on this list and pass through.
+ */
+const SESSION_VARS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_PID",
+  "CLAUDE_EFFORT",
+  "CODEX_SANDBOX",
+  "CODEX_SANDBOX_NETWORK_DISABLED",
+  "CODEX_THREAD_ID",
+];
 /** A GitHub token by its look, whatever the variable holding it is called (an npm registry's, say). */
 const GITHUB_TOKEN = /^\s*(gh[pousr]_|github_pat_)/;
 
@@ -15,7 +36,14 @@ const GITHUB_TOKEN = /^\s*(gh[pousr]_|github_pat_)/;
  * own `open` refuses).
  */
 export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return { ...env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", BROWSER: "none", PETRINA_AGENT: "1" };
+  return { ...ownSession(env), GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", BROWSER: "none", PETRINA_AGENT: "1" };
+}
+
+/** The environment without another coding agent's session in it: what Petrina starts is a session of its own. */
+export function ownSession(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const clean = { ...env };
+  for (const name of SESSION_VARS) delete clean[name];
+  return clean;
 }
 
 /**
@@ -23,7 +51,7 @@ export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
  * product's checks and hooks): no tokens, an empty gh config, git credential helpers reset, and no SSH for git.
  */
 export function withoutCredentials(env: NodeJS.ProcessEnv, emptyGhConfig: string): NodeJS.ProcessEnv {
-  const clean = withGitConfig(env, [
+  const clean = withGitConfig(ownSession(env), [
     ["credential.helper", ""],
     ["remote.origin.pushurl", "petrina-push-disabled://only-petrina-publishes"],
     ["core.sshCommand", "petrina-ssh-disabled"],

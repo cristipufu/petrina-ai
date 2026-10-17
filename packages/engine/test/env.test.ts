@@ -66,3 +66,23 @@ describe("the PATH an app opened from the Dock gets", () => {
     expect(pathFromEnv("no markers here")).toBeUndefined();
   });
 });
+
+describe("an engine started from inside another coding agent's session", () => {
+  it("gives its agents a session of their own: that session's markers stay behind, the coordinator's logins and settings go along", () => {
+    const outer = {
+      PATH: "/usr/bin",
+      GH_TOKEN: "ghp_example",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      CLAUDECODE: "1",
+      CLAUDE_CODE_SESSION_ID: "outer",
+      CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/outer.sock",
+      CLAUDE_CODE_MESSAGING_TOKEN: "secret",
+      CLAUDE_EFFORT: "low",
+      CODEX_SANDBOX: "seatbelt",
+    };
+    const env = agentEnv(outer);
+    for (const name of ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_EFFORT", "CODEX_SANDBOX"]) expect(env[name]).toBeUndefined();
+    expect(env).toMatchObject({ PATH: "/usr/bin", GH_TOKEN: "ghp_example", CLAUDE_CODE_USE_BEDROCK: "1", PETRINA_AGENT: "1" });
+    expect(withoutCredentials(outer, "/tmp/gh").CLAUDECODE).toBeUndefined();
+  });
+});
