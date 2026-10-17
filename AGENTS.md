@@ -42,6 +42,9 @@ What agents learned about working in this repository, added with the coordinator
 - The engine serves the built app itself (`bun run build`, then `petrina serve`), so a browser check needs no separate web server and can use a temporary data folder and a free port; the front end opened with no engine behind it runs the simulated squad, the demo.
 - A card is clickable through an invisible `.card-open::after` layer over the whole card: a positioned element inside a card sits above that layer and needs its own click handling.
 
+- The demos fast-forward dozens of tasks through the simulator and take seconds under load; createDemo, createPortfolioDemo and createDemoState build once per time and hand out copies, so tests should pass the same fixed time to reuse them.
+- The desktop keyboard tests mount the app on createDemoState with a fresh simulator, so Analytics has no history there; to test Analytics numbers, pass createDemo's log, open work, quirks and triggers to the Simulator.
+
 ## Review guide
 
 Every change here is reviewed against REVIEW.md: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.
