@@ -83,9 +83,11 @@ describe("board order", () => {
     expect(sections["needs-you"].map((task) => task.title)).toEqual(["Guest checkout", "Dark mode", "Refresh the pricing page", "Gift cards", "Weekly email digest"]);
     expect(sections.working.map((task) => task.title)).toEqual(["Fix login loop on Safari"]);
     expect(sections.queue.map((task) => task.title)).toEqual(["Export notes to PDF", "Onboarding checklist", "Search by tag", "Retry failed Stripe webhooks"]);
-    // The board's own finished tasks come first; the thirty days of history behind them follow.
-    expect(sections.done.slice(0, 2).map((task) => task.title)).toEqual(["Report errors to Sentry", "Fix the footer links"]);
-    expect(sections.done.slice(2).every((task) => /^h\d+$/.test(task.id) && demo.products.some((product) => product.id === task.productId))).toBe(true);
+    // Calendar-based history can fall between the board's named tasks in some timezones.
+    const named = sections.done.filter((task) => !/^h\d+$/.test(task.id));
+    expect(named.map((task) => task.title)).toEqual(["Report errors to Sentry", "Fix the footer links"]);
+    expect(sections.done.filter((task) => /^h\d+$/.test(task.id)).every((task) => demo.products.some((product) => product.id === task.productId))).toBe(true);
+    expect(sections.done.every((task, index, tasks) => index === 0 || tasks[index - 1]!.finishedAt! >= task.finishedAt!)).toBe(true);
   });
 
   it("keeps every task in exactly one section, and filters", () => {
