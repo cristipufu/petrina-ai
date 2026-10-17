@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import {
   BookOpen,
   Check,
@@ -141,7 +141,10 @@ export function Stepper({ task }: { task: Task }) {
   );
 }
 
-/** Close a popover or menu on a click outside it or on Escape. */
+/**
+ * Close a popover or menu on a click outside it or on Escape. Escape from inside it hands focus
+ * back to the button that opens it, the first in `ref`.
+ */
 export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void): void {
   useEffect(() => {
     if (!open) return;
@@ -151,6 +154,7 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, cl
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
+        if (ref.current?.contains(document.activeElement)) ref.current.querySelector("button")?.focus();
         close();
       }
     };
@@ -161,6 +165,65 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, cl
       window.removeEventListener("keydown", onKey, true);
     };
   }, [ref, open, close]);
+}
+
+const TABBABLE = "a[href], button, input, select, textarea, [tabindex]";
+/** Open dialogs, the topmost last: only the topmost keeps focus. */
+const traps: HTMLElement[] = [];
+
+/**
+ * Keep keyboard focus inside an open dialog: Tab after its last control comes back to its first,
+ * Shift+Tab before its first goes to its last, and focus that dropped out of it (the button you
+ * used disappeared) comes back on the next Tab. A dialog opened over it takes over until it closes,
+ * Escape included: it closes the topmost dialog only. Focus moves in when it opens and goes back to
+ * whatever had it before when it closes, or to `returnTo` when that is gone.
+ */
+export function useFocusTrap(ref: RefObject<HTMLElement | null>, onEscape?: () => void, returnTo?: () => HTMLElement | null): void {
+  // Read while rendering, before the dialog's own autofocus moves it.
+  const [opener] = useState(() => document.activeElement);
+  const escape = useRef(onEscape);
+  escape.current = onEscape;
+  const fallback = useRef(returnTo);
+  fallback.current = returnTo;
+  useEffect(() => {
+    const box = ref.current;
+    if (!box) return;
+    traps.push(box);
+    if (!box.contains(document.activeElement)) box.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (traps.at(-1) !== box) return;
+      if (event.key === "Escape" && escape.current && !event.defaultPrevented) {
+        event.preventDefault();
+        escape.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const stops = Array.from(box.querySelectorAll<HTMLElement>(TABBABLE)).filter(
+        (el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && el.getClientRects().length > 0,
+      );
+      const first = stops[0];
+      const last = stops.at(-1);
+      const at = document.activeElement;
+      const inside = at instanceof HTMLElement && box.contains(at) && at !== box;
+      if (!first || !last) {
+        event.preventDefault();
+        box.focus();
+      } else if (event.shiftKey ? !inside || at === first : !inside || at === last) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      traps.splice(traps.indexOf(box), 1);
+      // Only once the dialog is gone and focus went with it: never pull it from where someone moved it.
+      const at = document.activeElement;
+      if (box.isConnected || (at && at !== document.body)) return;
+      const back = opener instanceof HTMLElement && opener.isConnected && opener !== document.body ? opener : fallback.current?.();
+      back?.focus();
+    };
+  }, [ref, opener]);
 }
 
 /**

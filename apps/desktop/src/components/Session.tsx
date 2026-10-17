@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { ArrowRight, Send, SquareTerminal, User, X } from "lucide-react";
+import { ArrowRight, Send, SquareTerminal, User } from "lucide-react";
 import type { MessageMode, SessionLine, State, Task } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, profileText, type Lookup } from "../lib";
@@ -58,10 +58,14 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
     pinned.current = true;
   }, [scroller, task.id]);
 
+  // Follow new lines only while at the bottom, but always bring what you just sent into view.
+  const sent = useRef({ queued: task.queued.length, lines: task.session.length });
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [scroller, task.session.length, asks.length]);
+    const yours = task.queued.length > sent.current.queued || (task.session.length > sent.current.lines && task.session.at(-1)?.from === "you");
+    sent.current = { queued: task.queued.length, lines: task.session.length };
+    if (el && (pinned.current || yours)) el.scrollTop = el.scrollHeight;
+  }, [scroller, task.session.length, task.queued.length, asks.length]);
 
   const speaker = (line: SessionLine): ReactNode => {
     const lineRole = find.role(line.roleId);
@@ -138,6 +142,25 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
             );
           return speaker(group);
         })}
+        {task.queued.map((message) => (
+          <div key={message.id} className="msg you queued" data-queued>
+            <span className="avatar tone-violet" style={{ width: 28, height: 28 }} aria-hidden="true">
+              <User size={16} />
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div className="name">
+                You
+                <span className="queued-note">{live ? "Queued, delivered after the current step" : "Queued, delivered when an agent starts"}</span>
+                <button className="btn ghost small" onClick={() => sim.removeQueued(task.id, message.id)} aria-describedby={`queued-${message.id}`}>
+                  Remove
+                </button>
+              </div>
+              <div className="bubble" id={`queued-${message.id}`}>
+                {message.text}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
       {asks.length > 0 && (
@@ -166,18 +189,6 @@ function Composer({ task, find }: { task: Task; find: Lookup }) {
 
   return (
     <div className="composer">
-      {task.queued.length > 0 && (
-        <div className="queued-msgs" aria-label="Queued messages">
-          {task.queued.map((message) => (
-            <span key={message.id} className="q" title={message.text}>
-              <span>Queued: {message.text}</span>
-              <button aria-label="Remove queued message" onClick={() => sim.removeQueued(task.id, message.id)}>
-                <X size={14} />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
       <div className="composer-row">
         <textarea
           rows={1}

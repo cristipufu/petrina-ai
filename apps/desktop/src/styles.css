@@ -361,6 +361,8 @@ kbd {
 /* ── Rail ──────────────────────────────────────────────────────────── */
 
 .rail {
+  grid-row: 2;
+  grid-column: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -404,7 +406,7 @@ kbd {
 
 /* ── Board: one grid of task cards ─────────────────────────────────── */
 
-.main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.main { grid-row: 2; grid-column: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 .board {
   flex: 1;
@@ -643,6 +645,8 @@ kbd {
 /* ── Inbox ─────────────────────────────────────────────────────────── */
 
 .inbox {
+  grid-row: 2;
+  grid-column: 3;
   width: var(--inbox);
   display: flex;
   flex-direction: column;
@@ -651,12 +655,12 @@ kbd {
   background: var(--bg);
 }
 .inbox:focus { outline: none; }
+/* Over the board, in the same grid row: it starts below the top bar however tall enlarged text makes it. */
 .inbox.overlay {
-  position: fixed;
-  top: 56px;
-  right: 0;
-  bottom: 0;
-  width: min(var(--inbox), calc(100vw - var(--rail)));
+  grid-column: 2 / -1;
+  justify-self: end;
+  position: relative;
+  width: min(var(--inbox), 100%);
   z-index: 15;
   border-left-color: var(--line-strong);
   box-shadow: var(--shadow-pop);
@@ -904,18 +908,19 @@ kbd {
 .msg .name time { color: var(--text-3); font-weight: 400; font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .msg .bubble { margin-top: 4px; padding: 12px 16px; border-radius: var(--radius); background: var(--sunken); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-reading); line-height: var(--lh-reading); }
 .msg.you .bubble { background: var(--accent-soft); }
+/* Your messages waiting for the agent: in the conversation, outlined until they are delivered. */
+.msg.queued .name { flex-wrap: wrap; align-items: center; }
+.msg.queued .queued-note { color: var(--text-3); font-weight: 400; font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.msg.queued .name .btn { margin-left: auto; }
+.msg.queued .bubble { background: transparent; border: 1px dashed var(--field); padding: 11px 15px; }
 .activity { list-style: none; display: flex; flex-direction: column; gap: 4px; margin-left: 40px; padding: 8px 0 8px 16px; border-left: 2px solid var(--line); color: var(--text-3); font-size: var(--fs-control); line-height: var(--lh-control); }
 .activity li { display: flex; align-items: flex-start; gap: 8px; overflow-wrap: anywhere; }
 .activity svg { margin-top: 4px; flex: none; }
 .system { align-self: center; text-align: center; color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); display: flex; gap: 8px; align-items: center; }
 .session-asks { display: flex; flex-direction: column; gap: 12px; }
 .session-asks .ask { box-shadow: none; }
-.composer { border-top: 1px solid var(--line); padding: 12px var(--pad) 16px; background: var(--surface); }
-.queued-msgs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.queued-msgs .q { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-soft); color: var(--text); border-radius: var(--radius-sm); padding: 4px 4px 4px 12px; font-size: var(--fs-control); line-height: var(--lh-control); max-width: 100%; }
-.queued-msgs .q span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.queued-msgs .q button { border: 0; background: transparent; color: var(--text-2); border-radius: 6px; width: 24px; height: 24px; display: grid; place-items: center; }
-.queued-msgs .q button:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+/* Stays compact under the conversation: queued messages and long requests scroll above it. */
+.composer { flex: none; border-top: 1px solid var(--line); padding: 12px var(--pad) 16px; background: var(--surface); }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .composer textarea {
   flex: 1 1 240px;
@@ -928,6 +933,7 @@ kbd {
 }
 .composer .hint { color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); margin-top: 8px; }
 .sheet.short .composer { padding-top: 8px; padding-bottom: 8px; }
+.sheet.short .composer textarea { max-height: 5.25rem; }
 .sheet.short .composer .hint { display: none; }
 
 /* ── Pool ──────────────────────────────────────────────────────────── */
@@ -942,7 +948,7 @@ kbd {
   top: calc(100% + 8px);
   right: 0;
   width: min(21.5rem, calc(100vw - 32px));
-  max-height: calc(100vh - 72px);
+  max-height: calc(100vh - 4.5rem);
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--line);

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { DELIVERY_LABEL, type DeliveryMode, type State, type TaskKind } from "@petrina/core";
 import { sim } from "../engine";
+import { useFocusTrap } from "./bits";
 
 const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
   { id: "feature", label: "Feature", hint: "Designed, built and reviewed" },
@@ -27,14 +28,8 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
   // A pasted list becomes one task per line: the first line stays editable, the rest ride along.
   const [batch, setBatch] = useState<string[]>([]);
   const titleRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const box = useRef<HTMLDivElement>(null);
+  useFocusTrap(box, onClose);
 
   const add = (another: boolean) => {
     if (!title.trim()) return;
@@ -53,7 +48,7 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
   return (
     <>
       <div className="dialog-scrim" onClick={onClose} />
-      <div className="dialog" role="dialog" aria-modal="true" aria-label="New task">
+      <div ref={box} className="dialog" role="dialog" aria-modal="true" aria-label="New task" tabIndex={-1}>
         {state.products.length <= 5 ? (
           <div className="segmented" role="radiogroup" aria-label="Product" style={{ marginBottom: 8 }}>
             {state.products.map((product) => (

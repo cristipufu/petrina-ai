@@ -19,7 +19,7 @@ import {
 import type { Finding, Objection, Role, Stage, State, Task } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, deliveryText, duration, profileText, safeUrl, STATE_LABEL, type Lookup } from "../lib";
-import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useViewport } from "./bits";
+import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport } from "./bits";
 import { Session } from "./Session";
 import type { SheetTab } from "./TaskCard";
 
@@ -52,6 +52,9 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
   const menuBox = useRef<HTMLSpanElement>(null);
   const closeMenu = useCallback(() => setMenu(false), []);
   useDismiss(menuBox, menu, closeMenu);
+  // Focus moves into the sheet, and back to whatever opened it when it closes: the task's card if
+  // that moved meanwhile (pausing moves it between sections).
+  useFocusTrap(sheet, onClose, () => document.querySelector<HTMLElement>(`.card-open[aria-describedby="status-${task.id}"]`));
   const viewport = useViewport();
   // Narrow or short sheets keep the one-line title in the bar from the start.
   const compact = viewport.width < 900 || viewport.height < 640;
@@ -60,23 +63,6 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
   const product = find.product(task.productId);
   const prUrl = safeUrl(task.pr?.url);
   const canPause = task.state === "running" || task.state === "needs-you" || task.state === "waiting";
-
-  useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  // Focus moves into the sheet, and back to whatever opened it when it closes.
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    sheet.current?.focus();
-    return () => {
-      if (opener?.isConnected) opener.focus();
-    };
-  }, []);
 
   useEffect(() => {
     const title = heroTitle.current;

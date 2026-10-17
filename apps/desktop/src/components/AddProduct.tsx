@@ -1,20 +1,15 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { FolderGit2 } from "lucide-react";
 import { sim } from "../engine";
+import { useFocusTrap } from "./bits";
 
 /** Add a product from a local clone of its GitHub repository. */
 export function AddProductDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (productId: string) => void }) {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const box = useRef<HTMLDivElement>(null);
+  useFocusTrap(box, onClose);
 
   const add = async () => {
     if (!path.trim()) return;
@@ -33,7 +28,7 @@ export function AddProductDialog({ onClose, onAdded }: { onClose: () => void; on
   return (
     <>
       <div className="dialog-scrim" onClick={onClose} />
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="add-product-title">
+      <div ref={box} className="dialog" role="dialog" aria-modal="true" aria-labelledby="add-product-title" tabIndex={-1}>
         <div className="row" style={{ gap: 12, marginBottom: 8 }}>
           <span className="avatar tone-violet" style={{ width: 40, height: 40, borderRadius: 12 }} aria-hidden="true">
             <FolderGit2 size={20} />

@@ -60,7 +60,7 @@ What success feels like: many pull requests a day, little time spent being the t
 
 ### Window size
 
-- The desktop window opens at 1680×1000, never larger than the screen's usable area. It can shrink to 1100×680.
+- The desktop window opens with 1680×1000 for the app itself, the title bar on top of that, centred and never larger than the screen's usable area: the whole window, title bar included, stays below the menu bar and clear of the Dock or taskbar, on whichever screen it opens. It can shrink to 1100×680, again not counting the title bar. On a screen smaller than that it opens at the minimum in the top-left corner of the usable area, so the title bar is always reachable.
 - Narrower windows show fewer cards per row; the board itself never scrolls sideways. Wide tables, like the Products page, scroll sideways instead of squeezing.
 - As the window narrows, the top bar gives things up in order: the wordmark and repeated wording first, then the search field becomes a button that opens it, then the pool shows only its count, then the pool and the theme move into a More menu. The product switcher, Inbox and New task always stay.
 - Below 1200px of usable width the inbox opens over the board instead of beside it. Esc or the close button hides it and puts focus back on the Inbox button.
@@ -187,7 +187,7 @@ This is the "open in terminal" experience, made friendly.
 - A chat transcript of the task. Every message names its speaker, including You, keeps its paragraphs, and sits on a quiet background on both sides. Tool activity is grouped into quiet readable lines between messages ("Ran the tests: 42 passed", "Edited 3 files in Checkout").
 - New messages only scroll the conversation when you are already at the bottom, so reading earlier messages is never interrupted.
 - The composer has two modes:
-  - **Queue** (default): delivered when the agent finishes its current step. Queued messages show as chips you can edit, reorder or delete.
+  - **Queue** (default): delivered when the agent finishes its current step. Queued messages wait at the end of the conversation, outlined and marked as queued, each with Remove. They scroll with the conversation, so a long queue never pushes the composer or Send out of view, and sending always brings your message into view.
   - **Interrupt**: stops the current step and delivers now.
 - **Take over:** opens the agent's own CLI in your terminal, resumed on the same session in its working copy. Petrina pauses the stage while you drive. **Hand back** resumes it, with a note of what you did.
 - Anything the task is waiting on (a question, a permission, a checkpoint) shows at the end of the conversation with the same wording and buttons as the inbox, so you can unblock without leaving the session. It scrolls with the conversation; the composer stays compact at the bottom.
@@ -284,6 +284,8 @@ Inter, bundled with the app (the window's security policy only loads fonts from 
 | P | Pause or resume |
 | M | Message |
 | ⌘J | Join session |
+| Esc | Close the topmost thing only: a menu, then a dialog, then the task sheet. Focus goes back to where it was |
+| Tab / ⇧Tab | Inside the task sheet or a dialog, stay inside it until it closes |
 
 ## Edge cases
 
