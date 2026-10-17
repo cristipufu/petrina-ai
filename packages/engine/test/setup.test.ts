@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import * as processes from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
@@ -37,17 +38,6 @@ const agents = (tools: Partial<Record<CheckId, Behaviour>>, dir?: string): Engin
   if (profile.toolId === "grok" && !flags.includes("--silent-login")) flags.push("--silent-login");
   return [process.execPath, fake, ...(dir ? [dir] : []), ...flags];
 };
-
-/** The stubborn fake agents still running. */
-const stillRunning = (dir: string) =>
-  (existsSync(join(dir, "pids")) ? readFileSync(join(dir, "pids"), "utf8").split("\n").filter(Boolean).map(Number) : []).filter((pid) => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  });
 
 /** Wait for a condition, answering the inbox like a coordinator who approves everything. */
 async function until(engine: Engine, done: (state: State) => boolean, ms = 60_000): Promise<State> {
@@ -154,6 +144,20 @@ describe("Tool status", () => {
     it(`shows Couldn't check after 8 seconds for a tool that ${behaviour === "stubborn" ? "never opens a conversation" : "never reports its login"} and ignores being stopped, stops it, and never piles up copies`, async () => {
       const fakes = new Fakes(fresh("fakes"));
       const command = agents({ "claude-code": behaviour, codex: behaviour }, fakes.dir)!;
+      // Follow the actual children: historical PIDs can name another process after an exit on Windows.
+      const active = new Set<processes.ChildProcess>();
+      let most = 0;
+      const spawn = processes.spawn;
+      const watching = spyOn(processes, "spawn").mockImplementation(((...args: Parameters<typeof processes.spawn>) => {
+        const child = Reflect.apply(spawn, processes, args) as processes.ChildProcess;
+        if (Array.isArray(args[1]) && args[1].includes("--stubborn")) {
+          active.add(child);
+          most = Math.max(most, active.size);
+          child.once("exit", () => active.delete(child));
+          child.once("error", () => { if (child.pid === undefined) active.delete(child); });
+        }
+        return child;
+      }) as typeof processes.spawn);
       // Every copy of Claude Code and Codex the engine starts. Counted as it starts them, so a machine too busy
       // for a copy to get going before the limit still counts it.
       let starts = 0;
@@ -180,22 +184,16 @@ describe("Tool status", () => {
 
         // Check again three times and come back to the window while the hung copies are still stopping:
         // one new copy per tool, started only once the old one is gone.
-        let most = 0;
-        let done = false;
-        const again = Promise.all([engine.checkTools(), engine.checkTools(), engine.checkTools()]).then(() => (done = true));
-        while (!done) {
-          most = Math.max(most, stillRunning(fakes.dir).length);
-          await Bun.sleep(50);
-        }
-        await again;
+        await Promise.all([engine.checkTools(), engine.checkTools(), engine.checkTools()]);
         expect(most).toBeLessThanOrEqual(2);
         expect(starts).toBe(4);
         expect(status(engine, "claude-code")).toBe("unknown");
         // Every copy is stopped, though each ignored being asked.
-        await waitFor(() => stillRunning(fakes.dir).length === 0, "the hung tools to be stopped", 6_000);
+        await waitFor(() => active.size === 0, "the hung tools to be stopped", 6_000);
       } finally {
         engine.shutdown();
-        for (const pid of stillRunning(fakes.dir)) process.kill(pid, "SIGKILL");
+        for (const child of active) child.kill("SIGKILL");
+        watching.mockRestore();
       }
     }, 60_000 * SLOW);
   }
