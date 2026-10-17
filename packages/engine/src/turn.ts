@@ -6,7 +6,7 @@ import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
-import { buildPrompt, EARLIER_ATTEMPT, formatHandBack, formatStepNotes, formatWhereYouWere, HANDED_BACK, handBackPrompt, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
+import { buildPrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatStepNotes, formatWhereYouWere, HANDED_BACK, handBackPrompt, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { Kernel, Aborted, type MTask } from "./kernel.js";
 
@@ -179,14 +179,16 @@ export class Turns {
   }
 
   /**
-   * One agent working beside others on the same step (reviewers looking at once, voters): always a fresh
-   * conversation, never reopened after a restart, so the caller saves what it hands back as it arrives.
-   * It keeps no notes on the task, leaves the status line to its group, and the group cleans up after it.
+   * One agent working beside others on the same step (reviewers looking at once, voters), in a working copy
+   * of its own (`copy`) so none disturbs another: always a fresh conversation, never reopened after a
+   * restart, so the caller saves what it hands back as it arrives. It keeps no notes on the task and leaves
+   * the status line to its group.
    */
   async parallel<T>(
     task: MTask,
     roleId: Id,
     profileId: Id,
+    copy: string,
     given: () => { title: string; body: string }[],
     schema: z.ZodType<T>,
     signal: AbortSignal,
@@ -206,7 +208,7 @@ export class Turns {
       profile,
       ...(command ? { command } : {}),
       env: await this.envFor(task, roleId),
-      cwd: task.worktree!,
+      cwd: copy,
       signal,
       callbacks: {
         onActivity: (line) => {
@@ -228,7 +230,8 @@ export class Turns {
     this.k.helperRuns.set(taskId, runs.add(run));
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
-      const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections: given() });
+      const sections = [...given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
+      const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: copy, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       return await this.converse(task, run, opening, role, profileId, schema, signal, { ...options, main: false });
     } finally {
       runs.delete(run);

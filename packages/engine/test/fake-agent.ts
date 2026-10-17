@@ -30,7 +30,7 @@ export interface Scenario {
    * "important": in the first round the reviewer on Opus raises one Important finding, the others a nit.
    * "important-twice": every reviewer raises it, each in its own words. Later rounds pass.
    */
-  reviewer?: "commit" | "work" | "important" | "important-twice";
+  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch";
   /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. */
   guide?: "change of mind";
   /** How the planner rates the task's risk (unrated by default). */
@@ -310,6 +310,12 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         run(session.cwd, "add", "stray.txt");
         run(session.cwd, "commit", "--quiet", "-m", "A stray commit");
         return hang(sessionId, "reviewer-committed");
+      }
+      if (plan.reviewer === "move-branch" && session.model === "opus" && !marked("branch-moved")) {
+        // From its own copy, a misled reviewer rewinds the task's branch: the branches are shared.
+        mark("branch-moved");
+        const branch = /on branch (\S+?)\./.exec(text)?.[1];
+        if (branch) run(session.cwd, "update-ref", `refs/heads/${branch}`, "HEAD~1");
       }
       if ((plan.reviewer === "important" || plan.reviewer === "important-twice") && !text.includes("This is review round")) {
         const opus = session.model === "opus";

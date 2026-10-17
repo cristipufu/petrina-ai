@@ -172,6 +172,13 @@ export function formatWhereYouWere(where: WhereYouWere, reason: string): string 
   return lines.join("\n\n");
 }
 
+export const OWN_COPY = "Your working copy";
+
+/** For an agent working beside others on the same step, in a copy of the change made for it alone. */
+export function ownCopy(sha: string): string {
+  return `This copy of the change${sha ? ` (commit ${sha.slice(0, 7)})` : ""} is yours alone: other agents look at the same change at the same time in copies of their own, so nothing you do here disturbs them. It is a fresh checkout with nothing installed: read the code first, and install dependencies only if you must run something to prove a point. Petrina deletes it when you finish.`;
+}
+
 export const EARLIER_ATTEMPT = "What the coordinator said in an earlier attempt at this step";
 
 /** Everything said during a step that started before and was cut short, in order, each marked as earlier. */

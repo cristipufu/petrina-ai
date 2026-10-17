@@ -10,7 +10,7 @@
 // so tests can stand in a fake GitHub.
 
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { agentEnv, withGitConfig } from "./env.js";
@@ -458,4 +458,23 @@ export async function onGitHub(repo: string, ref: string, sha: string, command: 
 
 export async function removeWorktree(root: string, path: string): Promise<void> {
   await oneAtATime(root, () => run(["git", "worktree", "remove", "--force", path], root));
+}
+
+/**
+ * A working copy of one commit for one agent alone (a reviewer working beside others): detached, so it
+ * shares no branch, index or HEAD with the task's own copy. Nothing is installed in it.
+ */
+export async function addCopy(root: string, path: string, sha: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await oneAtATime(root, () => must(["git", "worktree", "add", "--detach", "--quiet", path, sha], root));
+}
+
+/** Remove every copy in a folder, and git's record of them, whatever state they were left in. */
+export async function removeCopies(root: string, folder: string): Promise<void> {
+  const names = await readdir(folder).catch(() => [] as string[]);
+  await oneAtATime(root, async () => {
+    for (const name of names) await run(["git", "worktree", "remove", "--force", join(folder, name)], root);
+    await rm(folder, { recursive: true, force: true });
+    await run(["git", "worktree", "prune"], root);
+  });
 }

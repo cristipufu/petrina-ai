@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { findingCount, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -64,6 +65,14 @@ describe.concurrent("reviews that converge", () => {
     expect(fakes.openings("verifier")).toHaveLength(2);
     // The two reviewers looked at the change at once, and so did the two voters.
     expect(atOnce).toBe(2);
+    // Each worked in a copy of its own, never the task's, and every copy is gone afterwards.
+    const copies = [...fakes.openings("code reviewer").slice(0, 2), ...fakes.openings("verifier")].map((text) => /Your working copy is (.+?), on branch/.exec(text)?.[1]);
+    expect(new Set(copies).size).toBe(4);
+    for (const copy of copies) {
+      expect(copy).not.toBe(task.worktree);
+      expect(existsSync(copy!)).toBe(false);
+    }
+    expect(fakes.openings("verifier")[0]).toContain("is yours alone");
     expect(lines(task)).toContain("Sent back to the builder: 1 important");
     expect(fakes.openings("builder")[1]).toContain("Review findings (answer every one by id; fix every Important one)");
 
@@ -141,6 +150,14 @@ describe.concurrent("reviewers at once, then a vote", () => {
     } finally {
       engine.shutdown();
     }
+  });
+
+  it("puts the task's branch back when a reviewer moves it from its own copy", async () => {
+    const { task, fakes } = await untilDelivery({ reviewer: "move-branch" });
+    expect(fakes.marked("branch-moved")).toBe(true);
+    expect(lines(task)).toContain("Undid commits from Code reviewer, which is read-only");
+    // The work the builder committed is still what ships.
+    expect(git(task.worktree!, "log", "-1", "--format=%s")).toBe("Add a greeting");
   });
 
   it("takes turns when the pool has one slot, and still gets every review and vote", async () => {

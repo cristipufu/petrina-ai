@@ -2,6 +2,7 @@
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
 import { extraSlot, findingCount, reviewRoundEnd, slotWait, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
@@ -130,14 +131,13 @@ export class Reviews {
       reviewers.map(({ key, profileId }) => ({
         roleId: stage.roleId,
         profileId,
-        work: async () => {
-          const result = await this.turns.parallel(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal);
+        work: async (copy) => {
+          const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal);
           this.applyReview(task, stage, result, profileId);
           reported(key);
         },
       })),
       (running, waiting) => `${running} ${role.toLowerCase()}${running === 1 ? "" : "s"} looking at the change at once${waiting ? `, ${waiting} waiting for a slot` : ""}`,
-      stage.roleId,
     );
   }
 
@@ -216,8 +216,8 @@ export class Reviews {
       voters.map((profileId) => ({
         roleId: "verifier",
         profileId,
-        work: async () => {
-          const result = await this.turns.parallel(task, "verifier", profileId, () => [...this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(findings) }], VerifyResult, signal, {
+        work: async (copy) => {
+          const result = await this.turns.parallel(task, "verifier", profileId, copy, () => [...this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(findings) }], VerifyResult, signal, {
             check: (value) => {
               const missing = findings.filter((finding) => !value.verdicts.some((verdict) => verdict.id === finding.id));
               return missing.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(missing)}` : undefined;
@@ -232,7 +232,6 @@ export class Reviews {
         },
       })),
       (running, waiting) => `${running} fresh agent${running === 1 ? "" : "s"} voting on ${findings.length} important finding${findings.length === 1 ? "" : "s"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
-      "verifier",
     );
   }
 
@@ -258,13 +257,18 @@ export class Reviews {
   }
 
   /**
-   * Several agents on one step at once. The first takes the task's own slot; each other one starts when a
-   * slot of its own is free, so the pool and every tool's cap still hold. One that cannot get a slot by the
-   * time the others finish is left for the driver, which waits for one. A failure stops the rest.
-   * Read-only agents leave the working copy as the group found it.
+   * Several agents on one step at once, each in a working copy of its own made from the task's current
+   * commit, so a test one runs or a checkout one makes never disturbs another, and the task's own copy is
+   * never touched. The first takes the task's own slot; each other one starts when a slot of its own is
+   * free, so the pool and every tool's cap still hold. One that cannot get a slot by the time the others
+   * finish is left for the driver, which waits for one. A failure stops the rest.
    */
-  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; work: () => Promise<void> }[], status: (running: number, waiting: number) => string, roleId: Id): Promise<void> {
-    const headBefore = task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined;
+  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; work: (copy: string) => Promise<void> }[], status: (running: number, waiting: number) => string): Promise<void> {
+    const root = this.k.productOf(task)!.path!;
+    const folder = join(this.k.dataDir, "worktrees", task.productId, `${task.id}.copies`);
+    const sha = await git.head(task.worktree!);
+    // Copies a crash left behind go first.
+    await git.removeCopies(root, folder);
     const pending = [...members];
     const running = new Map<number, { agent: ActiveAgent; done: Promise<void> }>();
     let failure: unknown;
@@ -286,8 +290,10 @@ export class Reviews {
         pending.shift();
         const id = next++;
         const agent = { roleId: member.roleId, profileId: member.profileId, since: Date.now(), step: 0 };
-        const done = member
-          .work()
+        const copy = join(folder, `${member.roleId}-${id}-${member.profileId}`);
+        const done = git
+          .addCopy(root, copy, sha)
+          .then(() => member.work(copy))
           .catch((error: unknown) => {
             failure ??= error;
           })
@@ -314,12 +320,15 @@ export class Reviews {
     } finally {
       this.k.stopHelpers(task.id);
       delete task.helpers;
-      if (!this.k.role(roleId)?.canEdit && task.worktree) {
-        if (headBefore && (await git.head(task.worktree).catch(() => headBefore)) !== headBefore) {
-          await git.resetTo(task.worktree, headBefore);
-          this.k.log(task, "warn", `Undid commits from ${this.k.role(roleId)?.name ?? roleId}, which is read-only`);
+      await git.removeCopies(root, folder);
+      // Copies share the repository's branches, so a read-only agent could still have moved the task's
+      // branch or written into its copy by path: the task's copy goes back to how the group found it.
+      if (task.worktree && members.every((member) => !this.k.role(member.roleId)?.canEdit)) {
+        if ((await git.head(task.worktree).catch(() => sha)) !== sha) {
+          await git.resetTo(task.worktree, sha);
+          this.k.log(task, "warn", `Undid commits from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
         }
-        await this.k.undoReadOnly(task, roleId);
+        await this.k.undoReadOnly(task, members[0]!.roleId);
       }
     }
   }
