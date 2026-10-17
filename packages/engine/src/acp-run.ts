@@ -7,7 +7,7 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "@petrina/core";
 import { adapterEntry, ADAPTERS } from "./tools.js";
-import { claudeReport, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
+import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 
 export interface PermissionInfo {
   title: string;
@@ -212,10 +212,11 @@ export class AgentRun {
               break;
             }
             case "usage_update": {
-              const info = claudeReport(profile.toolId, (update as { _meta?: unknown })._meta);
-              if (!info) break;
-              state.latest = info;
-              callbacks.onUsage?.(info);
+              const reports = claudeReports(profile.toolId, (update as { _meta?: unknown })._meta);
+              if (!reports.length) break;
+              for (const info of reports) callbacks.onUsage?.(info);
+              // A rejected spend cap outranks an open session window from the same note.
+              state.latest = reports.find((info) => info.status === "rejected") ?? reports[0];
               break;
             }
             case "plan": {

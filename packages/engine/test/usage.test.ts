@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { AgentProfile, Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
-import { claudeReport, clockTime, limitFromFailure, limitFromReport, UsageLimited } from "../src/usage.js";
+import { claudeReport, claudeReports, clockTime, limitFromFailure, limitFromReport, UsageLimited } from "../src/usage.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
@@ -174,6 +174,11 @@ describe("what the tools say about usage", () => {
   it("reads Claude Code's rate limit report, with the reset time in milliseconds", () => {
     expect(claudeReport("claude-code", { "_claude/rateLimit": { status: "allowed_warning", resetsAt: 1_800_000_000, rateLimitType: "seven_day_opus", utilization: 0.82 } })).toEqual({ toolId: "claude-code", kind: "seven_day_opus", status: "allowed_warning", model: "opus", utilization: 0.82, resetsAt: 1_800_000_000_000 });
     expect(claudeReport("claude-code", { "_claude/rateLimit": { status: "rejected" } })).toEqual({ toolId: "claude-code", kind: "limit", status: "rejected" });
+    // The spend cap is its own field. It can be rejected while the session window is still open.
+    expect(claudeReports("claude-code", { "_claude/rateLimit": { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.95, overageStatus: "rejected", overageResetsAt: 1_800_000_000 } })).toEqual([
+      { toolId: "claude-code", kind: "five_hour", status: "allowed_warning", utilization: 0.95 },
+      { toolId: "claude-code", kind: "overage", status: "rejected", resetsAt: 1_800_000_000_000 },
+    ]);
     expect(claudeReport("claude-code", {})).toBeUndefined();
     expect(claudeReport("claude-code", { "_claude/rateLimit": { status: "whatever" } })).toBeUndefined();
   });
@@ -194,10 +199,25 @@ describe("what the tools say about usage", () => {
     expect(limitFromFailure(codex, new Error("The agent stopped (exit 1)"), "Working on it", now)).toBeUndefined();
   });
 
+  it("reads a failed turn by its code, and Claude's sentence only when the code is missing", () => {
+    // The spend cap's code. No sentence required.
+    expect(limitFromFailure(claude, { code: -32603, message: "Internal error", data: { errorKind: "billing_error" } }, "Working on it", now)).toMatchObject({ toolId: "claude-code", reason: "Claude Code's spend limit", until: now + 30 * 60_000 });
+    expect(limitFromFailure(claude, { code: -32603, message: "Internal error", data: { errorKind: "rate_limit" } }, "", now)?.reason).toBe("Claude Code's rate limit");
+    // A synthetic usage-limit message has no errorKind. The adapter wraps Claude's sentence, which names the reset.
+    const said = "You've hit your monthly spend limit · raise it at https://claude.ai/settings/usage?from=cc_cli_limit_message · your session limit resets 8:10pm (Europe/Bucharest)";
+    const error = limitFromFailure(claude, new Error(`Internal error: ${said}`), "", now);
+    expect(error).toMatchObject({ toolId: "claude-code", reason: "Claude Code's usage limit", until: new Date(2026, 9, 17, 20, 10).getTime() });
+    expect(error?.model).toBeUndefined();
+    // Some other internal error is not a usage limit, even if the agent mentioned a limit.
+    expect(limitFromFailure(claude, new Error("Internal error: the tool crashed"), "You've hit your stride", now)).toBeUndefined();
+    expect(limitFromFailure(claude, { code: -32603, message: "Internal error", data: { errorKind: "server_error" } }, "", now)).toBeUndefined();
+  });
+
   it("takes the next time the clock shows what it says", () => {
     expect(clockTime("try again at 9:05 AM", now)).toBe(new Date(2026, 9, 18, 9, 5).getTime());
     expect(clockTime("Try again at 12:30 pm", now)).toBe(new Date(2026, 9, 18, 12, 30).getTime());
     expect(clockTime("try again at 16:00", now)).toBe(new Date(2026, 9, 17, 16, 0).getTime());
+    expect(clockTime("your session limit resets 8:10pm (Europe/Bucharest)", now)).toBe(new Date(2026, 9, 17, 20, 10).getTime());
     expect(clockTime("later", now)).toBeUndefined();
   });
 });
