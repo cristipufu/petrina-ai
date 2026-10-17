@@ -350,10 +350,10 @@ export abstract class Kernel {
   choose(plannedId: Id, task?: MTask, roleId?: Id): Choice | undefined {
     const planned = this.profile(plannedId);
     if (!planned) return undefined;
-    // Reviews keep the tools they were planned on, and a security review never moves onto the builder's tool.
+    // Reviews keep the tools they were planned on, and a security review's stand-in stays as far from the builder as it can.
     const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
-    const avoidTool = roleId === "security-reviewer" && builder ? this.profile(builder)?.toolId : undefined;
-    return chooseProfile(this.getState(), planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(avoidTool && avoidTool !== planned.toolId ? { avoidTool } : {}) });
+    const made = roleId === "security-reviewer" && builder ? this.profile(builder) : undefined;
+    return chooseProfile(this.getState(), planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) });
   }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */

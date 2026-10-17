@@ -58,6 +58,11 @@ export class Turns {
         }
       }
       options.used?.(profile.id);
+      // Said where the coordinator will see it: a security review that could not stay off the builder's tool.
+      const builder = this.k.profile(task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "");
+      if (roleId === "security-reviewer" && choice.kind === "substitute" && builder?.toolId === profile.toolId && !task.timeline.some((entry) => entry.text.startsWith("Security review on the builder's tool"))) {
+        this.k.log(task, "warn", `Security review on the builder's tool (${this.k.named(profile.id)}): ${this.k.named(plannedId)} is out of usage, and no other tool is free`);
+      }
       try {
         return await this.attempt(task, roleId, profile, given, schema, signal, options);
       } catch (error) {

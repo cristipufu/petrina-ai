@@ -82,12 +82,13 @@ export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile } |
  */
 /**
  * Rules a role's choice keeps. `keep`: never swap the planned profile for being near a limit (reviews were
- * planned on their tools for independence). `avoidTool`: no stand-in on this tool (a security review never
- * moves onto the builder's tool); with none left, the step waits for usage instead.
+ * planned on their tools for independence). `awayFrom`: the builder's tool and model, which a security
+ * review's stand-in stays as far from as it can: another tool first, then another model on that tool, and
+ * only as a last resort the same model. It never waits for that.
  */
 export interface ChoiceRules {
   keep?: boolean;
-  avoidTool?: Id;
+  awayFrom?: { toolId: Id; modelId?: string };
 }
 
 export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">, planned: AgentProfile, now: number, rules: ChoiceRules = {}): Choice {
@@ -96,9 +97,13 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   const near = (profile: AgentProfile) => nearLimit(pool, profile, now);
   const ready = state.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id);
   // With no tool found ready (tests stand in for the tools), every tool in the list counts.
-  const usable = (profile: AgentProfile) => free(profile) && (!ready.length || ready.includes(profile.toolId)) && profile.toolId !== rules.avoidTool;
-  // The same effort first, then the list's order.
-  const closest = (profiles: AgentProfile[]) => [...profiles].sort((a, b) => Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
+  const usable = (profile: AgentProfile) => free(profile) && (!ready.length || ready.includes(profile.toolId));
+  // How close a stand-in is to the work it must judge: 0 another tool, 1 another model on that tool, 2 the same model.
+  const away = rules.awayFrom;
+  const sameness = (profile: AgentProfile) => (!away || profile.toolId !== away.toolId ? 0 : profile.modelId !== away.modelId ? 1 : 2);
+  // The most independent first, then not near a limit, then the same effort, then the list's order.
+  const closest = (profiles: AgentProfile[]) =>
+    [...profiles].sort((a, b) => sameness(a) - sameness(b) || Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
 
   if (free(planned)) {
     if (!near(planned) || rules.keep) return { kind: "planned", profile: planned };
@@ -106,9 +111,10 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
     return equal ? { kind: "substitute", profile: equal } : { kind: "planned", profile: planned };
   }
   const sameTool = closest(state.profiles.filter((profile) => profile.id !== planned.id && profile.toolId === planned.toolId && usable(profile)));
-  if (sameTool) return { kind: "substitute", profile: sameTool };
   const other = closest(state.profiles.filter((profile) => profile.toolId !== planned.toolId && usable(profile)));
-  if (other) return { kind: "substitute", profile: other };
+  // Another model on the planned tool first, unless that is less independent than what another tool offers.
+  const pick = sameTool && (!other || sameness(sameTool) <= sameness(other)) ? sameTool : other;
+  if (pick) return { kind: "substitute", profile: pick };
   return { kind: "none", waiting: waitingWords(state, now) };
 }
 

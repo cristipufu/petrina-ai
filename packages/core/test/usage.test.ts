@@ -112,12 +112,15 @@ describe("usage in words", () => {
 });
 
 describe("reviews keep their independence", () => {
-  it("never moves a security review onto the builder's tool: it waits for usage instead", () => {
-    // Planned on Codex because the builder is on Claude Code; Codex is out.
-    const limited = pool({ limited: [out("codex", now + HOUR)] });
-    expect(chooseProfile({ profiles, tools, pool: limited }, solX, now, { avoidTool: "claude-code" }).kind).toBe("none");
-    // Without the rule, a stand-in on Claude Code would have been chosen.
-    expect(chooseProfile({ profiles, tools, pool: limited }, solX, now).kind).toBe("substitute");
+  it("moves a security review as far from the builder as it can, and never waits for that", () => {
+    const fromOpus = { awayFrom: { toolId: "claude-code", modelId: "opus" } };
+    // Planned on Codex because the builder is on Claude Code (Opus); Codex is out: Sonnet, not Opus.
+    const codexOut = pool({ limited: [out("codex", now + HOUR)] });
+    expect(chooseProfile({ profiles, tools, pool: codexOut }, solX, now, fromOpus)).toEqual({ kind: "substitute", profile: sonnet });
+    // Only the builder's own model left: it still switches rather than wait.
+    const onlyOpus = pool({ limited: [out("codex", now + HOUR), out("claude-code", now + HOUR, "sonnet")] });
+    const last = chooseProfile({ profiles, tools, pool: onlyOpus }, solX, now, fromOpus);
+    expect(last.kind === "substitute" && last.profile.modelId).toBe("opus");
   });
 
   it("keeps a reviewer on its planned tool when that tool is only near its limit", () => {
