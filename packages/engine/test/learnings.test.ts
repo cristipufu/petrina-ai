@@ -88,6 +88,53 @@ describe("lessons agents pass on", () => {
   });
 });
 
+describe("a lesson AGENTS.md gained in the meantime", () => {
+  it("is not offered: the coordinator, or another task, got there first", async () => {
+    const root = tempDir("petrina-lessons-known-");
+    roots.push(root);
+    const fakes = new Fakes(join(root, "fake"));
+    fakes.scenario({ learnings: true });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+    try {
+      const repo = makeProduct(root);
+      const productId = await engine.addProduct(repo);
+      engine.setProductDelivery(productId, "local", true);
+      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+      let written = false;
+      const offers: { body?: string }[] = [];
+      const task = await waitFor(() => {
+        const state = engine.getState();
+        const found = state.tasks.find((entry) => entry.id === taskId) as Task | undefined;
+        // While the builder works on its branch, main gains the second lesson by the coordinator's own hand.
+        if (!written && found?.timeline.some((entry) => entry.text === "Builder started")) {
+          writeFileSync(join(repo, "AGENTS.md"), "## Learnings\n\n- Greetings live at the repository root.\n");
+          git(repo, "add", "AGENTS.md");
+          git(repo, "commit", "-q", "-m", "Note where greetings live");
+          written = true;
+        }
+        for (const item of state.inbox) {
+          if (item.taskId !== taskId) continue;
+          if (item.kind === "learnings") {
+            offers.push(item);
+            engine.decline(item.id);
+          } else if (item.kind === "plan" || item.kind === "delivery") engine.approve(item.id);
+          else if (item.kind === "permission") engine.allow(item.id, "once");
+          else if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
+        }
+        if (found?.state === "failed") throw new Error(`The task failed: ${found.error}`);
+        return found?.state === "done" && found;
+      }, "the work to ship", 120_000);
+      expect(written).toBe(true);
+      // The work was brought onto the new main before the delivery check, so the lesson main has by now stays out.
+      expect(task.timeline.map((entry) => entry.text)).toContain("Brought up to date with main (1 new commit there), with no conflicts");
+      expect(offers).toHaveLength(1);
+      expect(offers[0]!.body).toBe("- Run the tests with bun test: they take a second.");
+    } finally {
+      engine.shutdown();
+    }
+  });
+});
+
 describe("lessons said twice in other words", () => {
   // Offered side by side on real tasks: each group is one lesson.
   const core = [

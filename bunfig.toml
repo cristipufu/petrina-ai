@@ -1,0 +1,4 @@
+# Engine tests drive real agent processes and git, so a single file run from here gets the suite's own time
+# limit (packages/engine/bunfig.toml says the same for runs from that package).
+[test]
+timeout = 90000

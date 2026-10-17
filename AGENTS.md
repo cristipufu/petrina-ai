@@ -33,6 +33,13 @@ What agents learned about working in this repository, added with the coordinator
 - Desktop tests run in happy-dom at 1024px wide, where the inbox opens over the board: to test the docked inbox, widen the window to 1200px or more with `window.happyDOM.setViewport({ width: 1400 })` inside `act()`, and set it back afterwards.
 - Code in packages/core runs straight from source with Bun and needs nothing installed: to try one function, or drive the demo simulator, without the whole suite, write a small script outside the working copy that imports packages/core/src/*.ts by full path.
 - This Mac has no `timeout` command: to cap how long a command runs, use your tool's own time limit.
+- A fresh working copy has no node_modules: run `bun install --frozen-lockfile` first (seconds, from Bun's cache).
+- packages/core and apps/desktop test with vitest (core stops at the first failure: filter by test name to see the ones after it); packages/engine tests with bun test. The engine's end-to-end tests drive the scripted agent in packages/engine/test/fake-agent.ts (scenarios ride as [tags] in the task description; its header comment lists them) and reach GitHub only through the Engine's `github` option: `makeWorld` in packages/engine/test/support.ts stands in for GitHub, and `checkEveryMs` shortens the once-a-minute checks.
+- Several agents run test suites on this Mac at once, so load is often above 50: a timing failure that passes alone is load, not a bug. Every deadline in the engine tests scales with `SLOW` from packages/engine/test/support.ts; give new ones the same factor.
+- With asymmetric matchers (`expect.any`, `expect.objectContaining`), bun:test's `toMatchObject` overwrites the matched fields of the object it checks with empty objects: check such values with `toEqual`, or on a copy.
+- Review votes come from every ready tool, Grok included: tests derive the voter count instead of assuming two.
+- The engine serves the built app itself (`bun run build`, then `petrina serve`), so a browser check needs no separate web server and can use a temporary data folder and a free port; the front end opened with no engine behind it runs the simulated squad, the demo.
+- A card is clickable through an invisible `.card-open::after` layer over the whole card: a positioned element inside a card sits above that layer and needs its own click handling.
 
 ## Review guide
 
