@@ -1,3 +1,5 @@
+# The folder, and a link by that name: a worktree once committed one by mistake.
+node_modules
 node_modules/
 dist/
 target/
