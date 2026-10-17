@@ -44,13 +44,11 @@ What agents learned about working in this repository, added with the coordinator
 
 - The demos fast-forward dozens of tasks through the simulator and take seconds under load; createDemo, createPortfolioDemo and createDemoState build once per time and hand out copies, so tests should pass the same fixed time to reuse them.
 - The desktop keyboard tests mount the app on createDemoState with a fresh simulator, so Analytics has no history there; to test Analytics numbers, pass createDemo's log, open work, quirks and triggers to the Simulator.
-- The web preview uses simulated agents unless it receives an engine connection.
 - The Claude Code connector and SDK sources can be read without installing anything, in ~/.bun/install/cache (@agentclientprotocol/claude-agent-acp dist/acp-agent.js, and @anthropic-ai/claude-agent-sdk sdk.d.ts for settings and sandbox options).
 - The fake agent's short plan uses one reviewer; use its default plan to test reviewers working side by side.
 - Keep disposable test repositories and package installs in a separate temporary folder; nested folders can accidentally use Petrina’s own repository and packages.
 - Tests that hold agents waiting must also let the Check finder finish, even when it is not in the plan.
 - Simulated keyboard events do not trigger the browser’s automatic clicks; use headless browser key presses when testing focus returned by a closing dialog.
-- The Claude Code connector and SDK sources can be read without installing anything, in ~/.bun/install/cache (@agentclientprotocol/claude-agent-acp dist/acp-agent.js, and @anthropic-ai/claude-agent-sdk sdk.d.ts for the full settings and sandb
 
 ## Review guide
 
