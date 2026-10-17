@@ -9,7 +9,7 @@
 // module of its own (driver, planning, design, work, review, shipping, take-over, product checks,
 // review guide, turns, context), and they share state and bookkeeping through the kernel.
 
-import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, type TaskKind, afterChangesAsked } from "@petrina/core";
+import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, afterChangesAsked, type Commands, type NewTaskInput, type SaidContext } from "@petrina/core";
 import * as git from "./git.js";
 import { parseCommand } from "./checks.js";
 import { Kernel, TONES, type EngineOptions } from "./kernel.js";
@@ -26,29 +26,11 @@ import { TakeOver } from "./take-over.js";
 import { Driver } from "./driver.js";
 
 export type { EngineOptions } from "./kernel.js";
+export type { NewTaskInput, SaidContext } from "@petrina/core";
 export { recordDisputes } from "./review.js";
 
-export interface NewTaskInput {
-  productId: Id;
-  title: string;
-  description?: string;
-  kind?: TaskKind;
-  position?: "top" | "bottom";
-  approvePlan?: boolean;
-  delivery?: DeliveryMode;
-  approveDelivery?: boolean;
-}
-
-/** What the window adds to an answer, so it still counts when the question is gone (a restart dropped it). */
-export interface SaidContext {
-  taskId?: Id;
-  /** The question, or what a "No" refused. */
-  about?: string;
-  /** The window's id for what it sent: a resend after a lost confirmation counts once. */
-  clientId?: Id;
-}
-
-export class Engine extends Kernel {
+/** The engine: every command the window can send (Commands) is a method here. */
+export class Engine extends Kernel implements Commands {
   private readonly turns: Turns;
   private readonly guide: GuideKeeper;
   private readonly context: Context;

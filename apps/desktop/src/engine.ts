@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type HandBackPreview, type Id, type Launched, type ProductSettings, type State } from "@petrina/core";
+import { COMMAND_NAMES, createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type CommandName, type Commands, type HandBackPreview, type Id, type Launched, type State, type WindowCommands } from "@petrina/core";
 
 // Where the UI finds the real engine:
 // - In the desktop app, it asks the shell over the app's internal channel. The shell starts the
@@ -11,48 +11,8 @@ import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type Ha
 
 type Mode = "engine" | "demo";
 
-/** Everything the UI can ask the squad to do. The simulator and the engine both answer it. */
-export interface Actions {
-  answer(itemId: Id, answer: string): void;
-  decideForMe(itemId: Id): void;
-  allow(itemId: Id, scope: "once" | "always"): void;
-  deny(itemId: Id, note?: string): void;
-  approve(itemId: Id): void;
-  declineGuide(itemId: Id): void;
-  requestChanges(itemId: Id, note: string): void;
-  retry(itemId: Id): void;
-  checkShipping(itemId: Id): void;
-  shipAgain(itemId: Id): void;
-  markDone(itemId: Id): void;
-  setPoolLimit(limit: number): void;
-  setPoolPaused(paused: boolean): void;
-  setToolCap(toolId: Id, cap: number): void;
-  moveInQueue(taskId: Id, index: number): void;
-  placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number | Promise<number>;
-  moveVisibleInQueue(taskId: Id, visibleIds: Id[], direction: -1 | 1): number | Promise<number>;
-  moveToTop(taskId: Id): void;
-  setHeld(taskId: Id, held: boolean): void;
-  setAfter(taskId: Id, after: Id[]): void;
-  pause(taskId: Id): void;
-  resume(taskId: Id): void;
-  cancel(taskId: Id): void;
-  sendMessage(taskId: Id, text: string, mode?: "queue" | "interrupt"): void;
-  removeQueued(taskId: Id, messageId: Id): void;
-  setStageProfile(taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): void;
-  addReviewer(taskId: Id, stageId: Id, profileId: Id): void;
-  setProductDelivery(productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean): void;
-  updateProduct(productId: Id, settings: ProductSettings): Promise<unknown>;
-  setProductChecks(productId: Id, checks: { name: string; command: string }[] | null): Promise<unknown>;
-  removeProduct(productId: Id): Promise<unknown>;
-  addTask(input: Parameters<Simulator["addTask"]>[0]): unknown;
-  addProduct(path: string, name?: string): Promise<unknown>;
-  /** Take over in the coordinator's terminal: open it there, or only get the command to run. */
-  takeOver(taskId: Id, how: "open" | "copy"): Promise<Launched>;
-  reopenTerminal(taskId: Id, how: "open" | "copy"): Promise<Launched>;
-  handBackPreview(taskId: Id): Promise<HandBackPreview>;
-  handBack(taskId: Id, note: string, anyway: boolean): Promise<void>;
-  setTerminal(terminalId: Id): void;
-}
+/** Everything the UI can ask the squad to do: the command table, answered by the engine or by the demo. */
+export type Actions = WindowCommands;
 
 /** Something the coordinator said that the engine has not confirmed saving yet. Sent again after reconnecting. */
 export interface Unsent {
@@ -163,7 +123,8 @@ function clientId(): string {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-class EngineClient implements Store {
+/** The connection to the real engine, and the outbox for what the coordinator says until the engine saves it. */
+class EngineClient {
   private state: State = EMPTY;
   private received = false;
   private status: EngineStatus;
@@ -338,14 +299,6 @@ class EngineClient implements Store {
     });
   }
 
-  private fire(name: string, ...args: unknown[]): Promise<void> {
-    const sent = this.call(name, ...args).then(() => undefined);
-    // Existing pointer controls report failures through the connection pill. Keyboard controls
-    // also await this promise, so their success notes follow the engine's acknowledgement.
-    void sent.catch(() => undefined);
-    return sent;
-  }
-
   /** Kept, and shown as unsent, until the engine confirms it saved it. */
   private durable(entry: Omit<Unsent, "clientId">, name: string, args: (id: string) => unknown[]): void {
     const unsent: Unsent = { ...entry, clientId: clientId() };
@@ -409,6 +362,7 @@ class EngineClient implements Store {
     };
   };
 
+  // What the coordinator says goes through the outbox: shown as unsent until the engine confirms it.
   answer = (itemId: Id, answer: string) => {
     const item = this.item(itemId);
     if (!item) return;
@@ -418,113 +372,96 @@ class EngineClient implements Store {
     const item = this.item(itemId);
     if (item) this.answer(itemId, item.options?.[0] ?? "Use your best judgment.");
   };
-  allow = (itemId: Id, scope: "once" | "always") => this.fire("allow", itemId, scope);
   deny = (itemId: Id, note?: string) => {
     const item = this.item(itemId);
     if (!item) return;
     this.durable({ taskId: item.taskId, kind: "no", text: note ?? "", itemId }, "deny", (id) => [itemId, note ?? "", { taskId: item.taskId, about: item.title, clientId: id }]);
   };
-  approve = (itemId: Id) => this.fire("approve", itemId);
-  declineGuide = (itemId: Id) => this.fire("declineGuide", itemId);
   requestChanges = (itemId: Id, note: string) => {
     const item = this.item(itemId);
     if (!item) return;
     this.durable({ taskId: item.taskId, kind: "changes", text: note, itemId }, "requestChanges", () => [itemId, note]);
   };
-  retry = (itemId: Id) => this.fire("retry", itemId);
-  checkShipping = (itemId: Id) => this.fire("checkShipping", itemId);
-  shipAgain = (itemId: Id) => this.fire("shipAgain", itemId);
-  markDone = (itemId: Id) => this.fire("markDone", itemId);
-  setPoolLimit = (limit: number) => this.fire("setPoolLimit", limit);
-  setPoolPaused = (paused: boolean) => this.fire("setPoolPaused", paused);
-  setToolCap = (toolId: Id, cap: number) => this.fire("setToolCap", toolId, cap);
-  moveInQueue = (taskId: Id, index: number) => this.fire("moveInQueue", taskId, index);
-  placeInQueue = (taskId: Id, anchorId: Id, side: "before" | "after") => this.call("placeInQueue", taskId, anchorId, side) as Promise<number>;
-  moveVisibleInQueue = (taskId: Id, visibleIds: Id[], direction: -1 | 1) => this.call("moveVisibleInQueue", taskId, visibleIds, direction) as Promise<number>;
-  moveToTop = (taskId: Id) => this.fire("moveToTop", taskId);
-  setHeld = (taskId: Id, held: boolean) => this.fire("setHeld", taskId, held);
-  setAfter = (taskId: Id, after: Id[]) => this.fire("setAfter", taskId, after);
-  pause = (taskId: Id) => this.fire("pause", taskId);
-  resume = (taskId: Id) => this.fire("resume", taskId);
-  cancel = (taskId: Id) => this.fire("cancel", taskId);
   sendMessage = (taskId: Id, text: string, mode: "queue" | "interrupt" = "queue") => {
     const trimmed = text.trim();
     if (trimmed) this.durable({ taskId, kind: "message", text: trimmed }, "sendMessage", (id) => [taskId, trimmed, mode, id]);
   };
-  removeQueued = (taskId: Id, messageId: Id) => this.fire("removeQueued", taskId, messageId);
-  setStageProfile = (taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id) => this.fire("setStageProfile", taskId, stageId, list, index, profileId);
-  addReviewer = (taskId: Id, stageId: Id, profileId: Id) => this.fire("addReviewer", taskId, stageId, profileId);
-  setProductDelivery = (productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean) => this.fire("setProductDelivery", productId, delivery, approveDelivery);
-  updateProduct = (productId: Id, settings: ProductSettings) => this.call("updateProduct", productId, settings);
-  setProductChecks = (productId: Id, checks: { name: string; command: string }[] | null) => this.call("setProductChecks", productId, checks);
-  removeProduct = (productId: Id) => this.call("removeProduct", productId);
-  addTask = (input: Parameters<Simulator["addTask"]>[0]) => this.call("addTask", input);
-  addProduct = (path: string, name?: string) => this.call("addProduct", path, name);
-  takeOver = (taskId: Id, how: "open" | "copy") => this.call("takeOver", taskId, how) as Promise<Launched>;
-  reopenTerminal = (taskId: Id, how: "open" | "copy") => this.call("reopenTerminal", taskId, how) as Promise<Launched>;
-  handBackPreview = (taskId: Id) => this.call("handBackPreview", taskId) as Promise<HandBackPreview>;
-  handBack = async (taskId: Id, note: string, anyway: boolean) => {
-    await this.call("handBack", taskId, note, anyway);
+
+  /**
+   * Any other command, sent as is: the engine's answer when it gives one. A failure shows in the
+   * connection pill; callers that await it (keyboard controls) hear it too.
+   */
+  send = (name: CommandName, args: readonly unknown[]): Promise<unknown> => {
+    const sent = this.call(name, ...args);
+    void sent.catch(() => undefined);
+    return sent;
   };
-  setTerminal = (terminalId: Id) => this.fire("setTerminal", terminalId);
 }
 
-class DemoStore implements Store {
-  constructor(private readonly simulator: Simulator) {}
-  getState = () => this.simulator.getState();
-  subscribe = (listener: () => void) => this.simulator.subscribe(listener);
-  synced = () => true;
-  unsent = () => NOTHING_UNSENT;
-  resendUnsent = () => undefined;
-  discardUnsent = () => undefined;
-  answer = (itemId: Id, answer: string) => this.simulator.answer(itemId, answer);
-  decideForMe = (itemId: Id) => this.simulator.decideForMe(itemId);
-  allow = (itemId: Id, scope: "once" | "always") => this.simulator.allow(itemId, scope);
-  deny = (itemId: Id, note?: string) => this.simulator.deny(itemId, note);
-  approve = (itemId: Id) => this.simulator.approve(itemId);
-  declineGuide = (itemId: Id) => this.simulator.declineGuide(itemId);
-  requestChanges = (itemId: Id, note: string) => this.simulator.requestChanges(itemId, note);
-  retry = (itemId: Id) => this.simulator.approve(itemId);
-  checkShipping = () => undefined;
-  shipAgain = () => undefined;
-  markDone = () => undefined;
-  setPoolLimit = (limit: number) => this.simulator.setPoolLimit(limit);
-  setPoolPaused = (paused: boolean) => this.simulator.setPoolPaused(paused);
-  setToolCap = (toolId: Id, cap: number) => this.simulator.setToolCap(toolId, cap);
-  moveInQueue = (taskId: Id, index: number) => this.simulator.moveInQueue(taskId, index);
-  placeInQueue = (taskId: Id, anchorId: Id, side: "before" | "after") => this.simulator.placeInQueue(taskId, anchorId, side);
-  moveVisibleInQueue = (taskId: Id, visibleIds: Id[], direction: -1 | 1) => this.simulator.moveVisibleInQueue(taskId, visibleIds, direction);
-  moveToTop = (taskId: Id) => this.simulator.moveToTop(taskId);
-  setHeld = (taskId: Id, held: boolean) => this.simulator.setHeld(taskId, held);
-  setAfter = () => undefined;
-  pause = (taskId: Id) => this.simulator.pause(taskId);
-  resume = (taskId: Id) => this.simulator.resume(taskId);
-  cancel = (taskId: Id) => this.simulator.cancel(taskId);
-  sendMessage = (taskId: Id, text: string, mode: "queue" | "interrupt" = "queue") => this.simulator.sendMessage(taskId, text, mode);
-  removeQueued = (taskId: Id, messageId: Id) => this.simulator.removeQueued(taskId, messageId);
-  setStageProfile = (taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id) => this.simulator.setStageProfile(taskId, stageId, list, index, profileId);
-  addReviewer = (taskId: Id, stageId: Id, profileId: Id) => this.simulator.addReviewer(taskId, stageId, profileId);
-  setProductDelivery = (productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean) => this.simulator.setProductDelivery(productId, delivery, approveDelivery);
-  updateProduct = async (productId: Id, settings: ProductSettings) => this.simulator.updateProduct(productId, settings);
-  setProductChecks = async () => undefined;
-  removeProduct = async (productId: Id) => this.simulator.removeProduct(productId);
-  addTask = (input: Parameters<Simulator["addTask"]>[0]) => this.simulator.addTask(input);
-  addProduct = async () => {
+/** The real engine: every command over the local API, what the coordinator says through the outbox. */
+function engineStore(client: EngineClient): Store {
+  const commands = Object.fromEntries(COMMAND_NAMES.map((name) => [name, (...args: unknown[]) => client.send(name, args)])) as unknown as WindowCommands;
+  return {
+    ...commands,
+    answer: client.answer,
+    decideForMe: client.decideForMe,
+    deny: client.deny,
+    requestChanges: client.requestChanges,
+    sendMessage: client.sendMessage,
+    getState: client.getState,
+    subscribe: client.subscribe,
+    synced: client.synced,
+    unsent: client.unsent,
+    resendUnsent: client.resendUnsent,
+    discardUnsent: client.discardUnsent,
+  };
+}
+
+/** Commands the demo answers its own way: the simulator has no engine, terminal or GitHub behind it. */
+const DEMO_OWN = {
+  retry: (simulator: Simulator) => (itemId: Id) => simulator.approve(itemId),
+  checkShipping: () => () => undefined,
+  shipAgain: () => () => undefined,
+  markDone: () => () => undefined,
+  setAfter: () => () => undefined,
+  setTerminal: () => () => undefined,
+  setProductChecks: () => async () => undefined,
+  addProduct: () => async (): Promise<Id> => {
     throw new Error("The demo has fixed products");
-  };
-  takeOver = async (): Promise<Launched> => {
+  },
+  takeOver: () => async (): Promise<Launched> => {
     throw new Error(NOT_IN_DEMO);
-  };
-  reopenTerminal = async (): Promise<Launched> => {
+  },
+  reopenTerminal: () => async (): Promise<Launched> => {
     throw new Error(NOT_IN_DEMO);
-  };
-  handBackPreview = async (): Promise<HandBackPreview> => {
+  },
+  handBackPreview: () => async (): Promise<HandBackPreview> => {
     throw new Error(NOT_IN_DEMO);
-  };
-  handBack = async () => {
+  },
+  handBack: () => async () => {
     throw new Error(NOT_IN_DEMO);
+  },
+} satisfies { [K in CommandName]?: (simulator: Simulator) => WindowCommands[K] };
+
+/** Every other command is a Simulator method of the same name: the compiler checks it has them all. */
+type Simulated = Exclude<CommandName, keyof typeof DEMO_OWN>;
+
+/** The demo: the simulated squad, in the window. */
+function demoStore(simulator: Simulator): Store {
+  const simulated: { [K in Simulated]: (...args: Parameters<Commands[K]>) => unknown } = simulator;
+  const own = DEMO_OWN as Record<string, (simulator: Simulator) => unknown>;
+  const commands = Object.fromEntries(
+    COMMAND_NAMES.map((name) => [name, own[name]?.(simulator) ?? ((...args: unknown[]) => (simulated[name as Simulated] as (...args: unknown[]) => unknown).apply(simulator, args))]),
+  ) as unknown as WindowCommands;
+  return {
+    ...commands,
+    getState: () => simulator.getState(),
+    subscribe: (listener) => simulator.subscribe(listener),
+    synced: () => true,
+    unsent: () => NOTHING_UNSENT,
+    resendUnsent: () => undefined,
+    discardUnsent: () => undefined,
   };
-  setTerminal = () => undefined;
 }
 
 const NOT_IN_DEMO = "Take over works with real agents, not in the demo";
@@ -548,7 +485,7 @@ if (!client) {
 }
 
 /** The squad: the real engine, or the simulated one in demo mode. */
-export const sim: Store = client ?? new DemoStore(simulator!);
+export const sim: Store = client ? engineStore(client) : demoStore(simulator!);
 
 let timer: ReturnType<typeof setInterval> | undefined;
 

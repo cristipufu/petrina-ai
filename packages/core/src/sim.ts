@@ -26,6 +26,7 @@ import type {
 import { extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
 import { afterChangesAsked, columnOf, designRoundEnd, GATE_TITLE, gateStatus, reviewRoundEnd, type DeepMutable } from "./flow.js";
 import { findingCount } from "./findings.js";
+import type { NewTaskInput } from "./commands.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 
 type Draft = DeepMutable<State>;
@@ -53,16 +54,9 @@ export interface SimOptions {
   disagree?: readonly Id[];
 }
 
-export interface NewTask {
-  productId: Id;
-  title: string;
-  description?: string;
-  kind?: TaskKind;
+/** A new task for the demo: the window's, plus the area its scripted agents talk about. */
+export interface NewTask extends NewTaskInput {
   area?: string;
-  position?: "top" | "bottom";
-  approvePlan?: boolean;
-  delivery?: DeliveryMode;
-  approveDelivery?: boolean;
 }
 
 export type MessageMode = "queue" | "interrupt";
@@ -223,7 +217,7 @@ export class Simulator {
     });
   }
 
-  allow(itemId: Id, _scope: "once" | "always"): void {
+  allow(itemId: Id, _scope: "once" | "always" = "once"): void {
     this.resolve(itemId, (d, task, item) => {
       this.log(d, task, "you", `You allowed: ${item.title}`);
       this.say(d, task, "agent", "Thanks, continuing.", item.roleId, item.profileId);

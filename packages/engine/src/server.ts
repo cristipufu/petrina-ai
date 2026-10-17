@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
+import { COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
 import type { Engine } from "./engine.js";
 
 const ALLOWED_ORIGINS = new Set(["http://localhost:1430", "http://127.0.0.1:1430", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"]);
@@ -16,15 +17,17 @@ const Said = z.object({ taskId: z.string().optional(), about: z.string().max(400
 const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
 
-const Action = z.discriminatedUnion("name", [
-  z.object({ name: z.literal("addProduct"), args: z.tuple([z.string().min(1), z.string().optional()]) }),
-  z.object({ name: z.literal("removeProduct"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("setProductChecks"), args: z.tuple([z.string(), z.union([z.null(), z.array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) })).max(12)])]) }),
-  z.object({ name: z.literal("updateProduct"), args: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean(), shipLowRisk: z.boolean().optional() })]) }),
-  z.object({ name: z.literal("setProductDelivery"), args: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]) }),
-  z.object({
-    name: z.literal("addTask"),
-    args: z.tuple([
+/**
+ * What each command's arguments may be, checked before the engine sees them. The compiler holds this to
+ * the command table (Commands in @petrina/core): every command, nothing else, arguments the engine takes.
+ */
+const ARGS = {
+  addProduct: z.tuple([z.string().min(1), z.string().optional()]),
+  removeProduct: z.tuple([z.string()]),
+  setProductChecks: z.tuple([z.string(), z.union([z.null(), z.array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) })).max(12)])]),
+  updateProduct: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean(), shipLowRisk: z.boolean().optional() })]),
+  setProductDelivery: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]),
+  addTask: z.tuple([
       z.object({
         productId: z.string(),
         title: z.string().min(1).max(200),
@@ -36,46 +39,47 @@ const Action = z.discriminatedUnion("name", [
         approveDelivery: z.boolean().optional(),
       }),
     ]),
-  }),
-  z.object({ name: z.literal("moveInQueue"), args: z.tuple([z.string(), z.number().int()]) }),
-  z.object({ name: z.literal("placeInQueue"), args: z.tuple([z.string(), z.string(), z.enum(["before", "after"])]) }),
-  z.object({ name: z.literal("moveVisibleInQueue"), args: z.tuple([z.string(), z.array(z.string()).max(100000), z.union([z.literal(-1), z.literal(1)])]) }),
-  z.object({ name: z.literal("moveToTop"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("setHeld"), args: z.tuple([z.string(), z.boolean()]) }),
-  z.object({ name: z.literal("setAfter"), args: z.tuple([z.string(), z.array(z.string()).max(20)]) }),
-  z.object({ name: z.literal("setPoolLimit"), args: z.tuple([z.number()]) }),
-  z.object({ name: z.literal("setPoolPaused"), args: z.tuple([z.boolean()]) }),
-  z.object({ name: z.literal("setToolCap"), args: z.tuple([z.string(), z.number()]) }),
-  z.object({ name: z.literal("pause"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("resume"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("cancel"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("retry"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("sendMessage"), args: z.tuple([z.string(), z.string().min(1).max(8000), z.enum(["queue", "interrupt"]).optional(), ClientId.optional()]) }),
-  z.object({ name: z.literal("removeQueued"), args: z.tuple([z.string(), z.string()]) }),
-  z.object({ name: z.literal("setStageProfile"), args: z.tuple([z.string(), z.string(), z.enum(["profileIds", "reviewerProfileIds"]), z.number().int(), z.string()]) }),
-  z.object({ name: z.literal("addReviewer"), args: z.tuple([z.string(), z.string(), z.string()]) }),
-  z.object({ name: z.literal("answer"), args: z.tuple([z.string(), z.string().min(1).max(4000), Said.optional()]) }),
-  z.object({ name: z.literal("decideForMe"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("allow"), args: z.tuple([z.string(), z.enum(["once", "always"])]) }),
-  z.object({ name: z.literal("deny"), args: z.tuple([z.string(), z.string().max(4000).optional(), Said.optional()]) }),
-  z.object({ name: z.literal("approve"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("declineGuide"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("requestChanges"), args: z.tuple([z.string(), z.string().min(1).max(4000)]) }),
-  z.object({ name: z.literal("checkShipping"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("shipAgain"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("markDone"), args: z.tuple([z.string()]) }),
-  z.object({ name: z.literal("takeOver"), args: z.tuple([TaskId, How.optional()]) }),
-  z.object({ name: z.literal("reopenTerminal"), args: z.tuple([TaskId, How.optional()]) }),
-  z.object({ name: z.literal("handBackPreview"), args: z.tuple([TaskId]) }),
-  z.object({ name: z.literal("handBack"), args: z.tuple([TaskId, z.string().max(4000).optional(), z.boolean().optional()]) }),
-  z.object({ name: z.literal("setTerminal"), args: z.tuple([z.string().regex(/^[a-z0-9-]{0,40}$/)]) }),
-]);
+  moveInQueue: z.tuple([z.string(), z.number().int()]),
+  placeInQueue: z.tuple([z.string(), z.string(), z.enum(["before", "after"])]),
+  moveVisibleInQueue: z.tuple([z.string(), z.array(z.string()).max(100000), z.union([z.literal(-1), z.literal(1)])]),
+  moveToTop: z.tuple([z.string()]),
+  setHeld: z.tuple([z.string(), z.boolean()]),
+  setAfter: z.tuple([z.string(), z.array(z.string()).max(20)]),
+  setPoolLimit: z.tuple([z.number()]),
+  setPoolPaused: z.tuple([z.boolean()]),
+  setToolCap: z.tuple([z.string(), z.number()]),
+  pause: z.tuple([z.string()]),
+  resume: z.tuple([z.string()]),
+  cancel: z.tuple([z.string()]),
+  retry: z.tuple([z.string()]),
+  sendMessage: z.tuple([z.string(), z.string().min(1).max(8000), z.enum(["queue", "interrupt"]).optional(), ClientId.optional()]),
+  removeQueued: z.tuple([z.string(), z.string()]),
+  setStageProfile: z.tuple([z.string(), z.string(), z.enum(["profileIds", "reviewerProfileIds"]), z.number().int(), z.string()]),
+  addReviewer: z.tuple([z.string(), z.string(), z.string()]),
+  answer: z.tuple([z.string(), z.string().min(1).max(4000), Said.optional()]),
+  decideForMe: z.tuple([z.string()]),
+  allow: z.tuple([z.string(), z.enum(["once", "always"])]),
+  deny: z.tuple([z.string(), z.string().max(4000).optional(), Said.optional()]),
+  approve: z.tuple([z.string()]),
+  declineGuide: z.tuple([z.string()]),
+  requestChanges: z.tuple([z.string(), z.string().min(1).max(4000)]),
+  checkShipping: z.tuple([z.string()]),
+  shipAgain: z.tuple([z.string()]),
+  markDone: z.tuple([z.string()]),
+  takeOver: z.tuple([TaskId, How.optional()]),
+  reopenTerminal: z.tuple([TaskId, How.optional()]),
+  handBackPreview: z.tuple([TaskId]),
+  handBack: z.tuple([TaskId, z.string().max(4000).optional(), z.boolean().optional()]),
+  setTerminal: z.tuple([z.string().regex(/^[a-z0-9-]{0,40}$/)]),
+} satisfies { [K in CommandName]: z.ZodType<Parameters<Commands[K]>> };
+
+const Envelope = z.object({ name: z.enum(COMMAND_NAMES), args: z.array(z.unknown()) });
 
 export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
-  const action = Action.parse(raw);
-  const method = (engine as unknown as Record<string, (...args: unknown[]) => unknown>)[action.name];
-  if (typeof method !== "function") throw new Error(`Unknown action ${action.name}`);
-  return await method.apply(engine, action.args as unknown[]);
+  const { name, args } = Envelope.parse(raw);
+  const checked = ARGS[name].parse(args) as unknown[];
+  const method = engine[name] as (...args: unknown[]) => unknown;
+  return await method.apply(engine, checked);
 }
 
 interface Socket {
