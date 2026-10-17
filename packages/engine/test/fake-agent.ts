@@ -219,6 +219,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     }
     case "design reviewer":
       if (plan.planner === "limits" && !text.includes("Objections so far")) return done({ objections: [{ text: "Explain who sees the greeting.", blocking: true }] });
+      // "[follow-up]": only a non-blocking suggestion, so the design settles with it undecided.
+      if (text.includes("[follow-up]")) return done({ objections: [{ text: "Follow-up: name the greeting's colour later.", blocking: false }] });
       if (text.includes("[disagree]")) {
         return done({ objections: [{ text: "The brief does not say who sees the greeting.", blocking: true }, { text: "Consider a greeting per language.", blocking: false }] });
       }

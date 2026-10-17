@@ -257,7 +257,11 @@ export class Simulator {
           break;
         case "disagreement":
           this.log(d, task, "you", "You sided with the architect");
-          for (const objection of task.objections) if (objection.status === "open") objection.status = "rejected";
+          for (const objection of task.objections) {
+            if (objection.status !== "open") continue;
+            objection.status = "rejected";
+            objection.decidedBy = "coordinator";
+          }
           task.brief = briefFor(task);
           this.advance(d, task);
           break;

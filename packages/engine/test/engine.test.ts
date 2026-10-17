@@ -255,6 +255,16 @@ describe("The coordinator's call on a design disagreement", () => {
     engine.cancel(taskId);
   });
 
+  it("keeps a non-blocking point raised as the design settles as an undecided follow-up, never rejected", async () => {
+    const taskId = engine.addTask({ productId, title: "Pick a colour", description: "A colour file. [follow-up]" });
+    const state = await waitFor(taskId, "design");
+    const objections = taskOf(state, taskId).objections;
+    expect(objections).toHaveLength(1);
+    expect(objections[0]!.status).toBe("noted");
+    expect(objections[0]!.answer).toBeUndefined();
+    engine.cancel(taskId);
+  });
+
   it("leaves siding with the architect as it was", async () => {
     const taskId = engine.addTask({ productId, title: "Pick a welcome", description: "A welcome file. [disagree]" });
     let state = await waitFor(taskId, "disagreement");

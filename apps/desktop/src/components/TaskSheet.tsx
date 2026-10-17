@@ -456,12 +456,12 @@ function PlanView({ task, state, find }: { task: Task; state: State; find: Looku
 
 /** Open blockers first, then other open points, then settled ones. */
 function openFirst<T extends { status: string; blocking: boolean }>(items: readonly T[]): T[] {
-  const rank = (item: T) => (item.status === "open" ? (item.blocking ? 0 : 1) : 2);
+  const rank = (item: T) => (item.status === "open" ? (item.blocking ? 0 : 1) : item.status === "noted" ? 2 : 3);
   return [...items].sort((a, b) => rank(a) - rank(b));
 }
 
 function ObjectionItem({ objection, find }: { objection: Objection; find: Lookup }) {
-  const status = objection.status === "open" ? "Open" : objection.status === "accepted" ? "Accepted" : "Rejected";
+  const status = objection.status === "open" ? "Open" : objection.status === "accepted" ? "Accepted" : objection.status === "noted" ? "Follow-up" : "Rejected";
   return (
     <li className="issue">
       <div className="issue-status">
@@ -484,6 +484,24 @@ function ObjectionItem({ objection, find }: { objection: Objection; find: Lookup
         <div className="issue-response">
           <b>{objection.call !== undefined ? "The architect's note" : "The architect's answer"}</b>
           {objection.answer}
+        </div>
+      )}
+      {objection.status === "noted" && (
+        <div className="issue-response">
+          <b>Not decided</b>
+          Raised as a non-blocking suggestion after the design settled, so nobody accepted or rejected it. It stays here as a follow-up.
+        </div>
+      )}
+      {objection.decidedBy === "coordinator" && (
+        <div className="issue-response">
+          <b>Your decision</b>
+          You sided with the architect, so this was not taken up.
+        </div>
+      )}
+      {objection.status !== "open" && objection.status !== "noted" && !objection.answer && objection.call === undefined && objection.decidedBy === undefined && (
+        <div className="issue-response">
+          <b>No reason recorded</b>
+          This was settled automatically by an older version of Petrina, without anyone deciding.
         </div>
       )}
     </li>

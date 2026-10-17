@@ -217,8 +217,11 @@ export interface Objection {
   text: string;
   blocking: boolean;
   raisedBy: Id;
-  status: "open" | "accepted" | "rejected";
+  /** `noted`: a non-blocking point nobody decided on, kept as a follow-up. Never a default "rejected". */
+  status: "open" | "accepted" | "rejected" | "noted";
   answer?: string;
+  /** Settled by the coordinator's own decision (siding with the architect), not by an answer. */
+  decidedBy?: "coordinator";
   /** The coordinator's words, when their call settled this objection. `answer` is then the architect's note on how the brief follows it. */
   call?: string;
 }

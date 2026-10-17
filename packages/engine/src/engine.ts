@@ -612,7 +612,11 @@ export class Engine {
         break;
       case "disagreement":
         this.log(task, "you", "You sided with the architect");
-        for (const objection of task.objections) if (objection.status === "open") objection.status = "rejected";
+        for (const objection of task.objections) {
+          if (objection.status !== "open") continue;
+          objection.status = "rejected";
+          objection.decidedBy = "coordinator";
+        }
         task.stageIndex += 1;
         break;
       default:
@@ -1280,16 +1284,25 @@ export class Engine {
     const round = task.rounds[stage.id] ?? 1;
     if (task.sub === 0) {
       const profileId = stage.profileIds[0] ?? "opus-xhigh";
-      const result = await this.turn(task, stage.roleId, profileId, () => this.sectionsFor(task, stage.roleId), BriefResult, signal);
+      // Every objection the architect is shown gets its answer: none is accepted or rejected by default.
+      const due = task.objections.filter((objection) => objection.status === "open").map((objection) => objection.id);
+      // Answers add up across repairs, so the architect can hand back just the ones it left out.
+      const given = new Map<string, { id: string; status: "accepted" | "rejected"; answer: string }>();
+      const result = await this.turn(task, stage.roleId, profileId, () => this.sectionsFor(task, stage.roleId), BriefResult, signal, {
+        check: (value) => {
+          for (const answer of value.answers) given.set(answer.id, answer);
+          const missing = task.objections.filter((objection) => due.includes(objection.id) && !given.has(objection.id));
+          return missing.length ? `every objection you were shown needs an answer by id, accepted or rejected with your reason, and these have none:\n${formatObjections(missing as Task["objections"])}` : undefined;
+        },
+      });
       task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks };
-      for (const answer of result.answers) {
+      for (const answer of given.size ? given.values() : result.answers) {
         const objection = task.objections.find((entry) => entry.id === answer.id);
         if (objection && objection.status === "open") {
           objection.status = answer.status;
           objection.answer = answer.answer;
         }
       }
-      for (const objection of task.objections) if (objection.status === "open" && objection.round < round) objection.status = "accepted";
       this.log(task, "done", round === 1 ? "Design brief ready" : "Answered every objection", stage.roleId, profileId);
       await this.undoReadOnly(task, stage.roleId);
       this.finishStep(task);
@@ -1309,7 +1322,8 @@ export class Engine {
     if (this.rerun(task)) return "continue";
     const blocking = result.objections.filter((objection) => objection.blocking).length;
     if (blocking === 0) {
-      for (const objection of task.objections) if (objection.status === "open" && !objection.blocking) objection.status = "rejected";
+      // Nobody decides on non-blocking points raised in the last round: they stay as follow-ups, never "rejected".
+      for (const objection of task.objections) if (objection.status === "open" && !objection.blocking) objection.status = "noted";
       this.log(task, "done", "Design settled: no blocking objections", reviewerRole, reviewerProfile);
       task.stageIndex += 1;
       task.sub = 0;
