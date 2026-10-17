@@ -30,14 +30,45 @@ export function drivingText(task: Task, now: number): string {
   return task.driving ? `You're driving · ${duration(task.driving.since, now)}` : "";
 }
 
-/** Open the terminal again, or say why not. */
-export async function reopenTerminal(taskId: Id, onToast: (title: string, detail?: string) => void): Promise<void> {
+// Reopen terminal runs one request at a time per task, whichever surface asked, so a second click waits for the first.
+const reopening = new Set<Id>();
+const reopenListeners = new Set<() => void>();
+const reopenChanged = () => {
+  for (const listener of reopenListeners) listener();
+};
+const subscribeReopening = (listener: () => void) => {
+  reopenListeners.add(listener);
+  return () => {
+    reopenListeners.delete(listener);
+  };
+};
+
+/** Open the terminal again, then say what happened: a title, and the reason when it did not open. */
+async function reopenTerminal(taskId: Id, onResult: (title: string, detail?: string) => void): Promise<void> {
+  if (reopening.has(taskId)) return;
+  reopening.add(taskId);
+  reopenChanged();
   try {
     const launched = await sim.reopenTerminal(taskId, "open");
-    onToast(launched.problem ? "The terminal did not open" : `Opened in ${launched.terminal ?? "your terminal"}`, launched.problem ?? undefined);
+    if (launched.problem) onResult("The terminal did not open", `${launched.problem}.`);
+    else onResult(`Opened in ${launched.terminal ?? "your terminal"}`);
   } catch (error) {
-    onToast("Not reopened", error instanceof Error ? error.message : String(error));
+    onResult("Not reopened", error instanceof Error ? error.message : String(error));
+  } finally {
+    reopening.delete(taskId);
+    reopenChanged();
   }
+}
+
+/** Reopen terminal, unavailable while Petrina is already opening it for this task. */
+export function ReopenButton({ taskId, className, onResult }: { taskId: Id; className: string; onResult: (title: string, detail?: string) => void }) {
+  const busy = useSyncExternalStore(subscribeReopening, () => reopening.has(taskId));
+  return (
+    <button className={className} disabled={busy} onClick={() => void reopenTerminal(taskId, onResult)}>
+      <SquareTerminal size={16} aria-hidden="true" />
+      {busy ? "Opening…" : "Reopen terminal"}
+    </button>
+  );
 }
 
 /** The Session tab's take-over control: the button, or what you can do while you drive. */
@@ -46,10 +77,7 @@ export function TakeOverControls({ task, state, onToast }: { task: Task; state: 
     return (
       <span className="driving-controls">
         <span className="label needs-you num">{drivingText(task, state.now)}</span>
-        <button className="btn small quiet" onClick={() => void reopenTerminal(task.id, onToast)}>
-          <SquareTerminal size={16} aria-hidden="true" />
-          Reopen terminal
-        </button>
+        <ReopenButton taskId={task.id} className="btn small quiet" onResult={onToast} />
         <button className="btn small lead" onClick={() => openHandBack(task.id)}>
           <Undo2 size={16} aria-hidden="true" />
           Hand back
@@ -177,7 +205,10 @@ function TakeOverDialog({ task, state, find, onClose, onToast }: { task: Task; s
         ) : (
           <>
             <p className="prose">
-              Petrina stops the {role?.name ?? "agent"} first and saves its unfinished work. {TAKE_OVER_WORDS.inCharge(tool)}
+              {role?.canEdit === false
+                ? `Petrina stops the ${role.name} first. It only reads, so anything it left unsaved is undone, as always.`
+                : `Petrina stops the ${role?.name ?? "agent"} first and saves its unfinished work.`}{" "}
+              {TAKE_OVER_WORDS.inCharge(tool)}
             </p>
             <p className="quiet-text">While you drive, the step keeps its seat. Messages you send in Petrina wait for the hand back. When you're done, close {tool} and click Hand back.</p>
             {terminal ? (

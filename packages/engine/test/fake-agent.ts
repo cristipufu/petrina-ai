@@ -14,7 +14,9 @@ import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
   /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
-  planner?: "short" | "tester-after";
+  planner?: "short" | "tester-after" | "limits";
+  /** Scheduling tests: each fresh agent waits for its own release file before answering. */
+  controlled?: boolean;
   /**
    * "restart": ask a question, then work until cancelled, then finish once the step restarts. "plain": no questions.
    * "work": draft a file and work (through interruptions) until the step restarts `restarts` times.
@@ -141,6 +143,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const say = (line: string) => send(client, sessionId, { sessionUpdate: "plan", entries: [{ content: line, status: "in_progress", priority: "medium" }] });
   const done = (value: unknown, prose?: string): Reply => ({ text: block(value, prose) });
   const plan = scenario();
+  if (plan.controlled && session.turns === 1 && dir) {
+    await say(`${session.role} is working`);
+    while (!existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
+  }
   const earlierAttempt = text.includes("in an earlier attempt at this step");
   // The coordinator drove this step in their terminal and handed it back: on this conversation, or in a fresh one.
   const handedBack = text.includes("handed it back");
@@ -158,6 +164,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             { kind: "do", title: "Test", roleId: "tester", profileIds: ["opus-high"] },
           ],
         });
+      if (plan.planner === "limits") return done({
+        rationale: "Exercise same-tool handoffs, design rounds and a mixed-tool review chain.",
+        stages: [
+          { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] },
+          { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
+          { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "opus-xhigh", "sol-high"], maxRounds: 2 },
+        ],
+      });
       if (plan.planner === "short")
         return done({
           rationale: "A small change: build it, one reviewer.",
@@ -202,6 +217,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return done({ ...brief, answers: [] });
     }
     case "design reviewer":
+      if (plan.planner === "limits" && !text.includes("Objections so far")) return done({ objections: [{ text: "Explain who sees the greeting.", blocking: true }] });
       if (text.includes("[disagree]")) {
         return done({ objections: [{ text: "The brief does not say who sees the greeting.", blocking: true }, { text: "Consider a greeting per language.", blocking: false }] });
       }

@@ -18,6 +18,11 @@ export interface CliScript {
 }
 
 const [dir, ...args] = process.argv.slice(2);
+// Asked for its help, as Petrina does to learn the name of Claude Code's ask-before-acting mode.
+if (args[0] === "--help") {
+  console.log(existsSync(join(dir!, "old-help")) ? '--permission-mode <mode> (choices: "acceptEdits", "bypassPermissions", "default", "plan")' : '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")');
+  process.exit(0);
+}
 const script: CliScript = existsSync(join(dir!, "cli.json")) ? JSON.parse(readFileSync(join(dir!, "cli.json"), "utf8")) : {};
 appendFileSync(join(dir!, "cli.jsonl"), `${JSON.stringify({ args, cwd: process.cwd(), env: Object.keys(process.env) })}\n`);
 writeFileSync(join(dir!, "cli-started"), String(Date.now()));

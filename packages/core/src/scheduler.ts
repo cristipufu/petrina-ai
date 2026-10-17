@@ -53,6 +53,19 @@ export function slotUses(state: State): SlotUse[] {
     .map((task) => ({ taskId: task.id, toolId: (task.agent && toolOf.get(task.agent.profileId)) ?? "unknown" }));
 }
 
+/** Rechecked for every agent, including one on the same tool. The task's old slot does not count. */
+export function slotWait(state: State, candidate: Candidate): string | undefined {
+  const others = slotUses(state).filter((use) => use.taskId !== candidate.taskId);
+  if (state.pool.paused) return "Waiting for the pool to resume";
+  if (others.length >= state.pool.limit) return "Waiting for a free slot";
+  const cap = state.pool.toolCaps[candidate.toolId];
+  if (cap !== undefined && others.filter((use) => use.toolId === candidate.toolId).length >= cap) {
+    const tool = state.tools.find((entry) => entry.id === candidate.toolId)?.name ?? candidate.toolId;
+    return `Waiting for a free ${tool} slot`;
+  }
+  return undefined;
+}
+
 /** The queue in priority order, held tasks included (they show, they just do not start). */
 export function queueOf(tasks: readonly Task[]): Task[] {
   return tasks.filter((task) => task.state === "queued").sort((a, b) => a.priority - b.priority);

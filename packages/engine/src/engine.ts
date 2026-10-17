@@ -19,14 +19,19 @@ import {
   dueAnswers,
   followingCall,
   pickStarts,
+  productHistory,
+  productName,
   queueOf,
+  slotWait,
   slotUses,
   startCall,
+  suggestProductName,
   TAKE_OVER_TOOLS,
   TAKE_OVER_WORDS,
   takeOverBlock,
   toolName,
   unanswered,
+  validateProductSettings,
   type AgentProfile,
   type CallAnswer,
   type Candidate,
@@ -40,6 +45,7 @@ import {
   type InboxKind,
   type Launched,
   type Product,
+  type ProductSettings,
   type Role,
   type Stage,
   type State,
@@ -80,7 +86,7 @@ import {
   type WhereYouWere,
 } from "./prompts.js";
 import { Store } from "./store.js";
-import { detectTerminals, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, thisMachine, writeLauncher } from "./terminal.js";
+import { askMode, clearEnded, detectTerminals, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, thisMachine, writeLauncher } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 
 type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
@@ -147,8 +153,8 @@ export class Engine {
   private readonly boot = randomBytes(6).toString("hex");
   /** Each driver until it has fully stopped, clean-up included. */
   private readonly settling = new Map<Id, Promise<void>>();
-  /** Tasks Petrina is taking over or handing back right now. */
-  private readonly switching = new Set<Id>();
+  /** Tasks Petrina is taking over, opening a terminal for again, or handing back right now. */
+  private readonly switching = new Map<Id, keyof typeof TAKE_OVER_WORDS.busy>();
   private readonly machine = thisMachine();
   /** The terminals on this machine, the usual one first. */
   private readonly found: FoundTerminal[];
@@ -196,16 +202,17 @@ export class Engine {
 
   // ── Products ───────────────────────────────────────────────────────────
 
-  async addProduct(path: string): Promise<Id> {
+  async addProduct(path: string, name?: string): Promise<Id> {
     const info = await git.repoInfo(path);
     const existing = this.s.products.find((product) => product.path === info.root);
     if (existing) return existing.id;
+    const displayName = productName(name ?? suggestProductName(info.root), this.s.products);
     const base = info.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "product";
     let id = base;
     for (let n = 2; this.s.products.some((product) => product.id === id); n += 1) id = `${base}-${n}`;
     this.s.products.push({
       id,
-      name: info.name.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      name: displayName,
       repo: `${info.owner}/${info.name}`,
       tone: TONES[this.s.products.length % TONES.length]!,
       path: info.root,
@@ -220,13 +227,23 @@ export class Engine {
   setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void {
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) return;
-    product.delivery = delivery;
-    product.approveDelivery = approveDelivery;
+    this.updateProduct(productId, { name: product.name, delivery, approveDelivery });
+  }
+
+  updateProduct(productId: Id, settings: ProductSettings): void {
+    const product = this.s.products.find((entry) => entry.id === productId);
+    if (!product) throw new Error("This product is no longer in Petrina.");
+    const validated = validateProductSettings(settings, this.s.products, productId);
+    Object.assign(product, validated);
     this.commit();
   }
 
   removeProduct(productId: Id): void {
-    if (this.s.tasks.some((task) => task.productId === productId && !["done", "cancelled"].includes(task.state))) throw new Error("This product still has work in progress");
+    const { unfinished } = productHistory(this.s.tasks, productId);
+    if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
+    const ids = new Set(this.s.tasks.filter((task) => task.productId === productId).map((task) => task.id));
+    this.s.inbox = this.s.inbox.filter((item) => !ids.has(item.taskId));
+    this.s.tasks = this.s.tasks.filter((task) => !ids.has(task.id));
     this.s.products = this.s.products.filter((product) => product.id !== productId);
     this.commit();
   }
@@ -682,21 +699,21 @@ export class Engine {
   async takeOver(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
     const task = this.task(taskId);
     if (!task) throw new Error("Unknown task");
-    if (this.switching.has(taskId)) throw new Error("Petrina is already taking this over");
+    this.notSwitching(taskId);
     const blocked = takeOverBlock(task as unknown as Task, this.getState());
     if (blocked) throw new Error(blocked);
     const agent = { ...task.agent! };
     const conversation = task.conversation!;
     const profile = this.profile(agent.profileId)!;
     const role = this.role(agent.roleId)!;
-    const tool = this.takeOverTool(profile.toolId);
     const terminal = how === "open" ? pickTerminal(this.found, this.s.terminal) : undefined;
     if (how === "open" && !terminal) throw new Error(TAKE_OVER_WORDS.noTerminal);
-    // Every value goes through its pattern before the agent stops, so a launcher that cannot be written never strands the step.
-    launchPlan(this.launchInput(task, tool, conversation.sessionId, conversation.model, profile.effort));
 
-    this.switching.add(taskId);
+    this.switching.set(taskId, "taking over");
     try {
+      const tool = await this.takeOverTool(profile.toolId);
+      // Every value goes through its pattern before the agent stops, so a launcher that cannot be written never strands the step.
+      launchPlan(this.launchInput(task, tool, conversation.sessionId, conversation.model, profile.effort));
       task.statusLine = "Stopping the agent so you can take over";
       this.commitNow();
       const run = this.runs.get(taskId);
@@ -710,29 +727,31 @@ export class Engine {
       if (!current) throw new Error("The task is gone");
       if (current.conversation?.step !== conversation.step || current.conversation.sessionId !== conversation.sessionId) {
         // The step handed back its result just as the coordinator took over: the next one starts as usual.
-        delete current.agent;
-        current.holdsSlot = false;
-        this.toWaiting(current);
-        this.commitNow();
-        this.schedule();
+        this.backToWork(current);
         throw new Error("The agent finished its step just as you took over. Take over again on its next step if you want to.");
       }
       const worktree = current.worktree!;
       let saved: { sha: string; files: string[] } | undefined;
-      if (role.canEdit) {
-        const files = (await git.changedSince(worktree, await git.head(worktree))).map((entry) => entry.file);
-        const sha = files.length
-          ? await git.commitAll(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.describe(role.id, profile.id)}`)
-          : undefined;
-        if (sha) saved = { sha, files };
-      } else {
-        await this.undoReadOnly(current, role.id);
+      try {
+        if (role.canEdit) {
+          const files = (await git.changedSince(worktree, await git.head(worktree))).map((entry) => entry.file);
+          const sha = files.length
+            ? await git.commitAll(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.describe(role.id, profile.id)}`)
+            : undefined;
+          if (sha) saved = { sha, files };
+        } else {
+          await this.undoReadOnly(current, role.id);
+        }
+        current.driving = { since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head: await git.head(worktree), ...(saved ? { saved } : {}) };
+      } catch (error) {
+        // The agent has stopped, but the working copy is not ready for the coordinator: the agent carries on instead.
+        this.log(current, "warn", `Could not get the working copy ready for you, so the ${role.name} carries on: ${error instanceof Error ? error.message : String(error)}`, role.id, profile.id);
+        this.backToWork(current);
+        throw new Error(`Petrina couldn't save the ${role.name}'s work before you took over, so the ${role.name} carries on. ${error instanceof Error ? error.message : String(error)}`);
       }
-      const head = await git.head(worktree);
       delete current.conversation.asked;
       current.agent = agent as MTask["agent"];
       current.holdsSlot = true;
-      current.driving = { since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head, ...(saved ? { saved } : {}) };
       current.statusLine = TAKE_OVER_WORDS.status;
       this.raise(current, "driving", `Hand back “${current.title}” when you're done`, false, {
         body: `${tool.name} is open in your terminal on the ${role.name}'s conversation. Close it there, then hand back: the ${role.name} carries on from what you did.`,
@@ -741,21 +760,40 @@ export class Engine {
       this.log(current, "you", `You took over the ${role.name} in your terminal`, role.id, profile.id);
       this.say(current, "system", `You took over in your terminal · ${tool.name} on the ${role.name}'s conversation`, role.id, profile.id);
       this.commitNow();
-      return await this.launch(current, terminal, true);
+      return await this.launch(current, terminal, true, tool);
     } finally {
       this.switching.delete(taskId);
     }
   }
 
-  /** Open the terminal again, or get the command again. Never a second copy: refused while the first one runs. */
+  /** The agent stopped for a take-over that did not happen: the step starts again as usual, picking its conversation back up. */
+  private backToWork(task: MTask): void {
+    delete task.agent;
+    task.holdsSlot = false;
+    this.toWaiting(task);
+    this.commitNow();
+    this.schedule();
+  }
+
+  /**
+   * Open the terminal again, or get the command again. Never a second copy: refused while one runs, and
+   * while Petrina is still opening one or handing back.
+   */
   async reopenTerminal(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
     const task = this.task(taskId);
     if (!task?.driving) throw new Error("You're not driving this task");
-    const tool = toolName(task.driving.toolId);
-    if ((await sessionState(this.takeOverDir(taskId), this.machine.platform)) === "running") throw new Error(TAKE_OVER_WORDS.alreadyOpen(tool));
+    this.notSwitching(taskId);
     const terminal = how === "open" ? pickTerminal(this.found, this.s.terminal) : undefined;
     if (how === "open" && !terminal) throw new Error(TAKE_OVER_WORDS.noTerminal);
-    return this.launch(task, terminal, false);
+    this.switching.set(taskId, "reopening");
+    try {
+      const tool = toolName(task.driving.toolId);
+      if ((await sessionState(this.takeOverDir(taskId), this.machine.platform)) === "running") throw new Error(TAKE_OVER_WORDS.alreadyOpen(tool));
+      if (!task.driving) throw new Error("You're not driving this task");
+      return await this.launch(task, terminal, false);
+    } finally {
+      this.switching.delete(taskId);
+    }
   }
 
   /** What hand back would find: whether the tool is still open, the branch, and what changed since the take-over. */
@@ -795,8 +833,8 @@ export class Engine {
   async handBack(taskId: Id, note = "", anyway = false): Promise<void> {
     const task = this.task(taskId);
     if (!task?.driving) throw new Error("You're not driving this task");
-    if (this.switching.has(taskId)) throw new Error("Petrina is already handing this back");
-    this.switching.add(taskId);
+    this.notSwitching(taskId);
+    this.switching.set(taskId, "handing back");
     try {
       const driving = task.driving;
       const tool = toolName(driving.toolId);
@@ -834,7 +872,7 @@ export class Engine {
       task.statusLine = `${role.name} is getting back to work`;
       this.commitNow();
       // It still has its seat: the same agent carries on right away, whatever the pool is doing.
-      this.startDriver(taskId);
+      this.startDriver(taskId, true);
     } finally {
       this.switching.delete(taskId);
     }
@@ -876,6 +914,12 @@ export class Engine {
     return true;
   }
 
+  /** One take-over step at a time per task: taking over, opening the terminal again, or handing back. */
+  private notSwitching(taskId: Id): void {
+    const busy = this.switching.get(taskId);
+    if (busy) throw new Error(TAKE_OVER_WORDS.busy[busy]);
+  }
+
   /** "You're driving" in the inbox only goes with a hand back. */
   private notDrivingItem(itemId: Id): void {
     if (this.s.inbox.some((entry) => entry.id === itemId && entry.kind === "driving")) throw new Error(TAKE_OVER_WORDS.handBackFirst);
@@ -885,12 +929,13 @@ export class Engine {
     if (task && (task.driving || this.switching.has(task.id))) throw new Error(TAKE_OVER_WORDS.handBackFirst);
   }
 
-  /** The tool's own app, as found on this machine. */
-  private takeOverTool(toolId: Id): LaunchInput["tool"] {
+  /** The tool's own app, as found on this machine, and for Claude Code the name its installed copy gives its ask-before-acting mode. */
+  private async takeOverTool(toolId: Id): Promise<LaunchInput["tool"]> {
     const adapter = ADAPTERS[toolId];
     const path = adapter && TAKE_OVER_TOOLS[toolId] ? (this.options.toolPath?.(toolId) ?? Bun.which(adapter.cli)) : undefined;
     if (!adapter || !path) throw new Error(TAKE_OVER_WORDS.missing(toolName(toolId)));
-    return { id: toolId as LaunchInput["tool"]["id"], name: adapter.name, path };
+    const id = toolId as LaunchInput["tool"]["id"];
+    return { id, name: adapter.name, path, ...(id === "claude-code" ? { mode: await askMode(path) } : {}) };
   }
 
   /** The launcher's folder: only the coordinator can read it, and it goes at hand back. */
@@ -904,12 +949,14 @@ export class Engine {
   }
 
   /** Write the launcher and open it in the terminal, or only write it for the coordinator to run. */
-  private async launch(task: MTask, terminal: FoundTerminal | undefined, fresh: boolean): Promise<Launched> {
+  private async launch(task: MTask, terminal: FoundTerminal | undefined, fresh: boolean, tool?: LaunchInput["tool"]): Promise<Launched> {
     const driving = task.driving!;
     const conversation = task.conversation!;
     const effort = this.profile(driving.profileId)?.effort ?? "high";
     const dir = this.takeOverDir(task.id);
-    const plan = launchPlan(this.launchInput(task, this.takeOverTool(driving.toolId), conversation.sessionId, conversation.model, effort));
+    const plan = launchPlan(this.launchInput(task, tool ?? (await this.takeOverTool(driving.toolId)), conversation.sessionId, conversation.model, effort));
+    // Opening again: until the new copy reports, Petrina can't tell, so an old "it has closed" never lets a hand back through.
+    if (!fresh) await clearEnded(dir, this.machine.platform);
     await writeLauncher(plan, dir, fresh);
     if (!terminal) {
       delete driving.terminal;
@@ -954,7 +1001,9 @@ export class Engine {
       if (blocked(task)) continue;
       if (task.statusLine.startsWith("Waiting for “")) task.statusLine = "Waiting for a free slot";
       const next = this.nextAgent(task);
-      candidates.push({ taskId: task.id, toolId: next ? tool(next.profileId) : "none" });
+      const candidate = { taskId: task.id, toolId: next ? tool(next.profileId) : "none" };
+      task.statusLine = slotWait(this.getState(), candidate) ?? "Waiting for a free slot";
+      candidates.push(candidate);
     }
     for (const task of queueOf(this.s.tasks as Task[])) if (!task.held && !blocked(task as MTask)) candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
 
@@ -966,12 +1015,30 @@ export class Engine {
         task.stageIndex = -1;
         this.log(task, "milestone", "Started from the queue");
       }
-      task.state = "running";
-      task.holdsSlot = true;
-      task.statusLine = "Getting ready";
-      this.startDriver(taskId);
+      if (this.reserveAgent(task)) this.startDriver(taskId);
     }
     this.commit();
+  }
+
+  /** Take the slot and name its agent together, before any working-copy or tool I/O. */
+  private reserveAgent(task: MTask): boolean {
+    const next = this.nextAgent(task);
+    const waiting = slotWait(this.getState(), { taskId: task.id, toolId: next ? this.profile(next.profileId)?.toolId ?? "unknown" : "none" });
+    if (waiting) {
+      task.state = "waiting";
+      task.holdsSlot = false;
+      delete task.agent;
+      task.column = this.columnFor(task);
+      task.statusLine = waiting;
+      return false;
+    }
+    task.state = "running";
+    task.holdsSlot = !!next;
+    if (next) task.agent = { ...next, since: Date.now(), step: 0 };
+    else delete task.agent;
+    task.column = this.columnFor(task);
+    task.statusLine = next ? `${this.role(next.roleId)?.name ?? next.roleId} is starting` : "Getting ready";
+    return true;
   }
 
   private nextAgent(task: MTask): { roleId: Id; profileId: Id } | undefined {
@@ -994,15 +1061,16 @@ export class Engine {
 
   // ── The task driver ────────────────────────────────────────────────────
 
-  private startDriver(taskId: Id): void {
-    const done = this.drive(taskId);
+  /** `resume`: the agent already has its seat (a hand back), so its step carries on whatever the pool is doing. */
+  private startDriver(taskId: Id, resume = false): void {
+    const done = this.drive(taskId, resume);
     this.settling.set(taskId, done);
     void done.finally(() => {
       if (this.settling.get(taskId) === done) this.settling.delete(taskId);
     });
   }
 
-  private async drive(taskId: Id): Promise<void> {
+  private async drive(taskId: Id, resume = false): Promise<void> {
     const controller = new AbortController();
     this.drivers.set(taskId, controller);
     const { signal } = controller;
@@ -1016,21 +1084,9 @@ export class Engine {
       for (;;) {
         if (signal.aborted) throw new Aborted();
         const current = task();
-        if (current.stageIndex < 0) {
-          await this.runPlanner(current, signal);
-          if (current.approvePlan) {
-            this.gate(current, "plan");
-            return;
-          }
-          current.stageIndex = 0;
-          current.sub = 0;
-          this.commit();
-          continue;
-        }
-        const stage = current.plan?.stages[current.stageIndex];
-        if (!stage) throw new Error("The plan ended without a delivery");
+        const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
         // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
-        if (current.handChanges && (stage.gate === "delivery" || stage.roleId === "shipper")) {
+        if (stage && current.handChanges && (stage.gate === "delivery" || stage.roleId === "shipper")) {
           const chain = lastIndex(current.plan!.stages, (entry) => entry.kind === "review-chain");
           if (chain >= 0) {
             current.stageIndex = chain;
@@ -1042,10 +1098,30 @@ export class Engine {
           }
           delete current.handChanges;
         }
-        if (stage.kind === "gate") {
+        // Checkpoints need no new agent, so a paused or full pool must not hold them back.
+        if (stage?.kind === "gate") {
           this.gate(current, stage.gate ?? "delivery");
           return;
         }
+        // Running agents finish; every following agent must qualify again, even on the same tool.
+        if (resume) resume = false;
+        else if (!this.reserveAgent(current)) {
+          this.commit();
+          return;
+        }
+        this.commit();
+        if (current.stageIndex < 0) {
+          await this.runPlanner(current, signal);
+          if (current.approvePlan) {
+            this.gate(current, "plan");
+            return;
+          }
+          current.stageIndex = 0;
+          current.sub = 0;
+          this.commit();
+          continue;
+        }
+        if (!stage) throw new Error("The plan ended without a delivery");
         const next = stage.kind === "do" ? await this.runDo(current, stage, signal) : stage.kind === "converge" ? await this.runConverge(current, stage, signal) : await this.runReview(current, stage, signal);
         if (next === "stop") return;
       }
@@ -1598,7 +1674,9 @@ export class Engine {
     const live = () => this.task(taskId);
     const command = this.options.agentCommand?.(profile);
     // GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none.
-    const env = roleId === "shipper" && task.delivery !== "local" ? undefined : agentEnv(process.env, await this.emptyGhConfig());
+    const base = roleId === "shipper" && task.delivery !== "local" ? process.env : agentEnv(process.env, await this.emptyGhConfig());
+    // Agents work in the background: tools that would pop a browser tab stay quiet, and Petrina's own `open` refuses.
+    const env = { ...base, BROWSER: "none", PETRINA_AGENT: "1" };
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
     const start = (sessionId?: string) =>

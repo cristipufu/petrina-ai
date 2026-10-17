@@ -20,7 +20,7 @@ import { sim, useEngineStatus, useUnsent } from "../engine";
 import { ago, type Lookup } from "../lib";
 import { ProductName, ProfileText, RoleAvatar } from "./bits";
 import { UnsentNote } from "./EngineState";
-import { openHandBack } from "./TakeOver";
+import { openHandBack, ReopenButton } from "./TakeOver";
 import type { SheetTab } from "./TaskCard";
 
 const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> = {
@@ -330,18 +330,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
               <Undo2 size={16} aria-hidden="true" />
               Hand back
             </button>
-            <button
-              className="btn"
-              onClick={() =>
-                void sim.reopenTerminal(item.taskId, "open").then(
-                  (launched) => setReopened(launched.problem ? `${launched.problem}.` : `Opened in ${launched.terminal ?? "your terminal"}.`),
-                  (error: Error) => setReopened(error.message),
-                )
-              }
-            >
-              <SquareTerminal size={16} aria-hidden="true" />
-              Reopen terminal
-            </button>
+            <ReopenButton taskId={item.taskId} className="btn" onResult={(title, detail) => setReopened(detail ?? `${title}.`)} />
           </div>
           {reopened && (
             <p className="ask-note" role="status">

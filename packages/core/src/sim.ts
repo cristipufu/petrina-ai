@@ -20,7 +20,8 @@ import type {
   Task,
   TaskKind,
 } from "./model.js";
-import { pickStarts, queueOf, slotUses, type Candidate } from "./scheduler.js";
+import { pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
+import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 
 type DeepMutable<T> = T extends readonly (infer U)[]
   ? DeepMutable<U>[]
@@ -309,11 +310,34 @@ export class Simulator {
 
   /** Change what "ready" means for a product, and whether the coordinator checks first. */
   setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void {
+    const product = this.state.products.find((entry) => entry.id === productId);
+    if (product) this.updateProduct(productId, { name: product.name, delivery, approveDelivery });
+  }
+
+  updateProduct(productId: Id, settings: ProductSettings): void {
+    const validated = validateProductSettings(settings, this.state.products, productId);
     this.update((d) => {
       const product = d.products.find((entry) => entry.id === productId);
-      if (!product) return;
-      product.delivery = delivery;
-      product.approveDelivery = approveDelivery;
+      if (!product) throw new Error("This product is no longer in Petrina.");
+      Object.assign(product, validated);
+    });
+  }
+
+  removeProduct(productId: Id): void {
+    const { unfinished } = productHistory(this.state.tasks, productId);
+    if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
+    this.update((d) => {
+      const ids = new Set(d.tasks.filter((task) => task.productId === productId).map((task) => task.id));
+      d.inbox = d.inbox.filter((item) => !ids.has(item.taskId));
+      d.tasks = d.tasks.filter((task) => !ids.has(task.id));
+      d.products = d.products.filter((product) => product.id !== productId);
+    });
+  }
+
+  setToolCap(toolId: Id, cap: number): void {
+    this.update((d) => {
+      d.pool.toolCaps[toolId] = Math.max(1, Math.min(12, Math.round(cap)));
+      this.schedule(d);
     });
   }
 
@@ -584,6 +608,16 @@ export class Simulator {
   private startAgent(d: Draft, task: DraftTask): void {
     const next = this.nextAgent(task);
     if (!next) return;
+    const toolId = d.profiles.find((profile) => profile.id === next.profileId)?.toolId ?? "unknown";
+    const waiting = slotWait(d as State, { taskId: task.id, toolId });
+    if (waiting) {
+      task.state = "waiting";
+      task.holdsSlot = false;
+      delete task.agent;
+      task.column = this.columnFor(d, task);
+      task.statusLine = waiting;
+      return;
+    }
     const agent: ActiveAgent = { ...next, since: d.now, step: 0 };
     task.agent = agent;
     task.state = "running";
@@ -911,7 +945,11 @@ export class Simulator {
     const inProgress = d.tasks.filter((task) => task.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
     for (const task of inProgress) {
       const next = this.nextAgent(task);
-      if (next) candidates.push({ taskId: task.id, toolId: toolOf.get(next.profileId) ?? "unknown" });
+      if (next) {
+        const candidate = { taskId: task.id, toolId: toolOf.get(next.profileId) ?? "unknown" };
+        task.statusLine = slotWait(d as State, candidate) ?? "Waiting for a free slot";
+        candidates.push(candidate);
+      }
     }
     for (const task of queueOf(d.tasks as Task[])) {
       if (task.held) continue;

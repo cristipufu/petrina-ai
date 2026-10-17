@@ -3,7 +3,7 @@
 // (fake-cli.ts) that adds a turn to the conversation and changes the working copy like a person would.
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { slotUses, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "../src/engine.js";
 import { sessionState } from "../src/terminal.js";
@@ -18,7 +18,7 @@ const posix = process.platform !== "win32";
 const SECRET = "petrina-test-secret-value-1234";
 
 /** A product delivering locally with no checks, a task on it, and an engine whose terminal runs the launcher with sh. */
-async function start(scenario: Scenario, description = "") {
+async function start(scenario: Scenario, description = "", open: (launcher: string) => string[] = (launcher) => ["/bin/sh", launcher]) {
   const root = tempDir("petrina-takeover-");
   roots.push(root);
   const product = makeProduct(root);
@@ -34,7 +34,7 @@ async function start(scenario: Scenario, description = "") {
   const options: EngineOptions = {
     agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir],
     toolPath: () => app,
-    terminals: () => [{ id: "test", name: "Test terminal", open: (launcher) => ["/bin/sh", launcher] }],
+    terminals: () => [{ id: "test", name: "Test terminal", open }],
   };
   let engine = new Engine(data, options);
   const productId = await engine.addProduct(product);
@@ -181,7 +181,8 @@ describe.skipIf(!posix)("take over a reviewer, which is read-only", () => {
     expect(run.task().driving!.saved).toBeUndefined();
     await waitFor(() => run.fakes.marked("cli-done"), "the app to finish");
     await waitFor(async () => (await sessionState(takeoverDir(run.data, run.taskId))) === "ended", "the app to close");
-    expect(run.launched()[0]!.args).toEqual(["--resume", before.conversation!.sessionId, "--model", "opus", "--effort", "high", "--permission-mode", "default"]);
+    // Claude Code's ask-before-acting mode, by the name the installed copy lists.
+    expect(run.launched()[0]!.args).toEqual(["--resume", before.conversation!.sessionId, "--model", "opus", "--effort", "high", "--permission-mode", "manual"]);
 
     await engine.handBack(run.taskId);
     expect(run.task().rereview).toBe(review.id);
@@ -320,6 +321,74 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     git(worktree, "checkout", "-q", run.task().branch!);
     await engine.handBack(run.taskId);
     await run.finished();
+    engine.shutdown();
+  });
+});
+
+describe.skipIf(!posix)("opening the terminal again", () => {
+  it("never overlaps with a hand back or another reopen, and an earlier session's end never lets a hand back through", async () => {
+    // A stand-in terminal that takes two seconds to run the launcher, as a real one may.
+    const run = await start({ planner: "short", builder: "work", reopen: "resume" }, "", (launcher) => ["/bin/sh", "-c", 'sleep 2; exec /bin/sh "$1"', "terminal", launcher]);
+    await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
+    await run.working("builder");
+    run.cli({});
+    const engine = run.engine();
+    await engine.takeOver(run.taskId);
+    await waitFor(async () => (await sessionState(takeoverDir(run.data, run.taskId))) === "ended", "the app to close");
+    expect(run.launched()).toHaveLength(1);
+
+    // Two quick clicks on Reopen terminal, and Hand back while it opens: only the first goes ahead.
+    const hold = join(run.root, "hold");
+    writeFileSync(hold, "");
+    run.cli({ hold, write: { "again.txt": "Again\n" } });
+    const first = engine.reopenTerminal(run.taskId);
+    await expect(engine.reopenTerminal(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.busy.reopening);
+    await expect(engine.handBack(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.busy.reopening);
+    await expect(engine.handBack(run.taskId, "", true)).rejects.toThrow(TAKE_OVER_WORDS.busy.reopening);
+    expect((await first).terminal).toBe("Test terminal");
+
+    // The terminal is open but the app has not reported yet: the last session's end says nothing about this one.
+    expect(run.launched()).toHaveLength(1);
+    expect((await engine.handBackPreview(run.taskId)).open).toBe("unknown");
+    await expect(engine.handBack(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.cannotTell("Codex"));
+    await waitFor(async () => run.launched().length === 2 && (await sessionState(takeoverDir(run.data, run.taskId))) === "running", "the app to open again");
+
+    // Open: no hand back, even anyway, and no third copy.
+    await expect(engine.handBack(run.taskId, "", true)).rejects.toThrow(TAKE_OVER_WORDS.stillOpen("Codex"));
+    await expect(engine.reopenTerminal(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.alreadyOpen("Codex"));
+    expect(run.task().driving).toBeTruthy();
+
+    rmSync(hold);
+    await waitFor(async () => (await sessionState(takeoverDir(run.data, run.taskId))) === "ended", "the app to close again");
+    await engine.handBack(run.taskId);
+    await run.finished();
+    expect(run.launched()).toHaveLength(2);
+    expect(git(run.product, "show", "main:again.txt")).toBe("Again");
+    engine.shutdown();
+  }, 60_000);
+});
+
+describe.skipIf(!posix)("when the agent's work cannot be saved", () => {
+  it("lets the agent carry on instead of leaving a stopped step holding its seat", async () => {
+    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+    await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
+    const worktree = (await run.working("builder")).worktree!;
+    // Something else holds the working copy's index, so Petrina can't save the builder's draft.
+    const lock = resolve(worktree, git(worktree, "rev-parse", "--git-path", "index.lock"));
+    writeFileSync(lock, "");
+    const engine = run.engine();
+    await expect(engine.takeOver(run.taskId)).rejects.toThrow("Petrina couldn't save the Builder's work before you took over, so the Builder carries on.");
+    rmSync(lock);
+    const task = run.task();
+    expect(task.driving).toBeUndefined();
+    expect(task.statusLine).not.toBe("Stopping the agent so you can take over");
+    expect(engine.getState().inbox.some((item) => item.taskId === run.taskId && item.kind === "driving")).toBe(false);
+    expect(run.launched()).toHaveLength(0);
+    expect(existsSync(takeoverDir(run.data, run.taskId))).toBe(false);
+    // The builder picks its step back up and finishes, with its draft.
+    const done = await run.finished();
+    expect(done.timeline.some((entry) => entry.text.startsWith("Could not get the working copy ready for you, so the Builder carries on"))).toBe(true);
+    expect(git(run.product, "show", "main:notes.txt")).toBe("A first draft");
     engine.shutdown();
   });
 });

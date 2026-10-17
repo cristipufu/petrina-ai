@@ -21,6 +21,12 @@ export const TAKE_OVER_WORDS = {
   cannotTell: (tool: string) => `Petrina can't tell whether ${tool} is still open. Hand back anyway only if you closed it: if it is still running, it and the agent could change the same files.`,
   alreadyOpen: (tool: string) => `${tool} is already open in your terminal for this task. Use that window.`,
   noTerminal: "Petrina can't find a terminal to open. Choose one, or take over and copy a command to run yourself.",
+  /** Another take-over step for the same task is under way. */
+  busy: {
+    "taking over": "Petrina is still taking this over. Try again in a moment.",
+    reopening: "Petrina is opening the terminal. Try again in a moment.",
+    "handing back": "Petrina is handing this back already.",
+  },
 } as const;
 
 /** Whether the tool Petrina opened is still running. `unknown`: the launcher never reported starting, or its record cannot be checked. */

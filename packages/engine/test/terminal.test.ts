@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dispatch } from "../src/server.js";
-import { detectTerminals, launchPlan, type LaunchInput, pickTerminal, type Platform, type Probe, sessionState, terminalEnv, toolArgs, UnsafeValue } from "../src/terminal.js";
-import { removeDir, tempDir } from "./support.js";
+import { askMode, clearEnded, detectTerminals, launchPlan, type LaunchInput, pickTerminal, type Platform, type Probe, sessionState, terminalEnv, toolArgs, UnsafeValue, writeLauncher } from "../src/terminal.js";
+import { removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -66,8 +66,10 @@ describe("each system's launch plan", () => {
     }
   }
 
-  it("asks Claude Code for its default permission mode, and Codex for its workspace sandbox with approvals the coordinator answers", () => {
+  it("asks Claude Code for its ask-before-acting mode, and Codex for its workspace sandbox with approvals the coordinator answers", () => {
     expect(toolArgs(input("darwin", "claude-code"))).toEqual([PATHS.darwin.claude, "--resume", SESSION, "--model", "opus", "--effort", "xhigh", "--permission-mode", "default"]);
+    const current = input("darwin", "claude-code");
+    expect(toolArgs({ ...current, tool: { ...current.tool, mode: "manual" } }).slice(-2)).toEqual(["--permission-mode", "manual"]);
     expect(toolArgs(input("darwin", "codex"))).toEqual([PATHS.darwin.codex, "resume", SESSION, "--model", "gpt-6.1-sol", "-c", "model_reasoning_effort=xhigh", "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=user", "--no-daemon"]);
   });
 
@@ -85,12 +87,22 @@ describe("each system's launch plan", () => {
     ["a tool path with a pipe", { tool: { id: "claude-code", name: "Claude Code", path: "/usr/bin/claude|sh" } }],
     ["a Windows folder with a %", { platform: "win32", worktree: "C:\\Users\\%USERNAME%\\task-7" }],
     ["a Windows folder with a smart quote", { platform: "win32", worktree: "C:\\Users\\Ana‘s\\task-7" }],
+    ["a permission mode that skips prompts", { tool: { id: "claude-code", name: "Claude Code", path: "/usr/bin/claude", mode: "bypassPermissions" as never } }],
   ];
   for (const [what, change] of unsafe) {
     it(`refuses ${what}`, () => {
       expect(() => launchPlan(input(change.platform ?? "darwin", "claude-code", change))).toThrow(UnsafeValue);
     });
   }
+
+  it("Windows: the launcher carries a byte order mark, so Windows PowerShell reads accented folder names as written", () => {
+    const plan = launchPlan(input("win32", "codex"));
+    expect(plan.script.startsWith("\uFEFF# Petrina")).toBe(true);
+    expect(plan.script).toContain("Set-Location -LiteralPath 'C:\\Users\\Ana María\\.petrina\\worktrees\\shop\\task-7'");
+    expect(Buffer.from(plan.script, "utf8").subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+    // One copy at a time: the lock file is held open for this copy alone until it ends.
+    expect(plan.script).toContain("[System.IO.File]::Open((Join-Path $dir 'lock'), 'OpenOrCreate', 'ReadWrite', 'None')");
+  });
 
   it("leaves Petrina's own variables out of the terminal and keeps the coordinator's", () => {
     const env = terminalEnv({ PATH: "/usr/bin", HOME: "/Users/ana", PETRINA_HOME: "/x", PETRINA_BRIDGE_SECRET: "s", GH_TOKEN: "theirs" });
@@ -137,34 +149,154 @@ describe("the usual terminal on each system", () => {
 });
 
 describe.skipIf(process.platform === "win32")("whether the app Petrina opened is still running", () => {
-  const status = (lines: string[]) => {
+  const folder = (files: Record<string, string[]>) => {
     const dir = tempDir("petrina-status-");
     roots.push(dir);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "status"), `${lines.join("\n")}\n`);
+    for (const [name, lines] of Object.entries(files)) writeFileSync(join(dir, name), `${lines.join("\n")}\n`);
     return dir;
   };
   const startedOf = async (pid: number) => (await new Response(Bun.spawn(["ps", "-o", "lstart=", "-p", String(pid)], { env: { ...process.env, LC_ALL: "C" } }).stdout).text()).trim();
+  const record = async (pid: number) => [`pid=${pid}`, `started=${await startedOf(pid)}`];
+  const gone = async () => {
+    const proc = Bun.spawn(["true"]);
+    await proc.exited;
+    return proc.pid;
+  };
 
-  it("running only when the process id has the start time the launcher noted", async () => {
-    expect(await sessionState(status(["state=running", `pid=${process.pid}`, `started=${await startedOf(process.pid)}`]))).toBe("running");
+  it("running only when a copy's process id has the start time it noted", async () => {
+    expect(await sessionState(folder({ [`run.${process.pid}`]: await record(process.pid) }))).toBe("running");
     // The same number, a different start time: the system gave it to another process.
-    expect(await sessionState(status(["state=running", `pid=${process.pid}`, "started=Mon Jan  1 00:00:00 2001"]))).toBe("ended");
+    expect(await sessionState(folder({ [`run.${process.pid}`]: [`pid=${process.pid}`, "started=Mon Jan  1 00:00:00 2001"] }))).toBe("ended");
   });
 
-  it("ended when the launcher said so, or its process is gone", async () => {
-    expect(await sessionState(status(["state=ended", "code=0"]))).toBe("ended");
-    const gone = Bun.spawn(["true"]);
-    await gone.exited;
-    expect(await sessionState(status(["state=running", `pid=${gone.pid}`, "started=whenever"]))).toBe("ended");
+  it("running while any copy runs, even after another one said it ended", async () => {
+    const other = Bun.spawn(["sleep", "30"]);
+    try {
+      const pid = await gone();
+      const dir = folder({ status: ["state=ended", "code=0"], [`run.${pid}`]: [`pid=${pid}`, "started=whenever"], [`run.${other.pid}`]: await record(other.pid) });
+      expect(await sessionState(dir)).toBe("running");
+    } finally {
+      other.kill();
+    }
   });
 
-  it("unknown when the launcher never reported starting, or its record cannot be checked", async () => {
+  it("ended when the copy that opened the tool said so, or every copy is gone", async () => {
+    expect(await sessionState(folder({ status: ["state=ended", "code=0"] }))).toBe("ended");
+    const pid = await gone();
+    expect(await sessionState(folder({ [`run.${pid}`]: [`pid=${pid}`, "started=whenever"] }))).toBe("ended");
+  });
+
+  it("unknown when no copy ever reported starting, or a record cannot be checked", async () => {
     const empty = tempDir("petrina-status-");
     roots.push(empty);
     expect(await sessionState(empty)).toBe("unknown");
-    expect(await sessionState(status(["state=running", `pid=${process.pid}`]))).toBe("unknown");
-    expect(await sessionState(status(["something else"]))).toBe("unknown");
+    expect(await sessionState(join(empty, "missing"))).toBe("unknown");
+    expect(await sessionState(folder({ [`run.${process.pid}`]: [`pid=${process.pid}`] }))).toBe("unknown");
+    expect(await sessionState(folder({ status: ["something else"] }))).toBe("unknown");
+  });
+
+  it("opening again forgets what the last session left, and keeps the records of copies still running", async () => {
+    const pid = await gone();
+    const dir = folder({ status: ["state=ended", "code=0"], [`run.${pid}`]: [`pid=${pid}`, "started=whenever"], [`run.${process.pid}`]: await record(process.pid) });
+    await clearEnded(dir);
+    expect(readdirSync(dir).sort()).toEqual([`run.${process.pid}`]);
+    rmSync(join(dir, `run.${process.pid}`));
+    expect(await sessionState(dir)).toBe("unknown");
+  });
+});
+
+describe.skipIf(process.platform === "win32")("the launcher runs one copy per task", () => {
+  /** A real launcher whose "tool" notes each start and stays open while the hold file exists. */
+  async function launcher() {
+    const root = tempDir("petrina-launcher-");
+    roots.push(root);
+    const dir = join(root, "takeover", "task-7");
+    const worktree = join(root, "work");
+    mkdirSync(worktree, { recursive: true });
+    const tool = join(root, "tool");
+    const hold = join(root, "hold");
+    const starts = join(root, "starts");
+    writeFileSync(tool, `#!/bin/sh\necho "$$" >> '${starts}'\nwhile [ -f '${hold}' ]; do sleep 0.05; done\n`);
+    chmodSync(tool, 0o755);
+    const platform: Platform = process.platform === "darwin" ? "darwin" : "linux";
+    const plan = launchPlan({ platform, dir, worktree, tool: { id: "codex", name: "Codex", path: tool }, sessionId: SESSION, model: "gpt-6.1-sol", effort: "high" });
+    await writeLauncher(plan, dir, true);
+    const startCount = () => (existsSync(starts) ? readFileSync(starts, "utf8").split("\n").filter(Boolean).length : 0);
+    const run = () => Bun.spawn(["/bin/sh", "-c", plan.copy], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    return { dir, hold, plan, startCount, run };
+  }
+
+  it("refuses every copy but one, even when they all start at the same moment", async () => {
+    const it = await launcher();
+    for (let round = 0; round < 8; round++) {
+      writeFileSync(it.hold, "");
+      const before = it.startCount();
+      const copies = Array.from({ length: 4 }, () => it.run());
+      const refused = copies.map((copy) => copy.exited.then((code) => code === 1));
+      // Every copy but one stops at once, saying the tool is open already.
+      await waitFor(async () => {
+        const done = await Promise.all(refused.map((result) => Promise.race([result, Bun.sleep(10).then(() => false)])));
+        return done.filter(Boolean).length === copies.length - 1 && it.startCount() === before + 1;
+      }, "all copies but one to refuse");
+      expect(await sessionState(it.dir)).toBe("running");
+      rmSync(it.hold);
+      const codes = await Promise.all(copies.map((copy) => copy.exited));
+      expect([...codes].sort()).toEqual([0, 1, 1, 1]);
+      for (const [index, copy] of copies.entries()) if (codes[index] === 1) expect(await new Response(copy.stdout).text()).toContain("Codex is already open in your terminal for this task. Use that window.");
+      expect(it.startCount()).toBe(before + 1);
+      expect(await sessionState(it.dir)).toBe("ended");
+      // Nothing is left behind but the launcher and the ended note.
+      expect(readdirSync(it.dir).filter((name) => !name.startsWith("open.")).sort()).toEqual(["status"]);
+    }
+  }, 60_000);
+
+  it("takes over a lock left by a copy that is gone, and still refuses a second copy", async () => {
+    const it = await launcher();
+    const dead = Bun.spawn(["true"]);
+    await dead.exited;
+    writeFileSync(join(it.dir, "lock"), `pid=${dead.pid}\nstarted=Mon Jan  1 00:00:00 2001\n`);
+    writeFileSync(it.hold, "");
+    const first = it.run();
+    await waitFor(() => it.startCount() === 1, "the first copy to open the tool");
+    const second = it.run();
+    expect(await second.exited).toBe(1);
+    expect(await sessionState(it.dir)).toBe("running");
+    rmSync(it.hold);
+    expect(await first.exited).toBe(0);
+    expect(it.startCount()).toBe(1);
+    expect(existsSync(join(it.dir, "lock"))).toBe(false);
+  }, 30_000);
+
+  it("notes the end when the terminal window is closed", async () => {
+    const it = await launcher();
+    writeFileSync(it.hold, "");
+    const copy = it.run();
+    await waitFor(async () => (await sessionState(it.dir)) === "running", "the copy to start");
+    const pid = Number(readdirSync(it.dir).find((name) => name.startsWith("run."))!.slice(4));
+    process.kill(pid, "SIGHUP");
+    rmSync(it.hold);
+    await copy.exited;
+    expect(await sessionState(it.dir)).toBe("ended");
+    expect(readFileSync(join(it.dir, "status"), "utf8")).toContain("state=ended");
+  }, 30_000);
+});
+
+describe.skipIf(process.platform === "win32")("Claude Code's ask-before-acting mode", () => {
+  const help = (text: string) => {
+    const dir = tempDir("petrina-help-");
+    roots.push(dir);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "claude");
+    writeFileSync(file, `#!/bin/sh\necho '${text}'\n`);
+    chmodSync(file, 0o755);
+    return file;
+  };
+
+  it("uses the name the installed copy lists: manual now, default before", async () => {
+    expect(await askMode(help('--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")'))).toBe("manual");
+    expect(await askMode(help('--permission-mode <mode> (choices: "acceptEdits", "bypassPermissions", "default", "plan")'))).toBe("default");
+    expect(await askMode("/nowhere/claude")).toBe("default");
   });
 });
 

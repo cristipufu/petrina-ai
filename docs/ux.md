@@ -58,6 +58,14 @@ What success feels like: many pull requests a day, little time spent being the t
 - **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
 - **A task** opens as a sheet over the board (840px wide), so the board stays in view.
 
+### Reaching the engine
+
+In a browser, a lost connection shows Reconnecting. After about three seconds a slim line below the top bar says: "Can't reach the Petrina engine. In a terminal, run `bun run engine` and leave it running, then run `bun run open` in another terminal." The commands are easy to select and copy. The line disappears on reconnect, never flashes during shorter blips, and never appears in the demo.
+
+If the engine answers but refuses this window's old key, it says instead: "The Petrina engine restarted. Run `bun run open` for a fresh window, then close this one." Restarts normally keep the key; this covers a changed key too. If the window cannot tell, it uses the first message. The desktop app starts and restarts its own engine, so it keeps its existing recovery message and **Try again**, without terminal instructions.
+
+Starting a second engine prints one line: "Petrina's engine is already running. Open it with bun run open." It stops before opening task data and changes nothing on the board, using the same single-engine check as the desktop app.
+
 ### Window size
 
 - The desktop window opens with 1680×1000 for the app itself, the title bar on top of that, centred and never larger than the screen's usable area: the whole window, title bar included, stays below the menu bar and clear of the Dock or taskbar, on whichever screen it opens. It can shrink to 1100×680, again not counting the title bar. On a screen smaller than that it opens at the minimum in the top-left corner of the usable area, so the title bar is always reachable.
@@ -115,6 +123,18 @@ A coordinator may run twenty products or more, so nothing assumes a handful.
 
 - **Product switcher** (⌘P) in the top bar: a search field, then products grouped as *Needs you*, *Active* and *Quiet*, each saying in quiet text what waits on you, how many agents work and how many tasks are queued. The board keeps its full width.
 - **Products page:** the portfolio on one screen. One row per product with its pipeline (queue, plan, design, build, review, ready), what shipped, and what waits on you, as aligned numbers rather than badges. Products that need you sort first; clicking one filters the board to it. In a small window the table scrolls sideways.
+
+### Product names and settings
+
+- **Add a product** has a folder path and a Name field below it. The folder suggests the name (`petrina-ai` becomes Petrina AI); common abbreviations AI, API, UI, UX, CLI and SDK stay in capitals, and words already containing capitals keep their spelling. Correct the name before adding. Both fields are required; adding an existing repository opens its product without renaming it.
+- Every product row has a separate **Settings** button. The row shows its delivery choice in plain words, such as "Pull request · asks first". The small settings dialog uses the shared dialog frame, focus stays inside it, Escape closes it, and closing returns focus to Settings.
+- The panel shows the product name and repository, Name, the same three delivery choices as New task, **Ask me before shipping**, and **Remove product**. It contains no permission controls. Save applies name and delivery defaults together; Cancel or Escape discards the edits. Names are trimmed, one line, at most 60 characters, and unique ignoring capitals, enforced by the engine as well as in the demo. A rejected save changes nothing.
+- Delivery choices apply to new tasks; tasks already on the board keep theirs. A saved name appears everywhere immediately and in the next agent's instructions. Running agents keep the instructions they already received. Working copies, branches and the GitHub repository keep their identities.
+- Removal is unavailable until all tasks are done or cancelled, and says how many must finish or be cancelled first. An open pull request, failed task, paused task or queued task still counts as unfinished. The engine checks this again.
+- Confirmation names the number of finished and cancelled tasks being permanently deleted, including their conversations, timelines, and design and review history, and says this cannot be undone. A separate line says: "Your repository, its local folder, its branches and GitHub are not touched." With no tasks, it says "This product has no task history." The confirm button names the loss: **Remove and delete 12 tasks**. Removal clears those tasks and their inbox entries, closes the panel, and returns a board filtered to that product to All products. Petrina's working copies remain on disk.
+- While disconnected, Add product, Save and Remove are disabled and say they are waiting for the engine. The same settings and removal flow work on simulated products in the demo.
+
+A task taking a slot leaves the queue immediately, before its working copy is ready or its planner speaks: no queue number, drag handle, queue count or next-up entry remains. The card's Plan step is current, its planner is named, and the Products page counts it under Plan. Resumed tasks show their own current step immediately too.
 - The queue and the pool stay global: priority is across products, because the pool of agents is shared.
 - Cards always carry their product, so an all-products board stays readable.
 
@@ -126,13 +146,14 @@ How many agents may run at once.
 - Clicking opens a popover:
   - a stepper for the limit (1 to 12),
   - caps per tool (for example Claude Code 3, Codex 2), so one subscription is not exhausted,
-  - **Pause pool**: running stages finish, nothing new starts,
+  - **Pause pool**: running agents finish, no new agent starts,
   - the list of who is in each slot.
 - Rules:
-  - A running stage holds a slot.
+  - Taking a slot immediately records its agent and tool, so each tool's cap counts it before setup finishes.
+  - Before every following agent, even on the same tool, the task checks the limits again. If other tasks fill its tool or the pool, or the pool is paused, it waits at its current step with a line such as "Waiting for a free Codex slot". It keeps its working copy and progress and continues ahead of queued tasks. Work already holding a slot keeps it when there is room.
   - A task at a checkpoint (waiting for your OK between stages) releases its slot.
   - An agent that asked you something mid-stage keeps its slot, and the slot turns amber. The top bar then says "You're blocking 1 agent", because the coordinator is the bottleneck and should know it.
-  - Lowering the limit never kills anyone. Running stages finish, then the pool shrinks.
+  - Lowering the limit never stops a running agent. Each finishes, then its next agent waits until there is room, so the pool shrinks as agents finish.
 - The **Agents** page is the same information large: one tile per slot with the live status line and a Join button.
 
 ## Inbox: "Needs you"
@@ -190,11 +211,11 @@ This is the "open in terminal" experience, made friendly.
   - **Queue** (default): delivered when the agent finishes its current step. Queued messages wait at the end of the conversation, outlined and marked as queued, each with Remove. They scroll with the conversation, so a long queue never pushes the composer or Send out of view, and sending always brings your message into view.
   - **Interrupt**: stops the current step and delivers now.
 - **Take over in terminal:** you drive the agent yourself, in your own terminal, with your own setup and logins. It is enabled while an agent other than the shipper is working or waiting on you, on Claude Code or Codex; otherwise it is off with a one-line reason (no agent right now, delivery runs on its own, still starting, tool not installed). The demo keeps a notice.
-  - After a quick OK, Petrina checks it can open a terminal. If it can't, the agent keeps working and the dialog offers to choose a terminal or to take over and copy a command to run yourself.
-  - Petrina then stops the agent cleanly and clears any question or permission request it had open. An editing role's unsaved work (the builder's, say) is saved as that agent's own commit, marked as unfinished; a read-only role's leftovers are undone, as always.
+  - After a quick OK, Petrina checks it can open a terminal. If it can't, the agent keeps working and the dialog offers to choose a terminal or to take over and copy a command to run yourself. The OK says what happens to the agent's unsaved work: saved for an editing role, undone for a role that only reads.
+  - Petrina then stops the agent cleanly and clears any question or permission request it had open. An editing role's unsaved work (the builder's, say) is saved as that agent's own commit, marked as unfinished; a read-only role's leftovers are undone, as always. If Petrina can't save that work, it says so and the agent carries on instead.
   - The agent's own app (Claude Code or Codex) opens in a new terminal window, in the task's working copy, on the same conversation, with the same model and effort, so you can scroll up and see what it was doing. The app runs in its normal mode with its usual prompts. Some actions may run without a prompt, and you are in charge of the session: Petrina adds no blocks there, so whatever happens there happens for real, outside Petrina's agent protections and review.
-  - While you drive, the step is paused and keeps its seat in the pool. The task says "You're driving" and for how long on its card, in the Session tab, on the Agents page and as a Needs you item with **Hand back** and **Reopen terminal**. Pause, Cancel and Interrupt wait: hand back first. Messages you type in Petrina wait for the hand back. Only one terminal session per task runs at a time: Reopen terminal refuses while it is open, and so does the copied command.
-  - **Hand back** works once you have closed the app in your terminal: Petrina says so if it is still open, and offers "Hand back anyway", with a warning, only when it can't tell. It also refuses while the working copy is off the task's branch or in the middle of a merge or rebase. It shows what you changed (files and commits), apart from the agent's saved unfinished work, with an optional note.
+  - While you drive, the step is paused and keeps its seat in the pool. The task says "You're driving" and for how long on its card, in the Session tab, on the Agents page and as a Needs you item with **Hand back** and **Reopen terminal**. Pause, Cancel and Interrupt wait: hand back first. Messages you type in Petrina wait for the hand back. Only one terminal session per task runs at a time: Reopen terminal refuses while it is open and waits while it is opening, and a second copy of the copied command (even one started at the same moment) says the app is already open and stops.
+  - **Hand back** works once you have closed the app in your terminal: Petrina says so if it is still open, and offers "Hand back anyway", with a warning, only when it can't tell (for a moment after Reopen terminal, until the app reports it started). It waits while Petrina is opening the terminal again. It also refuses while the working copy is off the task's branch or in the middle of a merge or rebase. It shows what you changed (files and commits), apart from the agent's saved unfinished work, with an optional note.
   - Anything you left unsaved becomes one commit marked as yours, never undone, even after driving a read-only role. A short note of what changed goes into the session, the timeline and the notes every later agent reads. The same agent then carries on with the same step on the same conversation; when its tool can't reopen it, it carries on in a fresh one with its usual instructions plus your note, and the Session tab says so.
   - If you changed files, the tests check runs at once and its problems become blocking findings. If review is still ahead, it covers your changes. If review was underway or done, the review starts again from the first reviewer once the step you drove finishes, before anything ships, without using up a review round.
   - You choose the terminal in the Library, under Your terminal: Terminal on macOS by default (iTerm2 and other installed ones selectable), Windows Terminal or else a PowerShell window on Windows, and on Linux the system default, then the desktop's own, then common ones.
