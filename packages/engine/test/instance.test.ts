@@ -149,7 +149,9 @@ describe("one engine per Petrina folder", () => {
 
   it("stops by itself within 10 seconds when the app crashes or is force-quit", async () => {
     const home = newHome();
-    const shell = Bun.spawn([process.execPath, join(import.meta.dir, "shell-standin.ts"), CLI], { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: engineEnv(home) });
+    // Started the way the desktop shell starts it: on Windows, by PowerShell, since Bun would end the engine with the stand-in.
+    const standin = process.platform === "win32" ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(import.meta.dir, "shell-standin.ps1"), process.execPath, CLI] : [process.execPath, join(import.meta.dir, "shell-standin.ts"), CLI];
+    const shell = Bun.spawn(standin, { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: engineEnv(home) });
     expect(JSON.parse(await firstLine(shell.stdout))).toMatchObject({ type: "ready" });
     const connection = readConnection(home)!;
     expect(await answers(connection)).toBe(true);

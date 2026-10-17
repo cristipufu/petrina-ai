@@ -1,5 +1,6 @@
-// Stands in for the desktop shell: starts an app-mode engine, passes on its first line, then
-// waits until a test kills it outright, the way a crash or a force-quit ends the app.
+// Stands in for the desktop shell (on macOS and Linux; shell-standin.ps1 on Windows): starts an app-mode
+// engine, passes on its first line, then waits until a test kills it outright, the way a crash or a
+// force-quit ends the app.
 // bun shell-standin.ts <cli.ts>
 const engine = Bun.spawn([process.execPath, process.argv[2]!, "app"], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
 const reader = engine.stdout.getReader();
