@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
-import { DELIVERY_LABEL, type Column, type DeliveryMode, type Product, type State } from "@petrina/core";
-import { sim } from "../engine";
+import { DELIVERY_LABEL, type Column, type Product, type State } from "@petrina/core";
+import { ProductSettingsDialog } from "./ProductSettings";
 import { useDismiss } from "./bits";
 
 /** Per-product numbers the switcher and the Products page both show. */
@@ -157,7 +157,9 @@ const PIPE: readonly { column: Column; label: string }[] = [
 ];
 
 /** The portfolio: every product on one screen, what is in flight and what waits on you. */
-export function ProductsPage({ state, onPick, onAdd }: { state: State; onPick: (productId: string) => void; onAdd?: () => void }) {
+export function ProductsPage({ state, onPick, onAdd, onRemoved }: { state: State; onPick: (productId: string) => void; onAdd?: () => void; onRemoved: (productId: string) => void }) {
+  const [settings, setSettings] = useState<string>();
+  const editing = state.products.find((product) => product.id === settings);
   const stats = productStats(state).sort(
     (a, b) => b.needsYou - a.needsYou || Number(b.active) - Number(a.active) || b.working - a.working || a.product.name.localeCompare(b.product.name),
   );
@@ -204,6 +206,7 @@ export function ProductsPage({ state, onPick, onAdd }: { state: State; onPick: (
                 Needs you
               </th>
               <th scope="col">When ready</th>
+              <th scope="col"><span className="sr-only">Settings</span></th>
             </tr>
           </thead>
           <tbody>
@@ -212,7 +215,7 @@ export function ProductsPage({ state, onPick, onAdd }: { state: State; onPick: (
                 key={entry.product.id}
                 className={entry.active ? "" : "quiet"}
                 onClick={(event) => {
-                  if (!(event.target as HTMLElement).closest(".delivery-cell, button")) onPick(entry.product.id);
+                  if (!(event.target as HTMLElement).closest("button")) onPick(entry.product.id);
                 }}
               >
                 <th scope="row">
@@ -234,30 +237,15 @@ export function ProductsPage({ state, onPick, onAdd }: { state: State; onPick: (
                 <td className="c">{count(entry.shipped)}</td>
                 <td className="c">{entry.needsYou > 0 ? <span className="needs">{entry.needsYou}</span> : count(0)}</td>
                 <td>
-                  <span className="delivery-cell">
-                    <select
-                      className="select"
-                      aria-label={`What happens when ${entry.product.name} work is ready`}
-                      value={entry.product.delivery ?? "pull-request"}
-                      onChange={(event) => sim.setProductDelivery(entry.product.id, event.target.value as DeliveryMode, entry.product.approveDelivery ?? true)}
-                    >
-                      {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
-                        <option key={mode} value={mode}>
-                          {DELIVERY_LABEL[mode]}
-                        </option>
-                      ))}
-                    </select>
-                    <label className="toggle">
-                      <input type="checkbox" checked={entry.product.approveDelivery ?? true} onChange={(event) => sim.setProductDelivery(entry.product.id, entry.product.delivery ?? "pull-request", event.target.checked)} />
-                      Ask me first
-                    </label>
-                  </span>
+                  <span className="delivery-summary">{DELIVERY_LABEL[entry.product.delivery ?? "pull-request"]} · {(entry.product.approveDelivery ?? true) ? "asks first" : "ships automatically"}</span>
                 </td>
+                <td><button className="btn small" aria-label={`Settings for ${entry.product.name}`} onClick={() => setSettings(entry.product.id)}>Settings</button></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {editing && <ProductSettingsDialog key={editing.id} product={editing} state={state} onClose={() => setSettings(undefined)} onRemoved={() => { setSettings(undefined); onRemoved(editing.id); }} />}
     </div>
   );
 }

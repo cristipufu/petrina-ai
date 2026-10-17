@@ -15,8 +15,9 @@ const ClientId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const Said = z.object({ taskId: z.string().optional(), about: z.string().max(4000).optional(), clientId: ClientId.optional() });
 
 const Action = z.discriminatedUnion("name", [
-  z.object({ name: z.literal("addProduct"), args: z.tuple([z.string().min(1)]) }),
+  z.object({ name: z.literal("addProduct"), args: z.tuple([z.string().min(1), z.string().optional()]) }),
   z.object({ name: z.literal("removeProduct"), args: z.tuple([z.string()]) }),
+  z.object({ name: z.literal("updateProduct"), args: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean() })]) }),
   z.object({ name: z.literal("setProductDelivery"), args: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]) }),
   z.object({
     name: z.literal("addTask"),
@@ -106,6 +107,11 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
       const origin = request.headers.get("origin");
       if (origin && !selfOrigins.has(origin)) return new Response("Forbidden", { status: 403 });
 
+      // A browser on the dev server can distinguish an engine that is down from one with a new
+      // key. Only the health check allows cross-origin reads, and only from Petrina's own pages.
+      const healthHeaders = url.pathname === "/api/health" && origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : undefined;
+      if (healthHeaders && request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...healthHeaders, "Access-Control-Allow-Methods": "GET", "Access-Control-Allow-Headers": "Authorization" } });
+
       if (url.pathname === "/ws") {
         // Browsers always send Origin on WebSocket handshakes: a missing one is not a browser we know.
         if (!origin) return new Response("Forbidden", { status: 403 });
@@ -118,8 +124,8 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
 
       if (url.pathname.startsWith("/api/")) {
         const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-        if (!tokenOk(bearer)) return new Response("Unauthorized", { status: 401 });
-        if (url.pathname === "/api/health" && request.method === "GET") return Response.json({ ok: true, pid: process.pid });
+        if (!tokenOk(bearer)) return new Response("Unauthorized", { status: 401, headers: healthHeaders });
+        if (url.pathname === "/api/health" && request.method === "GET") return Response.json({ ok: true, pid: process.pid }, { headers: healthHeaders });
         if (url.pathname === "/api/state" && request.method === "GET") return Response.json(engine.getState());
         if (url.pathname === "/api/action" && request.method === "POST") {
           try {

@@ -107,7 +107,7 @@ describe("what the coordinator says is kept for the step", () => {
   async function waitingTask(): Promise<() => Task> {
     const product = makeProduct(join(root, `p${Date.now()}`));
     engine.setPoolPaused(true);
-    const productId = await engine.addProduct(product);
+    const productId = await engine.addProduct(product, `Product ${engine.getState().products.length + 1}`);
     const taskId = engine.addTask({ productId, title: "Hold still" });
     return () => engine.getState().tasks.find((task) => task.id === taskId)!;
   }

@@ -58,6 +58,14 @@ What success feels like: many pull requests a day, little time spent being the t
 - **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
 - **A task** opens as a sheet over the board (840px wide), so the board stays in view.
 
+### Reaching the engine
+
+In a browser, a lost connection shows Reconnecting. After about three seconds a slim line below the top bar says: "Can't reach the Petrina engine. In a terminal, run `bun run engine` and leave it running, then run `bun run open` in another terminal." The commands are easy to select and copy. The line disappears on reconnect, never flashes during shorter blips, and never appears in the demo.
+
+If the engine answers but refuses this window's old key, it says instead: "The Petrina engine restarted. Run `bun run open` for a fresh window, then close this one." Restarts normally keep the key; this covers a changed key too. If the window cannot tell, it uses the first message. The desktop app starts and restarts its own engine, so it keeps its existing recovery message and **Try again**, without terminal instructions.
+
+Starting a second engine prints one line: "Petrina's engine is already running. Open it with bun run open." It stops before opening task data and changes nothing on the board, using the same single-engine check as the desktop app.
+
 ### Window size
 
 - The desktop window opens with 1680×1000 for the app itself, the title bar on top of that, centred and never larger than the screen's usable area: the whole window, title bar included, stays below the menu bar and clear of the Dock or taskbar, on whichever screen it opens. It can shrink to 1100×680, again not counting the title bar. On a screen smaller than that it opens at the minimum in the top-left corner of the usable area, so the title bar is always reachable.
@@ -115,6 +123,18 @@ A coordinator may run twenty products or more, so nothing assumes a handful.
 
 - **Product switcher** (⌘P) in the top bar: a search field, then products grouped as *Needs you*, *Active* and *Quiet*, each saying in quiet text what waits on you, how many agents work and how many tasks are queued. The board keeps its full width.
 - **Products page:** the portfolio on one screen. One row per product with its pipeline (queue, plan, design, build, review, ready), what shipped, and what waits on you, as aligned numbers rather than badges. Products that need you sort first; clicking one filters the board to it. In a small window the table scrolls sideways.
+
+### Product names and settings
+
+- **Add a product** has a folder path and a Name field below it. The folder suggests the name (`petrina-ai` becomes Petrina AI); common abbreviations AI, API, UI, UX, CLI and SDK stay in capitals, and words already containing capitals keep their spelling. Correct the name before adding. Both fields are required; adding an existing repository opens its product without renaming it.
+- Every product row has a separate **Settings** button. The row shows its delivery choice in plain words, such as "Pull request · asks first". The small settings dialog uses the shared dialog frame, focus stays inside it, Escape closes it, and closing returns focus to Settings.
+- The panel shows the product name and repository, Name, the same three delivery choices as New task, **Ask me before shipping**, and **Remove product**. It contains no permission controls. Save applies name and delivery defaults together; Cancel or Escape discards the edits. Names are trimmed, one line, at most 60 characters, and unique ignoring capitals, enforced by the engine as well as in the demo. A rejected save changes nothing.
+- Delivery choices apply to new tasks; tasks already on the board keep theirs. A saved name appears everywhere immediately and in the next agent's instructions. Running agents keep the instructions they already received. Working copies, branches and the GitHub repository keep their identities.
+- Removal is unavailable until all tasks are done or cancelled, and says how many must finish or be cancelled first. An open pull request, failed task, paused task or queued task still counts as unfinished. The engine checks this again.
+- Confirmation names the number of finished and cancelled tasks being permanently deleted, including their conversations, timelines, and design and review history, and says this cannot be undone. A separate line says: "Your repository, its local folder, its branches and GitHub are not touched." With no tasks, it says "This product has no task history." The confirm button names the loss: **Remove and delete 12 tasks**. Removal clears those tasks and their inbox entries, closes the panel, and returns a board filtered to that product to All products. Petrina's working copies remain on disk.
+- While disconnected, Add product, Save and Remove are disabled and say they are waiting for the engine. The same settings and removal flow work on simulated products in the demo.
+
+A task taking a slot leaves the queue immediately, before its working copy is ready or its planner speaks: no queue number, drag handle, queue count or next-up entry remains. The card's Plan step is current, its planner is named, and the Products page counts it under Plan. Resumed tasks show their own current step immediately too.
 - The queue and the pool stay global: priority is across products, because the pool of agents is shared.
 - Cards always carry their product, so an all-products board stays readable.
 
@@ -126,13 +146,14 @@ How many agents may run at once.
 - Clicking opens a popover:
   - a stepper for the limit (1 to 12),
   - caps per tool (for example Claude Code 3, Codex 2), so one subscription is not exhausted,
-  - **Pause pool**: running stages finish, nothing new starts,
+  - **Pause pool**: running agents finish, no new agent starts,
   - the list of who is in each slot.
 - Rules:
-  - A running stage holds a slot.
+  - Taking a slot immediately records its agent and tool, so each tool's cap counts it before setup finishes.
+  - Before every following agent, even on the same tool, the task checks the limits again. If other tasks fill its tool or the pool, or the pool is paused, it waits at its current step with a line such as "Waiting for a free Codex slot". It keeps its working copy and progress and continues ahead of queued tasks. Work already holding a slot keeps it when there is room.
   - A task at a checkpoint (waiting for your OK between stages) releases its slot.
   - An agent that asked you something mid-stage keeps its slot, and the slot turns amber. The top bar then says "You're blocking 1 agent", because the coordinator is the bottleneck and should know it.
-  - Lowering the limit never kills anyone. Running stages finish, then the pool shrinks.
+  - Lowering the limit never stops a running agent. Each finishes, then its next agent waits until there is room, so the pool shrinks as agents finish.
 - The **Agents** page is the same information large: one tile per slot with the live status line and a Join button.
 
 ## Inbox: "Needs you"

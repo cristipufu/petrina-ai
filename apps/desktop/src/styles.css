@@ -195,6 +195,10 @@ ol, ul { padding: 0; }
   grid-template-rows: minmax(56px, auto) minmax(0, 1fr);
   height: 100vh;
 }
+.app.with-engine-hint { grid-template-rows: minmax(56px, auto) auto minmax(0, 1fr); }
+.engine-recovery { grid-column: 1 / -1; grid-row: 2; padding: 8px 20px; background: var(--amber-soft); color: var(--amber-text); font-size: var(--fs-control); line-height: var(--lh-control); border-bottom: 1px solid var(--amber-line); }
+.app.with-engine-hint > .rail, .app.with-engine-hint > .main, .app.with-engine-hint > .inbox { grid-row: 3; }
+.engine-recovery code { font-family: var(--mono); white-space: nowrap; user-select: all; }
 
 .topbar {
   grid-column: 1 / -1;
@@ -1075,6 +1079,15 @@ kbd {
 .dialog .foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .dialog .foot .left { margin-right: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
 .dialog .heading { font-size: var(--fs-panel); line-height: var(--lh-panel); font-weight: 600; }
+.product-field { display: grid; gap: 8px; margin: 16px 0; font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+.product-field .field { width: 100%; font-weight: 400; }
+.dialog .muted { color: var(--text-2); }
+.product-repo { overflow-wrap: anywhere; font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.product-removal { display: grid; gap: 8px; justify-items: start; margin: 24px 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.product-settings > .foot { margin-top: 24px; }
+.product-settings > .error-text { margin-top: 16px; }
+.removal-copy { margin: 24px 0 16px; }
+.delivery-summary { font-size: var(--fs-control); line-height: var(--lh-control); color: var(--text-2); }
 .btn kbd { color: inherit; border-color: currentColor; opacity: 0.7; }
 .toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
 .toggle input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }

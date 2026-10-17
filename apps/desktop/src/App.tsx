@@ -3,7 +3,7 @@ import { Bell, Boxes, Bot, Ellipsis, Hand, LayoutGrid, Library, Moon, Plus, Sear
 import type { State, Task } from "@petrina/core";
 import { mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
-import { CouldNotStart, EnginePill, StartingScreen } from "./components/EngineState";
+import { CouldNotStart, EnginePill, EngineRecovery, StartingScreen } from "./components/EngineState";
 import { blockingCount, lookup, type Lookup } from "./lib";
 import { Logo, useDismiss, useViewport, viewportSize } from "./components/bits";
 import { Board } from "./components/Board";
@@ -64,6 +64,10 @@ export function App() {
 
   useEffect(() => applyTheme(theme), [theme]);
 
+  useEffect(() => {
+    if (product !== "all" && !state.products.some((entry) => entry.id === product)) setProduct("all");
+  }, [state.products, product]);
+
   const toast = useCallback((title: string, detail?: string, taskId?: string) => {
     const id = (toastId.current += 1);
     setToasts((list) => [...list.slice(-2), { id, title, ...(detail ? { detail } : {}), ...(taskId ? { taskId } : {}) }]);
@@ -102,6 +106,7 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
+      if (target.closest('[aria-modal="true"]')) return;
       const typing = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
@@ -138,9 +143,10 @@ export function App() {
     </button>
   );
   const docked = inboxOpen && !overlay;
+  const recovery = mode === "engine" && !status.desktop && status.link !== "live" && status.recovery;
 
   return (
-    <div className="app" style={{ gridTemplateColumns: `var(--rail) minmax(0, 1fr) ${docked ? "auto" : "0px"}` }}>
+    <div className={`app ${recovery ? "with-engine-hint" : ""}`} style={{ gridTemplateColumns: `var(--rail) minmax(0, 1fr) ${docked ? "auto" : "0px"}` }}>
       <header className="topbar">
         <div className="brand" aria-label="Petrina">
           <Logo />
@@ -185,6 +191,7 @@ export function App() {
         </button>
         {barExtras ? themeButton : <MoreMenu state={state} find={find} onOpen={open} status={status} themeButton={themeButton} />}
       </header>
+      {recovery && <EngineRecovery status={status} />}
 
       <nav className="rail" aria-label="Sections">
         <button className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={() => setView("board")} title="Board (B)">
@@ -215,6 +222,7 @@ export function App() {
         {view === "products" && (
           <ProductsPage
             state={state}
+            onRemoved={(productId) => { if (product === productId) setProduct("all"); }}
             {...(mode === "engine" ? { onAdd: () => setAddingProduct(true) } : {})}
             onPick={(productId) => {
               setProduct(productId);
@@ -238,6 +246,7 @@ export function App() {
           onAdded={(productId) => {
             setAddingProduct(false);
             setProduct(productId);
+            setView("board");
           }}
         />
       )}

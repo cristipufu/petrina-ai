@@ -19,10 +19,15 @@ import {
   dueAnswers,
   followingCall,
   pickStarts,
+  productHistory,
+  productName,
   queueOf,
+  slotWait,
   slotUses,
   startCall,
+  suggestProductName,
   unanswered,
+  validateProductSettings,
   type AgentProfile,
   type CallAnswer,
   type Candidate,
@@ -34,6 +39,7 @@ import {
   type InboxItem,
   type InboxKind,
   type Product,
+  type ProductSettings,
   type Role,
   type Stage,
   type State,
@@ -171,16 +177,17 @@ export class Engine {
 
   // ── Products ───────────────────────────────────────────────────────────
 
-  async addProduct(path: string): Promise<Id> {
+  async addProduct(path: string, name?: string): Promise<Id> {
     const info = await git.repoInfo(path);
     const existing = this.s.products.find((product) => product.path === info.root);
     if (existing) return existing.id;
+    const displayName = productName(name ?? suggestProductName(info.root), this.s.products);
     const base = info.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "product";
     let id = base;
     for (let n = 2; this.s.products.some((product) => product.id === id); n += 1) id = `${base}-${n}`;
     this.s.products.push({
       id,
-      name: info.name.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      name: displayName,
       repo: `${info.owner}/${info.name}`,
       tone: TONES[this.s.products.length % TONES.length]!,
       path: info.root,
@@ -195,13 +202,23 @@ export class Engine {
   setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void {
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) return;
-    product.delivery = delivery;
-    product.approveDelivery = approveDelivery;
+    this.updateProduct(productId, { name: product.name, delivery, approveDelivery });
+  }
+
+  updateProduct(productId: Id, settings: ProductSettings): void {
+    const product = this.s.products.find((entry) => entry.id === productId);
+    if (!product) throw new Error("This product is no longer in Petrina.");
+    const validated = validateProductSettings(settings, this.s.products, productId);
+    Object.assign(product, validated);
     this.commit();
   }
 
   removeProduct(productId: Id): void {
-    if (this.s.tasks.some((task) => task.productId === productId && !["done", "cancelled"].includes(task.state))) throw new Error("This product still has work in progress");
+    const { unfinished } = productHistory(this.s.tasks, productId);
+    if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
+    const ids = new Set(this.s.tasks.filter((task) => task.productId === productId).map((task) => task.id));
+    this.s.inbox = this.s.inbox.filter((item) => !ids.has(item.taskId));
+    this.s.tasks = this.s.tasks.filter((task) => !ids.has(task.id));
     this.s.products = this.s.products.filter((product) => product.id !== productId);
     this.commit();
   }
@@ -646,7 +663,9 @@ export class Engine {
       if (blocked(task)) continue;
       if (task.statusLine.startsWith("Waiting for “")) task.statusLine = "Waiting for a free slot";
       const next = this.nextAgent(task);
-      candidates.push({ taskId: task.id, toolId: next ? tool(next.profileId) : "none" });
+      const candidate = { taskId: task.id, toolId: next ? tool(next.profileId) : "none" };
+      task.statusLine = slotWait(this.getState(), candidate) ?? "Waiting for a free slot";
+      candidates.push(candidate);
     }
     for (const task of queueOf(this.s.tasks as Task[])) if (!task.held && !blocked(task as MTask)) candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
 
@@ -658,12 +677,30 @@ export class Engine {
         task.stageIndex = -1;
         this.log(task, "milestone", "Started from the queue");
       }
-      task.state = "running";
-      task.holdsSlot = true;
-      task.statusLine = "Getting ready";
-      void this.drive(taskId);
+      if (this.reserveAgent(task)) void this.drive(taskId);
     }
     this.commit();
+  }
+
+  /** Take the slot and name its agent together, before any working-copy or tool I/O. */
+  private reserveAgent(task: MTask): boolean {
+    const next = this.nextAgent(task);
+    const waiting = slotWait(this.getState(), { taskId: task.id, toolId: next ? this.profile(next.profileId)?.toolId ?? "unknown" : "none" });
+    if (waiting) {
+      task.state = "waiting";
+      task.holdsSlot = false;
+      delete task.agent;
+      task.column = this.columnFor(task);
+      task.statusLine = waiting;
+      return false;
+    }
+    task.state = "running";
+    task.holdsSlot = !!next;
+    if (next) task.agent = { ...next, since: Date.now(), step: 0 };
+    else delete task.agent;
+    task.column = this.columnFor(task);
+    task.statusLine = next ? `${this.role(next.roleId)?.name ?? next.roleId} is starting` : "Getting ready";
+    return true;
   }
 
   private nextAgent(task: MTask): { roleId: Id; profileId: Id } | undefined {
@@ -700,6 +737,18 @@ export class Engine {
       for (;;) {
         if (signal.aborted) throw new Aborted();
         const current = task();
+        const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
+        // Checkpoints need no new agent, so a paused or full pool must not hold them back.
+        if (stage?.kind === "gate") {
+          this.gate(current, stage.gate ?? "delivery");
+          return;
+        }
+        // Running agents finish; every following agent must qualify again, even on the same tool.
+        if (!this.reserveAgent(current)) {
+          this.commit();
+          return;
+        }
+        this.commit();
         if (current.stageIndex < 0) {
           await this.runPlanner(current, signal);
           if (current.approvePlan) {
@@ -711,12 +760,7 @@ export class Engine {
           this.commit();
           continue;
         }
-        const stage = current.plan?.stages[current.stageIndex];
         if (!stage) throw new Error("The plan ended without a delivery");
-        if (stage.kind === "gate") {
-          this.gate(current, stage.gate ?? "delivery");
-          return;
-        }
         const next = stage.kind === "do" ? await this.runDo(current, stage, signal) : stage.kind === "converge" ? await this.runConverge(current, stage, signal) : await this.runReview(current, stage, signal);
         if (next === "stop") return;
       }

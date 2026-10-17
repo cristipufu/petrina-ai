@@ -117,7 +117,7 @@ Petrina relies on each tool's own safety checker instead of building one:
 
 - Petrina reads no commands. When a tool's checker flags something and asks, the question goes to the inbox unchanged, with the exact command or paths, and the coordinator allows or denies it once.
 - Petrina never picks a tool's "always" option: those write settings into the working copy or switch modes.
-- Nothing is remembered: every request is allowed or denied once, in the inbox or the session, with the same wording and buttons in both. There are no remembered rules per product and no list of them in Settings. Seeing and removing remembered permissions is not available yet; if remembering returns, it belongs to Product settings and board papercuts.
+- Nothing is remembered: every request is allowed or denied once, in the inbox or the session, with the same wording and buttons in both. There are no remembered rules per product or permission controls in product settings.
 - If a tool's automatic mode is not available for a model, the session log says so and that tool asks before acting.
 - Approval gates and round limits are enforced by the engine, never by prompting a model to stop.
 
@@ -131,9 +131,11 @@ Petrina relies on each tool's own safety checker instead of building one:
 
 - The queue is an ordered list. Priority is position.
 - A pool limit caps running agents, with optional caps per tool.
-- A running stage holds a slot. A task waiting at a gate releases it. An agent waiting on a mid-stage question keeps its slot and is shown as waiting on the coordinator.
-- When a slot frees, the scheduler starts the first queued task that is not held and whose next stage's tool is under its cap.
-- Lowering the limit never kills a stage.
+- Taking a slot records the next agent and its profile (and therefore its tool) at the same moment, before working-copy setup or agent I/O. The card shows the correct step immediately; a new task shows Plan with its planner.
+- Before every new agent, including the same tool, a new design/review round or a new stage, check the pool and tool limits again, excluding this task's old slot. Keep the slot if there is room; otherwise release it and wait at the current step, keeping the working copy and progress. The status names the busy tool, a full pool, or a paused pool.
+- A task waiting at a gate releases its slot. An agent waiting on a mid-stage question keeps it and is shown as waiting on the coordinator.
+- When a slot frees, work already in progress continues first, then the first queued task that is not held and whose next tool is under its cap.
+- Lowering a limit never stops a running agent. Each finishes, and its successor waits if the other tasks still fill the new limit. Pausing the pool also holds tasks between agents.
 
 The scheduler is a pure function in `@petrina/core` (`pickStarts`), tested without any I/O.
 

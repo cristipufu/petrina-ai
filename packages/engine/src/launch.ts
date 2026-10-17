@@ -33,7 +33,7 @@ export interface LaunchOptions {
 /** What the engine tells the shell. One line of JSON, `type` first. */
 export type ShellMessage = { type: "ready" | "running"; owned: boolean; url: string; token: string } | { type: "error"; message: string };
 
-const ALREADY_RUNNING = "Petrina's engine is already running for this folder";
+const ALREADY_RUNNING = "Petrina's engine is already running. Open it with bun run open.";
 const BUSY = "Another Petrina engine holds this folder but does not answer. Wait a moment and try again; if it stays like this, stop the other engine";
 
 function tell(message: ShellMessage): void {
@@ -59,7 +59,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
     // Stepping aside: the log belongs to the engine that holds the folder.
     log.discard();
     if (app) tell(claim.kind === "running" ? { type: "running", owned: false, url: claim.connection.url, token: claim.connection.token } : { type: "error", message: `${BUSY}.` });
-    else process.stderr.write(claim.kind === "running" ? `${ALREADY_RUNNING} (process ${claim.connection.pid}, ${claim.connection.api}). Use that one, or stop it first.\n` : `${BUSY}.\n`);
+    else process.stderr.write(claim.kind === "running" ? `${ALREADY_RUNNING}\n` : `${BUSY}.\n`);
     process.exit(app && claim.kind === "running" ? 0 : 1);
   }
 
