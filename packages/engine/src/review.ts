@@ -3,7 +3,8 @@
 
 import { findingCount, type AgentProfile, type Finding, type Id, type Task } from "@petrina/core";
 import * as git from "./git.js";
-import { VerifyResult, formatFindings, ReviewResult } from "./prompts.js";
+import { formatFindings } from "./prompts.js";
+import { VerifyResult, ReviewResult } from "./roles.js";
 import { Kernel, type DeepMutable, type MStage, type MTask, PLANNER_PROFILE, lastIndex } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";

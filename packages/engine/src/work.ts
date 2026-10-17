@@ -3,7 +3,8 @@
 
 import type { Task } from "@petrina/core";
 import * as git from "./git.js";
-import { BuildResult, formatFindings, NotesResult, ShipResult, TestResult } from "./prompts.js";
+import { formatFindings } from "./prompts.js";
+import { BuildResult, NotesResult, ShipResult, TestResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";

@@ -4,7 +4,7 @@
 import type { Id } from "@petrina/core";
 import type { z } from "zod";
 import * as git from "./git.js";
-import { ShipResult } from "./prompts.js";
+import { ShipResult } from "./roles.js";
 import { Kernel, Aborted, type MTask, SHIPPER_PROFILE } from "./kernel.js";
 
 /** How far before shipping started a release still counts, for clocks that disagree. */

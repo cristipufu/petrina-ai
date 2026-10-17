@@ -3,7 +3,8 @@
 
 import type { Id, GuideLine, Task } from "@petrina/core";
 import * as git from "./git.js";
-import { GuideResult, formatFindings } from "./prompts.js";
+import { formatFindings } from "./prompts.js";
+import { GuideResult } from "./roles.js";
 import { appendToGuide, cleanPoint, GUIDE_FILE, guideText, inGuide, localGuide } from "./guide.js";
 import { Kernel, Aborted, type DeepMutable, GUIDE_KEEPER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";

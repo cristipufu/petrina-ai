@@ -2,7 +2,8 @@
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
 import { answerByCall, CALL_WORDS, followingCall, unanswered, type CallAnswer, type DesignCall, type Id, type Task } from "@petrina/core";
-import { BriefResult, formatObjections, ObjectionsResult } from "./prompts.js";
+import { formatObjections } from "./prompts.js";
+import { BriefResult, ObjectionsResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";

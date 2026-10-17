@@ -3,7 +3,7 @@
 
 import { deliveryStages, type Task } from "@petrina/core";
 import type { z } from "zod";
-import { PlanResult } from "./prompts.js";
+import { PlanResult } from "./roles.js";
 import { Kernel, type DeepMutable, type MStage, type MTask, PLANNER_PROFILE, RISK_WORD, SHIPPER_PROFILE, lastIndex } from "./kernel.js";
 import type { Turns } from "./turn.js";
 

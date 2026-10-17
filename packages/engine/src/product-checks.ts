@@ -3,7 +3,7 @@
 
 import type { ProductCheck } from "@petrina/core";
 import * as git from "./git.js";
-import { CheckFinderResult } from "./prompts.js";
+import { CheckFinderResult } from "./roles.js";
 import { checksFingerprint, commandText, detectChecks, runChecks } from "./checks.js";
 import { agentEnv } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask, lastIndex } from "./kernel.js";
