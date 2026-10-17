@@ -78,7 +78,7 @@ describe("the review guide is safe to read and write", () => {
 });
 
 describe.concurrent("a review guide that learns from misses", () => {
-  it("offers a point when the coordinator sends back what reviewers passed; accepted, reviewers check it and it lands in REVIEW.md", async () => {
+  it("offers a point when the coordinator sends back what reviewers passed; accepted, it reaches REVIEW.md before the next review, and AGENTS.md points every agent to it", async () => {
     const { engine, fakes, task, offers, productId } = await sendBack({}, (engine, id) => engine.approve(id));
     try {
       // An offer that never holds the task up.
@@ -86,12 +86,16 @@ describe.concurrent("a review guide that learns from misses", () => {
       expect(lines(task)).toContain(`You added to the review guide: ${POINT}`);
       expect(engine.getState().products.find((entry) => entry.id === productId)!.reviewGuide).toMatchObject([{ text: POINT, fromTask: task.id, writtenOn: task.id }]);
 
-      // The next round's reviewer read it, and the branch that ships carries it in REVIEW.md.
-      const reviews = fakes.openings("code reviewer");
-      expect(reviews.at(-1)).toContain("The product's review guide (REVIEW.md on ");
-      expect(reviews.at(-1)).toContain("check the change against every point. It never excuses a problem");
-      expect(reviews.at(-1)).toContain(POINT);
+      // In REVIEW.md before the next review round started, so its reviewers read it the way any agent does:
+      // AGENTS.md, which Claude Code and Codex load by themselves, points to it. Petrina adds nothing to prompts.
+      const text = lines(task);
+      expect(text.indexOf(`Added to REVIEW.md: ${POINT}`)).toBeLessThan(text.lastIndexOf("Code reviewer started"));
+      expect(text.indexOf(`Added to REVIEW.md: ${POINT}`)).toBeGreaterThan(text.indexOf(`You added to the review guide: ${POINT}`));
       expect(readFileSync(join(task.worktree!, "REVIEW.md"), "utf8")).toContain(`- ${POINT}`);
+      expect(readFileSync(join(task.worktree!, "AGENTS.md"), "utf8")).toContain("## Review guide\n\nEvery change here is reviewed against REVIEW.md: read it before you build or review one.");
+      const review = fakes.openings("code reviewer").at(-1)!;
+      expect(review).toContain("Check the change against every point of the repository's review guide, REVIEW.md, when it has one");
+      expect(review).not.toContain(POINT);
       // In the task's one commit, with the rest of the work.
       expect(git(task.worktree!, "show", "--format=", "--name-only", "HEAD")).toContain("REVIEW.md");
       expect(git(task.worktree!, "rev-list", "--count", `${task.baseSha}..HEAD`)).toBe("1");

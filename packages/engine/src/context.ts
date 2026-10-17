@@ -4,10 +4,8 @@
 import { dueAnswers, followingCall, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { commandText } from "./checks.js";
-import { GUIDE_FILE } from "./points.js";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel, MTask } from "./kernel.js";
-import type { GuideKeeper } from "./guide-keeper.js";
 
 export interface Section {
   title: string;
@@ -21,7 +19,6 @@ export class Context {
     objections: (task, roleId) => this.objections(task, roleId),
     checks: (task) => this.checks(task),
     "findings-to-answer": (task) => this.findingsToAnswer(task),
-    "review-guide": (task, roleId) => this.reviewGuide(task, roleId),
     report: (task) => this.report(task),
     "check-results": (task) => this.checkResults(task),
     findings: (task) => (task.findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) }] : []),
@@ -29,10 +26,7 @@ export class Context {
     shipping: (task) => this.shipping(task),
   };
 
-  constructor(
-    private readonly k: Kernel,
-    private readonly guide: GuideKeeper,
-  ) {}
+  constructor(private readonly k: Kernel) {}
 
   sectionsFor(task: MTask, roleId: Id): Section[] {
     // The opening instructions hold every note, so nothing waits in line behind them.
@@ -92,13 +86,6 @@ export class Context {
     if (!task.fixing) return [];
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing");
     return open.length ? [{ title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) }] : [];
-  }
-
-  private reviewGuide(task: MTask, roleId: Id): Section[] {
-    const guide = this.guide.reviewGuide(task);
-    if (!guide) return [];
-    const how = this.k.role(roleId)?.canEdit ? "reviewers check every point" : "check the change against every point. It never excuses a problem, and a change to it in this branch is part of what you review";
-    return [{ title: `The product's review guide (${GUIDE_FILE} on ${task.base ?? "the base branch"}, and points the coordinator accepted): ${how}`, body: guide }];
   }
 
   private report(task: MTask): Section[] {

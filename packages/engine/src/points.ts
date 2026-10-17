@@ -1,8 +1,6 @@
-// Plain files of one-line points at a repository's root, which grow only with the coordinator's OK: the review
-// guide (REVIEW.md), which reviewers check every change against, and the learnings in AGENTS.md.
-//
-// Reviewers read the guide as it is on the base branch, never from the change: a branch cannot soften the
-// rules it is judged by. Petrina writes only to a plain file, never through a link.
+// Plain files at a repository's root that grow only with the coordinator's OK: the review guide (REVIEW.md),
+// which reviewers check every change against, and AGENTS.md, which Claude Code and Codex load by themselves
+// (its Learnings, and a pointer to the review guide). Petrina writes only to a plain file, never through a link.
 
 import { lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +14,7 @@ export interface PointsFile {
 
 export const GUIDE: PointsFile = { name: "REVIEW.md", heading: "# Review guide\n\nReviewers check every change against these points.\n\n" };
 export const GUIDE_FILE = GUIDE.name;
+export const AGENTS_FILE = "AGENTS.md";
 const KEPT = 8000;
 
 /** One point on one line: no line breaks or control characters, whatever the agent wrote. */
@@ -62,5 +61,30 @@ export function appendPoints(root: string, file: PointsFile, points: readonly st
   const path = join(root, file.name);
   const draft = `${path}.petrina-${process.pid}`;
   writeFileSync(draft, `${head}${points.map((point) => `- ${cleanPoint(point)}`).join("\n")}\n`, { flag: "wx" });
+  renameSync(draft, path);
+}
+
+/**
+ * Lines added at the end of a section of AGENTS.md (a "## " heading), starting the section, after its intro,
+ * when there is none, and the file when there is none. Replaces the file in one step.
+ */
+export function addToSection(root: string, heading: string, intro: string, lines: readonly string[]): void {
+  const text = localPoints(root, AGENTS_FILE).replace(/\s*$/, "");
+  const all = text ? text.split("\n") : [];
+  const start = all.findIndex((line) => line.trim() === heading);
+  let next: string[];
+  if (start < 0) {
+    next = [...(all.length ? [...all, ""] : []), heading, "", intro, ...(lines.length ? ["", ...lines] : [])];
+  } else {
+    // At the end of the section: before the next heading of the same or a higher level, or at the end of the file.
+    let end = all.findIndex((line, index) => index > start && /^#{1,2} /.test(line));
+    if (end < 0) end = all.length;
+    let last = end;
+    while (last > start + 1 && all[last - 1]!.trim() === "") last -= 1;
+    next = [...all.slice(0, last), ...lines, ...(end < all.length ? ["", ...all.slice(end)] : [])];
+  }
+  const path = join(root, AGENTS_FILE);
+  const draft = `${path}.petrina-${process.pid}`;
+  writeFileSync(draft, `${next.join("\n")}\n`, { flag: "wx" });
   renameSync(draft, path);
 }

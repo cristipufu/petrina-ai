@@ -51,12 +51,12 @@ export class Engine extends Kernel implements Commands {
     super(dataDir, options);
     this.turns = new Turns(this);
     this.guide = new GuideKeeper(this, this.turns);
-    this.context = new Context(this, this.guide);
+    this.context = new Context(this);
     this.checks = new ProductChecks(this, this.turns, this.context);
     this.shipping = new Shipping(this);
     this.updates = new Updates(this);
     this.learnings = new Learnings(this);
-    this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings);
+    this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings, this.guide);
     this.design = new Design(this, this.turns, this.context);
     this.planning = new Planning(this, this.turns);
     this.work = new Work(this, this.turns, this.context, this.guide, this.shipping, this.updates, this.learnings);

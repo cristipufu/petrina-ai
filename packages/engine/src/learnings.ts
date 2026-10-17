@@ -4,14 +4,11 @@
 // Agents pass lessons on with their results, the coordinator accepts or declines them at the delivery check,
 // and accepted ones reach AGENTS.md with a delivery.
 
-import { renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { DeepMutable, GuideLine, Id } from "@petrina/core";
 import * as git from "./git.js";
-import { cleanPoint, hasPoint, localPoints } from "./points.js";
+import { addToSection, AGENTS_FILE, cleanPoint, hasPoint, localPoints } from "./points.js";
 import type { Kernel, MTask } from "./kernel.js";
 
-export const AGENTS_FILE = "AGENTS.md";
 const SECTION = "## Learnings";
 const INTRO = "What agents learned about working in this repository, added with the coordinator's OK.";
 
@@ -111,29 +108,7 @@ export class Learnings {
   }
 }
 
-/**
- * Lessons added at the end of AGENTS.md's Learnings section, starting the section (or the file) when there is
- * none. Only a plain file is written, and it is replaced in one step.
- */
+/** Lessons added at the end of AGENTS.md's Learnings section, starting the section (or the file) when there is none. */
 export function addLearnings(root: string, lessons: readonly string[]): void {
-  const current = localPoints(root, AGENTS_FILE);
-  const lines = lessons.map((lesson) => `- ${cleanPoint(lesson)}`);
-  const text = current.replace(/\s*$/, "");
-  const start = text.split("\n").findIndex((line) => line.trim() === SECTION);
-  let next: string;
-  if (start < 0) {
-    next = `${text ? `${text}\n\n` : ""}${SECTION}\n\n${INTRO}\n\n${lines.join("\n")}\n`;
-  } else {
-    // At the end of the section: before the next heading of the same or a higher level, or at the end of the file.
-    const all = text.split("\n");
-    let end = all.findIndex((line, index) => index > start && /^#{1,2} /.test(line));
-    if (end < 0) end = all.length;
-    let last = end;
-    while (last > start + 1 && all[last - 1]!.trim() === "") last -= 1;
-    next = `${[...all.slice(0, last), ...lines, ...(end < all.length ? ["", ...all.slice(end)] : [])].join("\n")}\n`;
-  }
-  const path = join(root, AGENTS_FILE);
-  const draft = `${path}.petrina-${process.pid}`;
-  writeFileSync(draft, next, { flag: "wx" });
-  renameSync(draft, path);
+  addToSection(root, SECTION, INTRO, lessons.map((lesson) => `- ${cleanPoint(lesson)}`));
 }

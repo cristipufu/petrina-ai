@@ -5,7 +5,11 @@ import { type DeepMutable, type Id, type GuideLine, type Task } from "@petrina/c
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { GuideResult } from "./roles.js";
-import { appendPoints, cleanPoint, GUIDE, GUIDE_FILE, hasPoint, localPoints, pointsText } from "./points.js";
+import { addToSection, AGENTS_FILE, appendPoints, cleanPoint, GUIDE, GUIDE_FILE, hasPoint, localPoints, pointsText } from "./points.js";
+
+/** What AGENTS.md says about the review guide, so every agent reads it, in Petrina or not. */
+const GUIDE_SECTION = "## Review guide";
+const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change may add points to it, but it is judged by the points as the default branch has them.`;
 import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 
@@ -72,7 +76,7 @@ export class GuideKeeper {
       else {
         // An offer, not a stop: the task carries on while the coordinator decides.
         const state = task.state;
-        this.k.raise(task, "guide", `Add a point to ${product.name}'s review guide?`, false, { body: result.line, detail: result.why });
+        this.k.raise(task, "guide", `Add a point to ${product.name}'s review guide?`, false, { body: result.line, detail: `${result.why} It goes into ${GUIDE_FILE}, which AGENTS.md points every agent to, in Petrina or in your own sessions.` });
         task.state = state;
         this.k.log(task, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", GUIDE_KEEPER_PROFILE);
       }
@@ -86,8 +90,9 @@ export class GuideKeeper {
   }
 
   /**
-   * Accepted points reach REVIEW.md on a branch that ships: the task they came from, or else the next
-   * one to reach its delivery check. Nothing is running in the working copy at this point.
+   * Accepted points reach REVIEW.md on a branch that ships: the task they came from (before its next review
+   * round, so its reviewers check them), or else the next one to reach a review or its delivery check. AGENTS.md
+   * gets a short section pointing to the guide when it has none. Nothing is running in the working copy then.
    */
   async writeGuide(task: MTask): Promise<void> {
     const product = this.k.productOf(task);
@@ -99,6 +104,7 @@ export class GuideKeeper {
       due = product.reviewGuide.filter((line) => !hasPoint(file, line.text) && free(line));
       if (!due.length) return;
       appendPoints(task.worktree, GUIDE, due.map((line) => line.text));
+      if (!localPoints(task.worktree, AGENTS_FILE).includes(GUIDE_FILE)) addToSection(task.worktree, GUIDE_SECTION, GUIDE_POINTER, []);
     } catch (error) {
       this.k.log(task, "warn", `The review guide was not updated: ${error instanceof Error ? error.message : String(error)}`);
       return;
@@ -109,7 +115,7 @@ export class GuideKeeper {
     this.k.commit();
   }
 
-  /** The guide as the base branch has it, never as the change under review has it, plus the points the coordinator accepted. */
+  /** The guide as the base branch has it, plus the points the coordinator accepted: what the Guide keeper weighs a new point against. */
   reviewGuide(task: MTask): string {
     const product = this.k.productOf(task);
     const ref = task.baseSha ?? task.base;
