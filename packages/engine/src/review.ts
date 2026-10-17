@@ -136,7 +136,7 @@ export class Reviews {
           reported(key);
         },
       })),
-      (running, waiting) => `${running} ${role.toLowerCase()}${running === 1 ? "" : "s"} looking at the change at once${waiting ? `, ${waiting} waiting for a slot` : ""}`,
+      (running, waiting) => `${running} ${role.toLowerCase()}${running === 1 ? " looking at the change" : "s looking at the change at once"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
     );
   }
 
