@@ -51,7 +51,12 @@ export class Driver {
       task.statusLine = slotWait(this.k.getState(), candidate) ?? "Waiting for a free slot";
       candidates.push(candidate);
     }
-    for (const task of queueOf(this.k.s.tasks as Task[])) if (!task.held && !blocked(task as MTask)) candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
+    for (const task of queueOf(this.k.s.tasks as Task[])) {
+      if (task.held || blocked(task as MTask)) continue;
+      // What it waited for landed or was cancelled: back to plain queue words.
+      if (task.statusLine.startsWith("Waiting for “")) (task as MTask).statusLine = "In the queue";
+      candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
+    }
 
     for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.getState()), pool: this.k.s.pool })) {
       const task = this.k.task(taskId);

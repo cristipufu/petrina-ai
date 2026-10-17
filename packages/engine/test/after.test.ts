@@ -43,8 +43,12 @@ describe("Tasks that start after others land", () => {
     expect(() => engine.setAfter(first, [second])).toThrow();
     expect(() => engine.setAfter(second, ["task-missing"])).toThrow();
 
-    // A cancelled prerequisite no longer blocks.
+    // A cancelled prerequisite no longer blocks, and the queue stops saying it waits for it.
+    engine.setPoolPaused(true);
     engine.cancel(first);
+    task = engine.getState().tasks.find((entry) => entry.id === second)!;
+    expect(task.statusLine).toBe("In the queue");
+    engine.setPoolPaused(false);
     await Bun.sleep(50);
     task = engine.getState().tasks.find((entry) => entry.id === second)!;
     expect(task.state).not.toBe("queued");
