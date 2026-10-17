@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
 import { Connections } from "../src/connection.js";
 import { Engine, type EngineOptions } from "../src/engine.js";
@@ -181,14 +181,17 @@ describe("Tool status", () => {
         // Check again three times and come back to the window while the hung copies are still stopping:
         // one new copy per tool, started only once the old one is gone.
         let most = 0;
+        let mostIds: number[] = [];
         let done = false;
         const again = Promise.all([engine.checkTools(), engine.checkTools(), engine.checkTools()]).then(() => (done = true));
         while (!done) {
-          most = Math.max(most, stillRunning(fakes.dir).length);
+          const ids = stillRunning(fakes.dir);
+          if (ids.length > most) { most = ids.length; mostIds = ids; }
           await Bun.sleep(50);
         }
         await again;
-        expect(most).toBeLessThanOrEqual(2);
+        console.log("Tool process diagnostic", JSON.stringify({ behaviour, starts, most, mostIds, pids: readFileSync(join(fakes.dir, "pids"), "utf8"), processStarts: existsSync(join(fakes.dir, "pid-starts.jsonl")) ? readFileSync(join(fakes.dir, "pid-starts.jsonl"), "utf8") : "" }));
+        expect(most, JSON.stringify({ mostIds, starts })).toBeLessThanOrEqual(2);
         expect(starts).toBe(4);
         expect(status(engine, "claude-code")).toBe("unknown");
         // Every copy is stopped, though each ignored being asked.
@@ -366,7 +369,13 @@ describe("The clone finder", () => {
     try {
       expect((await engine.findClones()).map((entry) => entry.repo).sort()).toEqual(["acme/blog", "acme/shop"]);
       await engine.addProduct(repo);
-      expect((await engine.findClones()).map((entry) => entry.repo)).toEqual(["acme/blog"]);
+      const after = await engine.findClones();
+      const pathInfo = (path: string) => {
+        const read = (fn: () => string) => { try { return fn(); } catch (e) { return String(e); } };
+        return { path, resolved: resolve(path), real: read(() => realpathSync(path)), native: read(() => realpathSync.native(path)) };
+      };
+      console.log("Clone path diagnostic", JSON.stringify({ platform: process.platform, repo: pathInfo(repo), added: engine.s.products.map((p) => ({ id: p.id, ...pathInfo(p.path!) })), after: after.map((p) => ({ repo: p.repo, ...pathInfo(p.path) })) }));
+      expect(after.map((entry) => entry.repo)).toEqual(["acme/blog"]);
       // Saved paths may use another spelling of the same folder (Git uses forward slashes on Windows).
       engine.s.products[0]!.path = `${repo}${sep}.`;
       expect((await engine.findClones()).map((entry) => entry.repo)).toEqual(["acme/blog"]);

@@ -1,0 +1,22 @@
+name: Windows first-run diagnostic
+
+on:
+  push:
+    branches: [diagnose/windows-first-run]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun test --parallel --timeout 90000 packages/engine/test/setup.test.ts -t "hides products already added|never piles up copies"

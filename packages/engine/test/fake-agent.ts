@@ -225,7 +225,10 @@ const stubborn = process.argv.includes("--stubborn");
 if (stubborn) {
   process.on("SIGTERM", () => undefined);
   setInterval(() => undefined, 1000);
-  if (dir) appendFileSync(join(dir, "pids"), `${process.pid}\n`);
+  if (dir) {
+    appendFileSync(join(dir, "pids"), `${process.pid}\n`);
+    appendFileSync(join(dir, "pid-starts.jsonl"), `${JSON.stringify({ pid: process.pid, at: Date.now(), tool })}\n`);
+  }
 }
 if (process.argv.includes("--wont-start")) process.exit(3);
 const scriptPath = process.argv.find((arg) => arg.startsWith("--script="))?.slice("--script=".length);
