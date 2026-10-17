@@ -178,6 +178,8 @@ export interface Task {
   /** Position in the queue. Lower starts first. */
   priority: number;
   held: boolean;
+  /** Tasks that must land first; until then this one waits quietly (a cancelled one no longer blocks). */
+  after?: readonly Id[];
   state: RunState;
   column: Column;
   /** Whether the task currently occupies a pool slot. */

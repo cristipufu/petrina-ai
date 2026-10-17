@@ -21,6 +21,7 @@ export interface Actions {
   moveInQueue(taskId: Id, index: number): void;
   moveToTop(taskId: Id): void;
   setHeld(taskId: Id, held: boolean): void;
+  setAfter(taskId: Id, after: Id[]): void;
   pause(taskId: Id): void;
   resume(taskId: Id): void;
   cancel(taskId: Id): void;
@@ -173,6 +174,7 @@ class EngineClient implements Store {
   moveInQueue = (taskId: Id, index: number) => this.fire("moveInQueue", taskId, index);
   moveToTop = (taskId: Id) => this.fire("moveToTop", taskId);
   setHeld = (taskId: Id, held: boolean) => this.fire("setHeld", taskId, held);
+  setAfter = (taskId: Id, after: Id[]) => this.fire("setAfter", taskId, after);
   pause = (taskId: Id) => this.fire("pause", taskId);
   resume = (taskId: Id) => this.fire("resume", taskId);
   cancel = (taskId: Id) => this.fire("cancel", taskId);
@@ -202,6 +204,7 @@ class DemoStore implements Store {
   moveInQueue = (taskId: Id, index: number) => this.simulator.moveInQueue(taskId, index);
   moveToTop = (taskId: Id) => this.simulator.moveToTop(taskId);
   setHeld = (taskId: Id, held: boolean) => this.simulator.setHeld(taskId, held);
+  setAfter = () => undefined;
   pause = (taskId: Id) => this.simulator.pause(taskId);
   resume = (taskId: Id) => this.simulator.resume(taskId);
   cancel = (taskId: Id) => this.simulator.cancel(taskId);

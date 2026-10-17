@@ -238,6 +238,35 @@ export class Engine {
     this.schedule();
   }
 
+  /** Start this task only after the given tasks have landed. An empty list removes the wait. */
+  setAfter(taskId: Id, after: readonly Id[]): void {
+    const task = this.task(taskId);
+    if (!task) throw new Error("Unknown task");
+    const ids = [...new Set(after)];
+    for (const id of ids) {
+      if (id === taskId) throw new Error("A task cannot wait for itself");
+      if (!this.task(id)) throw new Error(`Unknown task: ${id}`);
+    }
+    // No loops: none of the tasks it waits for may (indirectly) wait for it.
+    const reaches = (from: Id, seen = new Set<Id>()): boolean => {
+      if (from === taskId) return true;
+      if (seen.has(from)) return false;
+      seen.add(from);
+      return (this.task(from)?.after ?? []).some((next) => reaches(next, seen));
+    };
+    if (ids.some((id) => reaches(id))) throw new Error("That would make tasks wait for each other");
+    task.after = ids;
+    const names = ids.map((id) => `“${this.task(id)!.title}”`).join(" and ");
+    this.log(task, "you", ids.length ? `It starts after ${names} land${ids.length === 1 ? "s" : ""}` : "It no longer waits for other tasks");
+    this.commit();
+    this.schedule();
+  }
+
+  /** The tasks this one still waits for. */
+  private blockers(task: MTask): MTask[] {
+    return (task.after ?? []).map((id) => this.task(id)).filter((other): other is MTask => !!other && other.state !== "done" && other.state !== "cancelled");
+  }
+
   setPoolLimit(limit: number): void {
     this.s.pool.limit = Math.max(1, Math.min(12, Math.round(limit)));
     this.commit();
@@ -492,11 +521,21 @@ export class Engine {
   private schedule(): void {
     const candidates: Candidate[] = [];
     const tool = (profileId: Id) => this.profile(profileId)?.toolId ?? "unknown";
+    // A task waiting for others to land stays out of the running and says what it waits for.
+    const blocked = (task: MTask): boolean => {
+      const waitingFor = this.blockers(task);
+      if (!waitingFor.length) return false;
+      const line = `Waiting for “${waitingFor[0]!.title}”${waitingFor.length > 1 ? ` and ${waitingFor.length - 1} more` : ""} to land`;
+      if (task.statusLine !== line) task.statusLine = line;
+      return true;
+    };
     for (const task of this.s.tasks.filter((entry) => entry.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
+      if (blocked(task)) continue;
+      if (task.statusLine.startsWith("Waiting for “")) task.statusLine = "Waiting for a free slot";
       const next = this.nextAgent(task);
       candidates.push({ taskId: task.id, toolId: next ? tool(next.profileId) : "none" });
     }
-    for (const task of queueOf(this.s.tasks as Task[])) if (!task.held) candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
+    for (const task of queueOf(this.s.tasks as Task[])) if (!task.held && !blocked(task as MTask)) candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
 
     for (const taskId of pickStarts({ candidates, inUse: slotUses(this.getState()), pool: this.s.pool })) {
       const task = this.task(taskId);
@@ -1165,6 +1204,8 @@ export class Engine {
         task.statusLine = state === "merged" ? `Merged #${task.pr!.number} on GitHub` : `Closed #${task.pr!.number} without merging`;
         this.log(task, "done", task.statusLine);
         this.commit();
+        // Tasks waiting for this one to land can start now.
+        this.schedule();
       }
     }
   }
