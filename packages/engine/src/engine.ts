@@ -36,6 +36,7 @@ import {
   type Column,
   type DeliveryMode,
   type DesignCall,
+  type Finding,
   type GateKind,
   type Id,
   type InboxItem,
@@ -998,15 +999,13 @@ export class Engine {
       const finding = task.findings.find((entry) => entry.id === id);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
-    for (const id of result.disputes) {
-      const finding = task.findings.find((entry) => entry.id === id);
-      if (finding && finding.status === "open" && finding.raisedBy !== "petrina") finding.status = "dismissed";
-    }
+    recordDisputes(task.findings, result.disputes, profileId, Date.now());
     for (const finding of result.findings) {
       task.findings.push({
         id: this.id(task.id),
         text: finding.text,
         ...(finding.where ? { where: finding.where } : {}),
+        ...(finding.evidence ? { evidence: finding.evidence } : {}),
         severity: finding.severity,
         raisedBy: profileId,
         confirmedBy: [],
@@ -1789,6 +1788,19 @@ export class Engine {
     this.store.save(this.getState());
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
+  }
+}
+
+/**
+ * A later reviewer thinks findings are wrong: each dispute is kept with who and why. One reviewer's
+ * dispute dismisses a finding nobody else backed; Petrina's own checks and confirmed findings stay open.
+ */
+export function recordDisputes(findings: DeepMutable<Finding>[], disputes: readonly { id: string; reason: string }[], by: Id, at: number): void {
+  for (const dispute of disputes) {
+    const finding = findings.find((entry) => entry.id === dispute.id);
+    if (!finding || finding.status !== "open") continue;
+    finding.disputes = [...(finding.disputes ?? []), { by, reason: dispute.reason, at }];
+    if (finding.raisedBy !== "petrina" && finding.confirmedBy.length === 0) finding.status = "dismissed";
   }
 }
 

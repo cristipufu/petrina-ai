@@ -945,6 +945,7 @@ kbd {
 .issue-status { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--text-3); }
 .issue-text { color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
 .issue-who { color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.issue-evidence { color: var(--text-2); overflow-wrap: anywhere; }
 .issue-response { padding: 12px 16px; border-radius: var(--radius-sm); background: var(--sunken); color: var(--text-2); overflow-wrap: anywhere; white-space: pre-wrap; }
 .issue-response b { display: block; color: var(--text); font-weight: 600; margin-bottom: 4px; }
 .tamper { display: flex; align-items: center; gap: 8px; color: var(--green-text); font-weight: 500; }

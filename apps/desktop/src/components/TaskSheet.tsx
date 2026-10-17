@@ -560,10 +560,23 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
         <span>{finding.severity === "blocking" ? "Blocking" : "Suggestion"}</span>
       </div>
       <p className="issue-text">{finding.text}</p>
+      {finding.evidence && <p className="issue-evidence">{finding.evidence}</p>}
       <p className="issue-who">
         Raised by {profileText(find.profile(finding.raisedBy), find, true)}
         {finding.confirmedBy.length > 0 && `. Confirmed by ${finding.confirmedBy.map((profileId) => profileText(find.profile(profileId), find, true)).join(" and ")}`}
       </p>
+      {(finding.disputes ?? []).map((dispute, index) => (
+        <div key={index} className="issue-response">
+          <b>{finding.status === "dismissed" ? "Dismissed by" : "Disputed by"} {profileText(find.profile(dispute.by), find, true)}</b>
+          {dispute.reason}
+        </div>
+      ))}
+      {finding.status === "dismissed" && !finding.disputes?.length && (
+        <div className="issue-response">
+          <b>Dismissed by a later reviewer</b>
+          The reason was not recorded: reviewers did not have to give one before this change.
+        </div>
+      )}
     </li>
   );
 }

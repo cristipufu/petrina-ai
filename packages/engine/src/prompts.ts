@@ -72,7 +72,8 @@ export const ReviewResult = z.object({
     )
     .default([]),
   confirms: z.array(z.string()).default([]),
-  disputes: z.array(z.string()).default([]),
+  // A dispute always says why: the coordinator reads it next to the finding.
+  disputes: z.array(z.object({ id: z.string(), reason: z.string().min(10) })).default([]),
 });
 
 export const ShipResult = z.object({
@@ -152,7 +153,7 @@ const SHAPES: Record<string, string> = {
   "ux-designer": `{"summary": "The screens and words you propose", "notes": ["One note per line"]}`,
   builder: `{"summary": "What you built, in plain language", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result"}`,
   tester: `{"summary": "How it went", "checks": [{"text": "An acceptance item", "pass": true}]}`,
-  "code-reviewer": `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "blocking", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": ["<id of an earlier finding you think is wrong>"]}`,
+  "code-reviewer": `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "blocking", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}]}`,
   shipper: `{"summary": "What you delivered", "prNumber": 12, "prUrl": "https://github.com/...", "tag": "v1.2.3", "releaseUrl": "https://github.com/...", "sha": "<commit sha on the default branch>"}`,
 };
 
@@ -207,7 +208,7 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
       return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it. Your job is to try to prove that it is NOT done.
 Check every acceptance item, look for bugs, missing tests, weakened tests and things that break existing behaviour. Run the tests.
 Each finding is pass or fail with where it is and the evidence; never give a score. Mark a finding blocking only if the change should not ship with it.
-If earlier reviewers' findings are listed below, confirm the ones you agree with and dispute the ones you think are wrong, by id.
+If earlier reviewers' findings are listed below, confirm the ones you agree with by id. Dispute the ones you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.
 Do not change any files.`;
     case "shipper":
       return shipperInstructions(ctx, defaultBranch);
