@@ -45,8 +45,7 @@ export interface Scenario {
    * How it reopens a conversation: "resume" (it offers load too), "load" (it replays the conversation
    * first), or "stall" (it offers resume and never answers). Unset: it cannot reopen conversations.
    */
-  /** "silent": the first handshake after it is set never answers at all (later ones do). */
-  reopen?: "resume" | "load" | "stall" | "silent";
+  reopen?: "resume" | "load" | "stall";
   /** What the Check finder hands back: a passing check (default), a failing one, one that changes a tracked file, or one that commits. */
   checks?: "pass" | "fail" | "writes" | "commits";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
@@ -88,7 +87,13 @@ const brief = { summary: "A greeting file.", forUsers: ["People see a greeting"]
 const scenario = (): Scenario => (dir && existsSync(join(dir, "scenario.json")) ? (JSON.parse(readFileSync(join(dir, "scenario.json"), "utf8")) as Scenario) : {});
 const mark = (name: string) => dir && writeFileSync(join(dir, name), String(Date.now()));
 const marked = (name: string) => !!dir && existsSync(join(dir, name));
-const run = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+/**
+ * "--silent": this process never answers its handshake. A test hands it to one process only (the engine asks
+ * for the command for each one), so a slow machine killing it before the handshake even arrives cannot pass
+ * the silence on to the fresh agent that starts next.
+ */
+const silent = process.argv.includes("--silent");
+const run =(cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 const gh = (cwd: string, ...args: string[]) => execFileSync(process.execPath, [join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json"), ...args], { cwd }).toString().trim();
 
 type Reply = { text: string; stop?: "cancelled" };
@@ -408,10 +413,7 @@ acp
   .agent({ name: "fake-agent" })
   .onRequest("initialize", async () => {
     const how = scenario().reopen;
-    if (how === "silent" && dir && !existsSync(join(dir, "silent-stalled"))) {
-      mark("silent-stalled");
-      await new Promise(() => undefined);
-    }
+    if (silent) await new Promise(() => undefined);
     return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: how === "resume" || how === "load", ...(how === "resume" || how === "stall" ? { sessionCapabilities: { resume: {} } } : {}) } };
   })
   .onRequest("session/new", (ctx) => {

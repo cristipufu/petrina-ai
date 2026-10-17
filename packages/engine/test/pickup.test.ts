@@ -351,7 +351,14 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
       const product = makeProduct(root);
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ planner: "short", builder: "work", reopen: "resume" });
-      const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], reopenTimeoutMs: 1500 };
+      // "no answer at all": the next agent process never answers its handshake, whenever it is killed.
+      let silentNext = false;
+      const agentCommand = () => {
+        const silent = silentNext;
+        silentNext = false;
+        return [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(silent ? ["--silent"] : [])];
+      };
+      const options = { agentCommand, reopenTimeoutMs: 1500 };
       let engine = new Engine(join(root, "data"), options);
       const productId = await engine.addProduct(product);
       engine.setProductDelivery(productId, "local", false);
@@ -361,7 +368,8 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
       engine.shutdown();
 
       if (trouble === "no answer") fakes.scenario({ planner: "short", builder: "work", reopen: "stall" });
-      else if (trouble === "no answer at all") fakes.scenario({ planner: "short", builder: "work", reopen: "silent" });
+      // The new engine's first agent process is the one reopening the builder's conversation.
+      else if (trouble === "no answer at all") silentNext = true;
       else fakes.forgetConversations();
       engine = new Engine(join(root, "data"), options);
       const done = await waitFor(() => {

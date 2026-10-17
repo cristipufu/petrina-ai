@@ -1,4 +1,5 @@
 // Shared by the tests that run engines as separate processes.
+import { setDefaultTimeout } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +9,15 @@ import { readConnection } from "../src/instance.js";
 import type { ShellMessage } from "../src/launch.js";
 import type { Scenario } from "./fake-agent.js";
 import type { FakeGitHub } from "./fake-gh.js";
+
+/**
+ * How much longer the time limits are on this machine. A Windows runner takes several times longer to start
+ * every engine, agent and git process these tests drive. The limits only catch hangs, so they stretch there;
+ * what a test asserts about time (the engine stopping within 10 seconds, say) stays as it is.
+ */
+export const SLOW = process.platform === "win32" ? 3 : 1;
+// Every test that drives real processes imports this file: one limit for all of them, stretched like the waits.
+setDefaultTimeout(90_000 * SLOW);
 
 export const CLI = join(import.meta.dir, "../src/cli.ts");
 export const HARNESS = join(import.meta.dir, "harness.ts");
@@ -52,7 +62,7 @@ export async function waitFor<T>(check: () => T | undefined | false | Promise<T 
   for (;;) {
     const value = await check();
     if (value) return value;
-    if (Date.now() - started > ms) throw new Error(`Timed out waiting for ${what}`);
+    if (Date.now() - started > ms * SLOW) throw new Error(`Timed out waiting for ${what}`);
     await Bun.sleep(50);
   }
 }

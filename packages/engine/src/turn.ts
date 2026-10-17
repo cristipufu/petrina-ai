@@ -71,11 +71,11 @@ export class Turns {
     this.k.commitNow();
 
     const live = () => this.k.task(taskId);
-    const command = this.k.options.agentCommand?.(profile);
     const env = await this.envFor(task, roleId);
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
-    const start = (sessionId?: string) =>
+    // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
+    const start = (sessionId?: string, command = this.k.options.agentCommand?.(profile)) =>
       AgentRun.start({
         profile,
         ...(command ? { command } : {}),
