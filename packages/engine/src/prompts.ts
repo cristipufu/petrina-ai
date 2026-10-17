@@ -36,7 +36,8 @@ export const BriefResult = z.object({
   areas: z.array(z.string()).default([]),
   acceptance: z.array(z.string()).min(1),
   risks: z.array(z.string()).default([]),
-  answers: z.array(z.object({ id: z.string(), status: z.enum(["accepted", "rejected"]), answer: z.string(), byCall: z.boolean().default(false) })).default([]),
+  // A blank answer is no answer: it goes back to the architect to fill in.
+  answers: z.array(z.object({ id: z.string(), status: z.enum(["accepted", "rejected"]), answer: z.string().trim().min(1), byCall: z.boolean().default(false) })).default([]),
 });
 
 export const ObjectionsResult = z.object({

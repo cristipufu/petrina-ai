@@ -30,7 +30,8 @@ export interface Scenario {
    * How it reopens a conversation: "resume" (it offers load too), "load" (it replays the conversation
    * first), or "stall" (it offers resume and never answers). Unset: it cannot reopen conversations.
    */
-  reopen?: "resume" | "load" | "stall";
+  /** "silent": the first handshake after it is set never answers at all (later ones do). */
+  reopen?: "resume" | "load" | "stall" | "silent";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
   restarts?: number;
 }
@@ -282,8 +283,12 @@ async function ship(sessionId: string, cwd: string, text: string, plan: NonNulla
 
 acp
   .agent({ name: "fake-agent" })
-  .onRequest("initialize", () => {
+  .onRequest("initialize", async () => {
     const how = scenario().reopen;
+    if (how === "silent" && dir && !existsSync(join(dir, "silent-stalled"))) {
+      mark("silent-stalled");
+      await new Promise(() => undefined);
+    }
     return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: how === "resume" || how === "load", ...(how === "resume" || how === "stall" ? { sessionCapabilities: { resume: {} } } : {}) } };
   })
   .onRequest("session/new", (ctx) => {

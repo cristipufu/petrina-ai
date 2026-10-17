@@ -54,7 +54,7 @@ const humanizeCommand = (command: string): string => {
 
 const baseName = (path: string): string => path.split("/").filter(Boolean).at(-1) ?? path;
 
-function describeTool(update: { title?: string | null; kind?: string | null; locations?: { path: string }[] | null; rawInput?: unknown }): string {
+export function describeTool(update: { title?: string | null; kind?: string | null; locations?: { path: string }[] | null; rawInput?: unknown }): string {
   const kind = update.kind ?? "other";
   const command = commandOf(update.rawInput);
   const file = update.locations?.[0]?.path;
@@ -69,8 +69,11 @@ function describeTool(update: { title?: string | null; kind?: string | null; loc
       return file ? `Removing ${baseName(file)}` : "Removing files";
     case "move":
       return "Moving files";
-    case "execute":
-      return command ? humanizeCommand(command) : "Running a command";
+    case "execute": {
+      // Claude Code says what each command is for; that reads far better than "Running a command".
+      const purpose = purposeOf(update.rawInput);
+      return purpose ?? (command ? humanizeCommand(command) : "Running a command");
+    }
     case "think":
       return "Thinking it through";
     case "fetch":
@@ -78,6 +81,24 @@ function describeTool(update: { title?: string | null; kind?: string | null; loc
     default:
       return update.title ? update.title.slice(0, 80) : "Working";
   }
+}
+
+/** The agent's own one-line description of a command, when its tool gives one. */
+function purposeOf(rawInput: unknown): string | undefined {
+  if (!rawInput || typeof rawInput !== "object") return undefined;
+  const value = (rawInput as { description?: unknown }).description;
+  if (typeof value !== "string") return undefined;
+  const text = value.trim().replace(/\s+/g, " ");
+  if (text.length < 3) return undefined;
+  const line = text.length > 90 ? `${text.slice(0, 89).trimEnd()}…` : text;
+  return line[0]!.toUpperCase() + line.slice(1);
+}
+
+/** The tools' own plumbing (loading tools, to-do bookkeeping): never shown as what the agent is doing. */
+const PLUMBING = /^(ToolSearch|TodoWrite|TodoRead|Task(Output|Stop|Create|Update|Get|List)?|Skill|EnterPlanMode|ExitPlanMode|ListMcpResourcesTool|ReadMcpResourceTool)$/;
+
+export function isPlumbing(update: { title?: string | null; kind?: string | null }): boolean {
+  return (update.kind ?? "other") === "other" && PLUMBING.test((update.title ?? "").trim());
 }
 
 function commandOf(rawInput: unknown): string | undefined {
@@ -169,6 +190,7 @@ export class AgentRun {
               break;
             case "tool_call": {
               titles.set(update.toolCallId, update);
+              if (isPlumbing(update)) break;
               const line = describeTool(update);
               if (line !== state.lastActivity) {
                 state.lastActivity = line;
@@ -215,6 +237,15 @@ export class AgentRun {
     };
 
     // The same rules for a new and a reopened conversation: model, effort, then the automatic safety mode.
+    // Reopening is limited as a whole, handshake and settings included: a tool that never answers
+    // at all falls back to a fresh conversation instead of hanging the step.
+    let whole: ReturnType<typeof setTimeout> | undefined;
+    const reopenLimit = options.reopenTimeoutMs ?? REOPEN_TIMEOUT_MS;
+    const deadline =
+      options.reopen === undefined
+        ? undefined
+        : new Promise<never>((_, reject) => (whole = setTimeout(() => reject(new ReopenFailed(`${adapter.name} did not reopen the conversation within ${duration(reopenLimit)}`)), reopenLimit)));
+    deadline?.catch(() => undefined);
     const ready = (async () => {
       const session = await open();
       const configOptions = (session.configOptions ?? []) as { id: string; options?: { value: string }[] }[];
@@ -234,9 +265,11 @@ export class AgentRun {
     ready.catch(() => undefined);
 
     try {
-      const session = await Promise.race([ready, killed]);
+      const session = await Promise.race([ready, killed, ...(deadline ? [deadline] : [])]);
+      clearTimeout(whole);
       return new AgentRun(child, connection, session.sessionId, state, session.how);
     } catch (error) {
+      clearTimeout(whole);
       // No agent left running behind a conversation that did not open.
       signal.removeEventListener("abort", abort);
       if (child.exitCode === null) child.kill();

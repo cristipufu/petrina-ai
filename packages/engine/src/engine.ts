@@ -585,6 +585,8 @@ export class Engine {
   }
 
   requestChanges(itemId: Id, note: string): void {
+    // Refused, not dropped: the window keeps the note to send again.
+    if (!this.s.inbox.some((entry) => entry.id === itemId)) throw new Error("That check isn't waiting any more, so your note wasn't applied. Send it again on the task.");
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
@@ -608,6 +610,8 @@ export class Engine {
       task.stageIndex = -1;
       delete task.plan;
     } else if (item.kind === "design" || item.kind === "disagreement") {
+      // Back to this very check afterwards, not to an earlier one the coordinator already approved.
+      if (item.kind === "design") task.returnToCheck = task.stageIndex;
       const index = designStageIndex(stages, task.stageIndex);
       if (index >= 0) {
         // On a design the call settled, changes go to the architect alone and come back to the same check.
@@ -758,6 +762,15 @@ export class Engine {
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
         // Checkpoints need no new agent, so a paused or full pool must not hold them back.
         if (stage?.kind === "gate") {
+          // On the way back to the check where changes were asked, earlier design checks are not asked again.
+          if (stage.gate === "design" && current.returnToCheck !== undefined && current.stageIndex < current.returnToCheck) {
+            this.log(current, "milestone", "Went past the earlier design check you already approved, back to the one where you asked for changes");
+            current.stageIndex += 1;
+            current.sub = 0;
+            this.commit();
+            continue;
+          }
+          delete current.returnToCheck;
           this.gate(current, stage.gate ?? "delivery");
           return;
         }
@@ -945,7 +958,7 @@ export class Engine {
       task.holdsSlot = false;
       task.statusLine = "The architects disagree. Your call";
       this.raise(task, "disagreement", `The architects disagree on “${task.title}”`, false, { body: CALL_WORDS.disagreement });
-      this.commit();
+      this.commitNow();
       return "stop";
     }
     task.rounds[stage.id] = round + 1;
@@ -1226,7 +1239,10 @@ export class Engine {
     // The opening instructions hold every note, so nothing waits in line behind them.
     task.queued.splice(0);
     // Every agent on the task sees all of the coordinator's notes, reviewers included.
-    const notes = (task.notes ?? []).map((note) => `- ${note.text}`);
+    // A step started again hears what was said in its earlier attempt in that section of its own,
+    // so those notes are left out here: nothing is heard twice.
+    const fromEarlier = (task.stepAttempts ?? 0) > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
+    const notes = (task.notes ?? []).filter((note) => !fromEarlier.some((said) => (note.id !== undefined && note.id === said.id) || note.text === said.text)).map((note) => `- ${note.text}`);
     if (notes.length) sections.push({ title: "The coordinator's notes on this task (follow them; where they conflict with the brief or each other, the latest wins)", body: notes.join("\n\n") });
     if (brief && roleId !== "planner") {
       sections.push({
@@ -1509,7 +1525,8 @@ export class Engine {
     this.raise(task, gate, titles[gate], false, body ? { body } : {});
     task.statusLine = status[gate];
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
-    this.commit();
+    // On disk before the window shows it: an answer to this check must find it after any restart.
+    this.commitNow();
   }
 
   private raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string } = {}): Id {

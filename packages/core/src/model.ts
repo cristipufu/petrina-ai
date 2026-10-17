@@ -272,6 +272,8 @@ export interface Task {
   sub: number;
   /** The builder is fixing review findings. */
   fixing: boolean;
+  /** Changes were asked at this design check: earlier checks of the same design pass by themselves on the way back to it. */
+  returnToCheck?: number;
   agent?: ActiveAgent;
   statusLine: string;
   createdAt: number;

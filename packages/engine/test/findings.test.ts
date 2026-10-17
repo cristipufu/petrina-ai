@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import type { Finding } from "@petrina/core";
-import { recordDisputes } from "../src/engine.js";
-import { ReviewResult } from "../src/prompts.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Engine, recordDisputes } from "../src/engine.js";
+import { BriefResult, ReviewResult } from "../src/prompts.js";
+import { describeTool, isPlumbing } from "../src/acp-run.js";
 
 const finding = (id: string, extra: Partial<Finding> = {}): Finding => ({ id, text: `Finding ${id}`, severity: "blocking", raisedBy: "sol-xhigh", confirmedBy: [], status: "open", ...extra });
 
@@ -25,5 +29,30 @@ describe("disputed findings", () => {
     expect(ReviewResult.safeParse({ verdict: "pass", findings: [], disputes: ["a"] }).success).toBe(false);
     expect(ReviewResult.safeParse({ verdict: "pass", findings: [], disputes: [{ id: "a", reason: "" }] }).success).toBe(false);
     expect(ReviewResult.safeParse({ verdict: "pass", findings: [], disputes: [{ id: "a", reason: "Not reproducible on the branch." }] }).success).toBe(true);
+  });
+
+  it("refuses a blank answer to an objection", () => {
+    const brief = { summary: "A greeting.", acceptance: ["A greeting file exists"] };
+    expect(BriefResult.safeParse({ ...brief, answers: [{ id: "o1", status: "accepted", answer: "  " }] }).success).toBe(false);
+    expect(BriefResult.safeParse({ ...brief, answers: [{ id: "o1", status: "accepted", answer: "Added the empty state." }] }).success).toBe(true);
+  });
+
+  it("refuses a change request for a check that is no longer waiting, so the window keeps the note", () => {
+    const dir = mkdtempSync(join(tmpdir(), "petrina-changes-"));
+    const engine = new Engine(dir);
+    try {
+      expect(() => engine.requestChanges("inbox-gone", "Make it friendlier")).toThrow("isn't waiting any more");
+    } finally {
+      engine.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("says what a command is for, and hides the tools' own plumbing", () => {
+    expect(describeTool({ kind: "execute", rawInput: { command: "rg -n stage src", description: "find where the engine records stage changes" } })).toBe("Find where the engine records stage changes");
+    expect(describeTool({ kind: "execute", rawInput: { command: "bun test" } })).toBe("Running the tests");
+    expect(isPlumbing({ kind: "other", title: "ToolSearch" })).toBe(true);
+    expect(isPlumbing({ kind: "other", title: "TodoWrite" })).toBe(true);
+    expect(isPlumbing({ kind: "read", title: "Read notes.txt" })).toBe(false);
   });
 });

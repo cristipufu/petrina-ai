@@ -45,4 +45,10 @@ describe("the PATH an app opened from the Dock gets", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("Agents work in the background");
   });
+
+  it("reads the PATH even when the shell exports the marker as `_` (dash)", () => {
+    const output = ["__petrina_env__", "_=__petrina_env__", "HOME=/home/me", "PATH=/usr/local/bin:/usr/bin", "__petrina_env__", ""].join("\n");
+    expect(pathFromEnv(output)).toBe("/usr/local/bin:/usr/bin");
+    expect(pathFromEnv("no markers here")).toBeUndefined();
+  });
 });

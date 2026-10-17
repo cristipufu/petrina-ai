@@ -243,6 +243,8 @@ describe("The coordinator's call on a design disagreement", () => {
     state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== later.id, coordinator);
     const after = taskOf(state, taskId);
     expect(after.error).toBeUndefined();
+    // Back at the later check, not the earlier one already approved.
+    expect(after.stageIndex).toBe(designIndex + 3);
     expect(reviewerRuns(after)).toBe(reviews);
     expect(after.rounds[design.id]).toBe(rounds);
     expect(after.plan!.stages).toHaveLength(stages);
