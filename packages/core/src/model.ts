@@ -44,6 +44,8 @@ export interface Role {
   handsBack: string;
   /** The board column a task sits in while this role works on it. */
   column: Column;
+  /** Petrina runs this role itself: the planner is never told it exists, and a plan cannot use it. */
+  internal?: boolean;
 }
 
 export type Column = "queue" | "planning" | "designing" | "building" | "reviewing" | "ready" | "done";
@@ -259,6 +261,8 @@ export interface Finding {
   status: "open" | "fixed" | "dismissed";
 }
 
+export type RiskLevel = "low" | "medium" | "high";
+
 export interface FindingVerification {
   /** The verifier's profile. */
   by: Id;
@@ -320,6 +324,11 @@ export interface Task {
   checkReturns?: number;
   /** The commit the last review round looked at: later rounds review only what changed since. */
   reviewedSha?: string;
+  /** How much could go wrong, as the planner rated it from what the task touches. Sets review depth and the delivery check. */
+  risk?: { level: RiskLevel; why: string };
+  /** The commit the delivery check showed the coordinator, and the one they approved: a change after that asks again. */
+  checkedSha?: string;
+  approvedSha?: string;
   agent?: ActiveAgent;
   statusLine: string;
   createdAt: number;
@@ -409,6 +418,8 @@ export interface Product {
   approveDelivery?: boolean;
   /** Which part of the version a release bumps. Defaults to patch. */
   releaseBump?: "patch" | "minor" | "major";
+  /** With "ask before shipping" on: low-risk work ships without asking. Off unless the coordinator opts in. */
+  shipLowRisk?: boolean;
   /** The commands that prove this product works. Petrina runs them itself; unset until found. */
   checks?: readonly ProductCheck[];
   /** Who set the checks: the Check finder agent, or the coordinator by hand (never replaced on its own). */

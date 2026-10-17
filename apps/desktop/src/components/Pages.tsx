@@ -145,6 +145,7 @@ export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
                   <div className="name">{role.name}</div>
                   <div className="quiet-text" style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>
                     {role.canEdit ? "Edits the product" : "Read-only"}
+                    {role.internal ? " · Run by Petrina" : ""}
                   </div>
                 </div>
               </div>

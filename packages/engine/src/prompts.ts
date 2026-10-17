@@ -28,6 +28,7 @@ export const PlanResult = z.object({
     )
     .min(1)
     .max(12),
+  risk: z.object({ level: z.enum(["low", "medium", "high"]), why: z.string().trim().min(3).max(300) }).optional(),
 });
 
 export const BriefResult = z.object({
@@ -160,7 +161,7 @@ const SHAPES: Record<string, string> = {
   {"kind": "gate", "title": "Your design check", "roleId": "architect", "gate": "design"},
   {"kind": "do", "title": "Build", "roleId": "builder", "profileIds": ["<profile id>"]},
   {"kind": "review-chain", "title": "Review", "roleId": "code-reviewer", "profileIds": ["<profile id>", "<profile id on another tool>"], "maxRounds": 2}
-]}`,
+], "risk": {"level": "medium", "why": "What it touches, in plain words"}}`,
   researcher: `{"summary": "What you found, in plain language", "notes": ["One finding per line"]}`,
   architect: `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "answers": [{"id": "<objection id>", "status": "accepted", "answer": "What you changed, or why not"}]}`,
   "architect-call": `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "answers": [{"id": "<objection id the call decides>", "status": "accepted", "byCall": true, "answer": "What you changed in the brief to follow the call"}, {"id": "<objection id the call does not speak to>", "status": "rejected", "byCall": false, "answer": "What you changed, or why not"}]}`,
@@ -170,6 +171,7 @@ const SHAPES: Record<string, string> = {
   tester: `{"summary": "How it went", "checks": [{"text": "An acceptance item", "pass": true}]}`,
   "check-finder": `{"summary": "How this product is checked, in one sentence", "checks": [{"name": "Tests", "argv": ["dotnet", "test"], "why": "CI runs it on every pull request"}]}`,
   "code-reviewer": `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}]}`,
+  "security-reviewer": `{"verdict": "pass", "findings": [{"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": [], "disputes": []}`,
   verifier: `{"verdicts": [{"id": "<finding id>", "verdict": "real", "reason": "What you checked and what it showed"}]}`,
   shipper: `{"summary": "What you delivered", "prNumber": 12, "prUrl": "https://github.com/...", "tag": "v1.2.3", "releaseUrl": "https://github.com/...", "sha": "<commit sha on the default branch>"}`,
 };
@@ -178,7 +180,7 @@ function roleInstructions(ctx: PromptContext): string {
   const { task, role, base, defaultBranch, branch } = ctx;
   switch (role.id) {
     case "planner": {
-      const roles = ctx.roles.filter((entry) => entry.id !== "planner" && entry.id !== "shipper").map((entry) => `- ${entry.id}: ${entry.purpose}`).join("\n");
+      const roles = ctx.roles.filter((entry) => !entry.internal).map((entry) => `- ${entry.id}: ${entry.purpose}`).join("\n");
       const profiles = ctx.profiles.map((profile) => `- ${profile.id}: ${profile.toolId === "codex" ? "Codex" : "Claude Code"} running ${profile.model} at ${profile.effort} effort`).join("\n");
       return `Compose the plan for this task: which roles work on it, on which profiles, in what order. Read the repository enough to judge the size of the work, but change nothing.
 
@@ -199,7 +201,11 @@ Rules:
 - Always include exactly one builder stage before the review chain.
 - Prefer putting the reviewer of a piece of work on a different tool than its author.
 - Do not add delivery stages; Petrina adds them.
-- Never plan the Check finder: Petrina runs it, and runs the product's checks itself before every review and delivery.`;
+- Rate the task's risk from what it touches, and say why in plain words:
+  - "low": words, styles, docs, tests, or a small change inside one screen that cannot lose data or open access;
+  - "medium": new behaviour or logic in one part of the product;
+  - "high": sign-in and access, payments, secrets and credentials, data that could be lost or exposed (migrations, deletion, sync), shipping and release machinery, or anything most of the product shares.
+  When unsure, rate it higher.`;
     }
     case "researcher":
       return "Research what users expect from this and how good products solve it. Look at the repository to understand the current state. Do not change any files.";
@@ -239,6 +245,11 @@ Petrina already ran the product's checks on this exact commit (results below): d
 Each finding says where it is and the evidence; never give a score. Tag it "important" only if the change should not ship with it, "nit" for anything smaller, and "pre-existing" for a problem the change did not cause: that becomes a follow-up and never holds the work back.
 When you find a bug, look for the whole class of it in the change and report it once, listing every place. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead.
 If earlier reviewers' findings are listed below, confirm the ones you agree with by id. Dispute the ones you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.
+Do not change any files.`;
+    case "security-reviewer":
+      return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`) for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.
+Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
+Each finding says where it is and how someone could misuse it. Tag it "important" only if the change should not ship with it, "nit" for hardening that can wait, and "pre-existing" for a problem the change did not cause. Report a whole class of problem once, listing every place. Never repeat a finding listed below: confirm or dispute it by id instead.
 Do not change any files.`;
     case "verifier":
       return `Reviewers raised the Important findings below about the change on branch ${branch} (see \`git diff ${base}...HEAD\`). Before any of them can send the work back to the builder, check each one yourself, with fresh eyes: read the code, and run a single test when that is the quickest proof. For each finding, by id, give your verdict:

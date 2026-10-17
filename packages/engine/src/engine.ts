@@ -50,6 +50,7 @@ import {
   type Launched,
   type Product,
   type ProductCheck,
+  type RiskLevel,
   type ProductSettings,
   type Role,
   type Stage,
@@ -637,6 +638,7 @@ export class Engine {
         break;
       case "delivery":
         this.log(task, "you", "You approved the delivery");
+        if (task.checkedSha) task.approvedSha = task.checkedSha;
         task.stageIndex += 1;
         break;
       case "disagreement":
@@ -1156,6 +1158,19 @@ export class Engine {
           }
           delete current.handChanges;
         }
+        // What ships is what the coordinator approved: a change since then asks them again.
+        if (stage?.roleId === "shipper" && stage.kind !== "gate" && current.approvedSha && !current.shipping && current.worktree) {
+          const head = await git.head(current.worktree).catch(() => undefined);
+          const check = lastIndex(current.plan!.stages, (entry, index) => index < current.stageIndex && entry.gate === "delivery");
+          if (head && head !== current.approvedSha && check >= 0) {
+            delete current.approvedSha;
+            current.stageIndex = check;
+            current.sub = 0;
+            this.log(current, "warn", "The work changed after you approved the delivery, so Petrina asks you again");
+            this.commit();
+            continue;
+          }
+        }
         // Checkpoints need no new agent, so a paused or full pool must not hold them back.
         if (stage?.kind === "gate") {
           // On the way back to the check where changes were asked, earlier design checks are not asked again.
@@ -1169,6 +1184,18 @@ export class Engine {
           delete current.returnToCheck;
           // Right before the coordinator is asked to ship, the checks run again on what would ship.
           if (stage.gate === "delivery" && (await this.checksBeforeDelivery(current, signal))) continue;
+          if (stage.gate === "delivery") {
+            const head = await git.head(current.worktree!).catch(() => undefined);
+            if (head) current.checkedSha = head;
+            if (this.shipsUnasked(current)) {
+              if (head) current.approvedSha = head;
+              this.log(current, "milestone", "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
+              current.stageIndex += 1;
+              current.sub = 0;
+              this.commit();
+              continue;
+            }
+          }
           this.gate(current, stage.gate ?? "delivery");
           return;
         }
@@ -1220,19 +1247,23 @@ export class Engine {
 
   private async runPlanner(task: MTask, signal: AbortSignal): Promise<void> {
     const result = await this.turn(task, "planner", PLANNER_PROFILE, () => [], PlanResult, signal);
+    // Unrated work is treated as medium: never shipped unasked, never short of reviewers.
+    task.risk = result.risk ?? { level: "medium", why: "The planner did not rate it." };
     task.plan = this.normalizePlan(task, result);
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
     this.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", PLANNER_PROFILE);
+    this.log(task, "milestone", `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}`, "planner", PLANNER_PROFILE);
     this.finishStep(task);
     this.commit();
   }
 
   private normalizePlan(task: MTask, result: z.infer<typeof PlanResult>): DeepMutable<NonNullable<Task["plan"]>> {
-    const roles = new Set(this.s.roles.map((role) => role.id));
+    // Only roles the planner was told about can be planned.
+    const roles = new Set(this.s.roles.filter((role) => !role.internal).map((role) => role.id));
     const profile = (id: string | undefined, fallback: string) => (id && this.profile(id) ? id : fallback);
     const stages: MStage[] = [];
     result.stages.forEach((raw, index) => {
-      if (!roles.has(raw.roleId) || raw.roleId === "shipper" || raw.roleId === "planner") return;
+      if (!roles.has(raw.roleId)) return;
       const id = `${task.id}:s${index}`;
       if (raw.kind === "gate") {
         stages.push({ id, kind: "gate", title: raw.title, roleId: raw.roleId, profileIds: [], gate: raw.gate === "plan" ? "plan" : "design" });
@@ -1262,6 +1293,13 @@ export class Engine {
     }
     if (!stages.some((stage) => stage.kind === "review-chain")) {
       stages.push({ id: `${task.id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-xhigh", "opus-xhigh"], maxRounds: 2 });
+    }
+    if (task.risk?.level === "high") {
+      // High-risk work gets a security review after the others, on a tool other than the builder's.
+      const builderTool = this.profile(stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "")?.toolId;
+      const other = this.s.profiles.filter((entry) => entry.toolId !== builderTool);
+      const reviewer = (other.find((entry) => entry.effort === "xhigh") ?? other[0])?.id ?? "opus-xhigh";
+      stages.splice(lastIndex(stages, (stage) => stage.kind === "review-chain") + 1, 0, { id: `${task.id}:security`, kind: "review-chain", title: "Security review", roleId: "security-reviewer", profileIds: [reviewer], maxRounds: 2 });
     }
     stages.push(...(deliveryStages(task as unknown as Task, SHIPPER_PROFILE) as MStage[]));
     return { stages, rationale: result.rationale, plannerProfileId: PLANNER_PROFILE };
@@ -1440,14 +1478,17 @@ export class Engine {
       }
       this.log(task, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
       // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
-      const checks = await this.ensureChecks(task, signal);
+      // A later chain on the same commit (a security review) goes by the run that just passed.
+      const head = await git.head(task.worktree!).catch(() => undefined);
+      const passed = !!head && task.checks?.sha === head && task.checks.results.every((run) => run.ok);
+      const checks = passed ? [] : await this.ensureChecks(task, signal);
       if ((await this.runProductChecks(task, checks, signal)) > 0) {
         this.log(task, "warn", "Reviewers wait until the checks pass");
         return this.closeReviewRound(task, stage, round, false);
       }
     }
     const profileId = stage.profileIds[task.sub] ?? stage.profileIds[0] ?? "sol-xhigh";
-    const result = await this.turn(task, "code-reviewer", profileId, () => this.sectionsFor(task, "code-reviewer"), ReviewResult, signal);
+    const result = await this.turn(task, stage.roleId, profileId, () => this.sectionsFor(task, stage.roleId), ReviewResult, signal);
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
@@ -1468,11 +1509,11 @@ export class Engine {
         status: "open",
       });
     }
-    await this.undoReadOnly(task, "code-reviewer");
+    await this.undoReadOnly(task, stage.roleId);
     this.finishStep(task);
     const important = raised.some((finding) => finding.severity === "important");
     const also = [result.confirms.length ? `confirmed ${result.confirms.length}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
-    this.log(task, important ? "warn" : "done", `${findingCount(raised.map((finding) => ({ severity: SEVERITY[finding.severity] })))}${also ? `; ${also}` : ""}`, "code-reviewer", profileId);
+    this.log(task, important ? "warn" : "done", `${findingCount(raised.map((finding) => ({ severity: SEVERITY[finding.severity] })))}${also ? `; ${also}` : ""}`, stage.roleId, profileId);
     if (this.rerun(task)) return "continue";
 
     if (task.sub + 1 < stage.profileIds.length) {
@@ -1793,14 +1834,15 @@ export class Engine {
       const open = task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing");
       if (open.length) sections.push({ title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) });
     }
-    if ((roleId === "code-reviewer" || roleId === "verifier" || roleId === "shipper" || roleId === "tester") && task.report) {
+    const reviewer = roleId === "code-reviewer" || roleId === "security-reviewer";
+    if ((reviewer || roleId === "verifier" || roleId === "shipper" || roleId === "tester") && task.report) {
       sections.push({ title: "What the builder reports", body: [task.report.summary, ...task.report.changes.map((change) => `- ${change}`), task.report.tests ? `Tests: ${task.report.tests}` : ""].filter(Boolean).join("\n") });
     }
-    if ((roleId === "code-reviewer" || roleId === "verifier" || roleId === "tester" || roleId === "shipper") && task.checks?.results.length) {
+    if ((reviewer || roleId === "verifier" || roleId === "tester" || roleId === "shipper") && task.checks?.results.length) {
       const lines = task.checks.results.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})`);
       sections.push({ title: "The product's checks, run by Petrina itself on this commit (evidence, not an agent's word)", body: lines.join("\n") });
     }
-    if (roleId === "code-reviewer" && task.findings.length) sections.push({ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) });
+    if (reviewer && task.findings.length) sections.push({ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) });
     if (roleId === "shipper") {
       const reviews = task.findings.filter((finding) => finding.status !== "dismissed");
       sections.push({ title: "Review summary (list pre-existing findings as follow-ups in what you deliver)", body: reviews.length ? formatFindings(reviews as Task["findings"]) : "Nothing to fix: every reviewer passed it." });
@@ -2063,7 +2105,7 @@ export class Engine {
       design: callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check",
       delivery: "Reviews done. Waiting for your OK to ship",
     };
-    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? checksLine(task as unknown as Task) : undefined;
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? deliveryLines(task as unknown as Task) : undefined;
     this.raise(task, gate, titles[gate], false, body ? { body } : {});
     task.statusLine = status[gate];
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
@@ -2212,6 +2254,13 @@ export class Engine {
     this.log(task, "warn", "Sent back to the builder: the checks failed right before your delivery check");
     this.commit();
     return true;
+  }
+
+  /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */
+  private shipsUnasked(task: MTask): boolean {
+    if (task.risk?.level !== "low" || !this.productOf(task)?.shipLowRisk) return false;
+    if (task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) return false;
+    return task.checks?.results.every((run) => run.ok) ?? true;
   }
 
   /** The step handed back its result: the next step starts clean, in a new conversation. */
@@ -2474,6 +2523,14 @@ const SEVERITY = { important: "blocking", nit: "suggestion", "pre-existing": "pr
 /** The same finding, however it is spaced or capitalised. */
 function sameFinding(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+const RISK_WORD: Record<RiskLevel, string> = { low: "Low", medium: "Medium", high: "High" };
+
+/** What the delivery check says beside the work: its risk, and what Petrina's own run of the checks found. */
+function deliveryLines(task: Task): string | undefined {
+  const lines = [task.risk ? `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}` : "", checksLine(task) ?? ""].filter(Boolean);
+  return lines.length ? lines.join("\n") : undefined;
 }
 
 /** One plain line for the delivery check: what Petrina's own run of the checks found. */

@@ -949,6 +949,7 @@ kbd {
 .issue-who { color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .issue-evidence { color: var(--text-2); overflow-wrap: anywhere; }
 .mono { font-family: var(--mono); }
+.toggles { display: grid; gap: 8px; }
 .product-checks { display: grid; gap: 8px; margin: 16px 0 24px; }
 .product-checks-title { font-weight: 600; color: var(--text); }
 .product-checks textarea { resize: vertical; min-height: 88px; }

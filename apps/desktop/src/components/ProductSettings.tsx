@@ -45,7 +45,7 @@ export function ProductSettings({ state, open, onOpen }: { state: State; open: s
                     </span>
                   </span>
                   <span className="delivery-summary">
-                    {DELIVERY_LABEL[product.delivery ?? "pull-request"]} · {(product.approveDelivery ?? true) ? "asks first" : "ships automatically"}
+                    {DELIVERY_LABEL[product.delivery ?? "pull-request"]} · {(product.approveDelivery ?? true) ? (product.shipLowRisk ? "asks first, except low risk" : "asks first") : "ships automatically"}
                   </span>
                   <button
                     className="btn small"
@@ -84,6 +84,7 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
   const [name, setName] = useState(product.name);
   const [delivery, setDelivery] = useState<DeliveryMode>(product.delivery ?? "pull-request");
   const [approveDelivery, setApproveDelivery] = useState(product.approveDelivery ?? true);
+  const [shipLowRisk, setShipLowRisk] = useState(product.shipLowRisk ?? false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -114,7 +115,7 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
     setBusy(true);
     setError(undefined);
     try {
-      await sim.updateProduct(product.id, { name, delivery, approveDelivery });
+      await sim.updateProduct(product.id, { name, delivery, approveDelivery, shipLowRisk });
       onClose();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
@@ -175,10 +176,16 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
                 ))}
               </div>
             </div>
-            <label className="toggle">
-              <input type="checkbox" checked={approveDelivery} onChange={(event) => setApproveDelivery(event.target.checked)} />
-              Ask me before shipping
-            </label>
+            <div className="toggles">
+              <label className="toggle">
+                <input type="checkbox" checked={approveDelivery} onChange={(event) => setApproveDelivery(event.target.checked)} />
+                Ask me before shipping
+              </label>
+              <label className="toggle">
+                <input type="checkbox" checked={approveDelivery && shipLowRisk} disabled={!approveDelivery} onChange={(event) => setShipLowRisk(event.target.checked)} />
+                Except low-risk work
+              </label>
+            </div>
           </div>
           <ProductChecks product={product} live={live} />
           <div className="product-removal">

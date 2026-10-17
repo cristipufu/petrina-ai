@@ -16,7 +16,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { findingCount, TAKE_OVER_WORDS, type CheckRun, type Finding, type Objection, type Role, type Stage, type State, type Task } from "@petrina/core";
+import { findingCount, TAKE_OVER_WORDS, type CheckRun, type Finding, type RiskLevel, type Objection, type Role, type Stage, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, deliveryText, duration, profileText, safeUrl, STATE_LABEL, type Lookup } from "../lib";
 import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
@@ -381,6 +381,11 @@ function PlanView({ task, state, find }: { task: Task; state: State; find: Looku
       <section className="sheet-section reading">
         <h2>Why this plan</h2>
         <p className="prose">{plan.rationale}</p>
+        {task.risk && (
+          <p className="prose">
+            <b>{RISK_LABEL[task.risk.level]} risk.</b> {task.risk.why}
+          </p>
+        )}
         <p className="note">
           Composed by the planner on {profileText(planner, find, true)}. Stages that haven't started can be changed.
         </p>
@@ -578,6 +583,7 @@ function DesignView({ task, find }: { task: Task; find: Lookup }) {
   );
 }
 
+const RISK_LABEL: Record<RiskLevel, string> = { low: "Low", medium: "Medium", high: "High" };
 const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "Important", suggestion: "Nit", "pre-existing": "Pre-existing" };
 const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> = { real: "Checked: real", "not-a-bug": "Checked: not a bug", nit: "Checked: only a nit", "pre-existing": "Checked: older than this change" };
 

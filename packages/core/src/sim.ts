@@ -71,6 +71,12 @@ export interface NewTask {
 export type MessageMode = "queue" | "interrupt";
 
 const PLANNER_PROFILE = "sonnet-medium";
+const DEMO_RISK: Record<TaskKind, { level: "low" | "medium" | "high"; why: string }> = {
+  new: { level: "high", why: "A new product: everything it touches is new, sign-in included." },
+  feature: { level: "medium", why: "New behaviour in one part of the product." },
+  bug: { level: "medium", why: "A fix to how people sign in and pay, in one place." },
+  chore: { level: "low", why: "Only words and styles change: nothing can be lost or opened up." },
+};
 const DEMO_CHECKS: CheckRun[] = [
   { name: "Type check", command: "bun run typecheck", ok: true, ms: 9_000, output: "No errors." },
   { name: "Tests", command: "bun run test", ok: true, ms: 41_000, output: "212 pass\n0 fail\nRan 212 tests across 31 files." },
@@ -735,6 +741,7 @@ export class Simulator {
 
     if (task.stageIndex < 0) {
       task.plan = composePlan(task) as DeepMutable<NonNullable<Task["plan"]>>;
+      task.risk = DEMO_RISK[task.kind];
       const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
       this.log(d, task, "milestone", `Plan ready: ${count} stages. ${task.plan.rationale}`, agent.roleId, agent.profileId);
       this.say(d, task, "agent", task.plan.rationale, agent.roleId, agent.profileId);

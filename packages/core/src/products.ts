@@ -15,6 +15,7 @@ export interface ProductSettings {
   name: string;
   delivery: DeliveryMode;
   approveDelivery: boolean;
+  shipLowRisk?: boolean;
 }
 
 /** Validate before changing anything, so a rejected save leaves every setting alone. */
@@ -31,7 +32,9 @@ export function productName(name: string, products: readonly Product[], except?:
 export function validateProductSettings(settings: ProductSettings, products: readonly Product[], except?: Id): ProductSettings {
   const name = productName(settings.name, products, except);
   if (!["pull-request", "release", "local"].includes(settings.delivery) || typeof settings.approveDelivery !== "boolean") throw new Error("Choose what happens when work is ready.");
-  return { name, delivery: settings.delivery, approveDelivery: settings.approveDelivery };
+  if (settings.shipLowRisk !== undefined && typeof settings.shipLowRisk !== "boolean") throw new Error("Choose whether low-risk work ships without asking.");
+  // Left out, the low-risk setting stays as it is.
+  return { name, delivery: settings.delivery, approveDelivery: settings.approveDelivery, ...(settings.shipLowRisk !== undefined ? { shipLowRisk: settings.shipLowRisk } : {}) };
 }
 
 export function productHistory(tasks: readonly Task[], productId: Id): { unfinished: number; finished: number } {

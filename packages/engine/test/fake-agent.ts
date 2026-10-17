@@ -28,6 +28,8 @@ export interface Scenario {
    */
   /** "important": the first round's reviewers raise one Important finding (the second in other words); later rounds pass. */
   reviewer?: "commit" | "work" | "important";
+  /** How the planner rates the task's risk (unrated by default). */
+  risk?: "low" | "high";
   /** The verifier's verdict on every finding it is given (default "real"). */
   verifier?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
@@ -135,6 +137,11 @@ function findingIds(text: string, title: string): string[] {
   return [...(section(text, title) ?? "").matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
 }
 
+/** The planner's risk rating, when the scenario sets one. */
+function riskOf(plan: Scenario) {
+  return plan.risk ? { risk: { level: plan.risk, why: plan.risk === "high" ? "It changes how people sign in." : "Only the greeting's words change." } } : {};
+}
+
 /** A builder in a fix round answers every finding it was given, by id. */
 function answersTo(text: string) {
   return findingIds(text, "Review findings (answer every one by id; fix every Important one)").map((id) => ({ id, fixed: true, text: "Fixed it." }));
@@ -192,6 +199,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (plan.planner === "short")
         return done({
           rationale: "A small change: build it, one reviewer.",
+          ...riskOf(plan),
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
@@ -199,6 +207,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         });
       return done({
         rationale: "A small feature: agree on a design, build it, two reviewers.",
+        ...riskOf(plan),
         stages: [
           { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
           ...(text.includes("[no-check]") ? [] : text.includes("[screens]") ? [screens, check] : text.includes("[two-checks]") ? [check, screens, check] : [check]),
@@ -300,6 +309,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return done({ verdict: "fail", findings: [{ text: again ? "The GREETING is missing on the welcome page!" : "The greeting is missing on the welcome page.", where: "greeting.txt", severity: "important", evidence: "Opened the welcome page" }], confirms: [], disputes: [] });
       }
       return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
+    case "security reviewer":
+      return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
     case "verifier":
       return done({
         verdicts: findingIds(text, "Important findings to check (a verdict on every one, by id)").map((id) => ({
