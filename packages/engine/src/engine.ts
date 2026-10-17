@@ -229,7 +229,6 @@ export class Engine extends Kernel implements Commands {
 
   /** GitHub clones in the usual code folders, most recently changed first, without the ones already added. */
   async findClones(): Promise<Clone[]> {
-    const added = new Set(this.s.products.map((product) => product.path).filter((path): path is string => !!path));
     const real = (path: string) => {
       try {
         return realpathSync(path);
@@ -237,7 +236,8 @@ export class Engine extends Kernel implements Commands {
         return path;
       }
     };
-    return findClones({ ...(this.options.home ? { home: this.options.home } : {}), skip: (path) => added.has(path) || added.has(real(path)) });
+    const added = new Set(this.s.products.map((product) => product.path).filter((path): path is string => !!path).map(real));
+    return findClones({ ...(this.options.home ? { home: this.options.home } : {}), skip: (path) => added.has(real(path)) });
   }
 
   /** The furthest first-run screen reached, so closing Petrina partway reopens there. */

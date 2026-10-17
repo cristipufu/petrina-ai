@@ -9,7 +9,7 @@
 import { existsSync } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { join, posix, sep, win32 } from "node:path";
 import type { AgentProfile, CheckStatus, Clone, Platform } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { githubRepo, run, type Gh } from "./git.js";
@@ -298,13 +298,14 @@ export function originUrl(config: string): string | undefined {
 
 /** A pasted folder path: quotes and escaped spaces from a terminal undone, ~ meaning the home folder. */
 export function expandPath(input: string, home = homedir(), platform: NodeJS.Platform = process.platform): string {
+  const paths = platform === "win32" ? win32 : posix;
   let path = input.trim();
   const quoted = /^(["'])(.*)\1$/.exec(path);
   if (quoted) path = quoted[2]!;
   else if (platform !== "win32") path = path.replace(/\\(.)/g, "$1");
   if (path === "~") path = home;
-  else if (path.startsWith(`~/`) || path.startsWith(`~${sep}`)) path = join(home, path.slice(2));
-  return isAbsolute(path) ? resolve(path) : resolve(home, path);
+  else if (path.startsWith(`~/`) || path.startsWith(`~${paths.sep}`)) path = paths.join(home, path.slice(2));
+  return paths.isAbsolute(path) ? paths.resolve(path) : paths.resolve(home, path);
 }
 
 /** How to open a web page in the default browser, outside the app. */

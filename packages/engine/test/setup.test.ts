@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
 import { Connections } from "../src/connection.js";
 import { Engine, type EngineOptions } from "../src/engine.js";
@@ -367,6 +367,9 @@ describe("The clone finder", () => {
       expect((await engine.findClones()).map((entry) => entry.repo).sort()).toEqual(["acme/blog", "acme/shop"]);
       await engine.addProduct(repo);
       expect((await engine.findClones()).map((entry) => entry.repo)).toEqual(["acme/blog"]);
+      // Saved paths may use another spelling of the same folder (Git uses forward slashes on Windows).
+      engine.s.products[0]!.path = `${repo}${sep}.`;
+      expect((await engine.findClones()).map((entry) => entry.repo)).toEqual(["acme/blog"]);
     } finally {
       engine.shutdown();
     }
@@ -463,7 +466,13 @@ describe("Adding a product", () => {
     expect(expandPath("'/Users/me/My Code/shop'", "/home/me", "darwin")).toBe("/Users/me/My Code/shop");
     expect(expandPath("/Users/me/My\\ Code/shop", "/home/me", "darwin")).toBe("/Users/me/My Code/shop");
     expect(expandPath("code/shop", "/home/me", "linux")).toBe("/home/me/code/shop");
-    expect(expandPath("~", undefined, "linux")).toBe(homedir());
+    expect(expandPath("~")).toBe(homedir());
+    expect(expandPath("~", "C:\\Users\\me", "win32")).toBe("C:\\Users\\me");
+    expect(expandPath("~/code/shop", "C:\\Users\\me", "win32")).toBe("C:\\Users\\me\\code\\shop");
+    expect(expandPath("~\\code\\shop", "C:\\Users\\me", "win32")).toBe("C:\\Users\\me\\code\\shop");
+    expect(expandPath('"C:\\My Code\\shop"', "C:\\Users\\me", "win32")).toBe("C:\\My Code\\shop");
+    expect(expandPath("code/shop", "C:\\Users\\me", "win32")).toBe("C:\\Users\\me\\code\\shop");
+    expect(expandPath("\\\\server\\share\\shop", "C:\\Users\\me", "win32")).toBe("\\\\server\\share\\shop");
   });
 });
 
