@@ -7,7 +7,6 @@ import { randomUUID } from "node:crypto";
 import { askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
 import type { AgentRun, TurnNotes, TurnResult } from "./acp-run.js";
 import type { Kernel, MStage, MTask } from "./kernel.js";
-import { readCodexLimits } from "./limits.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
 import { WaitClock, WorkLog } from "./worklog.js";
 
@@ -365,33 +364,18 @@ export class Tracking {
 
   // ── Limits ─────────────────────────────────────────────────────────────
 
-  private setLimits(reports: readonly UsageReport[]): void {
-    if (this.k.stopped) return;
-    this.k.s.pool.usage = [...(this.k.s.pool.usage ?? []).filter((entry) => entry.toolId !== "codex"), ...reports];
-    for (const report of reports) this.usageReported(report);
-    this.k.commitNow();
-  }
-
   /** One reading of a limit goes into the thirty-day history; a changed reading has the window ask for its charts again. */
   usageReported(report: UsageReport): void {
     if (this.k.stopped) return;
     if (this.log.recordUsage(report)) this.changed();
   }
 
-  /** Ask the installed Codex for its limits, at most once per `gap`. A failed read means "not reported". */
+  /** Refresh through the engine's shared reader, at most once per gap. */
   private async refreshCodexLimits(gap: number): Promise<void> {
-    if (this.k.stopped) return;
-    // Injected agents use only an injected limits reader, never the coordinator’s installed account.
-    if (this.k.options.agentCommand && this.k.options.codexLimitsCommand === undefined) return;
-    const codex = this.k.options.codexLimitsCommand === undefined ? Bun.which("codex") : undefined;
-    const command = this.k.options.codexLimitsCommand === undefined ? (codex ? [codex, "app-server"] : null) : this.k.options.codexLimitsCommand;
-    if (!command || this.codexRead.running || Date.now() - this.codexRead.at < gap) return;
+    if (this.k.stopped || !this.k.codexUsage || this.codexRead.running || Date.now() - this.codexRead.at < gap) return;
     this.codexRead = { at: Date.now(), running: true };
     try {
-      const limits = await readCodexLimits(command, { cwd: this.k.dataDir });
-      this.setLimits(limits);
-    } catch {
-      this.setLimits([]);
+      await this.k.codexUsage.refresh();
     } finally {
       this.codexRead = { ...this.codexRead, running: false };
     }

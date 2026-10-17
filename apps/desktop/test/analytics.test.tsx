@@ -84,7 +84,7 @@ describe('the Analytics charts', () => {
     expect(charts).toHaveLength(2);
     expect(charts.map((chart) => chart.querySelector('.chart-title')?.textContent)).toEqual(['Claude Code', 'Codex']);
     const claude = charts[0]!;
-    expect([...claude.querySelectorAll('.legend > span:not(.reset-key)')].map((entry) => entry.textContent)).toEqual(['5-hour35%', 'weekly82%']);
+    expect([...claude.querySelectorAll('.legend > span:not(.reset-key)')].map((entry) => entry.textContent)).toEqual(['5-hour35%', 'weekly62%']);
     expect(claude.querySelector('.legend .reset-key')?.textContent).toBe('reset');
     expect(claude.querySelectorAll('svg path.series-line')).toHaveLength(2);
     expect(claude.querySelectorAll('svg g.reset:not(.ahead)').length).toBeGreaterThan(3);
@@ -94,7 +94,7 @@ describe('the Analytics charts', () => {
     const table = el('.limits-charts table.chart-table');
     expect([...table.querySelectorAll('thead th')].map((cell) => cell.textContent)).toEqual(['When', 'Limit', 'Used']);
     expect(table.textContent).toContain('reset');
-    expect(table.textContent).toContain('82%');
+    expect(table.textContent).toContain('62%');
   });
 
   it('charts the hours of today when the period is Today', async () => {

@@ -300,7 +300,7 @@ describe("analytics keeps who actually did the work", () => {
       run.engine.pause(run.taskId);
       if (restart) {
         run.engine.shutdown();
-        restarted = new Engine(join(run.root, "data"), { codexLimitsCommand: null });
+        restarted = new Engine(join(run.root, "data"), { codexCommand: null });
       }
       const engine = restarted ?? run.engine;
       expect(engine.getState().inbox.some((item) => item.id === question.id)).toBe(false);
@@ -350,7 +350,7 @@ describe("analytics keeps who actually did the work", () => {
       expect(words).not.toContain("under a minute");
       expect(JSON.stringify(asks())).not.toContain(question.title);
       run.engine.shutdown();
-      restarted = new Engine(join(run.root, "data"), { codexLimitsCommand: null });
+      restarted = new Engine(join(run.root, "data"), { codexCommand: null });
       expect(restarted.usage({ view: "analytics", period: "today" }).squad.asks).toBe(words);
     } finally {
       run.engine.shutdown();

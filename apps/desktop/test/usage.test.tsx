@@ -49,7 +49,7 @@ describe('usage by tool', () => {
     const until = state.now + 60 * 60_000;
     await show({ ...state, pool: { ...state.pool, limited: [{ toolId: 'codex', until, at, reason: "Codex's usage limit" }] } }, true);
     const meters = [...host.querySelectorAll('[role="meter"]')];
-    expect(meters.map((meter) => Number(meter.getAttribute('aria-valuenow')))).toEqual([82, 35, 16]);
+    expect(meters.map((meter) => Number(meter.getAttribute('aria-valuenow')))).toEqual([62, 35, 84]);
     expect(host.textContent).toContain('reported just now');
     expect(host.textContent).toContain('out until');
     expect(host.textContent).toContain('Reported 2m ago');

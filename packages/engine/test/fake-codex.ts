@@ -36,6 +36,7 @@ process.stdin.on("data", (chunk: Buffer) => {
       send({ method: "account/updated", params: { authMode: "chatgpt", planType: "test" }, emittedAtMs: Date.now() });
       continue;
     }
+    if (message.method === "initialized") continue;
     if (message.method === "account/rateLimits/read") {
       const plan = script();
       if (plan.hang) continue;

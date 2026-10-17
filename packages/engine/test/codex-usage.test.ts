@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { FEWER_START, slotUses, type State } from "@petrina/core";
-import { codexReports, readCodexUsage, windowKind } from "../src/codex-usage.js";
+import { codexReports, readCodexUsage } from "../src/codex-usage.js";
 import { Engine } from "../src/engine.js";
 import type { CodexScript } from "./fake-codex.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
@@ -36,13 +36,11 @@ describe("what Codex's app-server says about usage", () => {
   it("maps each window by its length, with the reset time in milliseconds, and the status by how much is used", () => {
     const result = { rateLimits: { primary: { usedPercent: 88, windowDurationMins: 10080, resetsAt: soon }, secondary: { usedPercent: 12.5, windowDurationMins: 300, resetsAt: null } } };
     expect(codexReports(result)).toEqual([
-      { toolId: "codex", kind: "seven_day", status: "allowed", utilization: 0.88, resetsAt: soon * 1000 },
-      { toolId: "codex", kind: "five_hour", status: "allowed", utilization: 0.125 },
+      { toolId: "codex", kind: "codex:primary", windowMinutes: 10080, status: "allowed", utilization: 0.88, resetsAt: soon * 1000 },
+      { toolId: "codex", kind: "codex:secondary", windowMinutes: 300, status: "allowed", utilization: 0.125 },
     ]);
     expect(codexReports({ rateLimits: { primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: soon }, secondary: null } })[0]).toMatchObject({ status: "allowed_warning" });
     expect(codexReports({ rateLimits: { primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: soon } } })[0]).toMatchObject({ status: "rejected", utilization: 1 });
-    expect(windowKind(60)).toBe("60m");
-    expect(windowKind(null)).toBe("limit");
     expect(codexReports({})).toEqual([]);
     expect(codexReports(undefined)).toEqual([]);
   });
@@ -50,9 +48,9 @@ describe("what Codex's app-server says about usage", () => {
   it("does the adapter's handshake first, reads once, and stops the process", async () => {
     const server = appServer({ primary: { usedPercent: 85, windowDurationMins: 10080, resetsAt: soon } });
     const reports = await readCodexUsage({ command: server.command, env: process.env });
-    expect(reports).toEqual([{ toolId: "codex", kind: "seven_day", status: "allowed", utilization: 0.85, resetsAt: soon * 1000 }]);
+    expect(reports).toEqual([{ toolId: "codex", kind: "codex:primary", windowMinutes: 10080, status: "allowed", utilization: 0.85, resetsAt: soon * 1000 }]);
     const asked = server.asked();
-    expect(asked.map((entry) => entry.method)).toEqual(["initialize", "account/rateLimits/read"]);
+    expect(asked.map((entry) => entry.method)).toEqual(["initialize", "initialized", "account/rateLimits/read"]);
     expect(asked[0]!.params?.clientInfo?.name).toBe("petrina");
     await waitFor(() => !alive(asked[0]!.pid), "the app-server to be gone", 5_000);
   });
@@ -87,8 +85,15 @@ describe("the engine slows a tool down before its limit", () => {
       engine.setToolCap("codex", 4);
       // Read at the start, before anything runs.
       const usage = await waitFor(() => engine.getState().pool.usage?.find((report) => report.toolId === "codex"), "Codex's usage to be read at the start");
-      expect(usage).toMatchObject({ kind: "seven_day", status: "allowed", utilization: 0.85 });
+      expect(usage).toMatchObject({ kind: "codex:primary", windowMinutes: 10080, status: "allowed", utilization: 0.85 });
       expect(server.asked().filter((entry) => entry.method === "account/rateLimits/read")).toHaveLength(1);
+      // The charts and scheduler share one reader and the same recorded reports.
+      engine.usage({ view: "analytics", period: "today" });
+      engine.usage({ view: "analytics", period: "today" });
+      await engine.codexUsage!.refresh();
+      expect(server.asked().filter((entry) => entry.method === "account/rateLimits/read")).toHaveLength(2);
+      const chart = engine.usage({ view: "analytics", period: "today" });
+      expect(chart.limits.tools.find((tool) => tool.toolId === "codex")!.limits[0]!.readings.at(-1)!.used).toBe(0.85);
       const productId = await engine.addProduct(repo);
       const ids = Array.from({ length: 4 }, (_, index) => engine.addTask({ productId, title: `Change ${index}`, description: "[no-check]" }));
       engine.setPoolPaused(false);

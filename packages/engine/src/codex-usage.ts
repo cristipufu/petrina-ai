@@ -7,7 +7,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { NEAR_LIMIT } from "@petrina/core";
+import { codexLimits } from "@petrina/core";
 import type { UsageInfo } from "./usage.js";
 
 /** How often Codex's usage is read while agents run. */
@@ -19,46 +19,14 @@ export const CODEX_USAGE_TIMEOUT_MS = 20_000;
 /** What Petrina runs to read it: Codex's own app-server, found on PATH like the agents' tools. */
 export const CODEX_USAGE_COMMAND: readonly string[] = ["codex", "app-server"];
 
-const TOOL = "codex";
-
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 /** Who is asking, in the shape the adapter sends. */
 const CLIENT_INFO = { name: "petrina", title: "Petrina", version };
 
-/** One window of a Codex limit, as the app-server reports it. */
-interface Window {
-  usedPercent?: number | null;
-  windowDurationMins?: number | null;
-  /** Seconds. */
-  resetsAt?: number | null;
-}
-
-/** The kind of limit a window is, by its length: Codex's five-hour and weekly windows get Claude Code's names, so the pool reads them alike. */
-export function windowKind(minutes: number | null | undefined): string {
-  if (minutes === 300) return "five_hour";
-  if (minutes === 10080) return "seven_day";
-  return minutes ? `${minutes}m` : "limit";
-}
-
-/** The answer to `account/rateLimits/read` as usage reports: one per window, out at 100%, a warning from 90%. */
+/** Codex's windows as shared usage reports, including named limits and their lengths. */
 export function codexReports(result: unknown): UsageInfo[] {
-  const limits = (result as { rateLimits?: { primary?: Window | null; secondary?: Window | null } | null } | undefined)?.rateLimits;
-  if (!limits || typeof limits !== "object") return [];
-  const reports: UsageInfo[] = [];
-  for (const window of [limits.primary, limits.secondary]) {
-    if (!window || typeof window.usedPercent !== "number") continue;
-    const used = window.usedPercent / 100;
-    reports.push({
-      toolId: TOOL,
-      kind: windowKind(window.windowDurationMins),
-      status: used >= 1 ? "rejected" : used >= NEAR_LIMIT ? "allowed_warning" : "allowed",
-      utilization: used,
-      // Seconds on the wire, milliseconds everywhere else.
-      ...(typeof window.resetsAt === "number" ? { resetsAt: window.resetsAt * 1000 } : {}),
-    });
-  }
-  return reports;
+  return codexLimits(result, Date.now()).map(({ at: _at, ...report }) => report);
 }
 
 export interface ReadOptions {
@@ -131,6 +99,7 @@ export async function readCodexUsage(options: ReadOptions): Promise<UsageInfo[]>
   late.catch(() => undefined);
   const read = (async () => {
     await request("initialize", { capabilities: { experimentalApi: true, requestAttestation: false }, clientInfo: CLIENT_INFO });
+    child.stdin!.write(`${JSON.stringify({ method: "initialized" })}\n`);
     return codexReports(await request("account/rateLimits/read"));
   })();
   read.catch(() => undefined);

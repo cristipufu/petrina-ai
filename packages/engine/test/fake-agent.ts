@@ -338,7 +338,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   switch (session.role) {
     case "planner":
       await say("Sizing the work");
-      if (tool === "claude-code") {
+      if (tool === "claude-code" && !plan.controlled) {
         // Claude Code's limit notice rides on a context update, next to a dollar figure Petrina ignores.
         await send(client, sessionId, {
           sessionUpdate: "usage_update",

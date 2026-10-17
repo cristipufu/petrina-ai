@@ -73,7 +73,7 @@ export interface EngineOptions {
   /** Tests: a fake GitHub instead of `gh`. */
   gh?: readonly string[];
   /** Tests: a fake Codex app-server instead of `codex app-server` for reading Codex's usage. With fake agents and none given, it is not read. */
-  codexCommand?: readonly string[];
+  codexCommand?: readonly string[] | null;
   /** Tests: a folder standing in for every product's copy on GitHub. Never from settings or saved data. */
   remote?: string;
   /** Tests: how long a tool gets to reopen a conversation. */
@@ -88,8 +88,6 @@ export interface EngineOptions {
   /** How many tasks' checks run at the same time on this machine (default: one per six cores, at least one). */
   checkRuns?: number;
   checkTimeoutMs?: number;
-  /** How to start the installed Codex to read its limits. `null` never reads them. */
-  codexLimitsCommand?: readonly string[] | null;
 }
 
 export class Aborted extends Error {}
@@ -134,7 +132,7 @@ export abstract class Kernel {
     this.tracking = new Tracking(this);
     this.tracking.start();
     // Codex does not pass its usage on over ACP: Petrina reads it from Codex's app-server, with the agents' environment.
-    const codexCommand = options.codexCommand ?? (options.agentCommand ? undefined : CODEX_USAGE_COMMAND);
+    const codexCommand = options.codexCommand === undefined ? (options.agentCommand ? undefined : CODEX_USAGE_COMMAND) : options.codexCommand;
     this.codexUsage = codexCommand
       ? new CodexUsage({
           command: codexCommand,
@@ -445,7 +443,7 @@ export abstract class Kernel {
     // the balancer prefers tools with room, but the agents keep working.
     if (info.status === "rejected" && !info.overage) {
       const until = info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS;
-      this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: info.toolId, ...(info.model ? { model: info.model } : {}), until, reason: `${this.toolName(info.toolId)}'s ${kindWords(info.kind)} limit` }) as MState["pool"]["limited"];
+      this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: info.toolId, ...(info.model ? { model: info.model } : {}), until, reason: `${this.toolName(info.toolId)}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, at: now }) as MState["pool"]["limited"];
       this.armLimitTimer();
     }
     this.commit();
