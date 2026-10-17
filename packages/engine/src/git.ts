@@ -204,10 +204,29 @@ export async function ensureWorktree(
   const skipped = { ...(risky.length ? { skippedFetch: risky } : {}), ...(timedOut ? { fetchTimedOut: true } : {}) };
   if (existsSync(path) && (await run(["git", "rev-parse", "--is-inside-work-tree"], path)).code === 0) return { base, ...skipped };
   await mkdir(dirname(path), { recursive: true });
-  const branchExists = (await run(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], root)).code === 0;
-  if (branchExists) await must(["git", "worktree", "add", path, branch], root);
-  else await must(["git", "worktree", "add", "-b", branch, path, base], root);
+  await oneAtATime(root, async () => {
+    const branchExists = (await run(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], root)).code === 0;
+    if (branchExists) await must(["git", "worktree", "add", path, branch], root);
+    else await must(["git", "worktree", "add", "-b", branch, path, base], root);
+  });
   return { base, ...skipped };
+}
+
+/**
+ * Git trips over a worktree another one is still creating ("failed to read .git/worktrees/…/commondir"),
+ * so tasks starting together add and remove one repository's worktrees one at a time.
+ */
+const worktreeTurns = new Map<string, Promise<void>>();
+function oneAtATime<T>(root: string, work: () => Promise<T>): Promise<T> {
+  const turn = (worktreeTurns.get(root) ?? Promise.resolve()).then(work);
+  worktreeTurns.set(
+    root,
+    turn.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return turn;
 }
 
 export async function isClean(path: string): Promise<boolean> {
@@ -431,5 +450,5 @@ export async function onGitHub(repo: string, ref: string, sha: string, command: 
 }
 
 export async function removeWorktree(root: string, path: string): Promise<void> {
-  await run(["git", "worktree", "remove", "--force", path], root);
+  await oneAtATime(root, () => run(["git", "worktree", "remove", "--force", path], root));
 }

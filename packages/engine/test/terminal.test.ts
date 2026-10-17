@@ -272,7 +272,8 @@ describe.skipIf(process.platform === "win32")("the launcher runs one copy per ta
     const it = await launcher();
     writeFileSync(it.hold, "");
     const copy = it.run();
-    await waitFor(async () => (await sessionState(it.dir)) === "running", "the copy to start");
+    // Running, and holding the lock: the window's close is now this copy's to note.
+    await waitFor(async () => (await sessionState(it.dir)) === "running" && readdirSync(it.dir).includes("lock"), "the copy to start");
     const pid = Number(readdirSync(it.dir).find((name) => name.startsWith("run."))!.slice(4));
     process.kill(pid, "SIGHUP");
     rmSync(it.hold);

@@ -32,7 +32,7 @@ async function shipping(mode: DeliveryMode, shipper: NonNullable<Scenario["shipp
 const delivered = (task: Task | undefined) => task?.state === "done" || task?.state === "pr-open";
 const shippingItem = (state: State, taskId: string) => state.inbox.find((item) => item.taskId === taskId && item.kind === "shipping");
 
-describe("shipping is never repeated blindly", () => {
+describe.concurrent("shipping is never repeated blindly", () => {
   for (const mode of ["pull-request", "release", "local"] as const) {
     for (const stop of ["quit", "kill"] as const) {
       it(`${mode}: finds a delivery that went out before ${stop === "quit" ? "an ordinary quit" : "a forced kill"}, and records it`, async () => {

@@ -39,7 +39,7 @@ async function start(scenario: Scenario, description = "") {
   return { product, home, fakes, engine, taskId, find, restart, finished };
 }
 
-describe("an agent waiting on a question when Petrina restarts", () => {
+describe.concurrent("an agent waiting on a question when Petrina restarts", () => {
   const cases: [Reopen, Stop][] = [
     ["resume", "quit"],
     ["resume", "kill"],
@@ -105,7 +105,7 @@ describe("an agent waiting on a question when Petrina restarts", () => {
   }
 });
 
-describe("a builder working when Petrina restarts", () => {
+describe.concurrent("a builder working when Petrina restarts", () => {
   const cases: [Reopen, Stop][] = [
     ["resume", "quit"],
     ["resume", "kill"],
@@ -269,7 +269,7 @@ describe("a builder working when Petrina restarts", () => {
   });
 });
 
-describe("a permission request open when Petrina restarts", () => {
+describe.concurrent("a permission request open when Petrina restarts", () => {
   for (const reopen of ["resume", undefined] as const) {
     it(`${named(reopen)}: leaves the inbox with a note, and the agent asks again`, async () => {
       const run = await start({ planner: "short", ...(reopen ? { reopen } : {}) });
@@ -293,7 +293,7 @@ describe("a permission request open when Petrina restarts", () => {
   }
 });
 
-describe("a read-only agent that committed before a restart", () => {
+describe.concurrent("a read-only agent that committed before a restart", () => {
   for (const reopen of ["resume", undefined] as const) {
     it(`${named(reopen)}: the clean-up goes back to the commit from when the step first started`, async () => {
       const run = await start({ planner: "short", builder: "plain", reviewer: "commit", ...(reopen ? { reopen } : {}) });
@@ -312,7 +312,7 @@ describe("a read-only agent that committed before a restart", () => {
   }
 });
 
-describe("a shipper interrupted by a restart", () => {
+describe.concurrent("a shipper interrupted by a restart", () => {
   it("never reopens its conversation, even on a tool that can: the shipping check comes first", async () => {
     const run = await start({ planner: "short", builder: "plain", shipper: "deliver-then-hang", reopen: "resume" });
     await waitFor(() => run.fakes.marked("delivered"), "the shipper to deliver");
@@ -326,7 +326,7 @@ describe("a shipper interrupted by a restart", () => {
   });
 });
 
-describe("where you were, for a fresh conversation", () => {
+describe.concurrent("where you were, for a fresh conversation", () => {
   it("lists up to 30 files and counts the rest", () => {
     const files = Array.from({ length: 34 }, (_, index) => ({ change: "changed", file: `src/file-${index + 1}.ts` }));
     const text = formatWhereYouWere({ stage: "Build", role: "Builder", done: ["Running the tests"], files }, "Codex cannot reopen conversations");
@@ -336,7 +336,7 @@ describe("where you were, for a fresh conversation", () => {
   });
 });
 
-describe("a tool that cannot reopen the conversation after all", () => {
+describe.concurrent("a tool that cannot reopen the conversation after all", () => {
   for (const trouble of ["no answer", "no answer at all", "conversation gone"] as const) {
     it(`starts the step again when there is ${trouble === "no answer" ? "no answer in time" : trouble === "no answer at all" ? "no answer even to the first handshake" : "no such conversation any more"}`, async () => {
       const root = tempDir("petrina-pickup-");

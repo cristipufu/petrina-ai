@@ -393,7 +393,7 @@ describe.skipIf(!posix)("when the agent's work cannot be saved", () => {
   });
 });
 
-describe("when take over is not available", () => {
+describe.concurrent("when take over is not available", () => {
   it("is refused for a task with no agent, with a plain reason", async () => {
     const root = tempDir("petrina-takeover-");
     roots.push(root);
