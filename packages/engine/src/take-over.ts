@@ -2,12 +2,12 @@
 // launcher scripts and terminals are in terminal.ts.
 
 import { join } from "node:path";
-import { TAKE_OVER_TOOLS, TAKE_OVER_WORDS, takeOverBlock, toolName, type HandBackPreview, type Id, type Launched, type Task } from "@petrina/core";
+import { lastIndexWhere, TAKE_OVER_TOOLS, TAKE_OVER_WORDS, takeOverBlock, toolName, type HandBackPreview, type Id, type Launched, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { handBackNote } from "./prompts.js";
 import { askMode, clearEnded, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, writeLauncher } from "./terminal.js";
 import { ADAPTERS } from "./tools.js";
-import { Kernel, type MTask, lastIndex } from "./kernel.js";
+import { Kernel, type MTask } from "./kernel.js";
 
 export class TakeOver {
   constructor(private readonly k: Kernel) {}
@@ -219,7 +219,7 @@ export class TakeOver {
     task.handChanges = true;
     const stages = task.plan?.stages ?? [];
     if (stages.some((stage, index) => index > task.stageIndex && stage.kind === "review-chain")) return;
-    const chain = stages[task.stageIndex]?.kind === "review-chain" ? task.stageIndex : lastIndex(stages, (stage, index) => index < task.stageIndex && stage.kind === "review-chain");
+    const chain = stages[task.stageIndex]?.kind === "review-chain" ? task.stageIndex : lastIndexWhere(stages, (stage, index) => index < task.stageIndex && stage.kind === "review-chain");
     if (chain >= 0) task.rereview = stages[chain]!.id;
   }
 

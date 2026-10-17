@@ -2,9 +2,9 @@
 // checkpoints, and putting interrupted work back in line after a restart.
 
 import { join } from "node:path";
-import { pickStarts, queueOf, slotWait, slotUses, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
+import { lastIndexWhere, pickStarts, queueOf, slotWait, slotUses, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
-import { Kernel, Aborted, type MTask, PLANNER_PROFILE, lastIndex } from "./kernel.js";
+import { Kernel, Aborted, type MTask, PLANNER_PROFILE } from "./kernel.js";
 import type { Planning } from "./planning.js";
 import type { Work } from "./work.js";
 import type { Design } from "./design.js";
@@ -118,7 +118,7 @@ export class Driver {
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
         // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
         if (stage && current.handChanges && (stage.gate === "delivery" || stage.roleId === "shipper")) {
-          const chain = lastIndex(current.plan!.stages, (entry) => entry.kind === "review-chain");
+          const chain = lastIndexWhere(current.plan!.stages, (entry) => entry.kind === "review-chain");
           if (chain >= 0) {
             current.stageIndex = chain;
             current.sub = 0;
@@ -132,7 +132,7 @@ export class Driver {
         // What ships is what the coordinator approved: a change since then asks them again.
         if (stage?.roleId === "shipper" && stage.kind !== "gate" && current.approvedSha && !current.shipping && current.worktree) {
           const head = await git.head(current.worktree).catch(() => undefined);
-          const check = lastIndex(current.plan!.stages, (entry, index) => index < current.stageIndex && entry.gate === "delivery");
+          const check = lastIndexWhere(current.plan!.stages, (entry, index) => index < current.stageIndex && entry.gate === "delivery");
           if (head && head !== current.approvedSha && check >= 0) {
             delete current.approvedSha;
             current.stageIndex = check;

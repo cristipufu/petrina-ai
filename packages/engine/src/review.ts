@@ -1,11 +1,11 @@
 // Review chains: Petrina's tamper check and the product's checks first, then reviewers one after another,
 // Important findings verified on another tool, and the round closing back to the builder or on to delivery.
 
-import { findingCount, type AgentProfile, type Finding, type Id, type Task } from "@petrina/core";
+import { type DeepMutable, findingCount, type AgentProfile, type Finding, type Id, type Task, reviewRoundEnd, type Stage } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { VerifyResult, ReviewResult } from "./roles.js";
-import { Kernel, type DeepMutable, type MStage, type MTask, PLANNER_PROFILE, lastIndex } from "./kernel.js";
+import { Kernel, type MStage, type MTask, PLANNER_PROFILE } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
@@ -170,13 +170,13 @@ export class Reviews {
   /** The end of a review round: back to the builder with what is Important, or on towards delivery. */
   private async closeReviewRound(task: MTask, stage: MStage, round: number, reviewed: boolean): Promise<"continue" | "stop"> {
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
-    const builder = lastIndex(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
-    if (open.length > 0 && builder >= 0 && round < (stage.maxRounds ?? 2)) {
+    const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
+    if (end.kind === "send back") {
       // The next round reviews only what changed since what the reviewers looked at in this one.
       const sha = reviewed ? await git.head(task.worktree!).catch(() => undefined) : undefined;
       if (sha) task.reviewedSha = sha;
       task.rounds[stage.id] = round + 1;
-      task.stageIndex = builder;
+      task.stageIndex = end.builder;
       task.sub = 0;
       task.fixing = true;
       this.k.log(task, "warn", `Sent back to the builder: ${findingCount(open)}`);
@@ -185,7 +185,7 @@ export class Reviews {
     }
     task.stageIndex += 1;
     task.sub = 0;
-    if (open.length > 0) {
+    if (end.kind === "used up") {
       this.k.log(task, "warn", `Review rounds used up: ${findingCount(open)} still open`);
       // With blocking findings left, the coordinator always looks before anything ships.
       const next = task.plan?.stages[task.stageIndex];

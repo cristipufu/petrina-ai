@@ -1,7 +1,7 @@
 // Design convergence: the architect writes the brief and a design reviewer objects, round after round,
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
-import { answerByCall, CALL_WORDS, followingCall, unanswered, type CallAnswer, type DesignCall, type Id, type Task } from "@petrina/core";
+import { answerByCall, CALL_WORDS, followingCall, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type Stage } from "@petrina/core";
 import { formatObjections } from "./prompts.js";
 import { BriefResult, ObjectionsResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
@@ -53,7 +53,8 @@ export class Design {
     this.k.finishStep(task);
     if (this.k.rerun(task)) return "continue";
     const blocking = result.objections.filter((objection) => objection.blocking).length;
-    if (blocking === 0) {
+    const end = designRoundEnd(blocking, round, stage as Stage);
+    if (end === "settled") {
       // Nobody decides on non-blocking points raised in the last round: they stay as follow-ups, never "rejected".
       for (const objection of task.objections) if (objection.status === "open" && !objection.blocking) objection.status = "noted";
       this.k.log(task, "done", "Design settled: no blocking objections", reviewerRole, reviewerProfile);
@@ -63,7 +64,7 @@ export class Design {
       return "continue";
     }
     this.k.log(task, "warn", `Raised ${result.objections.length} objection${result.objections.length === 1 ? "" : "s"}, ${blocking} blocking`, reviewerRole, reviewerProfile);
-    if (round >= (stage.maxRounds ?? 3)) {
+    if (end === "disagreement") {
       delete task.agent;
       task.holdsSlot = false;
       task.statusLine = "The architects disagree. Your call";

@@ -9,10 +9,10 @@
 // module of its own (driver, planning, design, work, review, shipping, take-over, product checks,
 // review guide, turns, context), and they share state and bookkeeping through the kernel.
 
-import { CALL_WORDS, callOn, designStageIndex, productHistory, productName, queueOf, queueNeighbour, queuePlacement, startCall, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, type TaskKind } from "@petrina/core";
+import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, type TaskKind, afterChangesAsked } from "@petrina/core";
 import * as git from "./git.js";
 import { parseCommand } from "./checks.js";
-import { Kernel, type MStage, type MTask, TONES, lastIndex, type EngineOptions } from "./kernel.js";
+import { Kernel, TONES, type EngineOptions } from "./kernel.js";
 import { Turns } from "./turn.js";
 import { GuideKeeper } from "./guide-keeper.js";
 import { Context } from "./context.js";
@@ -546,8 +546,7 @@ export class Engine extends Kernel {
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
-    const stages = task.plan?.stages ?? [];
-    const call = item.kind === "disagreement" ? startCall(task as unknown as Task, note, Date.now()) : undefined;
+    const call = item.kind === "disagreement";
     this.log(task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
     this.say(task, "you", note);
     const id = this.id(task.id);
@@ -557,34 +556,9 @@ export class Engine extends Kernel {
     // The change request starts the next step: it is the first thing that step keeps (a call is kept on the task).
     this.finishStep(task);
     if (!call) this.stepNote(task, "changes", note, { id });
-    if (call && task.plan) {
-      // The call is final: the architect follows it once, then the coordinator checks the brief. No review round.
-      task.plan.stages = call.stages as MStage[];
-      task.stageIndex = call.stageIndex;
-      task.call = call.call as MTask["call"];
-    } else if (item.kind === "plan") {
-      task.stageIndex = -1;
-      delete task.plan;
-    } else if (item.kind === "design" || item.kind === "disagreement") {
-      // Back to this very check afterwards, not to an earlier one the coordinator already approved.
-      if (item.kind === "design") task.returnToCheck = task.stageIndex;
-      const index = designStageIndex(stages, task.stageIndex);
-      if (index >= 0) {
-        // On a design the call settled, changes go to the architect alone and come back to the same check.
-        if (!callOn(task as unknown as Task, index)) task.rounds[stages[index]!.id] = (task.rounds[stages[index]!.id] ?? 1) + 1;
-        task.stageIndex = index;
-      }
-    } else if (item.kind === "delivery") {
-      // Every reviewer passed what the coordinator sent back: the Guide keeper looks for what they missed.
-      task.miss = { note, at: Date.now() };
-      task.sentBack = (task.sentBack ?? 0) + 1;
-      const index = lastIndex(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
-      if (index >= 0) {
-        task.stageIndex = index;
-        task.fixing = true;
-      }
-    }
-    task.sub = 0;
+    afterChangesAsked(task, item.kind, note, Date.now());
+    // Every reviewer passed what the coordinator sent back: the Guide keeper looks for what they missed.
+    if (item.kind === "delivery") task.miss = { note, at: Date.now() };
     this.toWaiting(task);
     this.commitNow();
     this.schedule();

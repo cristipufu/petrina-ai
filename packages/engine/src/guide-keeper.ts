@@ -1,12 +1,12 @@
 // The review guide that learns from misses: the Guide keeper's proposals, the coordinator's yes or no,
 // and accepted points reaching REVIEW.md. Reading and writing the file is in guide.ts.
 
-import type { Id, GuideLine, Task } from "@petrina/core";
+import { type DeepMutable, type Id, type GuideLine, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { GuideResult } from "./roles.js";
 import { appendToGuide, cleanPoint, GUIDE_FILE, guideText, inGuide, localGuide } from "./guide.js";
-import { Kernel, Aborted, type DeepMutable, GUIDE_KEEPER_PROFILE, type MTask } from "./kernel.js";
+import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 
 export class GuideKeeper {

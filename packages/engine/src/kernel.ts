@@ -4,14 +4,12 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, CALL_WORDS, callCheckBody, callOn, queueOf, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone } from "@petrina/core";
+import { BUILT_IN_ROLES, callCheckBody, queueOf, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, GATE_TITLE, gateStatus, type DeepMutable } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
 import { Store } from "./store.js";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
 import { detectTools, ENGINE_PROFILES } from "./tools.js";
-
-export type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
 
 export type MState = DeepMutable<State>;
 
@@ -51,11 +49,6 @@ export interface EngineOptions {
 export class Aborted extends Error {}
 
 export const RISK_WORD: Record<RiskLevel, string> = { low: "Low", medium: "Medium", high: "High" };
-
-export function lastIndex<T>(items: readonly T[], match: (item: T, index: number) => boolean): number {
-  for (let index = items.length - 1; index >= 0; index -= 1) if (match(items[index]!, index)) return index;
-  return -1;
-}
 
 /** What the delivery check says beside the work: its risk, and what Petrina's own run of the checks found. */
 function deliveryLines(task: Task): string | undefined {
@@ -157,19 +150,9 @@ export abstract class Kernel {
   gate(task: MTask, gate: GateKind): void {
     delete task.agent;
     task.holdsSlot = false;
-    const titles: Record<GateKind, string> = {
-      plan: `Approve the plan for “${task.title}”`,
-      design: `Check the design for “${task.title}”`,
-      delivery: `Ready to ship “${task.title}”`,
-    };
-    const status: Record<GateKind, string> = {
-      plan: "Plan ready. Waiting for your OK",
-      design: callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check",
-      delivery: "Reviews done. Waiting for your OK to ship",
-    };
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? deliveryLines(task as unknown as Task) : undefined;
-    this.raise(task, gate, titles[gate], false, body ? { body } : {});
-    task.statusLine = status[gate];
+    this.raise(task, gate, GATE_TITLE[gate](task.title), false, body ? { body } : {});
+    task.statusLine = gateStatus(task as unknown as Task, gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     // On disk before the window shows it: an answer to this check must find it after any restart.
     this.commitNow();
@@ -276,15 +259,7 @@ export abstract class Kernel {
   }
 
   columnFor(task: MTask): Column {
-    if (task.state === "cancelled" || task.state === "done") return "done";
-    if (task.state === "pr-open") return "ready";
-    if (task.state === "queued") return "queue";
-    if (task.stageIndex < 0) return "planning";
-    const stage = task.plan?.stages[task.stageIndex];
-    if (!stage) return "ready";
-    if (stage.kind === "gate") return stage.gate === "plan" ? "planning" : stage.gate === "design" ? "designing" : "ready";
-    if (stage.kind === "review-chain") return "reviewing";
-    return this.role(stage.roleId)?.column ?? "building";
+    return columnOf(task as unknown as Task, this.s.roles as Role[]);
   }
 
   empty(): State {

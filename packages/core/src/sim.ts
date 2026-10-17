@@ -3,7 +3,7 @@
 // request permissions, raise objections and findings, and wait at gates.
 // The UI uses it today; the tests use it to pin down scheduling and gate rules.
 
-import { answerByCall, CALL_WORDS, callCheckBody, callOn, designStageIndex, dueAnswers, followingCall, startCall, type CallAnswer } from "./call.js";
+import { answerByCall, CALL_WORDS, callCheckBody, callOn, dueAnswers, followingCall, type CallAnswer } from "./call.js";
 import { composePlan } from "./library.js";
 import { queueNeighbour, queuePlacement } from "./navigation.js";
 import type {
@@ -17,19 +17,16 @@ import type {
   Id,
   InboxItem,
   InboxKind,
+  Role,
   Stage,
   State,
   Task,
   TaskKind,
 } from "./model.js";
 import { pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
+import { afterChangesAsked, columnOf, designRoundEnd, GATE_TITLE, gateStatus, reviewRoundEnd, type DeepMutable } from "./flow.js";
+import { findingCount } from "./findings.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
-
-type DeepMutable<T> = T extends readonly (infer U)[]
-  ? DeepMutable<U>[]
-  : T extends object
-    ? { -readonly [K in keyof T]: DeepMutable<T[K]> }
-    : T;
 
 type Draft = DeepMutable<State>;
 type DraftTask = DeepMutable<Task>;
@@ -82,18 +79,6 @@ const DEMO_CHECKS: CheckRun[] = [
   { name: "Tests", command: "bun run test", ok: true, ms: 41_000, output: "212 pass\n0 fail\nRan 212 tests across 31 files." },
   { name: "Build", command: "bun run build", ok: true, ms: 23_000, output: "Built in 22.4s." },
 ];
-
-const GATE_TITLES: Record<GateKind, (title: string) => string> = {
-  plan: (title) => `Approve the plan for “${title}”`,
-  design: (title) => `Check the design for “${title}”`,
-  delivery: (title) => `Ready to ship “${title}”`,
-};
-
-const GATE_STATUS: Record<GateKind, string> = {
-  plan: "Plan ready. Waiting for your OK",
-  design: "Design settled. Waiting for your check",
-  delivery: "Reviews passed. Waiting for your OK to open the pull request",
-};
 
 interface ScriptContext {
   area: string;
@@ -304,33 +289,10 @@ export class Simulator {
    */
   requestChanges(itemId: Id, note: string): void {
     this.resolve(itemId, (d, task, item) => {
-      const stages = task.plan?.stages ?? [];
-      const call = item.kind === "disagreement" ? startCall(task as unknown as Task, note, d.now) : undefined;
+      const call = item.kind === "disagreement";
       this.log(d, task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
       this.say(d, task, "you", note);
-      if (call && task.plan) {
-        task.plan.stages = call.stages as DeepMutable<Stage>[];
-        task.stageIndex = call.stageIndex;
-        task.call = call.call as DraftTask["call"];
-      } else if (item.kind === "plan") {
-        task.stageIndex = -1;
-      } else if (item.kind === "design") {
-        const index = designStageIndex(stages, task.stageIndex);
-        if (index >= 0) {
-          const stage = stages[index]!;
-          // On a design the call settled, changes go to the architect alone and come back to the same check.
-          if (!callOn(task as unknown as Task, index)) task.rounds[stage.id] = (task.rounds[stage.id] ?? 1) + 1;
-          task.stageIndex = index;
-        }
-      } else if (item.kind === "delivery") {
-        task.sentBack = (task.sentBack ?? 0) + 1;
-        const index = lastIndexWhere(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
-        if (index >= 0) {
-          task.stageIndex = index;
-          task.fixing = true;
-        }
-      }
-      task.sub = 0;
+      afterChangesAsked(task, item.kind, note, d.now);
       task.state = "waiting";
       task.statusLine = "Waiting for a free slot";
       task.column = this.columnFor(d, task);
@@ -617,15 +579,7 @@ export class Simulator {
   }
 
   private columnFor(d: Draft, task: DraftTask): Column {
-    if (task.state === "cancelled" || task.state === "done") return "done";
-    if (task.state === "pr-open") return "ready";
-    if (task.state === "queued") return "queue";
-    if (task.stageIndex < 0) return "planning";
-    const stage = this.stage(task);
-    if (!stage) return "ready";
-    if (stage.kind === "gate") return stage.gate === "plan" ? "planning" : stage.gate === "design" ? "designing" : "ready";
-    if (stage.kind === "review-chain") return "reviewing";
-    return d.roles.find((role) => role.id === stage.roleId)?.column ?? "building";
+    return columnOf(task as unknown as Task, d.roles as Role[]);
   }
 
   /** Who should be working right now, given the stage and the sub-step. */
@@ -827,14 +781,17 @@ export class Simulator {
             : laterObjections(task.area, round);
         for (const objection of raised) task.objections.push({ id: this.id(d, task.id), round, raisedBy: agent.profileId, status: "open", ...objection });
         this.log(d, task, "warn", `Raised ${raised.length} objections, ${raised.filter((objection) => objection.blocking).length} blocking`, agent.roleId, agent.profileId);
-        if (round >= (stage.maxRounds ?? 3)) {
+        const end = designRoundEnd(raised.filter((objection) => objection.blocking).length, round, stage as Stage);
+        if (end === "disagreement") {
           this.gateDisagreement(d, task);
           return;
         }
-        task.rounds[stage.id] = round + 1;
-        task.sub = 0;
-        this.startAgent(d, task);
-        return;
+        if (end === "next round") {
+          task.rounds[stage.id] = round + 1;
+          task.sub = 0;
+          this.startAgent(d, task);
+          return;
+        }
       }
       task.brief = briefFor(task);
       this.log(d, task, "done", "Design settled: no blocking objections", agent.roleId, agent.profileId);
@@ -886,17 +843,17 @@ export class Simulator {
       }
 
       const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
-      const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
-      if (open.length > 0 && builder >= 0 && round < (stage.maxRounds ?? 2)) {
+      const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
+      if (end.kind === "send back") {
         task.rounds[stage.id] = round + 1;
-        task.stageIndex = builder;
+        task.stageIndex = end.builder;
         task.sub = 0;
         task.fixing = true;
-        this.log(d, task, "warn", `Sent back to the builder with ${open.length} blocking finding${open.length === 1 ? "" : "s"}`);
+        this.log(d, task, "warn", `Sent back to the builder: ${findingCount(open)}`);
         this.startAgent(d, task);
         return;
       }
-      this.log(d, task, "done", "Review passed");
+      this.log(d, task, end.kind === "used up" ? "warn" : "done", end.kind === "used up" ? `Review rounds used up: ${findingCount(open)} still open` : `Review passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
       this.advance(d, task);
     }
   }
@@ -920,9 +877,9 @@ export class Simulator {
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
     delete task.agent;
     task.holdsSlot = false;
-    task.statusLine = gate === "design" && callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : GATE_STATUS[gate];
+    task.statusLine = gateStatus(task as unknown as Task, gate);
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
-    this.raise(d, task, gate, GATE_TITLES[gate](task.title), false, body ? { body } : {});
+    this.raise(d, task, gate, GATE_TITLE[gate](task.title), false, body ? { body } : {});
     task.column = this.columnFor(d, task);
   }
 
@@ -1031,12 +988,6 @@ export class Simulator {
   }
 }
 
-function lastIndexWhere<T>(items: readonly T[], match: (item: T, index: number) => boolean): number {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    if (match(items[index]!, index)) return index;
-  }
-  return -1;
-}
 
 function areaFromTitle(title: string): string {
   const words = title.trim().toLowerCase().split(/\s+/).filter(Boolean);

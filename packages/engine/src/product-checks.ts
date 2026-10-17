@@ -1,12 +1,12 @@
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
-import type { ProductCheck } from "@petrina/core";
+import { lastIndexWhere, type ProductCheck } from "@petrina/core";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
 import { checksFingerprint, commandText, detectChecks, runChecks } from "./checks.js";
 import { agentEnv } from "./env.js";
-import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask, lastIndex } from "./kernel.js";
+import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 
@@ -101,7 +101,7 @@ export class ProductChecks {
     const sha = await git.head(task.worktree).catch(() => undefined);
     if (sha && task.checks?.sha === sha && task.checks.results.every((run) => run.ok)) return false;
     if ((await this.runProductChecks(task, product.checks, signal)) === 0) return false;
-    const builder = lastIndex(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
+    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
     if (builder < 0 || (task.checkReturns ?? 0) >= 2) return false;
     task.checkReturns = (task.checkReturns ?? 0) + 1;
     task.stageIndex = builder;

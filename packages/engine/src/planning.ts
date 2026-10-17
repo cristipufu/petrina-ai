@@ -1,10 +1,10 @@
 // The planner's turn, and turning its answer into a plan Petrina can run: only roles the planner was told
 // about, always a builder and a review, a security review for high risk, and the delivery stages.
 
-import { deliveryStages, type Task } from "@petrina/core";
+import { lastIndexWhere, type DeepMutable, deliveryStages, type Task } from "@petrina/core";
 import type { z } from "zod";
 import { PlanResult } from "./roles.js";
-import { Kernel, type DeepMutable, type MStage, type MTask, PLANNER_PROFILE, RISK_WORD, SHIPPER_PROFILE, lastIndex } from "./kernel.js";
+import { Kernel, type MStage, type MTask, PLANNER_PROFILE, RISK_WORD, SHIPPER_PROFILE } from "./kernel.js";
 import type { Turns } from "./turn.js";
 
 export class Planning {
@@ -64,7 +64,7 @@ export class Planning {
       const builderTool = this.k.profile(stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "")?.toolId;
       const other = this.k.s.profiles.filter((entry) => entry.toolId !== builderTool);
       const reviewer = (other.find((entry) => entry.effort === "xhigh") ?? other[0])?.id ?? "opus-xhigh";
-      stages.splice(lastIndex(stages, (stage) => stage.kind === "review-chain") + 1, 0, { id: `${task.id}:security`, kind: "review-chain", title: "Security review", roleId: "security-reviewer", profileIds: [reviewer], maxRounds: 2 });
+      stages.splice(lastIndexWhere(stages, (stage) => stage.kind === "review-chain") + 1, 0, { id: `${task.id}:security`, kind: "review-chain", title: "Security review", roleId: "security-reviewer", profileIds: [reviewer], maxRounds: 2 });
     }
     stages.push(...(deliveryStages(task as unknown as Task, SHIPPER_PROFILE) as MStage[]));
     return { stages, rationale: result.rationale, plannerProfileId: PLANNER_PROFILE };
