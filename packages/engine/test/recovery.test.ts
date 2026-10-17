@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { ShippingRecord, State } from "@petrina/core";
 import type { Engine } from "../src/engine.js";
 import { branchName } from "../src/git.js";
-import { finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, type World } from "./support.js";
+import { finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, type World, SLOW } from "./support.js";
 
 const worlds: World[] = [];
 const world = (...args: Parameters<typeof makeWorld>) => {
@@ -36,7 +36,7 @@ async function startHeld(w: World, mode: "pull-request" | "release", command: st
   for (;;) {
     respond(engine, engine.getState());
     if (existsSync(`${hold}.reached`)) break;
-    if (Date.now() - started > 60_000) throw new Error("the fake GitHub was never reached");
+    if (Date.now() - started > 60_000 * SLOW) throw new Error("the fake GitHub was never reached");
     await Bun.sleep(30);
   }
   return { engine, taskId, hold };

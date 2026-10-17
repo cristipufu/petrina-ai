@@ -9,6 +9,9 @@ import { removeDir } from "./support.js";
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
 
+/** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
+const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+
 describe("Petrina's own git steps", () => {
   afterAll(() => removeDir(temp));
 
@@ -169,11 +172,11 @@ describe("Petrina's own git steps", () => {
       writeFileSync(join(repo, "greeting.txt"), "Mine\n");
       expect((await fastForward(repo, "main", two, three, true)).ok).toBe(false);
       expect(git(repo, "rev-parse", "main")).toBe(two);
-      expect(readFileSync(join(repo, "greeting.txt"), "utf8")).toBe("Mine\n");
+      expect(checkedOut(join(repo, "greeting.txt"))).toBe("Mine\n");
       rmSync(join(repo, "greeting.txt"));
       expect((await fastForward(repo, "main", two, three, true)).ok).toBe(true);
       expect(git(repo, "rev-parse", "main")).toBe(three);
-      expect(readFileSync(join(repo, "greeting.txt"), "utf8")).toBe("Hello\n");
+      expect(checkedOut(join(repo, "greeting.txt"))).toBe("Hello\n");
       expect(git(repo, "status", "--porcelain")).toBe("");
       expect(git(repo, "rev-list", "--merges", "--count", "main")).toBe("0");
     });
@@ -220,7 +223,7 @@ describe("Petrina's own git steps", () => {
       // Still on main: it goes through, and leaves no lock behind.
       expect((await fastForward(repo, "main", one, tested, true)).ok).toBe(true);
       expect(git(repo, "rev-parse", "main")).toBe(tested);
-      expect(readFileSync(join(repo, "greeting.txt"), "utf8")).toBe("Hello\n");
+      expect(checkedOut(join(repo, "greeting.txt"))).toBe("Hello\n");
       expect(git(repo, "status", "--porcelain")).toBe("");
       expect(existsSync(lock)).toBe(false);
     });

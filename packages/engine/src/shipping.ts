@@ -227,7 +227,8 @@ export class Shipping {
     const reviewers = [...new Set((task.plan?.stages ?? []).filter((stage) => stage.kind === "review-chain").flatMap((stage) => stage.profileIds.map((profileId) => this.k.describe(stage.roleId, profileId))))];
     if (reviewers.length) parts.push(`### Reviewed by\n${reviewers.map((reviewer) => `- ${reviewer}`).join("\n")}`);
     const followUps = task.findings.filter((finding) => finding.status === "open" && finding.severity === "pre-existing");
-    if (followUps.length) parts.push(`### Follow-ups (older than this change)\n${followUps.map((finding) => `- ${finding.text}`).join("\n")}`);
+    // Only a count: an older problem a reviewer noted (a security one, say) is not for a public pull request.
+    if (followUps.length) parts.push(`### Follow-ups\n${followUps.length === 1 ? "One older problem was" : `${followUps.length} older problems were`} noted for a follow-up, in Petrina.`);
     return fit(`${builder}\n\n${parts.join("\n\n")}`, TEXT_LIMITS.body);
   }
 
