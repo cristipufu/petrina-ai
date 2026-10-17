@@ -101,10 +101,10 @@ function UnsentFoot({ entry, live }: { entry: Unsent; live: boolean }) {
     <>
       <p className="unsent-why">{entry.refused}</p>
       <div className="unsent-actions">
-        <button className="btn small" onClick={() => sim.resendUnsent(entry.clientId)}>
+        <button className="btn" onClick={() => sim.resendUnsent(entry.clientId)}>
           Send it again
         </button>
-        <button className="btn small quiet" onClick={() => sim.discardUnsent(entry.clientId)}>
+        <button className="btn quiet" onClick={() => sim.discardUnsent(entry.clientId)}>
           Discard
         </button>
       </div>
