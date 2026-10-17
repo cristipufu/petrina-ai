@@ -8,6 +8,7 @@ import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { VerifyResult, ReviewResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
+import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
@@ -119,8 +120,9 @@ export class Reviews {
     };
     if (stage.profileIds.length === 1) {
       const { key, profileId } = reviewers[0]!;
-      const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal);
-      this.applyReview(task, stage, result, profileId);
+      let by = profileId;
+      const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { used: (id) => (by = id) });
+      this.applyReview(task, stage, result, by);
       reported(key);
       return;
     }
@@ -131,8 +133,9 @@ export class Reviews {
         roleId: stage.roleId,
         profileId,
         work: async (copy) => {
-          const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal);
-          this.applyReview(task, stage, result, profileId);
+          let by = profileId;
+          const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { used: (id) => (by = id) });
+          this.applyReview(task, stage, result, by);
           reported(key);
         },
       })),
@@ -261,7 +264,8 @@ export class Reviews {
    * commit, so a test one runs or a checkout one makes never disturbs another, and the task's own copy is
    * never touched. The first takes the task's own slot; each other one starts when a slot of its own is
    * free, so the pool and every tool's cap still hold. One that cannot get a slot by the time the others
-   * finish is left for the driver, which waits for one. A failure stops the rest.
+   * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
+   * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
   private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; work: (copy: string) => Promise<void> }[], status: (running: number, waiting: number) => string): Promise<void> {
     const root = this.k.productOf(task)!.path!;
@@ -272,6 +276,7 @@ export class Reviews {
     const pending = [...members];
     const running = new Map<number, { agent: ActiveAgent; done: Promise<void> }>();
     let failure: unknown;
+    let noOne: WaitingForUsage | undefined;
     let next = 0;
     const show = () => {
       const agents = [...running.values()].map((entry) => entry.agent);
@@ -283,19 +288,28 @@ export class Reviews {
     const start = () => {
       while (pending.length && failure === undefined) {
         const member = pending[0]!;
-        const toolId = this.k.profile(member.profileId)?.toolId ?? "unknown";
+        // Whoever would really work it: its planned profile, or a stand-in while that one is out of usage.
+        const choice = this.k.choose(member.profileId, task, member.roleId);
+        if (choice?.kind === "none") {
+          noOne ??= new WaitingForUsage(choice.waiting);
+          pending.shift();
+          continue;
+        }
+        const seat = choice?.profile.id ?? member.profileId;
+        const toolId = this.k.profile(seat)?.toolId ?? "unknown";
         // The task's own slot was taken for one tool: another agent qualifies for it like anyone else.
         const free = running.size === 0 ? !slotWait(this.k.getState(), { taskId: task.id, toolId }) : extraSlot(this.k.getState(), toolId);
         if (!free) break;
         pending.shift();
         const id = next++;
-        const agent = { roleId: member.roleId, profileId: member.profileId, since: Date.now(), step: 0 };
+        const agent = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0 };
         const copy = join(folder, `${member.roleId}-${id}-${member.profileId}`);
         const done = git
           .addCopy(root, copy, sha)
           .then(() => member.work(copy))
           .catch((error: unknown) => {
-            failure ??= error;
+            if (error instanceof WaitingForUsage) noOne ??= error;
+            else failure ??= error;
           })
           .finally(() => {
             running.delete(id);
@@ -317,6 +331,11 @@ export class Reviews {
         start();
       }
       if (failure !== undefined) throw failure;
+      // The rest looked at the change and reported; the ones left wait for usage, and the driver starts them again after.
+      if (noOne) {
+        this.k.waitForUsage(task, noOne.words);
+        throw noOne;
+      }
     } finally {
       this.k.stopHelpers(task.id);
       delete task.helpers;

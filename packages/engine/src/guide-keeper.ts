@@ -11,6 +11,7 @@ import { addToSection, AGENTS_FILE, appendPoints, cleanPoint, GUIDE, GUIDE_FILE,
 const GUIDE_SECTION = "## Review guide";
 const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.`;
 import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, type MTask } from "./kernel.js";
+import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 
 export class GuideKeeper {
@@ -83,6 +84,7 @@ export class GuideKeeper {
     } catch (error) {
       if (signal.aborted || error instanceof Aborted) throw error;
       restore();
+      if (error instanceof WaitingForUsage) throw error;
       this.k.log(task, "warn", "The Guide keeper could not finish, so nothing was proposed for the review guide");
     }
     delete task.miss;

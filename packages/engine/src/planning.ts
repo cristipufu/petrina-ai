@@ -62,7 +62,7 @@ export class Planning {
     if (task.risk?.level === "high") {
       // High-risk work gets a security review after the others, on a tool other than the builder's.
       const builderTool = this.k.profile(stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "")?.toolId;
-      const other = this.k.s.profiles.filter((entry) => entry.toolId !== builderTool);
+      const other = this.k.s.profiles.filter((entry) => entry.toolId !== builderTool && !entry.standby);
       const reviewer = (other.find((entry) => entry.effort === "xhigh") ?? other[0])?.id ?? "opus-xhigh";
       stages.splice(lastIndexWhere(stages, (stage) => stage.kind === "review-chain") + 1, 0, { id: `${task.id}:security`, kind: "review-chain", title: "Security review", roleId: "security-reviewer", profileIds: [reviewer], maxRounds: 2 });
     }

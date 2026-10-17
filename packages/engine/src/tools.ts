@@ -25,7 +25,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     options: { model: "model", effort: "effort", mode: "mode" },
     // Auto: Claude Code's own classifier makes the permission decisions.
     mode: "auto",
-    models: ["Opus 5.5"],
+    models: ["Opus 5.5", "Sonnet 5.5"],
   },
   codex: {
     id: "codex",
@@ -40,14 +40,16 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
 };
 
 /**
- * The only profiles the real engine offers: Opus and sol, at high or xhigh effort.
- * The planner may only choose among these.
+ * The only profiles the real engine offers: Opus and sol, at high or xhigh effort, and Sonnet as a stand-in.
+ * The planner may only choose among the first four.
  */
 export const ENGINE_PROFILES: readonly AgentProfile[] = [
   { id: "opus-xhigh", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "xhigh" },
   { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" },
   { id: "sol-xhigh", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "xhigh" },
   { id: "sol-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
+  // Works only when Opus is out of usage and Claude Code is not (its weekly Opus limit); never planned.
+  { id: "sonnet-high", toolId: "claude-code", model: "Sonnet 5.5", modelId: "sonnet", effort: "high", standby: true },
 ];
 
 const require = createRequire(import.meta.url);

@@ -96,6 +96,14 @@ const SPECS: readonly Spec[] = [
 const MINUTE = 60_000;
 const TICK = 40_000;
 
+/** Claude Code is close to its weekly limit and Codex is fine: the usage the demo shows. */
+function demoUsage(now: number): NonNullable<State["pool"]["usage"]> {
+  return [
+    { toolId: "claude-code", kind: "seven_day", status: "allowed_warning", utilization: 0.82, resetsAt: now + 3 * 24 * 60 * MINUTE, at: now },
+    { toolId: "claude-code", kind: "five_hour", status: "allowed", utilization: 0.35, resetsAt: now + 90 * MINUTE, at: now },
+  ];
+}
+
 function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): State {
   return {
     now,
@@ -106,7 +114,7 @@ function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): St
     profiles: DEFAULT_PROFILES,
     tasks,
     inbox,
-    pool: { limit: 5, paused: false, toolCaps: { "claude-code": 3, codex: 2 } },
+    pool: { limit: 5, paused: false, toolCaps: { "claude-code": 3, codex: 2 }, usage: demoUsage(now) },
   };
 }
 
@@ -363,7 +371,7 @@ export function createPortfolioDemo(now: number): Demo {
   });
 
   return {
-    state: { ...baseState(now, tasks, inbox), products, seq: 10_000, pool: { limit: 8, paused: false, toolCaps: { "claude-code": 5, codex: 4 } } },
+    state: { ...baseState(now, tasks, inbox), products, seq: 10_000, pool: { limit: 8, paused: false, toolCaps: { "claude-code": 5, codex: 4 }, usage: demoUsage(now) } },
     triggers,
   };
 }

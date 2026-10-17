@@ -1065,6 +1065,13 @@ kbd {
 .slot-row .s.needs-you { color: var(--amber-text); font-weight: 600; }
 .slot-row.free { color: var(--text-3); cursor: default; }
 .slot-row.free:hover { background: transparent; }
+.usage-list { display: flex; flex-direction: column; gap: 8px; }
+.usage-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-control); line-height: var(--lh-control); }
+.usage-row i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.usage-row .label { color: var(--text-2); font-weight: 500; }
+.usage-row .label.warn { color: var(--amber-text); font-weight: 600; }
+.usage-row .label.bad { color: var(--red-text); font-weight: 600; }
+.usage-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
 .more-section + .more-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 
 /* ── Pages: Products, Agents, Library ──────────────────────────────── */

@@ -4,18 +4,22 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, callCheckBody, queueOf, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable } from "@petrina/core";
+import { BUILT_IN_ROLES, callCheckBody, chooseProfile, nextExpiry, queueOf, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
 import { Store } from "./store.js";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
-import { detectTools, ENGINE_PROFILES } from "./tools.js";
+import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
+import type { UsageInfo, UsageLimited } from "./usage.js";
 
 export type MState = DeepMutable<State>;
 
 export type MTask = DeepMutable<Task>;
 
 export type MStage = DeepMutable<Stage>;
+
+/** Roles that judge others' work: their tools were chosen for independence, so near a limit they are not swapped. */
+const REVIEWING = new Set(["code-reviewer", "security-reviewer", "verifier", "design-reviewer"]);
 
 export const PLANNER_PROFILE = "opus-high";
 
@@ -138,6 +142,9 @@ export abstract class Kernel {
   readonly waiting = new Map<Id, { resolve: (value: string) => void; reject: (error: Error) => void }>();
 
   saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Wakes the scheduler when the first usage limit in force ends. */
+  limitTimer: ReturnType<typeof setTimeout> | undefined;
 
   readonly timers: ReturnType<typeof setInterval>[] = [];
 
@@ -337,6 +344,74 @@ export abstract class Kernel {
 
   profile(id: Id): AgentProfile | undefined {
     return this.s.profiles.find((profile) => profile.id === id) as AgentProfile | undefined;
+  }
+
+  /** Who works a step planned for this profile right now: the planned one, or a stand-in while its tool or model is out of usage. */
+  choose(plannedId: Id, task?: MTask, roleId?: Id): Choice | undefined {
+    const planned = this.profile(plannedId);
+    if (!planned) return undefined;
+    // Reviews keep the tools they were planned on, and a security review never moves onto the builder's tool.
+    const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
+    const avoidTool = roleId === "security-reviewer" && builder ? this.profile(builder)?.toolId : undefined;
+    return chooseProfile(this.getState(), planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(avoidTool && avoidTool !== planned.toolId ? { avoidTool } : {}) });
+  }
+
+  /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */
+  named(profileId: Id): string {
+    const profile = this.profile(profileId);
+    return `${this.toolName(profile?.toolId)} · ${profile?.model}`;
+  }
+
+  private toolName(toolId: Id | undefined): string {
+    return this.s.tools.find((tool) => tool.id === toolId)?.name ?? ADAPTERS[toolId ?? ""]?.name ?? toolId ?? "the tool";
+  }
+
+  /** A tool said how much of a limit is used: kept as the latest for that tool and kind of limit. */
+  recordUsage(info: UsageInfo): void {
+    this.s.pool.usage = withReport(this.s.pool.usage, { ...info, at: Date.now() }) as MState["pool"]["usage"];
+    this.commit();
+  }
+
+  /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */
+  recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void {
+    this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: error.toolId, ...(error.model ? { model: error.model } : {}), until: error.until, reason: error.reason }) as MState["pool"]["limited"];
+    this.log(task, "warn", `${this.role(roleId)?.name ?? roleId} on ${this.named(profileId)} ran out of usage (${error.reason}), until ${untilWords(error.until, Date.now())}`, roleId, profileId);
+    this.armLimitTimer();
+    this.commitNow();
+  }
+
+  /** Limits whose time has passed are dropped. True when any was. */
+  expireLimits(): boolean {
+    const before = this.s.pool.limited?.length ?? 0;
+    if (!before) return false;
+    const now = Date.now();
+    const kept = this.s.pool.limited!.filter((limit) => limit.until > now);
+    if (kept.length === before) return false;
+    if (kept.length) this.s.pool.limited = kept;
+    else delete this.s.pool.limited;
+    return true;
+  }
+
+  /** The scheduler runs again when the first limit in force ends: tasks waiting for usage start by themselves. */
+  armLimitTimer(): void {
+    clearTimeout(this.limitTimer);
+    this.limitTimer = undefined;
+    const at = nextExpiry(this.s.pool, Date.now());
+    if (at === undefined || this.stopped) return;
+    this.limitTimer = setTimeout(() => {
+      this.limitTimer = undefined;
+      if (!this.stopped) this.schedule();
+    }, Math.min(at - Date.now() + 50, 2 ** 31 - 1));
+  }
+
+  /** The task lets go of its slot and waits until a limit ends: the driver stops, and the scheduler starts it again. */
+  waitForUsage(task: MTask, words: string): void {
+    task.state = "waiting";
+    task.holdsSlot = false;
+    delete task.agent;
+    task.statusLine = words;
+    task.column = this.columnFor(task);
+    this.commitNow();
   }
 
   describe(roleId: Id, profileId: Id): string {

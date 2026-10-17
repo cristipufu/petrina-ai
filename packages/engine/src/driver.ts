@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { lastIndexWhere, pickStarts, queueOf, slotWait, slotUses, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { Kernel, Aborted, type MTask, PLANNER_PROFILE } from "./kernel.js";
+import { WaitingForUsage } from "./usage.js";
 import type { Planning } from "./planning.js";
 import type { Work } from "./work.js";
 import type { Design } from "./design.js";
@@ -15,6 +16,9 @@ import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
 import type { Connections } from "./connection.js";
 import { destination, needsReleaseManager, type Shipping } from "./shipping.js";
+
+/** How a status line starts while a task waits for a tool to be out of its usage limit. */
+const USAGE_WAIT = "Waiting for usage";
 
 export class Driver {
   constructor(
@@ -33,8 +37,9 @@ export class Driver {
 
   schedule(): void {
     if (this.k.stopped) return;
+    // Limits that ended no longer hold anyone back.
+    this.k.expireLimits();
     const candidates: Candidate[] = [];
-    const tool = (profileId: Id) => this.k.profile(profileId)?.toolId ?? "unknown";
     // A task waiting for others to land stays out of the running and says what it waits for.
     const blocked = (task: MTask): boolean => {
       const waitingFor = this.k.blockers(task);
@@ -45,17 +50,27 @@ export class Driver {
     };
     for (const task of this.k.s.tasks.filter((entry) => entry.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
       if (blocked(task)) continue;
-      if (task.statusLine.startsWith("Waiting for “")) task.statusLine = "Waiting for a free slot";
-      const next = this.nextAgent(task);
-      const candidate = { taskId: task.id, toolId: next ? tool(next.profileId) : "none" };
+      if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) task.statusLine = "Waiting for a free slot";
+      const seat = this.seatFor(task);
+      // Everyone who could work this step is out of usage: it waits for a limit to end, and takes no slot.
+      if (seat.waiting) {
+        task.statusLine = seat.waiting;
+        continue;
+      }
+      const candidate = { taskId: task.id, toolId: seat.toolId };
       task.statusLine = slotWait(this.k.getState(), candidate) ?? "Waiting for a free slot";
       candidates.push(candidate);
     }
     for (const task of queueOf(this.k.s.tasks as Task[])) {
       if (task.held || blocked(task as MTask)) continue;
       // What it waited for landed or was cancelled: back to plain queue words.
-      if (task.statusLine.startsWith("Waiting for “")) (task as MTask).statusLine = "In the queue";
-      candidates.push({ taskId: task.id, toolId: tool(PLANNER_PROFILE) });
+      if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) (task as MTask).statusLine = "In the queue";
+      const seat = this.seatOf({ roleId: "planner", profileId: PLANNER_PROFILE });
+      if (seat.waiting) {
+        (task as MTask).statusLine = seat.waiting;
+        continue;
+      }
+      candidates.push({ taskId: task.id, toolId: seat.toolId });
     }
 
     for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.getState()), pool: this.k.s.pool })) {
@@ -68,13 +83,30 @@ export class Driver {
       }
       if (this.reserveAgent(task)) this.startDriver(taskId);
     }
+    this.k.armLimitTimer();
     this.k.commit();
+  }
+
+  /**
+   * Who would work this task's next step: its planned agent, or a stand-in while the planned tool or model is
+   * out of usage. `waiting` says why nobody can; `toolId` is the tool the slot is for.
+   */
+  private seatFor(task: MTask) {
+    return this.seatOf(this.nextAgent(task), task);
+  }
+
+  private seatOf(next: { roleId: Id; profileId: Id } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
+    if (!next) return { toolId: "none" };
+    const choice = this.k.choose(next.profileId, task, next.roleId);
+    if (!choice) return { agent: next, toolId: this.k.profile(next.profileId)?.toolId ?? "unknown" };
+    if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting };
+    return { agent: { roleId: next.roleId, profileId: choice.profile.id }, toolId: choice.profile.toolId };
   }
 
   /** Take the slot and name its agent together, before any working-copy or tool I/O. */
   private reserveAgent(task: MTask): boolean {
-    const next = this.nextAgent(task);
-    const waiting = slotWait(this.k.getState(), { taskId: task.id, toolId: next ? this.k.profile(next.profileId)?.toolId ?? "unknown" : "none" });
+    const { agent: next, toolId, waiting: noOne } = this.seatFor(task);
+    const waiting = noOne ?? slotWait(this.k.getState(), { taskId: task.id, toolId });
     if (waiting) {
       task.state = "waiting";
       task.holdsSlot = false;
@@ -224,6 +256,8 @@ export class Driver {
       }
     } catch (error) {
       if (signal.aborted || error instanceof Aborted) return;
+      // The task already says it waits for usage and has let go of its slot.
+      if (error instanceof WaitingForUsage) return;
       this.k.fail(taskId, error);
     } finally {
       if (this.k.drivers.get(taskId) === controller) this.k.drivers.delete(taskId);

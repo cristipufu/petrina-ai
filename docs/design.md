@@ -146,6 +146,15 @@ Petrina relies on each tool's own safety checker instead of building one:
 
 The scheduler is a pure function in `@petrina/core` (`pickStarts`), tested without any I/O.
 
+### Usage limits
+
+- Claude Code reports its usage on every turn (how much of each limit is used, and when it resets); Codex only fails a turn when it is out, with the time to try again when it says. The pool keeps the latest report per tool and kind of limit (`pool.usage`) and who is out until when (`pool.limited`). The window shows both in plain words next to the pool. Limits whose time has passed are dropped every time the scheduler runs, and a timer runs it again at the first one's end.
+- A limit is for the whole tool, except Claude Code's weekly Opus and Sonnet limits, which are for that model only.
+- One function (`chooseProfile` in `@petrina/core`, used through `Kernel.choose`) decides who really works a step: the planned profile when it is free, else another model on the same tool, else a profile on another tool (the same effort first, in the order of the profile list, never one the coordinator removed). It is used wherever an agent is chosen, so the slots count the right tool. With nobody left, the task waits without a slot ("Waiting for usage: …") and starts by itself when a limit ends. The plan is never rewritten: once the limit is over, later steps use the planned profile again.
+- When a turn ends because its tool ran out, the step starts again right away on the stand-in, in a fresh conversation told what the first agent did (the same summary a restart gives), what it last said and that its unfinished work is in the working copy. With no stand-in, the step waits and the first agent's own conversation is reopened when a limit ends. A builder never tries to go back to its own conversation on a tool or model that is out.
+- New agents also prefer an equal profile on a tool that is not close to its limit (a warning, or 90% used), when there is one. Running agents are never interrupted for this.
+- A usage-limit stand-in for Claude Code's Opus is Sonnet, which the planner is never offered (`standby` in the profile).
+
 ## Working copies
 
 - Each task gets a git worktree in Petrina's data folder (not inside the repository), on a branch named `petrina/<task-slug>`.

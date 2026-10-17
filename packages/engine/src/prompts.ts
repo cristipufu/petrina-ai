@@ -181,10 +181,14 @@ export const WHERE_YOU_WERE = "Where you were when Petrina restarted";
 
 /** For a fresh conversation on a step whose conversation could not be reopened. */
 export function formatWhereYouWere(where: WhereYouWere, reason: string): string {
+  return [`Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`, ...whereDetails(where, "you")].join("\n\n");
+}
+
+/** What was done in the step so far and which files changed: the same in a restart's summary and a take-over's. */
+function whereDetails(where: WhereYouWere, who: "you" | "it"): string[] {
   const files = where.files ?? [];
-  const lines = [
-    `Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`,
-    where.done.length ? `What you did last in this step, oldest first:\n${where.done.map((line) => `- ${line}`).join("\n")}` : "Nothing was recorded of what you did in this step.",
+  return [
+    where.done.length ? `What ${who} did last in this step, oldest first:\n${where.done.map((line) => `- ${line}`).join("\n")}` : `Nothing was recorded of what ${who} did in this step.`,
     files.length
       ? `Files added, changed or removed in the working copy since this step started:\n${files
           .slice(0, MAX_FILES)
@@ -192,7 +196,41 @@ export function formatWhereYouWere(where: WhereYouWere, reason: string): string 
           .join("\n")}${files.length > MAX_FILES ? `\n- and ${files.length - MAX_FILES} more` : ""}`
       : "No files were added, changed or removed in the working copy since this step started.",
   ];
-  return lines.join("\n\n");
+}
+
+export const TOOK_OVER = "Where the agent before you stopped";
+
+/** How much of what the stopped agent last said a new one is handed. */
+export const MAX_WORDS = 4000;
+
+/** The agent's last messages, most recent first, as many as fit. `lines` come most recent first. */
+export function lastWords(lines: readonly string[]): string {
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    if (used + line.length > MAX_WORDS) {
+      const room = MAX_WORDS - used;
+      if (room > 200) kept.push(`${line.slice(0, room)}…`);
+      break;
+    }
+    kept.push(line);
+    used += line.length;
+  }
+  return kept.join("\n\n---\n\n");
+}
+
+/** For a fresh conversation that takes a step over from an agent that ran out of usage. */
+export function formatTakeOver(where: WhereYouWere, from: string, words: string): string {
+  return [
+    `${from} was doing this step${where.stage ? ` (“${where.stage}”, as the ${where.role})` : ""} and ran out of usage. Its unfinished work is in this working copy, not committed: continue from it, don't start over.`,
+    ...whereDetails(where, "it"),
+    words ? `What it last said in this step, most recent first:\n\n${words}` : "It had not said anything yet in this step.",
+  ].join("\n\n");
+}
+
+/** For an agent working beside others that takes over from one that ran out of usage: the copy is fresh, so only its words carry over. */
+export function formatReviewTakeOver(from: string, words: string): string {
+  return [`${from} was doing this part of the review and ran out of usage. Carry on from what it had found instead of starting over.`, words ? `What it said so far, most recent first:\n\n${words}` : "It had not said anything yet."].join("\n\n");
 }
 
 export const OWN_COPY = "Your working copy";

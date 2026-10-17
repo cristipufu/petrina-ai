@@ -26,6 +26,8 @@ export interface AgentProfile {
   /** The value the tool's ACP adapter takes, e.g. "opus" or "gpt-6.1-sol". */
   modelId?: string;
   effort: Effort;
+  /** Only a stand-in for when the planned model is out of usage: the planner is never offered it. */
+  standby?: boolean;
 }
 
 export type RoleIcon = "map" | "book" | "compass" | "scale" | "palette" | "hammer" | "flask" | "search" | "rocket";
@@ -565,10 +567,42 @@ export interface CheckRun {
   timedOut?: boolean;
 }
 
+/** What a tool last said about its usage limit: "allowed_warning" means it is close, "rejected" means it is out. */
+export type UsageStatus = "allowed" | "allowed_warning" | "rejected";
+
+/** The latest report from a tool for one kind of limit (five hours, a week, one model's week). */
+export interface UsageReport {
+  toolId: Id;
+  /** Set when the report is about one model family only (for example "opus"). */
+  model?: string;
+  /** Which limit: "five_hour", "seven_day", "seven_day_opus", and so on. */
+  kind: string;
+  status: UsageStatus;
+  /** How much of the limit is used, from 0 to 1, when the tool says. */
+  utilization?: number;
+  /** When the limit resets (milliseconds), when the tool says. */
+  resetsAt?: number;
+  at: number;
+}
+
+/** A tool, or one model family of it, that is out of usage until a time. */
+export interface UsageLimit {
+  toolId: Id;
+  model?: string;
+  /** Milliseconds. */
+  until: number;
+  /** Plain words, for example "Claude Code's weekly Opus limit". */
+  reason: string;
+}
+
 export interface Pool {
   limit: number;
   paused: boolean;
   toolCaps: Readonly<Record<Id, number>>;
+  /** The latest report per tool and kind of limit. */
+  usage?: readonly UsageReport[];
+  /** Who is out of usage right now. Entries are dropped when their time has passed. */
+  limited?: readonly UsageLimit[];
 }
 
 /** A terminal Petrina can open a take-over in. */

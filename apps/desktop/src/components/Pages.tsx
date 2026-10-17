@@ -4,6 +4,7 @@ import { sim } from "../engine";
 import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
 import { ProductName, RoleAvatar, ROLE_ICONS } from "./bits";
 import { LimitStepper } from "./Pool";
+import { UsageList } from "./Usage";
 import { ReviewsPanel } from "./Reviews";
 import { drivingText, openHandBack } from "./TakeOver";
 import type { SheetTab } from "./TaskCard";
@@ -82,6 +83,9 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
           </div>
         ))}
       </div>
+
+      <h2 className="section-title">Usage</h2>
+      <UsageList state={state} />
 
       <h2 className="section-title">How reviews are going</h2>
       <ReviewsPanel state={state} find={find} />

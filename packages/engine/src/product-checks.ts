@@ -11,6 +11,7 @@ import type { CheckRun } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText } from "./checks.js";
 import { withoutCredentials } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask } from "./kernel.js";
+import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 
@@ -99,6 +100,8 @@ export class ProductChecks {
     } catch (error) {
       if (signal.aborted || error instanceof Aborted) throw error;
       restore();
+      // Everyone who could work it is out of usage: the task waits, and the finder runs when one is back.
+      if (error instanceof WaitingForUsage) throw error;
       const fallback: ProductCheck[] = product.checks ? [...product.checks] : declared;
       product.checks = fallback.map((check) => ({ name: check.name, argv: [...check.argv], ...(check.why ? { why: check.why } : {}) }));
       this.k.log(task, "warn", `The Check finder could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`);

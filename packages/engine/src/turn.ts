@@ -1,17 +1,26 @@
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import type { AgentProfile, Id, InboxKind, Product, Role, StepNote, Task } from "@petrina/core";
+import { limitOf, slotWait, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
-import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatStepNotes, formatWhereYouWere, HANDED_BACK, handBackPrompt, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
+import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
+import { UsageLimited, WaitingForUsage } from "./usage.js";
 import { ADAPTERS } from "./tools.js";
 import { Kernel, Aborted, type MTask } from "./kernel.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
+
+/** `used` hears which profile worked each attempt: a stand-in when the planned one was out of usage. */
+interface TurnOptions<T> {
+  status?: string;
+  check?: Check<T>;
+  resume?: { sessionId: string; toolId: Id; model: string };
+  used?: (profileId: Id) => void;
+}
 
 export class Turns {
   constructor(private readonly k: Kernel) {}
@@ -23,20 +32,65 @@ export class Turns {
    * After a restart, the step's agent picks up its own conversation when the tool can reopen it.
    * `resume` names an earlier step's conversation to go back to (same tool and model): the agent keeps what
    * it knew there, compactions and all, and hears only its job now. When it cannot reopen, a fresh one starts.
+   * The profile is the planned one: while its tool or model is out of usage another works the step (see
+   * `Kernel.choose`). An agent that runs out in the middle hands over to that stand-in in a fresh conversation,
+   * told what the first one did and said; with no stand-in the task waits, and the first agent's conversation
+   * is reopened when a limit ends.
    */
-  async turn<T>(
-    task: MTask,
-    roleId: Id,
-    profileId: Id,
-    given: () => { title: string; body: string }[],
-    schema: z.ZodType<T>,
-    signal: AbortSignal,
-    options: { status?: string; check?: Check<T>; resume?: { sessionId: string; toolId: Id; model: string } } = {},
-  ): Promise<T> {
+  async turn<T>(task: MTask, roleId: Id, plannedId: Id, given: () => { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T> = {}): Promise<T> {
+    if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
+    let stopped: { profileId: Id; error: UsageLimited } | undefined;
+    for (;;) {
+      const choice = this.k.choose(plannedId, task, roleId)!;
+      if (choice.kind === "none") {
+        this.k.waitForUsage(task, choice.waiting);
+        throw new WaitingForUsage(choice.waiting);
+      }
+      const { profile } = choice;
+      // The tool said it was out while running something it should not have limited: the step cannot go on.
+      if (stopped?.profileId === profile.id) throw stopped.error;
+      if (stopped && this.k.profile(stopped.profileId)?.toolId !== profile.toolId) {
+        // Another tool's seat: it qualifies for a slot like any agent.
+        const wait = slotWait(this.k.getState(), { taskId: task.id, toolId: profile.toolId });
+        if (wait) {
+          this.k.waitForUsage(task, wait);
+          throw new WaitingForUsage(wait);
+        }
+      }
+      options.used?.(profile.id);
+      try {
+        return await this.attempt(task, roleId, profile, given, schema, signal, options);
+      } catch (error) {
+        if (!(error instanceof UsageLimited) || signal.aborted) throw error;
+        this.keepWords(task, roleId, profile.id, error);
+        this.k.recordLimit(task, roleId, profile.id, error);
+        stopped = { profileId: profile.id, error };
+      }
+    }
+  }
+
+  /** What an agent had said when it ran out of usage joins the session, so the one taking over can be told. */
+  private keepWords(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void {
+    const prose = error.said ? proseOf(error.said) : undefined;
+    if (prose) this.k.say(task, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, roleId, profileId);
+  }
+
+  /** An agent's last messages in a step, most recent first, as many as fit. */
+  private lastWords(task: MTask, roleId: Id, profileId: Id, since: number): string {
+    return lastWords(
+      task.session
+        .filter((line) => line.from === "agent" && line.roleId === roleId && line.profileId === profileId && line.at >= since)
+        .map((line) => line.text)
+        .reverse(),
+    );
+  }
+
+  /** One attempt at the step by one agent on one profile. */
+  private async attempt<T>(task: MTask, roleId: Id, profile: AgentProfile, given: () => { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T>): Promise<T> {
     const role = this.k.role(roleId);
-    const profile = this.k.profile(profileId);
     const product = this.k.productOf(task);
-    if (!role || !profile || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profileId}`);
+    if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
+    const profileId = profile.id;
     const taskId = task.id;
     // Paused, cancelled or stopped while getting here: no agent starts, and the task stays as the coordinator left it.
     if (signal.aborted) throw new Aborted();
@@ -55,6 +109,9 @@ export class Turns {
     const startedAt = same?.startedAt ?? Date.now();
     // Handed back by the coordinator: the note of what changed, until the agent hears it.
     const handback = same?.handback;
+    // An agent that ran out of usage in this step is who this one takes over from.
+    const before = same && !reopen && !back ? this.k.profile(same.profileId) : undefined;
+    const tookOver = before && limitOf(this.k.getState().pool as Pool, before, Date.now()) ? before : undefined;
     task.stepAttempts = (task.stepAttempts ?? 0) + 1;
 
     task.agent = { roleId, profileId, since: Date.now(), step: 0 };
@@ -103,6 +160,7 @@ export class Turns {
           },
           onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }),
           onLog: (text) => void this.k.agentLog(taskId, text),
+          onUsage: (info) => this.k.recordUsage(info),
         },
       });
     let run: AgentRun | undefined;
@@ -138,6 +196,10 @@ export class Turns {
     } else if (picked) {
       this.k.say(task, "system", `${role.name} picked up where it left off · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
       this.k.log(task, "milestone", "Picked up where it left off", roleId, profileId);
+    } else if (tookOver) {
+      const words = `${role.name} on ${this.k.named(profileId)} took over from ${this.k.named(tookOver.id)}, which ran out of usage`;
+      this.k.say(task, "system", words, roleId, profileId);
+      this.k.log(task, "milestone", words, roleId, profileId);
     } else if (saved) {
       this.k.say(task, "system", `${role.name} started this step again · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
       this.k.log(task, "milestone", `Started this step again: ${again}`, roleId, profileId);
@@ -178,6 +240,7 @@ export class Turns {
         const sections = [...given()];
         if (earlier.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
+        else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt)) });
         else if (where) sections.push({ title: WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "") });
         opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       }
@@ -209,21 +272,50 @@ export class Turns {
   async parallel<T>(
     task: MTask,
     roleId: Id,
-    profileId: Id,
+    plannedId: Id,
     copy: string,
     given: () => { title: string; body: string }[],
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: { check?: Check<T> } = {},
+    options: { check?: Check<T>; used?: (profileId: Id) => void } = {},
   ): Promise<T> {
-    const role = this.k.role(roleId);
-    const profile = this.k.profile(profileId);
-    const product = this.k.productOf(task);
-    if (!role || !profile || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profileId}`);
+    if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     if (signal.aborted) throw new Aborted();
+    // Out of usage: a stand-in looks at the change instead, told what the first one had said. With none, the
+    // group (not this agent) makes the task wait: the others carry on, and this one is left for later.
+    let stopped: { profileId: Id; error: UsageLimited; at: number } | undefined;
+    for (;;) {
+      const choice = this.k.choose(plannedId, task, roleId)!;
+      if (choice.kind === "none") throw new WaitingForUsage(choice.waiting);
+      if (stopped?.profileId === choice.profile.id) throw stopped.error;
+      options.used?.(choice.profile.id);
+      const since = Date.now();
+      try {
+        return await this.attemptTogether(task, roleId, choice.profile, copy, given, schema, signal, { ...options, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at) } } : {}) });
+      } catch (error) {
+        if (!(error instanceof UsageLimited) || signal.aborted) throw error;
+        this.keepWords(task, roleId, choice.profile.id, error);
+        this.k.recordLimit(task, roleId, choice.profile.id, error);
+        stopped = { profileId: choice.profile.id, error, at: since };
+      }
+    }
+  }
+
+  /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
+  private async attemptTogether<T>(task: MTask, roleId: Id, profile: AgentProfile, copy: string, given: () => { title: string; body: string }[], schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; took?: { from: string; words: string } }): Promise<T> {
+    const role = this.k.role(roleId);
+    const product = this.k.productOf(task);
+    if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
+    const profileId = profile.id;
     const taskId = task.id;
-    this.k.say(task, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-    this.k.log(task, "milestone", `${role.name} started`, roleId, profileId);
+    if (options.took) {
+      const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ran out of usage`;
+      this.k.say(task, "system", words, roleId, profileId);
+      this.k.log(task, "milestone", words, roleId, profileId);
+    } else {
+      this.k.say(task, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+      this.k.log(task, "milestone", `${role.name} started`, roleId, profileId);
+    }
     this.k.commit();
     const command = this.k.options.agentCommand?.(profile);
     const run = await AgentRun.start({
@@ -247,6 +339,7 @@ export class Turns {
         },
         onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }),
         onLog: (text) => void this.k.agentLog(taskId, text),
+        onUsage: (info) => this.k.recordUsage(info),
       },
     });
     const runs = this.k.helperRuns.get(taskId) ?? new Set();
@@ -254,6 +347,7 @@ export class Turns {
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
       const sections = [...given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
+      if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words) });
       const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: copy, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       return await this.converse(task, run, opening, role, profileId, schema, signal, { ...options, main: false });
     } finally {

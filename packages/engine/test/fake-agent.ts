@@ -14,7 +14,7 @@ import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
   /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
-  planner?: "short" | "tester-after" | "limits";
+  planner?: "short" | "tester-after" | "limits" | "claude-build";
   /** Scheduling tests: each fresh agent waits for its own release file before answering. */
   controlled?: boolean;
   /**
@@ -58,6 +58,15 @@ export interface Scenario {
   title?: string;
   /** The builder and the code reviewers pass on what they learned about the repository (one lesson twice). */
   learnings?: boolean;
+  /**
+   * Agents on these models run out of usage: the first time one gets a turn it does some work, says so and fails
+   * the turn, and every agent on that model fails the same way until `resetsInMs` (default an hour) later. A
+   * Claude model reports a rejected rate limit of kind `type` (default "five_hour") first; "gpt-6.1-sol" fails the
+   * way Codex does, with a message. Only agents with this `role` when it is set.
+   */
+  limited?: { model: string; role?: string; type?: string; resetsInMs?: number }[];
+  /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
+  usage?: { model: string; status: "allowed" | "allowed_warning"; utilization: number; type?: string }[];
 }
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
@@ -132,7 +141,7 @@ async function send(client: acp.AgentContext, sessionId: string, update: acp.Ses
 
 /** The settings Petrina sets: model, effort (each tool's name for it) and the automatic safety mode. */
 const select = (id: string, values: string[]) => ({ type: "select" as const, id, name: id, currentValue: values[0]!, options: values.map((value) => ({ value, name: value })) });
-const configOptions = () => [select("model", ["default", "opus", "gpt-6.1-sol"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("mode", ["default", "auto", "agent"])];
+const configOptions = () => [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("mode", ["default", "auto", "agent"])];
 
 /** A turn that only ends when the engine cancels it, or the engine goes away. */
 function hang(sessionId: string, marker: string): Promise<Reply> {
@@ -222,6 +231,37 @@ function releaseManager(cwd: string, text: string): string {
   return block({ summary: `Wrote the notes on ${titles.length} change${titles.length === 1 ? "" : "s"}.`, notes: `## What's new\n${titles.map((title) => `- ${title}`).join("\n")}` });
 }
 
+/** A usage report the way Claude Code sends it: a usage update that carries the rate limit in its notes. */
+const usageUpdate = (status: string, kind: string, utilization?: number, resetsAt?: number): acp.SessionNotification["update"] =>
+  ({ sessionUpdate: "usage_update", used: 100, size: 1000, _meta: { "_claude/rateLimit": { status, rateLimitType: kind, ...(utilization !== undefined ? { utilization } : {}), ...(resetsAt !== undefined ? { resetsAt } : {}) } } }) as acp.SessionNotification["update"];
+
+/** Whether this model is out of usage now. The first time asks, the limit starts. */
+function outOfUsage(limit: NonNullable<Scenario["limited"]>[number]): number | undefined {
+  if (!dir) return undefined;
+  const file = join(dir, `limit-${limit.model}`);
+  if (!existsSync(file)) writeFileSync(file, String(Date.now() + (limit.resetsInMs ?? 3_600_000)));
+  const until = Number(readFileSync(file, "utf8"));
+  return Date.now() < until ? until : undefined;
+}
+
+/** Some work, a word about it, then the tool says it is out of usage and the turn fails. */
+async function runOut(limit: NonNullable<Scenario["limited"]>[number], until: number, session: Conversation, sessionId: string, client: acp.AgentContext): Promise<never> {
+  if (session.turns === 1) {
+    writeFileSync(join(session.cwd, "notes.txt"), "A first draft\n");
+    await send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: `edit-${session.turns}`, title: "Edit notes.txt", kind: "edit", status: "completed", locations: [{ path: join(session.cwd, "notes.txt") }] });
+    await Bun.sleep(20);
+    await send(client, sessionId, { sessionUpdate: "plan", entries: [{ content: "Drafting the greeting", status: "in_progress", priority: "medium" }] });
+  }
+  if (limit.model.startsWith("gpt")) {
+    const at = new Date(until);
+    await send(client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `You've hit your usage limit. Try again at ${at.getHours() % 12 || 12}:${String(at.getMinutes()).padStart(2, "0")} ${at.getHours() < 12 ? "AM" : "PM"}.` } });
+    throw acp.RequestError.internalError({ codexErrorInfo: "usageLimitExceeded", category: "quota_exhausted" }, "Internal error");
+  }
+  await send(client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "I drafted notes.txt and started on the greeting file before running out." } });
+  await send(client, sessionId, usageUpdate("rejected", limit.type ?? "five_hour", 1, Math.ceil(until / 1000)));
+  throw new Error("Claude usage limit reached");
+}
+
 async function answer(sessionId: string, text: string, client: acp.AgentContext): Promise<Reply> {
   const session = sessions.get(sessionId)!;
   session.turns += 1;
@@ -236,6 +276,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const learned = scenario().learnings ? (session.role === "builder" ? ["Run the tests with bun test: they take a second.", "Greetings live at the repository root."] : session.role === "code reviewer" ? ["Greetings live at the repository root!"] : []) : [];
   const done = (value: unknown, prose?: string): Reply => ({ text: block(learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value, prose) });
   const plan = scenario();
+  for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization));
+  const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role));
+  const until = limit && outOfUsage(limit);
+  if (limit && until) await runOut(limit, until, session, sessionId, client);
   if (plan.controlled && session.turns === 1 && dir) {
     await say(`${session.role} is working`);
     while (!existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
@@ -255,6 +299,14 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
             { kind: "do", title: "Test", roleId: "tester", profileIds: ["opus-high"] },
+          ],
+        });
+      if (plan.planner === "claude-build")
+        return done({
+          rationale: "Build it on Claude Code, one reviewer on Codex.",
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 1 },
           ],
         });
       if (plan.planner === "limits") return done({

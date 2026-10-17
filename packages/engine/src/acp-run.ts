@@ -7,6 +7,7 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "@petrina/core";
 import { adapterEntry, ADAPTERS } from "./tools.js";
+import { claudeReport, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 
 export interface PermissionInfo {
   title: string;
@@ -24,6 +25,8 @@ export interface RunCallbacks {
   onPlanStep(text: string): void;
   onPermission(info: PermissionInfo): Promise<"allow" | "deny">;
   onLog?(text: string): void;
+  /** The tool said how much of a usage limit is used (every report, whether or not it is close). */
+  onUsage?(info: UsageInfo): void;
 }
 
 export interface TurnResult {
@@ -119,7 +122,8 @@ export class AgentRun {
     private readonly connection: acp.ClientSideConnection,
     /** The tool's id for the conversation. */
     readonly sessionId: string,
-    private readonly state: { text: string; lastActivity: string; quiet: boolean },
+    private readonly state: { text: string; lastActivity: string; quiet: boolean; latest?: UsageInfo },
+    private readonly profile: AgentProfile,
     /** How an earlier conversation was reopened; unset for a new one. */
     readonly reopened?: "resume" | "load",
   ) {}
@@ -160,7 +164,7 @@ export class AgentRun {
 
     // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
     // already in the session view and timeline.
-    const state = { text: "", lastActivity: "", quiet: options.reopen !== undefined };
+    const state: { text: string; lastActivity: string; quiet: boolean; latest?: UsageInfo } = { text: "", lastActivity: "", quiet: options.reopen !== undefined };
     const titles = new Map<string, { title?: string | null; kind?: string | null; locations?: { path: string }[] | null; rawInput?: unknown }>();
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
 
@@ -205,6 +209,13 @@ export class AgentRun {
             case "tool_call_update": {
               const known = titles.get(update.toolCallId) ?? {};
               titles.set(update.toolCallId, { ...known, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== null && value !== undefined)) });
+              break;
+            }
+            case "usage_update": {
+              const info = claudeReport(profile.toolId, (update as { _meta?: unknown })._meta);
+              if (!info) break;
+              state.latest = info;
+              callbacks.onUsage?.(info);
               break;
             }
             case "plan": {
@@ -275,7 +286,7 @@ export class AgentRun {
     try {
       const session = await Promise.race([ready, killed, deadline]);
       clearTimeout(whole);
-      return new AgentRun(child, connection, session.sessionId, state, session.how);
+      return new AgentRun(child, connection, session.sessionId, state, profile, session.how);
     } catch (error) {
       clearTimeout(whole);
       // No agent left running behind a conversation that did not open.
@@ -290,11 +301,31 @@ export class AgentRun {
   async prompt(text: string): Promise<TurnResult> {
     this.state.quiet = false;
     this.state.text = "";
+    // Only a report from this turn can say it ended because the tool ran out.
+    delete this.state.latest;
     const exited = new Promise<never>((_, reject) => this.child.once("exit", (code) => reject(new Error(`The agent stopped (exit ${code ?? "signal"})`))));
     exited.catch(() => undefined);
-    const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]);
+    const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch((error: unknown) => {
+      throw this.limitOf(error) ?? error;
+    });
+    // Claude Code can also end the turn quietly after saying it is out.
+    if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
+      const out = this.rejected();
+      if (out) throw out;
+    }
     const usage = (response as { usage?: { totalTokens?: number } }).usage;
     return { stopReason: response.stopReason, text: this.state.text, ...(usage?.totalTokens ? { tokens: usage.totalTokens } : {}) };
+  }
+
+  /** The usage limit a failed turn ran into, when that is why it failed. */
+  private limitOf(error: unknown): UsageLimited | undefined {
+    return this.rejected() ?? limitFromFailure(this.profile, error, this.state.text, Date.now());
+  }
+
+  /** Claude Code said, during this turn, that it is out. */
+  private rejected(): UsageLimited | undefined {
+    const info = this.state.latest;
+    return info?.status === "rejected" ? Object.assign(limitFromReport(this.profile, info, Date.now()), { said: this.state.text }) : undefined;
   }
 
   /** Stop the current turn (the interrupt button). */

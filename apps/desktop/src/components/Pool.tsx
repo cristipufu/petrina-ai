@@ -4,6 +4,7 @@ import { queueOf, slotUses, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { type Lookup } from "../lib";
 import { RoleAvatar, useDismiss } from "./bits";
+import { UsageList, usageNote } from "./Usage";
 import type { SheetTab } from "./TaskCard";
 
 export function LimitStepper({ limit }: { limit: number }) {
@@ -51,6 +52,9 @@ export function PoolPanel({ state, find, onOpen, onDone }: { state: State; find:
           .join(", ")}
       </p>
       <div className="divider" />
+      <h4>Usage</h4>
+      <UsageList state={state} />
+      <div className="divider" />
       <div className="slot-list">
         {slots.map((holder, index) => {
           if (!holder)
@@ -89,6 +93,7 @@ export function PoolButton({ state, find, onOpen, compact }: { state: State; fin
   useDismiss(box, open, close);
   const holders = holdersOf(state, find);
   const slots = Array.from({ length: Math.max(state.pool.limit, holders.length) }, (_, index) => holders[index]);
+  const usage = usageNote(state);
 
   return (
     <div style={{ position: "relative" }} ref={box}>
@@ -96,8 +101,8 @@ export function PoolButton({ state, find, onOpen, compact }: { state: State; fin
         className="btn quiet"
         onClick={() => setOpen((on) => !on)}
         aria-expanded={open}
-        aria-label={`Agents at work: ${holders.length} of ${state.pool.limit}${state.pool.paused ? ", pool paused" : ""}`}
-        title="Agents running at once"
+        aria-label={`Agents at work: ${holders.length} of ${state.pool.limit}${state.pool.paused ? ", pool paused" : ""}${usage ? `. ${usage}` : ""}`}
+        title={usage ?? "Agents running at once"}
       >
         {state.pool.paused ? <Pause size={14} aria-hidden="true" /> : null}
         {!compact && (
@@ -112,6 +117,7 @@ export function PoolButton({ state, find, onOpen, compact }: { state: State; fin
         <span className="num" style={{ color: "var(--text)" }}>
           {holders.length}/{state.pool.limit}
         </span>
+        {usage && <span className="usage-dot" aria-hidden="true" />}
         <ChevronDown size={14} aria-hidden="true" />
       </button>
 

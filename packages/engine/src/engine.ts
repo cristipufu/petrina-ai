@@ -94,6 +94,7 @@ export class Engine extends Kernel implements Commands {
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
+    clearTimeout(this.limitTimer);
     for (const controller of this.drivers.values()) controller.abort();
     for (const run of this.runs.values()) run.close();
     this.store.save(this.getState());
