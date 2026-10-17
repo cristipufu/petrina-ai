@@ -111,6 +111,12 @@ function spawnPiped(cmd: readonly string[], cwd: string, input: string | undefin
   });
 }
 
+/** A file as committed at `ref`, read straight from git's objects: no filters, no links followed. Undefined when absent. */
+export function fileAt(root: string, ref: string, path: string): string | undefined {
+  const result = Bun.spawnSync(["git", "cat-file", "blob", `${ref}:${path}`], { cwd: root, env: gitEnv(false), stdin: "ignore", stdout: "pipe", stderr: "ignore", windowsHide: true });
+  return result.exitCode === 0 ? result.stdout.toString() : undefined;
+}
+
 async function must(cmd: readonly string[], cwd: string, input?: string): Promise<string> {
   const result = await run(cmd, cwd, input);
   if (result.code !== 0) throw new Error(`${cmd.slice(0, 3).join(" ")} failed: ${result.stderr || result.stdout}`);

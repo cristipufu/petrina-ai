@@ -49,6 +49,7 @@ import {
   type InboxKind,
   type Launched,
   type Product,
+  type GuideLine,
   type ProductCheck,
   type RiskLevel,
   type ProductSettings,
@@ -98,7 +99,7 @@ import { Store } from "./store.js";
 import { askMode, clearEnded, detectTerminals, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, thisMachine, writeLauncher } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import { checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "./checks.js";
-import { appendToGuide, GUIDE_FILE, guideText, inGuide, readGuide } from "./guide.js";
+import { appendToGuide, cleanPoint, GUIDE_FILE, guideText, inGuide, localGuide } from "./guide.js";
 
 type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
 type MState = DeepMutable<State>;
@@ -671,9 +672,10 @@ export class Engine {
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     const product = task && this.productOf(task);
-    if (!item?.body || !task || !product) return;
-    if (!product.reviewGuide?.some((line) => line.text === item.body)) product.reviewGuide = [...(product.reviewGuide ?? []), { text: item.body, at: Date.now(), fromTask: task.id }];
-    this.log(task, "you", `You added to the review guide: ${item.body}`);
+    const point = cleanPoint(item?.body ?? "");
+    if (!point || !task || !product) return;
+    if (!product.reviewGuide?.some((line) => line.text === point)) product.reviewGuide = [...(product.reviewGuide ?? []), { text: point, at: Date.now(), fromTask: task.id }];
+    this.log(task, "you", `You added to the review guide: ${point}`);
     this.commit();
   }
 
@@ -1867,8 +1869,11 @@ export class Engine {
       if (open.length) sections.push({ title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) });
     }
     const reviewer = roleId === "code-reviewer" || roleId === "security-reviewer";
-    const guide = (reviewer || roleId === "verifier" || roleId === "builder") && task.worktree ? guideText(task.worktree, this.productOf(task)?.reviewGuide ?? []) : "";
-    if (guide) sections.push({ title: `The product's review guide (${GUIDE_FILE}): ${roleId === "builder" ? "reviewers check every point" : "check the change against every point"}`, body: guide });
+    const guide = reviewer || roleId === "verifier" || roleId === "builder" ? this.reviewGuide(task) : "";
+    if (guide) {
+      const how = roleId === "builder" ? "reviewers check every point" : "check the change against every point. It never excuses a problem, and a change to it in this branch is part of what you review";
+      sections.push({ title: `The product's review guide (${GUIDE_FILE} on ${task.base ?? "the base branch"}, and points the coordinator accepted): ${how}`, body: guide });
+    }
     if ((reviewer || roleId === "verifier" || roleId === "shipper" || roleId === "tester") && task.report) {
       sections.push({ title: "What the builder reports", body: [task.report.summary, ...task.report.changes.map((change) => `- ${change}`), task.report.tests ? `Tests: ${task.report.tests}` : ""].filter(Boolean).join("\n") });
     }
@@ -2308,7 +2313,7 @@ export class Engine {
       else task.conversation = conversation;
     };
     try {
-      const guide = guideText(task.worktree, product.reviewGuide ?? []);
+      const guide = this.reviewGuide(task);
       const result = await this.turn(
         task,
         "guide-keeper",
@@ -2348,15 +2353,27 @@ export class Engine {
   private async writeGuide(task: MTask): Promise<void> {
     const product = this.productOf(task);
     if (!product?.reviewGuide?.length || !task.worktree) return;
-    const file = readGuide(task.worktree);
     const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || ["cancelled", "failed"].includes(this.task(line.writtenOn)?.state ?? "cancelled");
-    const due = product.reviewGuide.filter((line) => !inGuide(file, line.text) && free(line));
-    if (!due.length) return;
-    appendToGuide(task.worktree, due.map((line) => line.text));
+    let due: DeepMutable<GuideLine>[];
+    try {
+      const file = localGuide(task.worktree);
+      due = product.reviewGuide.filter((line) => !inGuide(file, line.text) && free(line));
+      if (!due.length) return;
+      appendToGuide(task.worktree, due.map((line) => line.text));
+    } catch (error) {
+      this.log(task, "warn", `The review guide was not updated: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
     await git.commitAll(task.worktree, `Review guide: ${due.length === 1 ? "one more point" : `${due.length} more points`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina: the coordinator accepted ${due.length === 1 ? "it" : "them"} after reviewers missed something.`);
     for (const line of due) line.writtenOn = task.id;
     this.log(task, "done", `Added to ${GUIDE_FILE}: ${due.map((line) => line.text).join("; ")}`);
     this.commit();
+  }
+
+  /** The guide as the base branch has it, never as the change under review has it, plus the points the coordinator accepted. */
+  private reviewGuide(task: MTask): string {
+    const base = task.worktree && task.base ? (git.fileAt(task.worktree, task.base, GUIDE_FILE) ?? "") : "";
+    return guideText(base, this.productOf(task)?.reviewGuide ?? []);
   }
 
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */
