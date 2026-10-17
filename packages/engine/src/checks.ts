@@ -2,7 +2,6 @@
 // runs them itself, so "the tests pass" is evidence, never an agent's word. Commands are argument
 // arrays, never a shell, and they run in the task's working copy without credentials.
 
-import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -121,14 +120,16 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     let cut = false;
     let timedOut = false;
     let done = false;
-    let child: ChildProcess | undefined;
+    let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
+    const readers: { cancel(): Promise<void> }[] = [];
     const finish = (code: number | null, error?: string) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       clearTimeout(grace);
       signal?.removeEventListener("abort", stop);
+      for (const reader of readers) void reader.cancel().catch(() => undefined);
       resolve({ code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, ...(error ? { error } : {}) });
     };
     const stop = () => stopAll(child?.pid, windows);
@@ -139,26 +140,48 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
       grace ??= setTimeout(() => finish(null), 5000);
     }, timeoutMs);
     try {
-      child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: !windows, windowsHide: true });
+      child = Bun.spawn([...argv], { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: !windows, windowsHide: true });
     } catch (error) {
       finish(null, error instanceof Error ? error.message : String(error));
       return;
     }
     signal?.addEventListener("abort", stop, { once: true });
     if (signal?.aborted) stop();
-    const keep = (chunk: Buffer) => {
-      kept += chunk.toString("utf8");
+    const keep = (text: string) => {
+      kept += text;
       if (kept.length > OUTPUT_KEPT * 2) {
         kept = kept.slice(-OUTPUT_KEPT * 2);
         cut = true;
       }
     };
-    child.stdout!.on("data", keep);
-    child.stderr!.on("data", keep);
-    child.once("error", (error) => finish(null, error.message));
-    // Output can stay open in something the check left running in the background: don't wait on it for long.
-    child.once("exit", (code) => (grace = setTimeout(() => finish(code), 5000)));
-    child.once("close", (code) => finish(code));
+    const drain = async (stream: ReadableStream<Uint8Array>) => {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      readers.push(reader);
+      try {
+        while (!done) {
+          const next = await reader.read();
+          if (next.done) break;
+          keep(decoder.decode(next.value, { stream: true }));
+        }
+        if (!done) keep(decoder.decode());
+      } catch {
+        // A timeout or stop closes the pipes too.
+      } finally {
+        reader.releaseLock();
+      }
+    };
+    // Bun can emit node:child_process exit/close inside spawn(), losing both the result and buffered output.
+    // Its native handle retains the exit promise and stream bytes even when the command has already ended.
+    const output = Promise.all([drain(child.stdout), drain(child.stderr)]);
+    // A background program can keep the pipes open after the check exits: don't wait on it for long.
+    void child.exited.then((code) => {
+      if (!done) grace ??= setTimeout(() => finish(code), 5000);
+    }, () => undefined);
+    void Promise.all([child.exited, output]).then(
+      ([code]) => finish(code),
+      (error) => finish(null, error instanceof Error ? error.message : String(error)),
+    );
   });
 }
 
@@ -166,7 +189,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
 function stopAll(pid: number | undefined, windows: boolean): void {
   if (!pid) return;
   try {
-    if (windows) spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    if (windows) Bun.spawn(["taskkill", "/pid", String(pid), "/T", "/F"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
     else process.kill(-pid, "SIGKILL");
   } catch {
     // Already gone.

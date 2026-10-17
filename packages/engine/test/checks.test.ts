@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
@@ -63,13 +63,29 @@ describe("a product's checks", () => {
       process.env,
       30_000 * SLOW,
     );
-    expect(results.map((run) => [run.name, run.ok])).toEqual([
+    expect(results.map((run) => [run.name, run.ok]), JSON.stringify(results)).toEqual([
       ["Passes", true],
       ["Fails", false],
       ["Missing", false],
     ]);
     expect(results[0]!.output).toContain("git version");
     expect(results[2]!.output).toStartWith("Could not start");
+  });
+
+  for (const code of [0, 7]) it(`keeps the output and exit code ${code} when the command ended before spawn returned`, async () => {
+    // A fast command under bun:test may be reaped before the caller can attach any event listeners.
+    const child = {
+      exited: Promise.resolve(code),
+      stdout: new Response("Check finished\n").body!,
+      stderr: new Response("Details kept\n").body!,
+    } as Bun.Subprocess<"ignore", "pipe", "pipe">;
+    const spawning = spyOn(Bun, "spawn").mockReturnValue(child);
+    try {
+      const runs = await runChecks(root("petrina-checks-ended-"), [{ name: "Already ended", argv: ["petrina-already-ended"] }], process.env, 200 * SLOW);
+      expect(runs, JSON.stringify(runs)).toEqual([{
+        name: "Already ended", command: "petrina-already-ended", ms: expect.any(Number), ok: code === 0, output: "Check finished\nDetails kept\n",
+      }]);
+    } finally { spawning.mockRestore(); }
   });
 
   it("reports a check that exceeds its deadline as timed out", async () => {
