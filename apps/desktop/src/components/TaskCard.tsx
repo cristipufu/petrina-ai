@@ -1,9 +1,10 @@
 import { useCallback, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
-import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Pause, PanelRightOpen, Play, SquareTerminal } from "lucide-react";
-import type { State, Task } from "@petrina/core";
+import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
+import { TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { deliveryText, duration, STATE_LABEL, type Lookup } from "../lib";
 import { Pipeline, ProductName, ProfileText, RoleAvatar, useDismiss } from "./bits";
+import { drivingText, openHandBack } from "./TakeOver";
 
 export interface CardProps {
   task: Task;
@@ -28,7 +29,8 @@ export type SheetTab = "overview" | "plan" | "design" | "review" | "session";
  * The state a card names next to its product. Working cards say it through their status line,
  * and cards that need the coordinator through their section and amber edge.
  */
-function flagOf(task: Task): { text: string; tone: string } | undefined {
+function flagOf(task: Task, now: number): { text: string; tone: string } | undefined {
+  if (task.driving) return { text: drivingText(task, now), tone: "needs-you" };
   if (task.state === "queued") return task.held ? { text: "On hold", tone: "" } : undefined;
   if (task.state === "running" || task.state === "needs-you") return undefined;
   return { text: STATE_LABEL[task.state], tone: task.state === "pr-open" ? "" : task.state };
@@ -51,7 +53,8 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
   const finished = task.state === "done" || task.state === "cancelled";
   const rounds = task.plan?.stages.reduce((max, stage) => Math.max(max, task.rounds[stage.id] ?? 1), 1) ?? 1;
   const canPause = task.state === "running" || task.state === "needs-you" || task.state === "waiting";
-  const flag = flagOf(task);
+  const driving = task.driving !== undefined;
+  const flag = flagOf(task, state.now);
   const delivery = deliveryText(task);
   const showAgent = role && profile && (task.state === "running" || task.state === "needs-you" || task.state === "paused");
 
@@ -149,8 +152,13 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
           <button aria-label="Message" title="Message" onClick={() => onOpen(task.id, "session")}>
             <MessageSquare size={16} />
           </button>
+          {driving && (
+            <button aria-label="Hand back" title="Hand back" onClick={() => openHandBack(task.id)}>
+              <Undo2 size={16} />
+            </button>
+          )}
           {canPause && (
-            <button aria-label="Pause" title="Pause" onClick={() => sim.pause(task.id)}>
+            <button aria-label={driving ? `Pause. ${TAKE_OVER_WORDS.handBackFirst}` : "Pause"} title={driving ? TAKE_OVER_WORDS.handBackFirst : "Pause"} disabled={driving} onClick={() => sim.pause(task.id)}>
               <Pause size={16} />
             </button>
           )}
@@ -182,9 +190,9 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
                   </button>
                 )}
                 {!finished && (
-                  <button role="menuitem" className="danger" onClick={act(() => sim.cancel(task.id))}>
+                  <button role="menuitem" className="danger" disabled={driving} title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined} onClick={act(() => sim.cancel(task.id))}>
                     <Ban size={16} />
-                    Cancel task
+                    {driving ? `Cancel task (${TAKE_OVER_WORDS.handBackFirst.toLowerCase()})` : "Cancel task"}
                   </button>
                 )}
               </div>

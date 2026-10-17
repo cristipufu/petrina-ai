@@ -189,7 +189,15 @@ This is the "open in terminal" experience, made friendly.
 - The composer has two modes:
   - **Queue** (default): delivered when the agent finishes its current step. Queued messages wait at the end of the conversation, outlined and marked as queued, each with Remove. They scroll with the conversation, so a long queue never pushes the composer or Send out of view, and sending always brings your message into view.
   - **Interrupt**: stops the current step and delivers now.
-- **Take over:** opens the agent's own CLI in your terminal, resumed on the same session in its working copy. Petrina pauses the stage while you drive. **Hand back** resumes it, with a note of what you did.
+- **Take over in terminal:** you drive the agent yourself, in your own terminal, with your own setup and logins. It is enabled while an agent other than the shipper is working or waiting on you, on Claude Code or Codex; otherwise it is off with a one-line reason (no agent right now, delivery runs on its own, still starting, tool not installed). The demo keeps a notice.
+  - After a quick OK, Petrina checks it can open a terminal. If it can't, the agent keeps working and the dialog offers to choose a terminal or to take over and copy a command to run yourself.
+  - Petrina then stops the agent cleanly and clears any question or permission request it had open. An editing role's unsaved work (the builder's, say) is saved as that agent's own commit, marked as unfinished; a read-only role's leftovers are undone, as always.
+  - The agent's own app (Claude Code or Codex) opens in a new terminal window, in the task's working copy, on the same conversation, with the same model and effort, so you can scroll up and see what it was doing. The app runs in its normal mode with its usual prompts. Some actions may run without a prompt, and you are in charge of the session: Petrina adds no blocks there, so whatever happens there happens for real, outside Petrina's agent protections and review.
+  - While you drive, the step is paused and keeps its seat in the pool. The task says "You're driving" and for how long on its card, in the Session tab, on the Agents page and as a Needs you item with **Hand back** and **Reopen terminal**. Pause, Cancel and Interrupt wait: hand back first. Messages you type in Petrina wait for the hand back. Only one terminal session per task runs at a time: Reopen terminal refuses while it is open, and so does the copied command.
+  - **Hand back** works once you have closed the app in your terminal: Petrina says so if it is still open, and offers "Hand back anyway", with a warning, only when it can't tell. It also refuses while the working copy is off the task's branch or in the middle of a merge or rebase. It shows what you changed (files and commits), apart from the agent's saved unfinished work, with an optional note.
+  - Anything you left unsaved becomes one commit marked as yours, never undone, even after driving a read-only role. A short note of what changed goes into the session, the timeline and the notes every later agent reads. The same agent then carries on with the same step on the same conversation; when its tool can't reopen it, it carries on in a fresh one with its usual instructions plus your note, and the Session tab says so.
+  - If you changed files, the tests check runs at once and its problems become blocking findings. If review is still ahead, it covers your changes. If review was underway or done, the review starts again from the first reviewer once the step you drove finishes, before anything ships, without using up a review round.
+  - You choose the terminal in the Library, under Your terminal: Terminal on macOS by default (iTerm2 and other installed ones selectable), Windows Terminal or else a PowerShell window on Windows, and on Linux the system default, then the desktop's own, then common ones.
 - Anything the task is waiting on (a question, a permission, a checkpoint) shows at the end of the conversation with the same wording and buttons as the inbox, so you can unblock without leaving the session. It scrolls with the conversation; the composer stays compact at the bottom.
 - Earlier agents of the task (previous stages) can be read the same way.
 
@@ -210,11 +218,12 @@ This is the "open in terminal" experience, made friendly.
 
 - **Roles:** cards with icon, purpose, permissions and what each one hands back. Edited in a plain-language form.
 - **Tools and models:** the agents found on this machine (installed, logged in), their models and effort levels, and a Test button.
+- **Your terminal:** where Take over in terminal opens, the usual one on this machine unless you pick another. When Petrina finds none, it says so: take over still works by copying a command.
 - **Templates:** example plans the planner learns from.
 
 ## Settings
 
-Pool limit and caps per tool. Notifications. Default checkpoints. Appearance: light, dark or system. Where data lives. (There is no permission list: Petrina remembers no permission answers.)
+Pool limit and caps per tool. Notifications. Default checkpoints. Appearance: light, dark or system. Where data lives. The terminal take over opens in (for now in the Library, under Your terminal). (There is no permission list: Petrina remembers no permission answers.)
 
 ## First run
 

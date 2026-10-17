@@ -13,6 +13,7 @@ import { AgentsPage, LibraryPage } from "./components/Pages";
 import { PoolButton, PoolPanel } from "./components/Pool";
 import { ProductsPage, ProductSwitcher } from "./components/Products";
 import type { SheetTab } from "./components/TaskCard";
+import { TakeOverDialogs } from "./components/TakeOver";
 import { TaskSheet } from "./components/TaskSheet";
 import { applyTheme, initialTheme, type Theme } from "./theme";
 
@@ -75,6 +76,8 @@ export function App() {
     for (const item of state.inbox) {
       if (seenInbox.current.has(item.id)) continue;
       seenInbox.current.add(item.id);
+      // The coordinator just took over themselves: the take-over says so already.
+      if (item.kind === "driving") continue;
       const task = find.task(item.taskId);
       const role = find.role(item.roleId);
       toast(item.title, `${task?.title ?? ""}${role ? ` · ${role.name}` : ""}`, item.taskId);
@@ -231,6 +234,8 @@ export function App() {
       {sheetTask && sheet && (
         <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ taskId: sheetTask.id, tab })} onClose={close} onToast={(title, detail) => toast(title, detail)} />
       )}
+
+      <TakeOverDialogs state={state} find={find} onToast={(title, detail) => toast(title, detail)} />
 
       {addingProduct && (
         <AddProductDialog

@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { agentEnv, withGitConfig } from "./env.js";
 
 export interface RunResult {
@@ -260,6 +260,30 @@ export async function changedSince(path: string, sha: string): Promise<FileChang
     if (file && !changes.some((entry) => entry.file === file)) changes.push({ change: "added", file });
   }
   return changes;
+}
+
+/** How many commits the working copy's branch has on top of `sha`. */
+export async function commitsSince(path: string, sha: string): Promise<number> {
+  if (!SHA.test(sha)) return 0;
+  return Number((await run(["git", "rev-list", "--count", `${sha}..HEAD`], path)).stdout) || 0;
+}
+
+const HALF_DONE: readonly (readonly [string, string])[] = [
+  ["MERGE_HEAD", "a merge"],
+  ["rebase-merge", "a rebase"],
+  ["rebase-apply", "a rebase"],
+  ["CHERRY_PICK_HEAD", "a cherry-pick"],
+  ["REVERT_HEAD", "a revert"],
+];
+
+/** The branch a working copy is on (undefined when it is on none), and a merge, rebase, cherry-pick or revert left half done. */
+export async function workingState(path: string): Promise<{ branch?: string; busy?: string }> {
+  const branch = await run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], path);
+  for (const [marker, what] of HALF_DONE) {
+    const where = await run(["git", "rev-parse", "--git-path", marker], path);
+    if (where.code === 0 && where.stdout && existsSync(resolve(path, where.stdout))) return { ...(branch.code === 0 ? { branch: branch.stdout } : {}), busy: what };
+  }
+  return branch.code === 0 && branch.stdout ? { branch: branch.stdout } : {};
 }
 
 export async function diffStat(path: string, base: string): Promise<{ files: number; additions: number; deletions: number }> {

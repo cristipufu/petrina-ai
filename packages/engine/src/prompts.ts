@@ -345,3 +345,68 @@ export function formatStepNotes(notes: readonly StepNote[]): string {
   });
   return `This step started before and was cut short (Petrina was closed, stopped or paused). Here is everything the coordinator said during it, in order. Take all of it into account; where two conflict, the later one wins. Permissions allowed in the earlier attempt are not carried over.\n${lines.join("\n")}`;
 }
+
+/** What changed while the coordinator drove a step by hand. */
+export interface HandBack {
+  /** The role the coordinator drove, e.g. "Builder". */
+  role: string;
+  tool: string;
+  /** How long they drove, in milliseconds. */
+  took: number;
+  /** The files of the agent's unfinished work Petrina saved before the take-over. */
+  saved?: readonly string[];
+  /** Commits made while driving. */
+  commits: number;
+  /** Files added, changed or removed while driving, committed or not. */
+  files: readonly { change: string; file: string }[];
+  /** Petrina saved what was left unsaved as one commit marked as made by hand. */
+  leftovers: boolean;
+  /** The coordinator's own note. */
+  note?: string;
+}
+
+export const MAX_HANDBACK_FILES = 10;
+
+function spent(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return "less than a minute";
+  if (minutes < 90) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** The short note of a hand back: in the session, the timeline, the task's notes, and for the agent that carries on. */
+export function handBackNote(back: HandBack): string {
+  const lines = [`Handed back after driving the ${back.role} by hand in the terminal (${back.tool}) for ${spent(back.took)}.`];
+  const saved = back.saved ?? [];
+  if (saved.length) lines.push(`- Before the take-over, Petrina saved the ${back.role}'s unfinished work as one commit: ${plural(saved.length, "file")} (${saved.slice(0, 3).join(", ")}${saved.length > 3 ? ` and ${saved.length - 3} more` : ""}).`);
+  lines.push(back.commits ? `- Commits made while driving: ${back.commits}.` : "- No commits were made while driving.");
+  if (back.files.length) {
+    lines.push(`- Files added, changed or removed while driving: ${back.files.length}.`);
+    for (const entry of back.files.slice(0, MAX_HANDBACK_FILES)) lines.push(`  - ${entry.change}: ${entry.file}`);
+    if (back.files.length > MAX_HANDBACK_FILES) lines.push(`  - and ${back.files.length - MAX_HANDBACK_FILES} more`);
+  } else {
+    lines.push("- No files changed while driving.");
+  }
+  if (back.leftovers) lines.push("- Petrina saved what was left unsaved as one commit, marked as made by hand.");
+  const note = back.note?.trim();
+  if (note) lines.push(`- Note: ${note}`);
+  return lines.join("\n");
+}
+
+/** What a reopened conversation hears after a hand back, then any messages that waited for it. */
+export function handBackPrompt(note: string, messages: readonly string[]): string {
+  const parts = [`The coordinator took over this step in their own terminal, on this same conversation, and has handed it back to you. What changed:\n${note}`];
+  if (messages.length) parts.push(`Messages from the coordinator that waited for the hand back, in order:\n${messages.map((text) => `- ${text}`).join("\n")}`);
+  parts.push("Check the working copy, then carry on with this step. When you are done, end with the result block.");
+  return parts.join("\n\n");
+}
+
+export const HANDED_BACK = "The coordinator drove this step by hand and handed it back";
+
+/** For a fresh conversation, when the one the coordinator drove could not be reopened. */
+export function formatHandBack(note: string, reason: string): string {
+  return `The coordinator took over this step in their own terminal and handed it back. That conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps everything that was done: build on it instead of redoing it, and check it first.\n\nWhat changed:\n${note}`;
+}

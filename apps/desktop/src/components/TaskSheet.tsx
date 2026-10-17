@@ -16,7 +16,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import type { Finding, Objection, Role, Stage, State, Task } from "@petrina/core";
+import { TAKE_OVER_WORDS, type Finding, type Objection, type Role, type Stage, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, deliveryText, duration, profileText, safeUrl, STATE_LABEL, type Lookup } from "../lib";
 import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport } from "./bits";
@@ -63,6 +63,9 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
   const product = find.product(task.productId);
   const prUrl = safeUrl(task.pr?.url);
   const canPause = task.state === "running" || task.state === "needs-you" || task.state === "waiting";
+  // Pause and Cancel wait until the coordinator hands back.
+  const driving = task.driving !== undefined;
+  const stateLabel = driving ? "You're driving" : STATE_LABEL[task.state];
 
   useEffect(() => {
     const title = heroTitle.current;
@@ -118,7 +121,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
             <div className="crumb">
               <ProductName product={product} />
               <span aria-hidden="true">·</span>
-              <span className={`label ${task.state === "needs-you" ? "needs-you" : task.state === "failed" ? "bad" : ""}`}>{task.held && task.state === "queued" ? "On hold" : STATE_LABEL[task.state]}</span>
+              <span className={`label ${task.state === "needs-you" ? "needs-you" : task.state === "failed" ? "bad" : ""}`}>{task.held && task.state === "queued" ? "On hold" : stateLabel}</span>
               {task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}
             </div>
           )}
@@ -134,7 +137,13 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
               {!compact && "Message"}
             </button>
             {canPause && (
-              <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Pause" onClick={() => sim.pause(task.id)}>
+              <button
+                className={`btn quiet small ${compact ? "icon" : ""}`}
+                aria-label={driving ? `Pause. ${TAKE_OVER_WORDS.handBackFirst}` : "Pause"}
+                title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined}
+                disabled={driving}
+                onClick={() => sim.pause(task.id)}
+              >
                 <Pause size={16} aria-hidden="true" />
                 {!compact && "Pause"}
               </button>
@@ -164,9 +173,9 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
                         </button>
                       </>
                     )}
-                    <button role="menuitem" className="danger" autoFocus={task.state !== "queued"} onClick={act(() => sim.cancel(task.id))}>
+                    <button role="menuitem" className="danger" autoFocus={task.state !== "queued"} disabled={driving} title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined} onClick={act(() => sim.cancel(task.id))}>
                       <Ban size={16} />
-                      Cancel task
+                      {driving ? `Cancel task (${TAKE_OVER_WORDS.handBackFirst.toLowerCase()})` : "Cancel task"}
                     </button>
                   </div>
                 )}
@@ -184,7 +193,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
               <div className="sheet-meta">
                 <ProductName product={product} />
                 <span aria-hidden="true">·</span>
-                <span>{STATE_LABEL[task.state]}</span>
+                <span>{stateLabel}</span>
               </div>
             )}
             <h1 className="sheet-title" id="sheet-title" ref={heroTitle}>
@@ -227,6 +236,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
 }
 
 function nowSentence(task: Task, role: Role | undefined): string {
+  if (task.driving) return role ? `You're driving the ${role.name.toLowerCase()} in your terminal` : "You're driving in your terminal";
   if (task.state === "needs-you") return role ? `${role.name} is waiting on you` : "Waiting on you";
   if (task.state === "running" && role) return `${role.name} is working`;
   if (task.state === "paused") return role ? `Paused while the ${role.name.toLowerCase()} was working` : "Paused";
@@ -280,7 +290,7 @@ function Overview({ task, state, find }: { task: Task; state: State; find: Looku
               <span className={`dot ${task.state}`} aria-hidden="true" />
               <span>
                 {task.statusLine}
-                {task.agent && <span className="num quiet-text"> · {duration(task.agent.since, state.now)}</span>}
+                {task.agent && <span className="num quiet-text"> · {duration(task.driving?.since ?? task.agent.since, state.now)}</span>}
               </span>
             </div>
           </div>

@@ -157,6 +157,27 @@ export interface ConversationNote {
   asked?: { itemId: Id; question: string; answer?: string };
   /** The agent has shown it received its opening instructions. Only then can a restart reopen the conversation. */
   briefed?: boolean;
+  /** The coordinator handed the step back: the note of what changed, until the agent hears it. */
+  handback?: string;
+}
+
+/**
+ * The coordinator took over a step in their own terminal: the agent's own tool, on the same
+ * conversation, in the task's working copy. The step is paused and keeps its seat in the pool.
+ */
+export interface Driving {
+  since: number;
+  roleId: Id;
+  profileId: Id;
+  toolId: Id;
+  /** The working copy's commit when the coordinator took over. */
+  head: string;
+  /** The agent's unfinished work Petrina saved for it before the take-over, as one commit. */
+  saved?: { sha: string; files: readonly string[] };
+  /** The terminal Petrina opened, by name. Unset when the coordinator copied the command. */
+  terminal?: string;
+  /** Why the terminal did not open, in plain words. */
+  problem?: string;
 }
 
 /**
@@ -299,12 +320,18 @@ export interface Task {
   conversation?: ConversationNote;
   /** Set while the task is being shipped. */
   shipping?: ShippingRecord;
+  /** Set while the coordinator drives the current step in their own terminal. */
+  driving?: Driving;
+  /** Files changed by hand that no review chain has looked at from its first reviewer yet. Nothing ships while set. */
+  handChanges?: boolean;
+  /** The review chain that runs again from its first reviewer once the step the coordinator drove finishes. */
+  rereview?: Id;
   /** Ids the window gave what it sent lately, so a resend after a lost confirmation counts once. */
   received?: readonly Id[];
 }
 
-/** `shipping`: a delivery was interrupted and Petrina could not confirm it went out. */
-export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping";
+/** `shipping`: a delivery was interrupted and Petrina could not confirm it went out. `driving`: the coordinator took over a step in their terminal. */
+export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving";
 
 export interface InboxItem {
   id: Id;
@@ -352,6 +379,12 @@ export interface Pool {
   toolCaps: Readonly<Record<Id, number>>;
 }
 
+/** A terminal Petrina can open a take-over in. */
+export interface Terminal {
+  id: Id;
+  name: string;
+}
+
 export interface State {
   now: number;
   seq: number;
@@ -362,4 +395,8 @@ export interface State {
   tasks: readonly Task[];
   inbox: readonly InboxItem[];
   pool: Pool;
+  /** The terminals found on this machine, the usual one first. Unset in the demo. */
+  terminals?: readonly Terminal[];
+  /** The terminal the coordinator chose for take-overs. Unset: the usual one. */
+  terminal?: Id;
 }

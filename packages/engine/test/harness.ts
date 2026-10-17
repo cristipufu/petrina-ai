@@ -12,5 +12,7 @@ await launch({
   engine: {
     agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), dir!],
     gh: [process.execPath, join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json")],
+    // Tests never open a real terminal window.
+    terminals: () => [],
   },
 });

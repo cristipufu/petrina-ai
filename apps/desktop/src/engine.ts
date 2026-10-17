@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type Id, type State } from "@petrina/core";
+import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type HandBackPreview, type Id, type Launched, type State } from "@petrina/core";
 
 // Where the UI finds the real engine:
 // - In the desktop app, it asks the shell over the app's internal channel. The shell starts the
@@ -40,6 +40,12 @@ export interface Actions {
   setProductDelivery(productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean): void;
   addTask(input: Parameters<Simulator["addTask"]>[0]): unknown;
   addProduct(path: string): Promise<unknown>;
+  /** Take over in the coordinator's terminal: open it there, or only get the command to run. */
+  takeOver(taskId: Id, how: "open" | "copy"): Promise<Launched>;
+  reopenTerminal(taskId: Id, how: "open" | "copy"): Promise<Launched>;
+  handBackPreview(taskId: Id): Promise<HandBackPreview>;
+  handBack(taskId: Id, note: string, anyway: boolean): Promise<void>;
+  setTerminal(terminalId: Id): void;
 }
 
 /** Something the coordinator said that the engine has not confirmed saving yet. Sent again after reconnecting. */
@@ -394,6 +400,13 @@ class EngineClient implements Store {
   setProductDelivery = (productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean) => this.fire("setProductDelivery", productId, delivery, approveDelivery);
   addTask = (input: Parameters<Simulator["addTask"]>[0]) => this.call("addTask", input);
   addProduct = (path: string) => this.call("addProduct", path);
+  takeOver = (taskId: Id, how: "open" | "copy") => this.call("takeOver", taskId, how) as Promise<Launched>;
+  reopenTerminal = (taskId: Id, how: "open" | "copy") => this.call("reopenTerminal", taskId, how) as Promise<Launched>;
+  handBackPreview = (taskId: Id) => this.call("handBackPreview", taskId) as Promise<HandBackPreview>;
+  handBack = async (taskId: Id, note: string, anyway: boolean) => {
+    await this.call("handBack", taskId, note, anyway);
+  };
+  setTerminal = (terminalId: Id) => this.fire("setTerminal", terminalId);
 }
 
 class DemoStore implements Store {
@@ -432,7 +445,22 @@ class DemoStore implements Store {
   addProduct = async () => {
     throw new Error("The demo has fixed products");
   };
+  takeOver = async (): Promise<Launched> => {
+    throw new Error(NOT_IN_DEMO);
+  };
+  reopenTerminal = async (): Promise<Launched> => {
+    throw new Error(NOT_IN_DEMO);
+  };
+  handBackPreview = async (): Promise<HandBackPreview> => {
+    throw new Error(NOT_IN_DEMO);
+  };
+  handBack = async () => {
+    throw new Error(NOT_IN_DEMO);
+  };
+  setTerminal = () => undefined;
 }
+
+const NOT_IN_DEMO = "Take over works with real agents, not in the demo";
 
 function demo() {
   const now = Date.now();

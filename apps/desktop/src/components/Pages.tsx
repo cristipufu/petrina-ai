@@ -1,9 +1,10 @@
-import { Pause, Play, SquareTerminal } from "lucide-react";
+import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { queueOf, slotUses, type State } from "@petrina/core";
 import { sim } from "../engine";
 import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
 import { ProductName, RoleAvatar, ROLE_ICONS } from "./bits";
 import { LimitStepper } from "./Pool";
+import { drivingText, openHandBack } from "./TakeOver";
 import type { SheetTab } from "./TaskCard";
 
 /** One tile per pool slot: who is in it, what they are doing, and a way in. */
@@ -36,6 +37,7 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
         {holders.map((task) => {
           const role = find.role(task.agent?.roleId);
           const waiting = task.state === "needs-you";
+          const driving = task.driving !== undefined;
           return (
             <div key={task.id} className={`tile ${waiting ? "waiting" : ""}`}>
               <div className="row">
@@ -55,11 +57,18 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
               <div className="grow" />
               <div className="foot">
                 <ProductName product={find.product(task.productId)} />
-                <span className="num">{duration(task.agent?.since, state.now)}</span>
-                <button className={`btn small ${waiting ? "lead" : ""}`} onClick={() => onOpen(task.id, "session")}>
-                  <SquareTerminal size={16} aria-hidden="true" />
-                  {waiting ? "Answer" : "Join"}
-                </button>
+                {driving ? <span className="num label needs-you">{drivingText(task, state.now)}</span> : <span className="num">{duration(task.agent?.since, state.now)}</span>}
+                {driving ? (
+                  <button className="btn small lead" onClick={() => openHandBack(task.id)}>
+                    <Undo2 size={16} aria-hidden="true" />
+                    Hand back
+                  </button>
+                ) : (
+                  <button className={`btn small ${waiting ? "lead" : ""}`} onClick={() => onOpen(task.id, "session")}>
+                    <SquareTerminal size={16} aria-hidden="true" />
+                    {waiting ? "Answer" : "Join"}
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -72,6 +81,33 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
         ))}
       </div>
     </div>
+  );
+}
+
+/** Where "Take over in terminal" opens: the usual terminal on this machine, or the coordinator's pick. */
+function TerminalPicker({ state }: { state: State }) {
+  const terminals = state.terminals ?? [];
+  return (
+    <>
+      <h2 className="section-title">Your terminal</h2>
+      <div className="grid">
+        <div className="tile" style={{ minHeight: 0 }}>
+          <strong style={{ fontWeight: 600 }}>Take over opens in</strong>
+          {terminals.length ? (
+            <select className="select" aria-label="The terminal take over opens in" value={state.terminal ?? ""} onChange={(event) => sim.setTerminal(event.target.value)}>
+              <option value="">The usual one ({terminals[0]!.name})</option>
+              {terminals.map((terminal) => (
+                <option key={terminal.id} value={terminal.id}>
+                  {terminal.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div style={{ color: "var(--text-2)" }}>Petrina can't find a terminal on this machine. Take over still works: copy the command it gives you and run it in any terminal.</div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -141,6 +177,8 @@ export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
           </div>
         ))}
       </div>
+
+      {state.terminals && <TerminalPicker state={state} />}
 
       <h2 className="section-title">Profiles</h2>
       <div className="grid">

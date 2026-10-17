@@ -10,7 +10,9 @@ import {
   PartyPopper,
   Scale,
   ShieldQuestion,
+  SquareTerminal,
   TriangleAlert,
+  Undo2,
   type LucideIcon,
 } from "lucide-react";
 import { DELIVERY_LABEL, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
@@ -18,6 +20,7 @@ import { sim, useEngineStatus, useUnsent } from "../engine";
 import { ago, type Lookup } from "../lib";
 import { ProductName, ProfileText, RoleAvatar } from "./bits";
 import { UnsentNote } from "./EngineState";
+import { openHandBack } from "./TakeOver";
 import type { SheetTab } from "./TaskCard";
 
 const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> = {
@@ -29,6 +32,7 @@ const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> =
   delivery: { label: "Ready to ship", icon: GitPullRequest, tone: "green" },
   stuck: { label: "Stuck", icon: TriangleAlert, tone: "slate" },
   shipping: { label: "Shipping was interrupted", icon: PackageSearch, tone: "amber" },
+  driving: { label: "You're driving", icon: SquareTerminal, tone: "blue" },
 };
 
 interface InboxProps {
@@ -107,6 +111,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState("");
   const [showDetail, setShowDetail] = useState(false);
+  const [reopened, setReopened] = useState<string>();
   const task = find.task(item.taskId);
   const product = find.product(task?.productId);
   const kind = KIND[item.kind];
@@ -316,6 +321,34 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
             Mark as done
           </button>
         </div>
+      )}
+
+      {item.kind === "driving" && (
+        <>
+          <div className="ask-actions">
+            <button className="btn lead" onClick={() => openHandBack(item.taskId)}>
+              <Undo2 size={16} aria-hidden="true" />
+              Hand back
+            </button>
+            <button
+              className="btn"
+              onClick={() =>
+                void sim.reopenTerminal(item.taskId, "open").then(
+                  (launched) => setReopened(launched.problem ? `${launched.problem}.` : `Opened in ${launched.terminal ?? "your terminal"}.`),
+                  (error: Error) => setReopened(error.message),
+                )
+              }
+            >
+              <SquareTerminal size={16} aria-hidden="true" />
+              Reopen terminal
+            </button>
+          </div>
+          {reopened && (
+            <p className="ask-note" role="status">
+              {reopened}
+            </p>
+          )}
+        </>
       )}
 
       {!sending && item.kind === "delivery" && (

@@ -72,9 +72,9 @@ export const TOOL_COLORS: Record<string, string> = {
   opencode: "#6b7079",
 };
 
-/** Agents waiting on the coordinator while keeping their slot. */
+/** Agents waiting on the coordinator while keeping their slot. A step the coordinator is driving is not waiting on them. */
 export function blockingCount(state: State): number {
-  return state.tasks.filter((task) => task.state === "needs-you" && task.holdsSlot).length;
+  return state.tasks.filter((task) => task.state === "needs-you" && task.holdsSlot && !task.driving).length;
 }
 
 /** Only https links leave the app. */

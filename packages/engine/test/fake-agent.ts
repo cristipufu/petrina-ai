@@ -13,15 +13,20 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
-  /** "short": build and one reviewer. */
-  planner?: "short";
+  /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
+  planner?: "short" | "tester-after";
   /**
    * "restart": ask a question, then work until cancelled, then finish once the step restarts. "plain": no questions.
    * "work": draft a file and work (through interruptions) until the step restarts `restarts` times.
    */
   builder?: "restart" | "plain" | "work";
-  /** "commit": commit a stray file, read-only as it is, then work until the step restarts. */
-  reviewer?: "commit";
+  /**
+   * "commit": commit a stray file, read-only as it is, then work until the step restarts.
+   * "work": the first reviewer to start works until the coordinator takes over and hands back; later ones pass.
+   */
+  reviewer?: "commit" | "work";
+  /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
+  tester?: "work";
   /** How the shipper behaves until the engine tells it an earlier attempt was interrupted. */
   shipper?: "finish" | "hang" | "deliver-then-hang" | "push-then-hang" | "bad-tag";
   /**
@@ -42,6 +47,8 @@ interface Conversation {
   restarts: number;
   /** Everything it sent and was sent, for load to replay. */
   history: acp.SessionNotification["update"][];
+  /** Turns the coordinator added in the tool's own app, in their terminal (see fake-cli.ts). */
+  terminal?: number;
 }
 
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
@@ -55,6 +62,7 @@ const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n$
 const brief = { summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [] };
 const scenario = (): Scenario => (dir && existsSync(join(dir, "scenario.json")) ? (JSON.parse(readFileSync(join(dir, "scenario.json"), "utf8")) as Scenario) : {});
 const mark = (name: string) => dir && writeFileSync(join(dir, name), String(Date.now()));
+const marked = (name: string) => !!dir && existsSync(join(dir, name));
 const run = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 const gh = (cwd: string, ...args: string[]) => execFileSync(process.execPath, [join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json"), ...args], { cwd }).toString().trim();
 
@@ -134,10 +142,22 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const done = (value: unknown, prose?: string): Reply => ({ text: block(value, prose) });
   const plan = scenario();
   const earlierAttempt = text.includes("in an earlier attempt at this step");
+  // The coordinator drove this step in their terminal and handed it back: on this conversation, or in a fresh one.
+  const handedBack = text.includes("handed it back");
+  const terminal = `Terminal turns: ${session.terminal ?? 0}.`;
 
   switch (session.role) {
     case "planner":
       await say("Sizing the work");
+      if (plan.planner === "tester-after")
+        return done({
+          rationale: "Build it, one reviewer, then try it out.",
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
+            { kind: "do", title: "Test", roleId: "tester", profileIds: ["opus-high"] },
+          ],
+        });
       if (plan.planner === "short")
         return done({
           rationale: "A small change: build it, one reviewer.",
@@ -156,6 +176,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         ],
       });
     case "architect": {
+      if (handedBack) return done({ ...brief, answers: [] }, terminal);
       // Asked again for objections it left out: answer those in its own name.
       if (text.includes("Your result block could not be used")) {
         return done({ ...brief, answers: objectionIds(text).map((id) => ({ id, status: "accepted", byCall: false, answer: "Added it to the brief." })) });
@@ -186,6 +207,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       return done({ objections: [] });
     case "builder": {
+      if (handedBack) {
+        writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
+        return done({ summary: "Finished the greeting after the hand back.", changes: ["People see a greeting"], tests: "1 passed" }, terminal);
+      }
       if (plan.builder === "restart" && !earlierAttempt && !restarted) {
         if (roleOf(text)) return done({ needsInput: { question: "Which colour should the greeting be?", options: ["Blue", "Green"] } });
         if (text.includes("The coordinator answered")) return hang(sessionId, "builder-answered");
@@ -218,6 +243,12 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed" });
     }
     case "code reviewer":
+      if (handedBack) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] }, terminal);
+      if (plan.reviewer === "work" && !marked("reviewer-worked")) {
+        mark("reviewer-worked");
+        await say("Reading the change");
+        return hang(sessionId, "reviewer-working");
+      }
       if (plan.reviewer === "commit" && !restarted && !earlierAttempt) {
         writeFileSync(join(session.cwd, "stray.txt"), "Not for this task\n");
         run(session.cwd, "add", "stray.txt");
@@ -225,6 +256,14 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return hang(sessionId, "reviewer-committed");
       }
       return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "suggestion" }], confirms: [], disputes: [] });
+    case "tester":
+      if (handedBack) return done({ summary: "Tried it after the hand back.", checks: [] }, terminal);
+      if (plan.tester === "work" && !marked("tester-worked")) {
+        mark("tester-worked");
+        await say("Trying it out");
+        return hang(sessionId, "tester-working");
+      }
+      return done({ summary: "Tried it: it works.", checks: [] });
     case "shipper":
       return ship(sessionId, session.cwd, text, plan.shipper ?? "finish");
     default:

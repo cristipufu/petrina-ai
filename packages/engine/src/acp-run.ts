@@ -264,4 +264,16 @@ export class AgentRun {
   close(): void {
     if (this.child.exitCode === null) this.child.kill();
   }
+
+  /** Stop the agent's process and wait until it has exited; forced after a few seconds. */
+  async stop(): Promise<void> {
+    const gone = (ms: number) =>
+      this.child.exitCode !== null || this.child.signalCode !== null
+        ? Promise.resolve(true)
+        : Promise.race([new Promise<boolean>((resolve) => this.child.once("exit", () => resolve(true))), Bun.sleep(ms).then(() => false)]);
+    this.close();
+    if (await gone(5000)) return;
+    this.child.kill("SIGKILL");
+    await gone(3000);
+  }
 }

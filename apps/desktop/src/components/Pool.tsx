@@ -69,7 +69,7 @@ export function PoolPanel({ state, find, onOpen, onDone }: { state: State; find:
             >
               <RoleAvatar role={role} size={20} />
               <span className="t">{task.title}</span>
-              {task.state === "needs-you" ? <span className="s needs-you">Waiting on you</span> : <span className="s">{role?.name}</span>}
+              {task.driving ? <span className="s needs-you">You're driving</span> : task.state === "needs-you" ? <span className="s needs-you">Waiting on you</span> : <span className="s">{role?.name}</span>}
             </button>
           );
         })}

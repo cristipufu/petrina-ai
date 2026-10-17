@@ -22,6 +22,10 @@ import {
   queueOf,
   slotUses,
   startCall,
+  TAKE_OVER_TOOLS,
+  TAKE_OVER_WORDS,
+  takeOverBlock,
+  toolName,
   unanswered,
   type AgentProfile,
   type CallAnswer,
@@ -30,9 +34,11 @@ import {
   type DeliveryMode,
   type DesignCall,
   type GateKind,
+  type HandBackPreview,
   type Id,
   type InboxItem,
   type InboxKind,
+  type Launched,
   type Product,
   type Role,
   type Stage,
@@ -53,8 +59,12 @@ import {
   EARLIER_ATTEMPT,
   formatFindings,
   formatObjections,
+  formatHandBack,
   formatStepNotes,
   formatWhereYouWere,
+  HANDED_BACK,
+  handBackNote,
+  handBackPrompt,
   MAX_DONE,
   NotesResult,
   ObjectionsResult,
@@ -70,6 +80,7 @@ import {
   type WhereYouWere,
 } from "./prompts.js";
 import { Store } from "./store.js";
+import { detectTerminals, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, thisMachine, writeLauncher } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 
 type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
@@ -103,6 +114,10 @@ export interface EngineOptions {
   gh?: readonly string[];
   /** Tests: how long a tool gets to reopen a conversation. */
   reopenTimeoutMs?: number;
+  /** Tests: the tool's own app that a take-over opens, instead of the one on PATH. */
+  toolPath?: (toolId: Id) => string | undefined;
+  /** Tests: the terminals on this machine. */
+  terminals?: () => FoundTerminal[];
 }
 
 /** What the window adds to an answer, so it still counts when the question is gone (a restart dropped it). */
@@ -130,6 +145,13 @@ export class Engine {
   private stopped = false;
   /** This run of the engine, to tell a restart from a pause. */
   private readonly boot = randomBytes(6).toString("hex");
+  /** Each driver until it has fully stopped, clean-up included. */
+  private readonly settling = new Map<Id, Promise<void>>();
+  /** Tasks Petrina is taking over or handing back right now. */
+  private readonly switching = new Set<Id>();
+  private readonly machine = thisMachine();
+  /** The terminals on this machine, the usual one first. */
+  private readonly found: FoundTerminal[];
 
   constructor(
     private readonly dataDir: string,
@@ -140,7 +162,10 @@ export class Engine {
     this.s = (loaded ?? this.empty()) as MState;
     this.s.roles = BUILT_IN_ROLES as MState["roles"];
     this.s.profiles = ENGINE_PROFILES as MState["profiles"];
-    this.s.tools = detectTools() as MState["tools"];
+    // Tests stand in the tools' own apps: those count as installed.
+    this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
+    this.found = options.terminals?.() ?? detectTerminals(this.machine);
+    this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
     this.recover();
     this.timers.push(setInterval(() => void this.pollPullRequests(), 60_000));
     this.schedule();
@@ -325,10 +350,19 @@ export class Engine {
     this.schedule();
   }
 
+  /** The terminal take-overs open in. Empty: the usual one on this machine. */
+  setTerminal(terminalId: Id): void {
+    if (!terminalId) delete this.s.terminal;
+    else if (this.found.some((terminal) => terminal.id === terminalId)) this.s.terminal = terminalId;
+    else throw new Error("That terminal is not on this machine");
+    this.commit();
+  }
+
   // ── Task control ───────────────────────────────────────────────────────
 
   pause(taskId: Id): void {
     const task = this.task(taskId);
+    this.notDriving(task);
     if (!task || !["running", "needs-you", "waiting"].includes(task.state)) return;
     this.stopDriver(taskId);
     task.state = "paused";
@@ -357,6 +391,7 @@ export class Engine {
   cancel(taskId: Id): void {
     const task = this.task(taskId);
     if (!task) return;
+    this.notDriving(task);
     this.stopDriver(taskId);
     task.state = "cancelled";
     task.column = "done";
@@ -374,6 +409,7 @@ export class Engine {
 
   /** Start a failed task again from the stage it failed in. */
   retry(itemId: Id): void {
+    this.notDrivingItem(itemId);
     const item = this.s.inbox.find((entry) => entry.id === itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
@@ -446,6 +482,7 @@ export class Engine {
    * conversation to pick up), the answer still reaches the step.
    */
   answer(itemId: Id, answer: string, context: SaidContext = {}): void {
+    this.notDrivingItem(itemId);
     const item = this.s.inbox.find((entry) => entry.id === itemId);
     const task = this.task(item?.taskId ?? context.taskId ?? "");
     const about = item?.title ?? context.about;
@@ -474,6 +511,7 @@ export class Engine {
   }
 
   allow(itemId: Id, _scope: "once" | "always" = "once"): void {
+    this.notDrivingItem(itemId);
     const item = this.takeItem(itemId);
     if (!item) return;
     const task = this.task(item.taskId);
@@ -488,6 +526,7 @@ export class Engine {
 
   /** Say no to a permission. The note with it is on disk before the agent hears the "No". */
   deny(itemId: Id, note?: string, context: SaidContext = {}): void {
+    this.notDrivingItem(itemId);
     const item = this.s.inbox.find((entry) => entry.id === itemId);
     const task = this.task(item?.taskId ?? context.taskId ?? "");
     const said = note?.trim();
@@ -510,6 +549,7 @@ export class Engine {
   }
 
   approve(itemId: Id): void {
+    this.notDrivingItem(itemId);
     const kind = this.s.inbox.find((entry) => entry.id === itemId)?.kind;
     if (kind === "stuck") {
       this.retry(itemId);
@@ -550,6 +590,7 @@ export class Engine {
   }
 
   requestChanges(itemId: Id, note: string): void {
+    this.notDrivingItem(itemId);
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
@@ -628,6 +669,273 @@ export class Engine {
     this.schedule();
   }
 
+  // ── Take over in the coordinator's terminal ────────────────────────────
+
+  /**
+   * The coordinator drives the current step in their own terminal: the agent's own tool, on the same
+   * conversation and model, in the task's working copy, in its normal mode. Petrina first checks it can
+   * open a terminal (or that every value fits in a launcher), then stops the agent and waits until its
+   * process has exited, clears what it had open in the inbox, saves an editing role's unfinished work as
+   * that agent's commit (a read-only role's is undone, as always), and only then opens the terminal.
+   * The step keeps its seat in the pool until the coordinator hands back.
+   */
+  async takeOver(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
+    const task = this.task(taskId);
+    if (!task) throw new Error("Unknown task");
+    if (this.switching.has(taskId)) throw new Error("Petrina is already taking this over");
+    const blocked = takeOverBlock(task as unknown as Task, this.getState());
+    if (blocked) throw new Error(blocked);
+    const agent = { ...task.agent! };
+    const conversation = task.conversation!;
+    const profile = this.profile(agent.profileId)!;
+    const role = this.role(agent.roleId)!;
+    const tool = this.takeOverTool(profile.toolId);
+    const terminal = how === "open" ? pickTerminal(this.found, this.s.terminal) : undefined;
+    if (how === "open" && !terminal) throw new Error(TAKE_OVER_WORDS.noTerminal);
+    // Every value goes through its pattern before the agent stops, so a launcher that cannot be written never strands the step.
+    launchPlan(this.launchInput(task, tool, conversation.sessionId, conversation.model, profile.effort));
+
+    this.switching.add(taskId);
+    try {
+      task.statusLine = "Stopping the agent so you can take over";
+      this.commitNow();
+      const run = this.runs.get(taskId);
+      const settled = this.settling.get(taskId);
+      this.stopDriver(taskId);
+      // What it asked is moot now: the coordinator is in the conversation themselves.
+      this.dropBlockingItems(taskId);
+      await Promise.all([settled, run?.stop()]);
+
+      const current = this.task(taskId);
+      if (!current) throw new Error("The task is gone");
+      if (current.conversation?.step !== conversation.step || current.conversation.sessionId !== conversation.sessionId) {
+        // The step handed back its result just as the coordinator took over: the next one starts as usual.
+        delete current.agent;
+        current.holdsSlot = false;
+        this.toWaiting(current);
+        this.commitNow();
+        this.schedule();
+        throw new Error("The agent finished its step just as you took over. Take over again on its next step if you want to.");
+      }
+      const worktree = current.worktree!;
+      let saved: { sha: string; files: string[] } | undefined;
+      if (role.canEdit) {
+        const files = (await git.changedSince(worktree, await git.head(worktree))).map((entry) => entry.file);
+        const sha = files.length
+          ? await git.commitAll(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.describe(role.id, profile.id)}`)
+          : undefined;
+        if (sha) saved = { sha, files };
+      } else {
+        await this.undoReadOnly(current, role.id);
+      }
+      const head = await git.head(worktree);
+      delete current.conversation.asked;
+      current.agent = agent as MTask["agent"];
+      current.holdsSlot = true;
+      current.driving = { since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head, ...(saved ? { saved } : {}) };
+      current.statusLine = TAKE_OVER_WORDS.status;
+      this.raise(current, "driving", `Hand back “${current.title}” when you're done`, false, {
+        body: `${tool.name} is open in your terminal on the ${role.name}'s conversation. Close it there, then hand back: the ${role.name} carries on from what you did.`,
+      });
+      if (saved) this.log(current, "milestone", `Saved the ${role.name}'s unfinished work as one commit (${saved.files.length} file${saved.files.length === 1 ? "" : "s"})`, role.id, profile.id);
+      this.log(current, "you", `You took over the ${role.name} in your terminal`, role.id, profile.id);
+      this.say(current, "system", `You took over in your terminal · ${tool.name} on the ${role.name}'s conversation`, role.id, profile.id);
+      this.commitNow();
+      return await this.launch(current, terminal, true);
+    } finally {
+      this.switching.delete(taskId);
+    }
+  }
+
+  /** Open the terminal again, or get the command again. Never a second copy: refused while the first one runs. */
+  async reopenTerminal(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
+    const task = this.task(taskId);
+    if (!task?.driving) throw new Error("You're not driving this task");
+    const tool = toolName(task.driving.toolId);
+    if ((await sessionState(this.takeOverDir(taskId), this.machine.platform)) === "running") throw new Error(TAKE_OVER_WORDS.alreadyOpen(tool));
+    const terminal = how === "open" ? pickTerminal(this.found, this.s.terminal) : undefined;
+    if (how === "open" && !terminal) throw new Error(TAKE_OVER_WORDS.noTerminal);
+    return this.launch(task, terminal, false);
+  }
+
+  /** What hand back would find: whether the tool is still open, the branch, and what changed since the take-over. */
+  async handBackPreview(taskId: Id): Promise<HandBackPreview> {
+    const task = this.task(taskId);
+    if (!task?.driving) throw new Error("You're not driving this task");
+    const driving = task.driving;
+    const worktree = task.worktree!;
+    const [open, where, files, commits, clean] = await Promise.all([
+      sessionState(this.takeOverDir(taskId), this.machine.platform),
+      git.workingState(worktree),
+      git.changedSince(worktree, driving.head),
+      git.commitsSince(worktree, driving.head),
+      git.isClean(worktree),
+    ]);
+    const problem = this.branchProblem(task, where);
+    return {
+      open,
+      tool: toolName(driving.toolId),
+      ...(problem ? { problem } : {}),
+      commits,
+      files: files.length,
+      names: files.slice(0, 5).map((entry) => entry.file),
+      unsaved: !clean,
+      ...(driving.saved ? { saved: { files: driving.saved.files.length, names: driving.saved.files.slice(0, 3) } } : {}),
+    };
+  }
+
+  /**
+   * The coordinator closed the tool and hands the step back. Refused while Petrina can see the tool
+   * running ("anyway" only counts when it cannot tell), or when the working copy left the task's branch.
+   * What they left unsaved becomes one commit marked as theirs, never undone. The note of what changed
+   * goes into the session, the timeline and the task's notes. If files changed, the tests check runs at
+   * once and nothing ships before a review chain has looked at them. Then the same agent carries on with
+   * the same step, on the same conversation when its tool can reopen it.
+   */
+  async handBack(taskId: Id, note = "", anyway = false): Promise<void> {
+    const task = this.task(taskId);
+    if (!task?.driving) throw new Error("You're not driving this task");
+    if (this.switching.has(taskId)) throw new Error("Petrina is already handing this back");
+    this.switching.add(taskId);
+    try {
+      const driving = task.driving;
+      const tool = toolName(driving.toolId);
+      const dir = this.takeOverDir(taskId);
+      const open = await sessionState(dir, this.machine.platform);
+      if (open === "running") throw new Error(TAKE_OVER_WORDS.stillOpen(tool));
+      if (open === "unknown" && !anyway) throw new Error(TAKE_OVER_WORDS.cannotTell(tool));
+      const worktree = task.worktree!;
+      const problem = this.branchProblem(task, await git.workingState(worktree));
+      if (problem) throw new Error(problem);
+      const role = this.role(driving.roleId)!;
+      const [commits, files, clean] = await Promise.all([git.commitsSince(worktree, driving.head), git.changedSince(worktree, driving.head), git.isClean(worktree)]);
+      const leftovers = clean
+        ? undefined
+        : await git.commitAll(worktree, `${task.title} (changes made by hand)\n\nMade by the coordinator in their own terminal while driving the ${role.name}, and saved by Petrina at the hand back.\n\nDriven by hand: ${this.describe(role.id, driving.profileId)}`);
+      const text = handBackNote({ role: role.name, tool, took: Date.now() - driving.since, ...(driving.saved ? { saved: driving.saved.files } : {}), commits, files, leftovers: leftovers !== undefined, note });
+      const head = await git.head(worktree);
+
+      this.say(task, "system", `You handed back to the ${role.name}`, role.id, driving.profileId);
+      this.say(task, "you", text);
+      const changed = files.length ? `${files.length} file${files.length === 1 ? "" : "s"} changed in ${commits + (leftovers ? 1 : 0)} commit${commits + (leftovers ? 1 : 0) === 1 ? "" : "s"}` : "nothing changed";
+      this.log(task, "you", `You handed back to the ${role.name}: ${changed}${note.trim() ? `. Your note: ${note.trim()}` : ""}`, role.id, driving.profileId);
+      this.remember(task, text);
+      // The conversation carries on from here, and a read-only role's clean-up keeps everything done by hand.
+      if (task.conversation) {
+        task.conversation.head = head;
+        task.conversation.handback = text;
+      }
+      if (files.length) await this.reviewHandChanges(task);
+      delete task.driving;
+      this.s.inbox = this.s.inbox.filter((item) => !(item.taskId === taskId && item.kind === "driving"));
+      await removeLauncher(dir);
+      task.state = "running";
+      task.holdsSlot = true;
+      task.statusLine = `${role.name} is getting back to work`;
+      this.commitNow();
+      // It still has its seat: the same agent carries on right away, whatever the pool is doing.
+      this.startDriver(taskId);
+    } finally {
+      this.switching.delete(taskId);
+    }
+  }
+
+  /**
+   * Files changed by hand: the tests check on the whole branch right away, and nothing ships until a
+   * review chain has looked at them from its first reviewer. A chain still ahead does that as planned.
+   * Otherwise the chain the coordinator drove in, or the last one behind, runs again once the step
+   * they drove finishes, without using up a review round.
+   */
+  private async reviewHandChanges(task: MTask): Promise<void> {
+    const problems = await git.tamperCheck(task.worktree!, task.base!);
+    for (const problem of problems) {
+      if (!task.findings.some((finding) => finding.text === problem && finding.status === "open")) {
+        task.findings.push({ id: this.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+      }
+    }
+    this.log(task, problems.length ? "warn" : "done", problems.length ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tests check on your changes passed: no tests removed or skipped");
+    task.handChanges = true;
+    const stages = task.plan?.stages ?? [];
+    if (stages.some((stage, index) => index > task.stageIndex && stage.kind === "review-chain")) return;
+    const chain = stages[task.stageIndex]?.kind === "review-chain" ? task.stageIndex : lastIndex(stages, (stage, index) => index < task.stageIndex && stage.kind === "review-chain");
+    if (chain >= 0) task.rereview = stages[chain]!.id;
+  }
+
+  /** The step the coordinator drove finished: its review chain runs again from the first reviewer, without using up a round. */
+  private rerun(task: MTask): boolean {
+    const id = task.rereview;
+    if (!id) return false;
+    delete task.rereview;
+    const index = task.plan?.stages.findIndex((stage) => stage.id === id) ?? -1;
+    if (index < 0) return false;
+    task.stageIndex = index;
+    task.sub = 0;
+    task.fixing = false;
+    this.log(task, "milestone", "Reviewing your changes: the review starts again from the first reviewer");
+    this.commit();
+    return true;
+  }
+
+  /** "You're driving" in the inbox only goes with a hand back. */
+  private notDrivingItem(itemId: Id): void {
+    if (this.s.inbox.some((entry) => entry.id === itemId && entry.kind === "driving")) throw new Error(TAKE_OVER_WORDS.handBackFirst);
+  }
+
+  private notDriving(task: MTask | undefined): void {
+    if (task && (task.driving || this.switching.has(task.id))) throw new Error(TAKE_OVER_WORDS.handBackFirst);
+  }
+
+  /** The tool's own app, as found on this machine. */
+  private takeOverTool(toolId: Id): LaunchInput["tool"] {
+    const adapter = ADAPTERS[toolId];
+    const path = adapter && TAKE_OVER_TOOLS[toolId] ? (this.options.toolPath?.(toolId) ?? Bun.which(adapter.cli)) : undefined;
+    if (!adapter || !path) throw new Error(TAKE_OVER_WORDS.missing(toolName(toolId)));
+    return { id: toolId as LaunchInput["tool"]["id"], name: adapter.name, path };
+  }
+
+  /** The launcher's folder: only the coordinator can read it, and it goes at hand back. */
+  private takeOverDir(taskId: Id): string {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(taskId)) throw new Error("Unknown task");
+    return join(this.dataDir, "takeover", taskId);
+  }
+
+  private launchInput(task: MTask, tool: LaunchInput["tool"], sessionId: string, model: string, effort: string): LaunchInput {
+    return { platform: this.machine.platform, dir: this.takeOverDir(task.id), worktree: task.worktree!, tool, sessionId, model, effort };
+  }
+
+  /** Write the launcher and open it in the terminal, or only write it for the coordinator to run. */
+  private async launch(task: MTask, terminal: FoundTerminal | undefined, fresh: boolean): Promise<Launched> {
+    const driving = task.driving!;
+    const conversation = task.conversation!;
+    const effort = this.profile(driving.profileId)?.effort ?? "high";
+    const dir = this.takeOverDir(task.id);
+    const plan = launchPlan(this.launchInput(task, this.takeOverTool(driving.toolId), conversation.sessionId, conversation.model, effort));
+    await writeLauncher(plan, dir, fresh);
+    if (!terminal) {
+      delete driving.terminal;
+      delete driving.problem;
+      this.commit();
+      return { command: plan.copy };
+    }
+    const problem = await openTerminal(terminal, plan.file);
+    driving.terminal = terminal.name;
+    if (problem) {
+      driving.problem = problem;
+      this.log(task, "warn", `${problem}. Reopen the terminal, or copy the command and run it yourself`);
+    } else {
+      delete driving.problem;
+    }
+    this.commit();
+    return { command: plan.copy, terminal: terminal.name, ...(problem ? { problem } : {}) };
+  }
+
+  /** Why hand back cannot go on with the working copy as it is, in plain words. */
+  private branchProblem(task: MTask, where: { branch?: string; busy?: string }): string | undefined {
+    if (where.busy) return `The working copy is in the middle of ${where.busy}. Finish it or abort it in your terminal, then hand back.`;
+    if (where.branch !== task.branch) return "The working copy is no longer on the task's branch. Switch back to it in your terminal, then hand back.";
+    return undefined;
+  }
+
   // ── Scheduling ─────────────────────────────────────────────────────────
 
   private schedule(): void {
@@ -661,7 +969,7 @@ export class Engine {
       task.state = "running";
       task.holdsSlot = true;
       task.statusLine = "Getting ready";
-      void this.drive(taskId);
+      this.startDriver(taskId);
     }
     this.commit();
   }
@@ -685,6 +993,14 @@ export class Engine {
   }
 
   // ── The task driver ────────────────────────────────────────────────────
+
+  private startDriver(taskId: Id): void {
+    const done = this.drive(taskId);
+    this.settling.set(taskId, done);
+    void done.finally(() => {
+      if (this.settling.get(taskId) === done) this.settling.delete(taskId);
+    });
+  }
 
   private async drive(taskId: Id): Promise<void> {
     const controller = new AbortController();
@@ -713,6 +1029,19 @@ export class Engine {
         }
         const stage = current.plan?.stages[current.stageIndex];
         if (!stage) throw new Error("The plan ended without a delivery");
+        // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
+        if (current.handChanges && (stage.gate === "delivery" || stage.roleId === "shipper")) {
+          const chain = lastIndex(current.plan!.stages, (entry) => entry.kind === "review-chain");
+          if (chain >= 0) {
+            current.stageIndex = chain;
+            current.sub = 0;
+            current.fixing = false;
+            this.log(current, "milestone", "Reviewing your changes before anything ships: the review starts again from the first reviewer");
+            this.commit();
+            continue;
+          }
+          delete current.handChanges;
+        }
         if (stage.kind === "gate") {
           this.gate(current, stage.gate ?? "delivery");
           return;
@@ -832,6 +1161,7 @@ export class Engine {
       this.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
     }
     this.finishStep(task);
+    if (this.rerun(task)) return "continue";
     task.stageIndex += 1;
     task.sub = 0;
     this.commit();
@@ -856,6 +1186,7 @@ export class Engine {
       this.log(task, "done", round === 1 ? "Design brief ready" : "Answered every objection", stage.roleId, profileId);
       await this.undoReadOnly(task, stage.roleId);
       this.finishStep(task);
+      if (this.rerun(task)) return "continue";
       task.sub = 1;
       this.commit();
       return "continue";
@@ -868,6 +1199,7 @@ export class Engine {
     }
     await this.undoReadOnly(task, reviewerRole);
     this.finishStep(task);
+    if (this.rerun(task)) return "continue";
     const blocking = result.objections.filter((objection) => objection.blocking).length;
     if (blocking === 0) {
       for (const objection of task.objections) if (objection.status === "open" && !objection.blocking) objection.status = "rejected";
@@ -913,6 +1245,7 @@ export class Engine {
     await this.undoReadOnly(task, stage.roleId);
     this.finishStep(task);
     this.log(task, "done", CALL_WORDS.settled);
+    if (this.rerun(task)) return "continue";
     // The design check comes next, maybe after steps such as Screens: the call made sure there is one.
     task.stageIndex += 1;
     task.sub = 0;
@@ -923,6 +1256,8 @@ export class Engine {
   private async runReview(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const round = task.rounds[stage.id] ?? 1;
     if (task.sub === 0) {
+      // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
+      delete task.handChanges;
       const problems = await git.tamperCheck(task.worktree!, task.base!);
       for (const problem of problems) {
         if (!task.findings.some((finding) => finding.text === problem && finding.status === "open")) {
@@ -956,6 +1291,7 @@ export class Engine {
     this.finishStep(task);
     const blockingNow = result.findings.filter((finding) => finding.severity === "blocking").length;
     this.log(task, blockingNow ? "warn" : "done", result.verdict === "pass" && !blockingNow ? "Passed" : `Found ${blockingNow} blocking issue${blockingNow === 1 ? "" : "s"}`, "code-reviewer", profileId);
+    if (this.rerun(task)) return "continue";
 
     if (task.sub + 1 < stage.profileIds.length) {
       task.sub += 1;
@@ -1242,6 +1578,8 @@ export class Engine {
     const reopen = same && same.briefed && roleId !== "shipper" && same.toolId === profile.toolId && same.model === model ? same : undefined;
     let again = saved && !reopen ? (same ? (same.briefed || roleId === "shipper" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
     const startedAt = same?.startedAt ?? Date.now();
+    // Handed back by the coordinator: the note of what changed, until the agent hears it.
+    const handback = same?.handback;
     task.stepAttempts = (task.stepAttempts ?? 0) + 1;
 
     task.agent = { roleId, profileId, since: Date.now(), step: 0 };
@@ -1305,7 +1643,13 @@ export class Engine {
     this.runs.set(taskId, run);
     const picked = run.reopened !== undefined;
     const where = saved ? this.whereYouWere(task, role, startedAt) : undefined;
-    if (picked) {
+    if (picked && handback) {
+      this.say(task, "system", `${role.name} took the step back on the same conversation · ${this.describe(roleId, profileId)}`, roleId, profileId);
+      this.log(task, "milestone", "Took the step back on the same conversation", roleId, profileId);
+    } else if (handback) {
+      this.say(task, "system", `${role.name} carried on in a fresh conversation, with your note, because the one you drove could not be reopened · ${this.describe(roleId, profileId)}`, roleId, profileId);
+      this.log(task, "milestone", `Carried on in a fresh conversation: ${again}`, roleId, profileId);
+    } else if (picked) {
       this.say(task, "system", `${role.name} picked up where it left off · ${this.describe(roleId, profileId)}`, roleId, profileId);
       this.log(task, "milestone", "Picked up where it left off", roleId, profileId);
     } else if (saved) {
@@ -1315,7 +1659,7 @@ export class Engine {
     // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
     // the old note; a reopened one keeps the open question until the conversation hears the answer.
     const asked = picked ? reopen?.asked : undefined;
-    if (roleId !== "shipper") task.conversation = { step, roleId, profileId, toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}) };
+    if (roleId !== "shipper") task.conversation = { step, roleId, profileId, toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && handback ? { handback } : {}) };
     this.commitNow();
     const headBefore = !role.canEdit ? head : undefined;
     try {
@@ -1323,24 +1667,29 @@ export class Engine {
       if (signal.aborted || !live()) throw new Aborted();
       let opening: string;
       if (picked) {
-        // One line about the restart, then only what the conversation has not heard: the answer to its open question, and messages still in line.
+        // One line about the restart (or the hand back), then only what the conversation has not heard: the answer to its open question, and messages still in line.
         const answer = asked?.answer !== undefined ? { question: asked.question, text: asked.answer } : undefined;
-        if (task.conversation) delete task.conversation.asked;
+        if (task.conversation) {
+          delete task.conversation.asked;
+          delete task.conversation.handback;
+        }
         const messages = task.queued.splice(0);
         for (const message of messages) {
           this.say(task, "you", message.text);
           this.log(task, "you", `You said: ${message.text}`);
         }
-        opening = restartPrompt(where!, { ...(answer ? { answer } : {}), messages: messages.map((message) => message.text) });
+        const texts = messages.map((message) => message.text);
+        opening = handback ? handBackPrompt(handback, texts) : restartPrompt(where!, { ...(answer ? { answer } : {}), messages: texts });
       } else {
         // Starting the step again: everything the coordinator said in it so far, in order, and after a restart, where it was.
-        const files = where && head && task.worktree ? await git.changedSince(task.worktree, head) : [];
+        const files = where && !handback && head && task.worktree ? await git.changedSince(task.worktree, head) : [];
         if (signal.aborted || !live()) throw new Aborted();
         const earlier = task.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
         if (earlier.length) this.log(task, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
         const sections = [...given()];
         if (earlier.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
-        if (where) sections.push({ title: WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "") });
+        if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
+        else if (where) sections.push({ title: WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "") });
         opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.s.roles as Role[], profiles: this.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       }
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
@@ -1625,6 +1974,12 @@ export class Engine {
     }
     this.s.inbox = this.s.inbox.filter(keep);
     for (const task of this.s.tasks) {
+      if (task.driving) {
+        // Still in the coordinator's hands: the step keeps its seat, and Hand back works as before.
+        task.state = "needs-you";
+        task.holdsSlot = true;
+        continue;
+      }
       if (this.s.inbox.some((item) => item.taskId === task.id && item.blocking)) {
         task.statusLine = "Waiting for your answer";
         delete task.agent;

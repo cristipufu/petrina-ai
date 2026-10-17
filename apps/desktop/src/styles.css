@@ -567,6 +567,8 @@ kbd {
   place-items: center;
 }
 .card-actions button:hover { background: var(--hover); color: var(--text); }
+.card-actions button:disabled { opacity: 0.5; cursor: default; }
+.card-actions button:disabled:hover { background: transparent; color: var(--text-2); }
 
 /* Above the card's click area, so each step can be hovered and focused for its tooltip. */
 /* Always one line: long plans tighten and fold (see stripOf), and a very long step name shortens rather than wrapping. */
@@ -919,6 +921,21 @@ kbd {
 .session-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-2); }
 .session-head strong { color: var(--text); font-weight: 600; }
 .session-head .btn { margin-left: auto; }
+/* Take over: the button with why it is off, or what you can do while you drive. */
+.session-head .take-over, .session-head .driving-controls { margin-left: auto; display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.session-head .take-over .btn, .session-head .driving-controls .btn { margin-left: 0; }
+.take-over-why { font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.take-over-dialog, .hand-back-dialog { display: grid; gap: 12px; }
+.take-over-dialog .foot, .hand-back-dialog .foot { margin-top: 4px; }
+.field-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+.command-box { display: grid; gap: 8px; color: var(--text-2); }
+.command-box .command { font-family: var(--mono); font-size: var(--fs-control); line-height: var(--lh-control); }
+.hand-back-summary { display: grid; gap: 4px; }
+.hand-back-summary h3 { margin-top: 8px; font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; color: var(--text-2); }
+.hand-back-summary h3:first-child { margin-top: 0; }
+.hand-back-summary p { overflow-wrap: anywhere; }
+.note-box { display: grid; gap: 8px; color: var(--text-2); font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; }
+.note-box textarea { width: 100%; resize: vertical; min-height: 72px; padding: 8px 12px; font-weight: 400; font-size: var(--fs-body); line-height: var(--lh-body); }
 .chat { display: flex; flex-direction: column; gap: 16px; }
 .msg { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; }
 .msg .name { display: flex; align-items: baseline; gap: 8px; font-weight: 600; font-size: var(--fs-control); line-height: var(--lh-control); }
@@ -1113,6 +1130,8 @@ kbd {
 .menu button:hover, .menu button:focus-visible { background: var(--hover); }
 .menu button:focus-visible { outline-offset: -2px; }
 .menu button.danger { color: var(--red-text); }
+.menu button:disabled { opacity: 0.55; cursor: default; }
+.menu button:disabled:hover { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

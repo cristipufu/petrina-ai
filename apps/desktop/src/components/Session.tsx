@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { ArrowRight, Send, SquareTerminal, User } from "lucide-react";
+import { ArrowRight, Send, User } from "lucide-react";
 import type { MessageMode, SessionLine, State, Task } from "@petrina/core";
 import { sim, useEngineStatus, useUnsent } from "../engine";
 import { ago, profileText, type Lookup } from "../lib";
 import { RoleAvatar } from "./bits";
 import { UnsentMessage } from "./EngineState";
 import { Ask } from "./Inbox";
+import { TakeOverControls } from "./TakeOver";
 import type { SheetTab } from "./TaskCard";
 
 interface LogProps {
@@ -39,7 +40,8 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
   const live = task.state === "running";
-  const asks = state.inbox.filter((item) => item.taskId === task.id);
+  // "You're driving" has its own controls in the header.
+  const asks = state.inbox.filter((item) => item.taskId === task.id && item.kind !== "driving");
   // Answers to something still waiting show with it below; the rest show here, in the conversation.
   const unsent = useUnsent().filter((entry) => entry.taskId === task.id && !(entry.itemId && asks.some((item) => item.id === entry.itemId)));
   const connected = useEngineStatus().link === "live";
@@ -106,22 +108,12 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
             <strong>{role.name}</strong>
             <span className="quiet-text">{profileText(profile, find, true)}</span>
             <span className={`dot ${task.state}`} aria-hidden="true" />
-            <span>{live ? "Working" : task.state === "needs-you" ? "Waiting on you" : "Idle"}</span>
+            <span>{task.driving ? "Paused while you drive" : live ? "Working" : task.state === "needs-you" ? "Waiting on you" : "Idle"}</span>
           </>
         ) : (
           <span>No agent is working on this right now. Messages wait until one starts.</span>
         )}
-        <button
-          className="btn small"
-          disabled={!task.agent}
-          title="Open this agent's own tool in your terminal, on the same session"
-          onClick={() =>
-            onToast("Take over arrives with the real agents", "It will open the agent's own tool in your terminal on this session and pause the stage until you hand back.")
-          }
-        >
-          <SquareTerminal size={16} aria-hidden="true" />
-          Take over in terminal
-        </button>
+        <TakeOverControls task={task} state={state} onToast={onToast} />
       </div>
 
       <div className="chat reading" aria-label="Conversation">
@@ -157,7 +149,7 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
             <div style={{ minWidth: 0 }}>
               <div className="name">
                 You
-                <span className="queued-note">{live ? "Queued, delivered after the current step" : "Queued, delivered when an agent starts"}</span>
+                <span className="queued-note">{task.driving ? "Queued, delivered when you hand back" : live ? "Queued, delivered after the current step" : "Queued, delivered when an agent starts"}</span>
                 <button className="btn ghost small" onClick={() => sim.removeQueued(task.id, message.id)} aria-describedby={`queued-${message.id}`}>
                   Remove
                 </button>
@@ -203,7 +195,7 @@ function Composer({ task, find }: { task: Task; find: Lookup }) {
         <textarea
           rows={1}
           aria-label="Message"
-          placeholder={live ? `Message the ${role?.name.toLowerCase() ?? "agent"}…` : "Message the next agent on this task…"}
+          placeholder={live || task.driving ? `Message the ${role?.name.toLowerCase() ?? "agent"}…` : "Message the next agent on this task…"}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
@@ -233,7 +225,9 @@ function Composer({ task, find }: { task: Task; find: Lookup }) {
           ? mode === "queue"
             ? "Delivered when the agent finishes its current step. Enter sends, Shift+Enter starts a new line."
             : "Stops the current step and delivers right away."
-          : "Delivered as soon as an agent starts on this task."}
+          : task.driving
+            ? "You're driving in your terminal. Delivered when you hand back."
+            : "Delivered as soon as an agent starts on this task."}
       </div>
     </div>
   );

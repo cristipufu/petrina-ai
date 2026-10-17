@@ -13,6 +13,8 @@ const ALLOWED_ORIGINS = new Set(["http://localhost:1430", "http://127.0.0.1:1430
 /** The window's id for something it sent, so a resend after a lost confirmation counts once. */
 const ClientId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const Said = z.object({ taskId: z.string().optional(), about: z.string().max(4000).optional(), clientId: ClientId.optional() });
+const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+const How = z.enum(["open", "copy"]);
 
 const Action = z.discriminatedUnion("name", [
   z.object({ name: z.literal("addProduct"), args: z.tuple([z.string().min(1)]) }),
@@ -57,6 +59,11 @@ const Action = z.discriminatedUnion("name", [
   z.object({ name: z.literal("checkShipping"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("shipAgain"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("markDone"), args: z.tuple([z.string()]) }),
+  z.object({ name: z.literal("takeOver"), args: z.tuple([TaskId, How.optional()]) }),
+  z.object({ name: z.literal("reopenTerminal"), args: z.tuple([TaskId, How.optional()]) }),
+  z.object({ name: z.literal("handBackPreview"), args: z.tuple([TaskId]) }),
+  z.object({ name: z.literal("handBack"), args: z.tuple([TaskId, z.string().max(4000).optional(), z.boolean().optional()]) }),
+  z.object({ name: z.literal("setTerminal"), args: z.tuple([z.string().regex(/^[a-z0-9-]{0,40}$/)]) }),
 ]);
 
 export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
