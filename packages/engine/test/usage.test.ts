@@ -46,6 +46,19 @@ async function start(scenario: Scenario, options: { description?: string; before
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("an agent that runs out of usage", () => {
+  it("keeps the security review off the builder's replacement tool while another tool is available", async () => {
+    const run = await start({ planner: "claude-build", risk: "high", builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] });
+    try {
+      const task = await run.done();
+      expect(task.builderSession!.toolId).toBe("codex");
+      const review = task.timeline.find((entry) => entry.text === "Security reviewer started");
+      expect(review).toBeDefined();
+      expect(run.engine.profile(review!.profileId!)!.toolId).toBe("grok");
+    } finally {
+      run.engine.shutdown();
+    }
+  });
+
   it("keeps both limit reports and the turn's settings when the spend cap rejects an open session window", async () => {
     const run = await start({ planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] });
     try {

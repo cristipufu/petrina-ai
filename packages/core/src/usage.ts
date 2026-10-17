@@ -178,6 +178,10 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
     byRoom(profiles, (profile) => headroom(pool, profile, now)).sort((a, b) => sameness(a) - sameness(b) || Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
 
   if (free(planned)) {
+    // A builder may have switched tools since the plan was made. Keep this review independent
+    // of the tool that actually built the change, even when its planned reviewer is still free.
+    const independent = away && planned.toolId === away.toolId ? closest(state.profiles.filter((profile) => profile.toolId !== away.toolId && usable(profile))) : undefined;
+    if (independent) return { kind: "substitute", profile: independent };
     if (!near(planned) || rules.keep) return { kind: "planned", profile: planned };
     const equal = closest(state.profiles.filter((profile) => profile.toolId !== planned.toolId && profile.effort === planned.effort && usable(profile) && !near(profile) && !profile.standby));
     return equal ? { kind: "substitute", profile: equal } : { kind: "planned", profile: planned };

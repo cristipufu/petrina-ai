@@ -413,9 +413,9 @@ export abstract class Kernel {
   choose(plannedId: Id, task?: MTask, roleId?: Id, room?: (toolId: Id) => boolean): Choice | undefined {
     const planned = this.profile(plannedId);
     if (!planned) return undefined;
-    // Reviews keep the tools they were planned on, and a security review's stand-in stays as far from the builder as it can.
+    // Reviews keep their planned tools; security reviews follow the tool that actually built the change.
     const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
-    const made = roleId === "security-reviewer" && builder ? this.profile(builder) : undefined;
+    const made = roleId === "security-reviewer" ? (task?.builderSession ? { toolId: task.builderSession.toolId, modelId: task.builderSession.model } : builder ? this.profile(builder) : undefined) : undefined;
     return chooseWithRoom(this.getState(), planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
   }
 

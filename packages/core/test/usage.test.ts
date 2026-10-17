@@ -228,6 +228,12 @@ describe("a window that is used up", () => {
 });
 
 describe("reviews keep their independence", () => {
+  it("moves a still-available planned reviewer away from a builder that changed tools", () => {
+    const rules = { keep: true, awayFrom: { toolId: "codex", modelId: solX.modelId! } };
+    expect(chooseProfile({ profiles, tools, pool: pool() }, solX, now, rules)).toEqual({ kind: "substitute", profile: opusX });
+    expect(chooseProfile({ profiles, tools, pool: pool({ limited: [out("claude-code", now + HOUR)] }) }, solX, now, rules)).toEqual({ kind: "planned", profile: solX });
+  });
+
   it("moves a security review as far from the builder as it can, and never waits for that", () => {
     const fromOpus = { awayFrom: { toolId: "claude-code", modelId: "opus" } };
     // Planned on Codex because the builder is on Claude Code (Opus); Codex is out: Sonnet, not Opus.

@@ -369,6 +369,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (plan.planner === "claude-build")
         return done({
           rationale: "Build it on Claude Code, one reviewer on Codex.",
+          ...riskOf(plan),
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: plan.reviewer === "confirm" ? 2 : 1 },
