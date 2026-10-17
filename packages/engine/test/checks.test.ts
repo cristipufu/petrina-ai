@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { checksFingerprint, detectChecks, parseCommand, runChecks } from "../src/checks.js";
 import { Engine } from "../src/engine.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor, SLOW } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -52,16 +52,18 @@ describe("a product's checks", () => {
 
   it("reports what really happened: passed, failed, too slow, or could not start", async () => {
     const dir = root("petrina-checks-run-");
+    // The limit stretches with the machine's load: a quick check must still count as quick on a busy Mac.
+    const limit = 2000 * SLOW;
     const results = await runChecks(
       dir,
       [
         { name: "Passes", argv: ["git", "--version"] },
         { name: "Fails", argv: ["git", "no-such-subcommand-petrina"] },
-        { name: "Too slow", argv: ["sleep", "5"] },
+        { name: "Too slow", argv: ["sleep", "120"] },
         { name: "Missing", argv: ["petrina-no-such-program"] },
       ],
       process.env,
-      1000,
+      limit,
     );
     expect(results.map((run) => [run.name, run.ok])).toEqual([
       ["Passes", true],
