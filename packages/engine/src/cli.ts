@@ -32,6 +32,11 @@ async function call(path: string, init?: RequestInit): Promise<unknown> {
 
 /** Hand the engine's address to the page in the URL fragment: browsers never send it anywhere. */
 async function open(dev: boolean): Promise<void> {
+  // Agents work in the background and never open windows on the coordinator's screen.
+  if (process.env.PETRINA_AGENT) {
+    console.error("petrina open is for the coordinator. Agents work in the background: use a headless browser on a free port.");
+    process.exit(1);
+  }
   const { api, token, url } = connection();
   const fragment = Buffer.from(JSON.stringify({ url, token })).toString("base64url");
   // The developer UI when it runs, otherwise the one the engine serves.

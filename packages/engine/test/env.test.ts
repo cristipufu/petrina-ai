@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { agentEnv, loginShellPath, mergePath, pathFromEnv } from "../src/env.js";
 import { ADAPTERS } from "../src/tools.js";
+import { BACKGROUND } from "../src/prompts.js";
+import { join } from "node:path";
 
 describe("agent safety", () => {
   it("runs every tool in its own automatic safety mode", () => {
@@ -35,5 +37,12 @@ describe("the PATH an app opened from the Dock gets", () => {
   it.skipIf(process.platform === "win32")("asks the login shell", async () => {
     const path = await loginShellPath({ ...process.env, SHELL: "/bin/sh" });
     expect(path?.split(":").length).toBeGreaterThan(0);
+  });
+
+  it("keeps agents in the background", () => {
+    expect(BACKGROUND).toContain("Never open windows or apps");
+    const result = Bun.spawnSync(["bun", join(import.meta.dir, "../src/cli.ts"), "open"], { env: { ...process.env, PETRINA_AGENT: "1", PETRINA_HOME: "/nonexistent-petrina-home" } });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("Agents work in the background");
   });
 });

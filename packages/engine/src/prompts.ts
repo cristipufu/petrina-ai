@@ -246,6 +246,9 @@ Do not push anything. Return the commit sha now on ${defaultBranch}.`;
   }
 }
 
+/** The coordinator works on this computer while the squad does: agents never take over the screen. */
+export const BACKGROUND = `Work in the background: the coordinator is using this computer while you work. Never open windows or apps on their screen. That means no open, xdg-open or start, no visible browser (use headless Chrome, or Playwright with headless: true, on a free port), no desktop app window and no terminal window. In tests, use stand-ins for anything that would open one. Stop every server and browser you start before you finish.`;
+
 export function buildPrompt(ctx: PromptContext): string {
   const { task, product, role, worktree, branch } = ctx;
   const sections = ctx.sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
@@ -253,6 +256,8 @@ export function buildPrompt(ctx: PromptContext): string {
 The coordinator who reads your work is a product person, not a developer: everything you write for them is plain language, short, and free of code.
 
 Your working copy is ${worktree}, on branch ${branch}. Stay inside it.
+
+${BACKGROUND}
 
 # The task: ${task.title}
 ${task.description || "(no further description)"}
