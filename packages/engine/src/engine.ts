@@ -18,6 +18,7 @@ import { GuideKeeper } from "./guide-keeper.js";
 import { Context } from "./context.js";
 import { ProductChecks } from "./product-checks.js";
 import { Shipping } from "./shipping.js";
+import { Updates } from "./update.js";
 import { Reviews } from "./review.js";
 import { Design } from "./design.js";
 import { Planning } from "./planning.js";
@@ -36,6 +37,7 @@ export class Engine extends Kernel implements Commands {
   private readonly context: Context;
   private readonly checks: ProductChecks;
   private readonly shipping: Shipping;
+  private readonly updates: Updates;
   private readonly reviews: Reviews;
   private readonly design: Design;
   private readonly planning: Planning;
@@ -50,12 +52,13 @@ export class Engine extends Kernel implements Commands {
     this.context = new Context(this, this.guide);
     this.checks = new ProductChecks(this, this.turns, this.context);
     this.shipping = new Shipping(this);
+    this.updates = new Updates(this);
     this.reviews = new Reviews(this, this.turns, this.context, this.checks);
     this.design = new Design(this, this.turns, this.context);
     this.planning = new Planning(this, this.turns);
-    this.work = new Work(this, this.turns, this.context, this.guide, this.shipping);
+    this.work = new Work(this, this.turns, this.context, this.guide, this.shipping, this.updates);
     this.takeover = new TakeOver(this);
-    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.shipping);
+    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates);
     this.driver.recover();
     this.timers.push(setInterval(() => void this.shipping.pollPullRequests(), 60_000));
     this.schedule();
@@ -503,6 +506,7 @@ export class Engine extends Kernel implements Commands {
       case "delivery":
         this.log(task, "you", "You approved the delivery");
         if (task.checkedSha) task.approvedSha = task.checkedSha;
+        if (task.checkedPatch) task.approvedPatch = task.checkedPatch;
         task.stageIndex += 1;
         break;
       case "disagreement":

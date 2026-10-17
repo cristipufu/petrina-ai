@@ -4,7 +4,11 @@
 import { lastIndexWhere, type ProductCheck } from "@petrina/core";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
-import { checksFingerprint, commandText, detectChecks, runChecks } from "./checks.js";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { CheckRun } from "@petrina/core";
+import { checksFingerprint, detectChecks, runChecks, commandText } from "./checks.js";
 import { agentEnv } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
@@ -15,7 +19,7 @@ export class ProductChecks {
 
   /**
    * The product's checks. The Check finder works them out once per product, and again only when the
-   * CI or build files it read have changed or a check could not even start. Checks the coordinator set
+   * CI, build or hook files it read have changed or a check could not even start. Checks the coordinator set
    * by hand are never replaced. Runs inside a step that already holds an agent slot.
    */
   async ensureChecks(task: MTask, signal: AbortSignal): Promise<readonly ProductCheck[]> {
@@ -35,7 +39,7 @@ export class ProductChecks {
       if (conversation === undefined) delete task.conversation;
       else task.conversation = conversation;
     };
-    const why = !product.checks ? "first time" : unstartable ? "a check could not start" : "the CI or build files changed";
+    const why = !product.checks ? "first time" : unstartable ? "a check could not start" : "the CI, build or hook files changed";
     try {
       const result = await this.turns.turn(
         task,
@@ -66,14 +70,25 @@ export class ProductChecks {
     return product.checks ?? [];
   }
 
-  /** Petrina runs the product's checks itself, without credentials. Failures become blocking findings, with the output as evidence. */
+  /**
+   * Petrina runs the product's checks itself, without credentials, and then the repository's own commit
+   * hooks on the task's whole change. Failures become blocking findings, with the output as evidence. A check
+   * only looks: whatever one changes in files git tracks is undone, so nothing unreviewed joins the work.
+   */
   async runProductChecks(task: MTask, checks: readonly ProductCheck[], signal: AbortSignal): Promise<number> {
-    if (!checks.length || !task.worktree) return 0;
+    if (!task.worktree) return 0;
+    const hooks = await this.noteHooks(task);
+    if (!checks.length && !hooks.length) return 0;
     task.statusLine = "Running the product's checks";
     this.k.commit();
     const env = { ...agentEnv(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
-    const results = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal);
+    const ran = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal);
     if (signal.aborted) throw new Aborted();
+    if (await git.trackedChanged(task.worktree)) {
+      await git.restoreTracked(task.worktree);
+      this.k.log(task, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
+    }
+    const results = [...ran, ...(await this.runHooks(task, hooks, env, signal))];
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
     task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), results };
     const failed = results.filter((run) => !run.ok);
@@ -103,17 +118,94 @@ export class ProductChecks {
    * A failure sends the work back to the builder, twice at most; after that the coordinator sees it.
    */
   async checksBeforeDelivery(task: MTask, signal: AbortSignal): Promise<boolean> {
-    const product = this.k.productOf(task);
-    if (!task.worktree || !product?.checks?.length) return false;
+    return (await this.failing(task, signal)) && this.backToBuilder(task, "right before your delivery check");
+  }
+
+  /**
+   * Right before shipping: the checks pass on exactly what ships. Failing, the work goes back to the builder,
+   * twice at most, and then to the coordinator's delivery check.
+   */
+  async checksBeforeShipping(task: MTask, signal: AbortSignal): Promise<boolean> {
+    if (!(await this.failing(task, signal))) return false;
+    if (this.backToBuilder(task, "on what was about to ship")) return true;
+    const check = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.gate === "delivery");
+    if (check < 0) throw new Error("The product's checks fail on the work about to ship");
+    delete task.approvedSha;
+    delete task.approvedPatch;
+    task.stageIndex = check;
+    task.sub = 0;
+    this.k.log(task, "warn", "The checks fail on what was about to ship, so Petrina asks you again");
+    this.k.commit();
+    return true;
+  }
+
+  /** Whether the checks (and the repository's commit hooks) fail on the code the task has now, running them unless they already passed on it. */
+  private async failing(task: MTask, signal: AbortSignal): Promise<boolean> {
+    if (!task.worktree) return false;
     if ((await this.ranOn(task)) && task.checks!.results.every((run) => run.ok)) return false;
-    if ((await this.runProductChecks(task, product.checks, signal)) === 0) return false;
+    return (await this.runProductChecks(task, this.k.productOf(task)?.checks ?? [], signal)) > 0;
+  }
+
+  /** The repository's commit hooks, as git would run them now, noted on the product for the builder's instructions. */
+  async noteHooks(task: MTask): Promise<string[]> {
+    const hooks: string[] = await git.commitHooks(task.worktree!);
+    const product = this.k.productOf(task);
+    if (product && (product.hooks ?? []).join() !== hooks.join()) {
+      if (hooks.length) product.hooks = hooks;
+      else delete product.hooks;
+    }
+    return hooks;
+  }
+
+  /**
+   * The repository's own commit hooks, run the way git runs them right before committing the task's whole
+   * change: pre-commit with the change staged on top of where the task started, and commit-msg on the task's
+   * commit message. Petrina's own git steps never run hooks; these run like the product's checks, with no logins.
+   */
+  private async runHooks(task: MTask, hooks: readonly string[], env: NodeJS.ProcessEnv, signal: AbortSignal): Promise<CheckRun[]> {
+    const worktree = task.worktree!;
+    const base = task.baseSha;
+    const branch = task.branch;
+    if (!hooks.length || !base || !branch || (await git.head(worktree).catch(() => base)) === base) return [];
+    const runs: CheckRun[] = [];
+    if (hooks.includes("pre-commit")) {
+      // On disk before HEAD moves: a restart while it is detached puts it back on the branch.
+      task.hooking = true;
+      this.k.commitNow();
+      await git.detachAt(worktree, base);
+      try {
+        runs.push(...(await runChecks(worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }], env, this.k.options.checkTimeoutMs, signal)));
+      } finally {
+        await git.reattach(worktree, branch);
+        delete task.hooking;
+        this.k.commit();
+      }
+    }
+    if (hooks.includes("commit-msg") && !signal.aborted) {
+      // The message the task's one commit carries, in a file of its own, as git hands it over.
+      const folder = await mkdtemp(join(tmpdir(), "petrina-message-"));
+      try {
+        const file = join(folder, "COMMIT_EDITMSG");
+        await writeFile(file, `${await git.message(worktree)}\n`);
+        const [run] = await runChecks(worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }], env, this.k.options.checkTimeoutMs, signal);
+        if (run) runs.push({ ...run, command: "git hook run commit-msg" });
+      } finally {
+        await rm(folder, { recursive: true, force: true });
+      }
+    }
+    if (signal.aborted) throw new Aborted();
+    return runs;
+  }
+
+  /** Failing checks send the work back to the builder, twice at most. */
+  private backToBuilder(task: MTask, when: string): boolean {
     const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
     if (builder < 0 || (task.checkReturns ?? 0) >= 2) return false;
     task.checkReturns = (task.checkReturns ?? 0) + 1;
     task.stageIndex = builder;
     task.sub = 0;
     task.fixing = true;
-    this.k.log(task, "warn", "Sent back to the builder: the checks failed right before your delivery check");
+    this.k.log(task, "warn", `Sent back to the builder: the checks failed ${when}`);
     this.k.commit();
     return true;
   }

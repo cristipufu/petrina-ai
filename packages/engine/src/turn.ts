@@ -6,9 +6,12 @@ import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
-import { buildPrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatStepNotes, formatWhereYouWere, HANDED_BACK, handBackPrompt, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
+import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatStepNotes, formatWhereYouWere, HANDED_BACK, handBackPrompt, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { Kernel, Aborted, type MTask } from "./kernel.js";
+
+/** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
+type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
 
 export class Turns {
   constructor(private readonly k: Kernel) {}
@@ -18,6 +21,8 @@ export class Turns {
    * status line fixed while the agent works; `check` turns a valid but incomplete result into a repair.
    * `given` builds the opening instructions' sections, only when a fresh conversation gets them.
    * After a restart, the step's agent picks up its own conversation when the tool can reopen it.
+   * `resume` names an earlier step's conversation to go back to (same tool and model): the agent keeps what
+   * it knew there, compactions and all, and hears only its job now. When it cannot reopen, a fresh one starts.
    */
   async turn<T>(
     task: MTask,
@@ -26,7 +31,7 @@ export class Turns {
     given: () => { title: string; body: string }[],
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: { status?: string; check?: (value: T) => string | undefined } = {},
+    options: { status?: string; check?: Check<T>; resume?: { sessionId: string; toolId: Id; model: string } } = {},
   ): Promise<T> {
     const role = this.k.role(roleId);
     const profile = this.k.profile(profileId);
@@ -45,6 +50,8 @@ export class Turns {
     // A conversation that never showed it got its instructions (Petrina stopped in between) starts again instead.
     const reopen = same && same.briefed && roleId !== "shipper" && same.toolId === profile.toolId && same.model === model ? same : undefined;
     let again = saved && !reopen ? (same ? (same.briefed || roleId === "shipper" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
+    // Back to an earlier step's conversation, unless this step already has one of its own.
+    const back = !saved && options.resume?.toolId === profile.toolId && options.resume.model === model ? options.resume : undefined;
     const startedAt = same?.startedAt ?? Date.now();
     // Handed back by the coordinator: the note of what changed, until the agent hears it.
     const handback = same?.handback;
@@ -98,19 +105,30 @@ export class Turns {
         },
       });
     let run: AgentRun | undefined;
-    if (reopen) {
+    let notBack: string | undefined;
+    if (reopen ?? back) {
       try {
-        run = await start(reopen.sessionId);
+        run = await start((reopen ?? back)!.sessionId);
       } catch (error) {
         if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
-        again = error.message;
+        if (reopen) again = error.message;
+        else notBack = error.message;
       }
     }
     run ??= await start();
     this.k.runs.set(taskId, run);
     const picked = run.reopened !== undefined;
+    const wentBack = picked && !reopen && back !== undefined;
     const where = saved ? this.whereYouWere(task, role, startedAt) : undefined;
-    if (picked && handback) {
+    if (wentBack) {
+      this.k.say(task, "system", `${role.name} went back to its own conversation from the last step · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+      this.k.log(task, "milestone", "Went back to its own conversation from the last step", roleId, profileId);
+    } else if (back) {
+      this.k.log(task, "milestone", `Could not go back to its own conversation (${notBack ?? "the tool did not reopen it"}), so it started a fresh one with what it reported`, roleId, profileId);
+    }
+    if (wentBack) {
+      // Said above.
+    } else if (picked && handback) {
       this.k.say(task, "system", `${role.name} took the step back on the same conversation · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
       this.k.log(task, "milestone", "Took the step back on the same conversation", roleId, profileId);
     } else if (handback) {
@@ -133,7 +151,10 @@ export class Turns {
       // The last moment to notice a pause before the agent gets any work.
       if (signal.aborted || !live()) throw new Aborted();
       let opening: string;
-      if (picked) {
+      if (wentBack) {
+        // Its job as it stands now and the context, from the same sections a fresh conversation gets.
+        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections: given() });
+      } else if (picked) {
         // One line about the restart (or the hand back), then only what the conversation has not heard: the answer to its open question, and messages still in line.
         const answer = asked?.answer !== undefined ? { question: asked.question, text: asked.answer } : undefined;
         if (task.conversation) {
@@ -192,7 +213,7 @@ export class Turns {
     given: () => { title: string; body: string }[],
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: { check?: (value: T) => string | undefined } = {},
+    options: { check?: Check<T> } = {},
   ): Promise<T> {
     const role = this.k.role(roleId);
     const profile = this.k.profile(profileId);
@@ -244,7 +265,7 @@ export class Turns {
    * coordinator, and an unusable result back to it twice at most. Only the step's main agent hears the
    * coordinator's messages as they come and keeps its open question across a restart.
    */
-  private async converse<T>(task: MTask, run: AgentRun, opening: string, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: (value: T) => string | undefined; main: boolean }): Promise<T> {
+  private async converse<T>(task: MTask, run: AgentRun, opening: string, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean }): Promise<T> {
     const by = { roleId: role.id, profileId };
     let reply = await run.prompt(opening);
     if (options.main) this.briefed(task);
@@ -277,7 +298,7 @@ export class Turns {
         reply = await run.prompt(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`);
         continue;
       }
-      const error = parsed.ok === true ? options.check?.(parsed.value) : parsed.error;
+      const error = parsed.ok === true ? await options.check?.(parsed.value) : parsed.error;
       if (parsed.ok === true && !error) return parsed.value;
       repairs += 1;
       if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${error}`);

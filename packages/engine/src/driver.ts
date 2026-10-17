@@ -11,10 +11,10 @@ import type { Design } from "./design.js";
 import type { Reviews } from "./review.js";
 import type { ProductChecks } from "./product-checks.js";
 import type { GuideKeeper } from "./guide-keeper.js";
-import type { Shipping } from "./shipping.js";
+import type { Updates } from "./update.js";
 
 export class Driver {
-  constructor(private readonly k: Kernel, private readonly planning: Planning, private readonly work: Work, private readonly design: Design, private readonly reviews: Reviews, private readonly checks: ProductChecks, private readonly guide: GuideKeeper, private readonly shipping: Shipping) {}
+  constructor(private readonly k: Kernel, private readonly planning: Planning, private readonly work: Work, private readonly design: Design, private readonly reviews: Reviews, private readonly checks: ProductChecks, private readonly guide: GuideKeeper, private readonly updates: Updates) {}
 
   schedule(): void {
     if (this.k.stopped) return;
@@ -128,22 +128,23 @@ export class Driver {
           }
           delete current.handChanges;
         }
+        // What ships is the change the coordinator approved, one commit on top of the latest main, with the checks passing on it.
         if (stage?.roleId === "shipper" && stage.kind !== "gate" && !current.shipping && current.worktree) {
-          // What ships is the code the coordinator approved (its tree: a squash keeps it). A change since asks them again.
-          if (current.approvedSha) {
-            const [now, approved] = await Promise.all([git.treeOf(current.worktree), git.treeOf(current.worktree, current.approvedSha)]);
-            const check = lastIndexWhere(current.plan!.stages, (entry, index) => index < current.stageIndex && entry.gate === "delivery");
-            if (now && now !== approved && check >= 0) {
-              delete current.approvedSha;
-              current.stageIndex = check;
-              current.sub = 0;
-              this.k.log(current, "warn", "The work changed after you approved the delivery, so Petrina asks you again");
-              this.k.commit();
-              continue;
-            }
+          // Before anything moves (an approval from before patch-ids were kept goes by its commit).
+          const approved = current.approvedPatch ?? (current.approvedSha ? await this.updates.patch(current, current.approvedSha) : undefined);
+          const update = await this.updates.upToDate(current);
+          if (update === "conflict") continue;
+          const check = lastIndexWhere(current.plan!.stages, (entry, index) => index < current.stageIndex && entry.gate === "delivery");
+          if (approved && check >= 0 && (await this.updates.patch(current)) !== approved) {
+            delete current.approvedSha;
+            delete current.approvedPatch;
+            current.stageIndex = check;
+            current.sub = 0;
+            this.k.log(current, "warn", update === "moved" ? "Main moved on, and on top of it this change reads differently from what you approved, so Petrina asks you again" : "The work changed after you approved the delivery, so Petrina asks you again");
+            this.k.commit();
+            continue;
           }
-          // One commit per task: the shipper rebases it onto the latest main, so the history stays clean.
-          await this.shipping.squash(current);
+          if (await this.checks.checksBeforeShipping(current, signal)) continue;
         }
         // Checkpoints need no new agent, so a paused or full pool must not hold them back.
         if (stage?.kind === "gate") {
@@ -156,14 +157,19 @@ export class Driver {
             continue;
           }
           delete current.returnToCheck;
-          if (stage.gate === "delivery") await this.guide.writeGuide(current);
-          // Right before the coordinator is asked to ship, the checks run again on what would ship.
-          if (stage.gate === "delivery" && (await this.checks.checksBeforeDelivery(current, signal))) continue;
           if (stage.gate === "delivery") {
+            await this.guide.writeGuide(current);
+            // What the coordinator checks is the work as it would land: one commit on top of the latest main.
+            if ((await this.updates.upToDate(current)) === "conflict") continue;
+            // Right before the coordinator is asked to ship, the checks run again on what would ship.
+            if (await this.checks.checksBeforeDelivery(current, signal)) continue;
             const head = await git.head(current.worktree!).catch(() => undefined);
             if (head) current.checkedSha = head;
+            const patch = await this.updates.patch(current);
+            if (patch) current.checkedPatch = patch;
             if (this.shipsUnasked(current)) {
               if (head) current.approvedSha = head;
+              if (patch) current.approvedPatch = patch;
               this.k.log(current, "milestone", "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
               current.stageIndex += 1;
               current.sub = 0;
@@ -216,6 +222,13 @@ export class Driver {
     if (!task.branch) this.k.log(task, "milestone", "Set up a fresh working copy");
     task.branch = branch;
     task.worktree = worktree;
+    // Petrina stopped while a pre-commit hook ran: the working copy goes back on its branch first.
+    if (task.hooking) {
+      await git.reattach(worktree, branch);
+      delete task.hooking;
+    }
+    // Known before the builder starts, so it runs them too.
+    await this.checks.noteHooks(task);
     task.base = task.base ?? base;
     // Pinned once, in the product's own clone: an agent moving a ref later changes nothing Petrina compares against.
     task.baseSha = task.baseSha ?? (await git.revParse(product.path, task.base));

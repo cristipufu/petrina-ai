@@ -68,8 +68,7 @@ export class Reviews {
     // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
     // A later chain on the same code (a security review) goes by the run that just passed.
     const passed = (await this.checks.ranOn(task)) && task.checks!.results.every((run) => run.ok);
-    const checks = passed ? [] : await this.checks.ensureChecks(task, signal);
-    if ((await this.checks.runProductChecks(task, checks, signal)) > 0) {
+    if (!passed && (await this.checks.runProductChecks(task, await this.checks.ensureChecks(task, signal), signal)) > 0) {
       this.k.log(task, "warn", "Reviewers wait until the checks pass");
       return this.closeReviewRound(task, stage, round, false);
     }

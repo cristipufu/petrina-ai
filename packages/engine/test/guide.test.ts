@@ -92,7 +92,9 @@ describe.concurrent("a review guide that learns from misses", () => {
       expect(reviews.at(-1)).toContain("check the change against every point. It never excuses a problem");
       expect(reviews.at(-1)).toContain(POINT);
       expect(readFileSync(join(task.worktree!, "REVIEW.md"), "utf8")).toContain(`- ${POINT}`);
-      expect(git(task.worktree!, "log", "-1", "--format=%s")).toBe("Review guide: one more point");
+      // In the task's one commit, with the rest of the work.
+      expect(git(task.worktree!, "show", "--format=", "--name-only", "HEAD")).toContain("REVIEW.md");
+      expect(git(task.worktree!, "rev-list", "--count", `${task.baseSha}..HEAD`)).toBe("1");
     } finally {
       engine.shutdown();
     }

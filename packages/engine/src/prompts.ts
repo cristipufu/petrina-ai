@@ -97,6 +97,24 @@ Keep a short to-do list as you work, written in plain language: the coordinator 
 ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
 }
 
+/**
+ * For an agent going back to its own conversation with the next piece of work on the same task: what it
+ * already knows still holds, so it gets its job as it stands now and the context, without the introduction.
+ */
+export function continuePrompt(ctx: PromptContext): string {
+  const contract = contractFor(ctx.role);
+  const sections = ctx.sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
+  return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}). What you learned before still holds; here is where things stand now.
+
+# Your job now
+${contract.instructions(ctx)}
+
+${sections}
+
+Keep a short to-do list as you work, written in plain language: the coordinator watches it live.
+${RESULT_FOOTER(shapeFor(contract, ctx))}`;
+}
+
 export function repairPrompt(error: string): string {
   return `Your result block could not be used: ${error}
 Reply with only the corrected \`\`\`petrina block, nothing else.`;

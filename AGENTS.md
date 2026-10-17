@@ -17,7 +17,7 @@ Petrina relies on each coding tool's own safety checker (Claude Code's Auto mode
 - enforces its checkpoints (plan, design, delivery) in the engine, and
 - undoes whatever a read-only role leaves behind.
 
-Petrina also runs each product's checks itself (`packages/engine/src/checks.ts`), so a passing check is evidence, not an agent's word. Those commands come from the Check finder agent or the coordinator, run as argument arrays without a shell or GitHub login, and do not pass through a tool's safety checker: a repository that misleads the Check finder could get a harmful command run. The coordinator sees and can change the checks in the product's settings.
+Petrina also runs each product's checks itself (`packages/engine/src/checks.ts`), so a passing check is evidence, not an agent's word. Those commands come from the Check finder agent or the coordinator, run as argument arrays without a shell or GitHub login, and do not pass through a tool's safety checker: a repository that misleads the Check finder could get a harmful command run. The coordinator sees and can change the checks in the product's settings. In the same way, Petrina runs the repository's own commit hooks (pre-commit, commit-msg), as git would find them, on each task's whole change: they are the repository's code, run with no GitHub login, never by Petrina's own git steps.
 
 Do not add security or sandboxing mechanisms of Petrina's own unless the task is about that.
 

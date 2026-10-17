@@ -10,7 +10,7 @@
 // so tests can stand in a fake GitHub.
 
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { agentEnv, withGitConfig } from "./env.js";
@@ -54,12 +54,17 @@ const SAFE_TRANSPORT: readonly (readonly [string, string])[] = [
   ["http.lowSpeedTime", "20"],
 ];
 
-function gitEnv(credentials: boolean): NodeJS.ProcessEnv {
+function gitEnv(credentials: boolean, ownHooks = false): NodeJS.ProcessEnv {
   const base = credentials ? process.env : agentEnv(process.env, emptyDir("gh"));
-  const settings = [["core.hooksPath", emptyDir("hooks")], ["core.fsmonitor", "false"], ...(credentials ? SAFE_TRANSPORT : [])] as const;
+  // `ownHooks` only for finding the repository's own hooks: never with credentials, never running a git step.
+  const settings = [...(ownHooks && !credentials ? [] : [["core.hooksPath", emptyDir("hooks")] as const]), ["core.fsmonitor", "false"] as const, ...(credentials ? SAFE_TRANSPORT : [])];
   // Replace objects could make a commit Petrina pinned show different content.
   return { ...withGitConfig(base, settings), GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" };
 }
+
+/** The hooks git runs when it commits, in the order it runs them. */
+export const COMMIT_HOOKS = ["pre-commit", "commit-msg"] as const;
+export type CommitHook = (typeof COMMIT_HOOKS)[number];
 
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -78,10 +83,10 @@ async function ghApi(repo: string, path: string, jq: string, command: Gh = GH): 
   return run([...command, "api", `repos/${repo}/${path}`, "--jq", jq], tmpdir(), undefined, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
 }
 
-export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean; timeoutMs?: number } = {}): Promise<RunResult> {
+export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean; timeoutMs?: number; ownHooks?: boolean } = {}): Promise<RunResult> {
   let proc: ReturnType<typeof spawnPiped>;
   try {
-    proc = spawnPiped(cmd, cwd, input, options.credentials === true);
+    proc = spawnPiped(cmd, cwd, input, options.credentials === true, options.ownHooks === true);
   } catch (error) {
     // The program is not installed (no gh, say): report it like a failed command.
     return { code: 127, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
@@ -101,13 +106,13 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
   return { code, stdout: stdout.trim(), stderr: stderr.trim() };
 }
 
-function spawnPiped(cmd: readonly string[], cwd: string, input: string | undefined, credentials: boolean) {
+function spawnPiped(cmd: readonly string[], cwd: string, input: string | undefined, credentials: boolean, ownHooks: boolean) {
   return Bun.spawn([...cmd], {
     cwd,
     stdin: input === undefined ? "ignore" : new Blob([input]),
     stdout: "pipe",
     stderr: "pipe",
-    env: gitEnv(credentials),
+    env: gitEnv(credentials, ownHooks),
     windowsHide: true,
   });
 }
@@ -194,6 +199,21 @@ export async function riskySettings(root: string): Promise<string[]> {
   return [...new Set(risky)];
 }
 
+/**
+ * The latest default branch from GitHub, into the product's own clone: `origin/<branch>`, or the local
+ * branch when there is no remote one.
+ */
+export async function fetchBase(root: string, defaultBranch: string, fetchTimeoutMs = FETCH_TIMEOUT_MS): Promise<{ base: string; skippedFetch?: string[]; fetchTimedOut?: boolean }> {
+  // Fail closed: never fetch with the coordinator's login while the repository's settings could misuse it.
+  const risky = await riskySettings(root);
+  const fetched = risky.length ? undefined : await run(["git", "fetch", "--quiet", "origin", defaultBranch], root, undefined, { credentials: true, timeoutMs: fetchTimeoutMs });
+  // A stalled network never holds a task: after the time limit it works from the local copy.
+  const timedOut = fetched?.timedOut === true;
+  const remoteBase = `origin/${defaultBranch}`;
+  const hasRemote = (await run(["git", "rev-parse", "--verify", "--quiet", remoteBase], root)).code === 0;
+  return { base: hasRemote ? remoteBase : defaultBranch, ...(risky.length ? { skippedFetch: risky } : {}), ...(timedOut ? { fetchTimedOut: true } : {}) };
+}
+
 /** Create (or reuse) the task's worktree on its own branch, based on the latest default branch. */
 export async function ensureWorktree(
   root: string,
@@ -202,15 +222,7 @@ export async function ensureWorktree(
   defaultBranch: string,
   fetchTimeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<{ base: string; skippedFetch?: string[]; fetchTimedOut?: boolean }> {
-  // Fail closed: never fetch with the coordinator's login while the repository's settings could misuse it.
-  const risky = await riskySettings(root);
-  const fetched = risky.length ? undefined : await run(["git", "fetch", "--quiet", "origin", defaultBranch], root, undefined, { credentials: true, timeoutMs: fetchTimeoutMs });
-  // A stalled network never holds a task: after the time limit it works from the local copy.
-  const timedOut = fetched?.timedOut === true;
-  const remoteBase = `origin/${defaultBranch}`;
-  const hasRemote = (await run(["git", "rev-parse", "--verify", "--quiet", remoteBase], root)).code === 0;
-  const base = hasRemote ? remoteBase : defaultBranch;
-  const skipped = { ...(risky.length ? { skippedFetch: risky } : {}), ...(timedOut ? { fetchTimedOut: true } : {}) };
+  const { base, ...skipped } = await fetchBase(root, defaultBranch, fetchTimeoutMs);
   if (existsSync(path) && (await run(["git", "rev-parse", "--is-inside-work-tree"], path)).code === 0) return { base, ...skipped };
   await mkdir(dirname(path), { recursive: true });
   await oneAtATime(root, async () => {
@@ -242,6 +254,49 @@ export async function isClean(path: string): Promise<boolean> {
   return (await run(["git", "status", "--porcelain"], path)).stdout === "";
 }
 
+/** The hooks git runs when committing, as the repository has them (core.hooksPath honoured): the ones that exist and git would run. */
+export async function commitHooks(path: string): Promise<CommitHook[]> {
+  const found: CommitHook[] = [];
+  for (const name of COMMIT_HOOKS) {
+    const where = await run(["git", "rev-parse", "--path-format=absolute", "--git-path", `hooks/${name}`], path, undefined, { ownHooks: true });
+    if (where.code !== 0 || !where.stdout) continue;
+    const mode = await stat(where.stdout).then((info) => (info.isFile() ? info.mode : undefined)).catch(() => undefined);
+    // Git skips a hook it cannot execute, except on Windows, where it runs every hook through its own shell.
+    if (mode !== undefined && (process.platform === "win32" || (mode & 0o111) !== 0)) found.push(name);
+  }
+  return found;
+}
+
+/**
+ * Where a hook sees the task's whole change as about to be committed: the working copy's HEAD detached at
+ * `base`, with its files and index left as they are. `reattach` puts it back on its branch.
+ */
+export async function detachAt(path: string, base: string): Promise<void> {
+  if (!SHA.test(base)) throw new Error("Not a commit");
+  await must(["git", "update-ref", "--no-deref", "HEAD", base], path);
+}
+
+/** The working copy back on its branch, with whatever a hook changed in files git tracks undone. */
+export async function reattach(path: string, branch: string): Promise<void> {
+  await must(["git", "symbolic-ref", "HEAD", `refs/heads/${branch}`], path);
+  await run(["git", "reset", "--hard", "--quiet"], path);
+}
+
+/** The message of the working copy's last commit. */
+export async function message(path: string): Promise<string> {
+  return (await run(["git", "log", "-1", "--format=%B", "HEAD"], path)).stdout;
+}
+
+/** Whether files git tracks changed in the working copy (new files aside). */
+export async function trackedChanged(path: string): Promise<boolean> {
+  return (await run(["git", "status", "--porcelain", "--untracked-files=no"], path)).stdout !== "";
+}
+
+/** Put the files git tracks back as committed, leaving new files alone. */
+export async function restoreTracked(path: string): Promise<void> {
+  await run(["git", "reset", "--hard", "--quiet"], path);
+}
+
 /** Undo anything a read-only agent changed in its working copy. */
 export async function discardChanges(path: string): Promise<void> {
   await run(["git", "reset", "--hard", "--quiet"], path);
@@ -263,19 +318,97 @@ export async function treeOf(path: string, ref = "HEAD"): Promise<string | undef
 }
 
 /**
- * The branch's work as one commit on top of where it forked from `base`, with the same code. Returns how
- * many commits it folded, or 0 when it already was one.
+ * The branch's work as one commit on top of where it forked from `base`, with the same code and `message`.
+ * Returns how many commits it folded: 0 when it already was one commit with that message, or had none.
  */
 export async function squash(path: string, base: string, message: string): Promise<number> {
-  const fork = (await run(["git", "merge-base", "HEAD", base], path)).stdout;
-  if (!SHA.test(fork)) return 0;
+  const fork = await mergeBase(path, "HEAD", base);
+  if (!fork) return 0;
   const count = Number((await run(["git", "rev-list", "--count", `${fork}..HEAD`], path)).stdout);
-  if (!(count > 1)) return 0;
+  if (!(count > 0)) return 0;
+  if (count === 1 && (await run(["git", "log", "-1", "--format=%B", "HEAD"], path)).stdout === message.trim()) return 0;
   // The commit is made first and the branch moves to it last, so a failure leaves the branch as it was.
   const sha = await must(["git", "commit-tree", "HEAD^{tree}", "-p", fork, "-F", "-"], path, message);
   if (!SHA.test(sha)) return 0;
   await must(["git", "reset", "--soft", "--quiet", sha], path);
   return count;
+}
+
+/** Where two commits' histories meet. */
+export async function mergeBase(path: string, a: string, b: string): Promise<string | undefined> {
+  const result = await run(["git", "merge-base", a, b], path);
+  return result.code === 0 && SHA.test(result.stdout) ? result.stdout : undefined;
+}
+
+/**
+ * A fingerprint of the change from `from` to `to` (git's patch-id): the same lines added and removed give
+ * the same fingerprint, whatever commit they sit on. "empty" for no change.
+ */
+export async function patchId(path: string, from: string, to: string): Promise<string | undefined> {
+  const diff = await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--binary", "--full-index", from, to], path);
+  if (diff.code !== 0) return undefined;
+  if (!diff.stdout) return "empty";
+  const id = await run(["git", "patch-id", "--stable"], path, `${diff.stdout}\n`);
+  const value = id.stdout.split(/\s+/)[0] ?? "";
+  return id.code === 0 && /^[0-9a-f]{40,64}$/.test(value) ? value : undefined;
+}
+
+/**
+ * This branch's change applied on top of `onto`, as a tree, without touching the working copy: a three-way
+ * merge from where the two met. Conflicting files keep git's conflict markers in the tree.
+ */
+export async function mergeTree(path: string, onto: string, ref = "HEAD"): Promise<{ tree: string; conflicts: string[]; notes: string[] } | undefined> {
+  const result = await run(["git", "merge-tree", "--write-tree", "--name-only", "-z", onto, ref], path);
+  if (result.code !== 0 && result.code !== 1) return undefined;
+  // -z: the tree, the conflicting files, an empty field, then each note as its path count, paths, kind and message.
+  const fields = result.stdout.split("\0");
+  const tree = fields[0] ?? "";
+  if (!SHA.test(tree)) return undefined;
+  const conflicts: string[] = [];
+  let index = 1;
+  for (; index < fields.length && fields[index] !== ""; index += 1) conflicts.push(fields[index]!);
+  const notes: string[] = [];
+  for (index += 1; index < fields.length; ) {
+    const count = Number(fields[index]);
+    if (!Number.isInteger(count) || count < 0) break;
+    const message = fields[index + count + 2];
+    if (message) notes.push(message.trim());
+    index += count + 3;
+  }
+  return { tree, conflicts: [...new Set(conflicts)], notes: notes.filter((note) => note.startsWith("CONFLICT")) };
+}
+
+/** A commit of `tree` on top of `parent`, made without hooks and without touching any working copy. */
+export async function commitTree(path: string, tree: string, parent: string, message: string): Promise<string> {
+  const sha = await must(["git", "commit-tree", tree, "-p", parent, "-F", "-"], path, message);
+  if (!SHA.test(sha)) throw new Error("git commit-tree did not return a commit");
+  return sha;
+}
+
+/** Move the working copy's branch to `sha`. It refuses, changing nothing, rather than lose a change in the way. */
+export async function moveTo(path: string, sha: string): Promise<void> {
+  if (!SHA.test(sha)) throw new Error("Not a commit");
+  await must(["git", "reset", "--keep", "--quiet", sha], path);
+}
+
+/**
+ * The branch on `onto`, with the working copy and index holding `tree` (a merge's result, conflict markers
+ * and all) as changes not committed yet: what an agent resolves and Petrina then commits.
+ */
+export async function openOn(path: string, onto: string, tree: string): Promise<void> {
+  if (!SHA.test(onto) || !SHA.test(tree)) throw new Error("Not a commit or tree");
+  await must(["git", "reset", "--soft", "--quiet", onto], path);
+  await must(["git", "read-tree", "-u", "--reset", tree], path);
+}
+
+/** Files that still hold git's conflict markers, out of `paths`. */
+export async function withMarkers(path: string, paths: readonly string[]): Promise<string[]> {
+  const marked: string[] = [];
+  for (const file of paths) {
+    const text = await readFile(join(path, file), "utf8").catch(() => "");
+    if (/^(<{7}|>{7})( |$)/m.test(text) || /^={7}$/m.test(text)) marked.push(file);
+  }
+  return marked;
 }
 
 export async function resetTo(path: string, sha: string): Promise<void> {
@@ -312,10 +445,10 @@ export async function changedSince(path: string, sha: string): Promise<FileChang
   return changes;
 }
 
-/** How many commits the working copy's branch has on top of `sha`. */
-export async function commitsSince(path: string, sha: string): Promise<number> {
+/** How many commits `to` (the working copy's branch, unless given) has on top of `sha`. */
+export async function commitsSince(path: string, sha: string, to = "HEAD"): Promise<number> {
   if (!SHA.test(sha)) return 0;
-  return Number((await run(["git", "rev-list", "--count", `${sha}..HEAD`], path)).stdout) || 0;
+  return Number((await run(["git", "rev-list", "--count", `${sha}..${to}`], path)).stdout) || 0;
 }
 
 const HALF_DONE: readonly (readonly [string, string])[] = [

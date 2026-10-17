@@ -48,6 +48,8 @@ export const NotesResult = z.object({
 
 export const BuildResult = z.object({
   summary: z.string().min(3),
+  // One line for the commit that carries the whole change, in the repository's own style.
+  title: z.string().trim().min(3).max(120).optional(),
   changes: z.array(z.string()).default([]),
   tests: z.string().optional(),
   // In a fix round: one answer per finding, by id.
@@ -124,8 +126,8 @@ export function reviewRound(task: Task): number {
   return (stage && task.rounds[stage.id]) || 1;
 }
 
-/** After three rounds of review the builder is asked to step back instead of patching again. */
-function stepBack(task: Task): boolean {
+/** After three rounds of review the builder is asked to step back instead of patching again, in a fresh conversation. */
+export function stepBack(task: Task): boolean {
   return reviewRound(task) > 3;
 }
 
@@ -136,33 +138,31 @@ Answer every objection listed as still open, or as answered after the call, by i
 - If the call does not speak to it, set "byCall" to false and answer it yourself: accept it and change the brief, or reject it with a reason.
 If objections are listed as answered after the call, the coordinator checked the brief that follows the call and asked for changes in their latest note: change the brief to cover it too, still following the call. Then answer every objection answered after the call again: keep or correct its status and "byCall" (the notes may say you read the call wrong), and make "answer" match the updated brief. Your new answers replace the old ones.`;
 
-/**
- * Rebasing the task's one commit onto the default branch when it moved on: learn what changed there from
- * its commits, then port this commit onto the code as it is now. The history stays one commit per task.
- */
-function rebaseGuide(ref: string): string {
-  return `Petrina already made the branch one commit, so a conflict comes up once. If it conflicts, learn what changed on ${ref} before resolving anything, from the commits it gained since this branch forked (\`git log --stat $(git merge-base HEAD ${ref})..${ref}\` shows their messages and the files they moved), and read the code as ${ref} has it now. Port this commit's changes to where that code lives now, keep ${ref}'s version of everything this commit did not change, never bring back code ${ref} moved or removed, then \`git rebase --continue\`. Never merge ${ref} in and never add commits: the history stays one commit per task on top of ${ref}. Then run every check the product has, not only the tests this change touched.`;
+/** The builder's job when main moved on and the task's change no longer applies cleanly on top of it. */
+function updateInstructions(updating: NonNullable<Task["updating"]>, defaultBranch: string): string {
+  const notes = updating.notes?.length ? `\nWhat git found:\n${updating.notes.map((note) => `- ${note}`).join("\n")}` : "";
+  return `${defaultBranch} moved on while this work was reviewed, and this task's change no longer applies cleanly on top of it. Petrina put this working copy on the latest ${defaultBranch} with the change applied, not committed yet; these files still have git's conflict markers: ${updating.files.join(", ")}.${notes}
+Bring the work up to date first. Learn what changed on ${defaultBranch} before resolving anything, from the commits it gained since this work started (\`git log --stat ${updating.from}..${updating.onto}\`), and read the code as it is now. Port this task's change to where that code lives now, keep ${defaultBranch}'s version of everything this task did not change, and never bring back code ${defaultBranch} moved or removed. Leave no conflict markers.`;
 }
 
 function shipperInstructions(ctx: PromptContext, defaultBranch: string): string {
   const { task, branch } = ctx;
+  const ready = `Branch ${branch} is one commit on top of the latest ${defaultBranch}: Petrina brought it up to date and ran the product's checks on it. Never rebase, merge or change the code.`;
   switch (task.delivery) {
     case "pull-request":
-      return `The coordinator approved this work. Deliver it as a pull request:
-1. If ${defaultBranch} moved on, bring ${branch} up to date by rebasing it: \`git fetch origin ${defaultBranch}\`, then \`git rebase origin/${defaultBranch}\`. ${rebaseGuide(`origin/${defaultBranch}`)}
-2. Push ${branch} to origin with \`git push --force-with-lease origin ${branch}\`.
-3. Open a pull request into ${defaultBranch} with \`gh pr create\`: a clear title, and a body in plain language that says what changed for users, the acceptance checklist, and what the reviewers checked.
+      return `The coordinator approved this work. ${ready} Deliver it as a pull request:
+1. Push ${branch} to origin with \`git push --force-with-lease origin ${branch}\`: the commit is new, so it replaces an earlier push of this branch.
+2. Open a pull request into ${defaultBranch} with \`gh pr create\`: a clear title, and a body in plain language that says what changed for users, the acceptance checklist, and what the reviewers checked.
 Never merge the pull request. Return its number and URL.`;
     case "release":
-      return `The coordinator approved this work. Deliver it as a release:
-1. Rebase ${branch} onto the latest ${defaultBranch}: \`git fetch origin ${defaultBranch}\`, then \`git rebase origin/${defaultBranch}\`. ${rebaseGuide(`origin/${defaultBranch}`)}
-2. Work out the next version from the latest release or tag (bump the ${ctx.product.releaseBump ?? "patch"} number) and update every version file in the project consistently (package.json, Cargo.toml, tauri.conf.json, and the like), then commit it as one version commit.
-3. Bring ${defaultBranch} up to ${branch} with a fast-forward only (never a merge commit), push ${defaultBranch}, then publish the release with \`gh release create <tag> --target ${defaultBranch}\`, with plain-language release notes.
+      return `The coordinator approved this work. ${ready} Deliver it as a release:
+1. Work out the next version from the latest release or tag (bump the ${ctx.product.releaseBump ?? "patch"} number) and update every version file in the project consistently (package.json, Cargo.toml, tauri.conf.json, and the like), then commit it on ${branch} as one version commit.
+2. Bring ${defaultBranch} up to ${branch} as a fast-forward only (never a merge commit), push ${defaultBranch}, then publish the release with \`gh release create <tag> --target ${defaultBranch}\`, with plain-language release notes.
+If the fast-forward or the push is refused because ${defaultBranch} moved on, stop and say so in your summary.
 Return the tag and the release URL.`;
     case "local":
-      return `The coordinator approved this work. Commit it onto ${defaultBranch} locally:
-1. If ${defaultBranch} moved on, rebase ${branch} onto it: \`git rebase ${defaultBranch}\`. ${rebaseGuide(defaultBranch)}
-2. Bring ${defaultBranch} up to ${branch} in the main clone at ${ctx.product.path ?? "the repository root"}, as a fast-forward only: if ${defaultBranch} is checked out there and clean, run \`git merge --ff-only ${branch}\` in that clone; if it is not checked out there, run \`git branch -f ${defaultBranch} ${branch}\`. If the clone has uncommitted changes, stop and ask the coordinator.
+      return `The coordinator approved this work. ${ready} Commit it onto ${defaultBranch} locally:
+Bring ${defaultBranch} up to ${branch} in the main clone at ${ctx.product.path ?? "the repository root"}, as a fast-forward only: if ${defaultBranch} is checked out there and clean, run \`git merge --ff-only ${branch}\` in that clone; if it is not checked out there, run \`git branch -f ${defaultBranch} ${branch}\` only if ${defaultBranch} is an ancestor of ${branch}. If the clone has uncommitted changes, stop and ask the coordinator. If the fast-forward is refused because ${defaultBranch} moved on, stop and say so in your summary.
 Do not push anything. Return the commit sha now on ${defaultBranch}.`;
   }
 }
@@ -246,13 +246,14 @@ If nothing blocking is left, return an empty or non-blocking list.${task.objecti
   },
   "builder": {
     result: BuildResult,
-    reads: ["notes", "brief", "checks", "findings-to-answer", "review-guide"],
-    shape: `{"summary": "What you built, in plain language", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result", "answers": [{"id": "<finding id, in a fix round>", "fixed": true, "text": "What you changed, or why you did not"}]}`,
-    instructions: ({ task }) => {
-      return `Implement the task in this working copy. Follow the design brief and acceptance checklist below when there is one.
+    reads: ["notes", "brief", "checks", "findings-to-answer", "review-guide", "report"],
+    shape: `{"summary": "What you built, in plain language", "title": "One line for the commit, in the repository's own style", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result", "answers": [{"id": "<finding id, in a fix round>", "fixed": true, "text": "What you changed, or why you did not"}]}`,
+    instructions: ({ task, defaultBranch }) => {
+      return `${task.updating ? `${updateInstructions(task.updating, defaultBranch)}\n` : ""}Implement the task in this working copy. Follow the design brief and acceptance checklist below when there is one.
 Keep the code consistent with the codebase and add or update tests.
-Before you finish, run the product's full checks (every one listed below, or else its whole type check, lint, test suite and build), not just the tests you touched, and fix whatever fails. ${task.fixing ? "This holds after fixing review findings too: the work goes back to review only with every check passing." : "The work goes to review only with every check passing."} Petrina runs them again itself after you finish, and failures come straight back to you.
+Before you finish, run the product's full checks (every one listed below, or else its whole type check, lint, test suite and build), not just the tests you touched, and fix whatever fails. ${task.fixing || task.updating ? "This holds after fixing review findings or bringing the work up to date too: the work goes back to review only with every check passing." : "The work goes to review only with every check passing."} Petrina runs them again itself after you finish, and failures come straight back to you.
 ${task.fixing ? `You are fixing the review findings listed below. Fix every Important one, unless you can show it is wrong. Answer every finding by id in "answers": fixed and what you changed, or not fixed and why.${stepBack(task) ? `\nThis is fix round ${reviewRound(task) - 1} and the findings keep coming. Step back before patching again: reconsider the approach, and if a simpler design removes the whole class of problem, take it.` : ""}` : ""}
+Give "title": one line for the commit that carries this whole change, in the repository's own style (look at \`git log\` and any commit-message rules it has). Petrina keeps the branch as one commit with that title.
 Do not commit, push or open pull requests: Petrina commits your work.`;
     },
   },

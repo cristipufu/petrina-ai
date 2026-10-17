@@ -47,12 +47,16 @@ export interface Scenario {
    */
   /** "silent": the first handshake after it is set never answers at all (later ones do). */
   reopen?: "resume" | "load" | "stall" | "silent";
-  /** What the Check finder hands back: a passing check (default) or a failing one. */
-  checks?: "pass" | "fail";
+  /** What the Check finder hands back: a passing check (default), a failing one, or one that changes a tracked file. */
+  checks?: "pass" | "fail" | "writes";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
   restarts?: number;
   /** "change": fixing review findings changes the code (by default the fix leaves it as it was). */
   fixes?: "change";
+  /** The first build writes a name the repository's pre-commit hook blocks; fixing removes it. */
+  leak?: boolean;
+  /** The builder's commit title. */
+  title?: string;
 }
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
@@ -253,7 +257,12 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     case "check finder":
       return done({
         summary: "Checked with git, which every test machine has.",
-        checks: plan.checks === "fail" ? [{ name: "Tests", argv: ["git", "no-such-subcommand-petrina"], why: "A check that fails, for tests" }] : [{ name: "Version", argv: ["git", "--version"], why: "A check that passes, for tests" }],
+        checks:
+          plan.checks === "fail"
+            ? [{ name: "Tests", argv: ["git", "no-such-subcommand-petrina"], why: "A check that fails, for tests" }]
+            : plan.checks === "writes"
+              ? [{ name: "Format", argv: ["git", "mv", "README.md", "README.txt"], why: "A check that changes a tracked file, for tests" }]
+              : [{ name: "Version", argv: ["git", "--version"], why: "A check that passes, for tests" }],
       });
     case "design reviewer":
       if (plan.planner === "limits" && !text.includes("Objections so far")) return done({ objections: [{ text: "Explain who sees the greeting.", blocking: true }] });
@@ -298,7 +307,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       writeFileSync(join(session.cwd, "greeting.txt"), allowed ? "Hello (with left-pad)\n" : "Hello\n");
       if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "welcome.txt"), "Hello\n");
-      return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
+      if (plan.leak && !text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "greeting.txt"), "Hello from internal-db-07\n");
+      return done({ ...(plan.title ? { title: plan.title } : {}), summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
     }
     case "code reviewer":
       if (handedBack) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] }, terminal);

@@ -80,8 +80,12 @@ export class Context {
   }
 
   private checks(task: MTask): Section[] {
-    const checks = this.k.productOf(task)?.checks;
-    return checks?.length ? [{ title: "The product's checks (run every one in full before you finish)", body: checks.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") }] : [];
+    const product = this.k.productOf(task);
+    const lines = (product?.checks ?? []).map((check) => `- ${check.name}: ${commandText(check.argv)}`);
+    // The repository's own commit hooks: Petrina runs them on the whole change, as git would when committing it.
+    if (product?.hooks?.includes("pre-commit")) lines.push("- Pre-commit hook: the repository's own, which Petrina runs on your whole change as if committing it. Run it yourself with `git add -A`, then `git hook run pre-commit`.");
+    if (product?.hooks?.includes("commit-msg")) lines.push(`- Commit message hook: the repository's own, which Petrina runs on the task's commit message (your "title" and summary).`);
+    return lines.length ? [{ title: "The product's checks (run every one in full before you finish)", body: lines.join("\n") }] : [];
   }
 
   private findingsToAnswer(task: MTask): Section[] {

@@ -71,23 +71,6 @@ export class Shipping {
     task.statusLine = statusLine;
   }
 
-  /**
-   * The task's work as one commit before the shipper puts it on top of main, with a message that says what
-   * changed for users. The code stays exactly the same.
-   */
-  async squash(task: MTask): Promise<void> {
-    const base = task.baseSha ?? task.base;
-    if (!task.worktree || !base) return;
-    const builder = task.plan?.stages.find((stage) => stage.roleId === "builder");
-    const changes = (task.report?.changes ?? []).map((change) => `- ${change}`).join("\n");
-    const message = [task.title, task.report?.summary ?? "", changes, `Built by Petrina${builder?.profileIds[0] ? `: ${this.k.describe("builder", builder.profileIds[0])}` : ""}`].filter(Boolean).join("\n\n");
-    const folded = await git.squash(task.worktree, base, message);
-    if (folded) {
-      this.k.log(task, "done", `Squashed ${folded} commits into one for delivery`);
-      this.k.commit();
-    }
-  }
-
   /** On disk before the shipper gets any work: when it started, the latest release, and where main was. */
   async startShipping(task: MTask, signal: AbortSignal): Promise<void> {
     const product = this.k.productOf(task)!;

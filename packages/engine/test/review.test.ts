@@ -178,8 +178,8 @@ describe.concurrent("reviewers at once, then a vote", () => {
 describe("a clean history", () => {
   it("ships the task as one commit on top of main, however many commits its branch had", async () => {
     const { task, repo, before } = await untilDelivery({ reviewer: "important", fixes: "change" }, undefined, true);
-    // A build and a round of review fixes: two commits on the branch, squashed before the shipper ran.
-    expect(task.timeline.map((entry) => entry.text)).toContain("Squashed 2 commits into one for delivery");
+    // A build and a round of review fixes, kept as one commit all along.
+    expect(task.timeline.map((entry) => entry.text)).toContain("Sent back to the builder: 1 important");
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
     expect(git(repo, "log", "-1", "--format=%B", "main")).toContain("Built by Petrina");
   });

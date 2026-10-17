@@ -1,18 +1,19 @@
-// "do" stages: one role on one profile. The builder commits and answers findings, the shipper delivers,
-// the tester checks acceptance, and any other role hands back notes.
+// "do" stages: one role on one profile. The builder answers findings and brings work up to date, and Petrina
+// keeps its work as one commit; the shipper delivers, the tester checks acceptance, any other role hands back notes.
 
 import type { Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
-import { BuildResult, NotesResult, ShipResult, TestResult } from "./roles.js";
+import { BuildResult, NotesResult, ShipResult, stepBack, TestResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import type { Shipping } from "./shipping.js";
+import type { Updates } from "./update.js";
 
 export class Work {
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly shipping: Shipping) {}
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly shipping: Shipping, private readonly updates: Updates) {}
 
   async runDo(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const roleId = stage.roleId;
@@ -22,17 +23,37 @@ export class Work {
 
     if (roleId === "builder") {
       if (task.miss) await this.guide.proposeGuideLine(task, signal);
+      const updating = task.updating;
+      if (updating) await this.updates.reopen(task);
       // In a fix round the builder answers every finding it was given, by id.
       const given = task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing") : [];
+      // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
+      const own = task.builderSession;
+      const back = (task.fixing || updating) && own?.stageId === stage.id && own.profileId === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
       const result = await this.turns.turn(task, roleId, profileId, sections, BuildResult, signal, {
-        check: (value) => {
+        check: async (value) => {
           const missing = given.filter((finding) => !value.answers.some((answer) => answer.id === finding.id));
-          return missing.length ? `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}` : undefined;
+          if (missing.length) return `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}`;
+          const marked = updating ? await git.withMarkers(task.worktree!, updating.files) : [];
+          return marked.length ? `these files still have git's conflict markers: ${marked.join(", ")}. Resolve them, run the checks again, then end with the result block.` : undefined;
         },
+        ...(back ? { resume: { sessionId: back.sessionId, toolId: back.toolId, model: back.model } } : {}),
       });
-      const label = this.k.describe(roleId, profileId);
-      const sha = await git.commitAll(task.worktree!, `${task.title}${task.fixing ? " (review fixes)" : ""}\n\n${result.summary}\n\n${result.changes.map((change) => `- ${change}`).join("\n")}\n\nBuilt by Petrina: ${label}`);
-      task.report = { summary: result.summary, changes: result.changes, ...(result.tests ? { tests: result.tests } : {}) };
+      task.report = { summary: result.summary, changes: result.changes, ...(result.tests ? { tests: result.tests } : {}), ...(result.title ? { title: result.title } : {}) };
+      // One commit per task: the builder's work joins the branch's one commit, under its title.
+      const sha = await git.commitAll(task.worktree!, this.updates.message(task));
+      if (updating) {
+        // Up to date now: the reviews look at the whole change again, on top of the new main, with fresh rounds.
+        delete task.updating;
+        delete task.reviewedSha;
+        delete task.hunt;
+        for (const entry of task.plan?.stages ?? []) if (entry.kind === "review-chain") task.rounds[entry.id] = 1;
+        this.k.log(task, "done", `Brought up to date with main: ${result.summary}`, roleId, profileId);
+      }
+      await this.updates.fold(task);
+      // The next fix round or update goes back to this conversation.
+      const conversation = task.conversation;
+      if (conversation?.briefed && conversation.roleId === roleId) task.builderSession = { stageId: stage.id, profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId };
       if (task.fixing) {
         const at = Date.now();
         for (const answer of result.answers) {
@@ -43,7 +64,7 @@ export class Work {
         }
         task.fixing = false;
       }
-      this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, profileId);
+      if (!updating) this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, profileId);
     } else if (roleId === "shipper") {
       // Shipping is never repeated blindly: after an interruption, look for the delivery first.
       if (task.shipping && !task.shipping.again) return this.shipping.checkDelivery(task, signal);

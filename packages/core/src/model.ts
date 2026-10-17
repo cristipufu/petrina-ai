@@ -358,9 +358,24 @@ export interface Task {
   reviewedSha?: string;
   /** How much could go wrong, as the planner rated it from what the task touches. Sets review depth and the delivery check. */
   risk?: { level: RiskLevel; why: string };
-  /** The commit the delivery check showed the coordinator, and the one they approved: a change after that asks again. */
+  /** The commit the delivery check showed the coordinator, and the one they approved. */
   checkedSha?: string;
   approvedSha?: string;
+  /**
+   * The change itself as the delivery check showed it, and as approved (git's patch-id): main moving on
+   * underneath keeps it, so only a change to the work itself asks the coordinator again.
+   */
+  checkedPatch?: string;
+  approvedPatch?: string;
+  /**
+   * Main moved on and the task's change no longer applies cleanly: the working copy is on main with the
+   * change applied and these files conflicting, until the builder brings it up to date.
+   */
+  updating?: { from: string; onto: string; files: readonly string[]; notes?: readonly string[] };
+  /** Petrina is running the repository's pre-commit hook, with the working copy's HEAD detached at the base: a restart puts it back. */
+  hooking?: boolean;
+  /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
+  builderSession?: { stageId: Id; profileId: Id; toolId: Id; model: string; sessionId: string };
   /** The coordinator sent the delivery back with this note: the Guide keeper looks for what reviewers missed. */
   miss?: { note: string; at: number };
   /** How many times the coordinator sent a delivery back after every reviewer had passed it. */
@@ -389,8 +404,8 @@ export interface Task {
   branch?: string;
   worktree?: string;
   base?: string;
-  /** What the builder reported, in plain language. Goes into the pull request. */
-  report?: { summary: string; changes: readonly string[]; tests?: string };
+  /** What the builder reported, in plain language, and its one-line commit title. Goes into the pull request. */
+  report?: { summary: string; changes: readonly string[]; tests?: string; title?: string };
   /** Why the task failed, when it did. */
   error?: string;
   /** Set when a `release` product published this task. */
@@ -468,6 +483,8 @@ export interface Product {
   checksBy?: "finder" | "coordinator";
   /** A fingerprint of the CI and build files the finder read: when they change, it looks again. */
   checksFingerprint?: string;
+  /** The repository's own commit hooks (pre-commit, commit-msg) as git would run them: Petrina runs them on every task's change. */
+  hooks?: readonly string[];
 }
 
 /** One command that proves a product works, run as an argument array (never through a shell). */
