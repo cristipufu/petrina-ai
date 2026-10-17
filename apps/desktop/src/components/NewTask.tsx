@@ -87,7 +87,10 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
             }
           }}
           onKeyDown={(event) => {
-            if (event.key === "Enter") add(event.metaKey || event.ctrlKey ? false : event.shiftKey);
+            if (event.key !== "Enter") return;
+            // The dialog closes mid-key and focus returns to the opener: the rest of this Enter must not reach it.
+            event.preventDefault();
+            add(event.metaKey || event.ctrlKey ? false : event.shiftKey);
           }}
         />
         {batch.length > 1 && (

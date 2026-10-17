@@ -49,7 +49,7 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
   const finish = (run: () => void) => () => { onClose(); run(); };
   const actionRow = (action: PaletteAction): PaletteAction => action.id === "limit" ? {
     ...action, run: () => { setLimit(true); setQuery(""); setSelected(`limit-${state.pool.limit}`); input.current?.focus(); },
-  } : { ...action, run: finish(action.id === "new" ? () => onNew(query.trim()) : action.run) };
+  } : { ...action, run: finish(action.run) };
   const taskRows: PaletteAction[] = search.tasks.slice(0, 40).map((task) => ({
     id: `task-${task.id}`, label: task.title,
     detail: `${state.products.find((product) => product.id === task.productId)?.name ?? "Product"} · ${taskState(task, state)}`,

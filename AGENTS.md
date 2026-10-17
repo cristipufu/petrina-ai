@@ -33,3 +33,7 @@ What agents learned about working in this repository, added with the coordinator
 - Desktop tests run in happy-dom at 1024px wide, where the inbox opens over the board: to test the docked inbox, widen the window to 1200px or more with `window.happyDOM.setViewport({ width: 1400 })` inside `act()`, and set it back afterwards.
 - Code in packages/core runs straight from source with Bun and needs nothing installed: to try one function, or drive the demo simulator, without the whole suite, write a small script outside the working copy that imports packages/core/src/*.ts by full path.
 - This Mac has no `timeout` command: to cap how long a command runs, use your tool's own time limit.
+
+## Review guide
+
+Every change here is reviewed against REVIEW.md: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.

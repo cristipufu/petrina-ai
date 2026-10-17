@@ -482,6 +482,7 @@ kbd {
 .done-row .title { font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
 .done-row .when { color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .done-row .sub { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 8px; color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.done-row .draft-note { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-text); }
 .done-row.cancelled .title { color: var(--text-2); }
 
 /* ── Card ──────────────────────────────────────────────────────────── */
@@ -1191,7 +1192,8 @@ kbd {
 
 /* ── Toasts & menus ────────────────────────────────────────────────── */
 
-.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 50; width: min(22.5rem, calc(100vw - 32px)); }
+/* Under every dialog's scrim (40) and the palette's (44), and only the messages themselves catch clicks. */
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 39; width: min(22.5rem, calc(100vw - 32px)); pointer-events: none; }
 .toast {
   display: flex;
   gap: 12px;
@@ -1201,6 +1203,7 @@ kbd {
   border-radius: var(--radius);
   box-shadow: var(--shadow-pop);
   padding: 12px;
+  pointer-events: auto;
   animation: pop 0.2s ease both;
 }
 .toast .t { font-weight: 600; overflow-wrap: anywhere; }

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { DELIVERY_LABEL, type Column, type Product, type State } from "@petrina/core";
 import { mod } from "../keyboard";
-import { useDismiss } from "./bits";
+import { useDismiss, useFocusTrap } from "./bits";
 
 /** Per-product numbers the switcher and the Products page both show. */
 export interface ProductStats {
@@ -60,10 +60,10 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p" && !document.querySelector('.command-palette, .dialog, .sheet')) {
-        event.preventDefault();
-        setOpen(true);
-      }
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "p") return;
+      // Never the browser's Print. Like ⌘K it works over an open task, but not over another dialog.
+      event.preventDefault();
+      if (!document.querySelector(".command-palette, .dialog")) setOpen(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -102,7 +102,7 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
         <ChevronDown size={16} aria-hidden="true" />
       </button>
       {open && (
-        <div className="popover switcher-pop" role="dialog" aria-label="Switch product">
+        <SwitcherPopover onEscape={close}>
           <label className="search-field" style={{ width: "100%", marginBottom: 8 }}>
             <Search size={16} aria-hidden="true" />
             <input
@@ -112,7 +112,10 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && first) pick(first.product.id);
+                if (event.key !== "Enter" || !first) return;
+                // Picking restores focus: this Enter must not activate the button it returns to.
+                event.preventDefault();
+                pick(first.product.id);
               }}
             />
             <kbd>{mod}P</kbd>
@@ -141,8 +144,19 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
               ),
             )}
           </div>
-        </div>
+        </SwitcherPopover>
       )}
+    </div>
+  );
+}
+
+/** Holds focus while open, over an open task too, and gives it back to where it was on Esc. */
+function SwitcherPopover({ onEscape, children }: { onEscape: () => void; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  useFocusTrap(box, onEscape);
+  return (
+    <div ref={box} className="popover switcher-pop" role="dialog" aria-label="Switch product" tabIndex={-1}>
+      {children}
     </div>
   );
 }

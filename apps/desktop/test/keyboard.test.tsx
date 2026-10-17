@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,6 +32,16 @@ async function type(selector: string, text: string) { await act(async () => {
   Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(input, text);
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }); }
+// A browser carries an Enter the page didn't cancel on to whatever has focus once its keydown is over.
+async function enter(selector: string) {
+  let carried = false;
+  await act(async () => { carried = el(selector).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); });
+  if (carried) await act(async () => {
+    const at = document.activeElement;
+    if (at instanceof HTMLButtonElement) at.click();
+    else if (at instanceof HTMLTextAreaElement) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(at, `${at.value}\n`); at.dispatchEvent(new Event('input', { bubbles: true })); }
+  });
+}
 async function palette(query: string) { await key('k', { ctrlKey: true }); await type('[role=combobox]', query); }
 function selected() { return host.querySelector('.card.selected')?.getAttribute('data-task-id'); }
 function sheetId() { return host.querySelector('.sheet-title')?.textContent; }
@@ -39,7 +51,11 @@ async function mount(state: State = createDemoState(1_000_000_000)) {
   await act(async () => root.render(<App />));
 }
 beforeEach(async () => { localStorage.clear(); live.link = 'live'; setSingleKeys(true); await mount(); });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.clearAllTimers(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.clearAllTimers(); await widen(1024); });
+// The inbox docks beside the board from 1200px; happy-dom's window starts narrower, so it opens over the board.
+async function widen(width: number) { await act(async () => (window as unknown as { happyDOM: { setViewport(size: { width: number }): void } }).happyDOM.setViewport({ width })); }
+// Dispatches a key and says whether something on the page took it from the browser.
+async function taken(key: string, options: KeyboardEventInit = {}) { let carried = true; await act(async () => { carried = (document.activeElement ?? window).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options })); }); return !carried; }
 
 describe('the app keyboard', () => {
   it('restores the palette opener and keeps the board in control after a quick inbox round trip', async () => {
@@ -75,6 +91,224 @@ describe('the app keyboard', () => {
       expect(simulator.getState()).toBe(before);
       await key('b'); expect(selected()).toBe(id);
     }
+  });
+  it('leaves nothing taking keys after Esc in the docked inbox on Products, Agents and Library, even after the palette', async () => {
+    await widen(1400);
+    for (const title of ['Products', 'Agents (A)', 'Library (L)']) {
+      await click(`.rail button[title="${title}"]`);
+      await key('i'); expect(host.querySelector('.inbox-item.selected')).not.toBeNull();
+      await key('Escape');
+      const before = simulator.getState();
+      const quiet = () => {
+        expect(host.querySelector('.inbox-item.selected')).toBeNull();
+        expect(el('.inbox').contains(document.activeElement)).toBe(false);
+        expect(host.querySelector('.sheet')).toBeNull();
+        expect(simulator.getState()).toBe(before);
+      };
+      await key('Enter'); await key('j'); await key('p'); await key('m'); quiet();
+      await key('k', { ctrlKey: true }); await key('k', { ctrlKey: true });
+      await key('Enter'); await key('j'); await key('p'); await key('m'); quiet();
+    }
+  });
+  it('hides the inbox over the board on Esc and gives focus to the Inbox button, and hands the docked one to the board', async () => {
+    await key('i'); expect(host.querySelector('.inbox-item.selected')).not.toBeNull();
+    await key('Escape');
+    expect(host.querySelector('.inbox')).toBeNull();
+    expect(document.activeElement).toBe(el('[aria-label^="Inbox,"]'));
+    await widen(1400);
+    await key('i'); await key('Escape');
+    expect(host.querySelector('.inbox')).not.toBeNull();
+    await key('j'); expect(selected()).toBe(boardOrder(simulator.getState().tasks, () => true, false)[0]);
+  });
+  it.each(['i', 'b'])('hands focus to the highlighted board card with %s from the docked inbox', async (shortcut) => {
+    await widen(1400);
+    await key('j'); const id = selected()!;
+    const title = simulator.getState().tasks.find((task) => task.id === id)!.title;
+    await key('i');
+    if (shortcut === 'b') await act(async () => el('[aria-label^="Inbox,"]').focus());
+    await key(shortcut);
+    expect(selected()).toBe(id);
+    expect(document.activeElement).toBe(el(`.card[data-task-id="${id}"]`));
+    if (shortcut === 'i') expect(host.querySelector('.inbox')).toBeNull();
+    await enter(`.card[data-task-id="${id}"]`);
+    expect(sheetId()).toBe(title);
+  });
+  it('keeps focus on the Inbox button when the button closes the inbox', async () => {
+    await widen(1400);
+    await key('j'); await key('i');
+    await act(async () => el('[aria-label^="Inbox,"]').focus());
+    await click('[aria-label^="Inbox,"]');
+    expect(host.querySelector('.inbox')).toBeNull();
+    expect(document.activeElement).toBe(el('[aria-label^="Inbox,"]'));
+  });
+  it.each([
+    [1400, 'click'], [1400, 'Enter'], [1024, 'click'], [1024, 'Enter'],
+  ])('returns to the highlighted card when Hide the inbox is used at %spx with %s', async (width, activation) => {
+    await widen(Number(width));
+    await key('j'); const id = selected()!;
+    const title = simulator.getState().tasks.find((task) => task.id === id)!.title;
+    await key('i');
+    const hide = '[aria-label="Hide the inbox"]';
+    await act(async () => el(hide).focus());
+    if (activation === 'click') await click(hide);
+    else await enter(hide);
+    expect(host.querySelector('.inbox')).toBeNull();
+    expect(selected()).toBe(id);
+    expect(document.activeElement).toBe(el(`.card[data-task-id="${id}"]`));
+    await enter(`.card[data-task-id="${id}"]`);
+    expect(sheetId()).toBe(title);
+  });
+  it('returns to the highlighted card when I hides the narrow inbox', async () => {
+    await key('j'); const id = selected()!;
+    const title = simulator.getState().tasks.find((task) => task.id === id)!.title;
+    await key('i'); await key('i');
+    expect(host.querySelector('.inbox')).toBeNull();
+    expect(selected()).toBe(id);
+    expect(document.activeElement).toBe(el(`.card[data-task-id="${id}"]`));
+    await enter(`.card[data-task-id="${id}"]`);
+    expect(sheetId()).toBe(title);
+  });
+  it('keeps in-app messages under dialogs and the palette, and lets clicks through the gaps between them', async () => {
+    const style = document.createElement('style');
+    style.textContent = readFileSync(resolve(__dirname, '../src/styles.css'), 'utf8');
+    document.head.append(style);
+    try {
+      await key('j'); await key('p'); await key('j'); await key('p');
+      expect(host.querySelectorAll('.toast').length).toBe(2);
+      const layer = (selector: string) => Number(getComputedStyle(el(selector)).zIndex);
+      await key('n', { ctrlKey: true });
+      expect(layer('.toasts')).toBeLessThan(layer('.dialog-scrim'));
+      expect(layer('.toasts')).toBeLessThan(layer('.dialog'));
+      await key('Escape'); await key('k', { ctrlKey: true });
+      expect(layer('.toasts')).toBeLessThan(layer('.palette-scrim'));
+      await key('Escape'); await key('Enter');
+      // Still over an open task.
+      expect(layer('.toasts')).toBeGreaterThan(layer('.sheet'));
+      expect(getComputedStyle(el('.toasts')).pointerEvents).toBe('none');
+      expect(getComputedStyle(el('.toast')).pointerEvents).toBe('auto');
+    } finally { style.remove(); }
+  });
+  it('keeps the palette\'s task rows on the task focused when it opened, and drops them when that task is gone', async () => {
+    await key('j'); const id = selected()!;
+    const title = simulator.getState().tasks.find((task) => task.id === id)!.title;
+    await key('k', { ctrlKey: true });
+    expect(el('[role=option][aria-selected=true]').id).toBe(`palette-open-task-${id}`);
+    // The card leaves the board, and the board's highlight moves on to its neighbour.
+    await act(async () => simulator.cancel(id));
+    expect(el('[role=option][aria-selected=true]').id).toBe(`palette-open-task-${id}`);
+    await key('Enter'); expect(sheetId()).toBe(title);
+    await key('Escape');
+    const next = selected()!; expect(next).not.toBe(id);
+    const productId = simulator.getState().tasks.find((task) => task.id === next)!.productId;
+    await key('k', { ctrlKey: true });
+    expect(el('[role=option][aria-selected=true]').id).toBe(`palette-open-task-${next}`);
+    await act(async () => {
+      for (const task of simulator.getState().tasks) if (task.productId === productId && task.state !== 'done' && task.state !== 'cancelled') simulator.cancel(task.id);
+      simulator.removeProduct(productId);
+    });
+    expect(host.querySelector(`[id^="palette-"][id$="-task-${next}"]`)).toBeNull();
+    expect(el('[role=option][aria-selected=true]').id).not.toContain(next);
+  });
+  it('opens an empty New task from the palette\'s New task action, whatever was typed', async () => {
+    await palette('new'); expect(el('[role=option][aria-selected=true]').textContent).toContain('New task');
+    await key('Enter');
+    expect(el<HTMLInputElement>('.title-input').value).toBe('');
+  });
+  it('opens the product switcher with Ctrl P over an open task, never the browser\'s Print', async () => {
+    expect(await taken('p', { ctrlKey: true })).toBe(true);
+    expect(host.querySelector('.switcher-pop')).not.toBeNull();
+    await key('Escape'); expect(host.querySelector('.switcher-pop')).toBeNull();
+    await key('j'); await key('m'); const title = sheetId();
+    const composer = el('.composer textarea');
+    expect(await taken('p', { ctrlKey: true })).toBe(true);
+    expect(document.activeElement).toBe(el('[aria-label="Search products"]'));
+    // Esc closes the switcher only, and focus goes back into the task.
+    await key('Escape');
+    expect(host.querySelector('.switcher-pop')).toBeNull();
+    expect(sheetId()).toBe(title); expect(document.activeElement).toBe(composer);
+    await key('p', { ctrlKey: true }); await click('.switcher-row[aria-current=false]');
+    expect(host.querySelector('.sheet')).toBeNull();
+    await key('n', { ctrlKey: true });
+    expect(await taken('p', { ctrlKey: true })).toBe(true);
+    expect(host.querySelector('.switcher-pop')).toBeNull();
+  });
+  it.each(['switcher', 'finished task'])('chooses a product with Enter once, without activating the restored %s', async (opener) => {
+    let productName = 'Shop';
+    if (opener === 'switcher') {
+      await act(async () => el('.switcher').focus());
+      await click('.switcher');
+    } else {
+      await click('.fold');
+      const row = el('.done-row');
+      const task = simulator.getState().tasks.find((task) => task.id === row.getAttribute('data-task-id'))!;
+      productName = simulator.getState().products.find((product) => product.id === task.productId)!.name;
+      await act(async () => row.focus());
+      await click('.done-row');
+      expect(host.querySelector('.sheet')).not.toBeNull();
+      await key('p', { ctrlKey: true });
+    }
+    await type('[aria-label="Search products"]', productName);
+    await enter('[aria-label="Search products"]');
+    expect(host.querySelector('.switcher-pop')).toBeNull();
+    expect(host.querySelector('.sheet')).toBeNull();
+    expect(el('.switcher').textContent).toContain(productName);
+    expect(document.activeElement).toBe(el(opener === 'switcher' ? '.switcher' : '.done-row.selected'));
+  });
+  it('keeps the open task open, untouched, when a new task is created with Enter', async () => {
+    await key('j'); await key('m'); const title = sheetId();
+    const id = simulator.getState().tasks.find((task) => task.title === title)!.id;
+    await type('.composer textarea', 'Keep this message');
+    const task = () => { const { state, held } = simulator.getState().tasks.find((entry) => entry.id === id)!; return { state, held }; };
+    const before = task();
+    // Enter must not carry on to whatever the new-task dialog hands focus back to.
+    for (const [index, opener] of ['.composer textarea', '.sheet [aria-label="Pause"]', '.sheet [aria-label="Close"]'].entries()) {
+      await act(async () => el(opener).focus());
+      await key('n', { ctrlKey: true });
+      await click('[role=dialog][aria-label="New task"] [role=radio]');
+      await type('[aria-label="What do you want done?"]', `Another thing ${index}`);
+      await enter('[aria-label="What do you want done?"]');
+      expect(host.querySelector('[aria-label="New task"]')).toBeNull();
+      expect(simulator.getState().tasks.some((entry) => entry.title === `Another thing ${index}`)).toBe(true);
+      expect(document.activeElement).toBe(el(opener));
+      expect(sheetId()).toBe(title);
+      expect(task()).toEqual(before);
+      expect(el<HTMLTextAreaElement>('.composer textarea').value).toBe('Keep this message');
+    }
+  });
+  it.each([
+    [1024, 'Board (B)'], [1400, 'Board (B)'],
+    [1024, 'Agents (A)'], [1400, 'Agents (A)'],
+  ])('keeps the inbox return point after creating a task at %spx on %s', async (width, page) => {
+    await widen(Number(width));
+    await click(`.rail button[title="${page}"]`);
+    await key('i'); await key('j');
+    const item = el('.inbox-item.selected').getAttribute('data-inbox-id')!;
+    const ids = inboxOrder(simulator.getState()).map((entry) => entry.id);
+    await key('Enter'); const title = sheetId();
+    await key('n', { ctrlKey: true });
+    await click('[role=dialog][aria-label="New task"] [role=radio]');
+    await type('[aria-label="What do you want done?"]', 'Another task from the inbox');
+    await enter('[aria-label="What do you want done?"]');
+    expect(simulator.getState().tasks.some((task) => task.title === 'Another task from the inbox')).toBe(true);
+    expect(sheetId()).toBe(title);
+    expect(el(`.rail button[title="${page}"]`).getAttribute('aria-current')).toBe('page');
+    await key('Escape');
+    expect(host.querySelector('.sheet')).toBeNull();
+    expect(el('.inbox-item.selected').getAttribute('data-inbox-id')).toBe(item);
+    expect(document.activeElement).toBe(el(`.inbox-item[data-inbox-id="${item}"]`));
+    expect(selected()).toBeUndefined();
+    await key('j');
+    expect(el('.inbox-item.selected').getAttribute('data-inbox-id')).toBe(ids[2]);
+    expect(selected()).toBeUndefined();
+  });
+  it('keeps the unsent message mark on finished and cancelled tasks', async () => {
+    await palette('Guest checkout'); await key('Enter'); await key('m');
+    await type('.composer textarea', 'Still to send');
+    await key('Escape'); await key('Escape');
+    const id = simulator.getState().tasks.find((task) => task.title === 'Guest checkout')!.id;
+    await act(async () => simulator.cancel(id));
+    await click('.fold');
+    expect(host.querySelector(`.done-row[data-task-id="${id}"] .draft-mark`)).not.toBeNull();
   });
   it('walks the board in display order, keeps identity through live updates and uses the old place on removal', async () => {
     const ids = boardOrder(simulator.getState().tasks, () => true, false);
@@ -231,7 +465,7 @@ describe('the app keyboard', () => {
   });
   it('offers no task actions on other pages and cannot confirm an action while reconnecting', async () => {
     await key('j'); await key('a'); await key('k', {ctrlKey:true});
-    expect(host.querySelector('#palette-pause-task')).toBeNull();
+    expect(host.querySelector('[id^="palette-pause-task"]')).toBeNull();
     await type('[role=combobox]', 'Resume pool');
     const before = simulator.getState(); live.link = 'reconnecting';
     await key('Enter');

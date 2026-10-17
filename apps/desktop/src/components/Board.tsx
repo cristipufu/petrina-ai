@@ -177,6 +177,8 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, showD
                     <span className="sub">
                       <ProductName product={find.product(task.productId)} />
                       <span>{delivery?.text ?? STATE_LABEL[task.state]}</span>
+                      {/* Worded, and away from the product's dot, so the two never read alike. */}
+                      {drafts[task.id] && <span className="draft-note"><span className="draft-mark" aria-hidden="true" />Unsent message</span>}
                     </span>
                   </button>
                 );

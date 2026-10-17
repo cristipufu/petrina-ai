@@ -113,6 +113,8 @@ export function App() {
   const sheetTask = sheet ? find.task(sheet.taskId) : undefined;
   const highlightedItem = items.find((item) => item.id === currentInboxId);
   const focusedTask = sheetTask ?? (area === "inbox" ? find.task(highlightedItem?.taskId) : area === "board" ? find.task(currentBoardId) : undefined);
+  const [paletteTaskId, setPaletteTaskId] = useState<string>();
+  const openPalette = () => { setPaletteTaskId(focusedTask?.id); setPalette(true); };
   const focusSnapshot = useRef<{ area: typeof area; id: string | undefined }>({ area, id: undefined });
 
   const open = useCallback((taskId: string, tab: SheetTab = "overview", list?: TaskList, itemId?: string) => {
@@ -136,7 +138,8 @@ export function App() {
   const toastNotice = useCallback((notice: Notice) => showToast(notice.title, notice.lines, notice.target), [showToast]);
   useNotices({ onJump: requestJump, onToast: toastNotice });
 
-  const go = (page: Page) => { close(); setView(page); setOwner("board"); focusArea.current = page === "board" ? "board" : undefined; if (page === "settings") setProductSettings(undefined); };
+  const show = (page: Page) => { setView(page); setOwner("board"); focusArea.current = page === "board" ? "board" : undefined; if (page === "settings") setProductSettings(undefined); };
+  const go = (page: Page) => { close(); show(page); };
   /** Settings, with one product's settings open when it comes from the Products page. */
   const openSettings = (productId?: string) => { go("settings"); setProductSettings(productId); };
   const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, "board"); if (tab === "session") setMessageFocus(id); };
@@ -150,10 +153,11 @@ export function App() {
     blankLanding.current = false;
     focusArea.current = "inbox";
   };
-  const closeInbox = () => {
+  const closeInbox = (keepButton: boolean) => {
+    focusArea.current = !keepButton && view === "board" ? "board" : undefined;
     setInboxOpen(false); setOwner("board"); inboxButton.current?.focus();
   };
-  const inboxKey = () => { close(); if (inboxOpen && owner === "inbox") closeInbox(); else openInbox(); };
+  const inboxKey = () => { close(); if (inboxOpen && owner === "inbox") closeInbox(false); else openInbox(); };
   const newTask = (title = "") => { setNewTitle(title); setCreating(true); };
   const pickProduct = (id: string) => { close(); setProduct(id); setView("board"); setOwner("board"); };
   const message = (task: Task) => {
@@ -180,7 +184,10 @@ export function App() {
   useEffect(() => {
     const id = area === "board" ? currentBoardId : area === "inbox" ? currentInboxId : undefined;
     const changed = focusSnapshot.current.area !== area || focusSnapshot.current.id !== id;
+    const leftInbox = focusSnapshot.current.area === "inbox" && area !== "inbox";
     focusSnapshot.current = { area, id };
+    // Button clicks and overlay Escape stay on the Inbox button; explicit board navigation moves on.
+    if (leftInbox && document.activeElement === inboxButton.current && !focusArea.current) return;
     // Closing a palette or dialog restores its opener. Only explicit navigation moves focus.
     if (!changed && !focusArea.current) return;
     if (area !== "board" && area !== "inbox") return;
@@ -204,12 +211,17 @@ export function App() {
     boardId: currentBoardId,
     inboxId: currentInboxId,
     togglePalette: () => {
-      if (!creating && !addingProduct) setPalette((on) => !on);
+      if (creating || addingProduct) return;
+      if (palette) setPalette(false);
+      else openPalette();
     },
     closeSheet: close,
+    // Over the board the inbox hides and hands focus to the Inbox button. Docked, it hands the keys to the
+    // board, and off the board to nothing: no hidden Enter, and no palette handing them back on close.
     leaveInbox: () => {
+      if (overlay) { closeInbox(true); return; }
       setOwner("board");
-      inboxPanel.current?.blur();
+      if (inboxPanel.current?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
     },
     newTask: () => newTask(),
     openSettings: () => openSettings(),
@@ -224,8 +236,10 @@ export function App() {
     message,
   });
 
+  // The palette's task rows stay with the task in focus when it opened, and go if that task does.
+  const paletteTask = palette ? find.task(paletteTaskId) : undefined;
   const actions = appActions({ state, singleKeys, newTask: () => newTask(), openInbox, go, showShortcuts: () => setShortcuts(true), sendAction });
-  const forTask = taskActions({ task: focusedTask, state, sheetOpen: Boolean(sheet), open, message, focusMessage: setMessageFocus, pause, visible, sendAction });
+  const forTask = taskActions({ task: paletteTask, state, sheetOpen: sheet?.taskId === paletteTask?.id, open, message, focusMessage: setMessageFocus, pause, visible, sendAction });
   const blocking = blockingCount(state);
   const docked = inboxOpen && !overlay;
   const recovery = mode === "engine" && !status.desktop && status.link !== "live" && status.recovery;
@@ -241,12 +255,12 @@ export function App() {
         onProduct={pickProduct}
         query={query}
         onClearQuery={() => setQuery("")}
-        onPalette={() => setPalette(true)}
+        onPalette={openPalette}
         blocking={blocking}
         inboxOpen={inboxOpen}
         inboxButton={inboxButton}
         onOpenInbox={openInbox}
-        onToggleInbox={() => (inboxOpen ? closeInbox() : openInbox())}
+        onToggleInbox={() => (inboxOpen ? closeInbox(true) : openInbox())}
         onNewTask={() => newTask()}
         theme={theme}
         onTheme={setTheme}
@@ -270,7 +284,7 @@ export function App() {
         {view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} onShortcuts={() => setShortcuts(true)} />}
       </main>
 
-      {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay && !sheet} landing={landing} onOpen={open} onClose={closeInbox} selectedId={area === "inbox" ? currentInboxId : undefined} onFocus={(id) => {
+      {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay && !sheet} landing={landing} onOpen={open} onClose={() => closeInbox(false)} selectedId={area === "inbox" ? currentInboxId : undefined} onFocus={(id) => {
         setOwner("inbox");
         if (!id && blankLanding.current) return;
         blankLanding.current = false;
@@ -304,7 +318,8 @@ export function App() {
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false);
-            go("board");
+            // An open task keeps its page and list return point while the new task joins the queue.
+            if (!sheet) show("board");
           }}
         />
       )}

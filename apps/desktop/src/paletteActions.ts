@@ -1,4 +1,5 @@
-// What the command palette offers: the app's own actions, and those for the task in focus.
+// What the command palette offers: the app's own actions, and those for the task in focus when it opened.
+// Their ids carry that task's, so a highlighted row never quietly becomes another task's.
 
 import { queueOf, type Page, type State, type Task } from "@petrina/core";
 import type { PaletteAction } from "./components/CommandPalette";
@@ -33,13 +34,13 @@ export function taskActions({ task, state, sheetOpen, open, message, focusMessag
   if (!task) return [];
   const queue = queueOf(state.tasks);
   return [
-    { id: "open-task", label: `Open “${task.title}”`, shortcut: "↵", run: () => { if (!sheetOpen) open(task.id); } },
-    { id: "message-task", label: `Message “${task.title}”`, shortcut: "M", run: () => { if (sheetOpen) message(task); else { open(task.id, "session"); focusMessage(task.id); } } },
-    { id: "pause-task", label: `${task.state === "queued" ? (task.held ? "Release" : "Hold") : task.state === "paused" ? "Resume" : "Pause"} “${task.title}”`, shortcut: "P", run: () => pause(task) },
+    { id: `open-task-${task.id}`, label: `Open “${task.title}”`, shortcut: "↵", run: () => { if (!sheetOpen) open(task.id); } },
+    { id: `message-task-${task.id}`, label: `Message “${task.title}”`, shortcut: "M", run: () => { if (sheetOpen) message(task); else { open(task.id, "session"); focusMessage(task.id); } } },
+    { id: `pause-task-${task.id}`, label: `${task.state === "queued" ? (task.held ? "Release" : "Hold") : task.state === "paused" ? "Resume" : "Pause"} “${task.title}”`, shortcut: "P", run: () => pause(task) },
     ...(task.state === "queued" && queue[0]?.id !== task.id
       ? [
           {
-            id: "top-task",
+            id: `top-task-${task.id}`,
             label: `Move “${task.title}” to top`,
             shortcut: "↵",
             run: () => {
