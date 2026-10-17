@@ -13,6 +13,7 @@ import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
+import type { Updates } from "./update.js";
 
 /**
  * A later reviewer thinks findings are wrong: each dispute is kept with who and why. One reviewer's
@@ -44,7 +45,14 @@ function sameFinding(text: string): string {
 }
 
 export class Reviews {
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly checks: ProductChecks, private readonly learnings: Learnings) {}
+  constructor(
+    private readonly k: Kernel,
+    private readonly turns: Turns,
+    private readonly context: Context,
+    private readonly checks: ProductChecks,
+    private readonly learnings: Learnings,
+    private readonly updates: Updates,
+  ) {}
 
   /**
    * A review round: Petrina's own checks first; then every reviewer looks at the change at once, each on
@@ -54,6 +62,9 @@ export class Reviews {
   async runReview(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const round = task.rounds[stage.id] ?? 1;
     if (task.hunt?.stageId !== stage.id || task.hunt.round !== round) {
+    // The work goes on top of the latest main before anyone reviews it: a conflict goes to the builder first,
+    // so a port after the review (and a review of that port) stays the exception.
+    if ((await this.updates.upToDate(task, signal)) === "conflict") return "continue";
     // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
     delete task.handChanges;
     const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
@@ -106,7 +117,15 @@ export class Reviews {
   /** The stage's reviewers who have not reported this round, by their place in the stage. */
   private pendingReviewers(task: MTask, stage: MStage): { key: string; profileId: Id }[] {
     const reported = task.hunt?.stageId === stage.id && task.hunt.round === (task.rounds[stage.id] ?? 1) ? task.hunt.reported : {};
-    return stage.profileIds.map((profileId, index) => ({ key: String(index), profileId })).filter((entry) => !reported[entry.key]);
+    const planned = stage.profileIds.map((profileId, index) => ({ key: String(index), profileId }));
+    // A port of an already reviewed change gets one reviewer, on a tool other than the builder's where the stage has one.
+    const reviewers = task.portReview ? [this.portReviewer(task, planned)] : planned;
+    return reviewers.filter((entry) => !reported[entry.key]);
+  }
+
+  private portReviewer(task: MTask, planned: { key: string; profileId: Id }[]): { key: string; profileId: Id } {
+    const builder = this.k.profile(task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "")?.toolId;
+    return planned.find((entry) => this.k.profile(entry.profileId)?.toolId !== builder) ?? planned[0]!;
   }
 
   /**
@@ -139,7 +158,7 @@ export class Reviews {
           reported(key);
         },
       })),
-      (running, waiting) => `${running} ${role.toLowerCase()}${running === 1 ? " looking at the change" : "s looking at the change at once"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
+      (running, waiting) => `${running} ${role.toLowerCase()}${running === 1 ? ` looking at the ${task.portReview ? "port" : "change"}` : "s looking at the change at once"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
     );
   }
 
@@ -362,6 +381,9 @@ export class Reviews {
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
     const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
     noteRoundEnd(task, stage.id, open.length);
+    // A port review is one round: whatever it found, the rounds after it are ordinary ones.
+    const port = task.portReview !== undefined;
+    delete task.portReview;
     if (end.kind === "send back") {
       // The next round reviews only what changed since what the reviewers looked at in this one.
       const sha = reviewed ? await git.head(task.worktree!).catch(() => undefined) : undefined;
@@ -385,7 +407,7 @@ export class Reviews {
         return "stop";
       }
     } else {
-      this.k.log(task, "done", `Review passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
+      this.k.log(task, "done", `${port ? "Port review" : "Review"} passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
     }
     this.k.commit();
     return "continue";

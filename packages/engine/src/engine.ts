@@ -59,7 +59,7 @@ export class Engine extends Kernel implements Commands {
     this.updates = new Updates(this, this.connections);
     this.shipping = new Shipping(this, this.turns, this.updates, this.checks, this.connections);
     this.learnings = new Learnings(this);
-    this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings);
+    this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings, this.updates);
     this.design = new Design(this, this.turns, this.context);
     this.planning = new Planning(this, this.turns);
     this.work = new Work(this, this.turns, this.context, this.guide, this.updates, this.learnings);

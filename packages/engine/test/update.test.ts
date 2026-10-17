@@ -96,7 +96,20 @@ describe.concurrent("work brought up to date with main", () => {
     expect(task.baseSha).toBe(landed);
   });
 
-  it("sends a conflict to the builder, reviews the change again on top of main, and ships one commit", async () => {
+  it("brings the work up to date before a review starts, so no port is needed afterwards", async () => {
+    const { task, fakes, repo, before } = await ship({}, { beforeBuild: (repo) => land(repo, "NEWS.md", "News\n", "News on main") });
+    const text = lines(task);
+    const updated = text.indexOf("Brought up to date with main (1 new commit there), with no conflicts");
+    expect(updated).toBeGreaterThan(-1);
+    expect(updated).toBeLessThan(text.indexOf("Code reviewer started"));
+    expect(text.filter((line) => line.startsWith("Brought up to date with main"))).toHaveLength(1);
+    // Every reviewer compared against the new main.
+    const landed = git(repo, "rev-parse", "main~1");
+    for (const review of fakes.openings("code reviewer")) expect(review).toContain(`git diff ${landed}...HEAD`);
+    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
+  });
+
+  it("sends a conflict to the builder, then one reviewer looks at the port only, and ships one commit", async () => {
     const { task, fakes, repo, before, deliveryChecks } = await ship({}, { beforeBuild: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main") });
     const text = lines(task);
     expect(text).toContain("Main moved on (1 new commit) and 1 file conflicts with this work, so the builder brings it up to date");
@@ -105,9 +118,13 @@ describe.concurrent("work brought up to date with main", () => {
     const update = fakes.prompts("builder").find((prompt) => prompt.includes("conflict markers"));
     expect(update).toContain("these files still have git's conflict markers: greeting.txt");
     expect(update).toMatch(/git log --stat [0-9a-f]{40}\.\.[0-9a-f]{40}/);
-    // The review ran again after the update, from its first reviewer.
+    // After the update, one reviewer (not the planned two) looked only at the port, and said so.
     const updated = text.indexOf("Brought up to date with main: Added a greeting.");
-    expect(text.slice(updated).filter((line) => line === "Code reviewer started").length).toBeGreaterThan(0);
+    expect(text.slice(updated).filter((line) => line === "Code reviewer started")).toHaveLength(1);
+    expect(text.slice(updated).some((line) => line.startsWith("Port review passed"))).toBe(true);
+    const port = fakes.openings("code reviewer").at(-1)!;
+    expect(port).toContain("Review only the port: run `git range-diff ");
+    expect(port).toContain("resolving conflicts in: greeting.txt");
     expect(deliveryChecks).toBe(1);
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
     expect(git(repo, "show", "main:greeting.txt")).not.toContain("<<<<<<<");

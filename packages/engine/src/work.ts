@@ -60,12 +60,11 @@ export class Work {
       // One commit per task: the builder's work joins the branch's one commit, under its title.
       const sha = await git.commitAll(task.worktree!, this.updates.message(task));
       if (updating) {
-        // Up to date now: the reviews look at the whole change again, on top of the new main, with fresh rounds.
+        // Up to date now. The change itself was reviewed already: the next review round looks only at the port.
         delete task.updating;
         delete task.reviewedSha;
         delete task.hunt;
-        for (const entry of task.plan?.stages ?? []) if (entry.kind === "review-chain") task.rounds[entry.id] = 1;
-        delete task.blockingAfter;
+        if (updating.head) task.portReview = { from: updating.from, head: updating.head, onto: updating.onto, files: updating.files };
         this.k.log(task, "done", `Brought up to date with main: ${result.summary}`, roleId, profileId);
       }
       await this.updates.fold(task);

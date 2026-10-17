@@ -95,6 +95,12 @@ export class Updates {
       await git.moveTo(worktree, await git.commitTree(worktree, merged.tree, latest.sha, this.message(task)));
       task.baseSha = latest.sha;
       task.base = latest.ref;
+      // The version the last round reviewed, carried onto the new main too, so the next round still sees only what changed since.
+      if (task.reviewedSha) {
+        const carried = await this.carry(task, task.reviewedSha);
+        if (carried) task.reviewedSha = carried;
+        else delete task.reviewedSha;
+      }
       this.k.log(task, "done", `Brought up to date with main (${commits} there), with no conflicts`);
       this.k.commit();
       return "moved";
@@ -102,7 +108,8 @@ export class Updates {
     const builder = lastIndexWhere(task.plan?.stages ?? [], (stage) => stage.roleId === "builder" && stage.kind === "do");
     if (builder < 0) throw new Error("Main moved on and the work conflicts with it, but the plan has no builder to bring it up to date");
     // On disk before the working copy moves: a restart in between finds the update and opens it again.
-    task.updating = { from: fork, onto: latest.sha, files: merged.conflicts, ...(merged.notes.length ? { notes: merged.notes } : {}) };
+    const head = await git.head(worktree);
+    task.updating = { from: fork, onto: latest.sha, head, files: merged.conflicts, ...(merged.notes.length ? { notes: merged.notes } : {}) };
     // The builder ports the change by hand: whatever was approved before, the coordinator checks it again.
     delete task.approvedSha;
     delete task.approvedPatch;
@@ -118,6 +125,19 @@ export class Updates {
     this.k.log(task, "warn", `Main moved on (${commits}) and ${files} with this work, so the builder brings it up to date`);
     this.k.commit();
     return "conflict";
+  }
+
+  /**
+   * A reviewed version of the change carried onto the current base unchanged: a commit of its merge with the
+   * base, on no branch, kept only as a reference for "what changed since". Undefined when the two overlap.
+   */
+  private async carry(task: MTask, sha: string): Promise<string | undefined> {
+    const worktree = task.worktree;
+    const base = task.baseSha;
+    if (!worktree || !base) return undefined;
+    const merged = await git.mergeTree(worktree, base, sha);
+    if (!merged || merged.conflicts.length) return undefined;
+    return git.commitTree(worktree, merged.tree, base, "The version the last review round saw, carried onto the latest main (Petrina's reference, on no branch)");
   }
 
   /** Before the builder starts on an update: the working copy as `upToDate` left it, even after a restart in between. */

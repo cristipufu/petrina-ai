@@ -142,6 +142,11 @@ const GUIDE_RULE = (base: string) =>
 /** Roles that work in the repository pass on what they learned about working there, for AGENTS.md. */
 const LEARN = `If you learned something about working in this repository that would have saved you time or a mistake (how to build, run or test it, a trap, a convention nobody wrote down), add it to "learnings": one plain line each, at most three, true for any future task in this repository and not about this one. Leave it empty otherwise, and skip anything AGENTS.md already says. The coordinator approves every line before it joins the Learnings section of AGENTS.md.`;
 
+/** A reviewer's job when the builder ported an already reviewed change onto a main that moved: the port, not the change. */
+function portClause(port: NonNullable<Task["portReview"]>): string {
+  return `\nMain moved on and the builder ported this change onto it by hand, resolving conflicts in: ${port.files.join(", ")}. The change itself was reviewed already (its version ${port.head.slice(0, 7)} on ${port.from.slice(0, 7)}). Review only the port: run \`git range-diff ${port.from}..${port.head} ${port.onto}..HEAD\` to see exactly what the port changed in the change, and read each resolved file against main's version (\`git diff ${port.onto} -- <file>\`). Raise nothing about code the port did not touch.`;
+}
+
 /** After three rounds of review the builder is asked to step back instead of patching again, in a fresh conversation. */
 export function stepBack(task: Task): boolean {
   return reviewRound(task) > 3;
@@ -283,9 +288,11 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
     shape: `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: ({ task, base, branch }) => {
       return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it. Your job is to try to prove that it is NOT done.${
-        reviewRound(task) > 1 && task.reviewedSha
-          ? `\nThis is review round ${reviewRound(task)}: the rest was reviewed already. Review only what changed since the last round (\`git diff ${task.reviewedSha}..HEAD\`) and whether the findings below were really fixed. Raise nothing about code that did not change since.`
-          : ""
+        task.portReview
+          ? portClause(task.portReview)
+          : reviewRound(task) > 1 && task.reviewedSha
+            ? `\nThis is review round ${reviewRound(task)}: the rest was reviewed already. Review only what changed since the last round (\`git diff ${task.reviewedSha}..HEAD\`) and whether the findings below were really fixed. Raise nothing about code that did not change since.`
+            : ""
       }
 Check every acceptance item, look for bugs, missing tests, weakened tests and things that break existing behaviour.
 ${GUIDE_RULE(base)}
@@ -302,7 +309,7 @@ Do not change any files.`;
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
     shape: `{"verdict": "pass", "findings": [{"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": [], "disputes": [], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: ({ task, base, branch }) => {
-      return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`) for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.
+      return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`) for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.${task.portReview ? portClause(task.portReview) : ""}
 ${GUIDE_RULE(base)}
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
 Each finding says where it is and how someone could misuse it. Tag it "important" only if the change should not ship with it, "nit" for hardening that can wait, and "pre-existing" for a problem the change did not cause. Report a whole class of problem once, listing every place. Never repeat a finding listed below: confirm or dispute it by id instead.

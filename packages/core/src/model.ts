@@ -411,7 +411,12 @@ export interface Task {
    * Main moved on and the task's change no longer applies cleanly: the working copy is on main with the
    * change applied and these files conflicting, until the builder brings it up to date.
    */
-  updating?: { from: string; onto: string; files: readonly string[]; notes?: readonly string[] };
+  updating?: { from: string; onto: string; head?: string; files: readonly string[]; notes?: readonly string[] };
+  /**
+   * The builder ported the change onto a main that moved: the change itself was reviewed already (its version
+   * `head` on `from`), so the next review round looks only at the port, in `files`, with one reviewer.
+   */
+  portReview?: { from: string; head: string; onto: string; files: readonly string[] };
   /** What agents learned about working in the repository during this task, offered to the coordinator at the delivery check. */
   lessons?: readonly Lesson[];
   /** Petrina is running the repository's pre-commit hook, with the working copy's HEAD detached at the base: a restart puts it back. */
