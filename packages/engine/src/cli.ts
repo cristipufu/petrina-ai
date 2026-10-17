@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-// petrina serve   — start the engine and its local API.
+// petrina serve [--new-key] — start the engine and its local API (keeps its key across restarts).
 // petrina state   — print the engine's state (for scripts).
 // petrina do <action-json> — run one action, e.g. '{"name":"addTask","args":[{...}]}'.
 // petrina open [--dev] — open the UI in the browser, connected to the running engine.
 
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,10 +15,25 @@ import { serve } from "./server.js";
 const home = process.env.PETRINA_HOME || join(homedir(), ".petrina");
 const connectionFile = join(home, "engine.json");
 
-async function start(): Promise<void> {
+/**
+ * The key from the last run, so open windows reconnect after a restart. Only trusted from a
+ * regular file (not a link) that this user owns and nobody else can read; otherwise a new one.
+ */
+function previousKey(): string | undefined {
+  try {
+    const info = lstatSync(connectionFile);
+    if (!info.isFile() || (process.getuid && info.uid !== process.getuid()) || (info.mode & 0o077) !== 0) return undefined;
+    const token = (JSON.parse(readFileSync(connectionFile, "utf8")) as { token?: unknown }).token;
+    return typeof token === "string" && /^[A-Za-z0-9_-]{32}$/.test(token) ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function start(newKey: boolean): Promise<void> {
   const port = Number(process.env.PETRINA_PORT || 4317);
   await mkdir(home, { recursive: true, mode: 0o700 });
-  const token = randomBytes(24).toString("base64url");
+  const token = (!newKey && previousKey()) || randomBytes(24).toString("base64url");
   const engine = new Engine(home);
   const ui = resolve(import.meta.dir, "../../../apps/desktop/dist");
   const server = serve(engine, { port, token, ...(existsSync(ui) ? { ui } : {}) });
@@ -56,7 +71,7 @@ function open(dev: boolean): void {
 }
 
 const [command, ...rest] = process.argv.slice(2);
-if (command === "serve") await start();
+if (command === "serve") await start(process.argv.includes("--new-key"));
 else if (command === "open") open(rest.includes("--dev"));
 else if (command === "state") console.log(JSON.stringify(await call("/api/state"), null, 2));
 else if (command === "do") console.log(JSON.stringify(await call("/api/action", { method: "POST", body: rest.join(" ") }), null, 2));
