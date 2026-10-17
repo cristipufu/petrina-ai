@@ -298,6 +298,10 @@ export interface Task {
   fixing: boolean;
   /** Changes were asked at this design check: earlier checks of the same design pass by themselves on the way back to it. */
   returnToCheck?: number;
+  /** The last time Petrina ran the product's checks on this task, and on which commit. */
+  checks?: { at: number; sha?: string; results: readonly CheckRun[] };
+  /** How many times failing checks sent the work back right before the delivery check. */
+  checkReturns?: number;
   agent?: ActiveAgent;
   statusLine: string;
   createdAt: number;
@@ -387,6 +391,31 @@ export interface Product {
   approveDelivery?: boolean;
   /** Which part of the version a release bumps. Defaults to patch. */
   releaseBump?: "patch" | "minor" | "major";
+  /** The commands that prove this product works. Petrina runs them itself; unset until found. */
+  checks?: readonly ProductCheck[];
+  /** Who set the checks: the Check finder agent, or the coordinator by hand (never replaced on its own). */
+  checksBy?: "finder" | "coordinator";
+  /** A fingerprint of the CI and build files the finder read: when they change, it looks again. */
+  checksFingerprint?: string;
+}
+
+/** One command that proves a product works, run as an argument array (never through a shell). */
+export interface ProductCheck {
+  name: string;
+  argv: readonly string[];
+  /** Why this command, in plain words (for example: "CI runs it on every pull request"). */
+  why?: string;
+}
+
+/** What really happened when Petrina ran a check. */
+export interface CheckRun {
+  name: string;
+  command: string;
+  ok: boolean;
+  ms: number;
+  /** The end of the command's output, as plain text. */
+  output: string;
+  timedOut?: boolean;
 }
 
 export interface Pool {

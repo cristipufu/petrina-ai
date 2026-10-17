@@ -16,7 +16,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { TAKE_OVER_WORDS, type Finding, type Objection, type Role, type Stage, type State, type Task } from "@petrina/core";
+import { TAKE_OVER_WORDS, type CheckRun, type Finding, type Objection, type Role, type Stage, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, deliveryText, duration, profileText, safeUrl, STATE_LABEL, type Lookup } from "../lib";
 import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
@@ -633,17 +633,26 @@ function CallWords({ text }: { text: string }) {
 
 function ReviewView({ task, find }: { task: Task; find: Lookup }) {
   const reviewing = task.plan?.stages.some((stage, index) => stage.kind === "review-chain" && index <= task.stageIndex) || task.state === "pr-open" || task.state === "done";
-  if (task.findings.length === 0) return <div className="empty-state">{reviewing ? "No findings. Every reviewer passed it." : "Reviews start after the build."}</div>;
+  const runs = task.checks?.results ?? [];
+  if (task.findings.length === 0 && runs.length === 0) return <div className="empty-state">{reviewing ? "No findings. Every reviewer passed it." : "Reviews start after the build."}</div>;
 
   const findings = openFirst(task.findings.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" })));
   const open = findings.filter((finding) => finding.status === "open").length;
+  // Petrina's own findings that aren't failing checks come from the tamper check.
+  const tampered = task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed"));
 
   return (
     <>
-      <p className="tamper">
-        <ShieldCheck size={16} aria-hidden="true" />
-        Tamper check passed: no tests were removed, weakened or skipped.
-      </p>
+      {runs.length > 0 && <ChecksSection runs={runs} at={task.checks!.at} />}
+      {reviewing && (
+        <p className="tamper">
+          <ShieldCheck size={16} aria-hidden="true" />
+          {tampered ? "Tamper check found tests removed, weakened or skipped: see the findings below." : "Tamper check passed: no tests were removed, weakened or skipped."}
+        </p>
+      )}
+      {findings.length === 0 ? (
+        <p className="quiet-text">No findings. Every reviewer passed it.</p>
+      ) : (
       <section className="sheet-section">
         <h2>
           Findings <span className="quiet-text num">{open > 0 ? `${open} open` : "all settled"}</span>
@@ -654,6 +663,49 @@ function ReviewView({ task, find }: { task: Task; find: Lookup }) {
           ))}
         </ol>
       </section>
+      )}
     </>
+  );
+}
+
+/** What Petrina saw when it ran the product's checks itself: evidence, never an agent's word. */
+function ChecksSection({ runs, at }: { runs: readonly CheckRun[]; at: number }) {
+  const failed = runs.filter((run) => !run.ok).length;
+  const when = ago(at, Date.now());
+  return (
+    <section className="sheet-section">
+      <h2>
+        Checks <span className="quiet-text num">{failed ? `${failed} of ${runs.length} failed` : `all ${runs.length} passed`} · run by Petrina {when === "now" ? "just now" : `${when} ago`}</span>
+      </h2>
+      <ol className="issues">
+        {runs.map((run) => (
+          <CheckItem key={run.name} run={run} />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function CheckItem({ run }: { run: CheckRun }) {
+  const [open, setOpen] = useState(!run.ok);
+  return (
+    <li className="issue">
+      <div className="issue-status">
+        <span className={`label ${run.ok ? "ok" : "bad"}`}>{run.ok ? "Passed" : run.timedOut ? "Too slow" : "Failed"}</span>
+        <span aria-hidden="true">·</span>
+        <span className="issue-text">{run.name}</span>
+        <span aria-hidden="true">·</span>
+        <span className="num">{Math.max(1, Math.round(run.ms / 1000))}s</span>
+      </div>
+      <p className="issue-who mono">{run.command}</p>
+      {run.output && (
+        <>
+          <button className="linkish" onClick={() => setOpen((on) => !on)}>
+            {open ? "Hide the output" : "Show the output"}
+          </button>
+          {open && <pre className="check-output">{run.output}</pre>}
+        </>
+      )}
+    </li>
   );
 }

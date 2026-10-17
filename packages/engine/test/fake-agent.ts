@@ -37,6 +37,8 @@ export interface Scenario {
    */
   /** "silent": the first handshake after it is set never answers at all (later ones do). */
   reopen?: "resume" | "load" | "stall" | "silent";
+  /** What the Check finder hands back: a passing check (default) or a failing one. */
+  checks?: "pass" | "fail";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
   restarts?: number;
 }
@@ -217,6 +219,11 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (!text.includes("The coordinator answered")) return done({ needsInput: { question: "Should the greeting be formal?", options: ["Formal", "Casual"] } });
       return done({ ...brief, answers: [] });
     }
+    case "check finder":
+      return done({
+        summary: "Checked with git, which every test machine has.",
+        checks: plan.checks === "fail" ? [{ name: "Tests", argv: ["git", "no-such-subcommand-petrina"], why: "A check that fails, for tests" }] : [{ name: "Version", argv: ["git", "--version"], why: "A check that passes, for tests" }],
+      });
     case "design reviewer":
       if (plan.planner === "limits" && !text.includes("Objections so far")) return done({ objections: [{ text: "Explain who sees the greeting.", blocking: true }] });
       // "[follow-up]": only a non-blocking suggestion, so the design settles with it undecided.

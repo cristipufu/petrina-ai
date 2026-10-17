@@ -69,6 +69,17 @@ export const BUILT_IN_ROLES: readonly Role[] = [
     column: "building",
   },
   {
+    id: "check-finder",
+    name: "Check finder",
+    icon: "flask",
+    tone: "green",
+    purpose: "Works out, once per product, which commands prove it works. Petrina runs them itself on every task. Always run by Petrina, never planned.",
+    canEdit: false,
+    sees: "The repository, its CI workflows, build files and README.",
+    handsBack: "The product's checks as exact commands, each with why.",
+    column: "reviewing",
+  },
+  {
     id: "tester",
     name: "Tester",
     icon: "flask",

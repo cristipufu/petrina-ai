@@ -55,6 +55,14 @@ export const BuildResult = z.object({
   tests: z.string().optional(),
 });
 
+export const CheckFinderResult = z.object({
+  summary: z.string().min(3),
+  checks: z
+    .array(z.object({ name: z.string().trim().min(2).max(40), argv: z.array(z.string().min(1)).min(1).max(40), why: z.string().trim().min(3).max(200) }))
+    .min(1)
+    .max(8),
+});
+
 export const TestResult = z.object({
   summary: z.string().min(3),
   checks: z.array(z.object({ text: z.string(), pass: z.boolean() })).default([]),
@@ -154,6 +162,7 @@ const SHAPES: Record<string, string> = {
   "ux-designer": `{"summary": "The screens and words you propose", "notes": ["One note per line"]}`,
   builder: `{"summary": "What you built, in plain language", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result"}`,
   tester: `{"summary": "How it went", "checks": [{"text": "An acceptance item", "pass": true}]}`,
+  "check-finder": `{"summary": "How this product is checked, in one sentence", "checks": [{"name": "Tests", "argv": ["dotnet", "test"], "why": "CI runs it on every pull request"}]}`,
   "code-reviewer": `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "blocking", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}]}`,
   shipper: `{"summary": "What you delivered", "prNumber": 12, "prUrl": "https://github.com/...", "tag": "v1.2.3", "releaseUrl": "https://github.com/...", "sha": "<commit sha on the default branch>"}`,
 };
@@ -182,7 +191,8 @@ Rules:
 - Size the plan to the task. A small fix can be a builder and two reviewers. Something new deserves research, a converge design, a design gate, a builder, maybe a tester, and a review chain.
 - Always include exactly one builder stage before the review chain.
 - Prefer putting the reviewer of a piece of work on a different tool than its author.
-- Do not add delivery stages; Petrina adds them.`;
+- Do not add delivery stages; Petrina adds them.
+- Never plan the Check finder: Petrina runs it, and runs the product's checks itself before every review and delivery.`;
     }
     case "researcher":
       return "Research what users expect from this and how good products solve it. Look at the repository to understand the current state. Do not change any files.";
@@ -200,14 +210,21 @@ If nothing blocking is left, return an empty or non-blocking list.${task.objecti
       return "Shape the screens, layout and words users will see for this change, following the product's existing design. Do not change any files: describe the design in your notes.";
     case "builder":
       return `Implement the task in this working copy. Follow the design brief and acceptance checklist below when there is one.
-Keep the code consistent with the codebase, add or update tests, and run the relevant tests and build before you finish.
+Keep the code consistent with the codebase and add or update tests.
+Before you finish, run the product's full checks (every one listed below, or else its whole type check, lint, test suite and build), not just the tests you touched, and fix whatever fails. ${task.fixing ? "This holds after fixing review findings too: the work goes back to review only with every check passing." : "The work goes to review only with every check passing."} Petrina runs them again itself after you finish, and failures come straight back to you.
 ${task.fixing ? "You are fixing the review findings listed below. Fix every blocking one." : ""}
 Do not commit, push or open pull requests: Petrina commits your work.`;
     case "tester":
       return "Run the product and check every acceptance item like a user would. Do not change files. Report each check as pass or fail.";
+    case "check-finder":
+      return `Work out which commands prove this product works, so Petrina can run them itself on every task. Read the repository the way a careful developer joining the team would: its CI workflows first (for example .github/workflows, azure-pipelines.yml, .gitlab-ci.yml), then build files (package.json, Cargo.toml, *.csproj or *.sln, go.mod, pyproject.toml, Package.swift, *.xcodeproj, build.gradle, pom.xml, Makefile) and the README.
+Pick the checks CI relies on that run on this machine without secrets, deploy keys or cloud access: usually type check, lint, unit tests and a build. Prefer the exact commands CI runs. Skip deploys, releases, publishing and anything needing credentials.
+Give each command as an argument array, exactly as it should run from the repository root (no shell, no pipes, no "&&"). If a check needs a different folder, use the tool's own option for it (for example "--cwd", "-C", "--project").
+You may run a command to confirm it works, but keep it quick, and do not change files. Hand back between one and eight checks, fastest first.`;
     case "code-reviewer":
       return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it. Your job is to try to prove that it is NOT done.
-Check every acceptance item, look for bugs, missing tests, weakened tests and things that break existing behaviour. Run the tests.
+Check every acceptance item, look for bugs, missing tests, weakened tests and things that break existing behaviour.
+Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again. Run a single test only when you need it to prove a finding.
 Each finding is pass or fail with where it is and the evidence; never give a score. Mark a finding blocking only if the change should not ship with it.
 If earlier reviewers' findings are listed below, confirm the ones you agree with by id. Dispute the ones you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.
 Do not change any files.`;
@@ -289,7 +306,14 @@ export function formatObjections(objections: readonly Objection[]): string {
 }
 
 export function formatFindings(findings: readonly Finding[]): string {
-  return findings.map((finding) => `- [${finding.id}] ${finding.severity} (${finding.status}): ${finding.text}${finding.where ? ` at ${finding.where}` : ""}`).join("\n");
+  return findings
+    .map((finding) => {
+      const line = `- [${finding.id}] ${finding.severity} (${finding.status}): ${finding.text}${finding.where ? ` at ${finding.where}` : ""}`;
+      // Evidence matters most where Petrina itself found the problem (a failing check): the builder sees the output.
+      const evidence = finding.evidence && finding.raisedBy === "petrina" && finding.status === "open" ? `\n  Evidence:\n${finding.evidence.slice(-1200).replace(/^/gm, "    ")}` : "";
+      return line + evidence;
+    })
+    .join("\n");
 }
 
 /** Where an agent was in a step when Petrina restarted: for the restart line and the fresh start's summary. */

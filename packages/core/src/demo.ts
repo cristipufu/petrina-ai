@@ -6,7 +6,20 @@ import type { DeliveryMode, InboxItem, Product, State, Task, TaskKind } from "./
 import { Simulator, type Trigger, type Triggers } from "./sim.js";
 
 export const DEMO_PRODUCTS: readonly Product[] = [
-  { id: "shop", name: "Shop", repo: "acme/shop", tone: "blue", delivery: "pull-request", approveDelivery: true },
+  {
+    id: "shop",
+    name: "Shop",
+    repo: "acme/shop",
+    tone: "blue",
+    delivery: "pull-request",
+    approveDelivery: true,
+    checks: [
+      { name: "Type check", argv: ["bun", "run", "typecheck"], why: "CI runs it on every pull request" },
+      { name: "Tests", argv: ["bun", "run", "test"], why: "CI runs it on every pull request" },
+      { name: "Build", argv: ["bun", "run", "build"], why: "The release workflow builds before it ships" },
+    ],
+    checksBy: "finder",
+  },
   { id: "notes", name: "Notes", repo: "acme/notes", tone: "green", delivery: "release", approveDelivery: true },
   { id: "site", name: "Site", repo: "acme/site", tone: "orange", delivery: "local", approveDelivery: false },
 ];

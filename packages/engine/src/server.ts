@@ -19,6 +19,7 @@ const How = z.enum(["open", "copy"]);
 const Action = z.discriminatedUnion("name", [
   z.object({ name: z.literal("addProduct"), args: z.tuple([z.string().min(1), z.string().optional()]) }),
   z.object({ name: z.literal("removeProduct"), args: z.tuple([z.string()]) }),
+  z.object({ name: z.literal("setProductChecks"), args: z.tuple([z.string(), z.union([z.null(), z.array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) })).max(12)])]) }),
   z.object({ name: z.literal("updateProduct"), args: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean() })]) }),
   z.object({ name: z.literal("setProductDelivery"), args: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]) }),
   z.object({

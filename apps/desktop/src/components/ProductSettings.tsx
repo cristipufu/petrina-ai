@@ -180,6 +180,7 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
               Ask me before shipping
             </label>
           </div>
+          <ProductChecks product={product} live={live} />
           <div className="product-removal">
             <button
               className="btn danger"
@@ -219,6 +220,93 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The commands that prove this product works. The Check finder works them out from the repository
+ * (its CI first); Petrina runs them itself on every task. The coordinator can set them by hand.
+ */
+function ProductChecks({ product, live }: { product: Product; live: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const checks = product.checks ?? [];
+  const start = () => {
+    setText(checks.map((check) => `${check.name}: ${check.argv.map((part) => (/\s/.test(part) ? `"${part}"` : part)).join(" ")}`).join("\n"));
+    setError(undefined);
+    setEditing(true);
+  };
+  const run = async (checksOrNull: { name: string; command: string }[] | null) => {
+    if (!live || busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await sim.setProductChecks(product.id, checksOrNull);
+      setEditing(false);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = () => {
+    const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+    const parsed = lines.map((line) => {
+      const colon = line.indexOf(":");
+      return colon > 0 ? { name: line.slice(0, colon).trim(), command: line.slice(colon + 1).trim() } : { name: line.split(/\s+/)[0] ?? line, command: line };
+    });
+    void run(parsed.filter((check) => check.name && check.command));
+  };
+  const source = product.checksBy === "coordinator" ? "Set by you." : product.checksBy === "finder" ? "Found by the Check finder from the repository, its CI first. It looks again when the CI or build files change." : "Not found yet: the Check finder works them out at this product's first review.";
+  return (
+    <div className="product-checks">
+      <div className="product-checks-title">Checks Petrina runs</div>
+      <p className="setting-hint">Petrina runs these itself before every review and right before your delivery check, so a passing check is evidence, never an agent's word. {source}</p>
+      {editing ? (
+        <>
+          <textarea className="field mono" rows={Math.max(3, text.split("\n").length + 1)} value={text} onChange={(event) => setText(event.target.value)} aria-label="Checks, one per line as Name: command" placeholder={"Tests: dotnet test\nBuild: dotnet build --nologo"} />
+          <p className="setting-hint">One per line, as Name: command. Commands run from the repository root without a shell, so no pipes or &&.</p>
+          <div className="row-actions">
+            <button className="btn primary" disabled={!live || busy} onClick={save}>
+              Save checks
+            </button>
+            <button className="btn quiet" disabled={busy} onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          {checks.length > 0 && (
+            <ul className="check-list">
+              {checks.map((check) => (
+                <li key={check.name}>
+                  <b>{check.name}</b> <span className="mono quiet-text">{check.argv.join(" ")}</span>
+                  {check.why && <span className="quiet-text"> · {check.why}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="row-actions">
+            <button className="btn" disabled={!live || busy} onClick={start}>
+              {checks.length ? "Edit checks" : "Set checks by hand"}
+            </button>
+            {product.checksBy !== undefined && (
+              <button className="btn quiet" disabled={!live || busy} onClick={() => void run(null)}>
+                Find again
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

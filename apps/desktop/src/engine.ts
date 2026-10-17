@@ -41,6 +41,7 @@ export interface Actions {
   addReviewer(taskId: Id, stageId: Id, profileId: Id): void;
   setProductDelivery(productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean): void;
   updateProduct(productId: Id, settings: ProductSettings): Promise<unknown>;
+  setProductChecks(productId: Id, checks: { name: string; command: string }[] | null): Promise<unknown>;
   removeProduct(productId: Id): Promise<unknown>;
   addTask(input: Parameters<Simulator["addTask"]>[0]): unknown;
   addProduct(path: string, name?: string): Promise<unknown>;
@@ -453,6 +454,7 @@ class EngineClient implements Store {
   addReviewer = (taskId: Id, stageId: Id, profileId: Id) => this.fire("addReviewer", taskId, stageId, profileId);
   setProductDelivery = (productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean) => this.fire("setProductDelivery", productId, delivery, approveDelivery);
   updateProduct = (productId: Id, settings: ProductSettings) => this.call("updateProduct", productId, settings);
+  setProductChecks = (productId: Id, checks: { name: string; command: string }[] | null) => this.call("setProductChecks", productId, checks);
   removeProduct = (productId: Id) => this.call("removeProduct", productId);
   addTask = (input: Parameters<Simulator["addTask"]>[0]) => this.call("addTask", input);
   addProduct = (path: string, name?: string) => this.call("addProduct", path, name);
@@ -501,6 +503,7 @@ class DemoStore implements Store {
   addReviewer = (taskId: Id, stageId: Id, profileId: Id) => this.simulator.addReviewer(taskId, stageId, profileId);
   setProductDelivery = (productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean) => this.simulator.setProductDelivery(productId, delivery, approveDelivery);
   updateProduct = async (productId: Id, settings: ProductSettings) => this.simulator.updateProduct(productId, settings);
+  setProductChecks = async () => undefined;
   removeProduct = async (productId: Id) => this.simulator.removeProduct(productId);
   addTask = (input: Parameters<Simulator["addTask"]>[0]) => this.simulator.addTask(input);
   addProduct = async () => {

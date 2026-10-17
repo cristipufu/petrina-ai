@@ -48,6 +48,7 @@ import {
   type InboxKind,
   type Launched,
   type Product,
+  type ProductCheck,
   type ProductSettings,
   type Role,
   type Stage,
@@ -64,6 +65,7 @@ import { agentEnv } from "./env.js";
 import {
   BriefResult,
   BuildResult,
+  CheckFinderResult,
   buildPrompt,
   EARLIER_ATTEMPT,
   formatFindings,
@@ -91,6 +93,7 @@ import {
 import { Store } from "./store.js";
 import { askMode, clearEnded, detectTerminals, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, thisMachine, writeLauncher } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
+import { checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "./checks.js";
 
 type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
 type MState = DeepMutable<State>;
@@ -99,6 +102,7 @@ type MStage = DeepMutable<Stage>;
 
 const PLANNER_PROFILE = "opus-high";
 const SHIPPER_PROFILE = "opus-high";
+const CHECK_FINDER_PROFILE = "opus-high";
 const TONES: readonly Tone[] = ["blue", "green", "orange", "violet", "pink", "teal", "indigo", "purple", "amber", "slate"];
 const MAX_SESSION_LINES = 800;
 const MAX_TIMELINE = 400;
@@ -127,6 +131,8 @@ export interface EngineOptions {
   toolPath?: (toolId: Id) => string | undefined;
   /** Tests: the terminals on this machine. */
   terminals?: () => FoundTerminal[];
+  /** Tests: how long one of a product's checks may run. */
+  checkTimeoutMs?: number;
 }
 
 /** What the window adds to an answer, so it still counts when the question is gone (a restart dropped it). */
@@ -231,6 +237,27 @@ export class Engine {
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) return;
     this.updateProduct(productId, { name: product.name, delivery, approveDelivery });
+  }
+
+  /**
+   * The coordinator sets a product's checks by hand (never replaced on its own), or clears them so
+   * the Check finder looks again at the next review.
+   */
+  setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
+    const product = this.s.products.find((entry) => entry.id === productId);
+    if (!product) throw new Error("This product is no longer in Petrina.");
+    if (checks === null) {
+      delete product.checks;
+      delete product.checksBy;
+      delete product.checksFingerprint;
+    } else {
+      const parsed = checks.map((check) => ({ name: check.name.trim(), argv: parseCommand(check.command) })).filter((check) => check.name && check.argv.length);
+      if (!parsed.length) throw new Error("Give at least one check, as a name and a command.");
+      product.checks = parsed;
+      product.checksBy = "coordinator";
+      delete product.checksFingerprint;
+    }
+    this.commit();
   }
 
   updateProduct(productId: Id, settings: ProductSettings): void {
@@ -1135,6 +1162,8 @@ export class Engine {
             continue;
           }
           delete current.returnToCheck;
+          // Right before the coordinator is asked to ship, the checks run again on what would ship.
+          if (stage.gate === "delivery" && (await this.checksBeforeDelivery(current, signal))) continue;
           this.gate(current, stage.gate ?? "delivery");
           return;
         }
@@ -1386,6 +1415,12 @@ export class Engine {
         }
       }
       this.log(task, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
+      // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
+      const checks = await this.ensureChecks(task, signal);
+      if ((await this.runProductChecks(task, checks, signal)) > 0) {
+        this.log(task, "warn", "Reviewers wait until the checks pass");
+        return this.closeReviewRound(task, stage, round);
+      }
     }
     const profileId = stage.profileIds[task.sub] ?? stage.profileIds[0] ?? "sol-xhigh";
     const result = await this.turn(task, "code-reviewer", profileId, () => this.sectionsFor(task, "code-reviewer"), ReviewResult, signal);
@@ -1417,6 +1452,11 @@ export class Engine {
       this.commit();
       return "continue";
     }
+    return this.closeReviewRound(task, stage, round);
+  }
+
+  /** The end of a review round: back to the builder with what is blocking, or on towards delivery. */
+  private closeReviewRound(task: MTask, stage: MStage, round: number): "continue" | "stop" {
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
     const builder = lastIndex(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
     if (open.length > 0 && builder >= 0 && round < (stage.maxRounds ?? 2)) {
@@ -1646,12 +1686,20 @@ export class Engine {
     } else if ((roleId === "architect" || roleId === "design-reviewer") && task.objections.length) {
       sections.push({ title: "Objections so far", body: formatObjections(task.objections as Task["objections"]) });
     }
+    const checks = this.productOf(task)?.checks;
+    if (roleId === "builder" && checks?.length) {
+      sections.push({ title: "The product's checks (run every one in full before you finish)", body: checks.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") });
+    }
     if (roleId === "builder" && task.fixing) {
       const open = task.findings.filter((finding) => finding.status === "open");
       if (open.length) sections.push({ title: "Review findings to fix", body: formatFindings(open as Task["findings"]) });
     }
     if ((roleId === "code-reviewer" || roleId === "shipper" || roleId === "tester") && task.report) {
       sections.push({ title: "What the builder reports", body: [task.report.summary, ...task.report.changes.map((change) => `- ${change}`), task.report.tests ? `Tests: ${task.report.tests}` : ""].filter(Boolean).join("\n") });
+    }
+    if ((roleId === "code-reviewer" || roleId === "tester" || roleId === "shipper") && task.checks?.results.length) {
+      const lines = task.checks.results.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})`);
+      sections.push({ title: "The product's checks, run by Petrina itself on this commit (evidence, not an agent's word)", body: lines.join("\n") });
     }
     if (roleId === "code-reviewer" && task.findings.length) sections.push({ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) });
     if (roleId === "shipper") {
@@ -1916,7 +1964,7 @@ export class Engine {
       design: callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check",
       delivery: "Reviews done. Waiting for your OK to ship",
     };
-    const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? checksLine(task as unknown as Task) : undefined;
     this.raise(task, gate, titles[gate], false, body ? { body } : {});
     task.statusLine = status[gate];
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
@@ -1966,6 +2014,101 @@ export class Engine {
   /** Keep what the coordinator said for the current step, until the step finishes. */
   private stepNote(task: MTask, kind: StepNote["kind"], text: string, extra: { id?: Id; about?: string } = {}): void {
     task.stepNotes = [...(task.stepNotes ?? []), { id: extra.id ?? this.id(task.id), at: Date.now(), kind, text, ...(extra.about ? { about: extra.about } : {}) }];
+  }
+
+  /**
+   * The product's checks. The Check finder works them out once per product, and again only when the
+   * CI or build files it read have changed or a check could not even start. Checks the coordinator set
+   * by hand are never replaced. Runs inside a step that already holds an agent slot.
+   */
+  private async ensureChecks(task: MTask, signal: AbortSignal): Promise<readonly ProductCheck[]> {
+    const product = this.productOf(task);
+    if (!product || !task.worktree) return [];
+    if (product.checksBy === "coordinator") return product.checks ?? [];
+    const fingerprint = checksFingerprint(task.worktree);
+    const unstartable = task.checks?.results.some((run) => run.output.startsWith("Could not start")) ?? false;
+    if (product.checks && product.checksFingerprint === fingerprint && !unstartable) return product.checks;
+    const declared = detectChecks(task.worktree);
+    // A side errand inside the step: it leaves the step's own restart bookkeeping as it found it.
+    const attempts = task.stepAttempts;
+    const conversation = task.conversation;
+    const restore = () => {
+      if (attempts === undefined) delete task.stepAttempts;
+      else task.stepAttempts = attempts;
+      if (conversation === undefined) delete task.conversation;
+      else task.conversation = conversation;
+    };
+    const why = !product.checks ? "first time" : unstartable ? "a check could not start" : "the CI or build files changed";
+    try {
+      const result = await this.turn(
+        task,
+        "check-finder",
+        CHECK_FINDER_PROFILE,
+        () => [
+          ...this.sectionsFor(task, "check-finder"),
+          ...(product.checks ? [{ title: "The checks used until now", body: product.checks.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") }] : []),
+          ...(declared.length ? [{ title: "Commands the repository declares (a starting point, not the answer)", body: declared.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") }] : []),
+        ],
+        CheckFinderResult,
+        signal,
+        { status: "Working out how to check this product" },
+      );
+      restore();
+      product.checks = result.checks.map((check) => ({ name: check.name, argv: check.argv, why: check.why }));
+      this.log(task, "done", `Found how to check ${product.name} (${why}): ${product.checks.map((check) => check.name).join(", ")}`, "check-finder", CHECK_FINDER_PROFILE);
+    } catch (error) {
+      if (signal.aborted || error instanceof Aborted) throw error;
+      restore();
+      const fallback: ProductCheck[] = product.checks ? [...product.checks] : declared;
+      product.checks = fallback.map((check) => ({ name: check.name, argv: [...check.argv], ...(check.why ? { why: check.why } : {}) }));
+      this.log(task, "warn", `The Check finder could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`);
+    }
+    product.checksBy = "finder";
+    product.checksFingerprint = fingerprint;
+    this.commit();
+    return product.checks ?? [];
+  }
+
+  /** Petrina runs the product's checks itself, without credentials. Failures become blocking findings, with the output as evidence. */
+  private async runProductChecks(task: MTask, checks: readonly ProductCheck[], signal: AbortSignal): Promise<number> {
+    if (!checks.length || !task.worktree) return 0;
+    task.statusLine = "Running the product's checks";
+    this.commit();
+    const env = { ...agentEnv(process.env, await this.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
+    const results = await runChecks(task.worktree, checks, env, this.options.checkTimeoutMs, signal);
+    if (signal.aborted) throw new Aborted();
+    const sha = await git.head(task.worktree).catch(() => undefined);
+    task.checks = { at: Date.now(), ...(sha ? { sha } : {}), results };
+    const failed = results.filter((run) => !run.ok);
+    for (const run of failed) {
+      const text = `Check failed: ${run.name} (${run.command})`;
+      if (task.findings.some((finding) => finding.text === text && finding.status === "open")) continue;
+      task.findings.push({ id: this.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+    }
+    this.log(task, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : `Checks passed: ${results.map((run) => run.name).join(", ")}`);
+    this.commit();
+    return failed.length;
+  }
+
+  /**
+   * Right before the delivery check: the checks run again when the code changed since they last ran.
+   * A failure sends the work back to the builder, twice at most; after that the coordinator sees it.
+   */
+  private async checksBeforeDelivery(task: MTask, signal: AbortSignal): Promise<boolean> {
+    const product = this.productOf(task);
+    if (!task.worktree || !product?.checks?.length) return false;
+    const sha = await git.head(task.worktree).catch(() => undefined);
+    if (sha && task.checks?.sha === sha && task.checks.results.every((run) => run.ok)) return false;
+    if ((await this.runProductChecks(task, product.checks, signal)) === 0) return false;
+    const builder = lastIndex(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
+    if (builder < 0 || (task.checkReturns ?? 0) >= 2) return false;
+    task.checkReturns = (task.checkReturns ?? 0) + 1;
+    task.stageIndex = builder;
+    task.sub = 0;
+    task.fixing = true;
+    this.log(task, "warn", "Sent back to the builder: the checks failed right before your delivery check");
+    this.commit();
+    return true;
   }
 
   /** The step handed back its result: the next step starts clean, in a new conversation. */
@@ -2220,6 +2363,16 @@ export function recordDisputes(findings: DeepMutable<Finding>[], disputes: reado
     finding.disputes = [...(finding.disputes ?? []), { by, reason: dispute.reason, at }];
     if (finding.raisedBy !== "petrina" && finding.confirmedBy.length === 0) finding.status = "dismissed";
   }
+}
+
+/** One plain line for the delivery check: what Petrina's own run of the checks found. */
+export function checksLine(task: Task): string | undefined {
+  const runs = task.checks?.results;
+  if (!runs?.length) return undefined;
+  const failed = runs.filter((run) => !run.ok);
+  return failed.length
+    ? `Petrina's checks: ${failed.length} of ${runs.length} failed (${failed.map((run) => run.name).join(", ")}).`
+    : `Petrina's checks: all ${runs.length} passed (${runs.map((run) => run.name).join(", ")}).`;
 }
 
 function lastIndex<T>(items: readonly T[], match: (item: T, index: number) => boolean): number {

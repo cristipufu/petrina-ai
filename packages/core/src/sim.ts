@@ -8,6 +8,7 @@ import { composePlan } from "./library.js";
 import { queueNeighbour, queuePlacement } from "./navigation.js";
 import type {
   ActiveAgent,
+  CheckRun,
   Column,
   DeliveryMode,
   DesignBrief,
@@ -70,6 +71,11 @@ export interface NewTask {
 export type MessageMode = "queue" | "interrupt";
 
 const PLANNER_PROFILE = "sonnet-medium";
+const DEMO_CHECKS: CheckRun[] = [
+  { name: "Type check", command: "bun run typecheck", ok: true, ms: 9_000, output: "No errors." },
+  { name: "Tests", command: "bun run test", ok: true, ms: 41_000, output: "212 pass\n0 fail\nRan 212 tests across 31 files." },
+  { name: "Build", command: "bun run build", ok: true, ms: 23_000, output: "Built in 22.4s." },
+];
 
 const GATE_TITLES: Record<GateKind, (title: string) => string> = {
   plan: (title) => `Approve the plan for “${title}”`,
@@ -813,6 +819,8 @@ export class Simulator {
     }
 
     if (stage.kind === "review-chain") {
+      // Petrina runs the product's checks itself before the first reviewer of each round.
+      if (task.sub === 0) task.checks = { at: d.now, results: DEMO_CHECKS };
       if (round === 1 && task.sub === 0) {
         task.findings.push({
           id: this.id(d, task.id),
