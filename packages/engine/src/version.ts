@@ -18,52 +18,62 @@ export function isVersionFile(path: string): boolean {
   return VERSION_FILES.has(path.split("/").at(-1) ?? "");
 }
 
-/** A line that states a version and nothing else, as TOML and lock files write it. */
-const VERSION_LINE = /^\s*version\s*=\s*"([^"]*)"\s*$/;
+/** The keys where a TOML version file states the product's own version. */
+const OWN_TOML_VERSIONS: readonly (readonly string[])[] = [["package", "version"], ["project", "version"], ["workspace", "package", "version"], ["tool", "poetry", "version"]];
 
 /**
  * Whether a version file's change sets the version and nothing else, so no dependency, script or setting can
- * ride along in a release's version commit unreviewed. JSON: the same document once its version fields are
- * put back. TOML and lock files: only lines that state a version changed, each from `from` (the previous
- * release's version, when there is one) to `version`. Plain version files: exactly the version.
+ * ride along in a release's version commit unreviewed. JSON and TOML: the same document once the product's own
+ * version fields are put back, and those say `version`. Cargo.lock: only local packages (no registry source)
+ * move, from `from` (the previous release's version) to `version`. Plain version files: exactly the version.
  */
 export function onlyVersionChanged(path: string, before: string | undefined, after: string | undefined, version: string, from?: string): boolean {
   if (before === undefined || after === undefined) return false;
   const name = path.split("/").at(-1) ?? "";
   if (name === "VERSION" || name === "version.txt") return after.trim() === version;
-  if (name.endsWith(".json")) {
-    let old: unknown;
-    let now: unknown;
-    try {
-      old = JSON.parse(before);
-      now = JSON.parse(after);
-    } catch {
-      return false;
-    }
-    const versions = (doc: unknown): unknown[] => {
-      const root = doc as { version?: unknown; packages?: Record<string, { version?: unknown }> } | null;
-      return [root?.version, ...(name === "package-lock.json" ? [root?.packages?.[""]?.version] : [])];
-    };
-    const reset = (doc: unknown): string => {
-      const copy = JSON.parse(JSON.stringify(doc)) as { version?: unknown; packages?: Record<string, { version?: unknown }> } | null;
-      if (copy && typeof copy === "object" && "version" in copy) copy.version = "";
-      if (name === "package-lock.json" && copy?.packages?.[""] && "version" in copy.packages[""]) copy.packages[""].version = "";
-      return JSON.stringify(copy);
-    };
-    const changed = versions(now).filter((value, index) => value !== versions(old)[index]);
-    return reset(old) === reset(now) && changed.every((value) => value === version);
+  const parse = name.endsWith(".json") ? (text: string) => JSON.parse(text) as unknown : (text: string) => Bun.TOML.parse(text) as unknown;
+  let old: Record<string, unknown>;
+  let now: Record<string, unknown>;
+  try {
+    old = parse(before) as Record<string, unknown>;
+    now = parse(after) as Record<string, unknown>;
+  } catch {
+    return false;
   }
-  const old = before.split("\n");
-  const now = after.split("\n");
-  if (old.length !== now.length) return false;
-  return old.every((line, index) => {
-    if (line === now[index]) return true;
-    const was = VERSION_LINE.exec(line)?.[1];
-    const is = VERSION_LINE.exec(now[index]!)?.[1];
-    // In a lock file, only the product's own entries move: from the version it had to the new one.
-    const own = !name.endsWith(".lock") || from === undefined || was === from;
-    return was !== undefined && is === version && own;
+  if (!old || !now || typeof old !== "object" || typeof now !== "object") return false;
+  if (name === "Cargo.lock") return lockOnlyBumps(old, now, version, from);
+  const keys: readonly (readonly string[])[] = name.endsWith(".json") ? [["version"], ...(name === "package-lock.json" ? [["packages", "", "version"]] : [])] : OWN_TOML_VERSIONS;
+  const changed = keys.map((key) => [get(old, key), get(now, key)] as const).filter(([was, is]) => was !== is);
+  if (changed.some(([, is]) => is !== version)) return false;
+  return JSON.stringify(cleared(old, keys)) === JSON.stringify(cleared(now, keys));
+}
+
+/** Cargo.lock: the same packages, and only local ones (no registry source) change, only their version, from `from` to `version`. */
+function lockOnlyBumps(old: Record<string, unknown>, now: Record<string, unknown>, version: string, from: string | undefined): boolean {
+  if (from === undefined) return false;
+  const was = Array.isArray(old.package) ? (old.package as Record<string, unknown>[]) : [];
+  const is = Array.isArray(now.package) ? (now.package as Record<string, unknown>[]) : [];
+  if (was.length !== is.length || JSON.stringify({ ...old, package: [] }) !== JSON.stringify({ ...now, package: [] })) return false;
+  return was.every((entry, index) => {
+    const next = is[index]!;
+    if (JSON.stringify(entry) === JSON.stringify(next)) return true;
+    const local = entry.source === undefined && next.source === undefined;
+    return local && entry.version === from && next.version === version && JSON.stringify({ ...entry, version: "" }) === JSON.stringify({ ...next, version: "" });
   });
+}
+
+function get(doc: unknown, key: readonly string[]): unknown {
+  return key.reduce<unknown>((at, part) => (at && typeof at === "object" ? (at as Record<string, unknown>)[part] : undefined), doc);
+}
+
+/** A copy with the given version keys emptied, where they exist. */
+function cleared(doc: Record<string, unknown>, keys: readonly (readonly string[])[]): unknown {
+  const copy = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+  for (const key of keys) {
+    const parent = get(copy, key.slice(0, -1));
+    if (parent && typeof parent === "object" && key.at(-1)! in parent) (parent as Record<string, unknown>)[key.at(-1)!] = "";
+  }
+  return copy;
 }
 
 /** A release tag or version number Petrina can count up from, e.g. v1.2.3 or 1.2.3. */

