@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProfile, Pool, Tool, UsageLimit, UsageReport } from "../src/model.js";
-import { chooseProfile, chooseWithRoom, liveLimits, nearLimit, nextExpiry, untilWords, usageLines, waitingWords, withLimit, withReport } from "../src/usage.js";
+import { HOLDING_BACK, byRoom, chooseProfile, chooseWithRoom, headroom, liveLimits, nearLimit, nextExpiry, slowingDown, toolCapNow, untilWords, usageLines, waitingWords, withLimit, withReport } from "../src/usage.js";
 
 const opus: AgentProfile = { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" };
 const opusX: AgentProfile = { id: "opus-xhigh", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "xhigh" };
@@ -124,8 +124,106 @@ describe("usage in words", () => {
       { toolId: "claude-code", name: "Claude Code", text: "weekly 82% · 5-hour 30% · Opus out until Fri 17:00", tone: "out" },
       { toolId: "codex", name: "Codex", text: "not reported", tone: "fine" },
     ]);
-    expect(usageLines({ tools, pool: pool({ usage: [report({ status: "allowed_warning" })] }) }, now)[0]).toMatchObject({ text: "weekly nearly used", tone: "near" });
+    expect(usageLines({ tools, pool: pool({ usage: [report({ status: "allowed_warning" })] }) }, now)[0]).toMatchObject({ text: `weekly nearly used · ${HOLDING_BACK}`, tone: "near" });
     expect(usageLines({ tools, pool: pool({ usage: [report({ utilization: 0.4, resetsAt: now - 1 })] }) }, now)[0]).toMatchObject({ text: "not reported", tone: "fine" });
+  });
+
+  it("says when each window resets, and in one line when Petrina is starting fewer agents on a tool", () => {
+    const thursday = new Date(2026, 9, 22, 13, 0).getTime();
+    const lines = usageLines({ tools, pool: pool({ usage: [report({ toolId: "codex", utilization: 0.84, resetsAt: thursday }), report({ utilization: 0.5, resetsAt: now + 2 * HOUR }), report({ kind: "five_hour", utilization: 0.1, resetsAt: now + HOUR })] }) }, now);
+    expect(lines).toEqual([
+      { toolId: "claude-code", name: "Claude Code", text: "weekly 50%, resets 14:00 · 5-hour 10%, resets 13:00", tone: "fine" },
+      { toolId: "codex", name: "Codex", text: `weekly 84%, resets Thu 13:00 · ${HOLDING_BACK}`, tone: "near" },
+    ]);
+    // Out already says it all.
+    expect(usageLines({ tools, pool: pool({ usage: [report({ toolId: "codex", utilization: 1, status: "rejected", resetsAt: thursday })], limited: [out("codex", thursday)] }) }, now)[1]).toEqual({ toolId: "codex", name: "Codex", text: "weekly 100%, resets Thu 13:00 · out until Thu 13:00", tone: "out" });
+  });
+});
+
+describe("balancing by what is left", () => {
+  it("measures room as the unused share of the tightest window per hour until it resets", () => {
+    // 20% left with an hour to go beats 50% left with a week to go.
+    expect(headroom(pool({ usage: [report({ utilization: 0.8, resetsAt: now + HOUR })] }), opus, now)).toBeCloseTo(0.2);
+    expect(headroom(pool({ usage: [report({ utilization: 0.5, resetsAt: now + 7 * 24 * HOUR })] }), opus, now)).toBeCloseTo(0.5 / 168);
+    // The tightest window counts: the 5-hour one here (0.02 of it left per hour, against 0.009 of the week).
+    expect(headroom(pool({ usage: [report({ utilization: 0.1, resetsAt: now + 100 * HOUR }), report({ kind: "five_hour", utilization: 0.98, resetsAt: now + 4 * HOUR })] }), opus, now)).toBeCloseTo(0.005);
+    // A warning with no number counts as 90% used; no reset time counts as within the hour; out is nothing.
+    expect(headroom(pool({ usage: [report({ status: "allowed_warning" })] }), opus, now)).toBeCloseTo(0.1);
+    expect(headroom(pool({ usage: [report({ status: "rejected", utilization: 1, resetsAt: now + HOUR })] }), opus, now)).toBe(0);
+    // A tool that said nothing, or whose report no longer counts, has no number.
+    expect(headroom(pool(), opus, now)).toBeUndefined();
+    expect(headroom(pool({ usage: [report({ utilization: 0.5, resetsAt: now - 1 })] }), opus, now)).toBeUndefined();
+    // A report about one model's week is about that model only; a whole tool counts every report.
+    expect(headroom(pool({ usage: [report({ kind: "seven_day_opus", model: "opus", utilization: 0.9, resetsAt: now + HOUR })] }), sonnet, now)).toBeUndefined();
+    expect(headroom(pool({ usage: [report({ kind: "seven_day_opus", model: "opus", utilization: 0.9, resetsAt: now + HOUR })] }), { toolId: "claude-code" }, now)).toBeCloseTo(0.1);
+  });
+
+  it("puts the roomiest first, keeps order among equals, and lets one that said nothing tie with the roomiest", () => {
+    const rooms: Record<string, number | undefined> = { a: 0.1, b: 0.5, c: undefined, d: 0.5 };
+    expect(byRoom(["a", "b", "c", "d"], (item) => rooms[item])).toEqual(["b", "c", "d", "a"]);
+    expect(byRoom(["a", "b"], () => undefined)).toEqual(["a", "b"]);
+  });
+
+  it("sends a stand-in to the tool with more of its limit left, after independence, nearness and effort", () => {
+    const grok: AgentProfile = { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" };
+    const grokX: AgentProfile = { id: "grok-xhigh", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "xhigh" };
+    const list = [opusX, opus, solX, sol, grokX, grok, sonnet];
+    const toolList: Tool[] = [...tools, { id: "grok", name: "Grok", command: [], status: "ready", models: [] }];
+    const claudeOut = out("claude-code", now + HOUR);
+    const state = (usage: UsageReport[]) => ({ profiles: list, tools: toolList, pool: pool({ limited: [claudeOut], usage }) });
+    // Codex at 70% of a week, Grok at 20%: Grok has more room, so it takes the step.
+    const codexBusy = [report({ toolId: "codex", utilization: 0.7, resetsAt: now + 100 * HOUR }), report({ toolId: "grok", utilization: 0.2, resetsAt: now + 100 * HOUR })];
+    expect(chooseProfile(state(codexBusy), opus, now)).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseProfile(state(codexBusy), opusX, now)).toEqual({ kind: "substitute", profile: grokX });
+    // The other way round, and the same effort still comes before room.
+    const grokBusy = [report({ toolId: "codex", utilization: 0.2, resetsAt: now + 100 * HOUR }), report({ toolId: "grok", utilization: 0.7, resetsAt: now + 100 * HOUR })];
+    expect(chooseProfile(state(grokBusy), opus, now)).toEqual({ kind: "substitute", profile: sol });
+    expect(chooseProfile({ profiles: [opus, solX, grok], tools: toolList, pool: pool({ limited: [claudeOut], usage: codexBusy }) }, opus, now)).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseProfile({ profiles: [opus, solX, grokX], tools: toolList, pool: pool({ limited: [claudeOut], usage: codexBusy }) }, opusX, now)).toEqual({ kind: "substitute", profile: grokX });
+    // Reset time scales it: Codex at 70% resetting in two hours has more room per hour than Grok at 20% with four days to go.
+    const codexSoon = [report({ toolId: "codex", utilization: 0.7, resetsAt: now + 2 * HOUR }), report({ toolId: "grok", utilization: 0.2, resetsAt: now + 96 * HOUR })];
+    expect(chooseProfile(state(codexSoon), opus, now)).toEqual({ kind: "substitute", profile: sol });
+    // A tool that said nothing is not pushed behind one that has: the list's order decides, as before.
+    expect(chooseProfile(state([report({ toolId: "codex", utilization: 0.7, resetsAt: now + 100 * HOUR })]), opus, now)).toEqual({ kind: "substitute", profile: sol });
+    // Near a limit still loses to not near, whatever the room says.
+    const codexNear = [report({ toolId: "codex", utilization: 0.92, resetsAt: now + HOUR }), report({ toolId: "grok", utilization: 0.5, resetsAt: now + 100 * HOUR })];
+    expect(chooseProfile(state(codexNear), opus, now)).toEqual({ kind: "substitute", profile: grok });
+    // An equal profile for a tool that is near: the roomier of the others.
+    const claudeNear = pool({ usage: [report({ utilization: 0.95, resetsAt: now + HOUR }), ...codexBusy] });
+    expect(chooseProfile({ profiles: list, tools: toolList, pool: claudeNear }, opus, now)).toEqual({ kind: "substitute", profile: grok });
+    // A review planned on Codex stays there (keep), and a security review still goes to another tool first.
+    expect(chooseProfile({ profiles: list, tools: toolList, pool: pool({ usage: codexBusy }) }, sol, now, { keep: true })).toEqual({ kind: "planned", profile: sol });
+    // Codex out, Claude Code busy with the builder: Grok, even with less room than Claude Code's own stand-in would have.
+    expect(chooseProfile({ profiles: list, tools: toolList, pool: pool({ limited: [out("codex", now + HOUR)], usage: grokBusy }) }, solX, now, { awayFrom: { toolId: "claude-code", modelId: "opus" } })).toEqual({ kind: "substitute", profile: grokX });
+  });
+
+  it("slows a tool down past 80% of a window: half its cap of new agents, rounded up, at least one", () => {
+    const busy = pool({ toolCaps: { codex: 3, "claude-code": 1 }, usage: [report({ toolId: "codex", utilization: 0.85, resetsAt: now + HOUR })] });
+    expect(slowingDown(busy, "codex", now)).toBe(true);
+    expect(slowingDown(busy, "claude-code", now)).toBe(false);
+    expect(toolCapNow(busy, "codex", now)).toBe(2);
+    expect(toolCapNow(busy, "claude-code", now)).toBe(1);
+    expect(toolCapNow(pool({ toolCaps: { codex: 1 }, usage: busy.usage }), "codex", now)).toBe(1);
+    expect(toolCapNow(pool({ toolCaps: { codex: 4 }, usage: busy.usage }), "codex", now)).toBe(2);
+    // With no cap of its own, half the pool.
+    expect(toolCapNow(pool({ limit: 5, usage: busy.usage }), "codex", now)).toBe(3);
+    expect(toolCapNow(pool({ limit: 5 }), "codex", now)).toBeUndefined();
+    // Below the mark, as set; a warning counts; a report that no longer counts does not.
+    expect(toolCapNow(pool({ toolCaps: { codex: 3 }, usage: [report({ toolId: "codex", utilization: 0.79, resetsAt: now + HOUR })] }), "codex", now)).toBe(3);
+    expect(toolCapNow(pool({ toolCaps: { codex: 3 }, usage: [report({ toolId: "codex", status: "allowed_warning" })] }), "codex", now)).toBe(2);
+    expect(toolCapNow(pool({ toolCaps: { codex: 3 }, usage: [report({ toolId: "codex", utilization: 0.85, resetsAt: now - 1 })] }), "codex", now)).toBe(3);
+  });
+});
+
+describe("a window that is used up", () => {
+  it("is said so, with extra usage when the tool goes on with it, and leaves the tool in with no room", () => {
+    const spent = pool({ usage: [report({ status: "rejected", overage: true, resetsAt: now + 72 * HOUR })] });
+    expect(usageLines({ tools, pool: spent }, now)[0]).toMatchObject({ text: "weekly used up, on extra usage, resets Mon 12:00 · starting fewer agents on it", tone: "near" });
+    // Spent is no room, so a tool with room comes first; it is not out.
+    expect(headroom(spent, opus, now)).toBe(0);
+    expect(liveLimits(spent, now)).toEqual([]);
+    // Without extra usage the window still shows, and the tool is out once the engine marks it.
+    expect(usageLines({ tools, pool: pool({ usage: [report({ status: "rejected", resetsAt: now + HOUR })] }) }, now)[0]!.text).toBe("weekly used up, resets 13:00 · starting fewer agents on it");
   });
 });
 

@@ -12,6 +12,7 @@
 import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, afterChangesAsked, type AskAnswer, type Commands, type NewTaskInput, type SaidContext, type UsageRequest, type UsageViewFor } from "@petrina/core";
 import * as git from "./git.js";
 import { parseCommand } from "./checks.js";
+import { CODEX_USAGE_EVERY_MS } from "./codex-usage.js";
 import { Kernel, TONES, type EngineOptions } from "./kernel.js";
 import { Turns } from "./turn.js";
 import { GuideKeeper } from "./guide-keeper.js";
@@ -73,9 +74,14 @@ export class Engine extends Kernel implements Commands {
         void this.shipping.pollPullRequests();
         this.shipping.settleCancelledTasks();
       }, 60_000),
+      // Codex's usage, every ten minutes while any agent runs (Claude Code reports its own on every turn).
+      setInterval(() => {
+        if (this.runs.size || [...this.helperRuns.values()].some((runs) => runs.size)) this.readUsage();
+      }, CODEX_USAGE_EVERY_MS),
     );
     this.shipping.settleCancelledTasks();
     this.schedule();
+    this.readUsage();
   }
 
   schedule(): void {
@@ -95,6 +101,7 @@ export class Engine extends Kernel implements Commands {
     this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
     clearTimeout(this.limitTimer);
+    this.codexUsage?.stop();
     for (const controller of this.drivers.values()) controller.abort();
     for (const run of this.runs.values()) run.close();
     this.store.save(this.getState());

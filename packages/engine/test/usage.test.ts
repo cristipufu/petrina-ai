@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { AgentProfile, Task } from "@petrina/core";
+import { usageLines } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { failureReason } from "../src/tracking.js";
 import { claudeReport, claudeReports, clockTime, limitFromFailure, limitFromReport, UsageLimited, WaitingForUsage } from "../src/usage.js";
@@ -217,6 +218,29 @@ describe.concurrent("usage reports", () => {
     }
   });
 
+  it("keep a tool in when a window is used up but the account goes on with extra usage, and take it out when it does not", async () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 3 * 24 * 3600;
+    const spent = await start({ planner: "claude-build", builder: "plain", usage: [{ model: "opus", status: "rejected", type: "seven_day", resetsAt, overage: true }] });
+    try {
+      await spent.done();
+      const state = spent.engine.getState();
+      expect(state.pool.limited ?? []).toEqual([]);
+      expect(state.pool.usage![0]).toMatchObject({ toolId: "claude-code", kind: "seven_day", status: "rejected", overage: true, resetsAt: resetsAt * 1000 });
+      expect(usageLines(state, Date.now()).find((line) => line.toolId === "claude-code")!.text).toContain("weekly used up, on extra usage");
+    } finally {
+      spent.engine.shutdown();
+    }
+    const out = await start({ planner: "claude-build", builder: "plain", usage: [{ model: "opus", status: "rejected", type: "seven_day", resetsAt }] });
+    try {
+      await out.done();
+      // Out before any turn failed on it, until the window resets.
+      expect(out.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", until: resetsAt * 1000 }]);
+      expect(out.engine.getState().pool.limited![0]!.reason).toContain("weekly");
+    } finally {
+      out.engine.shutdown();
+    }
+  });
+
   it("works the step on Grok when Claude Code and Codex are both out, and leaves the plan as written", async () => {
     const until = Date.now() + 120_000;
     const run = await start({ planner: "claude-build", builder: "plain" }, {
@@ -396,6 +420,10 @@ describe("what the tools say about usage", () => {
   it("reads Claude Code's rate limit report, with the reset time in milliseconds", () => {
     expect(claudeReport("claude-code", { "_claude/rateLimit": { status: "allowed_warning", resetsAt: 1_800_000_000, rateLimitType: "seven_day_opus", utilization: 0.82 } })).toEqual({ toolId: "claude-code", kind: "seven_day_opus", status: "allowed_warning", model: "opus", utilization: 0.82, resetsAt: 1_800_000_000_000 });
     expect(claudeReport("claude-code", { "_claude/rateLimit": { status: "rejected" } })).toEqual({ toolId: "claude-code", kind: "limit", status: "rejected" });
+    // A window used up while the account goes on with extra usage: spent, not out.
+    expect(claudeReports("claude-code", { "_claude/rateLimit": { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000, isUsingOverage: true } })).toEqual([
+      { toolId: "claude-code", kind: "seven_day", status: "rejected", resetsAt: 1_800_000_000_000, overage: true },
+    ]);
     // The spend cap is its own field. It can be rejected while the session window is still open.
     expect(claudeReports("claude-code", { "_claude/rateLimit": { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.95, overageStatus: "rejected", overageResetsAt: 1_800_000_000 } })).toEqual([
       { toolId: "claude-code", kind: "five_hour", status: "allowed_warning", utilization: 0.95 },

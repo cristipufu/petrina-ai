@@ -43,13 +43,14 @@ export function claudeReports(toolId: string, meta: unknown): UsageInfo[] {
   if (!meta || typeof meta !== "object") return [];
   const info = (meta as Record<string, unknown>)["_claude/rateLimit"];
   if (!info || typeof info !== "object") return [];
-  const { status, resetsAt, rateLimitType, utilization, overageStatus, overageResetsAt } = info as {
+  const { status, resetsAt, rateLimitType, utilization, overageStatus, overageResetsAt, isUsingOverage } = info as {
     status?: unknown;
     resetsAt?: unknown;
     rateLimitType?: unknown;
     utilization?: unknown;
     overageStatus?: unknown;
     overageResetsAt?: unknown;
+    isUsingOverage?: unknown;
   };
   const reports: UsageInfo[] = [];
   if (typeof status === "string" && USAGE_STATUS.has(status)) {
@@ -63,6 +64,8 @@ export function claudeReports(toolId: string, meta: unknown): UsageInfo[] {
       ...(typeof utilization === "number" ? { utilization } : {}),
       // Seconds on the wire, milliseconds everywhere else.
       ...(typeof resetsAt === "number" ? { resetsAt: resetsAt * 1000 } : {}),
+      // A window reported as rejected while the account goes on with extra usage is spent, not out: turns keep working.
+      ...(isUsingOverage === true ? { overage: true } : {}),
     });
   }
   // The monthly spend cap is this field, not a sentence. It can be rejected while the session window is still open.

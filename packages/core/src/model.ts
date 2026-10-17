@@ -598,6 +598,8 @@ export interface UsageReport {
   name?: string;
   /** When the limit resets (milliseconds), when the tool says. */
   resetsAt?: number;
+  /** The window is used up and the tool goes on, on usage paid beyond the plan (Claude Code's extra usage): spent, not out. */
+  overage?: boolean;
   at: number;
 }
 

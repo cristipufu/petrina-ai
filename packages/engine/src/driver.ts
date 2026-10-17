@@ -2,7 +2,7 @@
 // checkpoints, and putting interrupted work back in line after a restart.
 
 import { join } from "node:path";
-import { lastIndexWhere, pickStarts, queueOf, slotWait, slotUses, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
+import { balanced, lastIndexWhere, pickStarts, queueOf, slotWait, slotUses, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { Kernel, Aborted, type MTask, PLANNER_PROFILE } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
@@ -39,7 +39,8 @@ export class Driver {
     if (this.k.stopped || this.k.draining) return;
     // Limits that ended no longer hold anyone back.
     this.k.expireLimits();
-    const candidates: Candidate[] = [];
+    const now = Date.now();
+    const continuing: Candidate[] = [];
     // A task waiting for others to land stays out of the running and says what it waits for.
     const blocked = (task: MTask): boolean => {
       const waitingFor = this.k.blockers(task);
@@ -59,8 +60,10 @@ export class Driver {
       }
       const candidate = { taskId: task.id, toolId: seat.toolId };
       task.statusLine = slotWait(this.k.getState(), candidate) ?? "Waiting for a free slot";
-      candidates.push(candidate);
+      continuing.push(candidate);
     }
+    // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
+    const candidates = balanced(continuing, this.k.s.pool, now);
     for (const task of queueOf(this.k.s.tasks as Task[])) {
       if (task.held || blocked(task as MTask)) continue;
       // What it waited for landed or was cancelled: back to plain queue words.
@@ -73,7 +76,7 @@ export class Driver {
       candidates.push({ taskId: task.id, toolId: seat.toolId });
     }
 
-    for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.getState()), pool: this.k.s.pool })) {
+    for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.getState()), pool: this.k.s.pool, now })) {
       const task = this.k.task(taskId);
       if (!task || this.k.drivers.has(taskId)) continue;
       if (task.state === "queued") {

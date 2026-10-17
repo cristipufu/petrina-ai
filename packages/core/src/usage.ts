@@ -6,8 +6,22 @@ import type { AgentProfile, Id, Pool, State, UsageLimit, UsageReport } from "./m
 /** From this much of a limit used, new agents prefer a tool that is further from its own. */
 export const NEAR_LIMIT = 0.9;
 
+/** From this much of a window used, a tool slows down: it gets fewer new agents, so it does not run into the wall. */
+export const SLOW_DOWN = 0.8;
+
+/** How much of its cap a tool that slows down keeps for new agents (rounded up, at least one). */
+export const SLOW_DOWN_SHARE = 0.5;
+
+/** What the usage line says about a tool that slows down. */
+export const HOLDING_BACK = "starting fewer agents on it";
+
 /** A report with no reset time stops counting after this long without a newer one. */
 const STALE_REPORT_MS = 30 * 60_000;
+
+const HOUR = 3_600_000;
+
+/** A window about to reset counts as at least this far from it (hours), so its room does not read as endless. */
+const LEAST_HOURS = 0.25;
 
 /** When a tool does not say when it is back: try again after this long. */
 export const UNKNOWN_LIMIT_MS = 30 * 60_000;
@@ -38,7 +52,10 @@ export function inFamily(profile: Pick<AgentProfile, "model" | "modelId">, famil
   return `${profile.modelId ?? ""} ${profile.model}`.toLowerCase().includes(wanted);
 }
 
-const covers = (entry: { toolId: Id; model?: string | undefined }, profile: AgentProfile): boolean => entry.toolId === profile.toolId && (!entry.model || inFamily(profile, entry.model));
+/** A tool, or a profile on it: with no model named, every report about the tool counts. */
+type OnTool = Pick<AgentProfile, "toolId"> & Partial<Pick<AgentProfile, "model" | "modelId">>;
+
+const covers = (entry: { toolId: Id; model?: string | undefined }, profile: OnTool): boolean => entry.toolId === profile.toolId && (!entry.model || profile.model === undefined || inFamily(profile as Pick<AgentProfile, "model" | "modelId">, entry.model));
 
 /** The limits still in force at `now`. */
 export function liveLimits(pool: Pool, now: number): readonly UsageLimit[] {
@@ -77,6 +94,51 @@ export function nearLimit(pool: Pool, profile: AgentProfile, now: number): boole
   return (pool.usage ?? []).some((report) => report.status !== "rejected" && covers(report, profile) && currentReport(report, now) && (report.status === "allowed_warning" || (report.utilization ?? 0) >= NEAR_LIMIT));
 }
 
+/** Whether the tool is past the slow-down mark on any window it reported (a warning counts), so fewer new agents start on it. */
+export function slowingDown(pool: Pool, toolId: Id, now: number): boolean {
+  return (pool.usage ?? []).some((report) => report.toolId === toolId && currentReport(report, now) && (report.status !== "allowed" || (report.utilization ?? 0) >= SLOW_DOWN));
+}
+
+/**
+ * How many agents the tool may have at once right now: its cap as set (the pool's limit when it has none), and
+ * half of that, rounded up and at least one, while it slows down. Undefined: no cap, and nothing to slow down for.
+ */
+export function toolCapNow(pool: Pool, toolId: Id, now: number): number | undefined {
+  const cap = pool.toolCaps[toolId];
+  if (!slowingDown(pool, toolId, now)) return cap;
+  return Math.max(1, Math.ceil((cap ?? pool.limit) * SLOW_DOWN_SHARE));
+}
+
+/**
+ * How much room a tool (or a profile's model on it) has left, as the unused share of its tightest window per hour
+ * until that window resets: 20% left with an hour to go (0.2) beats 50% left with a week to go (0.003). Out: 0.
+ * Undefined when the tool has said nothing that counts, which is neither better nor worse than any number.
+ */
+export function headroom(pool: Pool, on: OnTool, now: number): number | undefined {
+  let least: number | undefined;
+  for (const report of (pool.usage ?? []).filter((report) => covers(report, on) && currentReport(report, now))) {
+    if (report.status === "rejected") return 0;
+    const used = report.utilization ?? (report.status === "allowed_warning" ? NEAR_LIMIT : undefined);
+    if (used === undefined) continue;
+    // With no reset time, the window counts as resetting within the hour.
+    const hours = report.resetsAt === undefined ? 1 : Math.max(LEAST_HOURS, (report.resetsAt - now) / HOUR);
+    const room = Math.max(0, 1 - used) / hours;
+    if (least === undefined || room < least) least = room;
+  }
+  return least;
+}
+
+/**
+ * Items in order of room left (see `headroom`), the most first; one whose tool has said nothing ties with the
+ * one that has the most. Stable: among equals the given order holds.
+ */
+export function byRoom<T>(items: readonly T[], roomOf: (item: T) => number | undefined): T[] {
+  const known = items.map(roomOf).filter((room): room is number => room !== undefined);
+  const top = known.length ? Math.max(...known) : 0;
+  const key = (item: T) => roomOf(item) ?? top;
+  return [...items].sort((a, b) => key(b) - key(a));
+}
+
 export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile } | { kind: "none"; waiting: string };
 
 /**
@@ -110,9 +172,10 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   // How close a stand-in is to the work it must judge: 0 another tool, 1 another model on that tool, 2 the same model.
   const away = rules.awayFrom;
   const sameness = (profile: AgentProfile) => (!away || profile.toolId !== away.toolId ? 0 : profile.modelId !== away.modelId ? 1 : 2);
-  // The most independent first, then not near a limit, then the same effort, then the list's order.
+  // The most independent first, then not near a limit, then the same effort, then the tool with more of its limit
+  // left (one that said nothing ties with the roomiest), then the list's order.
   const closest = (profiles: AgentProfile[]) =>
-    [...profiles].sort((a, b) => sameness(a) - sameness(b) || Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
+    byRoom(profiles, (profile) => headroom(pool, profile, now)).sort((a, b) => sameness(a) - sameness(b) || Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
 
   if (free(planned)) {
     if (!near(planned) || rules.keep) return { kind: "planned", profile: planned };
@@ -172,26 +235,36 @@ export function waitingWords(state: Pick<State, "tools" | "pool">, now: number):
 export interface UsageLine {
   toolId: Id;
   name: string;
-  /** "weekly 82% · Opus out until Fri 17:00", or "fine". */
+  /** "weekly 84%, resets Thu 13:00 · starting fewer agents on it", "Opus out until Fri 17:00", or "fine". */
   text: string;
   tone: "fine" | "near" | "out";
 }
 
-/** Every tool's usage in plain words: how much of each limit is used, and who is out until when. */
+/**
+ * Every tool's usage in plain words: how much of each window is used and when it resets, who is out until when,
+ * and whether Petrina is starting fewer agents on it (see `slowingDown`).
+ */
 export function usageLines(state: Pick<State, "tools" | "pool">, now: number): UsageLine[] {
   const lines = state.tools.map((tool) => {
     const reports = (state.pool.usage ?? []).filter((report) => report.toolId === tool.id && currentReport(report, now));
+    // A window the tool reported as used up counts as full, whether or not it gave a percentage.
+    const fullness = (report: UsageReport) => (report.status === "rejected" ? 1 : (report.utilization ?? 0));
+    const words = (report: UsageReport) => {
+      const share = report.utilization !== undefined ? `${Math.round(report.utilization * 100)}%` : undefined;
+      if (report.status === "rejected") return `${share ?? "used up"}${report.overage ? ", on extra usage" : ""}`;
+      return share ?? "nearly used";
+    };
     const used = reports
-      .filter((report) => report.utilization !== undefined || report.status === "allowed_warning")
-      .sort((a, b) => (b.utilization ?? 0) - (a.utilization ?? 0))
+      .filter((report) => report.utilization !== undefined || report.status !== "allowed")
+      .sort((a, b) => fullness(b) - fullness(a))
       .slice(0, 2)
-      .map((report) => (report.utilization !== undefined ? `${kindWords(report.kind, report.windowMinutes, report.name)} ${Math.round(report.utilization * 100)}%` : `${kindWords(report.kind, report.windowMinutes, report.name)} nearly used`));
+      .map((report) => `${kindWords(report.kind, report.windowMinutes, report.name)} ${words(report)}${report.resetsAt !== undefined ? `, resets ${untilWords(report.resetsAt, now)}` : ""}`);
     const out = liveLimits(state.pool, now)
       .filter((limit) => limit.toolId === tool.id)
       .map((limit) => `${limit.model ? `${modelWords(limit.model)} ` : ""}out until ${untilWords(limit.until, now)}`);
-    const parts = [...used, ...out];
-    const near = reports.some((report) => report.status === "allowed_warning" || (report.utilization ?? 0) >= NEAR_LIMIT);
-    return { line: { toolId: tool.id, name: tool.name, text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || report.utilization !== undefined) ? "fine" : "not reported", tone: (out.length ? "out" : near ? "near" : "fine") as UsageLine["tone"] }, shown: tool.status === "ready" || parts.length > 0 };
+    const holding = !out.length && slowingDown(state.pool, tool.id, now);
+    const parts = [...used, ...out, ...(holding ? [HOLDING_BACK] : [])];
+    return { line: { toolId: tool.id, name: tool.name, text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || report.utilization !== undefined) ? "fine" : "not reported", tone: (out.length ? "out" : holding ? "near" : "fine") as UsageLine["tone"] }, shown: tool.status === "ready" || parts.length > 0 };
   });
   // A tool that is not here and has said nothing is not listed.
   return lines.filter((entry) => entry.shown).map((entry) => entry.line);

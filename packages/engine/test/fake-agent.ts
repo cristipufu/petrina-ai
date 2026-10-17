@@ -72,7 +72,7 @@ export interface Scenario {
    */
   limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean }[];
   /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
-  usage?: { model: string; status: "allowed" | "allowed_warning"; utilization: number; type?: string }[];
+  usage?: { model: string; status: "allowed" | "allowed_warning" | "rejected"; utilization?: number; type?: string; resetsAt?: number; overage?: boolean }[];
 }
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
@@ -261,8 +261,8 @@ function releaseManager(cwd: string, text: string): string {
 }
 
 /** A usage report the way Claude Code sends it: a usage update that carries the rate limit in its notes. */
-const usageUpdate = (status: string, kind: string, utilization?: number, resetsAt?: number): acp.SessionNotification["update"] =>
-  ({ sessionUpdate: "usage_update", used: 100, size: 1000, _meta: { "_claude/rateLimit": { status, rateLimitType: kind, ...(utilization !== undefined ? { utilization } : {}), ...(resetsAt !== undefined ? { resetsAt } : {}) } } }) as acp.SessionNotification["update"];
+const usageUpdate = (status: string, kind: string, utilization?: number, resetsAt?: number, overage?: boolean): acp.SessionNotification["update"] =>
+  ({ sessionUpdate: "usage_update", used: 100, size: 1000, _meta: { "_claude/rateLimit": { status, rateLimitType: kind, ...(utilization !== undefined ? { utilization } : {}), ...(resetsAt !== undefined ? { resetsAt } : {}), ...(overage ? { isUsingOverage: true } : {}) } } }) as acp.SessionNotification["update"];
 
 /** Whether this model is out of usage now. The first time asks, the limit starts. */
 function outOfUsage(limit: NonNullable<Scenario["limited"]>[number]): number | undefined {
@@ -310,7 +310,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const learned = scenario().learnings ? (session.role === "builder" ? ["Run the tests with bun test: they take a second.", "Greetings live at the repository root."] : session.role === "code reviewer" ? ["Greetings live at the repository root!"] : []) : [];
   const done = (value: unknown, prose?: string): Reply => ({ text: block(learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value, prose) });
   const plan = scenario();
-  for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization));
+  for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage));
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role));
   const until = limit && outOfUsage(limit);
   if (limit && until) await runOut(limit, until, session, sessionId, client);

@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDemoState, type State, type WorkUsageLine } from '@petrina/core';
+import { createDemoState, untilWords, type State, type WorkUsageLine } from '@petrina/core';
 import { SplitList, UsageList, usageNote } from '../src/components/Usage';
 
 vi.mock('../src/engine', () => ({ mode: 'demo', desktop: false, sim: {} }));
@@ -14,21 +14,26 @@ async function show(state: State, expanded = false) {
 }
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
+const MINUTE = 60_000;
+
 describe('usage by tool', () => {
-  it('shows the demo with one tool near its limit and the other fine, in plain words', async () => {
+  it('shows the demo with Codex held back near its limit and Claude Code fine, each window with its reset time', async () => {
     const state = createDemoState(1_000_000_000);
+    const at = (ms: number) => untilWords(state.now + ms, state.now);
     await show(state);
     const rows = [...host.querySelectorAll('.usage-row')].map((row) => `${row.querySelector('strong')?.textContent}${row.querySelector('.label')?.textContent}`);
-    expect(rows).toEqual(['Claude Codeweekly 82% · 5-hour 35%', 'Codexweekly 16%']);
-    expect(host.querySelector('.usage-row .label.warn')?.textContent).toBe('weekly 82% · 5-hour 35%');
-    expect(usageNote(state)).toBe('Claude Code: weekly 82% · 5-hour 35%');
+    const claude = `weekly 62%, resets ${at(3 * 24 * 60 * MINUTE)} · 5-hour 35%, resets ${at(90 * MINUTE)}`;
+    const codex = `weekly 84%, resets ${at(2 * 24 * 60 * MINUTE)} · starting fewer agents on it`;
+    expect(rows).toEqual([`Claude Code${claude}`, `Codex${codex}`]);
+    expect(host.querySelector('.usage-row .label.warn')?.textContent).toBe(codex);
+    expect(usageNote(state)).toBe(`Codex: ${codex}`);
     expect(host.querySelector('.usage-reported')?.textContent).toContain('reported just now');
   });
 
   it('says who is out and until when', async () => {
     const state = createDemoState(1_000_000_000);
     const until = state.now + 2 * 60 * 60_000;
-    await show({ ...state, pool: { ...state.pool, limited: [{ toolId: 'codex', until, reason: "Codex's usage limit" }] } });
+    await show({ ...state, pool: { ...state.pool, usage: [], limited: [{ toolId: 'codex', until, reason: "Codex's usage limit" }] } });
     const codex = [...host.querySelectorAll('.usage-row')].find((row) => row.textContent?.startsWith('Codex'))!;
     expect(codex.querySelector('.label')?.textContent).toMatch(/out until (\d\d:\d\d|\w{3} \d\d:\d\d)$/);
     expect(codex.querySelector('.label.bad')).not.toBeNull();

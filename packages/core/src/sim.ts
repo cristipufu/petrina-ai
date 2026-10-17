@@ -23,7 +23,7 @@ import type {
   Task,
   TaskKind,
 } from "./model.js";
-import { extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
+import { balanced, extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
 import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, noteRoundEnd, reviewRoundEnd, type DeepMutable } from "./flow.js";
 import { findingCount } from "./findings.js";
 import type { NewTaskInput } from "./commands.js";
@@ -1266,25 +1266,26 @@ export class Simulator {
     this.wrote(d);
   }
 
-  /** Fill free slots: tasks already in progress first, then the queue, in priority order. */
+  /** Fill free slots: tasks already in progress first (the tool with more of its limit left first), then the queue, in priority order. */
   private schedule(d: Draft): void {
     const toolOf = new Map(d.profiles.map((profile) => [profile.id, profile.toolId]));
-    const candidates: Candidate[] = [];
     const inProgress = d.tasks.filter((task) => task.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+    const continuing: Candidate[] = [];
     for (const task of inProgress) {
       const next = this.nextAgent(task);
       if (next) {
         const candidate = { taskId: task.id, toolId: toolOf.get(next.profileId) ?? "unknown" };
         task.statusLine = slotWait(d as State, candidate) ?? "Waiting for a free slot";
-        candidates.push(candidate);
+        continuing.push(candidate);
       }
     }
+    const candidates = balanced(continuing, d.pool, d.now);
     for (const task of queueOf(d.tasks as Task[])) {
       if (task.held) continue;
       candidates.push({ taskId: task.id, toolId: toolOf.get(PLANNER_PROFILE) ?? "unknown" });
     }
 
-    const starts = pickStarts({ candidates, inUse: slotUses(d as unknown as State), pool: d.pool });
+    const starts = pickStarts({ candidates, inUse: slotUses(d as unknown as State), pool: d.pool, now: d.now });
     for (const taskId of starts) {
       const task = d.tasks.find((entry) => entry.id === taskId);
       if (!task) continue;

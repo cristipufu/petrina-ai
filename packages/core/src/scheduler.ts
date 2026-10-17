@@ -1,4 +1,5 @@
 import type { Id, Pool, State, Task } from "./model.js";
+import { byRoom, headroom, toolCapNow } from "./usage.js";
 
 /** A pool slot in use: which task holds it, on which tool, and the agent in it when there is one. */
 export interface SlotUse {
@@ -20,13 +21,16 @@ export interface PickInput {
   candidates: readonly Candidate[];
   inUse: readonly SlotUse[];
   pool: Pool;
+  /** The time, for the usage reports that slow a tool down. Default: now. */
+  now?: number;
 }
 
 /**
  * Which tasks start now. Pure: the pool limit, the per-tool caps and the order decide.
  * A candidate whose tool is at its cap is skipped, so a lower task on another tool can go.
+ * A tool past the slow-down mark of a usage window has half its cap for new agents (`toolCapNow`).
  */
-export function pickStarts({ candidates, inUse, pool }: PickInput): Id[] {
+export function pickStarts({ candidates, inUse, pool, now = Date.now() }: PickInput): Id[] {
   if (pool.paused) return [];
   let free = pool.limit - inUse.length;
   if (free <= 0) return [];
@@ -37,7 +41,7 @@ export function pickStarts({ candidates, inUse, pool }: PickInput): Id[] {
   const starts: Id[] = [];
   for (const candidate of candidates) {
     if (free === 0) break;
-    const cap = pool.toolCaps[candidate.toolId];
+    const cap = toolCapNow(pool, candidate.toolId, now);
     const used = perTool.get(candidate.toolId) ?? 0;
     if (cap !== undefined && used >= cap) continue;
     starts.push(candidate.taskId);
@@ -45,6 +49,14 @@ export function pickStarts({ candidates, inUse, pool }: PickInput): Id[] {
     free -= 1;
   }
   return starts;
+}
+
+/**
+ * Candidates with those on the tool that has more of its limit left first (see `headroom`), so when the pool
+ * cannot take them all, the slots go to the tool with the most room. Candidates on one tool keep their order.
+ */
+export function balanced(candidates: readonly Candidate[], pool: Pool, now: number): Candidate[] {
+  return byRoom(candidates, (candidate) => headroom(pool, { toolId: candidate.toolId }, now));
 }
 
 /** The slots in use: one per task holding a slot, and one more for each agent working beside its main one. */
@@ -63,19 +75,24 @@ export function extraSlot(state: State, toolId: Id): boolean {
   if (state.pool.paused) return false;
   const uses = slotUses(state);
   if (uses.length >= state.pool.limit) return false;
-  const cap = state.pool.toolCaps[toolId];
+  const cap = toolCapNow(state.pool, toolId, state.now);
   return cap === undefined || uses.filter((use) => use.toolId === toolId).length < cap;
 }
+
+/** What a task waits for when its tool slows down near a usage limit. */
+export const FEWER_START = "fewer start on it this close to its limit";
 
 /** Rechecked for every agent, including one on the same tool. The task's old slot does not count. */
 export function slotWait(state: State, candidate: Candidate): string | undefined {
   const others = slotUses(state).filter((use) => use.taskId !== candidate.taskId);
   if (state.pool.paused) return "Waiting for the pool to resume";
   if (others.length >= state.pool.limit) return "Waiting for a free slot";
-  const cap = state.pool.toolCaps[candidate.toolId];
+  const cap = toolCapNow(state.pool, candidate.toolId, state.now);
   if (cap !== undefined && others.filter((use) => use.toolId === candidate.toolId).length >= cap) {
     const tool = state.tools.find((entry) => entry.id === candidate.toolId)?.name ?? candidate.toolId;
-    return `Waiting for a free ${tool} slot`;
+    // Fewer seats than the cap says: the tool is slowing down, and the task says so.
+    const held = cap !== state.pool.toolCaps[candidate.toolId];
+    return `Waiting for a free ${tool} slot${held ? ` (${FEWER_START})` : ""}`;
   }
   return undefined;
 }

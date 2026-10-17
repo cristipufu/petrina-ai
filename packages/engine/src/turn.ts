@@ -189,6 +189,7 @@ export class Turns {
     }
     run ??= await start();
     this.k.runs.set(taskId, run);
+    this.k.readUsage(profile.toolId);
     const picked = run.reopened !== undefined;
     const wentBack = picked && !reopen && back !== undefined;
     const where = saved ? this.whereYouWere(task, role, startedAt) : undefined;
@@ -381,6 +382,7 @@ export class Turns {
     });
     const runs = this.k.helperRuns.get(taskId) ?? new Set();
     this.k.helperRuns.set(taskId, runs.add(run));
+    this.k.readUsage(profile.toolId);
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
       const sections = [...given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];

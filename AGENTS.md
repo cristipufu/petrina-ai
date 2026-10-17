@@ -14,6 +14,7 @@ Agents act with the coordinator's own logins: GitHub (gh, git's credential helpe
 
 - publishes deliveries itself, after its gates allow it, with no merge, force-push or delete, and sets a release's version itself (the only agent at delivery is the read-only Release Manager, writing a release's notes),
 - runs its own git steps with hooks off, and credentials only where GitHub needs them, to the product's saved address (`packages/engine/src/git.ts`),
+- reads Codex's usage itself (`codex app-server`, one `account/rateLimits/read`, then the process is stopped), with the coordinator's login the way agents run, because Codex's ACP adapter keeps those numbers to itself (`packages/engine/src/codex-usage.ts`),
 - enforces its checkpoints (plan, design, delivery) in the engine, and
 - undoes whatever a read-only role leaves behind.
 

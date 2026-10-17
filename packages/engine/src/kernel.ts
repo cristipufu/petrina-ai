@@ -4,8 +4,10 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, callCheckBody, chooseWithRoom, nextExpiry, queueOf, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable } from "@petrina/core";
+import { BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, nextExpiry, queueOf, UNKNOWN_LIMIT_MS, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
+import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
+import { agentEnv } from "./env.js";
 import * as git from "./git.js";
 import { Store } from "./store.js";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
@@ -70,6 +72,8 @@ export interface EngineOptions {
   agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
   /** Tests: a fake GitHub instead of `gh`. */
   gh?: readonly string[];
+  /** Tests: a fake Codex app-server instead of `codex app-server` for reading Codex's usage. With fake agents and none given, it is not read. */
+  codexCommand?: readonly string[];
   /** Tests: a folder standing in for every product's copy on GitHub. Never from settings or saved data. */
   remote?: string;
   /** Tests: how long a tool gets to reopen a conversation. */
@@ -129,6 +133,20 @@ export abstract class Kernel {
     this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
     this.tracking = new Tracking(this);
     this.tracking.start();
+    // Codex does not pass its usage on over ACP: Petrina reads it from Codex's app-server, with the agents' environment.
+    const codexCommand = options.codexCommand ?? (options.agentCommand ? undefined : CODEX_USAGE_COMMAND);
+    this.codexUsage = codexCommand
+      ? new CodexUsage({
+          command: codexCommand,
+          env: () => agentEnv(process.env),
+          record: (reports) => {
+            for (const info of reports) this.recordUsage(info);
+            // More or less room on Codex: waiting tasks may start, or hold.
+            this.schedule();
+          },
+          log: (text) => console.warn(`${new Date().toISOString()} ${text}`),
+        })
+      : undefined;
   }
 
   readonly s: MState;
@@ -137,6 +155,8 @@ export abstract class Kernel {
 
   /** The work log: every agent turn and notable moment, the permanent product list and the tools' limits. */
   readonly tracking: Tracking;
+  /** Reads Codex's usage, when Codex's usage can be read here. */
+  readonly codexUsage: CodexUsage | undefined;
 
   readonly listeners = new Set<() => void>();
 
@@ -411,12 +431,34 @@ export abstract class Kernel {
     return this.s.tools.find((tool) => tool.id === toolId)?.name ?? ADAPTERS[toolId ?? ""]?.name ?? toolId ?? "the tool";
   }
 
-  /** A tool said how much of a limit is used: kept as the latest for that tool and kind of limit, and in the thirty-day history. */
+  /**
+   * A tool said how much of a limit is used: kept as the latest for that tool and kind of limit. A report that
+   * says the tool is out keeps new agents off it until it resets, whether or not a turn fails on it (Codex's own
+   * count comes from outside any turn).
+   */
   recordUsage(info: UsageInfo): void {
-    const report = { ...info, at: Date.now() };
+    const now = Date.now();
+    const report = { ...info, at: now };
     this.s.pool.usage = withReport(this.s.pool.usage, report) as MState["pool"]["usage"];
     this.tracking.usageReported(report);
+    // Not when the tool goes on with usage paid beyond the plan: the window is spent, the usage line says so, and
+    // the balancer prefers tools with room, but the agents keep working.
+    if (info.status === "rejected" && !info.overage) {
+      const until = info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS;
+      this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: info.toolId, ...(info.model ? { model: info.model } : {}), until, reason: `${this.toolName(info.toolId)}'s ${kindWords(info.kind)} limit` }) as MState["pool"]["limited"];
+      this.armLimitTimer();
+    }
     this.commit();
+  }
+
+  /**
+   * An agent on this tool is starting, or the engine is (no tool): Codex's usage is read again when Codex is the
+   * tool and it is here. The read runs on its own; nothing waits for it.
+   */
+  readUsage(toolId?: Id): void {
+    if (toolId !== undefined && toolId !== "codex") return;
+    if (!this.s.tools.some((tool) => tool.id === "codex" && tool.status === "ready")) return;
+    void this.codexUsage?.refresh();
   }
 
   /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */

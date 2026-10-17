@@ -98,12 +98,12 @@ const SPECS: readonly Spec[] = [
 const MINUTE = 60_000;
 const TICK = 40_000;
 
-/** Claude Code is close to its weekly limit and Codex is fine: the usage the demo shows. */
+/** Codex is close to its weekly limit, so Petrina starts fewer agents on it, and Claude Code has room: the usage the demo shows. */
 function demoUsage(now: number): NonNullable<State["pool"]["usage"]> {
   return [
-    { toolId: "claude-code", kind: "seven_day", status: "allowed_warning", utilization: 0.82, resetsAt: now + 3 * 24 * 60 * MINUTE, at: now },
+    { toolId: "claude-code", kind: "seven_day", status: "allowed", utilization: 0.62, resetsAt: now + 3 * 24 * 60 * MINUTE, at: now },
     { toolId: "claude-code", kind: "five_hour", status: "allowed", utilization: 0.35, resetsAt: now + 90 * MINUTE, at: now },
-    { toolId: "codex", kind: "codex:primary", status: "allowed", utilization: 0.16, windowMinutes: 10_080, resetsAt: now + 5 * 24 * 60 * MINUTE, at: now - 2 * MINUTE },
+    { toolId: "codex", kind: "codex:primary", status: "allowed", utilization: 0.84, windowMinutes: 10_080, resetsAt: now + 2 * 24 * 60 * MINUTE, at: now },
   ];
 }
 
