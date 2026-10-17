@@ -71,6 +71,19 @@ async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void;
 
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
+describe.concurrent("a builder that brings main in itself", () => {
+  it("has the work count from where the branch met main, so reviews see only its own changes and no merge commit lands", async () => {
+    let landed = "";
+    const { task, fakes, repo, before } = await ship({ mergesMain: true }, { beforeBuild: (repo) => (landed = land(repo, "NEWS.md", "News\n", "News on main")) });
+    expect(lines(task).some((line) => line.startsWith("The builder brought main into the branch itself"))).toBe(true);
+    expect(task.baseSha).toBe(landed);
+    // Every reviewer compared against the met main, not the base from before the merge.
+    for (const review of fakes.openings("code reviewer")) expect(review).toContain(`git diff ${landed}...HEAD`);
+    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
+    expect(git(repo, "rev-list", "--merges", "--count", `${before}..main`)).toBe("0");
+  });
+});
+
 describe.concurrent("work brought up to date with main", () => {
   it("puts the work on top of a main that moved, before the delivery check, and ships it as one commit there", async () => {
     let landed = "";

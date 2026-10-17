@@ -265,6 +265,7 @@ Before you finish, run the product's full checks (every one listed below, or els
 ${task.fixing ? `You are fixing the review findings listed below. Fix every Important one, unless you can show it is wrong. Answer every finding by id in "answers": fixed and what you changed, or not fixed and why.${stepBack(task) ? `\nThis is fix round ${reviewRound(task) - 1} and the findings keep coming. Step back before patching again: reconsider the approach, and if a simpler design removes the whole class of problem, take it.` : ""}` : ""}
 Give "title": one line for the commit that carries this whole change, in the repository's own style (look at \`git log\` and any commit-message rules it has). Petrina keeps the branch as one commit with that title${task.delivery === "pull-request" ? ", and it is the pull request's title too" : ""}.
 ${deliveryText(task)}${LEARN}
+Never merge or rebase ${defaultBranch} into your branch yourself: Petrina brings the work up to date, as one commit on top of the latest ${defaultBranch}, before every review and delivery, and hands it to you only when a conflict needs a decision.
 Do not commit, push or open pull requests: Petrina commits your work.`;
     },
   },

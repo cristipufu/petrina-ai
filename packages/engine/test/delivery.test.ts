@@ -47,6 +47,9 @@ function landed(w: World, title: string, change: string): void {
   git(w.clone, "push", "-q", w.remote, "main");
 }
 
+/** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
+const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+
 describe.concurrent("Petrina publishes deliveries itself", () => {
   it("opens a pull request with no agent: the builder's title and description, as text, then Petrina's own part", async () => {
     const w = world("pr");
@@ -221,7 +224,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       // Exactly the checked commit, no merge commit of Petrina's, and the files are there.
       expect(git(w.clone, "rev-parse", "main")).toBe(tested);
       expect(task.landed).toEqual({ branch: "main", sha: tested.slice(0, 7) });
-      expect(readFileSync(join(w.clone, "greeting.txt"), "utf8")).toBe("Hello (with left-pad)\n");
+      expect(checkedOut(join(w.clone, "greeting.txt"))).toBe("Hello (with left-pad)\n");
       expect(git(w.clone, "status", "--porcelain")).toBe("");
       // Nothing touched GitHub, and no agent ran at delivery.
       expect(w.github().calls).toEqual([]);
@@ -249,7 +252,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(git(w.clone, "rev-parse", "main")).toBe(git(task.worktree!, "rev-parse", "HEAD"));
       expect(git(w.clone, "rev-parse", "--abbrev-ref", "HEAD")).toBe("notes");
       expect(existsSync(join(w.clone, "greeting.txt"))).toBe(false);
-      expect(readFileSync(join(w.clone, "notes.txt"), "utf8")).toBe("mine\n");
+      expect(checkedOut(join(w.clone, "notes.txt"))).toBe("mine\n");
     } finally {
       engine.shutdown();
     }
@@ -267,7 +270,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(task.state).toBe("failed");
       expect(task.error).toContain("has changes that are not committed");
       expect(git(w.clone, "rev-parse", "main")).toBe(w.initial);
-      expect(readFileSync(join(w.clone, "README.md"), "utf8")).toBe("# Mine, not committed\n");
+      expect(checkedOut(join(w.clone, "README.md"))).toBe("# Mine, not committed\n");
 
       // main checked out in another folder: still nothing moves.
       git(w.clone, "checkout", "-q", "--", "README.md");

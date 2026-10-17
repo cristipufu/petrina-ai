@@ -23,10 +23,44 @@ export class Updates {
 
   /** The branch as one commit on top of where it forked, with the same code and the task's message. */
   async fold(task: MTask): Promise<void> {
-    const base = task.baseSha ?? task.base;
     // While the builder brings the work up to date, the branch sits on main with the change not committed yet.
-    if (!task.worktree || !base || task.updating) return;
+    if (!task.worktree || task.updating) return;
+    const base = (await this.settleBase(task)) ?? task.base;
+    if (!base) return;
     await git.squash(task.worktree, base, this.message(task));
+  }
+
+  /**
+   * Where the task's work starts, checked before each fold. A builder that brings main into its branch itself
+   * (told not to, but it happens) moves where the branch last met main past the base noted when the working
+   * copy was made; left there, main's own changes would read as the task's in every review, and its merge
+   * would be folded into the task's commit. The base follows the branch's latest meeting with main, read from
+   * the product's own clone with no network. The same when the noted base is not in the branch at all.
+   */
+  private async settleBase(task: MTask): Promise<string | undefined> {
+    const worktree = task.worktree!;
+    const base = task.baseSha;
+    const product = this.k.productOf(task);
+    if (!base || !product?.path) return base;
+    const branch = product.defaultBranch ?? "main";
+    const main = (task.delivery !== "local" ? await git.revParse(product.path, `refs/remotes/origin/${branch}`) : undefined) ?? (await git.revParse(product.path, `refs/heads/${branch}`));
+    if (!main) return base;
+    const met = await git.mergeBase(worktree, "HEAD", main);
+    if (!met || met === base) return base;
+    const forward = await git.contains(worktree, met, base);
+    const baseInBranch = await git.contains(worktree, await git.head(worktree), base);
+    // The usual case: the branch forked at the base and main moved on since. Nothing to settle.
+    if (!forward && baseInBranch) return base;
+    task.baseSha = met;
+    this.k.log(
+      task,
+      "warn",
+      forward
+        ? `The builder brought ${branch} into the branch itself, so the work now counts from ${met.slice(0, 7)} and reviews see only its own changes. Petrina brings work up to date; builders need not.`
+        : `The work's noted base was not in the branch: it now counts from ${met.slice(0, 7)}, where the branch last met ${branch}`,
+    );
+    this.k.commit();
+    return met;
   }
 
   /** The change itself (git's patch-id), from where the branch forked to `ref`. */

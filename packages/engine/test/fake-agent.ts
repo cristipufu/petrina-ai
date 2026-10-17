@@ -54,6 +54,8 @@ export interface Scenario {
   fixes?: "change";
   /** The first build writes a name the repository's pre-commit hook blocks; fixing removes it. */
   leak?: boolean;
+  /** The first build merges main into the branch itself, which builders are told never to do. */
+  mergesMain?: boolean;
   /** The builder's commit title. */
   title?: string;
   /** The builder and the code reviewers pass on what they learned about the repository (one lesson twice). */
@@ -439,6 +441,11 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       writeFileSync(join(session.cwd, "greeting.txt"), allowed ? "Hello (with left-pad)\n" : "Hello\n");
       if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "welcome.txt"), "Hello\n");
       if (plan.leak && !text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "greeting.txt"), "Hello from internal-db-07\n");
+      if (plan.mergesMain && !text.includes("You are fixing the review findings")) {
+        execFileSync("git", ["add", "-A"], { cwd: session.cwd });
+        execFileSync("git", ["-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "-q", "-m", "Builder's own commit"], { cwd: session.cwd });
+        execFileSync("git", ["-c", "user.email=fake@example.com", "-c", "user.name=Fake", "merge", "-q", "--no-edit", "main"], { cwd: session.cwd });
+      }
       const script = readScript();
       const taskTitle = /^# The task: (.+)$/m.exec(text)?.[1];
       if (script.ownFiles && taskTitle) writeFileSync(join(session.cwd, `${taskTitle.toLowerCase().replace(/\W+/g, "-")}.txt`), `${taskTitle}\n`);
