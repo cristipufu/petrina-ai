@@ -53,6 +53,8 @@ export const BuildResult = z.object({
   summary: z.string().min(3),
   changes: z.array(z.string()).default([]),
   tests: z.string().optional(),
+  // In a fix round: one answer per finding, by id.
+  answers: z.array(z.object({ id: z.string(), fixed: z.boolean(), text: z.string().min(3) })).default([]),
 });
 
 export const CheckFinderResult = z.object({
@@ -75,7 +77,7 @@ export const ReviewResult = z.object({
       z.object({
         text: z.string().min(3),
         where: z.string().optional(),
-        severity: z.enum(["blocking", "suggestion"]),
+        severity: z.enum(["important", "nit", "pre-existing"]),
         evidence: z.string().optional(),
       }),
     )
@@ -83,6 +85,10 @@ export const ReviewResult = z.object({
   confirms: z.array(z.string()).default([]),
   // A dispute always says why: the coordinator reads it next to the finding.
   disputes: z.array(z.object({ id: z.string(), reason: z.string().min(10) })).default([]),
+});
+
+export const VerifyResult = z.object({
+  verdicts: z.array(z.object({ id: z.string(), verdict: z.enum(["real", "not-a-bug", "nit", "pre-existing"]), reason: z.string().min(10) })).min(1),
 });
 
 export const ShipResult = z.object({
@@ -160,10 +166,11 @@ const SHAPES: Record<string, string> = {
   "architect-call": `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "answers": [{"id": "<objection id the call decides>", "status": "accepted", "byCall": true, "answer": "What you changed in the brief to follow the call"}, {"id": "<objection id the call does not speak to>", "status": "rejected", "byCall": false, "answer": "What you changed, or why not"}]}`,
   "design-reviewer": `{"objections": [{"text": "A concrete gap in the design", "blocking": true}]}`,
   "ux-designer": `{"summary": "The screens and words you propose", "notes": ["One note per line"]}`,
-  builder: `{"summary": "What you built, in plain language", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result"}`,
+  builder: `{"summary": "What you built, in plain language", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result", "answers": [{"id": "<finding id, in a fix round>", "fixed": true, "text": "What you changed, or why you did not"}]}`,
   tester: `{"summary": "How it went", "checks": [{"text": "An acceptance item", "pass": true}]}`,
   "check-finder": `{"summary": "How this product is checked, in one sentence", "checks": [{"name": "Tests", "argv": ["dotnet", "test"], "why": "CI runs it on every pull request"}]}`,
-  "code-reviewer": `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "blocking", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}]}`,
+  "code-reviewer": `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}]}`,
+  verifier: `{"verdicts": [{"id": "<finding id>", "verdict": "real", "reason": "What you checked and what it showed"}]}`,
   shipper: `{"summary": "What you delivered", "prNumber": 12, "prUrl": "https://github.com/...", "tag": "v1.2.3", "releaseUrl": "https://github.com/...", "sha": "<commit sha on the default branch>"}`,
 };
 
@@ -212,7 +219,7 @@ If nothing blocking is left, return an empty or non-blocking list.${task.objecti
       return `Implement the task in this working copy. Follow the design brief and acceptance checklist below when there is one.
 Keep the code consistent with the codebase and add or update tests.
 Before you finish, run the product's full checks (every one listed below, or else its whole type check, lint, test suite and build), not just the tests you touched, and fix whatever fails. ${task.fixing ? "This holds after fixing review findings too: the work goes back to review only with every check passing." : "The work goes to review only with every check passing."} Petrina runs them again itself after you finish, and failures come straight back to you.
-${task.fixing ? "You are fixing the review findings listed below. Fix every blocking one." : ""}
+${task.fixing ? `You are fixing the review findings listed below. Fix every Important one, unless you can show it is wrong. Answer every finding by id in "answers": fixed and what you changed, or not fixed and why.${stepBack(task) ? `\nThis is fix round ${reviewRound(task) - 1} and the findings keep coming. Step back before patching again: reconsider the approach, and if a simpler design removes the whole class of problem, take it.` : ""}` : ""}
 Do not commit, push or open pull requests: Petrina commits your work.`;
     case "tester":
       return "Run the product and check every acceptance item like a user would. Do not change files. Report each check as pass or fail.";
@@ -222,12 +229,24 @@ Pick the checks CI relies on that run on this machine without secrets, deploy ke
 Give each command as an argument array, exactly as it should run from the repository root (no shell, no pipes, no "&&"). If a check needs a different folder, use the tool's own option for it (for example "--cwd", "-C", "--project").
 You may run a command to confirm it works, but keep it quick, and do not change files. Hand back between one and eight checks, fastest first.`;
     case "code-reviewer":
-      return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it. Your job is to try to prove that it is NOT done.
+      return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it. Your job is to try to prove that it is NOT done.${
+        reviewRound(task) > 1 && task.reviewedSha
+          ? `\nThis is review round ${reviewRound(task)}: the rest was reviewed already. Review only what changed since the last round (\`git diff ${task.reviewedSha}..HEAD\`) and whether the findings below were really fixed. Raise nothing about code that did not change since.`
+          : ""
+      }
 Check every acceptance item, look for bugs, missing tests, weakened tests and things that break existing behaviour.
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again. Run a single test only when you need it to prove a finding.
-Each finding is pass or fail with where it is and the evidence; never give a score. Mark a finding blocking only if the change should not ship with it.
+Each finding says where it is and the evidence; never give a score. Tag it "important" only if the change should not ship with it, "nit" for anything smaller, and "pre-existing" for a problem the change did not cause: that becomes a follow-up and never holds the work back.
+When you find a bug, look for the whole class of it in the change and report it once, listing every place. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead.
 If earlier reviewers' findings are listed below, confirm the ones you agree with by id. Dispute the ones you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.
 Do not change any files.`;
+    case "verifier":
+      return `Reviewers raised the Important findings below about the change on branch ${branch} (see \`git diff ${base}...HEAD\`). Before any of them can send the work back to the builder, check each one yourself, with fresh eyes: read the code, and run a single test when that is the quickest proof. For each finding, by id, give your verdict:
+- "real": the change should not ship with it;
+- "not-a-bug": it is wrong, and say why;
+- "nit": real but small, it should not hold the work back;
+- "pre-existing": the problem was already there before this change (check ${base}), so it is a follow-up.
+Be strict both ways: a finding without real evidence is not real, and a real one stays real however it was worded. Do not change any files.`;
     case "shipper":
       return shipperInstructions(ctx, defaultBranch);
     default:
@@ -305,10 +324,30 @@ export function formatObjections(objections: readonly Objection[]): string {
     .join("\n");
 }
 
+/** The review round the task is in (1 for the first). */
+export function reviewRound(task: Task): number {
+  const stage = task.plan?.stages.find((entry, index) => entry.kind === "review-chain" && index >= task.stageIndex) ?? task.plan?.stages.findLast((entry) => entry.kind === "review-chain");
+  return (stage && task.rounds[stage.id]) || 1;
+}
+
+/** After three rounds of review the builder is asked to step back instead of patching again. */
+function stepBack(task: Task): boolean {
+  return reviewRound(task) > 3;
+}
+
+/** The words agents and the coordinator use for a finding's severity. */
+export const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "important", suggestion: "nit", "pre-existing": "pre-existing" };
+
 export function formatFindings(findings: readonly Finding[]): string {
   return findings
     .map((finding) => {
-      const line = `- [${finding.id}] ${finding.severity} (${finding.status}): ${finding.text}${finding.where ? ` at ${finding.where}` : ""}`;
+      const line = [
+        `- [${finding.id}] ${FINDING_TAG[finding.severity]} (${finding.status}): ${finding.text}${finding.where ? ` at ${finding.where}` : ""}`,
+        finding.verification ? `  Verified by a fresh agent: ${finding.verification.verdict}. ${finding.verification.reason}` : "",
+        finding.answer ? `  The builder: ${finding.answer.fixed ? "fixed" : "not fixed"}. ${finding.answer.text}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
       // Evidence matters most where Petrina itself found the problem (a failing check): the builder sees the output.
       const evidence = finding.evidence && finding.raisedBy === "petrina" && finding.status === "open" ? `\n  Evidence:\n${finding.evidence.slice(-1200).replace(/^/gm, "    ")}` : "";
       return line + evidence;

@@ -17,6 +17,7 @@ import {
   deliveryStages,
   designStageIndex,
   dueAnswers,
+  findingCount,
   followingCall,
   pickStarts,
   productHistory,
@@ -66,6 +67,7 @@ import {
   BriefResult,
   BuildResult,
   CheckFinderResult,
+  VerifyResult,
   buildPrompt,
   EARLIER_ATTEMPT,
   formatFindings,
@@ -1105,8 +1107,11 @@ export class Engine {
         return task.sub === 0
           ? { roleId: stage.roleId, profileId: stage.profileIds[0] ?? PLANNER_PROFILE }
           : { roleId: stage.reviewerRoleId ?? "design-reviewer", profileId: stage.reviewerProfileIds?.[0] ?? "sol-xhigh" };
-      case "review-chain":
-        return { roleId: stage.roleId, profileId: stage.profileIds[task.sub] ?? stage.profileIds[0] ?? PLANNER_PROFILE };
+      case "review-chain": {
+        if (task.sub < stage.profileIds.length) return { roleId: stage.roleId, profileId: stage.profileIds[task.sub] ?? stage.profileIds[0] ?? PLANNER_PROFILE };
+        const verify = this.nextVerification(task, stage);
+        return verify ? { roleId: "verifier", profileId: verify.profileId } : undefined;
+      }
       case "gate":
         return undefined;
     }
@@ -1269,12 +1274,25 @@ export class Engine {
     const sections = () => this.sectionsFor(task, roleId);
 
     if (roleId === "builder") {
-      const result = await this.turn(task, roleId, profileId, sections, BuildResult, signal);
+      // In a fix round the builder answers every finding it was given, by id.
+      const given = task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing") : [];
+      const result = await this.turn(task, roleId, profileId, sections, BuildResult, signal, {
+        check: (value) => {
+          const missing = given.filter((finding) => !value.answers.some((answer) => answer.id === finding.id));
+          return missing.length ? `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}` : undefined;
+        },
+      });
       const label = this.describe(roleId, profileId);
       const sha = await git.commitAll(task.worktree!, `${task.title}${task.fixing ? " (review fixes)" : ""}\n\n${result.summary}\n\n${result.changes.map((change) => `- ${change}`).join("\n")}\n\nBuilt by Petrina: ${label}`);
       task.report = { summary: result.summary, changes: result.changes, ...(result.tests ? { tests: result.tests } : {}) };
       if (task.fixing) {
-        for (const finding of task.findings) if (finding.status === "open" && finding.severity === "blocking") finding.status = "fixed";
+        const at = Date.now();
+        for (const answer of result.answers) {
+          const finding = given.find((entry) => entry.id === answer.id && entry.status === "open");
+          if (!finding) continue;
+          finding.answer = { fixed: answer.fixed, text: answer.text, at };
+          if (answer.fixed) finding.status = "fixed";
+        }
         task.fixing = false;
       }
       this.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, profileId);
@@ -1405,10 +1423,16 @@ export class Engine {
 
   private async runReview(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const round = task.rounds[stage.id] ?? 1;
+    // After the last reviewer, Important findings are checked on the other tool before the round closes.
+    if (task.sub >= stage.profileIds.length) return this.runVerify(task, stage, round, signal);
     if (task.sub === 0) {
       // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
       delete task.handChanges;
       const problems = await git.tamperCheck(task.worktree!, task.base!);
+      // Petrina's own findings settle on what it sees now, whatever anyone answered.
+      for (const finding of task.findings) {
+        if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && !problems.includes(finding.text)) finding.status = "fixed";
+      }
       for (const problem of problems) {
         if (!task.findings.some((finding) => finding.text === problem && finding.status === "open")) {
           task.findings.push({ id: this.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
@@ -1419,7 +1443,7 @@ export class Engine {
       const checks = await this.ensureChecks(task, signal);
       if ((await this.runProductChecks(task, checks, signal)) > 0) {
         this.log(task, "warn", "Reviewers wait until the checks pass");
-        return this.closeReviewRound(task, stage, round);
+        return this.closeReviewRound(task, stage, round, false);
       }
     }
     const profileId = stage.profileIds[task.sub] ?? stage.profileIds[0] ?? "sol-xhigh";
@@ -1429,13 +1453,16 @@ export class Engine {
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
     recordDisputes(task.findings, result.disputes, profileId, Date.now());
-    for (const finding of result.findings) {
+    // A finding is raised once: a repeat of any earlier one, open or settled, is dropped.
+    const known = new Set(task.findings.map((finding) => sameFinding(finding.text)));
+    const raised = result.findings.filter((finding) => !known.has(sameFinding(finding.text)) && known.add(sameFinding(finding.text)));
+    for (const finding of raised) {
       task.findings.push({
         id: this.id(task.id),
         text: finding.text,
         ...(finding.where ? { where: finding.where } : {}),
         ...(finding.evidence ? { evidence: finding.evidence } : {}),
-        severity: finding.severity,
+        severity: SEVERITY[finding.severity],
         raisedBy: profileId,
         confirmedBy: [],
         status: "open",
@@ -1443,8 +1470,9 @@ export class Engine {
     }
     await this.undoReadOnly(task, "code-reviewer");
     this.finishStep(task);
-    const blockingNow = result.findings.filter((finding) => finding.severity === "blocking").length;
-    this.log(task, blockingNow ? "warn" : "done", result.verdict === "pass" && !blockingNow ? "Passed" : `Found ${blockingNow} blocking issue${blockingNow === 1 ? "" : "s"}`, "code-reviewer", profileId);
+    const important = raised.some((finding) => finding.severity === "important");
+    const also = [result.confirms.length ? `confirmed ${result.confirms.length}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
+    this.log(task, important ? "warn" : "done", `${findingCount(raised.map((finding) => ({ severity: SEVERITY[finding.severity] })))}${also ? `; ${also}` : ""}`, "code-reviewer", profileId);
     if (this.rerun(task)) return "continue";
 
     if (task.sub + 1 < stage.profileIds.length) {
@@ -1452,26 +1480,97 @@ export class Engine {
       this.commit();
       return "continue";
     }
-    return this.closeReviewRound(task, stage, round);
+    // Every reviewer has looked: on to checking Important findings, or the round closes.
+    task.sub = stage.profileIds.length;
+    this.commit();
+    return "continue";
   }
 
-  /** The end of a review round: back to the builder with what is blocking, or on towards delivery. */
-  private closeReviewRound(task: MTask, stage: MStage, round: number): "continue" | "stop" {
+  /**
+   * An Important finding sends work back only once a fresh agent on another tool agrees. One turn
+   * checks the findings raised on one tool; the step repeats until none is left unchecked.
+   */
+  private async runVerify(task: MTask, stage: MStage, round: number, signal: AbortSignal): Promise<"continue" | "stop"> {
+    const next = this.nextVerification(task, stage);
+    if (!next) return this.closeReviewRound(task, stage, round, true);
+    const ids = new Set(next.findings.map((finding) => finding.id));
+    const result = await this.turn(
+      task,
+      "verifier",
+      next.profileId,
+      () => [...this.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(next.findings) }],
+      VerifyResult,
+      signal,
+      {
+        status: `Checking ${next.findings.length} important finding${next.findings.length === 1 ? "" : "s"} with fresh eyes`,
+        check: (value) => {
+          const missing = next.findings.filter((finding) => !value.verdicts.some((verdict) => verdict.id === finding.id));
+          return missing.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(missing)}` : undefined;
+        },
+      },
+    );
+    const at = Date.now();
+    for (const verdict of result.verdicts) {
+      const finding = task.findings.find((entry) => entry.id === verdict.id && ids.has(entry.id));
+      if (!finding) continue;
+      finding.verification = { by: next.profileId, verdict: verdict.verdict, reason: verdict.reason, at };
+      if (verdict.verdict === "not-a-bug") finding.status = "dismissed";
+      else if (verdict.verdict === "nit") finding.severity = "suggestion";
+      else if (verdict.verdict === "pre-existing") finding.severity = "pre-existing";
+    }
+    await this.undoReadOnly(task, "verifier");
+    this.finishStep(task);
+    const verdicts = result.verdicts.filter((verdict) => ids.has(verdict.id));
+    const real = verdicts.filter((verdict) => verdict.verdict === "real").length;
+    this.log(task, real ? "warn" : "done", `${verdicts.length} checked: ${real} real${verdicts.length > real ? `, ${verdicts.length - real} not holding the work back` : ""}`, "verifier", next.profileId);
+    if (this.rerun(task)) return "continue";
+    this.commit();
+    return "continue";
+  }
+
+  /**
+   * The next Important findings to check: those raised on one tool that nobody on another tool has
+   * confirmed or checked yet. Petrina's own findings (checks, tamper check) are evidence already.
+   */
+  private nextVerification(task: MTask, stage: MStage): { profileId: Id; findings: Task["findings"] } | undefined {
+    const toolOf = (profileId: Id) => this.profile(profileId)?.toolId;
+    const pending = task.findings.filter(
+      (finding) =>
+        finding.status === "open" &&
+        finding.severity === "blocking" &&
+        finding.raisedBy !== "petrina" &&
+        !finding.verification &&
+        !finding.confirmedBy.some((by) => toolOf(by) !== toolOf(finding.raisedBy)),
+    );
+    if (!pending.length) return undefined;
+    const tool = toolOf(pending[0]!.raisedBy);
+    const ready = (profile: AgentProfile) => this.s.tools.some((entry) => entry.id === profile.toolId && entry.status === "ready");
+    const other = this.s.profiles.filter((profile) => profile.toolId !== tool && ready(profile as AgentProfile));
+    // The stage's own reviewers on another tool first; with only one tool working, a fresh agent on the same tool.
+    const profileId = stage.profileIds.find((id) => other.some((profile) => profile.id === id)) ?? other[0]?.id ?? stage.profileIds[0] ?? PLANNER_PROFILE;
+    return { profileId, findings: pending.filter((finding) => toolOf(finding.raisedBy) === tool) as Task["findings"] };
+  }
+
+  /** The end of a review round: back to the builder with what is Important, or on towards delivery. */
+  private async closeReviewRound(task: MTask, stage: MStage, round: number, reviewed: boolean): Promise<"continue" | "stop"> {
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
     const builder = lastIndex(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
     if (open.length > 0 && builder >= 0 && round < (stage.maxRounds ?? 2)) {
+      // The next round reviews only what changed since what the reviewers looked at in this one.
+      const sha = reviewed ? await git.head(task.worktree!).catch(() => undefined) : undefined;
+      if (sha) task.reviewedSha = sha;
       task.rounds[stage.id] = round + 1;
       task.stageIndex = builder;
       task.sub = 0;
       task.fixing = true;
-      this.log(task, "warn", `Sent back to the builder with ${open.length} blocking finding${open.length === 1 ? "" : "s"}`);
+      this.log(task, "warn", `Sent back to the builder: ${findingCount(open)}`);
       this.commit();
       return "continue";
     }
     task.stageIndex += 1;
     task.sub = 0;
     if (open.length > 0) {
-      this.log(task, "warn", `Review rounds used up with ${open.length} blocking finding${open.length === 1 ? "" : "s"} open`);
+      this.log(task, "warn", `Review rounds used up: ${findingCount(open)} still open`);
       // With blocking findings left, the coordinator always looks before anything ships.
       const next = task.plan?.stages[task.stageIndex];
       if (next && next.kind !== "gate") {
@@ -1479,7 +1578,7 @@ export class Engine {
         return "stop";
       }
     } else {
-      this.log(task, "done", "Review passed");
+      this.log(task, "done", `Review passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
     }
     this.commit();
     return "continue";
@@ -1691,20 +1790,20 @@ export class Engine {
       sections.push({ title: "The product's checks (run every one in full before you finish)", body: checks.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") });
     }
     if (roleId === "builder" && task.fixing) {
-      const open = task.findings.filter((finding) => finding.status === "open");
-      if (open.length) sections.push({ title: "Review findings to fix", body: formatFindings(open as Task["findings"]) });
+      const open = task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing");
+      if (open.length) sections.push({ title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) });
     }
-    if ((roleId === "code-reviewer" || roleId === "shipper" || roleId === "tester") && task.report) {
+    if ((roleId === "code-reviewer" || roleId === "verifier" || roleId === "shipper" || roleId === "tester") && task.report) {
       sections.push({ title: "What the builder reports", body: [task.report.summary, ...task.report.changes.map((change) => `- ${change}`), task.report.tests ? `Tests: ${task.report.tests}` : ""].filter(Boolean).join("\n") });
     }
-    if ((roleId === "code-reviewer" || roleId === "tester" || roleId === "shipper") && task.checks?.results.length) {
+    if ((roleId === "code-reviewer" || roleId === "verifier" || roleId === "tester" || roleId === "shipper") && task.checks?.results.length) {
       const lines = task.checks.results.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})`);
       sections.push({ title: "The product's checks, run by Petrina itself on this commit (evidence, not an agent's word)", body: lines.join("\n") });
     }
     if (roleId === "code-reviewer" && task.findings.length) sections.push({ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) });
     if (roleId === "shipper") {
       const reviews = task.findings.filter((finding) => finding.status !== "dismissed");
-      sections.push({ title: "Review summary", body: reviews.length ? formatFindings(reviews as Task["findings"]) : "Every reviewer passed it." });
+      sections.push({ title: "Review summary (list pre-existing findings as follow-ups in what you deliver)", body: reviews.length ? formatFindings(reviews as Task["findings"]) : "Nothing to fix: every reviewer passed it." });
       if (task.shipping?.found) {
         sections.push({
           title: "An earlier attempt to ship this was interrupted",
@@ -2080,6 +2179,10 @@ export class Engine {
     const sha = await git.head(task.worktree).catch(() => undefined);
     task.checks = { at: Date.now(), ...(sha ? { sha } : {}), results };
     const failed = results.filter((run) => !run.ok);
+    // An earlier failure settles on this run, whatever anyone answered about it.
+    for (const finding of task.findings) {
+      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && !failed.some((run) => finding.text === `Check failed: ${run.name} (${run.command})`)) finding.status = "fixed";
+    }
     for (const run of failed) {
       const text = `Check failed: ${run.name} (${run.command})`;
       if (task.findings.some((finding) => finding.text === text && finding.status === "open")) continue;
@@ -2363,6 +2466,14 @@ export function recordDisputes(findings: DeepMutable<Finding>[], disputes: reado
     finding.disputes = [...(finding.disputes ?? []), { by, reason: dispute.reason, at }];
     if (finding.raisedBy !== "petrina" && finding.confirmedBy.length === 0) finding.status = "dismissed";
   }
+}
+
+/** What a reviewer's tag means for the finding. */
+const SEVERITY = { important: "blocking", nit: "suggestion", "pre-existing": "pre-existing" } as const;
+
+/** The same finding, however it is spaced or capitalised. */
+function sameFinding(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 /** One plain line for the delivery check: what Petrina's own run of the checks found. */

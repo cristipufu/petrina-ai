@@ -754,7 +754,12 @@ export class Simulator {
 
     if (stage.kind === "do") {
       if (agent.roleId === "builder" && task.fixing) {
-        for (const finding of task.findings) if (finding.status === "open" && finding.severity === "blocking") finding.status = "fixed";
+        for (const finding of task.findings) {
+          if (finding.status !== "open" || finding.severity === "pre-existing") continue;
+          const fixed = finding.severity === "blocking";
+          finding.answer = { fixed, text: fixed ? "Fixed, with a test for addresses with a plus sign." : "Kept as is: the current message matches the rest of the product.", at: d.now };
+          if (fixed) finding.status = "fixed";
+        }
         task.fixing = false;
         this.log(d, task, "done", "Fixed the blocking findings", agent.roleId, agent.profileId);
       } else {
@@ -831,7 +836,7 @@ export class Simulator {
           confirmedBy: [],
           status: "open",
         });
-        this.log(d, task, "warn", "Found 1 blocking issue", agent.roleId, agent.profileId);
+        this.log(d, task, "warn", "1 important", agent.roleId, agent.profileId);
       } else if (round === 1) {
         for (const finding of task.findings) if (finding.status === "open") finding.confirmedBy.push(agent.profileId);
         task.findings.push({
@@ -842,9 +847,17 @@ export class Simulator {
           confirmedBy: [],
           status: "open",
         });
-        this.log(d, task, "warn", "Confirmed the blocking issue and added a suggestion", agent.roleId, agent.profileId);
+        task.findings.push({
+          id: this.id(d, task.id),
+          text: "The sign-in page has no limit on attempts. It was like this before the change.",
+          severity: "pre-existing",
+          raisedBy: agent.profileId,
+          confirmedBy: [],
+          status: "open",
+        });
+        this.log(d, task, "warn", "1 nit, 1 follow-up; confirmed 1", agent.roleId, agent.profileId);
       } else {
-        this.log(d, task, "done", "Passed", agent.roleId, agent.profileId);
+        this.log(d, task, "done", "Nothing to fix", agent.roleId, agent.profileId);
       }
 
       if (task.sub + 1 < stage.profileIds.length) {

@@ -26,7 +26,10 @@ export interface Scenario {
    * "commit": commit a stray file, read-only as it is, then work until the step restarts.
    * "work": the first reviewer to start works until the coordinator takes over and hands back; later ones pass.
    */
-  reviewer?: "commit" | "work";
+  /** "important": the first round's reviewers raise one Important finding (the second in other words); later rounds pass. */
+  reviewer?: "commit" | "work" | "important";
+  /** The verifier's verdict on every finding it is given (default "real"). */
+  verifier?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
   tester?: "work";
   /** How the shipper behaves until the engine tells it an earlier attempt was interrupted. */
@@ -125,6 +128,16 @@ function section(text: string, title: string): string | undefined {
   const body = text.slice(start + title.length + 4);
   const end = body.indexOf("\n## ");
   return (end < 0 ? body : body.slice(0, end)).trim();
+}
+
+/** The finding ids listed in a section of the prompt. */
+function findingIds(text: string, title: string): string[] {
+  return [...(section(text, title) ?? "").matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
+}
+
+/** A builder in a fix round answers every finding it was given, by id. */
+function answersTo(text: string) {
+  return findingIds(text, "Review findings (answer every one by id; fix every Important one)").map((id) => ({ id, fixed: true, text: "Fixed it." }));
 }
 
 const NOTES = "The coordinator's notes on this task (follow them; where they conflict with the brief or each other, the latest wins)";
@@ -235,7 +248,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     case "builder": {
       if (handedBack) {
         writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
-        return done({ summary: "Finished the greeting after the hand back.", changes: ["People see a greeting"], tests: "1 passed" }, terminal);
+        return done({ summary: "Finished the greeting after the hand back.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) }, terminal);
       }
       if (plan.builder === "restart" && !earlierAttempt && !restarted) {
         if (roleOf(text)) return done({ needsInput: { question: "Which colour should the greeting be?", options: ["Blue", "Green"] } });
@@ -266,7 +279,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         allowed = permission.outcome.outcome === "selected" && permission.outcome.optionId === "allow";
       }
       writeFileSync(join(session.cwd, "greeting.txt"), allowed ? "Hello (with left-pad)\n" : "Hello\n");
-      return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed" });
+      return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
     }
     case "code reviewer":
       if (handedBack) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] }, terminal);
@@ -281,7 +294,20 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         run(session.cwd, "commit", "--quiet", "-m", "A stray commit");
         return hang(sessionId, "reviewer-committed");
       }
-      return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "suggestion" }], confirms: [], disputes: [] });
+      if (plan.reviewer === "important" && !text.includes("This is review round")) {
+        // The second reviewer repeats the first one's finding in other words: Petrina keeps it once.
+        const again = text.includes("Findings so far");
+        return done({ verdict: "fail", findings: [{ text: again ? "The GREETING is missing on the welcome page!" : "The greeting is missing on the welcome page.", where: "greeting.txt", severity: "important", evidence: "Opened the welcome page" }], confirms: [], disputes: [] });
+      }
+      return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
+    case "verifier":
+      return done({
+        verdicts: findingIds(text, "Important findings to check (a verdict on every one, by id)").map((id) => ({
+          id,
+          verdict: plan.verifier ?? "real",
+          reason: plan.verifier === "not-a-bug" ? "The welcome page shows the greeting already." : "The welcome page has no greeting: confirmed by opening it.",
+        })),
+      });
     case "tester":
       if (handedBack) return done({ summary: "Tried it after the hand back.", checks: [] }, terminal);
       if (plan.tester === "work" && !marked("tester-worked")) {

@@ -237,18 +237,34 @@ export interface DesignCall {
   at: number;
 }
 
+/**
+ * What a review found. `blocking` is shown as Important (must be fixed before it ships), `suggestion`
+ * as Nit, and `pre-existing` is an old problem the change did not cause: a follow-up, never blocking.
+ */
 export interface Finding {
   id: Id;
   text: string;
   where?: string;
   /** How the reviewer knows. */
   evidence?: string;
-  severity: "blocking" | "suggestion";
+  severity: "blocking" | "suggestion" | "pre-existing";
   raisedBy: Id;
   confirmedBy: readonly Id[];
   /** Later reviewers who think it is wrong, and why. */
   disputes?: readonly FindingDispute[];
+  /** A fresh agent on the other tool checked an Important finding before it could send work back. */
+  verification?: FindingVerification;
+  /** The builder's answer when the finding came back to it. */
+  answer?: { fixed: boolean; text: string; at: number };
   status: "open" | "fixed" | "dismissed";
+}
+
+export interface FindingVerification {
+  /** The verifier's profile. */
+  by: Id;
+  verdict: "real" | "not-a-bug" | "nit" | "pre-existing";
+  reason: string;
+  at: number;
 }
 
 export interface FindingDispute {
@@ -302,6 +318,8 @@ export interface Task {
   checks?: { at: number; sha?: string; results: readonly CheckRun[] };
   /** How many times failing checks sent the work back right before the delivery check. */
   checkReturns?: number;
+  /** The commit the last review round looked at: later rounds review only what changed since. */
+  reviewedSha?: string;
   agent?: ActiveAgent;
   statusLine: string;
   createdAt: number;

@@ -16,7 +16,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { TAKE_OVER_WORDS, type CheckRun, type Finding, type Objection, type Role, type Stage, type State, type Task } from "@petrina/core";
+import { findingCount, TAKE_OVER_WORDS, type CheckRun, type Finding, type Objection, type Role, type Stage, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, deliveryText, duration, profileText, safeUrl, STATE_LABEL, type Lookup } from "../lib";
 import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
@@ -578,14 +578,18 @@ function DesignView({ task, find }: { task: Task; find: Lookup }) {
   );
 }
 
+const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "Important", suggestion: "Nit", "pre-existing": "Pre-existing" };
+const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> = { real: "Checked: real", "not-a-bug": "Checked: not a bug", nit: "Checked: only a nit", "pre-existing": "Checked: older than this change" };
+
 function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
-  const status = finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : "Open";
+  const followUp = finding.status === "open" && finding.severity === "pre-existing";
+  const status = finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : followUp ? "Follow-up" : "Open";
   return (
     <li className="issue">
       <div className="issue-status">
-        <span className={`label ${finding.status === "fixed" ? "ok" : finding.status === "open" ? (finding.severity === "blocking" ? "bad" : "warn") : ""}`}>{status}</span>
+        <span className={`label ${finding.status === "fixed" ? "ok" : finding.status === "open" && !followUp ? (finding.severity === "blocking" ? "bad" : "warn") : ""}`}>{status}</span>
         <span aria-hidden="true">·</span>
-        <span>{finding.severity === "blocking" ? "Blocking" : "Suggestion"}</span>
+        <span>{FINDING_TAG[finding.severity]}</span>
       </div>
       <p className="issue-text">{finding.text}</p>
       {finding.evidence && <p className="issue-evidence">{finding.evidence}</p>}
@@ -599,7 +603,21 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
           {dispute.reason}
         </div>
       ))}
-      {finding.status === "dismissed" && !finding.disputes?.length && (
+      {finding.verification && (
+        <div className="issue-response">
+          <b>
+            {VERDICT[finding.verification.verdict]}, by {profileText(find.profile(finding.verification.by), find, true)}
+          </b>
+          {finding.verification.reason}
+        </div>
+      )}
+      {finding.answer && (
+        <div className="issue-response">
+          <b>{finding.answer.fixed ? "The builder fixed it" : "The builder did not fix it"}</b>
+          {finding.answer.text}
+        </div>
+      )}
+      {finding.status === "dismissed" && !finding.disputes?.length && !finding.verification && (
         <div className="issue-response">
           <b>Dismissed by a later reviewer</b>
           The reason was not recorded: reviewers did not have to give one before this change.
@@ -634,10 +652,10 @@ function CallWords({ text }: { text: string }) {
 function ReviewView({ task, find }: { task: Task; find: Lookup }) {
   const reviewing = task.plan?.stages.some((stage, index) => stage.kind === "review-chain" && index <= task.stageIndex) || task.state === "pr-open" || task.state === "done";
   const runs = task.checks?.results ?? [];
-  if (task.findings.length === 0 && runs.length === 0) return <div className="empty-state">{reviewing ? "No findings. Every reviewer passed it." : "Reviews start after the build."}</div>;
+  if (task.findings.length === 0 && runs.length === 0) return <div className="empty-state">{reviewing ? "Nothing to fix. Every reviewer passed it." : "Reviews start after the build."}</div>;
 
   const findings = openFirst(task.findings.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" })));
-  const open = findings.filter((finding) => finding.status === "open").length;
+  const open = findings.filter((finding) => finding.status === "open");
   // Petrina's own findings that aren't failing checks come from the tamper check.
   const tampered = task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed"));
 
@@ -651,18 +669,18 @@ function ReviewView({ task, find }: { task: Task; find: Lookup }) {
         </p>
       )}
       {findings.length === 0 ? (
-        <p className="quiet-text">No findings. Every reviewer passed it.</p>
+        <p className="quiet-text">Nothing to fix. Every reviewer passed it.</p>
       ) : (
-      <section className="sheet-section">
-        <h2>
-          Findings <span className="quiet-text num">{open > 0 ? `${open} open` : "all settled"}</span>
-        </h2>
-        <ol className="issues">
-          {findings.map((finding) => (
-            <FindingItem key={finding.id} finding={finding} find={find} />
-          ))}
-        </ol>
-      </section>
+        <section className="sheet-section">
+          <h2>
+            Findings <span className="quiet-text num">{findingCount(open)}</span>
+          </h2>
+          <ol className="issues">
+            {findings.map((finding) => (
+              <FindingItem key={finding.id} finding={finding} find={find} />
+            ))}
+          </ol>
+        </section>
       )}
     </>
   );

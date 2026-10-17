@@ -80,6 +80,17 @@ export const BUILT_IN_ROLES: readonly Role[] = [
     column: "reviewing",
   },
   {
+    id: "verifier",
+    name: "Verifier",
+    icon: "scale",
+    tone: "teal",
+    purpose: "Checks Important review findings with fresh eyes on the other tool before they can send work back. Always run by Petrina, never planned.",
+    canEdit: false,
+    sees: "The change, the findings to check and the reviewers' evidence.",
+    handsBack: "For each finding: real, not a bug, only a nit, or older than the change, with why.",
+    column: "reviewing",
+  },
+  {
     id: "tester",
     name: "Tester",
     icon: "flask",

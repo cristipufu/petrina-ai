@@ -226,8 +226,8 @@ describe.skipIf(!posix)("hand changes after every review chain", () => {
     expect(rerun).toBeGreaterThan(milestones.indexOf("You handed back to the Tester: 1 file changed in 1 commit. Your note: One more fix"));
     // The review ran again after the tester finished, and only then did the work ship.
     expect(milestones.filter((text) => text === "Code reviewer started")).toHaveLength(2);
-    expect(milestones.lastIndexOf("Review passed")).toBeGreaterThan(rerun);
-    expect(milestones.lastIndexOf("Review passed")).toBeLessThan(milestones.findIndex((text) => text.startsWith("Committed to main")));
+    expect(milestones.findLastIndex((text) => text.startsWith("Review passed"))).toBeGreaterThan(rerun);
+    expect(milestones.findLastIndex((text) => text.startsWith("Review passed"))).toBeLessThan(milestones.findIndex((text) => text.startsWith("Committed to main")));
     expect(done.rounds[review.id]).toBeUndefined();
     expect(git(run.product, "show", "main:fix.txt")).toBe("A fix");
     run.engine().shutdown();
