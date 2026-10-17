@@ -115,6 +115,19 @@ describe.concurrent("a review guide that learns from misses", () => {
     }
   });
 
+  it("counts a Guide keeper that could not finish as a failure, and carries on", async () => {
+    const { engine, task, offers } = await sendBack({ guide: "broken" }, () => undefined);
+    try {
+      expect(offers).toEqual([]);
+      expect(lines(task)).toContain("The Guide keeper could not finish, so nothing was proposed for the review guide");
+      const details = engine.usage({ view: "analytics", period: "today" }).squad.details;
+      expect(details.failuresByReason).toEqual([{ label: "unusable result", count: 1 }]);
+      expect(engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] })).toMatchObject([{ outcome: "unusable", roleId: "guide-keeper" }]);
+    } finally {
+      engine.shutdown();
+    }
+  });
+
   it("offers nothing when the note was a change of mind", async () => {
     const { engine, task, offers } = await sendBack({ guide: "change of mind" }, () => undefined);
     try {

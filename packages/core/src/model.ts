@@ -1,6 +1,8 @@
 // The domain model shared by the engine, the simulator and the UI.
 // Everything here is plain data so it can be stored, diffed and rendered.
 
+import type { WorkInfo } from "./worklog.js";
+
 export type Id = string;
 
 export type Effort = "low" | "medium" | "high" | "xhigh";
@@ -587,6 +589,9 @@ export interface UsageReport {
   status: UsageStatus;
   /** How much of the limit is used, from 0 to 1, when the tool says. */
   utilization?: number;
+  /** Codex reports each window’s length and, sometimes, its name. */
+  windowMinutes?: number;
+  name?: string;
   /** When the limit resets (milliseconds), when the tool says. */
   resetsAt?: number;
   at: number;
@@ -600,6 +605,8 @@ export interface UsageLimit {
   until: number;
   /** Plain words, for example "Claude Code's weekly Opus limit". */
   reason: string;
+  /** When the tool reported that it was out. Missing in older saved state. */
+  at?: number;
 }
 
 export interface Pool {
@@ -632,4 +639,6 @@ export interface State {
   terminals?: readonly Terminal[];
   /** The terminal the coordinator chose for take-overs. Unset: the usual one. */
   terminal?: Id;
+  /** The work log's counter and when tracking began. Never the log itself. */
+  work?: WorkInfo;
 }

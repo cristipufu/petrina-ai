@@ -6,6 +6,10 @@
 // them, notes how each was opened in dir/opens.jsonl and every setting it was given in
 // dir/config.jsonl, follows dir/scenario.json, and drops marker files there at the moments a test
 // waits for. With "--script=<file>", the builder and the Release Manager follow the AgentScript in that file.
+//
+// With --tool=claude-code or --tool=codex (the work-log tests), it also reports usage, settings and
+// limits the way that tool's adapter does. With FAKE_BARE_ACK set, it acknowledges a settings change
+// without saying what the session ended up on.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -30,9 +34,9 @@ export interface Scenario {
    * "important": in the first round the reviewer on Opus raises one Important finding, the others a nit.
    * "important-twice": every reviewer raises it, each in its own words. Later rounds pass.
    */
-  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch";
-  /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. */
-  guide?: "change of mind";
+  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm";
+  /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. "broken": it never hands back a usable result. */
+  guide?: "change of mind" | "broken";
   /** How the planner rates the task's risk (unrated by default). */
   risk?: "low" | "high";
   /** The verifier's verdict on every finding it is given (default "real"). */
@@ -46,8 +50,8 @@ export interface Scenario {
    * first), or "stall" (it offers resume and never answers). Unset: it cannot reopen conversations.
    */
   reopen?: "resume" | "load" | "stall";
-  /** What the Check finder hands back: a passing check (default), a failing one, one that changes a tracked file, or one that commits. */
-  checks?: "pass" | "fail" | "writes" | "commits" | "slow";
+  /** What the Check finder hands back: a passing check (default), a failing one, one that changes a tracked file, or one that commits. "broken": never a usable result. */
+  checks?: "pass" | "fail" | "writes" | "commits" | "slow" | "broken";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
   restarts?: number;
   /** "change": fixing review findings changes the code (by default the fix leaves it as it was). */
@@ -66,7 +70,7 @@ export interface Scenario {
    * Claude model reports a rejected rate limit of kind `type` (default "five_hour") first; "gpt-6.1-sol" fails the
    * way Codex does, with a message. Only agents with this `role` when it is set.
    */
-  limited?: { model: string; role?: string; type?: string; resetsInMs?: number }[];
+  limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean }[];
   /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
   usage?: { model: string; status: "allowed" | "allowed_warning"; utilization: number; type?: string }[];
 }
@@ -84,6 +88,16 @@ interface Conversation {
   terminal?: number;
   /** The model Petrina chose for it ("opus", "gpt-6.1-sol"). */
   model?: string;
+  /** The session's settings as the tool keeps them. */
+  options: ConfigOption[];
+}
+
+interface ConfigOption {
+  id: string;
+  name: string;
+  type: "select";
+  currentValue: string;
+  options: { value: string; name: string }[];
 }
 
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
@@ -92,6 +106,7 @@ interface Conversation {
 // build and one review. With "--hold=<file>", the architect stops halfway through following a call for as long
 // as that file exists.
 const dir = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
+const tool = process.argv.find((arg) => arg.startsWith("--tool="))?.slice("--tool=".length) as "claude-code" | "codex" | undefined;
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
@@ -108,7 +123,14 @@ const silent = process.argv.includes("--silent");
 /** The agent's own git: none of the programs a security test plants. */
 const run = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
-type Reply = { text: string; stop?: "cancelled" };
+interface Reply {
+  text: string;
+  stop?: "cancelled";
+  /** Leave the usage out entirely. */
+  silent?: boolean;
+  /** Claude Code: the per-model breakdown. */
+  models?: { model: string; input: number; cached: number; write: number; output: number }[];
+}
 
 const conversationFile = (sessionId: string) => dir && join(dir, "conversations", `${sessionId}.json`);
 
@@ -142,8 +164,13 @@ async function send(client: acp.AgentContext, sessionId: string, update: acp.Ses
 }
 
 /** The settings Petrina sets: model, effort (each tool's name for it) and the automatic safety mode. */
-const select = (id: string, values: string[]) => ({ type: "select" as const, id, name: id, currentValue: values[0]!, options: values.map((value) => ({ value, name: value })) });
-const configOptions = () => [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol", "grok-4.7"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("mode", ["default", "auto", "agent"])];
+const select = (id: string, values: string[], names: string[] = values): ConfigOption => ({ type: "select", id, name: id, currentValue: values[0]!, options: values.map((value, index) => ({ value, name: names[index]! })) });
+/** With --tool, that tool's own choices: Claude Code offers Opus and Sonnet; this Codex only gpt-6.1, at up to high effort. */
+const configOptions = (): ConfigOption[] => {
+  if (tool === "codex") return [select("mode", ["read-only", "agent"]), select("model", ["gpt-6.1"]), { ...select("reasoning_effort", ["low", "medium", "high"]), currentValue: "medium" }];
+  if (tool === "claude-code") return [select("mode", ["default", "auto"]), { ...select("model", ["opus", "sonnet"], ["Opus 5.5", "Sonnet 5.5"]), currentValue: "sonnet" }, { ...select("effort", ["low", "medium", "high", "xhigh"]), currentValue: "medium" }];
+  return [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol", "grok-4.7"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("mode", ["default", "auto", "agent"])];
+};
 
 /** A turn that only ends when the engine cancels it, or the engine goes away. */
 function hang(sessionId: string, marker: string): Promise<Reply> {
@@ -260,7 +287,12 @@ async function runOut(limit: NonNullable<Scenario["limited"]>[number], until: nu
     throw acp.RequestError.internalError({ codexErrorInfo: "usageLimitExceeded", category: "quota_exhausted" }, "Internal error");
   }
   await send(client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "I drafted notes.txt and started on the greeting file before running out." } });
-  await send(client, sessionId, usageUpdate("rejected", limit.type ?? "five_hour", 1, Math.ceil(until / 1000)));
+  if (limit.spendCap) {
+    // The session window is open, but the separate spend cap is exhausted in the same update.
+    await send(client, sessionId, { sessionUpdate: "usage_update", used: 100, size: 1000, _meta: { "_claude/model": "claude-opus-5-5", "_claude/rateLimit": { status: "allowed", rateLimitType: "five_hour", utilization: 0.4, overageStatus: "rejected", overageResetsAt: Math.ceil(until / 1000) } } } as acp.SessionNotification["update"]);
+  } else {
+    await send(client, sessionId, usageUpdate("rejected", limit.type ?? "five_hour", 1, Math.ceil(until / 1000)));
+  }
   throw new Error("Claude usage limit reached");
 }
 
@@ -291,9 +323,31 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const handedBack = text.includes("handed it back");
   const terminal = `Terminal turns: ${session.terminal ?? 0}.`;
 
+  if (text.includes("HANG-FOREVER")) {
+    await say("Thinking for a very long time");
+    await new Promise(() => undefined);
+  }
+  if (text.includes("SWITCH-THEN-STOP")) {
+    // The tool confirms a switch to Sonnet at low effort, then stops before it replies.
+    for (const [id, value] of [["model", "sonnet"], ["effort", "low"]] as const) session.options.find((option) => option.id === id)!.currentValue = value;
+    await send(client, sessionId, { sessionUpdate: "config_option_update", configOptions: session.options } as acp.SessionNotification["update"]);
+    setTimeout(() => process.exit(3), 200);
+    await new Promise(() => undefined);
+  }
+
   switch (session.role) {
     case "planner":
       await say("Sizing the work");
+      if (tool === "claude-code") {
+        // Claude Code's limit notice rides on a context update, next to a dollar figure Petrina ignores.
+        await send(client, sessionId, {
+          sessionUpdate: "usage_update",
+          used: 12_000,
+          size: 200_000,
+          cost: { amount: 1.2345, currency: "USD" },
+          _meta: { "_claude/model": "claude-opus-5-5", "_claude/rateLimit": { status: "allowed", rateLimitType: "five_hour", utilization: 0.81, resetsAt: Math.round(Date.now() / 1000) + 7200 } },
+        } as acp.SessionNotification["update"]);
+      }
       if (plan.planner === "tester-after")
         return done({
           rationale: "Build it, one reviewer, then try it out.",
@@ -308,7 +362,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           rationale: "Build it on Claude Code, one reviewer on Codex.",
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 1 },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: plan.reviewer === "confirm" ? 2 : 1 },
           ],
         });
       if (plan.planner === "two-opus")
@@ -380,9 +434,17 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return done({ ...brief, answers }, `Call: ${call}. Final: ${text.includes("The call is final") ? "yes" : "no"}. Open: ${open.join(", ")}.`);
       }
       if (!text.includes("The coordinator answered")) return done({ needsInput: { question: "Should the greeting be formal?", options: ["Formal", "Casual"] } });
-      return done({ ...brief, answers: [] });
+      return {
+        ...done({ ...brief, answers: [] }),
+        // A helper agent ran on Haiku: Claude Code's breakdown already includes it.
+        models: [
+          { model: "claude-opus-5-5", input: 150, cached: 1500, write: 30, output: 70 },
+          { model: "claude-haiku-5-5", input: 40, cached: 240, write: 0, output: 20 },
+        ],
+      };
     }
     case "check finder":
+      if (plan.checks === "broken") return { text: "I could not work out how this product is checked." };
       if (readScript().checks) return done({ summary: "Checked the way this test asks.", checks: readScript().checks });
       return done({
         summary: "Checked with git, which every test machine has.",
@@ -404,7 +466,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (text.includes("[disagree]")) {
         return done({ objections: [{ text: "The brief does not say who sees the greeting.", blocking: true }, { text: "Consider a greeting per language.", blocking: false }] });
       }
-      return done({ objections: [] });
+      // This turn reports no usage at all.
+      return { ...done({ objections: [] }), silent: true };
     case "builder": {
       if (handedBack) {
         writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
@@ -426,6 +489,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return hang(sessionId, session.restarts ? `builder-restart-${session.restarts}` : "builder-heard");
       }
       await say("Writing the greeting");
+      // Codex starting a helper agent shows up as a spawnAgent tool call.
+      if (tool) await send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: `spawn-${session.turns}`, title: "spawnAgent", kind: "other", status: "completed", rawInput: { receiverThreadIds: ["child-thread"], senderThreadId: sessionId } });
       let allowed = true;
       if (!plan.builder) {
         const permission = (await client.request(acp.methods.client.session.requestPermission, {
@@ -470,6 +535,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return done({ ...(title ? { title } : {}), ...(description ? { description } : {}), summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
     }
     case "code reviewer":
+      if (plan.reviewer === "confirm") return done({ verdict: text.includes("This is review round") ? "pass" : "fail", findings: [], confirms: text.includes("This is review round") ? [] : findingIds(text, "Findings so far (confirm or dispute by id)"), disputes: [] });
       if (handedBack) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] }, terminal);
       // Only the reviewer on Opus: with reviewers starting at once, which one works on stays certain.
       if (plan.reviewer === "work" && session.model === "opus" && !marked("reviewer-worked")) {
@@ -494,10 +560,18 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         if (plan.reviewer === "important" && !opus) return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
         return done({ verdict: "fail", findings: [{ text: opus ? "The greeting is missing on the welcome page." : "The GREETING is missing on the welcome page!", where: "greeting.txt", severity: "important", evidence: "Opened the welcome page" }], confirms: [], disputes: [] });
       }
+      if (tool === "claude-code") {
+        // A fallback: Claude Code switches the session's model and says so with a config update.
+        session.options.find((option) => option.id === "model")!.currentValue = "sonnet";
+        await send(client, sessionId, { sessionUpdate: "config_option_update", configOptions: session.options } as acp.SessionNotification["update"]);
+      } else if (tool === "codex") {
+        await send(client, sessionId, { sessionUpdate: "notice", severity: "info", title: "Model rerouted", description: "Switched from gpt-6.1 to gpt-6.1-mini (high demand)." } as unknown as acp.SessionNotification["update"]);
+      }
       return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
     case "security reviewer":
       return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
     case "guide keeper":
+      if (plan.guide === "broken") return { text: "I could not tell what the reviewers missed." };
       return done(
         plan.guide === "change of mind"
           ? { missed: false, line: "", why: "The note asks for a new colour: a change of mind, not a miss." }
@@ -530,6 +604,38 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   }
 }
 
+const tokenCount = (row: { input: number; cached: number; write: number; output: number }) => ({
+  inputTokens: row.input,
+  cachedInputTokens: row.cached,
+  cachedWriteTokens: row.write,
+  outputTokens: row.output,
+  reasoningOutputTokens: 0,
+  totalTokens: row.input + row.cached + row.write + row.output,
+});
+
+/** The prompt response each adapter sends: ACP usage plus `_meta.quota.model_usage`. */
+function responseFor(reply: Reply, session: Conversation) {
+  const stopReason = reply.stop ?? ("end_turn" as const);
+  if (reply.silent) return { stopReason };
+  const main = { input: 100, cached: 1000, write: 20, output: 50 };
+  if (tool === "codex") {
+    const model = session.options.find((option) => option.id === "model")!.currentValue;
+    const count = { ...tokenCount({ ...main, write: 0 }), reasoningOutputTokens: 20, cacheWriteInputTokens: 0 };
+    return {
+      stopReason,
+      usage: { inputTokens: 100, cachedReadTokens: 1000, cachedWriteTokens: 0, outputTokens: 50, thoughtTokens: 20, totalTokens: 1150 },
+      _meta: { quota: { token_count: count, model_usage: [{ model, token_count: count }] } },
+    };
+  }
+  // Claude Code: the main figure counts the main agent loop only; the breakdown is the fuller picture.
+  const rows = reply.models ?? [{ model: "claude-opus-5-5", ...main }];
+  return {
+    stopReason,
+    usage: { inputTokens: main.input, cachedReadTokens: main.cached, cachedWriteTokens: main.write, outputTokens: main.output, totalTokens: 1170 },
+    _meta: { quota: { token_count: tokenCount(main), model_usage: rows.map((row) => ({ model: row.model, token_count: tokenCount(row) })) } },
+  };
+}
+
 acp
   .agent({ name: "fake-agent" })
   .onRequest("initialize", async () => {
@@ -539,28 +645,32 @@ acp
   })
   .onRequest("session/new", (ctx) => {
     const sessionId = crypto.randomUUID();
-    sessions.set(sessionId, { cwd: ctx.params.cwd, role: "", turns: 0, restarts: 0, history: [] });
+    sessions.set(sessionId, { cwd: ctx.params.cwd, role: "", turns: 0, restarts: 0, history: [], options: configOptions() });
     keep(sessionId);
     opened(sessionId, "new");
-    return { sessionId, configOptions: configOptions() };
+    return { sessionId, configOptions: sessions.get(sessionId)!.options };
   })
   .onRequest("session/resume", async (ctx) => {
     // A tool that never answers: Petrina gives up and starts a fresh conversation.
     if (scenario().reopen === "stall") await new Promise(() => undefined);
-    reopen(ctx.params.sessionId, "resume");
-    return { configOptions: configOptions() };
+    return { configOptions: reopen(ctx.params.sessionId, "resume").options };
   })
   .onRequest("session/load", async (ctx) => {
     const conversation = reopen(ctx.params.sessionId, "load");
     // Load streams the whole conversation back before it answers.
     for (const update of conversation.history) await ctx.client.notify(acp.methods.client.session.update, { sessionId: ctx.params.sessionId, update });
-    return { configOptions: configOptions() };
+    return { configOptions: conversation.options };
   })
   .onRequest("session/set_config_option", (ctx) => {
-    const session = sessions.get(ctx.params.sessionId);
-    if (session && ctx.params.configId === "model") session.model = String(ctx.params.value);
+    const session = sessions.get(ctx.params.sessionId)!;
+    if (ctx.params.configId === "model") session.model = String(ctx.params.value);
     if (dir) appendFileSync(join(dir, "config.jsonl"), `${JSON.stringify({ session: ctx.params.sessionId, configId: ctx.params.configId, value: ctx.params.value })}\n`);
-    return { configOptions: configOptions() };
+    const option = session.options.find((entry) => entry.id === ctx.params.configId);
+    const value = (ctx.params as { value?: unknown }).value;
+    if (option && typeof value === "string" && option.options.some((entry) => entry.value === value)) option.currentValue = value;
+    keep(ctx.params.sessionId);
+    // The protocol asks for the options back; a bare acknowledgement is what a tool that skips them sends.
+    return (process.env.FAKE_BARE_ACK ? {} : { configOptions: session.options }) as acp.SetSessionConfigOptionResponse;
   })
   .onRequest("session/prompt", async (ctx) => {
     const { sessionId } = ctx.params;
@@ -572,7 +682,7 @@ acp
       throw error;
     });
     if (reply.text) await send(ctx.client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply.text } });
-    return { stopReason: reply.stop ?? "end_turn" };
+    return tool ? responseFor(reply, sessions.get(sessionId)!) : { stopReason: reply.stop ?? "end_turn" };
   })
   .onNotification("session/cancel", (ctx) => {
     cancels.get(ctx.params.sessionId)?.();

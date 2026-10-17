@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { boardOrder, draftFor, inboxOrder, inboxTab, keyArea, matchesWords, reconcileHighlight, stepHighlight, withDraft, type KeyArea, type Page, type Task, type TaskList } from "@petrina/core";
 import { sim, mode, startClock, useEngineStatus, useSim } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
+import { AnalyticsPage } from "./components/Analytics";
 import { CouldNotStart, EngineRecovery, StartingScreen } from "./components/EngineState";
 import { blockingCount, lookup } from "./lib";
 import { useViewport, viewportSize } from "./components/bits";
@@ -42,6 +43,8 @@ export function App() {
   const find = useMemo(() => lookup(state), [state]);
   const viewport = useViewport();
   const [view, setView] = useState<Page>("board");
+  /** "About these numbers" opens with Analytics when a task sheet's link leads there. */
+  const [aboutNumbers, setAboutNumbers] = useState(false);
   const [product, setProduct] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [palette, setPalette] = useState(false);
@@ -123,6 +126,14 @@ export function App() {
     setSheet({ taskId, tab, list, ...(itemId ? { itemId } : {}) });
   }, [boardIds, inboxIds]);
   const close = useCallback(() => { setSheet(undefined); setMessageFocus(undefined); }, []);
+  /** Go to Analytics, optionally with "About these numbers" open. */
+  const analytics = useCallback((about = false) => {
+    close();
+    setView("analytics");
+    setOwner("board");
+    setAboutNumbers(about);
+  }, [close]);
+  const aboutSeen = useCallback(() => setAboutNumbers(false), []);
 
   const openInboxAt = useCallback((who: KeyArea, itemId: string | undefined) => {
     setInboxOpen(true);
@@ -159,7 +170,7 @@ export function App() {
   };
   const inboxKey = () => { close(); if (inboxOpen && owner === "inbox") closeInbox(false); else openInbox(); };
   const newTask = (title = "") => { setNewTitle(title); setCreating(true); };
-  const pickProduct = (id: string) => { close(); setProduct(id); setView("board"); setOwner("board"); };
+  const pickProduct = (id: string) => { close(); setProduct(id); if (view !== "analytics") setView("board"); setOwner("board"); };
   const message = (task: Task) => {
     if (sheet) setSheet({ ...sheet, tab: "session" });
     else if (area === "inbox" && highlightedItem) openItem(highlightedItem.id, "session");
@@ -265,6 +276,7 @@ export function App() {
         theme={theme}
         onTheme={setTheme}
         onOpen={open}
+        onAnalytics={() => analytics()}
       />
       {recovery && <EngineRecovery status={status} />}
 
@@ -280,6 +292,7 @@ export function App() {
           />
         )}
         {view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
+        {view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
         {view === "library" && <LibraryPage state={state} find={find} />}
         {view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} onShortcuts={() => setShortcuts(true)} />}
       </main>
@@ -292,7 +305,7 @@ export function App() {
       }} onOpenItem={openItem} /> : <div />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
+        <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
       )}
 
       <TakeOverDialogs state={state} find={find} onToast={(title, detail) => toast(title, detail)} />

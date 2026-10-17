@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { COMMAND_NAMES, createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type CommandName, type Commands, type HandBackPreview, type Id, type Launched, type State, type WindowCommands } from "@petrina/core";
+import { COMMAND_NAMES, createDemo, createPortfolioDemo, Simulator, type CommandName, type Commands, type HandBackPreview, type Id, type Launched, type State, type WindowCommands } from "@petrina/core";
 
 // Where the UI finds the real engine:
 // - In the desktop app, it asks the shell over the app's internal channel. The shell starts the
@@ -469,7 +469,7 @@ const NOT_IN_DEMO = "Take over works with real agents, not in the demo";
 function demo() {
   const now = Date.now();
   if (new URLSearchParams(window.location.search).get("demo") === "portfolio") return createPortfolioDemo(now);
-  return { state: createDemoState(now), triggers: DEMO_TRIGGERS };
+  return createDemo(now);
 }
 
 /** Inside the desktop app (not a browser). */
@@ -481,7 +481,7 @@ export const mode: Mode = client ? "engine" : "demo";
 let simulator: Simulator | undefined;
 if (!client) {
   const initial = demo();
-  simulator = new Simulator(initial.state, { triggers: initial.triggers, prMergeAfter: 45, tickMs: TICK_MS });
+  simulator = new Simulator(initial.state, { triggers: initial.triggers, prMergeAfter: 45, tickMs: TICK_MS, log: initial.log, open: initial.open, quirks: initial.quirks });
 }
 
 /** The squad: the real engine, or the simulated one in demo mode. */

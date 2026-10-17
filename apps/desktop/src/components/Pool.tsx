@@ -1,11 +1,13 @@
 import { useCallback, useRef, useState } from "react";
-import { ChevronDown, Minus, Pause, Play, Plus } from "lucide-react";
+import { ChartColumn, ChevronDown, Minus, Pause, Play, Plus } from "lucide-react";
 import { queueOf, slotUses, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { type Lookup } from "../lib";
+import { useUsage } from "../usage";
 import { RoleAvatar, useDismiss } from "./bits";
 import { UsageList, usageNote } from "./Usage";
 import type { SheetTab } from "./TaskCard";
+import { Amount, toolColor } from "./Usage";
 
 export function LimitStepper({ limit }: { limit: number }) {
   return (
@@ -29,8 +31,8 @@ function holdersOf(state: State, find: Lookup): { task: Task; roleId?: string; k
   });
 }
 
-/** The pool's controls and who is in each slot: in the pool popover, or in the top bar's More menu. */
-export function PoolPanel({ state, find, onOpen, onDone }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void; onDone: () => void }) {
+/** The pool's controls, who is in each slot, and today's numbers: in the pool popover, or in the top bar's More menu. */
+export function PoolPanel({ state, find, onOpen, onDone, onAnalytics }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void; onDone: () => void; onAnalytics: () => void }) {
   const holders = holdersOf(state, find);
   const next = queueOf(state.tasks).find((task) => !task.held);
   const slots = Array.from({ length: Math.max(state.pool.limit, holders.length) }, (_, index) => holders[index]);
@@ -81,12 +83,20 @@ export function PoolPanel({ state, find, onOpen, onDone }: { state: State; find:
           );
         })}
       </div>
+      <div className="divider" />
+      <Today
+        state={state}
+        onAnalytics={() => {
+          onDone();
+          onAnalytics();
+        }}
+      />
     </>
   );
 }
 
 /** The pool indicator in the top bar: one square per slot, coloured by the role in it. */
-export function PoolButton({ state, find, onOpen, compact }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void; compact: boolean }) {
+export function PoolButton({ state, find, onOpen, onAnalytics, compact }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void; onAnalytics: () => void; compact: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -123,9 +133,51 @@ export function PoolButton({ state, find, onOpen, compact }: { state: State; fin
 
       {open && (
         <div className="popover">
-          <PoolPanel state={state} find={find} onOpen={onOpen} onDone={close} />
+          <PoolPanel state={state} find={find} onOpen={onOpen} onDone={close} onAnalytics={onAnalytics} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** Today's tokens and agent time, since local midnight across all products, per tool with its nearest limit. */
+function Today({ state, onAnalytics }: { state: State; onAnalytics: () => void }) {
+  const today = useUsage({ view: "today" }, state);
+  return (
+    <div className="pool-today">
+      <div className="row between">
+        <strong>Today</strong>
+        <button className="linkish row" style={{ gap: 4 }} onClick={onAnalytics}>
+          <ChartColumn size={12} />
+          Analytics
+        </button>
+      </div>
+      {!today ? null : (
+        <>
+          {today.turns === 0 ? (
+            <p>{today.atLeast || "Nothing used yet today."}</p>
+          ) : (
+            <div className="usage-total">
+              <Amount tokens={today.tokens} time={today.time} />
+              <span className="muted"> agent time</span>
+            </div>
+          )}
+          {today.byTool
+            .filter((tool) => tool.turns > 0)
+            .map((tool) => {
+              return (
+                <div key={tool.toolId} className="pool-tool">
+                  <i style={{ background: toolColor(tool.toolId) }} />
+                  <span className="t">{tool.label}</span>
+                  <span className="small">{tool.turns > 0 ? <Amount tokens={tool.tokens} time={tool.time} /> : <span className="muted">nothing yet</span>}</span>
+
+                </div>
+              );
+            })}
+          {today.turns > 0 && today.atLeast && <p className="small">{today.atLeast}</p>}
+        </>
+      )}
+      <p className="small">Agent time adds up agents running at once.</p>
     </div>
   );
 }

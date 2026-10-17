@@ -28,6 +28,11 @@ export class Store {
     this.db.query("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run("state", JSON.stringify(state), Date.now());
   }
 
+  /** The same database holds the work log, in its own tables. */
+  get database(): Database {
+    return this.db;
+  }
+
   close(): void {
     this.db.close();
   }

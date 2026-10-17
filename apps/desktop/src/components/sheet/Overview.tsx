@@ -1,10 +1,11 @@
-// The task sheet's Overview tab: who is working now, what the task is waiting for, and how it got here.
+// The task sheet's Overview tab: who is working now, what the task is waiting for, what it used, and how it got here.
 
 import { useState } from "react";
 import { CircleAlert, CircleCheck, User } from "lucide-react";
 import type { Role, State, Task } from "@petrina/core";
 import { ago, deliveryText, duration, profileText, type Lookup } from "../../lib";
 import { RoleAvatar } from "../bits";
+import { WhatItUsed } from "./WhatItUsed";
 
 function nowSentence(task: Task, role: Role | undefined): string {
   if (task.driving) return role ? `You're driving the ${role.name.toLowerCase()} in your terminal` : "You're driving in your terminal";
@@ -29,7 +30,7 @@ function nowSentence(task: Task, role: Role | undefined): string {
   }
 }
 
-export function Overview({ task, state, find }: { task: Task; state: State; find: Lookup }) {
+export function Overview({ task, state, find, onAboutNumbers }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void }) {
   const [all, setAll] = useState(false);
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
@@ -67,6 +68,8 @@ export function Overview({ task, state, find }: { task: Task; state: State; find
           </div>
         </div>
       </section>
+
+      <WhatItUsed task={task} state={state} find={find} onAbout={onAboutNumbers} />
 
       <section className="sheet-section">
         <h2>Timeline</h2>

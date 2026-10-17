@@ -22,7 +22,13 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
 };
 
 /** A limit's name in plain words: "weekly Opus". */
-export const kindWords = (kind: string): string => KIND_WORDS[kind] ?? "usage";
+export function kindWords(kind: string, minutes?: number, name?: string): string {
+  let label = KIND_WORDS[kind] ?? "usage";
+  if (minutes !== undefined && Number.isFinite(minutes) && minutes > 0) {
+    label = minutes === 10_080 ? "weekly" : minutes === 1440 ? "daily" : minutes < 60 ? `${Math.round(minutes)}-minute` : minutes < 1440 ? `${Math.round(minutes / 60)}-hour` : `${Math.round(minutes / 1440)}-day`;
+  }
+  return name ? `${label}, ${name}` : label;
+}
 
 const modelWords = (family: string): string => family.charAt(0).toUpperCase() + family.slice(1);
 
@@ -64,11 +70,11 @@ export function withReport(reports: readonly UsageReport[] | undefined, report: 
 }
 
 /** A report that still counts at `now`. */
-const current = (report: UsageReport, now: number): boolean => (report.resetsAt !== undefined ? report.resetsAt > now : now - report.at < STALE_REPORT_MS);
+export const currentReport = (report: UsageReport, now: number): boolean => (report.resetsAt !== undefined ? report.resetsAt > now : now - report.at < STALE_REPORT_MS);
 
 /** Whether the profile's tool says it is close to a limit that covers this profile's model. */
 export function nearLimit(pool: Pool, profile: AgentProfile, now: number): boolean {
-  return (pool.usage ?? []).some((report) => report.status !== "rejected" && covers(report, profile) && current(report, now) && (report.status === "allowed_warning" || (report.utilization ?? 0) >= NEAR_LIMIT));
+  return (pool.usage ?? []).some((report) => report.status !== "rejected" && covers(report, profile) && currentReport(report, now) && (report.status === "allowed_warning" || (report.utilization ?? 0) >= NEAR_LIMIT));
 }
 
 export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile } | { kind: "none"; waiting: string };
@@ -174,18 +180,18 @@ export interface UsageLine {
 /** Every tool's usage in plain words: how much of each limit is used, and who is out until when. */
 export function usageLines(state: Pick<State, "tools" | "pool">, now: number): UsageLine[] {
   const lines = state.tools.map((tool) => {
-    const reports = (state.pool.usage ?? []).filter((report) => report.toolId === tool.id && current(report, now));
+    const reports = (state.pool.usage ?? []).filter((report) => report.toolId === tool.id && currentReport(report, now));
     const used = reports
       .filter((report) => report.utilization !== undefined || report.status === "allowed_warning")
       .sort((a, b) => (b.utilization ?? 0) - (a.utilization ?? 0))
       .slice(0, 2)
-      .map((report) => (report.utilization !== undefined ? `${kindWords(report.kind)} ${Math.round(report.utilization * 100)}%` : `${kindWords(report.kind)} nearly used`));
+      .map((report) => (report.utilization !== undefined ? `${kindWords(report.kind, report.windowMinutes, report.name)} ${Math.round(report.utilization * 100)}%` : `${kindWords(report.kind, report.windowMinutes, report.name)} nearly used`));
     const out = liveLimits(state.pool, now)
       .filter((limit) => limit.toolId === tool.id)
       .map((limit) => `${limit.model ? `${modelWords(limit.model)} ` : ""}out until ${untilWords(limit.until, now)}`);
     const parts = [...used, ...out];
     const near = reports.some((report) => report.status === "allowed_warning" || (report.utilization ?? 0) >= NEAR_LIMIT);
-    return { line: { toolId: tool.id, name: tool.name, text: parts.length ? parts.join(" · ") : "fine", tone: (out.length ? "out" : near ? "near" : "fine") as UsageLine["tone"] }, shown: tool.status === "ready" || parts.length > 0 };
+    return { line: { toolId: tool.id, name: tool.name, text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || report.utilization !== undefined) ? "fine" : "not reported", tone: (out.length ? "out" : near ? "near" : "fine") as UsageLine["tone"] }, shown: tool.status === "ready" || parts.length > 0 };
   });
   // A tool that is not here and has said nothing is not listed.
   return lines.filter((entry) => entry.shown).map((entry) => entry.line);

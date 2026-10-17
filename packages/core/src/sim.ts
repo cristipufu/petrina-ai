@@ -28,6 +28,8 @@ import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, not
 import { findingCount } from "./findings.js";
 import type { NewTaskInput } from "./commands.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
+import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js";
+import { askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type TurnReport, type WorkMoment, type WorkStageKind } from "./worklog.js";
 
 type Draft = DeepMutable<State>;
 type DraftTask = DeepMutable<Task>;
@@ -44,8 +46,40 @@ export interface Trigger {
 /** Keyed by `taskId|roleId|round|step`. */
 export type Triggers = Readonly<Record<string, Trigger>>;
 
+/** How the simulated tools behave for one agent (keyed by `taskId|roleId`), so the demos show every case. */
+export interface SimQuirk {
+  /** Only for agents on this tool. */
+  toolId?: Id;
+  /** What the tool actually ran, when it differs from the profile. */
+  ran?: { model: string; name: string; effort: string };
+  /** The tool changed model or effort during the agent's first turn. */
+  changedTo?: { model?: string; effort?: string };
+  /** The tool never said what the session ran on. */
+  notConfirmed?: boolean;
+  /** Codex: helper agents started in the first turn, whose use Codex doesn't report. */
+  helpers?: number;
+  /** The first turn ends without a token report. */
+  noTokens?: boolean;
+  /** Claude Code sent only its main figure, without the per-model breakdown. */
+  noBreakdown?: boolean;
+  /** Claude Code: a second model in the breakdown (a helper agent or compaction). */
+  extraModel?: string;
+}
+
+/** Turns and stages still open when a simulator stops, so another one can pick them up. */
+export interface SimOpenWork {
+  turns: readonly [Id, { id: Id; startedAt: number; waitedMs: number; waitingSince?: number; first: boolean }][];
+  stages: readonly [Id, { stageId: Id; title: string; kind: WorkStageKind; roleId: Id; round: number; startedAt: number }][];
+  runs: readonly [Id, number][];
+}
+
 export interface SimOptions {
   triggers?: Triggers;
+  /** Work another simulator left open (the demos fast-forward tasks one by one). */
+  open?: SimOpenWork;
+  /** The work log the simulator writes. A fresh one by default. */
+  log?: MemoryWorkLog;
+  quirks?: Readonly<Record<string, SimQuirk>>;
   /** Ticks a pull request stays open before the simulated coordinator merges it on GitHub. */
   prMergeAfter?: number;
   /** Milliseconds of simulated time per tick when no clock value is given. */
@@ -62,6 +96,8 @@ export interface NewTask extends NewTaskInput {
 export type MessageMode = "queue" | "interrupt";
 
 const PLANNER_PROFILE = "sonnet-medium";
+/** Requests are logged when raised and completed by an answer, as the engine does. */
+const ASKS: ReadonlySet<string> = new Set(["question", "permission", "plan", "design", "delivery", "disagreement"]);
 const DEMO_RISK: Record<TaskKind, { level: "low" | "medium" | "high"; why: string }> = {
   new: { level: "high", why: "A new product: everything it touches is new, sign-in included." },
   feature: { level: "medium", why: "New behaviour in one part of the product." },
@@ -159,6 +195,12 @@ export class Simulator {
   private readonly triggers: Triggers;
   private readonly prMergeAfter: number;
   private readonly tickMs: number;
+  private readonly work: MemoryWorkLog;
+  private readonly quirks: Readonly<Record<string, SimQuirk>>;
+  private readonly openTurns = new Map<Id, { id: Id; startedAt: number; waitedMs: number; waitingSince?: number; first: boolean }>();
+  private readonly openStages = new Map<Id, { stageId: Id; title: string; kind: WorkStageKind; roleId: Id; round: number; startedAt: number }>();
+  private readonly stageRuns = new Map<Id, number>();
+  private serial = 0;
   private readonly disagree: ReadonlySet<Id>;
 
   constructor(state: State, options: SimOptions = {}) {
@@ -167,9 +209,35 @@ export class Simulator {
     this.disagree = new Set(options.disagree ?? []);
     this.prMergeAfter = options.prMergeAfter ?? 12;
     this.tickMs = options.tickMs ?? 40_000;
+    this.work = options.log ?? new MemoryWorkLog(state.work?.since ?? state.now);
+    this.quirks = options.quirks ?? {};
+    this.serial = this.work.size();
+    for (const [taskId, turn] of options.open?.turns ?? []) this.openTurns.set(taskId, { ...turn });
+    for (const [taskId, stage] of options.open?.stages ?? []) this.openStages.set(taskId, { ...stage });
+    for (const [stageId, runs] of options.open?.runs ?? []) this.stageRuns.set(stageId, runs);
+    if (!state.work) this.state = { ...state, work: { version: 0, since: this.work.since() } };
   }
 
   getState = (): State => this.state;
+
+  /** The simulator's work log (the demos read and shape it). */
+  get workLog(): MemoryWorkLog {
+    return this.work;
+  }
+
+  /** What is still open, moved `delta` milliseconds in time. */
+  openWork(delta = 0): SimOpenWork {
+    return {
+      turns: [...this.openTurns.entries()].map(([taskId, turn]) => [taskId, { ...turn, startedAt: turn.startedAt + delta, ...(turn.waitingSince !== undefined ? { waitingSince: turn.waitingSince + delta } : {}) }]),
+      stages: [...this.openStages.entries()].map(([taskId, stage]) => [taskId, { ...stage, startedAt: stage.startedAt + delta }]),
+      runs: [...this.stageRuns.entries()],
+    };
+  }
+
+  /** The numbers for one view, the same way the engine works them out. */
+  usage<R extends UsageRequest>(request: R): UsageViewFor<R> {
+    return usageView(this.work, request, { now: this.state.now, state: this.state });
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -198,7 +266,7 @@ export class Simulator {
       this.log(d, task, "you", `You answered: ${answer}`);
       this.say(d, task, "agent", `Thanks. Going with: ${answer}.`, item.roleId, item.profileId);
       this.unblock(task);
-    });
+    }, "answered");
   }
 
   /** The agent goes with its own recommendation (the first option). */
@@ -210,7 +278,7 @@ export class Simulator {
       this.log(d, task, "you", `You let the agent decide. It chose: ${pick}`);
       this.say(d, task, "agent", `I'll go with: ${pick}.`, item.roleId, item.profileId);
       this.unblock(task);
-    });
+    }, "decided");
   }
 
   allow(itemId: Id, _scope: "once" | "always" = "once"): void {
@@ -218,7 +286,7 @@ export class Simulator {
       this.log(d, task, "you", `You allowed: ${item.title}`);
       this.say(d, task, "agent", "Thanks, continuing.", item.roleId, item.profileId);
       this.unblock(task);
-    });
+    }, "allowed");
   }
 
   deny(itemId: Id, note?: string): void {
@@ -227,7 +295,7 @@ export class Simulator {
       if (note) this.say(d, task, "you", note);
       this.say(d, task, "agent", "Understood. I'll find a way without it.", item.roleId, item.profileId);
       this.unblock(task);
-    });
+    }, "denied");
   }
 
   /** Approve a gate (plan, design, delivery) or settle a disagreement with the architect's position. */
@@ -272,7 +340,7 @@ export class Simulator {
         default:
           break;
       }
-    });
+    }, "approved");
   }
 
   /** "Add the ticked ones": the lessons of an offer the coordinator keeps, by their place in it. */
@@ -307,7 +375,7 @@ export class Simulator {
       task.state = "waiting";
       task.statusLine = "Waiting for a free slot";
       task.column = this.columnFor(d, task);
-    });
+    }, "changes");
   }
 
   /** Change what "ready" means for a product, and whether the coordinator checks first. */
@@ -322,6 +390,8 @@ export class Simulator {
       const product = d.products.find((entry) => entry.id === productId);
       if (!product) throw new Error("This product is no longer in Petrina.");
       Object.assign(product, validated);
+      // The permanent list keeps the latest name, so a removed product shows under the name it last had.
+      this.work.recordProduct({ id: product.id, name: product.name, repo: product.repo });
     });
   }
 
@@ -329,10 +399,14 @@ export class Simulator {
     const { unfinished } = productHistory(this.state.tasks, productId);
     if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
     this.update((d) => {
+      const product = d.products.find((entry) => entry.id === productId);
+      // Its entry stays, marked removed, so its history keeps its name and its id is never reused.
+      if (product) this.work.recordProduct({ id: product.id, name: product.name, repo: product.repo, removedAt: d.now });
       const ids = new Set(d.tasks.filter((task) => task.productId === productId).map((task) => task.id));
       d.inbox = d.inbox.filter((item) => !ids.has(item.taskId));
       d.tasks = d.tasks.filter((task) => !ids.has(task.id));
-      d.products = d.products.filter((product) => product.id !== productId);
+      d.products = d.products.filter((entry) => entry.id !== productId);
+      this.wrote(d);
     });
   }
 
@@ -403,6 +477,7 @@ export class Simulator {
   pause(taskId: Id): void {
     this.updateTask(taskId, (d, task) => {
       if (!["running", "needs-you", "waiting"].includes(task.state)) return;
+      this.endTurn(d, task, "stopped");
       task.state = "paused";
       task.holdsSlot = false;
       task.statusLine = "Paused by you";
@@ -425,6 +500,9 @@ export class Simulator {
 
   cancel(taskId: Id): void {
     this.updateTask(taskId, (d, task) => {
+      this.endTurn(d, task, "stopped");
+      this.endStage(d, task, "cancelled");
+      this.moment(d, task, { kind: "task-end", outcome: "cancelled" });
       task.state = "cancelled";
       task.column = "done";
       task.holdsSlot = false;
@@ -447,7 +525,7 @@ export class Simulator {
     this.updateTask(taskId, (d, task) => {
       if (mode === "interrupt" && task.agent && task.state === "running") {
         this.say(d, task, "system", "You interrupted the current step");
-        this.deliver(d, task, trimmed);
+        this.deliver(d, task, trimmed, true);
         return;
       }
       task.queued.push({ id: this.id(d, task.id), text: trimmed, at: d.now });
@@ -551,12 +629,14 @@ export class Simulator {
     });
   }
 
-  private resolve(itemId: Id, change: (draft: Draft, task: DraftTask, item: DeepMutable<InboxItem>) => void): void {
+  /** `answer`: how the coordinator answered an agent or a checkpoint, for the work log. An offer (the review guide, LEARNINGS.md) has none. */
+  private resolve(itemId: Id, change: (draft: Draft, task: DraftTask, item: DeepMutable<InboxItem>) => void, answer?: AskAnswer): void {
     this.update((d) => {
       const item = d.inbox.find((entry) => entry.id === itemId);
       const task = item && d.tasks.find((entry) => entry.id === item.taskId);
       if (!item || !task) return;
       d.inbox = d.inbox.filter((entry) => entry.id !== itemId);
+      if (answer && ASKS.has(item.kind)) this.answered(d, task, item, answer);
       change(d, task, item);
       this.schedule(d);
     });
@@ -647,6 +727,8 @@ export class Simulator {
     task.statusLine = `${role} is starting`;
     this.say(d, task, "system", `${role} joined`, next.roleId, next.profileId);
     this.log(d, task, "milestone", `${role} started`, next.roleId, next.profileId);
+    this.beginStage(d, task);
+    this.openTurn(d, task, "first");
   }
 
   private step(d: Draft, task: DraftTask): void {
@@ -677,7 +759,11 @@ export class Simulator {
     if (trigger) this.ask(d, task, trigger);
   }
 
-  private deliver(d: Draft, task: DraftTask, text: string): void {
+  private deliver(d: Draft, task: DraftTask, text: string, interrupt = false): void {
+    if (this.openTurns.has(task.id)) {
+      this.endTurn(d, task, interrupt ? "interrupted" : "finished");
+      this.openTurn(d, task, "message");
+    }
     this.say(d, task, "you", text);
     this.log(d, task, "you", `You said: ${text}`);
     this.say(d, task, "agent", "Got it. I'll take that into account from here.", task.agent?.roleId, task.agent?.profileId);
@@ -685,6 +771,12 @@ export class Simulator {
 
   private ask(d: Draft, task: DraftTask, trigger: Trigger): void {
     const agent = task.agent;
+    // A question ends the agent's turn; a permission is answered inside it, and the wait is not work.
+    if (trigger.kind === "question") this.endTurn(d, task, "finished");
+    else {
+      const open = this.openTurns.get(task.id);
+      if (open) open.waitingSince = d.now;
+    }
     this.raise(d, task, trigger.kind, trigger.title, true, trigger);
     task.statusLine = trigger.kind === "question" ? "Waiting for your answer" : "Waiting for your permission";
     this.say(d, task, "agent", trigger.title, agent?.roleId, agent?.profileId);
@@ -713,6 +805,7 @@ export class Simulator {
       ...(extra.options ? { options: [...extra.options] } : {}),
       ...(extra.detail ? { detail: extra.detail } : {}),
     });
+    if (ASKS.has(kind)) this.askMoment(d, task, d.inbox.at(-1)!);
   }
 
   private unblock(task: DraftTask): void {
@@ -725,6 +818,7 @@ export class Simulator {
   private finish(d: Draft, task: DraftTask): void {
     const agent = task.agent;
     if (!agent) return;
+    this.endTurn(d, task, "finished");
 
     if (task.stageIndex < 0) {
       task.plan = composePlan(task) as DeepMutable<NonNullable<Task["plan"]>>;
@@ -732,6 +826,7 @@ export class Simulator {
       const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
       this.log(d, task, "milestone", `Plan ready: ${count} stages. ${task.plan.rationale}`, agent.roleId, agent.profileId);
       this.say(d, task, "agent", task.plan.rationale, agent.roleId, agent.profileId);
+      this.endStage(d, task, "done");
       if (task.approvePlan) this.gate(d, task, "plan");
       else this.advance(d, task);
       return;
@@ -742,6 +837,7 @@ export class Simulator {
     const round = this.round(task);
 
     if (stage.kind === "do" && agent.roleId === "release-manager") {
+      this.endStage(d, task, "delivered");
       this.ship(d, task);
       return;
     }
@@ -759,6 +855,7 @@ export class Simulator {
       } else {
         this.log(d, task, "done", `${stage.title} done`, agent.roleId, agent.profileId);
       }
+      this.endStage(d, task, "done");
       this.advance(d, task);
       return;
     }
@@ -778,6 +875,7 @@ export class Simulator {
         task.brief = briefFor(task);
         this.log(d, task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, agent.roleId, agent.profileId);
         this.log(d, task, "done", CALL_WORDS.settled);
+        this.endStage(d, task, "settled");
         this.advance(d, task);
         return;
       }
@@ -792,6 +890,8 @@ export class Simulator {
         this.startAgent(d, task);
         return;
       }
+      // A round that raised objections is logged once, even when it settles.
+      let logged = false;
       if (round === 1 || this.disagree.has(task.id)) {
         const raised =
           round === 1
@@ -801,9 +901,14 @@ export class Simulator {
               ]
             : laterObjections(task.area, round);
         for (const objection of raised) task.objections.push({ id: this.id(d, task.id), round, raisedBy: agent.profileId, status: "open", ...objection });
-        this.log(d, task, "warn", `Raised ${raised.length} objections, ${raised.filter((objection) => objection.blocking).length} blocking`, agent.roleId, agent.profileId);
-        const end = designRoundEnd(raised.filter((objection) => objection.blocking).length, round, stage as Stage);
+        const blocking = raised.filter((objection) => objection.blocking).length;
+        this.log(d, task, "warn", `Raised ${raised.length} objections, ${blocking} blocking`, agent.roleId, agent.profileId);
+        this.designRound(d, task, stage, round, raised.length, blocking);
+        logged = true;
+        const end = designRoundEnd(blocking, round, stage as Stage);
         if (end === "disagreement") {
+          this.moment(d, task, { kind: "design-end", outcome: "to-you", rounds: round, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) });
+          this.endStage(d, task, "to-you");
           this.gateDisagreement(d, task);
           return;
         }
@@ -816,6 +921,9 @@ export class Simulator {
       }
       task.brief = briefFor(task);
       this.log(d, task, "done", "Design settled: no blocking objections", agent.roleId, agent.profileId);
+      if (!logged) this.designRound(d, task, stage, round, 0, 0);
+      this.moment(d, task, { kind: "design-end", outcome: "settled", rounds: round, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) });
+      this.endStage(d, task, "settled");
       this.advance(d, task);
       return;
     }
@@ -834,6 +942,7 @@ export class Simulator {
           status: "open",
         });
         this.log(d, task, "warn", "1 important", agent.roleId, agent.profileId);
+        this.moment(d, task, { kind: "verdict", verdict: "fail", roleId: agent.roleId, profileId: agent.profileId, count: 1, blocking: 1 });
       } else if (round === 1) {
         for (const finding of task.findings) if (finding.status === "open") finding.confirmedBy.push(agent.profileId);
         task.findings.push({
@@ -853,8 +962,11 @@ export class Simulator {
           status: "open",
         });
         this.log(d, task, "warn", "1 nit, 1 follow-up; confirmed 1", agent.roleId, agent.profileId);
+        const blocking = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking" && finding.confirmedBy.includes(agent.profileId)).length;
+        this.moment(d, task, { kind: "verdict", verdict: blocking ? "fail" : "pass", roleId: agent.roleId, profileId: agent.profileId, count: 2 + blocking, blocking });
       } else {
         this.log(d, task, "done", "Nothing to fix", agent.roleId, agent.profileId);
+        this.moment(d, task, { kind: "verdict", verdict: "pass", roleId: agent.roleId, profileId: agent.profileId, count: 0, blocking: 0 });
       }
 
       if (task.sub + 1 < stage.profileIds.length) {
@@ -872,10 +984,14 @@ export class Simulator {
         task.sub = 0;
         task.fixing = true;
         this.log(d, task, "warn", `Sent back to the builder: ${findingCount(open)}`);
+        this.moment(d, task, { kind: "review-end", outcome: "sent-back", stageId: stage.id, stageTitle: stage.title, stageKind: stage.kind, round });
+        this.endStage(d, task, "sent-back", stage.id);
         this.startAgent(d, task);
         return;
       }
       this.log(d, task, end.kind === "used up" ? "warn" : "done", end.kind === "used up" ? `Review rounds used up: ${findingCount(open)} still open` : `Review passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
+      this.moment(d, task, { kind: "review-end", outcome: end.kind === "used up" ? "rounds-used" : "passed" });
+      this.endStage(d, task, end.kind === "used up" ? "rounds-used" : "passed");
       this.advance(d, task);
     }
   }
@@ -957,6 +1073,7 @@ export class Simulator {
     task.column = "ready";
     this.log(d, task, "status", "Petrina pushed the branch");
     this.log(d, task, "done", `Petrina opened pull request #${number}, and checked it on GitHub`);
+    this.moment(d, task, { kind: "task-end", outcome: "delivered" });
   }
 
   /** Petrina publishes it, the way the task asks: with the builder's text, or the Release Manager's notes. */
@@ -972,6 +1089,7 @@ export class Simulator {
     task.state = "done";
     task.column = "done";
     task.finishedAt = d.now;
+    this.moment(d, task, { kind: "task-end", outcome: "delivered" });
     if (task.delivery === "release") {
       const tag = `v1.${(d.seq % 40) + 1}.0`;
       task.release = { tag, url: `https://github.com/${product?.repo ?? "owner/repo"}/releases/tag/${tag}` };
@@ -995,6 +1113,157 @@ export class Simulator {
     task.finishedAt = d.now;
     task.statusLine = `Merged #${task.pr.number} on GitHub`;
     this.log(d, task, "done", `Merged on GitHub (#${task.pr.number})`);
+    this.moment(d, task, { kind: "task-end", outcome: "merged" });
+  }
+
+  // ── The work log ─────────────────────────────────────────────────────────
+
+  private wrote(d: Draft): void {
+    d.work = { version: (d.work?.version ?? 0) + 1, since: d.work?.since ?? this.work.since() };
+  }
+
+  private entryId(prefix: string): Id {
+    this.serial += 1;
+    return `${prefix}-${this.serial}`;
+  }
+
+  private stageContext(task: DraftTask): { stageId: Id; title: string; kind: WorkStageKind; roleId: Id } {
+    const stage = this.stage(task);
+    if (!stage) return { stageId: `${task.id}:plan`, title: "Planning", kind: "plan", roleId: "planner" };
+    return { stageId: stage.id, title: stage.title, kind: stage.kind, roleId: stage.roleId };
+  }
+
+  private moment(d: Draft, task: DraftTask, moment: Omit<WorkMoment, "id" | "at" | "taskId" | "productId">, when: { id?: Id; at?: number } = {}): void {
+    const open = this.openStages.get(task.id);
+    const context = open ?? this.stageContext(task);
+    this.work.addMoment({
+      id: when.id ?? this.entryId(`${task.id}-m`),
+      at: when.at ?? d.now,
+      taskId: task.id,
+      productId: task.productId,
+      ...(moment.kind === "task-end" ? {} : { stageId: context.stageId, stageTitle: context.title, stageKind: context.kind, round: context.kind === "converge" || context.kind === "review-chain" ? this.round(task) : (open?.round ?? this.round(task)) }),
+      ...moment,
+    });
+    this.wrote(d);
+  }
+
+  private beginStage(d: Draft, task: DraftTask): void {
+    const context = this.stageContext(task);
+    const open = this.openStages.get(task.id);
+    if (open?.stageId === context.stageId) return;
+    if (open) this.endStage(d, task, "done");
+    const runs = (this.stageRuns.get(context.stageId) ?? 0) + 1;
+    this.stageRuns.set(context.stageId, runs);
+    const stage = this.stage(task);
+    const round = stage && (stage.kind === "converge" || stage.kind === "review-chain") ? (task.rounds[stage.id] ?? 1) : runs;
+    this.openStages.set(task.id, { ...context, round, startedAt: d.now });
+    this.moment(d, task, { kind: "stage-start", roleId: context.roleId });
+  }
+
+  private endStage(d: Draft, task: DraftTask, outcome: MomentOutcome, stageId?: Id): void {
+    const open = this.openStages.get(task.id);
+    if (!open || (stageId && open.stageId !== stageId)) return;
+    const workMs = this.work
+      .turns({ taskId: task.id })
+      .filter((turn) => turn.stageId === open.stageId && turn.startedAt >= open.startedAt)
+      .reduce((sum, turn) => sum + (turn.workMs ?? 0), 0);
+    this.moment(d, task, { kind: "stage-end", outcome, roleId: open.roleId, durationMs: d.now - open.startedAt, workMs });
+    this.openStages.delete(task.id);
+  }
+
+  private designRound(d: Draft, task: DraftTask, stage: DeepMutable<Stage>, round: number, objections: number, blocking: number): void {
+    this.moment(d, task, {
+      kind: "design-round",
+      roleId: stage.roleId,
+      ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}),
+      ...(stage.reviewerRoleId ? { peerRoleId: stage.reviewerRoleId } : {}),
+      ...(stage.reviewerProfileIds?.[0] ? { peerProfileId: stage.reviewerProfileIds[0] } : {}),
+      round,
+      count: objections,
+      blocking,
+    });
+  }
+
+  /** The coordinator answered something: how long it took and what it was. */
+  private answered(d: Draft, task: DraftTask, item: DeepMutable<InboxItem>, answer: AskAnswer): void {
+    this.askMoment(d, task, item, answer);
+    if (item.kind === "question" && task.agent) this.openTurn(d, task, "answer");
+    const open = this.openTurns.get(task.id);
+    if (item.kind === "permission" && open?.waitingSince !== undefined) {
+      open.waitedMs += d.now - open.waitingSince;
+      delete open.waitingSince;
+    }
+  }
+
+  private askMoment(d: Draft, task: DraftTask, item: DeepMutable<InboxItem>, answer?: AskAnswer): void {
+    const ask = item.kind === "question" ? "question" : item.kind === "permission" ? "permission" : "checkpoint";
+    this.moment(d, task, { kind: "ask", ask, ...(answer ? { answer, durationMs: Math.max(0, d.now - item.at) } : {}), ...(item.roleId ? { roleId: item.roleId } : {}), ...(item.profileId ? { profileId: item.profileId } : {}) }, { id: askMomentId(task.id, item.id), at: item.at });
+  }
+
+  private openTurn(d: Draft, task: DraftTask, reason: TurnReason): void {
+    const agent = task.agent;
+    if (!agent) return;
+    this.endTurn(d, task, "finished");
+    const profile = d.profiles.find((entry) => entry.id === agent.profileId);
+    const toolId = profile?.toolId ?? "unknown";
+    const quirk = this.quirkFor(task.id, agent.roleId, toolId);
+    const open = this.openStages.get(task.id);
+    const context = open ?? { ...this.stageContext(task), round: this.round(task) };
+    // Design and review rounds come from the stage; a do stage's round is which run of it this is.
+    const round = context.kind === "converge" || context.kind === "review-chain" ? this.round(task) : context.round;
+    const asked = profile?.modelId ?? profile?.model;
+    const ran = quirk.notConfirmed ? undefined : (quirk.ran ?? (asked ? { model: asked, name: toolId === "codex" ? asked : (profile?.model ?? asked), effort: profile?.effort ?? "high" } : undefined));
+    const id = this.entryId(`${task.id}-turn`);
+    const first = !this.work.turns({ taskId: task.id }).some((turn) => turn.roleId === agent.roleId);
+    this.work.addTurn({
+      id,
+      taskId: task.id,
+      productId: task.productId,
+      stageId: context.stageId,
+      stageTitle: context.title,
+      stageKind: context.kind,
+      round,
+      fixing: task.fixing,
+      roleId: agent.roleId,
+      toolId,
+      profileId: agent.profileId,
+      ...(asked ? { modelAsked: asked } : {}),
+      ...(profile?.model ? { modelAskedName: profile.model } : {}),
+      ...(profile?.effort ? { effortAsked: profile.effort } : {}),
+      ...(ran ? { modelRan: ran.model, modelRanName: ran.name, effortRan: ran.effort } : {}),
+      ...(first && quirk.changedTo?.model ? { modelChangedTo: quirk.changedTo.model } : {}),
+      ...(first && quirk.changedTo?.effort ? { effortChangedTo: quirk.changedTo.effort } : {}),
+      sessionId: `${task.id}-agent-${agent.since}`,
+      reason,
+      startedAt: d.now,
+      mainOnly: false,
+      helpers: 0,
+    });
+    this.openTurns.set(task.id, { id, startedAt: d.now, waitedMs: 0, first });
+    this.wrote(d);
+  }
+
+  private quirkFor(taskId: Id, roleId: Id, toolId: Id): SimQuirk {
+    const quirk = this.quirks[`${taskId}|${roleId}`];
+    return quirk && (!quirk.toolId || quirk.toolId === toolId) ? quirk : {};
+  }
+
+  private endTurn(d: Draft, task: DraftTask, end: TurnEnd): void {
+    const open = this.openTurns.get(task.id);
+    if (!open) return;
+    this.openTurns.delete(task.id);
+    const turn = this.work.turn(open.id);
+    if (!turn) return;
+    const waited = open.waitedMs + (open.waitingSince !== undefined ? d.now - open.waitingSince : 0);
+    const workMs = Math.max(0, d.now - open.startedAt - waited);
+    const quirk = this.quirkFor(task.id, turn.roleId, turn.toolId);
+    const reported = end === "finished" || end === "interrupted";
+    const silent = !reported || (open.first && quirk.noTokens);
+    const helpers = open.first ? (quirk.helpers ?? 0) : 0;
+    const report = silent ? undefined : simReport(`${open.id}|${turn.profileId}`, turn.toolId, turn.modelChangedTo ?? turn.modelRan ?? turn.modelAsked ?? "", turn.roleId, workMs, open.first ? quirk : {});
+    const counted = turnTokens({ toolId: turn.toolId, ...(report ? { report } : {}), ...(turn.modelRanName ? { model: turn.modelRanName } : {}), rerouted: turn.toolId === "codex" && turn.modelChangedTo !== undefined, helpers });
+    this.work.endTurn(open.id, { end, endedAt: d.now, workMs, mainOnly: counted.mainOnly, helpers, ...(counted.tokens ? { tokens: counted.tokens } : {}) }, counted.lines);
+    this.wrote(d);
   }
 
   /** Fill free slots: tasks already in progress first, then the queue, in priority order. */
@@ -1033,4 +1302,39 @@ export class Simulator {
 function areaFromTitle(title: string): string {
   const words = title.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return words.slice(-2).join(" ") || "this part";
+}
+
+function hash(text: string): number {
+  let value = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    value ^= text.charCodeAt(index);
+    value = Math.imul(value, 16777619);
+  }
+  return value >>> 0;
+}
+
+const FULL_MODEL: Record<string, string> = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5", fable: "claude-fable-5-1" };
+
+/** Believable token figures for a simulated turn: mostly input reused from the cache, as with the real tools. */
+function simReport(seed: string, toolId: Id, model: string, roleId: Id, workMs: number, quirk: SimQuirk): TurnReport {
+  const minutes = Math.max(0.3, workMs / 60_000);
+  const jitter = (salt: string) => 0.6 + (hash(`${seed}|${salt}`) % 800) / 1000;
+  const heavy = roleId === "builder" ? 1.6 : roleId === "code-reviewer" ? 1.1 : roleId === "planner" ? 0.5 : 0.8;
+  const scale = minutes * heavy;
+  if (toolId === "codex") {
+    const output = Math.round(1000 * scale * jitter("out"));
+    const counts = { input: Math.round(2800 * scale * jitter("in")), cacheRead: Math.round(30_000 * scale * jitter("cache")), cacheWrite: 0, output, reasoning: Math.round(output * 0.4 * jitter("reason")) };
+    return { main: counts, models: [{ model, counts }] };
+  }
+  const counts = { input: Math.round(900 * scale * jitter("in")), cacheRead: Math.round(38_000 * scale * jitter("cache")), cacheWrite: Math.round(3400 * scale * jitter("write")), output: Math.round(800 * scale * jitter("out")) };
+  if (quirk.noBreakdown) return { main: counts };
+  const main = FULL_MODEL[model] ?? model;
+  const helper = quirk.extraModel ?? (roleId === "builder" && hash(seed) % 3 === 0 ? "claude-haiku-5-5" : undefined);
+  const models = [{ model: main, counts }];
+  if (helper) {
+    const share = 0.08 + (hash(`${seed}|helper`) % 100) / 1000;
+    models.push({ model: helper, counts: { input: Math.round(counts.input * share), cacheRead: Math.round(counts.cacheRead * share), cacheWrite: Math.round(counts.cacheWrite * share), output: Math.round(counts.output * share * 1.5) } });
+  }
+  // The main figure counts the main agent loop only, so it is smaller than the breakdown. Petrina never adds the two.
+  return { main: { ...counts, output: Math.round(counts.output * 0.9) }, models };
 }

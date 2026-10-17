@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Search } from "lucide-react";
-import { DELIVERY_LABEL, type Column, type Product, type State } from "@petrina/core";
+import { Check, ChevronDown, CircleAlert, Search } from "lucide-react";
+import { DELIVERY_LABEL, type Column, type Product, type ProductsUsage, type State } from "@petrina/core";
 import { mod } from "../keyboard";
+import { useUsage } from "../usage";
 import { useDismiss, useFocusTrap } from "./bits";
+import { FigureText } from "./Usage";
 
 /** Per-product numbers the switcher and the Products page both show. */
 export interface ProductStats {
@@ -178,6 +180,10 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
   const active = stats.filter((entry) => entry.active).length;
   const waiting = stats.reduce((sum, entry) => sum + entry.needsYou, 0);
   const count = (value: number) => (value > 0 ? value : <span className="zero" aria-label="none">–</span>);
+  // Each product's tokens and agent time across all its tasks, finished and cancelled included.
+  const usage = useUsage({ view: "products" }, state);
+  const work = new Map(usage?.products.map((entry) => [entry.productId, entry]));
+  const atLeast = usage?.atLeast;
 
   return (
     <div className="page">
@@ -217,6 +223,7 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
               <th scope="col" className="c">
                 Needs you
               </th>
+              <th scope="col">Agent work</th>
               <th scope="col">When ready</th>
               <th scope="col"><span className="sr-only">Settings</span></th>
             </tr>
@@ -249,6 +256,9 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
                 <td className="c">{count(entry.shipped)}</td>
                 <td className="c">{entry.needsYou > 0 ? <span className="needs">{entry.needsYou}</span> : count(0)}</td>
                 <td>
+                  <AgentWork used={work.get(entry.product.id)} />
+                </td>
+                <td>
                   <span className="delivery-summary">{DELIVERY_LABEL[entry.product.delivery ?? "pull-request"]} · {(entry.product.approveDelivery ?? true) ? "asks first" : "ships automatically"}</span>
                 </td>
                 <td><button className="btn small" aria-label={`Settings for ${entry.product.name}`} title="Opens in Settings" onClick={() => onSettings(entry.product.id)}>Settings</button></td>
@@ -257,6 +267,26 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
           </tbody>
         </table>
       </div>
+      {atLeast && (
+        <div className="at-least">
+          <CircleAlert size={13} />
+          {atLeast}
+        </div>
+      )}
     </div>
+  );
+}
+
+/** A product's tokens and agent time, or one calm line when there is nothing to add up. */
+function AgentWork({ used }: { used: ProductsUsage["products"][number] | undefined }) {
+  if (!used) return null;
+  if (used.turns === 0) return <span className="muted">{used.tokens.atLeast ? "Earlier work not recorded" : "Nothing yet"}</span>;
+  return (
+    <span className="agent-work">
+      <FigureText figure={used.tokens} kind="tokens" />
+      <span className="muted small">
+        <FigureText figure={used.time} kind="time" />
+      </span>
+    </span>
   );
 }

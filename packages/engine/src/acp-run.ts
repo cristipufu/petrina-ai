@@ -1,11 +1,11 @@
 // One agent session over ACP: start the tool's adapter, open a session in the task's
 // worktree (or reopen an earlier one), pin model, effort and mode, then send turns and report
-// what happens.
+// what happens. It also reads back what the tool says the session runs on, and what each turn used.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentProfile } from "@petrina/core";
+import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 
@@ -29,10 +29,101 @@ export interface RunCallbacks {
   onUsage?(info: UsageInfo): void;
 }
 
-export interface TurnResult {
+/** What the tool confirmed the session runs on. A missing value: not confirmed. */
+export interface SessionSettings {
+  model?: string;
+  /** The tool's own name for the model, e.g. "Opus 5.5". */
+  modelName?: string;
+  effort?: string;
+}
+
+/** What the tool said during a turn about how it ran, kept even when the turn never finished. */
+export interface TurnNotes {
+  /** What the tool switched the model or effort to during the turn. */
+  changed: { model?: string; effort?: string };
+  /** Codex rerouted the turn to another model. */
+  rerouted: boolean;
+  /** Helper agents the agent started during the turn. */
+  helpers: number;
+  /** The model the tool said answered (Claude Code names it on its context updates). */
+  modelSeen?: string;
+}
+
+export interface TurnResult extends TurnNotes {
   stopReason: string;
   text: string;
-  tokens?: number;
+  /** What the tool reported about tokens. Missing: nothing reported. */
+  report?: TurnReport;
+}
+
+type ConfigOption = { id: string; currentValue?: unknown; options?: ({ value?: string; name?: string; options?: { value?: string; name?: string }[] } | undefined)[] };
+
+/** Every choice of a select option, groups flattened. */
+function choices(option: ConfigOption | undefined): { value: string; name?: string }[] {
+  const flat: { value: string; name?: string }[] = [];
+  for (const entry of option?.options ?? []) {
+    if (!entry) continue;
+    if (Array.isArray(entry.options)) for (const inner of entry.options) if (typeof inner.value === "string") flat.push({ value: inner.value, ...(inner.name ? { name: inner.name } : {}) });
+    if (typeof entry.value === "string") flat.push({ value: entry.value, ...(entry.name ? { name: entry.name } : {}) });
+  }
+  return flat;
+}
+
+/** The option without its current value: what it is set to is not confirmed. */
+const unconfirmed = ({ currentValue: _value, ...option }: ConfigOption): ConfigOption => option;
+
+/** Read what the session is set to from the tool's config options, never guessing. */
+export function settingsOf(options: readonly ConfigOption[], ids: { model: string; effort: string }): SessionSettings {
+  const model = options.find((entry) => entry.id === ids.model);
+  const effort = options.find((entry) => entry.id === ids.effort);
+  const modelValue = typeof model?.currentValue === "string" && model.currentValue ? model.currentValue : undefined;
+  const name = modelValue ? choices(model).find((entry) => entry.value === modelValue)?.name : undefined;
+  const effortValue = typeof effort?.currentValue === "string" && effort.currentValue ? effort.currentValue : undefined;
+  return { ...(modelValue ? { model: modelValue } : {}), ...(name ? { modelName: name } : {}), ...(effortValue ? { effort: effortValue } : {}) };
+}
+
+const count = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined);
+
+function defined(counts: TokenCounts): TokenCounts {
+  return Object.fromEntries(Object.entries(counts).filter(([, value]) => value !== undefined)) as TokenCounts;
+}
+
+/**
+ * The token figures a prompt response carries: ACP's `usage` (the main figure) and the
+ * per-model rows both adapters attach under `_meta.quota.model_usage`. The dollar figure
+ * Claude Code sends is never read.
+ */
+export function reportOf(response: unknown): TurnReport | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const { usage, _meta } = response as { usage?: Record<string, unknown> | null; _meta?: { quota?: { model_usage?: unknown } } | null };
+  const report: { main?: TokenCounts; models?: { model: string; counts: TokenCounts }[] } = {};
+  if (usage && typeof usage === "object") {
+    report.main = defined({ input: count(usage.inputTokens), cacheRead: count(usage.cachedReadTokens), cacheWrite: count(usage.cachedWriteTokens), output: count(usage.outputTokens), reasoning: count(usage.thoughtTokens), total: count(usage.totalTokens) });
+  }
+  const rows = _meta?.quota?.model_usage;
+  if (Array.isArray(rows)) {
+    report.models = rows.flatMap((row) => {
+      const { model, token_count: tokens } = (row ?? {}) as { model?: unknown; token_count?: Record<string, unknown> };
+      if (typeof model !== "string" || !model.trim() || !tokens || typeof tokens !== "object") return [];
+      const counts = defined({
+        input: count(tokens.inputTokens),
+        cacheRead: count(tokens.cachedInputTokens),
+        cacheWrite: count(tokens.cachedWriteTokens ?? tokens.cacheWriteInputTokens),
+        output: count(tokens.outputTokens),
+        reasoning: count(tokens.reasoningOutputTokens),
+        total: count(tokens.totalTokens),
+      });
+      return [{ model, counts }];
+    });
+  }
+  return report.main || report.models?.length ? report : undefined;
+}
+
+/** "Model rerouted from X to Y (reason)" or "Switched from X to Y (reason)": the model Codex moved to. */
+export function reroutedTo(text: string): string | undefined {
+  const match = /(?:rerouted|switched)\s+from\s+\S+\s+to\s+(\S+)/i.exec(text);
+  const model = match?.[1]?.replace(/[.,;:)]+$/, "");
+  return model && model.length <= 120 ? model : undefined;
 }
 
 /** How long Petrina waits for a tool to reopen a conversation before it starts a fresh one. */
@@ -116,17 +207,38 @@ function commandOf(rawInput: unknown): string | undefined {
   return undefined;
 }
 
+interface RunState {
+  text: string;
+  lastActivity: string;
+  quiet: boolean;
+  settings: SessionSettings;
+  latest?: UsageInfo;
+  turn?: { changed: { model?: string; effort?: string }; rerouted: boolean; helpers: Set<string>; modelSeen?: string; next?: SessionSettings };
+}
+
 export class AgentRun {
+  private notes: TurnNotes | undefined;
+
   private constructor(
     private readonly child: ChildProcess,
     private readonly connection: acp.ClientSideConnection,
     /** The tool's id for the conversation. */
     readonly sessionId: string,
-    private readonly state: { text: string; lastActivity: string; quiet: boolean; latest?: UsageInfo },
+    private readonly state: RunState,
     private readonly profile: AgentProfile,
     /** How an earlier conversation was reopened; unset for a new one. */
     readonly reopened?: "resume" | "load",
   ) {}
+
+  /** What the tool confirmed the session runs on right now. */
+  get settings(): SessionSettings {
+    return { ...this.state.settings };
+  }
+
+  /** What the tool said during the last turn, also when the agent stopped before replying. */
+  get lastTurn(): TurnNotes | undefined {
+    return this.notes && { ...this.notes, changed: { ...this.notes.changed } };
+  }
 
   /**
    * With `reopen`, pick up that conversation: by the tool's resume, which replays nothing, or by
@@ -164,7 +276,29 @@ export class AgentRun {
 
     // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
     // already in the session view and timeline.
-    const state: { text: string; lastActivity: string; quiet: boolean; latest?: UsageInfo } = { text: "", lastActivity: "", quiet: options.reopen !== undefined };
+    const state: RunState = { text: "", lastActivity: "", quiet: options.reopen !== undefined, settings: {} };
+    // The session's options as the tool last sent them, while the model, effort and mode are set.
+    let sessionOptions: ConfigOption[] = [];
+    const optionIds = { model: adapter.options.model, effort: adapter.options.effort };
+    // The tool can change the session's model or effort by itself (a fallback): keep what it says.
+    const readSettings = (options: readonly ConfigOption[]) => {
+      const next = settingsOf(options, optionIds);
+      const turn = state.turn;
+      if (turn) {
+        if (next.model && next.model !== state.settings.model) turn.changed.model = next.modelName ?? next.model;
+        if (next.effort && next.effort !== state.settings.effort) turn.changed.effort = next.effort;
+        turn.next = next;
+      } else {
+        state.settings = next;
+      }
+    };
+    const noteReroute = (text: string) => {
+      const model = state.turn && reroutedTo(text);
+      if (model && state.turn) {
+        state.turn.changed.model = model;
+        state.turn.rerouted = true;
+      }
+    };
     const titles = new Map<string, { title?: string | null; kind?: string | null; locations?: { path: string }[] | null; rawInput?: unknown }>();
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
 
@@ -196,7 +330,30 @@ export class AgentRun {
             case "agent_message_chunk":
               if (update.content.type === "text") state.text += update.content.text;
               break;
+            case "agent_thought_chunk":
+              if (update.content.type === "text" && /rerouted/i.test(update.content.text)) noteReroute(update.content.text);
+              break;
+            case "notice":
+              if (/rerouted/i.test(update.title)) noteReroute(update.description ?? update.title);
+              break;
+            case "config_option_update":
+              sessionOptions = update.configOptions as ConfigOption[];
+              readSettings(sessionOptions);
+              break;
+            case "usage_update": {
+              const meta = update._meta ?? {};
+              const reports = claudeReports(profile.toolId, meta);
+              for (const info of reports) callbacks.onUsage?.(info);
+              // A rejected spend cap outranks an open session window from the same note.
+              if (reports.length) state.latest = reports.find((info) => info.status === "rejected") ?? reports[0];
+              const seen = meta["_claude/model"];
+              if (state.turn && typeof seen === "string") state.turn.modelSeen = seen;
+              break;
+            }
             case "tool_call": {
+              // A Codex agent starting a helper agent shows up as a tool call named spawnAgent.
+              const input = update.rawInput as { receiverThreadIds?: unknown } | undefined;
+              if (state.turn && (update.title === "spawnAgent" || Array.isArray(input?.receiverThreadIds))) state.turn.helpers.add(update.toolCallId);
               titles.set(update.toolCallId, update);
               if (isPlumbing(update)) break;
               const line = describeTool(update);
@@ -209,14 +366,6 @@ export class AgentRun {
             case "tool_call_update": {
               const known = titles.get(update.toolCallId) ?? {};
               titles.set(update.toolCallId, { ...known, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== null && value !== undefined)) });
-              break;
-            }
-            case "usage_update": {
-              const reports = claudeReports(profile.toolId, (update as { _meta?: unknown })._meta);
-              if (!reports.length) break;
-              for (const info of reports) callbacks.onUsage?.(info);
-              // A rejected spend cap outranks an open session window from the same note.
-              state.latest = reports.find((info) => info.status === "rejected") ?? reports[0];
               break;
             }
             case "plan": {
@@ -233,7 +382,8 @@ export class AgentRun {
     );
 
     const open = async (): Promise<{ sessionId: string; configOptions?: unknown; how?: "resume" | "load" }> => {
-      const init = await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+      // Notices let Codex announce a reroute as a typed update instead of text in the reply.
+      const init = await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} } } });
       const sessionId = options.reopen;
       // Grok's auto mode is metadata on the session, not a config option and not always-approve.
       const meta = adapter.sessionMeta ? { _meta: { ...adapter.sessionMeta } } : {};
@@ -270,12 +420,19 @@ export class AgentRun {
     deadline.catch(() => undefined);
     const ready = (async () => {
       const session = await open();
-      const configOptions = (session.configOptions ?? []) as { id: string; options?: { value: string }[] }[];
+      sessionOptions = ((session as { configOptions?: ConfigOption[] }).configOptions ?? []) as ConfigOption[];
       const set = async (configId: string, value: string | undefined): Promise<boolean> => {
         if (!value) return false;
-        const option = configOptions.find((entry) => entry.id === configId);
-        if (!option || !option.options?.some((entry) => entry.value === value)) return false;
-        await connection.setSessionConfigOption({ sessionId: session.sessionId, configId, value });
+        const option = sessionOptions.find((entry) => entry.id === configId);
+        // A value the tool doesn't offer is not forced: the session keeps the tool's default, and that is recorded.
+        if (!option || !choices(option).some((entry) => entry.value === value)) return false;
+        const before = sessionOptions;
+        const response = await connection.setSessionConfigOption({ sessionId: session.sessionId, configId, value });
+        const echoed = (response as { configOptions?: ConfigOption[] } | undefined)?.configOptions;
+        if (Array.isArray(echoed)) sessionOptions = echoed;
+        // A bare acknowledgement doesn't say what the session ended up on: not confirmed, never assumed,
+        // unless the tool sent its options in an update meanwhile.
+        else if (sessionOptions === before) sessionOptions = sessionOptions.map((entry) => (entry.id === configId ? unconfirmed(entry) : entry));
         return true;
       };
       await set(adapter.options.model, profile.modelId);
@@ -284,6 +441,7 @@ export class AgentRun {
       // metadata (Grok's auto mode) has already asked for it, and has no config option to set.
       const automatic = adapter.sessionMeta !== undefined || (adapter.options.mode !== undefined && (await set(adapter.options.mode, adapter.mode)));
       if (!automatic) callbacks.onLog?.(`${adapter.name}'s automatic safety mode is not available here, so it will ask you before acting`);
+      readSettings(sessionOptions);
       return session;
     })();
     ready.catch(() => undefined);
@@ -302,24 +460,31 @@ export class AgentRun {
     }
   }
 
-  /** Send one turn and wait for it to end. Returns everything the agent said in it. */
+  /** Send one turn and wait for it to end. Returns everything the agent said in it, and what it used. */
   async prompt(text: string): Promise<TurnResult> {
     this.state.quiet = false;
     this.state.text = "";
-    // Only a report from this turn can say it ended because the tool ran out.
     delete this.state.latest;
+    const turn: NonNullable<RunState["turn"]> = { changed: {}, rerouted: false, helpers: new Set() };
+    this.state.turn = turn;
+    this.notes = undefined;
+    const notes = (): TurnNotes => ({ changed: { ...turn.changed }, rerouted: turn.rerouted, helpers: turn.helpers.size, ...(turn.modelSeen ? { modelSeen: turn.modelSeen } : {}) });
     const exited = new Promise<never>((_, reject) => this.child.once("exit", (code) => reject(new Error(`The agent stopped (exit ${code ?? "signal"})`))));
     exited.catch(() => undefined);
-    const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch((error: unknown) => {
-      throw this.limitOf(error) ?? error;
-    });
-    // Claude Code can also end the turn quietly after saying it is out.
-    if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
-      const out = this.rejected();
-      if (out) throw out;
+    try {
+      const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch((error: unknown) => { throw this.limitOf(error) ?? error; });
+      if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
+        const out = this.rejected();
+        if (out) throw out;
+      }
+      const report = reportOf(response);
+      return { stopReason: response.stopReason, text: this.state.text, ...(report ? { report } : {}), ...notes() };
+    } finally {
+      this.notes = notes();
+      this.state.turn = undefined;
+      // Later turns run on whatever the tool switched the session to. A Codex reroute is per turn.
+      if (turn.next) this.state.settings = turn.next;
     }
-    const usage = (response as { usage?: { totalTokens?: number } }).usage;
-    return { stopReason: response.stopReason, text: this.state.text, ...(usage?.totalTokens ? { tokens: usage.totalTokens } : {}) };
   }
 
   /** The usage limit a failed turn ran into, when that is why it failed. */

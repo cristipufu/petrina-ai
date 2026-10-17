@@ -2,7 +2,8 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { AgentProfile, Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
-import { claudeReport, claudeReports, clockTime, limitFromFailure, limitFromReport, UsageLimited } from "../src/usage.js";
+import { failureReason } from "../src/tracking.js";
+import { claudeReport, claudeReports, clockTime, limitFromFailure, limitFromReport, UsageLimited, WaitingForUsage } from "../src/usage.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
@@ -38,12 +39,33 @@ async function start(scenario: Scenario, options: { description?: string; before
       return task.state === "done" && task;
     }, "the task to finish", 60_000);
   const modelOf = (session: string) => fakes.settings(session).find((line) => line.startsWith("model="))?.slice("model=".length);
-  return { engine, fakes, find, done, answer, modelOf, taskId };
+  return { root, engine, fakes, find, done, answer, modelOf, taskId };
 }
 
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("an agent that runs out of usage", () => {
+  it("keeps both limit reports and the turn's settings when the spend cap rejects an open session window", async () => {
+    const run = await start({ planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] });
+    try {
+      const task = await run.done();
+      expect(run.engine.getState().pool.usage).toEqual(expect.arrayContaining([
+        expect.objectContaining({ toolId: "claude-code", kind: "five_hour", status: "allowed", utilization: 0.4 }),
+        expect.objectContaining({ toolId: "claude-code", kind: "overage", status: "rejected", resetsAt: expect.any(Number) }),
+      ]));
+      expect(run.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", reason: "Claude Code's extra usage limit", at: expect.any(Number) }]);
+      const builders = run.engine.tracking.log.turns({ taskId: task.id }).filter((turn) => turn.roleId === "builder");
+      expect(builders[0]).toMatchObject({ toolId: "claude-code", modelAsked: "opus", effortAsked: "high", modelRan: "opus", effortRan: "high", end: "agent-stopped", workMs: expect.any(Number) });
+      expect(builders[0]!.tokens).toBeUndefined();
+      expect(builders.some((turn) => turn.toolId === "codex" && turn.end === "finished")).toBe(true);
+      const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
+      expect(details.failuresByReason).toContainEqual({ label: "usage limit reached", count: 1 });
+      expect(details.retries).toBe(1);
+    } finally {
+      run.engine.shutdown();
+    }
+  });
+
   it("is taken over in the same step by an agent on another tool, who is told what the first one did and said", async () => {
     const run = await start({ planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder" }] });
     try {
@@ -69,6 +91,9 @@ describe.concurrent("an agent that runs out of usage", () => {
       // Who is out is kept, and the plan is not rewritten.
       expect(run.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", reason: "Claude Code's 5-hour limit" }]);
       expect(task.plan!.stages.find((stage) => stage.roleId === "builder")!.profileIds).toEqual(["opus-high"]);
+      const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
+      expect(details.failuresByReason).toContainEqual({ label: "usage limit reached", count: 1 });
+      expect(details.retries).toBe(1);
     } finally {
       run.engine.shutdown();
     }
@@ -115,6 +140,27 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(lines(task)).toContain("Picked up where it left off");
       // Claude Code's limit ended and was dropped; Codex's, set to last longer, is still there.
       expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex", "grok"]);
+      // Picking the step up after the wait is a retry, counted once, with nothing left owed.
+      const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
+      expect(details.failuresByReason).toEqual([{ label: "usage limit reached", count: 1 }]);
+      expect(details.retries).toBe(1);
+      const retry = run.engine.tracking.log.moments({ taskId: task.id, kinds: ["retry"] });
+      expect(retry).toMatchObject([{ roleId: "builder", profileId: "opus-high", toolId: "claude-code" }]);
+      expect(run.engine.tracking.log.owedRetries()).toEqual([]);
+    } finally {
+      run.engine.shutdown();
+    }
+  });
+
+  it("counts a Check finder that could not finish as a failure, and carries on with the checks it has", async () => {
+    const run = await start({ planner: "claude-build", builder: "plain", checks: "broken" });
+    try {
+      const task = await run.done();
+      expect(lines(task)).toContain("The Check finder could not finish, so Petrina uses no checks for now");
+      const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
+      expect(details.failuresByReason).toEqual([{ label: "unusable result", count: 1 }]);
+      expect(run.engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] })).toMatchObject([{ outcome: "unusable", roleId: "check-finder", profileId: expect.any(String) }]);
+      expect(details.redone).toBe(2);
     } finally {
       run.engine.shutdown();
     }
@@ -162,6 +208,9 @@ describe.concurrent("usage reports", () => {
       // The planner (Claude Code) reported the warning; the builder, planned on Claude Code, went to Codex.
       expect(run.modelOf(builders[0]!.session)).toBe("gpt-6.1-sol");
       expect(task.plan!.stages.find((stage) => stage.roleId === "builder")!.profileIds).toEqual(["opus-high"]);
+      const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
+      expect(details.failuresByReason).toEqual([]);
+      expect(details.retries).toBe(0);
       expect(run.engine.getState().pool.limited ?? []).toEqual([]);
     } finally {
       run.engine.shutdown();
@@ -208,6 +257,131 @@ describe.concurrent("usage reports", () => {
       const joined = task.session.find((line) => line.from === "system" && line.text.startsWith("Code reviewer joined · Code reviewer on Grok"));
       expect(joined?.profileId).toBe("grok-xhigh");
       expect(new Set(task.findings.flatMap((finding) => [finding.raisedBy, ...finding.confirmedBy]))).toEqual(new Set(["sol-high", "grok-xhigh"]));
+    } finally {
+      run.engine.shutdown();
+    }
+  });
+});
+
+describe("analytics keeps who actually did the work", () => {
+  for (const restart of [false, true]) it(`completes a question answered after a pause${restart ? " and restart" : ""}`, async () => {
+    const run = await start({ builder: "plain" });
+    let restarted: Engine | undefined;
+    try {
+      const question = await waitFor(() => {
+        for (const item of run.engine.getState().inbox) if (item.kind === "plan") run.engine.approve(item.id);
+        return run.engine.getState().inbox.find((item) => item.taskId === run.taskId && item.kind === "question");
+      }, "the architect's question");
+      const original = run.engine.tracking.log.moments({ taskId: run.taskId, kinds: ["ask"] }).find((moment) => moment.ask === "question")!;
+      run.engine.pause(run.taskId);
+      if (restart) {
+        run.engine.shutdown();
+        restarted = new Engine(join(run.root, "data"), { codexLimitsCommand: null });
+      }
+      const engine = restarted ?? run.engine;
+      expect(engine.getState().inbox.some((item) => item.id === question.id)).toBe(false);
+      const version = engine.getState().work!.version;
+      const beforeAnswer = Date.now();
+      const context = { taskId: run.taskId, about: question.title, clientId: "late-answer" };
+      engine.answer(question.id, "Follow the system", context);
+      const afterAnswer = Date.now();
+      const asks = () => engine.tracking.log.moments({ taskId: run.taskId, kinds: ["ask"] }).filter((moment) => moment.ask === "question");
+      expect(asks()).toHaveLength(1);
+      const completed = asks()[0]!;
+      expect(completed).toEqual({ ...original, answer: "answered", durationMs: expect.any(Number) });
+      expect(completed.durationMs!).toBeGreaterThanOrEqual(beforeAnswer - question.at);
+      expect(completed.durationMs!).toBeLessThanOrEqual(afterAnswer - question.at);
+      expect(engine.getState().work!.version).toBeGreaterThan(version);
+      expect(engine.getState().tasks.find((task) => task.id === run.taskId)!.queued.some((message) => message.text.includes("Follow the system"))).toBe(true);
+      const words = engine.usage({ view: "analytics", period: "today" }).squad.asks;
+      expect(words).toContain("Agents stopped to ask you 1 time; you answered in");
+      expect(words).not.toContain("unanswered");
+      engine.answer(question.id, "Follow the system", context);
+      expect(asks()).toEqual([completed]);
+      engine.answer(question.id, "Follow the system", { ...context, clientId: "late-answer-repeated" });
+      expect(asks()).toEqual([completed]);
+    } finally {
+      run.engine.shutdown();
+      restarted?.shutdown();
+    }
+  });
+
+  it("records unanswered questions before cancellation and keeps them after a restart", async () => {
+    const run = await start({ builder: "plain" });
+    let restarted: Engine | undefined;
+    try {
+      const question = await waitFor(() => {
+        for (const item of run.engine.getState().inbox) if (item.kind === "plan") run.engine.approve(item.id);
+        return run.engine.getState().inbox.find((item) => item.taskId === run.taskId && item.kind === "question");
+      }, "the architect's question");
+      const asks = () => run.engine.tracking.log.moments({ taskId: run.taskId, kinds: ["ask"] }).filter((moment) => moment.ask === "question");
+      expect(asks()).toHaveLength(1);
+      expect(asks()[0]).toMatchObject({ at: question.at, roleId: "architect" });
+      expect(asks()[0]!.answer).toBeUndefined();
+      run.engine.cancel(run.taskId);
+      expect(run.engine.getState().inbox.some((item) => item.id === question.id)).toBe(false);
+      expect(asks()).toHaveLength(1);
+      const words = run.engine.usage({ view: "analytics", period: "today" }).squad.asks;
+      expect(words).toContain("Agents stopped to ask you 1 time; 1 unanswered");
+      expect(words).not.toContain("under a minute");
+      expect(JSON.stringify(asks())).not.toContain(question.title);
+      run.engine.shutdown();
+      restarted = new Engine(join(run.root, "data"), { codexLimitsCommand: null });
+      expect(restarted.usage({ view: "analytics", period: "today" }).squad.asks).toBe(words);
+    } finally {
+      run.engine.shutdown();
+      restarted?.shutdown();
+    }
+  });
+
+  for (const afterFirstRound of [false, true]) it(`credits replacement designers ${afterFirstRound ? "after a completed planned round" : "from the first round"}`, async () => {
+    const limited = [{ model: "opus", role: "architect", type: "seven_day_opus" }, { model: "gpt-6.1-sol", role: "design reviewer" }];
+    const run = await start(afterFirstRound ? {} : { limited }, {
+      description: "[disagree]",
+      before: (engine) => { engine.s.profiles = engine.s.profiles.filter((profile) => !["fable-xhigh", "astra-xhigh"].includes(profile.id)); },
+    });
+    let switched = false;
+    const unsubscribe = run.engine.subscribe(() => {
+      if (afterFirstRound && !switched && run.engine.tracking.log.moments({ taskId: run.taskId, kinds: ["design-round"] }).length > 0) {
+        switched = true;
+        run.fakes.scenario({ limited });
+      }
+    });
+    try {
+      const task = await waitFor(() => {
+        run.answer();
+        if (run.find().state === "failed") throw new Error(run.find().error);
+        return run.engine.getState().inbox.some((item) => item.taskId === run.taskId && item.kind === "disagreement") && run.find();
+      }, "the replacement agents' design rounds", 60_000);
+      const rounds = run.engine.tracking.log.moments({ taskId: task.id, kinds: ["design-round"] });
+      expect(rounds).toHaveLength(2);
+      expect(rounds[0]).toMatchObject({ profileId: afterFirstRound ? "opus-xhigh" : "sonnet-high", peerProfileId: afterFirstRound ? "sol-xhigh" : "grok-xhigh", count: 2, blocking: 1 });
+      expect(rounds[1]).toMatchObject({ profileId: "sonnet-high", peerProfileId: "grok-xhigh", count: 2, blocking: 1 });
+      expect(task.objections.filter((objection) => objection.round === 2).every((objection) => objection.raisedBy === "grok-xhigh")).toBe(true);
+      const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
+      const replacementRounds = afterFirstRound ? 1 : 2;
+      expect(details.architects.find((row) => row.label.includes("Sonnet 5.5"))).toMatchObject({ rounds: replacementRounds, designs: 1, sentBack: 1 });
+      expect(details.designReviewers.find((row) => row.label.startsWith("Grok · "))).toMatchObject({ rounds: replacementRounds, blocking: replacementRounds });
+      expect(details.architects.filter((row) => !row.label.includes("Sonnet 5.5")).every((row) => row.rounds === (afterFirstRound ? 1 : 0) && row.designs === 0)).toBe(true);
+    } finally {
+      unsubscribe();
+      run.engine.cancel(run.taskId);
+      run.engine.shutdown();
+    }
+  });
+
+  it("keeps a confirming reviewer's blocking findings and pass or fail verdict", async () => {
+    const run = await start({ planner: "claude-build", builder: "plain", reviewer: "confirm" }, { before: (engine) => engine.setPoolPaused(true) });
+    try {
+      run.engine.s.tasks.find((task) => task.id === run.taskId)!.findings.push({ id: "existing-important", text: "The greeting is missing on the welcome page.", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "open" });
+      run.engine.setPoolPaused(false);
+      await run.done();
+      const verdicts = run.engine.tracking.log.moments({ taskId: run.taskId, kinds: ["verdict"] });
+      expect(verdicts).toHaveLength(2);
+      expect(verdicts[0]).toMatchObject({ profileId: "sol-high", verdict: "fail", count: 1, blocking: 1 });
+      expect(verdicts[1]).toMatchObject({ profileId: "sol-high", verdict: "pass", count: 0, blocking: 0 });
+      const reviewer = run.engine.usage({ view: "analytics", period: "today" }).squad.details.reviewers[0]!;
+      expect(reviewer).toMatchObject({ rounds: 2, sentBack: 1, blocking: 1 });
     } finally {
       run.engine.shutdown();
     }
@@ -277,6 +451,34 @@ describe("what the tools say about usage", () => {
     expect(limitFromFailure(grok, { message: "Internal error", data: { error: "server_error" } }, "", now)).toBeUndefined();
     // The same sentence in what the agent said is not a limit. Only the error text is.
     expect(limitFromFailure(grok, new Error("Internal error"), "You've hit the rate limit for your plan.", now)).toBeUndefined();
+  });
+
+  it("reads every limit code both tools send, with the kind of limit in words", () => {
+    const failure = (data: Record<string, string>) => ({ code: -32603, message: "Internal error", data });
+    // Codex: its usage, its rate and its session budget.
+    expect(limitFromFailure(codex, failure({ codexErrorInfo: "usageLimitExceeded" }), "", now)?.reason).toBe("Codex's usage limit");
+    expect(limitFromFailure(codex, failure({ codexErrorInfo: "rateLimitExceeded" }), "", now)?.reason).toBe("Codex's rate limit");
+    expect(limitFromFailure(codex, failure({ codexErrorInfo: "sessionBudgetExceeded" }), "", now)?.reason).toBe("Codex's usage limit");
+    // Claude: the spend cap, the rate limit and an account on hold.
+    expect(limitFromFailure(claude, failure({ errorKind: "billing_error" }), "", now)?.reason).toBe("Claude Code's spend limit");
+    expect(limitFromFailure(claude, failure({ errorKind: "rate_limit" }), "", now)?.reason).toBe("Claude Code's rate limit");
+    expect(limitFromFailure(claude, failure({ errorKind: "account_on_hold" }), "", now)?.reason).toBe("Claude Code's usage limit");
+    // The session-failure kinds both adapters use.
+    for (const kind of ["quota_exhausted", "rate_limited", "budget_exhausted"]) {
+      expect(limitFromFailure(codex, failure({ category: kind }), "", now)).toBeInstanceOf(UsageLimited);
+      expect(limitFromFailure(claude, failure({ kind }), "", now)).toBeInstanceOf(UsageLimited);
+    }
+    expect(limitFromFailure(codex, failure({ codexErrorInfo: "contextWindowExceeded" }), "", now)).toBeUndefined();
+  });
+
+  it("files a task that stopped on any limit as a usage limit in Analytics, whatever the limit is called", () => {
+    expect(failureReason(new UsageLimited("claude-code", now, "Claude Code's spend limit"))).toBe("limit");
+    expect(failureReason(new UsageLimited("codex", now, "Codex's rate limit"))).toBe("limit");
+    expect(failureReason(new WaitingForUsage("Waiting for Claude Code's limit to reset"))).toBe("limit");
+    expect(failureReason(new Error("Claude Code's extra usage limit is used up"))).toBe("limit");
+    expect(failureReason(new Error("The agent stopped (exit 1)"))).toBe("agent-stopped");
+    expect(failureReason(new Error("Builder did not hand back a usable result: no result block"))).toBe("unusable");
+    expect(failureReason(new Error("git push failed"))).toBe("other");
   });
 
   it("takes the next time the clock shows what it says", () => {

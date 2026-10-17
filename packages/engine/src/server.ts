@@ -72,6 +72,15 @@ const ARGS = {
   handBackPreview: z.tuple([TaskId]),
   handBack: z.tuple([TaskId, z.string().max(4000).optional(), z.boolean().optional()]),
   setTerminal: z.tuple([z.string().regex(/^[a-z0-9-]{0,40}$/)]),
+  // The window asks for the numbers of one view at a time: only these views and periods exist.
+  usage: z.tuple([
+    z.discriminatedUnion("view", [
+      z.object({ view: z.literal("task"), taskId: z.string().min(1).max(200) }).strict(),
+      z.object({ view: z.literal("products") }).strict(),
+      z.object({ view: z.literal("today") }).strict(),
+      z.object({ view: z.literal("analytics"), period: z.enum(["today", "7d", "30d"]), productId: z.string().min(1).max(200).optional() }).strict(),
+    ]),
+  ]),
 } satisfies { [K in CommandName]: z.ZodType<Parameters<Commands[K]>> };
 
 const Envelope = z.object({ name: z.enum(COMMAND_NAMES), args: z.array(z.unknown()) });

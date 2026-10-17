@@ -26,6 +26,8 @@ interface SheetProps {
   messageFocus: boolean;
   onMessageFocused: () => void;
   onMessage: () => void;
+  /** Open the "About these numbers" note on Analytics. */
+  onAboutNumbers: () => void;
 }
 
 const TABS: readonly { id: SheetTab; label: string }[] = [
@@ -36,7 +38,7 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
   { id: "session", label: "Session" },
 ];
 
-export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, waiting }: SheetProps) {
+export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, waiting }: SheetProps) {
   const [menu, setMenu] = useState(false);
   const [titleGone, setTitleGone] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -218,7 +220,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
           </nav>
 
           <div className="sheet-body" id="sheet-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
-            {tab === "overview" && <Overview task={task} state={state} find={find} />}
+            {tab === "overview" && <Overview task={task} state={state} find={find} onAboutNumbers={onAboutNumbers} />}
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
             {tab === "review" && <ReviewView task={task} find={find} />}

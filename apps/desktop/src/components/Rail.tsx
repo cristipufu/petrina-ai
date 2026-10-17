@@ -1,6 +1,6 @@
 // The sections down the left edge of the window.
 
-import { Bot, Boxes, LayoutGrid, Library, Settings } from "lucide-react";
+import { Bot, Boxes, ChartColumn, LayoutGrid, Library, Settings } from "lucide-react";
 import type { Page } from "@petrina/core";
 import { mod } from "../keyboard";
 
@@ -23,6 +23,10 @@ export function Rail({ view, blocking, onGo }: { view: Page; blocking: number; o
             {blocking}
           </span>
         )}
+      </button>
+      <button className={view === "analytics" ? "on" : ""} aria-current={view === "analytics" ? "page" : undefined} onClick={() => onGo("analytics")} title="Analytics">
+        <ChartColumn size={20} aria-hidden="true" />
+        Analytics
       </button>
       <button className={view === "library" ? "on" : ""} aria-current={view === "library" ? "page" : undefined} onClick={() => onGo("library")} title="Library (L)">
         <Library size={20} aria-hidden="true" />

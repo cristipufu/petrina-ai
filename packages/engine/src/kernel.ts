@@ -11,6 +11,7 @@ import { Store } from "./store.js";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import type { UsageInfo, UsageLimited } from "./usage.js";
+import { Tracking } from "./tracking.js";
 
 export type MState = DeepMutable<State>;
 
@@ -83,6 +84,8 @@ export interface EngineOptions {
   /** How many tasks' checks run at the same time on this machine (default: one per six cores, at least one). */
   checkRuns?: number;
   checkTimeoutMs?: number;
+  /** How to start the installed Codex to read its limits. `null` never reads them. */
+  codexLimitsCommand?: readonly string[] | null;
 }
 
 export class Aborted extends Error {}
@@ -124,11 +127,16 @@ export abstract class Kernel {
     this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
     this.found = options.terminals?.() ?? detectTerminals(this.machine);
     this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
+    this.tracking = new Tracking(this);
+    this.tracking.start();
   }
 
   readonly s: MState;
 
   readonly store: Store;
+
+  /** The work log: every agent turn and notable moment, the permanent product list and the tools' limits. */
+  readonly tracking: Tracking;
 
   readonly listeners = new Set<() => void>();
 
@@ -148,6 +156,7 @@ export abstract class Kernel {
 
   readonly timers: ReturnType<typeof setInterval>[] = [];
 
+  /** Set by shutdown: work that ends afterwards (a turn cut off by the stop) changes nothing. */
   stopped = false;
   /** Stopping is under way: no new agent starts, and reviewers and voters in flight hand back first. */
   draining = false;
@@ -251,6 +260,7 @@ export abstract class Kernel {
       ...(extra.options ? { options: extra.options } : {}),
       ...(extra.detail ? { detail: extra.detail } : {}),
     });
+    this.tracking.asked(task, this.s.inbox.at(-1)!);
     return id;
   }
 
@@ -260,6 +270,7 @@ export abstract class Kernel {
     this.stopHelpers(taskId);
     delete task.helpers;
     const message = error instanceof Error ? error.message : String(error);
+    this.tracking.failed(task, error);
     delete task.agent;
     delete task.conversation;
     task.holdsSlot = false;
@@ -408,7 +419,8 @@ export abstract class Kernel {
 
   /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */
   recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void {
-    this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: error.toolId, ...(error.model ? { model: error.model } : {}), until: error.until, reason: error.reason }) as MState["pool"]["limited"];
+    this.tracking.limitHit(task, roleId, profileId, error);
+    this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: error.toolId, ...(error.model ? { model: error.model } : {}), until: error.until, reason: error.reason, at: Date.now() }) as MState["pool"]["limited"];
     this.log(task, "warn", `${this.role(roleId)?.name ?? roleId} on ${this.named(profileId)} ran out of usage (${error.reason}), until ${untilWords(error.until, Date.now())}`, roleId, profileId);
     this.armLimitTimer();
     this.commitNow();

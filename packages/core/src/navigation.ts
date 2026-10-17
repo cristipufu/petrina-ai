@@ -1,7 +1,7 @@
 import { boardSections } from "./board.js";
 import type { InboxItem, State, Task } from "./model.js";
 
-export type Page = "board" | "products" | "agents" | "library" | "settings";
+export type Page = "board" | "products" | "agents" | "analytics" | "library" | "settings";
 export type KeyArea = "board" | "inbox";
 export type TaskList = KeyArea | undefined;
 

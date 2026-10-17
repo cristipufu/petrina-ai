@@ -83,7 +83,9 @@ describe("board order", () => {
     expect(sections["needs-you"].map((task) => task.title)).toEqual(["Guest checkout", "Dark mode", "Refresh the pricing page", "Gift cards", "Weekly email digest"]);
     expect(sections.working.map((task) => task.title)).toEqual(["Fix login loop on Safari"]);
     expect(sections.queue.map((task) => task.title)).toEqual(["Export notes to PDF", "Onboarding checklist", "Search by tag", "Retry failed Stripe webhooks"]);
-    expect(sections.done.map((task) => task.title)).toEqual(["Report errors to Sentry", "Fix the footer links"]);
+    // The board's own finished tasks come first; the thirty days of history behind them follow.
+    expect(sections.done.slice(0, 2).map((task) => task.title)).toEqual(["Report errors to Sentry", "Fix the footer links"]);
+    expect(sections.done.slice(2).every((task) => /^h\d+$/.test(task.id) && demo.products.some((product) => product.id === task.productId))).toBe(true);
   });
 
   it("keeps every task in exactly one section, and filters", () => {

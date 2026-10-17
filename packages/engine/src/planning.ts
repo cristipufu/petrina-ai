@@ -19,6 +19,7 @@ export class Planning {
     this.k.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", PLANNER_PROFILE);
     this.k.log(task, "milestone", `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}`, "planner", PLANNER_PROFILE);
     this.k.finishStep(task);
+    this.k.tracking.endStage(task, "done");
     this.k.commit();
   }
 

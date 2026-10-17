@@ -767,6 +767,7 @@ export class Shipping {
       this.k.log(task, "status", `Pull request #${pr.number} went out while you cancelled it: ${pr.url}`);
     } else {
       if (how) this.k.log(task, "done", `Petrina opened pull request #${pr.number}, and checked it on GitHub`);
+      this.k.tracking.delivered(task);
       if (pr.state === "open") {
         delete task.agent;
         task.holdsSlot = false;
@@ -787,6 +788,7 @@ export class Shipping {
     if (task.state === "cancelled") this.k.log(task, "status", `Release ${release.tag} went out while you cancelled it: ${release.url}`);
     else {
       if (how) this.k.log(task, "done", `Petrina published release ${release.tag}, and checked it on GitHub`);
+      this.k.tracking.delivered(task);
       this.finished(task, `Released ${release.tag}`);
     }
     this.k.commitNow();
@@ -798,6 +800,7 @@ export class Shipping {
     delete task.shipping;
     if (task.state === "cancelled") this.k.log(task, "status", `${branch} moved forward to it while you cancelled it (${sha.slice(0, 7)})`);
     else {
+      this.k.tracking.delivered(task);
       if (how) this.k.log(task, "done", how === "found" ? `Checked: ${branch} already has it (${sha.slice(0, 7)})` : `Petrina moved ${branch} forward to it (${sha.slice(0, 7)}), and checked the main copy`);
       this.finished(task, `Committed to ${branch}`);
     }
@@ -952,6 +955,7 @@ export class Shipping {
     if (!task) return;
     delete task.shipping;
     this.k.finishStep(task);
+    this.k.tracking.delivered(task);
     task.state = "done";
     task.column = "done";
     task.finishedAt = Date.now();
@@ -972,6 +976,7 @@ export class Shipping {
         task.finishedAt = Date.now();
         task.statusLine = state === "merged" ? `Merged #${task.pr!.number} on GitHub` : `Closed #${task.pr!.number} without merging`;
         this.k.log(task, "done", task.statusLine);
+        this.k.tracking.prSettled(task, state);
         this.k.commit();
         // Tasks waiting for this one to land can start now.
         this.k.schedule();

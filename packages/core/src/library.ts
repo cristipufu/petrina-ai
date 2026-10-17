@@ -186,10 +186,10 @@ export const KNOWN_TOOLS: readonly Tool[] = [
 ];
 
 export const DEFAULT_PROFILES: readonly AgentProfile[] = [
-  { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", effort: "high" },
-  { id: "sonnet-medium", toolId: "claude-code", model: "Sonnet 5.5", effort: "medium" },
-  { id: "codex-xhigh", toolId: "codex", model: "sol", effort: "xhigh" },
-  { id: "codex-high", toolId: "codex", model: "sol", effort: "high" },
+  { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" },
+  { id: "sonnet-medium", toolId: "claude-code", model: "Sonnet 5.5", modelId: "sonnet", effort: "medium" },
+  { id: "codex-xhigh", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "xhigh" },
+  { id: "codex-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
 ];
 
 const PLANNER_PROFILE = "sonnet-medium";

@@ -1,7 +1,7 @@
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { limitOf, slotWait, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task } from "@petrina/core";
+import { limitOf, slotWait, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
@@ -10,6 +10,8 @@ import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, format
 import { UsageLimited, WaitingForUsage } from "./usage.js";
 import { ADAPTERS } from "./tools.js";
 import { Kernel, Aborted, type MTask } from "./kernel.js";
+import type { TurnAgent } from "./tracking.js";
+import { WaitClock } from "./worklog.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
@@ -43,6 +45,8 @@ export class Turns {
     for (;;) {
       const choice = this.k.choose(plannedId, task, roleId, (toolId) => !slotWait(this.k.getState(), { taskId: task.id, toolId }))!;
       if (choice.kind === "none") {
+        // Stopped by a limit and waiting for the reset: the step's next attempt is a retry.
+        if (stopped) this.k.tracking.owesRetry(task, roleId, plannedId);
         this.k.waitForUsage(task, choice.waiting);
         throw new WaitingForUsage(choice.waiting);
       }
@@ -53,10 +57,12 @@ export class Turns {
         // Another tool's seat: it qualifies for a slot like any agent.
         const wait = slotWait(this.k.getState(), { taskId: task.id, toolId: profile.toolId });
         if (wait) {
+          this.k.tracking.owesRetry(task, roleId, plannedId);
           this.k.waitForUsage(task, wait);
           throw new WaitingForUsage(wait);
         }
       }
+      this.k.tracking.attempt(task, roleId, plannedId, profile, stopped !== undefined);
       options.used?.(profile.id);
       // Said where the coordinator will see it: a security review that could not stay off the builder's tool.
       const builder = this.k.profile(task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "");
@@ -134,6 +140,8 @@ export class Turns {
 
     const live = () => this.k.task(taskId);
     const env = this.envFor();
+    // How its turns are written down in the work log, with its own waits for the coordinator left out of its time.
+    const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
@@ -163,7 +171,7 @@ export class Turns {
             if (current.timeline.at(-1)?.text !== line) this.k.log(current, "status", line, roleId, profileId);
             this.k.commit();
           },
-          onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }),
+          onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits),
           onLog: (text) => void this.k.agentLog(taskId, text),
           onUsage: (info) => this.k.recordUsage(info),
         },
@@ -251,7 +259,8 @@ export class Turns {
       }
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
       this.k.commitNow();
-      return await this.converse(task, run, opening, role, profileId, schema, signal, { ...options, main: true });
+      // A reopened conversation carries on after the interruption; a fresh one gets its first instructions.
+      return await this.converse(task, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: true });
     } finally {
       this.k.runs.delete(taskId);
       run.close();
@@ -300,15 +309,21 @@ export class Turns {
       else {
         const choice = this.k.choose(plannedId, task, roleId, options.room);
         if (!choice) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
-        if (choice.kind === "none") throw new WaitingForUsage(choice.waiting);
+        if (choice.kind === "none") {
+          // The group waits, and this agent is started again after: that attempt is a retry.
+          if (stopped) this.k.tracking.owesRetry(task, roleId, plannedId);
+          throw new WaitingForUsage(choice.waiting);
+        }
         profile = choice.profile;
       }
       // A later stand-in still has to fit the seat this member already holds. With no room, the group waits.
       if (stopped && options.room && !options.room(profile.toolId)) {
         const tool = this.k.s.tools.find((entry) => entry.id === profile.toolId)?.name ?? profile.toolId;
+        this.k.tracking.owesRetry(task, roleId, plannedId);
         throw new WaitingForUsage(`Waiting for a free ${tool} slot`);
       }
       if (stopped && stopped.profileId === profile.id) throw stopped.error;
+      this.k.tracking.attempt(task, roleId, plannedId, profile, stopped !== undefined);
       options.used?.(profile.id);
       const since = Date.now();
       try {
@@ -338,6 +353,7 @@ export class Turns {
       this.k.log(task, "milestone", `${role.name} started`, roleId, profileId);
     }
     this.k.commit();
+    const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
     const command = this.k.options.agentCommand?.(profile);
     const run = await AgentRun.start({
       profile,
@@ -358,7 +374,7 @@ export class Turns {
           if (current && !current.timeline.slice(-5).some((entry) => entry.text === line && entry.profileId === profileId)) this.k.log(current, "status", line, roleId, profileId);
           this.k.commit();
         },
-        onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }),
+        onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits),
         onLog: (text) => void this.k.agentLog(taskId, text),
         onUsage: (info) => this.k.recordUsage(info),
       },
@@ -370,7 +386,7 @@ export class Turns {
       const sections = [...given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
       if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words) });
       const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.k.s.profiles as AgentProfile[], worktree: copy, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
-      return await this.converse(task, run, opening, role, profileId, schema, signal, { ...options, main: false });
+      return await this.converse(task, run, agent, opening, "first", role, profileId, schema, signal, { ...options, main: false });
     } finally {
       runs.delete(run);
       run.close();
@@ -382,9 +398,11 @@ export class Turns {
    * coordinator, and an unusable result back to it twice at most. Only the step's main agent hears the
    * coordinator's messages as they come and keeps its open question across a restart.
    */
-  private async converse<T>(task: MTask, run: AgentRun, opening: string, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean }): Promise<T> {
+  private async converse<T>(task: MTask, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean }): Promise<T> {
     const by = { roleId: role.id, profileId };
-    let reply = await run.prompt(opening);
+    // Every message to the agent and the reply it waits for is one entry in the work log.
+    const send = (text: string, why: TurnReason) => this.k.tracking.turn(this.k.task(task.id) ?? task, agent, run, text, why, signal);
+    let reply = await send(opening, reason);
     if (options.main) this.briefed(task);
     for (let repairs = 0; ; ) {
       if (signal.aborted) throw new Aborted();
@@ -397,11 +415,11 @@ export class Turns {
         this.k.say(current, "you", message.text);
         this.k.log(current, "you", `You said: ${message.text}`);
         this.k.commitNow();
-        reply = await run.prompt(`Message from the coordinator: ${message.text}\n\nTake it into account. When you are done, end with the result block again.`);
+        reply = await send(`Message from the coordinator: ${message.text}\n\nTake it into account. When you are done, end with the result block again.`, "message");
         continue;
       }
       if (reply.stopReason === "cancelled") {
-        reply = await run.prompt("Continue where you left off. When you are done, end with the result block.");
+        reply = await send("Continue where you left off. When you are done, end with the result block.", "continue");
         continue;
       }
       const parsed = parseResult(reply.text, schema);
@@ -412,14 +430,15 @@ export class Turns {
         // Heard from here on: a restart does not hand the answer over again.
         if (options.main && current.conversation) delete current.conversation.asked;
         this.k.commitNow();
-        reply = await run.prompt(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`);
+        reply = await send(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`, "answer");
         continue;
       }
       const error = parsed.ok === true ? await options.check?.(parsed.value) : parsed.error;
       if (parsed.ok === true && !error) return parsed.value;
       repairs += 1;
       if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${error}`);
-      reply = await run.prompt(repairPrompt(error ?? ""));
+      this.k.tracking.redo(current, role.id, agent.profile);
+      reply = await send(repairPrompt(error ?? ""), "redo");
     }
   }
 
@@ -432,14 +451,20 @@ export class Turns {
   }
 
   /** The tool's own safety check flagged something: the coordinator decides. Petrina adds no rules of its own. */
-  private async permission(taskId: Id, info: PermissionInfo, signal: AbortSignal, by: { roleId: Id; profileId: Id }): Promise<"allow" | "deny"> {
+  private async permission(taskId: Id, info: PermissionInfo, signal: AbortSignal, by: { roleId: Id; profileId: Id }, waits: WaitClock): Promise<"allow" | "deny"> {
     const task = this.k.task(taskId);
     if (!task) return "deny";
     const tool = ADAPTERS[this.k.profile(by.profileId)?.toolId ?? ""]?.name ?? "The agent's tool";
     const detail = info.command ?? info.paths.join("\n");
     const main = task.agent?.profileId === by.profileId && task.agent.roleId === by.roleId;
-    const answer = await this.wait(task, "permission", info.title, true, { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) }, signal, "Waiting for your permission", by, main);
-    return answer === "allow" ? "allow" : "deny";
+    // Waiting for the coordinator is not agent work: the wait is left out of the turn's working time.
+    waits.start(taskId);
+    try {
+      const answer = await this.wait(task, "permission", info.title, true, { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) }, signal, "Waiting for your permission", by, main);
+      return answer === "allow" ? "allow" : "deny";
+    } finally {
+      waits.stop(taskId);
+    }
   }
 
   private wait(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string }, signal: AbortSignal, status: string, by: { roleId: Id; profileId: Id }, main: boolean): Promise<string> {

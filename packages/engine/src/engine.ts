@@ -9,7 +9,7 @@
 // module of its own (driver, planning, design, work, review, shipping, take-over, product checks,
 // review guide, turns, context), and they share state and bookkeeping through the kernel.
 
-import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, afterChangesAsked, type Commands, type NewTaskInput, type SaidContext } from "@petrina/core";
+import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, afterChangesAsked, type AskAnswer, type Commands, type NewTaskInput, type SaidContext, type UsageRequest, type UsageViewFor } from "@petrina/core";
 import * as git from "./git.js";
 import { parseCommand } from "./checks.js";
 import { Kernel, TONES, type EngineOptions } from "./kernel.js";
@@ -98,7 +98,14 @@ export class Engine extends Kernel implements Commands {
     for (const controller of this.drivers.values()) controller.abort();
     for (const run of this.runs.values()) run.close();
     this.store.save(this.getState());
+    // Turns still running stay unfinished in the log: the next start marks them lost.
+    this.tracking.close();
     this.store.close();
+  }
+
+  /** The numbers one view needs, worked out from the work log. The log itself never leaves the engine. */
+  usage<R extends UsageRequest>(request: R): UsageViewFor<R> {
+    return this.tracking.usage(request);
   }
 
   async addProduct(path: string, name?: string): Promise<Id> {
@@ -107,8 +114,10 @@ export class Engine extends Kernel implements Commands {
     if (existing) return existing.id;
     const displayName = productName(name ?? suggestProductName(info.root), this.s.products);
     const base = info.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "product";
+    // An id is never handed out again: not one in use, not a removed product's, not one in the work log.
     let id = base;
-    for (let n = 2; this.s.products.some((product) => product.id === id); n += 1) id = `${base}-${n}`;
+    for (let n = 2; this.tracking.productIdTaken(id); n += 1) id = `${base}-${n}`;
+    this.tracking.product({ id, name: displayName, repo: `${info.owner}/${info.name}` }, { addedAt: Date.now() });
     this.s.products.push({
       id,
       name: displayName,
@@ -158,16 +167,22 @@ export class Engine extends Kernel implements Commands {
     if (!product) throw new Error("This product is no longer in Petrina.");
     const validated = validateProductSettings(settings, this.s.products, productId);
     Object.assign(product, validated);
+    // The permanent list keeps the latest name, so a removed product shows under the name it last had.
+    this.tracking.product(product);
     this.commit();
   }
 
   removeProduct(productId: Id): void {
     const { unfinished } = productHistory(this.s.tasks, productId);
     if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
+    const product = this.s.products.find((entry) => entry.id === productId);
+    if (!product) return;
+    // Its entry stays, marked removed, so its history keeps its name and its id is never reused.
+    this.tracking.product(product, { removedAt: Date.now() });
     const ids = new Set(this.s.tasks.filter((task) => task.productId === productId).map((task) => task.id));
     this.s.inbox = this.s.inbox.filter((item) => !ids.has(item.taskId));
     this.s.tasks = this.s.tasks.filter((task) => !ids.has(task.id));
-    this.s.products = this.s.products.filter((product) => product.id !== productId);
+    this.s.products = this.s.products.filter((entry) => entry.id !== productId);
     this.commit();
   }
 
@@ -176,7 +191,8 @@ export class Engine extends Kernel implements Commands {
     if (!product) throw new Error("Unknown product");
     const title = input.title.trim();
     if (!title) throw new Error("A task needs a title");
-    const id = this.id("task");
+    let id = this.id("task");
+    while (this.tracking.taskIdTaken(id)) id = this.id("task");
     const queue = queueOf(this.s.tasks as Task[]);
     this.s.tasks.push({
       id,
@@ -340,6 +356,7 @@ export class Engine extends Kernel implements Commands {
     if (!task) return;
     this.takeover.notDriving(task);
     this.stopDriver(taskId);
+    this.tracking.cancelled(task);
     task.state = "cancelled";
     task.column = "done";
     task.holdsSlot = false;
@@ -366,6 +383,7 @@ export class Engine extends Kernel implements Commands {
     if (!item || !task) return;
     this.s.inbox = this.s.inbox.filter((entry) => entry.id !== itemId);
     delete task.error;
+    this.tracking.retried(task);
     task.state = "waiting";
     task.statusLine = "Waiting for a free slot";
     this.log(task, "you", "You asked to try again");
@@ -430,7 +448,7 @@ export class Engine extends Kernel implements Commands {
    * is gone (a pause dropped it before the answer arrived, or a restart did on a step with no
    * conversation to pick up), the answer still reaches the step.
    */
-  answer(itemId: Id, answer: string, context: SaidContext = {}): void {
+  answer(itemId: Id, answer: string, context: SaidContext = {}, how: AskAnswer = "answered"): void {
     this.takeover.notDrivingItem(itemId);
     const item = this.s.inbox.find((entry) => entry.id === itemId);
     const task = this.task(item?.taskId ?? context.taskId ?? "");
@@ -438,6 +456,7 @@ export class Engine extends Kernel implements Commands {
     if (!task || !this.firstTime(task, context.clientId)) return;
     if (!item && (!about || ["done", "cancelled"].includes(task.state))) return;
     this.takeItem(itemId);
+    this.tracking.answered(task, item ?? itemId, how);
     this.stepNote(task, "answer", answer, { ...(about ? { about } : {}) });
     this.say(task, "you", answer);
     this.log(task, "you", `You answered: ${answer}`);
@@ -456,7 +475,7 @@ export class Engine extends Kernel implements Commands {
   decideForMe(itemId: Id): void {
     const item = this.s.inbox.find((entry) => entry.id === itemId);
     if (!item) return;
-    this.answer(itemId, item.options?.[0] ?? "Use your best judgment.");
+    this.answer(itemId, item.options?.[0] ?? "Use your best judgment.", {}, "decided");
   }
 
   allow(itemId: Id, _scope: "once" | "always" = "once"): void {
@@ -465,6 +484,7 @@ export class Engine extends Kernel implements Commands {
     if (!item) return;
     const task = this.task(item.taskId);
     if (task) {
+      this.tracking.answered(task, item, "allowed");
       this.log(task, "you", `You allowed: ${item.title}`);
       this.unblock(task);
     }
@@ -484,6 +504,7 @@ export class Engine extends Kernel implements Commands {
     // A plain "No" to a request a restart already dropped changes nothing.
     if (!item && (!said || ["done", "cancelled"].includes(task.state))) return;
     this.takeItem(itemId);
+    if (item) this.tracking.answered(task, item, "denied");
     this.log(task, "you", said ? `You said no: ${said}` : `You said no to: ${about}`);
     if (said) {
       const id = this.id(task.id);
@@ -519,6 +540,7 @@ export class Engine extends Kernel implements Commands {
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
+    if (["plan", "design", "delivery", "disagreement"].includes(item.kind)) this.tracking.answered(task, item, "approved");
     switch (item.kind) {
       case "plan":
         this.log(task, "you", "You approved the plan");
@@ -562,6 +584,7 @@ export class Engine extends Kernel implements Commands {
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
+    this.tracking.answered(task, item, "changes");
     const call = item.kind === "disagreement";
     this.log(task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
     this.say(task, "you", note);

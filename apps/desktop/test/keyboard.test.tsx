@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Simulator, boardOrder, createDemoState, inboxOrder, inboxTab, type State } from '@petrina/core';
+import { Simulator, boardOrder, createDemo, createDemoState, inboxOrder, inboxTab, type State } from '@petrina/core';
 import { useSyncExternalStore } from 'react';
 import { App } from '../src/App';
 import { setSingleKeys } from '../src/keyboard';
@@ -45,8 +45,8 @@ async function enter(selector: string) {
 async function palette(query: string) { await key('k', { ctrlKey: true }); await type('[role=combobox]', query); }
 function selected() { return host.querySelector('.card.selected')?.getAttribute('data-task-id'); }
 function sheetId() { return host.querySelector('.sheet-title')?.textContent; }
-async function mount(state: State = createDemoState(1_000_000_000)) {
-  simulator = new Simulator({ ...state, pool: { ...state.pool, paused: true } });
+async function mount(state: State = createDemoState(1_000_000_000), options: ConstructorParameters<typeof Simulator>[1] = {}) {
+  simulator = new Simulator({ ...state, pool: { ...state.pool, paused: true } }, options);
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   await act(async () => root.render(<App />));
 }
@@ -80,6 +80,48 @@ describe('the app keyboard', () => {
     await key('Escape'); expect(host.querySelector('.sheet')).not.toBeNull();
     expect(document.activeElement).not.toBe(el('.composer textarea'));
     await key('Escape'); expect(host.querySelector('.sheet')).toBeNull();
+  });
+  it('keeps Analytics and its choices open while changing product scope', async () => {
+    await click('.rail button[title="Analytics"]');
+    await click('[aria-label="Period"] button:first-child');
+    await click('label.toggle input');
+    await click('.switcher');
+    await click('.switcher-row.tone-blue');
+    expect(el('h1').textContent).toBe('Analytics');
+    expect(el('.page-head p').textContent).toContain('Shop · what the squad used today');
+    expect(el('[aria-label="Period"] button[aria-selected="true"]').textContent).toBe('Today');
+    expect(el<HTMLInputElement>('label.toggle input').checked).toBe(true);
+    await click('.switcher');
+    await click('.switcher-row:first-child');
+    expect(el('h1').textContent).toBe('Analytics');
+    expect(el('.page-head p').textContent).toContain('All products · what the squad used today');
+    expect(el<HTMLInputElement>('label.toggle input').checked).toBe(true);
+  });
+  it('opens a task from the Analytics task split with the keyboard, and leaves tasks no longer on the board as plain rows', async () => {
+    // The demo with its history, so Analytics has a removed product's tasks.
+    await act(async () => root.unmount()); host.remove();
+    const demo = createDemo(1_000_000_000);
+    await mount(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
+    await click('.rail button[title="Analytics"]');
+    // Thirty days, so the removed product's tasks are in the split too.
+    await click('[aria-label="Period"] button:last-child');
+    const byTask = [...host.querySelectorAll<HTMLButtonElement>('.splits-head button')].find((button) => button.textContent === 'By task')!;
+    await act(async () => byTask.click());
+    const split = () => [...host.querySelectorAll('.split')].find((section) => section.querySelector('h3')?.textContent === 'By task')!;
+    const all = split().querySelector<HTMLButtonElement>('.show-earlier');
+    if (all) await act(async () => all.click());
+    const rows = [...split().querySelectorAll('.split-row:not(.head)')];
+    const gone = rows.filter((row) => row.querySelector('.usage-note')?.textContent === 'removed');
+    expect(gone.length).toBeGreaterThan(0);
+    for (const row of gone) expect(row.querySelector('button')).toBeNull();
+    const open = split().querySelector<HTMLButtonElement>('button.split-open')!;
+    expect(open.type).toBe('button');
+    const title = open.textContent;
+    await act(async () => open.focus());
+    expect(document.activeElement).toBe(open);
+    // A focused button opens with Enter or Space: the browser turns either into this click.
+    await act(async () => open.click());
+    expect(sheetId()).toBe(title);
   });
   it('rests board keys on Products, Agents and Library and remembers its card', async () => {
     await key('j'); await key('j'); const id = selected();

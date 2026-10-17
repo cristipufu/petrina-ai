@@ -55,7 +55,7 @@ describe("keyboard ownership and order", () => {
     expect(stepHighlight([], "b", 1, previous)).toBeUndefined();
   });
   it("lets a task take precedence and rests board keys on every other page", () => {
-    for (const page of ["products", "agents", "library", "settings"] as const) {
+    for (const page of ["products", "agents", "analytics", "library", "settings"] as const) {
       expect(keyArea(page, true, "board", false)).toBeUndefined();
       expect(keyArea(page, true, "inbox", false)).toBe("inbox");
       expect(keyArea(page, true, "inbox", true)).toBe("task");

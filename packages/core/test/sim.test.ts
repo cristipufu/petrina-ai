@@ -469,7 +469,9 @@ describe("Simulator", () => {
     expect(state.products).toHaveLength(20);
     expect(slotUses(state).length).toBeLessThanOrEqual(state.pool.limit);
     expect(new Set(state.inbox.map((item) => item.id)).size).toBe(state.inbox.length);
-    expect(new Set(state.tasks.map((task) => task.productId)).size).toBe(16);
+    // The last four products are quiet: nothing on the board, nothing in their history.
+    const quiet = new Set(state.products.slice(16).map((product) => product.id));
+    expect(state.tasks.some((task) => quiet.has(task.productId))).toBe(false);
   });
 });
 

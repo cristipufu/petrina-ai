@@ -157,6 +157,54 @@ The scheduler is a pure function in `@petrina/core` (`pickStarts`), tested witho
 - New agents also prefer an equal profile on a tool that is not close to its limit (a warning, or 90% used), when there is one. Running agents are never interrupted for this.
 - A usage-limit stand-in for Claude Code's Opus is Sonnet, which the planner is never offered (`standby` in the profile).
 
+## Work log and usage
+
+Petrina records what the squad uses so the coordinator can see what work costs in tokens and time, per task, per product and for the whole squad. No prices: on subscriptions they would mislead.
+
+### What is logged, and where
+
+- **One entry per agent turn** (each message Petrina sends an agent and the reply it waits for), in the `work_turns` table: task and product; the stage, its name at the time (planning counts as a stage), its round, and whether the builder was fixing review findings; role and tool; the profile, model and effort asked for; the model and effort the tool confirmed, or nothing ("not confirmed"); any switch the tool made during the turn; the agent session; why the turn happened (first instructions, a message, an answer, redoing an unusable result, continuing after an interrupt); when it started and ended; how it ended (finished, interrupted, stopped by a pause or cancel, the agent stopped, lost when Petrina stopped); whether it counts the main agent only; the working time; and the tokens: new input, input reused from the cache, input written to the cache, output, reasoning (part of output) and the total. A figure the tool doesn't give is stored as missing ("not reported"), never as zero.
+- **One line per model per turn** in `work_tokens`: a model name and token figures, nothing else.
+- **One entry per notable moment** in `work_moments`: a stage starting and ending (outcome, start-to-finish time, agent time), each design round (who took part, objections, blocking), how a design ended, each reviewer's pass or fail verdict and the open findings it supported (new or confirmed, each counted once), how a review ended, each question, permission and checkpoint (how long the answer took and what kind of answer), each failure (a plain reason; one Petrina recovers from, like a Check finder or Guide keeper that could not finish, counts too, and each failure counts once however many places see it), each retry (an agent taking over after a usage limit, at once or when the step starts again after waiting for the reset or a free slot; what a step owes is kept in the work log, so a restart keeps it), each result an agent had to redo, and each task delivered, merged, closed or cancelled.
+- **Every product Petrina has ever had** in `products_ever`: id, name, repository, when added and, if removed, when.
+
+The tables live in the engine's SQLite file next to its state, are kept forever and survive restarts. They hold only numbers, names and ids: no prompts, replies, commands or file paths. The dollar figure Claude Code sends is never read. The app never receives the log: the work-log state only carries a counter that changes when an entry is written and when tracking began. Limits use the existing shared pool reports (`pool.usage`) and blocked tools and models (`pool.limited`), so Analytics, the pool and Agents always read one source. Each view asks the engine for its own numbers with one checked request (`usage`, with a fixed set of views and periods), and asks again when the counter changes or the local day rolls over. The per-product totals are added up by SQLite, so they stay fast after a year of turns. The simulator writes the same entries in memory, and the demos start with thirty days of them.
+
+Questions, permissions and checkpoints are recorded when raised. An answer completes that same entry, retaining when it was asked, even if a pause or restart has removed it from the inbox. Cancelling or pausing never removes the request from history, and unanswered requests never count as zero-length answers. The demos keep inbox requests and their history on the same identifiers too, so answering a seeded request never counts it twice. Design rounds and outcomes name the profiles that actually returned the brief and objections, including replacements, rather than the planned profiles.
+
+Working time leaves out the time an agent waits for the coordinator: permission answers inside a turn are subtracted, and questions, checkpoints and waits for a free slot fall between turns. When an agent asks for two permissions at once, the time either is open counts once, so the overlap is never taken off twice.
+
+### Counting tokens
+
+- Petrina works out every total itself as new input + reused input + written input + output, the same way for every tool, so nothing is counted twice. When a tool gives only a total, that total is used. (Both adapters already report "input" without the cached part.)
+- **Claude Code** attaches a per-model breakdown to each turn (`_meta.quota.model_usage`, from the SDK's `modelUsage`). It already includes helper agents, side conversations and compaction. Each model is kept as its own line, exactly as reported, and the turn's figures are the breakdown's sum. The main figure (ACP's `usage`, main agent loop only) is never added on top. Without a breakdown, the main figure is kept as one line under the confirmed model and the turn is marked "main agent only".
+- **Codex** gives one figure per turn, kept as one line under the model Codex names for the turn. If Codex rerouted to another model during the turn (`model/rerouted`, announced as a notice), the line is marked "changed during the turn": it can't be split between models. A `spawnAgent` tool call means a helper agent Codex doesn't report on, so the turn is marked "main agent only".
+- **Grok** is counted like Codex: whatever single figure it sends with a turn (ACP's `usage`) is one line under the model it ran on, and a turn it sends no figure for reads "not reported".
+
+### No helper figure, and effort stays on the agent
+
+Claude Code folds helper agents that use the same model into that model's line, so nobody can say how much was helper work; Petrina doesn't try, and keeps no separate helper figure anywhere. Token lines carry only a model and its figures. Effort belongs to the agent's turn (asked for and actually run) and is shown on the agent, never next to tokens. In the model split, tokens group by the model on each line; agent time goes to the model the agent's session ran on; a model that only appeared inside turns shows its time as "not reported". Petrina recognises Claude model ids (family, version, an optional date) and shows them plainly; every other name, a bracketed ending such as `[1m]` included, is kept and shown exactly as reported, so two different names never share a line.
+
+### Asked for and actually ran
+
+After setting a profile's model and effort, Petrina reads back the session's config options and records what the tool says it is actually set to. A value the tool doesn't offer isn't forced: the session keeps the tool's default (as before) and the entry keeps both what was asked and what ran. Petrina keeps listening: Claude Code sends a `config_option_update` after a fallback, Codex announces a reroute. If the tool doesn't say, the setting is "not confirmed", never a guess: a tool that acknowledges a change without sending its options back leaves that setting unconfirmed. A switch the tool confirms during a turn is kept on that turn's entry even when the agent stops before replying. Comparisons per profile only count an agent's stage when all its turns, across every round of the stage, ran on that profile's own model and effort. That is judged on the stage's whole history, so a round before the chosen period still takes the credit away. Code and Security reviewers both keep their stages and agent time in comparisons. Profile time follows the same unknown and “at least” rules as every other total.
+
+### Product identities
+
+A product's id is never handed out again. A new product's id is checked against current products, removed products and every id in the work log, so a different repository with the same name, or the same repository added again after removal, starts fresh and never inherits history. Removing a product keeps its entry, marked removed, and its work still counts in squad totals under its old name. On the first start with a work log, any product id a task still points to that is no longer in the list is recorded as removed (without a name: Petrina never kept it). If the saved state is ever lost, task and product ids in the log are still never reused.
+
+### Limits
+
+Claude Code sends limit notices on its context updates (`_meta._claude/rateLimit`): which limit (5-hour, weekly, weekly for one model, extra usage), how much is used when given, a status (fine, close, reached) and the reset time. Codex doesn't send them over ACP, so Petrina starts the installed `codex app-server`, calls `account/rateLimits/read` and stops it: no agent, no thread, no tokens. That happens after a Codex turn (at most every 5 minutes) and when Analytics opens (at most once a minute). Only each limit's percentage, length and reset are kept. A failed read means "not reported". These reads update `pool.usage`, alongside Claude Code’s own reports; no second limits record is kept in the work log. Limits are stored with the time they were reported, survive restarts, and a passed reset time is shown as such. The same Usage component serves Analytics, the pool and Agents.
+
+### "At least"
+
+A total reads "at least" only when whole turns are known to be missing, judged separately for tokens and time. Tokens: a turn with no token report, a turn lost when Petrina stopped, or work from before tracking began. Time: a lost turn or work from before tracking began. Turns counting the main agent only, cache reuse, the tools counting differently and model changes never make a total "at least"; they are explained once in the "About these numbers" note. Petrina remembers when it started keeping track; tasks that had started before then are marked "earlier work not recorded" for good, and so are their products' totals and any period that starts before tracking began. The splits keep the warning too: in a period that starts before tracking began, every tool, model and role line reads "at least", and so does every product line except products added after tracking began, which can't be missing anything. A turn still running when Petrina stops is marked lost on the next start. When nothing known adds up and work is missing (only earlier work, or only lost turns), there is no number at all: it reads "not known", never "at least 0"; a figure a tool didn't send reads "not reported". Deliveries and cancellations are charted per day in every period, Today as one column.
+
+### Why no prices
+
+Claude Code sends an estimated dollar figure, but on a subscription it describes nothing the coordinator pays, and Codex sends none. Showing it would mislead, so it is never stored or shown. Tokens and time are the honest measure.
+
 ## Working copies
 
 - Each task gets a git worktree in Petrina's data folder (not inside the repository), on a branch named `petrina/<task-slug>`.
@@ -200,6 +248,7 @@ Inside the engine, `Engine` (`engine.ts`) is a thin front with the coordinator's
 | `update.ts` | One commit per task, put on top of the latest main before the delivery check and before shipping |
 | `shipping.ts` | Delivery, never repeated blindly, and pull request polling |
 | `take-over.ts`, `terminal.ts` | Take over in the terminal |
+| `tracking.ts`, `worklog.ts`, `limits.ts` | The work log: an entry per agent turn and per notable moment, the permanent product list, each tool's limits, and the numbers each view asks for |
 
 Adding a role is one entry in `roles.ts` (and its data in `@petrina/core`'s library); a role the coordinator makes, with no entry, is told its purpose and hands back notes. The rules a task's run follows (board column, checkpoint wording, where a request for changes goes, how rounds end) live in `@petrina/core`'s `flow.ts`, shared by the engine and the demo simulator. Every command the window can send the engine is listed once, in `@petrina/core`'s `commands.ts`: the Engine implements them, the local API has one argument schema for each, and the window's two clients (the real engine's and the demo's) are built from the list, all held to it by the compiler.
 
@@ -278,4 +327,4 @@ Known limits: anything done in a take-over session (a push, a pull request, a co
 | **M1** | Engine on fake agents: plans, stage kinds, structured results, SQLite, worktrees |
 | **M2** | ACP tools: Claude Code and Codex end to end, permissions, bridge, pull requests |
 | **M3** | Planner, design convergence, review chain, tamper check, checkpoints |
-| **M4** | More ACP agents, usage display, signed builds for macOS, Windows and Linux |
+| **M4** | More ACP agents, usage and analytics (done: work log, Analytics page, limits), signed builds for macOS, Windows and Linux |

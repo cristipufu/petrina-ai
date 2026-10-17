@@ -1,7 +1,7 @@
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
-import { lastIndexWhere, type ProductCheck } from "@petrina/core";
+import { lastIndexWhere, type Id, type ProductCheck } from "@petrina/core";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -80,6 +80,7 @@ export class ProductChecks {
       else task.conversation = conversation;
     };
     const why = !product.checks ? "first time" : unstartable ? "a check could not start" : "the CI, build or hook files changed";
+    let ran: Id = CHECK_FINDER_PROFILE;
     try {
       const result = await this.turns.turn(
         task,
@@ -92,7 +93,7 @@ export class ProductChecks {
         ],
         CheckFinderResult,
         signal,
-        { status: "Working out how to check this product" },
+        { status: "Working out how to check this product", used: (id) => (ran = id) },
       );
       restore();
       product.checks = result.checks.map((check) => ({ name: check.name, argv: check.argv, why: check.why }));
@@ -102,6 +103,8 @@ export class ProductChecks {
       restore();
       // Everyone who could work it is out of usage: the task waits, and the finder runs when one is back.
       if (error instanceof WaitingForUsage) throw error;
+      // Petrina carries on without it, but it is still a failure in Analytics.
+      this.k.tracking.failed(task, error, { roleId: "check-finder", profileId: ran });
       const fallback: ProductCheck[] = product.checks ? [...product.checks] : declared;
       product.checks = fallback.map((check) => ({ name: check.name, argv: [...check.argv], ...(check.why ? { why: check.why } : {}) }));
       this.k.log(task, "warn", `The Check finder could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`);

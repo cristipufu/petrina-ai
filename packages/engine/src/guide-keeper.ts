@@ -56,6 +56,7 @@ export class GuideKeeper {
       if (conversation === undefined) delete task.conversation;
       else task.conversation = conversation;
     };
+    let ran: Id = GUIDE_KEEPER_PROFILE;
     try {
       const guide = this.reviewGuide(task);
       const result = await this.turns.turn(
@@ -69,7 +70,7 @@ export class GuideKeeper {
         ],
         GuideResult,
         signal,
-        { status: "Looking for what the reviewers missed" },
+        { status: "Looking for what the reviewers missed", used: (id) => (ran = id) },
       );
       restore();
       if (!result.missed || !result.line) this.k.log(task, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", GUIDE_KEEPER_PROFILE);
@@ -85,6 +86,8 @@ export class GuideKeeper {
       if (signal.aborted || error instanceof Aborted) throw error;
       restore();
       if (error instanceof WaitingForUsage) throw error;
+      // Petrina carries on without it, but it is still a failure in Analytics.
+      this.k.tracking.failed(task, error, { roleId: "guide-keeper", profileId: ran });
       this.k.log(task, "warn", "The Guide keeper could not finish, so nothing was proposed for the review guide");
     }
     delete task.miss;

@@ -193,6 +193,10 @@ export class Reviews {
       }
     }
     const important = raised.some((finding) => finding.severity === "important");
+    // A confirmed existing finding asks for fixes just as a newly raised one does. Count each once.
+    const named = new Set(result.findings.map((finding) => sameFinding(finding.text)));
+    const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || named.has(sameFinding(finding.text))));
+    this.k.tracking.verdict(task, stage.roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
     const confirmed = result.confirms.length + backed;
     const also = [confirmed ? `confirmed ${confirmed}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
     this.k.log(task, important ? "warn" : "done", `${findingCount(raised.map((finding) => ({ severity: SEVERITY[finding.severity] })))}${also ? `; ${also}` : ""}`, stage.roleId, profileId);
@@ -386,6 +390,7 @@ export class Reviews {
     // A port review is one round: whatever it found, the rounds after it are ordinary ones.
     const port = task.portReview !== undefined;
     delete task.portReview;
+    this.k.tracking.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
     if (end.kind === "send back") {
       // The next round reviews only what changed since what the reviewers looked at in this one.
       const sha = reviewed ? await git.head(task.worktree!).catch(() => undefined) : undefined;

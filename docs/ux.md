@@ -53,7 +53,7 @@ What success feels like: many pull requests a day, little time spent being the t
 ```
 
 - **Top bar** (56px): product switcher, search (⌘K), the pool indicator, the inbox button with its count, and **New task**, the only solid violet button in the workspace. It stays quiet: no border, neutral buttons.
-- **Left rail** (64px): Board, Products, Agents, Library, and Settings at the bottom. Icons with labels.
+- **Left rail** (64px): Board, Products, Agents, Analytics, Library, and Settings at the bottom. Icons with labels.
 - **Main area:** the board by default.
 - **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
 - **A task** opens as a sheet over the board (840px wide), so the board stays in view.
@@ -155,6 +155,7 @@ How many agents may run at once.
   - An agent that asked you something mid-stage keeps its slot, and the slot turns amber. The top bar then says "You're blocking 1 agent", because the coordinator is the bottleneck and should know it.
   - Lowering the limit never stops a running agent. Each finishes, then its next agent waits until there is room, so the pool shrinks as agents finish.
 - The **Agents** page is the same information large: one tile per slot with the live status line and a Join button.
+- In the popover, under the slots, **Today**: the tokens and agent time used since local midnight across all products, the same split by tool with each tool's nearest limit when known (how much is used, when it resets and when that was reported; a limit drops out the moment its reset time passes, so an old percentage never shows as current), one line saying agent time adds up agents running at once, and a link to Analytics. With nothing yet today it says so in words.
 
 ## Inbox: "Needs you"
 
@@ -248,6 +249,28 @@ This is the "open in terminal" experience, made friendly.
 - Attachments: screenshots and links.
 - "Add another" keeps the dialog open for brain dumps. Pasting a list creates one task per line.
 - New task and Add product open centred and stay inside the window at every size and at 200% zoom; when there is not enough room, the dialog scrolls inside itself.
+
+## Analytics
+
+What the whole squad used and how it works, in plain words and simple charts. It follows the product switcher (all products, or one), staying open with the chosen period and details when the product changes and offers **Today**, **7 days** and **30 days**, counted from local midnight. It opens on 7 days. Defaults matter more than options: one chart and three splits are visible, the rest is one click away.
+
+1. **Usage limits**, per tool, first: how much of each limit is used (a thin meter that turns amber close to the limit and red when it is reached), when it resets, and when that was reported. Claude Code reports its limits while it works. Codex doesn't send them through its connection, so Petrina asks the installed Codex directly, without starting an agent or spending anything (after a Codex turn, at most every 5 minutes, and when this page opens, at most once a minute). A limit whose reset time has passed says so instead of showing the old percentage. Nothing reported reads "Not reported".
+2. **Tokens and agent time.** Four headline numbers: tokens, agent time, turns and tasks worked on. One short "at least" line only when whole turns are missing. One column chart per day (per hour for Today), split by tool, labelled on every column and with the numbers on hover; it shows tokens and switches to agent time. Under it three splits: **by tool**, **by model** and **by role**, each line with its tokens, agent time and a bar, largest first. **Show details** adds new input, reused from the cache, written to the cache and output ("not reported" where missing; no figure ever shows as a dash). **By product** (only with all products) and **By task** are one click away; the task split shows the ten largest, a way to see all, and opens each task's sheet.
+   - The model split shows tokens per model exactly as each tool reported them. Agent time sits with the model the agent ran on; a model that only appeared inside a turn shows its tokens, and its time reads "not reported". Model names Petrina recognises read plainly ("Opus 5.5"); any other name, a bracketed ending included, is shown exactly as reported and never merged into another model. Time from turns whose model wasn't confirmed sits on "Model not confirmed"; time from turns that changed model partway, and the tokens of a Codex turn that rerouted, sit on "Changed model during a turn". Token lines never show an effort.
+   - A removed product keeps its history here under its old name, marked "removed".
+3. **How the squad works.** Stages run, turns run, tasks delivered and cancelled; a column chart of tasks delivered and cancelled per day (Today is one column, never hourly); how long each kind of stage usually takes and how much of that was agent work; and one plain line each on send-backs, design rounds, questions to you (how often, and how long you took) and failures and retries. **Details per reviewer and per profile** are one click away: blocking findings and send-backs per reviewer, design rounds per architect and design reviewer and how often designs came to you, failures by reason, retries, redone results and interrupted turns. A profile is only credited with stages that ran on its own model and effort in every round, including rounds before the chosen period; other stages are listed under what actually ran, or under "Settings not confirmed", and one line says how many. Code and Security reviewers are both included. A profile’s unknown agent time reads “not known”; recorded time mixed with a lost turn reads “at least”. Questions count from when agents ask, even if the task is later cancelled, and unanswered requests are listed without adding zero-length answers to the average.
+
+**About these numbers** is one small note, opened from a link beside the tokens section (and from the task sheet). It says, for the chosen period: input reused from the cache is each tool's own count, not an exact measure of what agents re-read; the tools count slightly differently, so totals across tools are approximate; Claude Code's numbers include its helper agents and compaction inside each model's line; Codex reports only its main agent, with how many turns started helpers whose use it doesn't report; how many Claude Code turns counted the main agent only because no per-model breakdown came; how agent time is placed by model; what "not known" means; that agent time adds up agents running at once; and why no prices are shown. None of this is repeated line by line.
+
+**"At least"**: a number reads "at least …" only when whole turns are missing from it: a turn whose tokens weren't reported, a turn cut off when Petrina stopped, or work from before Petrina started keeping track. Each view gives its reasons once, in one short line with counts. Unknown is never shown as zero: when nothing known adds up (only earlier work, or only turns cut off) the number reads "not known" with one line saying why, never "at least 0" or "at least under a minute". A missing figure a tool didn't send reads "not reported". No money appears anywhere.
+
+### The three small places
+
+- **Task sheet → Overview → What it used:** total tokens and agent time, a line with the input the tools reused from their cache "as the tools report it", and an "About these numbers" link. Then each stage that ran, in plan order with planning first, with its agents: role, tool, the model and effort that actually ran (or "asked for sol at xhigh, ran gpt-6.1 at medium", or "settings not confirmed"), rounds, tokens and time, and each model's tokens when an agent's tokens span more than one. A stage removed by a re-plan still shows under its old name. A task with no entries says "Nothing used yet" or that it ran before Petrina kept track.
+- **Products page → Agent work:** each product's total tokens and agent time, finished and cancelled tasks included.
+- **Pool popover → Today** (see The pool).
+
+Cards, board columns, the Agents page and the inbox show no usage numbers, so the board stays calm.
 
 ## Library
 
@@ -360,5 +383,4 @@ P pauses or resumes; on queued tasks it holds or releases them. Products is in t
 - Follow-ups on pull request comments.
 - A Tester role that runs the app and attaches screenshots.
 - Diagrams of what a change does.
-- Usage and throughput dashboard.
 - Phone notifications.

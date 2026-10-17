@@ -43,9 +43,11 @@ interface TopBarProps {
   theme: Theme;
   onTheme: (theme: Theme) => void;
   onOpen: (taskId: string, tab?: SheetTab) => void;
+  /** Open the Analytics page (the pool's link to today's numbers). */
+  onAnalytics: () => void;
 }
 
-export function TopBar({ state, find, status, room, product, onProduct, query, onClearQuery, onPalette, blocking, inboxOpen, inboxButton, onOpenInbox, onToggleInbox, onNewTask, theme, onTheme, onOpen }: TopBarProps) {
+export function TopBar({ state, find, status, room, product, onProduct, query, onClearQuery, onPalette, blocking, inboxOpen, inboxButton, onOpenInbox, onToggleInbox, onNewTask, theme, onTheme, onOpen, onAnalytics }: TopBarProps) {
   const { roomy, searchField, poolSquares, barExtras, inboxLabel } = room;
   const themeButton = (
     <button className="btn ghost icon" aria-label={theme === "dark" ? "Use the light theme" : "Use the dark theme"} title="Switch theme" onClick={() => onTheme(theme === "dark" ? "light" : "dark")}>
@@ -92,7 +94,7 @@ export function TopBar({ state, find, status, room, product, onProduct, query, o
           )}
         </button>
       )}
-      {barExtras && <PoolButton state={state} find={find} onOpen={onOpen} compact={!poolSquares} />}
+      {barExtras && <PoolButton state={state} find={find} onOpen={onOpen} onAnalytics={onAnalytics} compact={!poolSquares} />}
       <button ref={inboxButton} className="btn quiet" onClick={onToggleInbox} aria-pressed={inboxOpen} aria-label={`Inbox, ${state.inbox.length} waiting on you`} title="Needs you (I)">
         <Bell size={16} aria-hidden="true" />
         {inboxLabel && "Inbox"}
@@ -102,7 +104,7 @@ export function TopBar({ state, find, status, room, product, onProduct, query, o
         <Plus size={16} aria-hidden="true" />
         New task
       </button>
-      {barExtras ? themeButton : <MoreMenu state={state} find={find} onOpen={onOpen} status={status} themeButton={themeButton} />}
+      {barExtras ? themeButton : <MoreMenu state={state} find={find} onOpen={onOpen} onAnalytics={onAnalytics} status={status} themeButton={themeButton} />}
     </header>
   );
 }
@@ -111,12 +113,13 @@ interface MoreProps {
   state: State;
   find: Lookup;
   onOpen: (taskId: string, tab?: SheetTab) => void;
+  onAnalytics: () => void;
   status: EngineStatus;
   themeButton: ReactNode;
 }
 
 /** In the narrowest windows the pool, the theme and the connection status move here. */
-function MoreMenu({ state, find, onOpen, status, themeButton }: MoreProps) {
+function MoreMenu({ state, find, onOpen, onAnalytics, status, themeButton }: MoreProps) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -129,7 +132,7 @@ function MoreMenu({ state, find, onOpen, status, themeButton }: MoreProps) {
       {open && (
         <div className="popover">
           <div className="more-section">
-            <PoolPanel state={state} find={find} onOpen={onOpen} onDone={close} />
+            <PoolPanel state={state} find={find} onOpen={onOpen} onDone={close} onAnalytics={onAnalytics} />
           </div>
           <div className="more-section row between">
             <EnginePill status={status} />

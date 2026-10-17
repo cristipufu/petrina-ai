@@ -118,14 +118,14 @@ describe("usage in words", () => {
     expect(untilWords(new Date(2026, 9, 23, 17, 0).getTime(), now)).toBe("Fri 17:00");
   });
 
-  it("lists each tool: how much is used, who is out until when, or fine", () => {
+  it("lists each tool: how much is used, who is out until when, or not reported", () => {
     const lines = usageLines({ tools, pool: pool({ usage: [report({ utilization: 0.82 }), report({ kind: "five_hour", utilization: 0.3 })], limited: [out("claude-code", new Date(2026, 9, 23, 17, 0).getTime(), "opus")] }) }, now);
     expect(lines).toEqual([
       { toolId: "claude-code", name: "Claude Code", text: "weekly 82% · 5-hour 30% · Opus out until Fri 17:00", tone: "out" },
-      { toolId: "codex", name: "Codex", text: "fine", tone: "fine" },
+      { toolId: "codex", name: "Codex", text: "not reported", tone: "fine" },
     ]);
     expect(usageLines({ tools, pool: pool({ usage: [report({ status: "allowed_warning" })] }) }, now)[0]).toMatchObject({ text: "weekly nearly used", tone: "near" });
-    expect(usageLines({ tools, pool: pool({ usage: [report({ utilization: 0.4, resetsAt: now - 1 })] }) }, now)[0]).toMatchObject({ text: "fine", tone: "fine" });
+    expect(usageLines({ tools, pool: pool({ usage: [report({ utilization: 0.4, resetsAt: now - 1 })] }) }, now)[0]).toMatchObject({ text: "not reported", tone: "fine" });
   });
 });
 

@@ -244,6 +244,8 @@ export class Driver {
           return;
         }
         this.k.commit();
+        // The stage (or planning) is under way from here: a slot is held for it, or it needs none.
+        this.k.tracking.beginStage(current);
         if (current.stageIndex < 0) {
           await this.planning.runPlanner(current, signal);
           if (current.approvePlan) {

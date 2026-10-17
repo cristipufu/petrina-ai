@@ -99,6 +99,7 @@ export class Work {
       this.k.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
     }
     this.k.finishStep(task);
+    this.k.tracking.endStage(task, "done");
     if (this.k.rerun(task)) return "continue";
     task.stageIndex += 1;
     task.sub = 0;

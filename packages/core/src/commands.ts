@@ -7,6 +7,7 @@
 import type { DeliveryMode, Id, TaskKind } from "./model.js";
 import type { ProductSettings } from "./products.js";
 import type { HandBackPreview, Launched } from "./takeover.js";
+import type { UsageRequest, UsageViewFor } from "./analytics.js";
 
 /** A new task as the window sends it. */
 export interface NewTaskInput {
@@ -76,6 +77,9 @@ export interface Commands {
   reopenTerminal(taskId: Id, how?: "open" | "copy"): Promise<Launched>;
   handBackPreview(taskId: Id): Promise<HandBackPreview>;
   handBack(taskId: Id, note?: string, anyway?: boolean): Promise<void>;
+  // Numbers
+  /** The numbers for one view, worked out from the work log. The log itself never reaches the window. */
+  usage<R extends UsageRequest>(request: R): UsageViewFor<R>;
 }
 
 export type CommandName = keyof Commands;
@@ -121,6 +125,7 @@ export const COMMAND_NAMES = [
   "reopenTerminal",
   "handBackPreview",
   "handBack",
+  "usage",
 ] as const satisfies readonly CommandName[];
 
 // Every command is in the list: a name left out fails here.
