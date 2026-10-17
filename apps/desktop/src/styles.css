@@ -1099,8 +1099,10 @@ kbd {
 .portfolio.narrow { min-width: 0; }
 .portfolio.narrow .c { width: auto; white-space: nowrap; }
 .portfolio.narrow tbody tr { cursor: default; }
-.portfolio-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); }
-.portfolio { width: 100%; min-width: 67.5rem; border-collapse: collapse; font-size: var(--fs-body); line-height: var(--lh-body); }
+.portfolio-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); container-type: inline-size; }
+/* It shares whatever width the page has (the inbox docked beside it included): nothing is ever cut off. */
+.portfolio { width: 100%; border-collapse: collapse; font-size: var(--fs-body); line-height: var(--lh-body); }
+.portfolio th[scope="row"], .portfolio thead th:first-child { min-width: 10rem; }
 .portfolio th, .portfolio td { padding: 12px 16px; font-weight: 400; text-align: left; border-top: 1px solid var(--line); vertical-align: middle; }
 .portfolio thead th { border-top: 0; color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; white-space: nowrap; background: var(--surface); }
 .portfolio .c { text-align: right; width: 72px; font-variant-numeric: tabular-nums; }
@@ -1115,6 +1117,10 @@ kbd {
 .portfolio .needs { color: var(--amber-text); font-weight: 600; }
 .portfolio tr.quiet .product-pick { color: var(--text-2); }
 .delivery-cell { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+@container (max-width: 64rem) {
+  .portfolio th, .portfolio td { padding: 10px 10px; }
+  .portfolio .c { width: auto; }
+}
 
 /* ── Dialog ────────────────────────────────────────────────────────── */
 
