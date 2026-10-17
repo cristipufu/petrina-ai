@@ -93,10 +93,8 @@ function scriptFor(roleId: Id, ctx: ScriptContext): string[] {
     // The shipper only gets the delivery ready; Petrina publishes it (see `ship`).
     case "shipper":
       return delivery === "release"
-        ? ["Setting the new version", "Writing the release notes", "Ready to publish"]
-        : delivery === "local"
-          ? ["Ready to publish"]
-          : ["Writing the pull request description", "Ready to publish"];
+        ? ["Setting the new version", "Writing the release notes", "Running the checks on the version"]
+        : ["Writing the pull request description", "Checking the title and description fit"];
     case "planner":
       return ["Reading the task", `Looking at how ${product} is organised`, "Choosing who should work on this", "Writing the plan"];
     case "researcher":
@@ -884,7 +882,17 @@ export class Simulator {
       this.gate(d, task, stage.gate);
       return;
     }
+    if (this.petrinaDelivers(task)) {
+      this.ship(d, task);
+      return;
+    }
     this.startAgent(d, task);
+  }
+
+  /** "Commit to main" needs no agent: Petrina moves main forward itself, as the engine does. */
+  private petrinaDelivers(task: DraftTask): boolean {
+    const stage = this.stage(task);
+    return task.delivery === "local" && stage?.kind === "do" && stage.roleId === "shipper";
   }
 
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
@@ -916,6 +924,10 @@ export class Simulator {
       this.gate(d, task, stage.gate);
       return;
     }
+    if (this.petrinaDelivers(task)) {
+      this.ship(d, task);
+      return;
+    }
     task.state = "waiting";
     task.statusLine = "Waiting for a free slot";
     task.column = this.columnFor(d, task);
@@ -937,7 +949,7 @@ export class Simulator {
 
   /** The shipper got it ready: Petrina publishes it, the way the task asks. */
   private ship(d: Draft, task: DraftTask): void {
-    this.log(d, task, "done", "Ready to publish", "shipper", task.agent?.profileId);
+    if (task.agent) this.log(d, task, "done", "Ready to publish", "shipper", task.agent.profileId);
     if (task.delivery === "pull-request") {
       this.openPullRequest(d, task);
       return;

@@ -471,3 +471,25 @@ describe("Simulator", () => {
     expect(new Set(state.tasks.map((task) => task.productId)).size).toBe(16);
   });
 });
+
+describe("delivery in the demo, as the engine does it", () => {
+  it("commits to main with no agent: Petrina moves main forward itself", () => {
+    const sim = new Simulator(emptyState(4), { prMergeAfter: 1_000 });
+    const id = sim.addTask({ productId: "p", title: "Small fix", kind: "chore", delivery: "local" });
+    runUntil(sim, () => task(sim, id).state === "done");
+    const done = task(sim, id);
+    expect(done.landed?.branch).toBe("main");
+    const lines = done.timeline.map((entry) => entry.text);
+    expect(lines).not.toContain("Shipper started");
+    expect(lines.some((line) => line.startsWith("Petrina moved main forward to it"))).toBe(true);
+  });
+
+  it("has the shipper write a pull request's text, then Petrina opens it, with each step said once", () => {
+    const sim = new Simulator(emptyState(4), { prMergeAfter: 1_000 });
+    const id = sim.addTask({ productId: "p", title: "Small fix", kind: "chore", delivery: "pull-request" });
+    runUntil(sim, () => task(sim, id).state === "pr-open");
+    const lines = task(sim, id).timeline.map((entry) => entry.text);
+    expect(lines.filter((line) => line === "Ready to publish")).toHaveLength(1);
+    expect(lines.indexOf("Petrina pushed the branch")).toBeGreaterThan(lines.indexOf("Shipper started"));
+  });
+});
