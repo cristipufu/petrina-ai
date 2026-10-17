@@ -3,7 +3,7 @@ import { Bell, Boxes, Bot, Ellipsis, Hand, LayoutGrid, Library, Moon, Plus, Sear
 import { boardOrder, draftFor, inboxOrder, inboxTab, keyArea, matchesWords, queueOf, reconcileHighlight, stepHighlight, withDraft, type KeyArea, type Page, type State, type Task, type TaskList } from "@petrina/core";
 import { sim, mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
-import { CouldNotStart, EnginePill, StartingScreen } from "./components/EngineState";
+import { CouldNotStart, EnginePill, EngineRecovery, StartingScreen } from "./components/EngineState";
 import { blockingCount, lookup, type Lookup } from "./lib";
 import { Logo, useDismiss, useViewport, viewportSize } from "./components/bits";
 import { Board } from "./components/Board";
@@ -48,7 +48,8 @@ export function App() {
   const [inboxId, setInboxId] = useState<string>();
   const [showDone, setShowDone] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [messageFocus, setMessageFocus] = useState(0);
+  const [messageFocus, setMessageFocus] = useState<string>();
+  const messageFocused = useCallback(() => setMessageFocus(undefined), []);
   const [newTitle, setNewTitle] = useState("");
   const [inboxOpen, setInboxOpen] = useState(() => viewportSize().width >= DOCKED_INBOX);
   const [sheet, setSheet] = useState<Sheet>();
@@ -77,6 +78,10 @@ export function App() {
 
   useEffect(() => applyTheme(theme), [theme]);
 
+  useEffect(() => {
+    if (product !== "all" && !state.products.some((entry) => entry.id === product)) setProduct("all");
+  }, [state.products, product]);
+
   const toast = useCallback((title: string, detail?: string, taskId?: string) => {
     const id = (toastId.current += 1);
     setToasts((list) => [...list.slice(-2), { id, title, ...(detail ? { detail } : {}), ...(taskId ? { taskId } : {}) }]);
@@ -103,6 +108,12 @@ export function App() {
   const inboxIds = useMemo(() => items.map((item) => item.id), [items]);
   const previousBoard = useRef(boardIds);
   const previousInbox = useRef(inboxIds);
+  const sheetOrder = useRef<readonly string[]>([]);
+  useEffect(() => {
+    const ids = sheet?.list === "board" ? boardIds : inboxIds;
+    const id = sheet?.list === "board" ? sheet.taskId : sheet?.itemId;
+    if (id && ids.includes(id)) sheetOrder.current = ids;
+  }, [sheet, boardIds, inboxIds]);
   const currentBoardId = reconcileHighlight(previousBoard.current, boardIds, boardId);
   const currentInboxId = reconcileHighlight(previousInbox.current, inboxIds, inboxId);
   useEffect(() => { setBoardId(currentBoardId); previousBoard.current = boardIds; }, [currentBoardId, boardIds]);
@@ -114,11 +125,13 @@ export function App() {
   const focusSnapshot = useRef<{ area: typeof area; id: string | undefined }>({ area, id: undefined });
 
   const open = useCallback((taskId: string, tab: SheetTab = "overview", list?: TaskList, itemId?: string) => {
+    sheetOrder.current = list === "board" ? boardIds : list === "inbox" ? inboxIds : [];
+    setMessageFocus(undefined);
     setSheet({ taskId, tab, list, ...(itemId ? { itemId } : {}) });
-  }, []);
-  const close = useCallback(() => setSheet(undefined), []);
+  }, [boardIds, inboxIds]);
+  const close = useCallback(() => { setSheet(undefined); setMessageFocus(undefined); }, []);
   const go = (page: Page) => { close(); setView(page); setOwner("board"); focusArea.current = page === "board" ? "board" : undefined; };
-  const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, "board"); if (tab === "session") setMessageFocus((n) => n + 1); };
+  const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, "board"); if (tab === "session") setMessageFocus(id); };
   const openItem = (id: string, tab?: SheetTab) => {
     const item = items.find((entry) => entry.id === id);
     if (!item) return;
@@ -139,7 +152,7 @@ export function App() {
     else if (area === "inbox" && highlightedItem) openItem(highlightedItem.id, "session");
     else if (area === "board") openBoard(task.id, "session");
     else open(task.id, "session");
-    setMessageFocus((n) => n + 1);
+    setMessageFocus(task.id);
   };
   const sendAction = async (action: () => unknown, title: string, detail?: string) => {
     if (status.link !== "live") { toast("Could not send that action", "Petrina is reconnecting. Try again when it is connected."); return false; }
@@ -183,10 +196,10 @@ export function App() {
     if (sheet) {
       if (!sheet.list) { toast("J and K walk the board or the inbox", "Open a task there to walk that list."); return; }
       if (sheet.list === "board") {
-        const id = stepHighlight(boardIds, sheet.taskId, direction);
+        const id = stepHighlight(boardIds, sheet.taskId, direction, sheetOrder.current);
         if (id) { setBoardId(id); open(id, sheet.tab, "board"); }
       } else {
-        const id = stepHighlight(inboxIds, sheet.itemId, direction); if (id) openItem(id);
+        const id = stepHighlight(inboxIds, sheet.itemId, direction, sheetOrder.current); if (id) openItem(id);
       }
     } else if (area === "inbox") setInboxId(stepHighlight(inboxIds, currentInboxId, direction));
     else if (area === "board") setBoardId(stepHighlight(boardIds, currentBoardId, direction));
@@ -264,7 +277,7 @@ export function App() {
   ];
   const taskActions: PaletteAction[] = focusedTask ? [
     { id: "open-task", label: `Open “${focusedTask.title}”`, shortcut: "↵", run: () => { if (!sheet) open(focusedTask.id); } },
-    { id: "message-task", label: `Message “${focusedTask.title}”`, shortcut: "M", run: () => { if (sheet) message(focusedTask); else { open(focusedTask.id, "session"); setMessageFocus((n) => n + 1); } } },
+    { id: "message-task", label: `Message “${focusedTask.title}”`, shortcut: "M", run: () => { if (sheet) message(focusedTask); else { open(focusedTask.id, "session"); setMessageFocus(focusedTask.id); } } },
     { id: "pause-task", label: `${focusedTask.state === "queued" ? focusedTask.held ? "Release" : "Hold" : focusedTask.state === "paused" ? "Resume" : "Pause"} “${focusedTask.title}”`, shortcut: "P", run: () => pause(focusedTask) },
     ...(focusedTask.state === "queued" && queueOf(state.tasks)[0]?.id !== focusedTask.id ? [{ id: "top-task", label: `Move “${focusedTask.title}” to top`, shortcut: "↵", run: () => {
       const hidden = queueOf(state.tasks).slice(0, queueOf(state.tasks).findIndex((task) => task.id === focusedTask.id)).filter((task) => !visible(task)).length;
@@ -278,9 +291,10 @@ export function App() {
     </button>
   );
   const docked = inboxOpen && !overlay;
+  const recovery = mode === "engine" && !status.desktop && status.link !== "live" && status.recovery;
 
   return (
-    <div className="app" style={{ gridTemplateColumns: `var(--rail) minmax(0, 1fr) ${docked ? "auto" : "0px"}` }}>
+    <div className={`app ${recovery ? "with-engine-hint" : ""}`} style={{ gridTemplateColumns: `var(--rail) minmax(0, 1fr) ${docked ? "auto" : "0px"}` }}>
       <header className="topbar">
         <div className="brand" aria-label="Petrina">
           <Logo />
@@ -326,6 +340,7 @@ export function App() {
         </button>
         {barExtras ? themeButton : <MoreMenu state={state} find={find} onOpen={open} status={status} themeButton={themeButton} />}
       </header>
+      {recovery && <EngineRecovery status={status} />}
 
       <nav className="rail" aria-label="Sections">
         <button className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={() => go("board")} title="Board (B)">
@@ -357,6 +372,7 @@ export function App() {
         {view === "products" && (
           <ProductsPage
             state={state}
+            onRemoved={(productId) => { if (product === productId) setProduct("all"); }}
             {...(mode === "engine" ? { onAdd: () => setAddingProduct(true) } : {})}
             onPick={pickProduct}
           />
@@ -369,7 +385,7 @@ export function App() {
       {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay && !sheet} onOpen={open} onClose={closeInbox} selectedId={area === "inbox" ? currentInboxId : undefined} onFocus={(id) => { setOwner("inbox"); setInboxId(id ?? currentInboxId ?? inboxIds[0]); }} onOpenItem={openItem} /> : <div />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} />
+        <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} />
       )}
 
       {addingProduct && (
@@ -378,6 +394,7 @@ export function App() {
           onAdded={(productId) => {
             setAddingProduct(false);
             setProduct(productId);
+            setView("board");
           }}
         />
       )}

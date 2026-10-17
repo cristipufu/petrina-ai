@@ -33,7 +33,8 @@ interface SheetProps {
   onToast: (title: string, detail?: string) => void;
   draft: string;
   onDraft: (text: string) => void;
-  messageFocus: number;
+  messageFocus: boolean;
+  onMessageFocused: () => void;
   onMessage: () => void;
 }
 
@@ -45,7 +46,7 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
   { id: "session", label: "Session" },
 ];
 
-export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessage }: SheetProps) {
+export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage }: SheetProps) {
   const [menu, setMenu] = useState(false);
   const [titleGone, setTitleGone] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -225,7 +226,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
           </div>
         </div>
 
-        {tab === "session" && <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} />}
+        {tab === "session" && <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} onFocused={onMessageFocused} />}
       </section>
     </>
   );

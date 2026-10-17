@@ -47,10 +47,20 @@ export function reconcileHighlight(previous: readonly string[], next: readonly s
   return next[Math.min(Math.max(0, previous.indexOf(id)), next.length - 1)];
 }
 
-export function stepHighlight(ids: readonly string[], id: string | undefined, direction: -1 | 1): string | undefined {
+export function stepHighlight(ids: readonly string[], id: string | undefined, direction: -1 | 1, previous: readonly string[] = ids): string | undefined {
   if (!ids.length) return undefined;
-  const index = id ? ids.indexOf(id) : -1;
-  return ids[index < 0 ? 0 : Math.max(0, Math.min(ids.length - 1, index + direction))];
+  if (!id) return ids[0];
+  const index = ids.indexOf(id);
+  if (index >= 0) return ids[Math.max(0, Math.min(ids.length - 1, index + direction))];
+  // An open task can outlive its card or request. Walk from its last known neighbours,
+  // skipping others that also left, and stop at the end instead of restarting the list.
+  const oldIndex = previous.indexOf(id);
+  if (oldIndex < 0) return undefined;
+  const remaining = new Set(ids);
+  for (let next = oldIndex + direction; next >= 0 && next < previous.length; next += direction) {
+    if (remaining.has(previous[next]!)) return previous[next];
+  }
+  return undefined;
 }
 
 /** Insert beside the visible neighbour after removing the moved card. Hidden cards keep order. */

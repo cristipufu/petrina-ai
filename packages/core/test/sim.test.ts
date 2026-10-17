@@ -70,6 +70,51 @@ function tickUntil(sim: Simulator, kind: string, limit = 300) {
 
 const reviewerRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "design-reviewer" && entry.tone === "milestone").length;
 
+describe("limits between simulated agents", () => {
+  for (const limit of ["tool", "pool", "paused"] as const) {
+    it(`keeps running agents when the ${limit} limit changes, then checks same-tool successors`, () => {
+      const sim = new Simulator(emptyState(9));
+      sim.setPoolPaused(true);
+      sim.setToolCap("claude-code", 7);
+      const ids = Array.from({ length: 9 }, (_, index) => sim.addTask({ productId: "p", title: `Task ${index}`, kind: "new" }));
+      sim.setPoolPaused(false);
+      expect(slotUses(sim.getState())).toHaveLength(7);
+      if (limit === "tool") sim.setToolCap("claude-code", 5);
+      else if (limit === "pool") sim.setPoolLimit(5);
+      else sim.setPoolPaused(true);
+      expect(slotUses(sim.getState())).toHaveLength(7);
+      let reachedFive = false;
+      const queued = ids.slice(7);
+      let waitingSeen = false;
+      let otherToolSeen = false;
+      for (let tick = 0; tick < 100; tick += 1) {
+        sim.tick();
+        const state = sim.getState();
+        const uses = slotUses(state);
+        for (const task of state.tasks) if (task.holdsSlot) expect(task.agent).toBeDefined();
+        const used = limit === "tool" ? uses.filter((use) => use.toolId === "claude-code").length : uses.length;
+        if (used <= 5) reachedFive = true;
+        if (reachedFive) expect(used).toBeLessThanOrEqual(5);
+        for (const task of state.tasks.filter((task) => task.state === "waiting")) {
+          waitingSeen = true;
+          expect(task.column).not.toBe("queue");
+          expect(task.statusLine).toMatch(/Waiting for (a free|the pool)/);
+        }
+        otherToolSeen ||= uses.some((use) => use.toolId === "codex");
+        for (const item of state.inbox) if (!item.blocking) sim.approve(item.id);
+        if (limit === "paused" && uses.length === 0) {
+          expect(queued.every((id) => task(sim, id).state === "queued")).toBe(true);
+          sim.setPoolPaused(false);
+          expect(queued.every((id) => task(sim, id).state === "queued")).toBe(true);
+          break;
+        }
+      }
+      expect(waitingSeen).toBe(true);
+      if (limit !== "paused") expect(otherToolSeen).toBe(true);
+    });
+  }
+});
+
 describe("The coordinator's call on a design disagreement", () => {
   const CALL = "Keep the confirmation step, but only for existing accounts.";
 

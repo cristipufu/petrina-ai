@@ -2,6 +2,17 @@ import { CloudOff, User } from "lucide-react";
 import { desktop, leaveDemo, mode, openDemo, retryEngine, sim, type EngineStatus, type Unsent } from "../engine";
 import { Logo } from "./bits";
 
+/** Browser windows need a terminal; desktop recovery belongs to the app's own engine screen. */
+export function EngineRecovery({ status }: { status: EngineStatus }) {
+  return (
+    <div className="engine-recovery" role="status">
+      {status.restarted
+        ? <>The Petrina engine restarted. Run <code>bun run open</code> for a fresh window, then close this one.</>
+        : <>Can't reach the Petrina engine. In a terminal, run <code>bun run engine</code> and leave it running, then run <code>bun run open</code> in another terminal.</>}
+    </div>
+  );
+}
+
 /**
  * Live, reconnecting or the demo. In the desktop app it also says who started the engine, so quitting
  * holds no surprise. `compact` keeps the dot and moves the words to the tooltip and screen readers.
@@ -101,10 +112,10 @@ function UnsentFoot({ entry, live }: { entry: Unsent; live: boolean }) {
     <>
       <p className="unsent-why">{entry.refused}</p>
       <div className="unsent-actions">
-        <button className="btn small" onClick={() => sim.resendUnsent(entry.clientId)}>
+        <button className="btn" onClick={() => sim.resendUnsent(entry.clientId)}>
           Send it again
         </button>
-        <button className="btn small quiet" onClick={() => sim.discardUnsent(entry.clientId)}>
+        <button className="btn quiet" onClick={() => sim.discardUnsent(entry.clientId)}>
           Discard
         </button>
       </div>

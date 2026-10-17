@@ -42,6 +42,18 @@ describe("keyboard ownership and order", () => {
     expect(reconcileHighlight(["a"], [], "a")).toBeUndefined();
     expect(reconcileHighlight([], ["new"], undefined)).toBeUndefined();
   });
+  it("walks from a removed item to its surviving neighbours without restarting the list", () => {
+    const previous = ["a", "b", "c", "d"];
+    expect(stepHighlight(["a", "c", "d"], "b", 1, previous)).toBe("c");
+    expect(stepHighlight(["a", "c", "d"], "b", -1, previous)).toBe("a");
+    expect(stepHighlight(["a", "d"], "b", 1, previous)).toBe("d");
+    expect(stepHighlight(["a", "b", "c"], "d", 1, previous)).toBeUndefined();
+    expect(stepHighlight(["a", "b", "c"], "d", -1, previous)).toBe("c");
+    expect(stepHighlight(["b", "c", "d"], "a", -1, previous)).toBeUndefined();
+    expect(stepHighlight(["b", "c", "d"], "a", 1, previous)).toBe("b");
+    expect(stepHighlight(["a"], "missing", 1)).toBeUndefined();
+    expect(stepHighlight([], "b", 1, previous)).toBeUndefined();
+  });
   it("lets a task take precedence and rests board keys on every other page", () => {
     for (const page of ["products", "agents", "library", "settings"] as const) {
       expect(keyArea(page, true, "board", false)).toBeUndefined();

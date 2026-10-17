@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type Id, type State } from "@petrina/core";
+import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS, Simulator, type Id, type ProductSettings, type State } from "@petrina/core";
 
 // Where the UI finds the real engine:
 // - In the desktop app, it asks the shell over the app's internal channel. The shell starts the
@@ -40,8 +40,10 @@ export interface Actions {
   setStageProfile(taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): void;
   addReviewer(taskId: Id, stageId: Id, profileId: Id): void;
   setProductDelivery(productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean): void;
+  updateProduct(productId: Id, settings: ProductSettings): Promise<unknown>;
+  removeProduct(productId: Id): Promise<unknown>;
   addTask(input: Parameters<Simulator["addTask"]>[0]): unknown;
-  addProduct(path: string): Promise<unknown>;
+  addProduct(path: string, name?: string): Promise<unknown>;
 }
 
 /** Something the coordinator said that the engine has not confirmed saving yet. Sent again after reconnecting. */
@@ -75,6 +77,9 @@ export interface EngineStatus {
   owned?: boolean;
   /** Why the engine could not start or be reached. */
   problem?: string;
+  /** Browser: the address answers but refuses this window's old key. */
+  restarted?: boolean;
+  recovery?: boolean;
   /** The last action the engine refused. */
   error?: string;
 }
@@ -160,6 +165,8 @@ class EngineClient implements Store {
   private owned: boolean | undefined;
   private failures = 0;
   private wasLive = false;
+  private disconnectedAt: number | undefined;
+  private hintTimer: ReturnType<typeof setTimeout> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   /** Asking the shell, so a second attempt waits for this one. */
   private connecting = false;
@@ -168,6 +175,7 @@ class EngineClient implements Store {
 
   constructor(private readonly source: { desktop: true } | { desktop: false; address: Address }) {
     this.status = { link: "starting", desktop: source.desktop };
+    if (!source.desktop) this.browserDisconnected();
     if (!source.desktop) this.address = source.address;
     void this.attempt(false);
     // Hidden windows get slow timers: the moment the window shows again, retry instead of waiting.
@@ -213,6 +221,8 @@ class EngineClient implements Store {
     this.socket = socket;
     let opened = false;
     socket.onopen = () => {
+      clearTimeout(this.hintTimer);
+      this.disconnectedAt = undefined;
       opened = true;
       this.failures = 0;
       this.wasLive = true;
@@ -239,10 +249,11 @@ class EngineClient implements Store {
       this.socket = undefined;
       for (const call of this.calls.values()) call.reject(new Lost("Petrina lost its connection to the engine"));
       this.calls.clear();
+      if (!this.source.desktop) this.browserDisconnected();
       if (!opened) return this.failed("Petrina could not connect to its engine.");
       // The engine stopped: in the desktop app, the shell starts a new one if needed. Right away,
       // not on a timer, which a hidden window would slow down.
-      this.setStatus({ link: "reconnecting", desktop: this.source.desktop });
+      this.setStatus({ ...this.status, link: "reconnecting", desktop: this.source.desktop });
       void this.attempt(false);
     };
   }
@@ -254,9 +265,39 @@ class EngineClient implements Store {
       this.setStatus({ link: "failed", desktop: true, problem });
       return;
     }
-    this.setStatus({ link: this.wasLive ? "reconnecting" : "starting", desktop: this.source.desktop, problem });
+    const browserWaiting = !this.source.desktop && this.disconnectedAt !== undefined && Date.now() - this.disconnectedAt >= 3000;
+    this.setStatus({ ...this.status, link: this.wasLive || browserWaiting ? "reconnecting" : "starting", desktop: this.source.desktop, problem });
+    if (browserWaiting) void this.checkBrowserEngine();
     // After a failure the desktop app asks for a fresh engine: the old one may be stuck.
     this.retryTimer = setTimeout(() => void this.attempt(this.source.desktop), this.source.desktop ? 1000 : 1500);
+  }
+
+  /** Browser recovery stays quiet on short blips; the desktop shell owns its own recovery. */
+  private browserDisconnected(): void {
+    if (this.disconnectedAt !== undefined) return;
+    this.disconnectedAt = Date.now();
+    this.hintTimer = setTimeout(() => {
+      if (this.status.link === "live") return;
+      this.setStatus({ ...this.status, link: "reconnecting", recovery: true });
+      void this.checkBrowserEngine();
+    }, 3000);
+  }
+
+  private async checkBrowserEngine(): Promise<void> {
+    const address = this.address;
+    if (!address || this.source.desktop) return;
+    const disconnectedAt = this.disconnectedAt;
+    let restarted = false;
+    try {
+      const url = new URL(address.url);
+      url.protocol = "http:";
+      url.pathname = "/api/health";
+      const response = await fetch(url, { headers: { authorization: `Bearer ${address.token}` }, signal: AbortSignal.timeout(1500) });
+      restarted = response.status === 401;
+    } catch {
+      // Nothing answers, or the window cannot tell: the general hint covers both.
+    }
+    if (this.status.link !== "live" && this.disconnectedAt === disconnectedAt) this.setStatus({ ...this.status, restarted });
   }
 
   /** "Try again" on the couldn't-start message. */
@@ -400,8 +441,10 @@ class EngineClient implements Store {
   setStageProfile = (taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id) => this.fire("setStageProfile", taskId, stageId, list, index, profileId);
   addReviewer = (taskId: Id, stageId: Id, profileId: Id) => this.fire("addReviewer", taskId, stageId, profileId);
   setProductDelivery = (productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean) => this.fire("setProductDelivery", productId, delivery, approveDelivery);
+  updateProduct = (productId: Id, settings: ProductSettings) => this.call("updateProduct", productId, settings);
+  removeProduct = (productId: Id) => this.call("removeProduct", productId);
   addTask = (input: Parameters<Simulator["addTask"]>[0]) => this.call("addTask", input);
-  addProduct = (path: string) => this.call("addProduct", path);
+  addProduct = (path: string, name?: string) => this.call("addProduct", path, name);
 }
 
 class DemoStore implements Store {
@@ -423,7 +466,7 @@ class DemoStore implements Store {
   markDone = () => undefined;
   setPoolLimit = (limit: number) => this.simulator.setPoolLimit(limit);
   setPoolPaused = (paused: boolean) => this.simulator.setPoolPaused(paused);
-  setToolCap = () => undefined;
+  setToolCap = (toolId: Id, cap: number) => this.simulator.setToolCap(toolId, cap);
   moveInQueue = (taskId: Id, index: number) => this.simulator.moveInQueue(taskId, index);
   placeInQueue = (taskId: Id, anchorId: Id, side: "before" | "after") => this.simulator.placeInQueue(taskId, anchorId, side);
   moveVisibleInQueue = (taskId: Id, visibleIds: Id[], direction: -1 | 1) => this.simulator.moveVisibleInQueue(taskId, visibleIds, direction);
@@ -438,6 +481,8 @@ class DemoStore implements Store {
   setStageProfile = (taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id) => this.simulator.setStageProfile(taskId, stageId, list, index, profileId);
   addReviewer = (taskId: Id, stageId: Id, profileId: Id) => this.simulator.addReviewer(taskId, stageId, profileId);
   setProductDelivery = (productId: Id, delivery: "pull-request" | "release" | "local", approveDelivery: boolean) => this.simulator.setProductDelivery(productId, delivery, approveDelivery);
+  updateProduct = async (productId: Id, settings: ProductSettings) => this.simulator.updateProduct(productId, settings);
+  removeProduct = async (productId: Id) => this.simulator.removeProduct(productId);
   addTask = (input: Parameters<Simulator["addTask"]>[0]) => this.simulator.addTask(input);
   addProduct = async () => {
     throw new Error("The demo has fixed products");

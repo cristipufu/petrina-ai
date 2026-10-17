@@ -246,6 +246,13 @@ Do not push anything. Return the commit sha now on ${defaultBranch}.`;
   }
 }
 
+/** The coordinator works on this computer while the squad does: agents never take over the screen. */
+export const BACKGROUND = `Work in the background: the coordinator is using this computer while you work. Never open windows or apps on their screen. That means no open, xdg-open or start, no visible browser, no desktop app window and no terminal window. In tests, use stand-ins for anything that would open one. Stop every server and browser you start before you finish.
+Check what you build without windows:
+- Web UIs, including Tauri and Electron front ends: in a headless browser (Playwright with headless: true, or headless Chrome) on a free port.
+- Native Mac app screens (SwiftUI, AppKit): render views offscreen to images in snapshot tests, never by launching the app.
+If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.`;
+
 export function buildPrompt(ctx: PromptContext): string {
   const { task, product, role, worktree, branch } = ctx;
   const sections = ctx.sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
@@ -253,6 +260,8 @@ export function buildPrompt(ctx: PromptContext): string {
 The coordinator who reads your work is a product person, not a developer: everything you write for them is plain language, short, and free of code.
 
 Your working copy is ${worktree}, on branch ${branch}. Stay inside it.
+
+${BACKGROUND}
 
 # The task: ${task.title}
 ${task.description || "(no further description)"}

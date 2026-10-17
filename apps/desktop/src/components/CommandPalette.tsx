@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
-import { matchesWords, queueOf, searchTasks, type State, type Task } from "@petrina/core";
+import { matchesWords, queueOf, reconcileHighlight, searchTasks, type State, type Task } from "@petrina/core";
 import { STATE_LABEL } from "../lib";
 import { productStats } from "./Products";
 import { mod, SHORTCUTS } from "../keyboard";
@@ -33,7 +33,8 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
 }) {
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(false);
-  const [selected, setSelected] = useState(0);
+  const [selected, setSelected] = useState<string>();
+  const previousRows = useRef<string[]>([]);
   const box = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   useFocusTrap(box, onClose);
@@ -47,7 +48,7 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
 
   const finish = (run: () => void) => () => { onClose(); run(); };
   const actionRow = (action: PaletteAction): PaletteAction => action.id === "limit" ? {
-    ...action, run: () => { setLimit(true); setQuery(""); setSelected(state.pool.limit - 1); input.current?.focus(); },
+    ...action, run: () => { setLimit(true); setQuery(""); setSelected(`limit-${state.pool.limit}`); input.current?.focus(); },
   } : { ...action, run: finish(action.id === "new" ? () => onNew(query.trim()) : action.run) };
   const taskRows: PaletteAction[] = search.tasks.slice(0, 40).map((task) => ({
     id: `task-${task.id}`, label: task.title,
@@ -72,10 +73,12 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
     { id: "new-query", label: `New task: “${query.trim()}”`, detail: "Choose a product and review before creating", shortcut: "↵", run: finish(() => onNew(query.trim())) },
     ...(!nothing ? [{ id: "filter", label: `Filter the board: “${query.trim()}”`, shortcut: "↵", run: finish(() => onFilter(query.trim())) }] : []),
   ];
-  const active = rows[Math.min(selected, rows.length - 1)];
-  const signature = rows.map((row) => row.id).join("|");
+  const rowIds = rows.map((row) => row.id);
+  const activeId = reconcileHighlight(previousRows.current, rowIds, selected) ?? rowIds[0];
+  const active = rows.find((row) => row.id === activeId);
+  const signature = rowIds.join("|");
   useEffect(() => { document.getElementById(`palette-${active?.id}`)?.scrollIntoView({ block: "nearest" }); }, [active?.id]);
-  useEffect(() => { if (!limit) setSelected(0); }, [query, signature, limit]);
+  useEffect(() => { setSelected(activeId); previousRows.current = rowIds; }, [activeId, signature]);
 
   return <>
     <div className="palette-scrim" onClick={onClose} />
@@ -84,9 +87,9 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
         <Search size={20} aria-hidden="true" />
         <input ref={input} autoFocus role="combobox" aria-label={limit ? "Choose a pool limit" : "Find tasks, products or actions"} aria-autocomplete="list" aria-expanded="true" aria-controls="palette-list" aria-activedescendant={active ? `palette-${active.id}` : undefined}
           placeholder={limit ? "Type a number from 1 to 12" : "Find tasks, products or actions…"} value={query}
-          onChange={(event) => { const value = event.target.value; setQuery(value); if (limit && /^(?:[1-9]|1[0-2])$/.test(value)) setSelected(Number(value) - 1); }}
+          onChange={(event) => { const value = event.target.value; setQuery(value); if (!limit) setSelected(undefined); else if (/^(?:[1-9]|1[0-2])$/.test(value)) setSelected(`limit-${Number(value)}`); }}
           onKeyDown={(event) => {
-            if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setSelected((index) => Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))); }
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const index = rowIds.indexOf(activeId!); setSelected(rowIds[Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))]); }
             if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); active?.run(); }
           }} />
         <button className="btn quiet small" onClick={onClose}>Esc</button>
@@ -94,7 +97,7 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
       {limit && <p className="palette-note">Lowering the limit never stops anyone. Running stages finish first.</p>}
       {!limit && nothing && query.trim() && <p className="palette-note" role="status">Nothing matched. Enter opens New task for you to review.</p>}
       <div className="palette-list" id="palette-list" role="listbox" aria-label={limit ? "Pool limits" : "Tasks, products and actions"}>
-        {rows.map((row, index) => <div key={row.id} id={`palette-${row.id}`} role="option" aria-selected={row.id === active?.id} className={`palette-row ${row.id === active?.id ? "on" : ""}`} onMouseMove={() => setSelected(index)} onClick={row.run}>
+        {rows.map((row) => <div key={row.id} id={`palette-${row.id}`} role="option" aria-selected={row.id === active?.id} className={`palette-row ${row.id === active?.id ? "on" : ""}`} onMouseMove={() => setSelected(row.id)} onClick={row.run}>
           <span><strong>{row.label}</strong>{row.detail && <small>{row.detail}</small>}</span><kbd>{row.shortcut}</kbd>
         </div>)}
       </div>

@@ -35,6 +35,18 @@ function connect(url: string, protocols: string[], origin?: string): Promise<"op
 const status = (path: string, headers: Record<string, string>) => fetch(`${http}${path}`, { headers }).then((response) => response.status);
 
 describe("the engine's key checks", () => {
+  it("lets only Petrina's browser pages read whether their health-check key was refused", async () => {
+    const origin = "http://127.0.0.1:1430";
+    const preflight = await fetch(`${http}/api/health`, { method: "OPTIONS", headers: { origin, "access-control-request-method": "GET", "access-control-request-headers": "authorization" } });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(origin);
+    const refused = await fetch(`${http}/api/health`, { headers: { origin, authorization: "Bearer an-old-key" } });
+    expect(refused.status).toBe(401);
+    expect(refused.headers.get("access-control-allow-origin")).toBe(origin);
+    expect(await status("/api/health", { origin: "https://example.com" })).toBe(403);
+    const state = await fetch(`${http}/api/state`, { headers: { origin, authorization: `Bearer ${token}` } });
+    expect(state.headers.get("access-control-allow-origin")).toBeNull();
+  });
   it("lets Petrina's own window in with the key in the connection", async () => {
     expect(await connect(ws, ["petrina.v1", `petrina.token.${token}`], OWN)).toBe("open");
     expect(await connect(ws, ["petrina.v1", `petrina.token.${token}`], `http://127.0.0.1:${server.port}`)).toBe("open");

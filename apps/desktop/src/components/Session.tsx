@@ -185,9 +185,11 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
 }
 
 /** Messages queue until the agent finishes its step, or interrupt it. */
-function Composer({ task, find, text, onText, focusRequest }: { task: Task; find: Lookup; text: string; onText: (text: string) => void; focusRequest: number }) {
+function Composer({ task, find, text, onText, focusRequest, onFocused }: { task: Task; find: Lookup; text: string; onText: (text: string) => void; focusRequest: boolean; onFocused: () => void }) {
   const textarea = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (focusRequest) textarea.current?.focus(); }, [focusRequest]);
+  useEffect(() => {
+    if (focusRequest) { textarea.current?.focus(); onFocused(); }
+  }, [focusRequest, onFocused]);
   const [mode, setMode] = useState<MessageMode>("queue");
   const role = find.role(task.agent?.roleId);
   const live = task.state === "running";

@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Simulator, boardOrder, createDemoState, type State } from '@petrina/core';
+import { Simulator, boardOrder, createDemoState, inboxOrder, inboxTab, type State } from '@petrina/core';
 import { useSyncExternalStore } from 'react';
 import { App } from '../src/App';
 import { setSingleKeys } from '../src/keyboard';
@@ -85,6 +85,71 @@ describe('the app keyboard', () => {
     await key('Escape'); expect(selected()).toBe(ids[2]);
     await act(async () => simulator.cancel(ids[2]!));
     expect(selected()).toBe(ids[3]);
+  });
+  it('focuses the message box only for M, so the Session tab can keep walking the board', async () => {
+    const ids = boardOrder(simulator.getState().tasks, () => true, false);
+    const title = (index: number) => simulator.getState().tasks.find((task) => task.id === ids[index])!.title;
+    await key('j'); await key('m');
+    expect(document.activeElement).toBe(el('.composer textarea'));
+    await type('.composer textarea', 'A draft for the first task');
+    await key('Escape');
+    await key('j'); expect(sheetId()).toBe(title(1));
+    expect(document.activeElement).not.toBe(el('.composer textarea'));
+    expect(el<HTMLTextAreaElement>('.composer textarea').value).toBe('');
+    await key('j'); expect(sheetId()).toBe(title(2));
+    await key('k'); expect(sheetId()).toBe(title(1));
+    await key('k'); expect(sheetId()).toBe(title(0));
+    expect(el<HTMLTextAreaElement>('.composer textarea').value).toBe('A draft for the first task');
+    await click('#tab-plan'); await click('#tab-session');
+    expect(document.activeElement).not.toBe(el('.composer textarea'));
+    await key('Escape'); await key('Enter'); await click('#tab-session');
+    expect(document.activeElement).not.toBe(el('.composer textarea'));
+    await key('j'); expect(sheetId()).toBe(title(1));
+    await key('m'); expect(document.activeElement).toBe(el('.composer textarea'));
+  });
+  it.each([1, -1] as const)('walks from an open board task that left the list in direction %s', async (direction) => {
+    const ids = boardOrder(simulator.getState().tasks, () => true, false);
+    await key('j'); await key('j'); await key('j'); await key('Enter');
+    await act(async () => simulator.cancel(ids[2]!));
+    await key(direction === 1 ? 'j' : 'k');
+    expect(sheetId()).toBe(simulator.getState().tasks.find((task) => task.id === ids[2 + direction])!.title);
+  });
+  it.each([1, -1] as const)('walks from an answered inbox item in direction %s without taking the cursor', async (direction) => {
+    const items = inboxOrder(simulator.getState());
+    await key('i'); await key('j'); await key('m');
+    await type('.composer textarea', 'Keep this inbox draft'); await key('Escape');
+    await act(async () => simulator.answer(items[1]!.id, 'Both, starting from the system setting'));
+    expect(inboxOrder(simulator.getState()).map((item) => item.id)).not.toContain(items[1]!.id);
+    await key(direction === 1 ? 'j' : 'k');
+    const target = items[1 + direction]!;
+    expect(sheetId()).toBe(simulator.getState().tasks.find((task) => task.id === target.taskId)!.title);
+    expect(el('[role=tab][aria-selected=true]').id).toBe(`tab-${inboxTab(target.kind)}`);
+    if (inboxTab(target.kind) === 'session') expect(document.activeElement).not.toBe(el('.composer textarea'));
+    await key(direction === 1 ? 'k' : 'j');
+    const next = direction === 1 ? items[0]! : items[2]!;
+    expect(sheetId()).toBe(simulator.getState().tasks.find((task) => task.id === next.taskId)!.title);
+  });
+  it('keeps the chosen palette row through live insertions and reordering, and Enter opens it', async () => {
+    await palette(''); await key('ArrowDown');
+    const chosen = el('[role=option][aria-selected=true]').id;
+    await act(async () => {
+      simulator.setPoolLimit(12);
+      simulator.setPoolPaused(false);
+      simulator.addTask({ productId: 'shop', title: 'New work needs approval', approvePlan: true });
+      for (let step = 0; step < 60; step++) simulator.tick(1_000_002_200 + step * 2200);
+    });
+    expect(el('[role=option][aria-selected=true]').id).toBe(chosen);
+    await key('Enter');
+    expect(sheetId()).toBe(simulator.getState().tasks.find((task) => task.id === chosen.replace('palette-task-', ''))!.title);
+  });
+  it('highlights the next palette row when its result leaves, and resets only when the query changes', async () => {
+    await palette(''); await key('ArrowDown');
+    const rows = Array.from(host.querySelectorAll('[role=option]')).map((row) => row.id);
+    const removed = el('[role=option][aria-selected=true]').id;
+    await act(async () => simulator.cancel(removed.replace('palette-task-', '')));
+    expect(el('[role=option][aria-selected=true]').id).toBe(rows[2]);
+    await type('[role=combobox]', 'Change the pool limit');
+    expect(el('[role=option][aria-selected=true]').id).toBe('palette-limit');
   });
   it('does not walk a list for a task opened from a palette result', async () => {
     await key('j'); const remembered = selected();
