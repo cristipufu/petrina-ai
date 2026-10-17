@@ -278,15 +278,21 @@ Inter, bundled with the app (the window's security policy only loads fonts from 
 |---|---|
 | ⌘K | Command palette |
 | ⌘N | New task |
-| I / B / A | Inbox, Board, Agents |
+| I / B / A / L | Inbox, Board, Agents, Library |
 | J / K | Move between cards or inbox items |
 | ↵ | Open |
 | ⌥↑ / ⌥↓ | Raise or lower priority |
 | P | Pause or resume |
 | M | Message |
-| ⌘J | Join session |
-| Esc | Close the topmost thing only: a menu, then a dialog, then the task sheet. Focus goes back to where it was |
+| ? | Every keyboard shortcut |
+| Esc | Close the topmost thing only: palette, dialog, text field (keep its text), task, then leave the inbox. Focus goes back to where it was |
 | Tab / ⇧Tab | Inside the task sheet or a dialog, stay inside it until it closes |
+
+The top-bar search opens the same palette as ⌘K (Ctrl+K on Windows and Linux). Search checks every word against task titles and product names across the whole portfolio. The palette also opens products, creates a task draft, filters the board, pauses the pool, changes its limit and opens pages. A new task always opens the usual dialog for review before creating it.
+
+Only one area takes single keys: the open task first, otherwise the inbox after entering it, otherwise the board while it is visible. Other pages rest the board's keys. J and K follow the displayed order, including filters and folded sections; an open task remembers whether it came from the board or inbox. Tasks opened elsewhere explain that there is no list to walk. Option+arrows move queued cards beside their visible neighbours, preserving hidden products' order.
+
+P pauses or resumes; on queued tasks it holds or releases them. Products is in the palette and left menu. M opens Session and focuses the message box. Every task keeps its own unsent message while the app stays open, with a mark on the card and Session tab. Single keys rest while typing, and can be turned off in the palette or the shared Settings page. This choice survives restarting. Join session (⌘J) is not assigned yet.
 
 ## Edge cases
 

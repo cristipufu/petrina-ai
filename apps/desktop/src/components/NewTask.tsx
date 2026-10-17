@@ -10,9 +10,9 @@ const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
   { id: "chore", label: "Small change", hint: "Quick build, one reviewer" },
 ];
 
-export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { state: State; defaultProduct?: string; onClose: () => void; onCreated: () => void }) {
-  const [productId, setProductId] = useState(defaultProduct ?? state.products[0]?.id ?? "");
-  const [title, setTitle] = useState("");
+export function NewTaskDialog({ state, defaultProduct, initialTitle = "", onClose, onCreated }: { state: State; defaultProduct?: string; initialTitle?: string; onClose: () => void; onCreated: () => void }) {
+  const [productId, setProductId] = useState(defaultProduct ?? "");
+  const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<TaskKind>("feature");
   const [position, setPosition] = useState<"bottom" | "top">("bottom");
@@ -32,7 +32,7 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
   useFocusTrap(box, onClose);
 
   const add = (another: boolean) => {
-    if (!title.trim()) return;
+    if (!title.trim() || !productId) return;
     const titles = [title.trim(), ...batch.slice(1)];
     for (const entry of titles) void Promise.resolve(sim.addTask({ productId, title: entry, description, kind, position, approvePlan, delivery, approveDelivery })).catch(() => undefined);
     if (another) {
@@ -60,6 +60,7 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
           </div>
         ) : (
           <select className="select" style={{ marginBottom: 8 }} aria-label="Product" value={productId} onChange={(event) => pickProduct(event.target.value)}>
+            <option value="" disabled>Choose a product</option>
             {[...state.products].sort((a, b) => a.name.localeCompare(b.name)).map((product) => (
               <option key={product.id} value={product.id}>
                 {product.name}
@@ -140,10 +141,10 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
               Ask me before shipping
             </label>
           </span>
-          <button className="btn quiet" onClick={() => add(true)} disabled={!title.trim()}>
+          <button className="btn quiet" onClick={() => add(true)} disabled={!title.trim() || !productId}>
             Add another <kbd>⇧↵</kbd>
           </button>
-          <button className="btn lead" onClick={() => add(false)} disabled={!title.trim()}>
+          <button className="btn lead" onClick={() => add(false)} disabled={!title.trim() || !productId}>
             Add to queue <kbd>↵</kbd>
           </button>
         </div>

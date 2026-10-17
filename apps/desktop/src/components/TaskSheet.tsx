@@ -31,6 +31,10 @@ interface SheetProps {
   onTab: (tab: SheetTab) => void;
   onClose: () => void;
   onToast: (title: string, detail?: string) => void;
+  draft: string;
+  onDraft: (text: string) => void;
+  messageFocus: number;
+  onMessage: () => void;
 }
 
 const TABS: readonly { id: SheetTab; label: string }[] = [
@@ -41,7 +45,7 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
   { id: "session", label: "Session" },
 ];
 
-export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: SheetProps) {
+export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessage }: SheetProps) {
   const [menu, setMenu] = useState(false);
   const [titleGone, setTitleGone] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -129,7 +133,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
                 <ExternalLink size={14} aria-hidden="true" />
               </a>
             )}
-            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={() => onTab("session")}>
+            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={onMessage}>
               <MessageSquare size={16} aria-hidden="true" />
               {!compact && "Message"}
             </button>
@@ -206,6 +210,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
                 onClick={() => onTab(entry.id)}
               >
                 {entry.label}
+                {entry.id === "session" && draft && <span className="draft-mark" aria-label="Unsent message" title="Unsent message" />}
                 {counts[entry.id] ? <span className="count">{counts[entry.id]}</span> : null}
               </button>
             ))}
@@ -220,7 +225,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
           </div>
         </div>
 
-        {tab === "session" && <Session.Composer task={task} find={find} />}
+        {tab === "session" && <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} />}
       </section>
     </>
   );

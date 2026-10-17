@@ -5,6 +5,7 @@
 
 import { answerByCall, CALL_WORDS, callCheckBody, callOn, designStageIndex, dueAnswers, followingCall, startCall, type CallAnswer } from "./call.js";
 import { composePlan } from "./library.js";
+import { queueNeighbour, queuePlacement } from "./navigation.js";
 import type {
   ActiveAgent,
   Column,
@@ -351,6 +352,21 @@ export class Simulator {
     this.moveInQueue(taskId, 0);
   }
 
+  placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number {
+    const queue = queueOf(this.getState().tasks).map((task) => task.id);
+    const index = queuePlacement(queue, taskId, anchorId, side);
+    if (index === undefined) return -1;
+    const hidden = Math.max(0, Math.abs(queue.indexOf(taskId) - queue.indexOf(anchorId)) - 1);
+    this.moveInQueue(taskId, index);
+    return hidden;
+  }
+
+  moveVisibleInQueue(taskId: Id, visibleIds: Id[], direction: -1 | 1): number {
+    const queue = queueOf(this.getState().tasks).map((task) => task.id);
+    const anchor = queueNeighbour(queue, visibleIds, taskId, direction);
+    return anchor ? this.placeInQueue(taskId, anchor, direction < 0 ? "before" : "after") : -1;
+  }
+
   setHeld(taskId: Id, held: boolean): void {
     this.updateTask(taskId, (d, task) => {
       task.held = held;
@@ -365,6 +381,7 @@ export class Simulator {
       task.state = "paused";
       task.holdsSlot = false;
       task.statusLine = "Paused by you";
+      d.inbox = d.inbox.filter((item) => item.taskId !== taskId || !item.blocking);
       this.log(d, task, "you", "You paused it");
       this.schedule(d);
     });

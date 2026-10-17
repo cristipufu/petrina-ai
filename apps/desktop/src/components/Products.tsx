@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { DELIVERY_LABEL, type Column, type DeliveryMode, type Product, type State } from "@petrina/core";
 import { sim } from "../engine";
+import { mod } from "../keyboard";
 import { useDismiss } from "./bits";
 
 /** Per-product numbers the switcher and the Products page both show. */
@@ -60,7 +61,7 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p" && !document.querySelector('.command-palette, .dialog, .sheet')) {
         event.preventDefault();
         setOpen(true);
       }
@@ -86,7 +87,7 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
 
   return (
     <div style={{ position: "relative", minWidth: 0, flex: "0 1 auto" }} ref={box}>
-      <button className="btn switcher" onClick={() => setOpen((on) => !on)} aria-expanded={open} aria-haspopup="dialog" title="Switch product (⌘P)">
+      <button className="btn switcher" onClick={() => setOpen((on) => !on)} aria-expanded={open} aria-haspopup="dialog" title={`Switch product (${mod}P)`}>
         <span className="label-text">
           {current ? (
             <span className={`tone-${current.tone}`} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -115,7 +116,7 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
                 if (event.key === "Enter" && first) pick(first.product.id);
               }}
             />
-            <kbd>⌘P</kbd>
+            <kbd>{mod}P</kbd>
           </label>
           <div className="switcher-list">
             {!query.trim() && (

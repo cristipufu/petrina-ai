@@ -20,6 +20,8 @@ import {
   followingCall,
   pickStarts,
   queueOf,
+  queueNeighbour,
+  queuePlacement,
   slotUses,
   startCall,
   unanswered,
@@ -265,6 +267,21 @@ export class Engine {
 
   moveToTop(taskId: Id): void {
     this.moveInQueue(taskId, 0);
+  }
+
+  placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number {
+    const queue = queueOf(this.s.tasks).map((task) => task.id);
+    const index = queuePlacement(queue, taskId, anchorId, side);
+    if (index === undefined) return -1;
+    const hidden = Math.max(0, Math.abs(queue.indexOf(taskId) - queue.indexOf(anchorId)) - 1);
+    this.moveInQueue(taskId, index);
+    return hidden;
+  }
+
+  moveVisibleInQueue(taskId: Id, visibleIds: Id[], direction: -1 | 1): number {
+    const queue = queueOf(this.s.tasks).map((task) => task.id);
+    const anchor = queueNeighbour(queue, visibleIds, taskId, direction);
+    return anchor ? this.placeInQueue(taskId, anchor, direction < 0 ? "before" : "after") : -1;
   }
 
   setHeld(taskId: Id, held: boolean): void {

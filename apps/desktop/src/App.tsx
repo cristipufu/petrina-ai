@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Bell, Boxes, Bot, Ellipsis, Hand, LayoutGrid, Library, Moon, Plus, Search, Sun, X } from "lucide-react";
-import type { State, Task } from "@petrina/core";
-import { mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Bell, Boxes, Bot, Ellipsis, Hand, LayoutGrid, Library, Moon, Plus, Search, Settings, Sun, X } from "lucide-react";
+import { boardOrder, draftFor, inboxOrder, inboxTab, keyArea, matchesWords, queueOf, reconcileHighlight, stepHighlight, withDraft, type KeyArea, type Page, type State, type Task, type TaskList } from "@petrina/core";
+import { sim, mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
 import { CouldNotStart, EnginePill, StartingScreen } from "./components/EngineState";
 import { blockingCount, lookup, type Lookup } from "./lib";
@@ -14,9 +14,13 @@ import { PoolButton, PoolPanel } from "./components/Pool";
 import { ProductsPage, ProductSwitcher } from "./components/Products";
 import type { SheetTab } from "./components/TaskCard";
 import { TaskSheet } from "./components/TaskSheet";
+import { SettingsPage } from "./components/Settings";
 import { applyTheme, initialTheme, type Theme } from "./theme";
 
-type View = "board" | "products" | "agents" | "library";
+import { CommandPalette, KeyboardShortcuts, taskState, type PaletteAction } from "./components/CommandPalette";
+import { isTyping, mod, setSingleKeys, useSingleKeys } from "./keyboard";
+
+type Sheet = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string };
 
 interface Toast {
   id: number;
@@ -33,19 +37,28 @@ export function App() {
   const status = useEngineStatus();
   const find = useMemo(() => lookup(state), [state]);
   const viewport = useViewport();
-  const [view, setView] = useState<View>("board");
+  const [view, setView] = useState<Page>("board");
   const [product, setProduct] = useState<string>("all");
   const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const [shortcuts, setShortcuts] = useState(false);
+  const singleKeys = useSingleKeys();
+  const [owner, setOwner] = useState<KeyArea>("board");
+  const [boardId, setBoardId] = useState<string>();
+  const [inboxId, setInboxId] = useState<string>();
+  const [showDone, setShowDone] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [messageFocus, setMessageFocus] = useState(0);
+  const [newTitle, setNewTitle] = useState("");
   const [inboxOpen, setInboxOpen] = useState(() => viewportSize().width >= DOCKED_INBOX);
-  const [sheet, setSheet] = useState<{ taskId: string; tab: SheetTab }>();
+  const [sheet, setSheet] = useState<Sheet>();
   const [creating, setCreating] = useState(false);
   const [addingProduct, setAddingProduct] = useState(false);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const searchRef = useRef<HTMLInputElement>(null);
   const inboxButton = useRef<HTMLButtonElement>(null);
   const inboxPanel = useRef<HTMLElement>(null);
+  const focusArea = useRef<KeyArea | undefined>(undefined);
   const seenInbox = useRef(new Set(state.inbox.map((item) => item.id)));
   const toastId = useRef(0);
 
@@ -81,56 +94,183 @@ export function App() {
     }
   }, [state.inbox, find, toast]);
 
-  const open = useCallback((taskId: string, tab: SheetTab = "overview") => {
-    setSheet({ taskId, tab });
-    if (viewportSize().width < DOCKED_INBOX) setInboxOpen(false);
+  const visible = useCallback(
+    (task: Task) => (product === "all" || task.productId === product) && matchesWords(query, task.title, find.product(task.productId)?.name ?? ""),
+    [product, query, find],
+  );
+  const boardIds = useMemo(() => boardOrder(state.tasks, visible, showDone), [state.tasks, visible, showDone]);
+  const items = useMemo(() => inboxOrder(state), [state]);
+  const inboxIds = useMemo(() => items.map((item) => item.id), [items]);
+  const previousBoard = useRef(boardIds);
+  const previousInbox = useRef(inboxIds);
+  const currentBoardId = reconcileHighlight(previousBoard.current, boardIds, boardId);
+  const currentInboxId = reconcileHighlight(previousInbox.current, inboxIds, inboxId);
+  useEffect(() => { setBoardId(currentBoardId); previousBoard.current = boardIds; }, [currentBoardId, boardIds]);
+  useEffect(() => { setInboxId(currentInboxId); previousInbox.current = inboxIds; }, [currentInboxId, inboxIds]);
+  const area = keyArea(view, inboxOpen, owner, Boolean(sheet));
+  const sheetTask = sheet ? find.task(sheet.taskId) : undefined;
+  const highlightedItem = items.find((item) => item.id === currentInboxId);
+  const focusedTask = sheetTask ?? (area === "inbox" ? find.task(highlightedItem?.taskId) : area === "board" ? find.task(currentBoardId) : undefined);
+  const focusSnapshot = useRef<{ area: typeof area; id: string | undefined }>({ area, id: undefined });
+
+  const open = useCallback((taskId: string, tab: SheetTab = "overview", list?: TaskList, itemId?: string) => {
+    setSheet({ taskId, tab, list, ...(itemId ? { itemId } : {}) });
   }, []);
   const close = useCallback(() => setSheet(undefined), []);
+  const go = (page: Page) => { close(); setView(page); setOwner("board"); focusArea.current = page === "board" ? "board" : undefined; };
+  const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, "board"); if (tab === "session") setMessageFocus((n) => n + 1); };
+  const openItem = (id: string, tab?: SheetTab) => {
+    const item = items.find((entry) => entry.id === id);
+    if (!item) return;
+    setOwner("inbox"); setInboxId(id); open(item.taskId, tab ?? inboxTab(item.kind), "inbox", id);
+  };
+  const openInbox = () => {
+    close(); setInboxOpen(true); setOwner("inbox"); setInboxId(inboxIds[0]);
+    focusArea.current = "inbox";
+  };
+  const closeInbox = () => {
+    setInboxOpen(false); setOwner("board"); inboxButton.current?.focus();
+  };
+  const inboxKey = () => { close(); if (inboxOpen && owner === "inbox") closeInbox(); else openInbox(); };
+  const newTask = (title = "") => { setNewTitle(title); setCreating(true); };
+  const pickProduct = (id: string) => { close(); setProduct(id); setView("board"); setOwner("board"); };
+  const message = (task: Task) => {
+    if (sheet) setSheet({ ...sheet, tab: "session" });
+    else if (area === "inbox" && highlightedItem) openItem(highlightedItem.id, "session");
+    else if (area === "board") openBoard(task.id, "session");
+    else open(task.id, "session");
+    setMessageFocus((n) => n + 1);
+  };
+  const sendAction = async (action: () => unknown, title: string, detail?: string) => {
+    if (status.link !== "live") { toast("Could not send that action", "Petrina is reconnecting. Try again when it is connected."); return false; }
+    try { await action(); toast(title, detail); return true; }
+    catch { toast("Could not send that action", "The engine did not confirm it. Try again when it is connected."); return false; }
+  };
+  const pause = (task: Task) => {
+    const name = `“${task.title}”`;
+    if (task.state === "queued") {
+      void sendAction(() => sim.setHeld(task.id, !task.held), `${name} ${task.held ? "released" : "held"}`, task.held ? "It can start when a slot is free. P again holds it." : "It stays in the queue and will not start. P again releases it.");
+    } else if (task.state === "paused") {
+      const waitingForYou = state.inbox.some((item) => item.taskId === task.id && !item.blocking);
+      void sendAction(() => sim.resume(task.id), `${name} resumed`, waitingForYou ? "It waits for you at its checkpoint." : "It is ready to start again when a slot is free.");
+    } else if (["running", "needs-you", "waiting"].includes(task.state)) {
+      const request = state.inbox.some((item) => item.taskId === task.id && (item.kind === "question" || item.kind === "permission") && item.blocking);
+      const detail = request ? "Its open request was withdrawn and may be asked again. P to resume" : task.holdsSlot ? "The agent’s current step stopped and will start again after resuming. P to resume" : "It will not start another step. P to resume";
+      void sendAction(() => sim.pause(task.id), `${name} paused`, detail);
+    } else toast(`${name} cannot be paused`, task.state === "failed" ? "Use Try again to restart this task." : "This task has finished.");
+  };
+  const moved = async (task: Task, action: () => number | Promise<number>) => {
+    if (task.state !== "queued") { toast(`“${task.title}” cannot move`, "It has already started. Only queued tasks have a priority."); return; }
+    if (status.link !== "live") { toast("Could not change priority", "Petrina is reconnecting. Try again when it is connected."); return; }
+    try {
+      const hidden = await action();
+      if (hidden >= 0) toast(`“${task.title}” moved`, hidden ? `It passed ${hidden} hidden task${hidden === 1 ? "" : "s"}. Their order stays the same.` : "Its queue position has updated.");
+    } catch { toast("Could not change priority", "The engine did not confirm the move."); }
+  };
+  const move = (task: Task, direction: -1 | 1) => {
+    const ids = state.tasks.filter((entry) => entry.state === "queued" && visible(entry)).map((entry) => entry.id);
+    void moved(task, () => sim.moveVisibleInQueue(task.id, ids, direction));
+  };
+  const place = (id: string, anchor: string, side: "before" | "after") => {
+    const task = find.task(id);
+    const queue = queueOf(state.tasks);
+    const from = queue.findIndex((entry) => entry.id === id);
+    const to = queue.findIndex((entry) => entry.id === anchor);
+    const hidden = queue.slice(Math.min(from, to) + 1, Math.max(from, to)).filter((entry) => !visible(entry)).length;
+    if (task) void moved(task, async () => (await sim.placeInQueue(id, anchor, side)) < 0 ? -1 : hidden);
+  };
+  const walk = (direction: -1 | 1) => {
+    if (sheet) {
+      if (!sheet.list) { toast("J and K walk the board or the inbox", "Open a task there to walk that list."); return; }
+      if (sheet.list === "board") {
+        const id = stepHighlight(boardIds, sheet.taskId, direction);
+        if (id) { setBoardId(id); open(id, sheet.tab, "board"); }
+      } else {
+        const id = stepHighlight(inboxIds, sheet.itemId, direction); if (id) openItem(id);
+      }
+    } else if (area === "inbox") setInboxId(stepHighlight(inboxIds, currentInboxId, direction));
+    else if (area === "board") setBoardId(stepHighlight(boardIds, currentBoardId, direction));
+  };
 
-  const openInbox = useCallback(() => setInboxOpen(true), []);
-  // Closing the inbox hands focus back to the button that opens it.
-  const closeInbox = useCallback(() => {
-    setInboxOpen(false);
-    inboxButton.current?.focus();
-  }, []);
-
-  // Over the board, the inbox takes focus when it opens.
   useEffect(() => {
-    if (inboxOpen && overlay) inboxPanel.current?.focus();
-  }, [inboxOpen, overlay]);
+    const id = area === "board" ? currentBoardId : area === "inbox" ? currentInboxId : undefined;
+    const changed = focusSnapshot.current.area !== area || focusSnapshot.current.id !== id;
+    focusSnapshot.current = { area, id };
+    // Closing a palette or dialog restores its opener. Only explicit navigation moves focus.
+    if (!changed && !focusArea.current) return;
+    if (area !== "board" && area !== "inbox") return;
+    const attr = area === "board" ? "data-task-id" : "data-inbox-id";
+    const el = id ? Array.from(document.querySelectorAll<HTMLElement>(`[${attr}]`)).find((node) => node.getAttribute(attr) === id) : area === "inbox" ? inboxPanel.current : document.querySelector<HTMLElement>(".board");
+    if (id) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // Give Tab a starting point at the highlighted item, without taking focus from a field.
+    if (el && !palette && !creating && !addingProduct && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
+      el.focus({ preventScroll: true });
+      focusArea.current = undefined;
+    }
+  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, shortcuts]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
       const target = event.target as HTMLElement;
-      const typing = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        setCreating(true);
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setSearching(true);
-        searchRef.current?.focus();
-      } else if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        if (event.key === "i") {
-          if (inboxPanel.current) closeInbox();
-          else openInbox();
-        }
-        if (event.key === "b") setView("board");
-        if (event.key === "p") setView("products");
-        if (event.key === "a") setView("agents");
-        if (event.key === "l") setView("library");
+      const key = event.key.toLocaleLowerCase();
+      if ((event.metaKey || event.ctrlKey) && key === "k") {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (!creating && !addingProduct) setPalette((on) => !on);
+        return;
       }
+      if (palette || creating || addingProduct || shortcuts) return;
+      // Popovers handle their own keys. A task sheet is the one dialog with navigation keys.
+      if (target.closest("[role=dialog]:not(.sheet), [role=menu], .popover, .menu") || document.querySelector(".popover, .menu")) return;
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (isTyping(target)) target.blur();
+        else if (sheet) close();
+        else if (area === "inbox") { setOwner("board"); inboxPanel.current?.blur(); }
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && key === "n") { event.preventDefault(); newTask(); return; }
+      if (isTyping(target) || event.metaKey || event.ctrlKey) return;
+      if (event.altKey && (key === "arrowup" || key === "arrowdown")) {
+        if (focusedTask) { event.preventDefault(); move(focusedTask, key === "arrowup" ? -1 : 1); } return;
+      }
+      if (key === "enter" && !target.closest("button, a, [role=button], [role=radio]")) {
+        if (area === "board" && currentBoardId) { event.preventDefault(); openBoard(currentBoardId); }
+        else if (area === "inbox" && currentInboxId) { event.preventDefault(); openItem(currentInboxId); }
+        return;
+      }
+      if (event.altKey || !singleKeys) return;
+      if (event.repeat && ["p", "i", "m", "?"].includes(key)) return;
+      if (key === "i") { event.preventDefault(); inboxKey(); }
+      else if (key === "b" || key === "a" || key === "l") { event.preventDefault(); go(key === "b" ? "board" : key === "a" ? "agents" : "library"); }
+      else if (key === "?") { event.preventDefault(); setShortcuts(true); }
+      else if ((key === "j" || key === "k") && area) { event.preventDefault(); walk(key === "j" ? 1 : -1); }
+      else if (key === "p" && focusedTask) { event.preventDefault(); pause(focusedTask); }
+      else if (key === "m" && focusedTask) { event.preventDefault(); message(focusedTask); }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openInbox, closeInbox]);
+    // Capture gives Escape one owner before nested dialogs or text controls see it.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
 
-  const visible = useCallback(
-    (task: Task) => (product === "all" || task.productId === product) && (!query.trim() || task.title.toLowerCase().includes(query.trim().toLowerCase())),
-    [product, query],
-  );
-
-  const sheetTask = sheet ? find.task(sheet.taskId) : undefined;
+  const actions: PaletteAction[] = [
+    { id: "new", label: "New task", shortcut: `${mod}N`, run: () => newTask() },
+    { id: "pool", label: state.pool.paused ? "Resume pool" : "Pause pool", shortcut: "↵", run: () => { void sendAction(() => sim.setPoolPaused(!state.pool.paused), state.pool.paused ? "Pool resumed" : "Pool paused", state.pool.paused ? "New stages can start." : "Running stages finish. Nothing new starts."); } },
+    { id: "limit", label: "Change the pool limit", detail: `Currently ${state.pool.limit} · Lowering never stops anyone`, shortcut: "↵", run: () => {} },
+    { id: "inbox", label: "Open the inbox", shortcut: "I", run: openInbox },
+    ...(["board", "products", "agents", "library", "settings"] as Page[]).map((page) => ({ id: page, label: `Go to ${page[0]!.toUpperCase()}${page.slice(1)}`, shortcut: ({ board: "B", products: "↵", agents: "A", library: "L", settings: "↵" })[page], run: () => go(page) })),
+    { id: "shortcuts", label: "Keyboard shortcuts", shortcut: "?", run: () => setShortcuts(true) },
+    { id: "toggle-keys", label: `Turn single-key shortcuts ${singleKeys ? "off" : "on"}`, shortcut: "↵", run: () => setSingleKeys(!singleKeys) },
+  ];
+  const taskActions: PaletteAction[] = focusedTask ? [
+    { id: "open-task", label: `Open “${focusedTask.title}”`, shortcut: "↵", run: () => { if (!sheet) open(focusedTask.id); } },
+    { id: "message-task", label: `Message “${focusedTask.title}”`, shortcut: "M", run: () => { if (sheet) message(focusedTask); else { open(focusedTask.id, "session"); setMessageFocus((n) => n + 1); } } },
+    { id: "pause-task", label: `${focusedTask.state === "queued" ? focusedTask.held ? "Release" : "Hold" : focusedTask.state === "paused" ? "Resume" : "Pause"} “${focusedTask.title}”`, shortcut: "P", run: () => pause(focusedTask) },
+    ...(focusedTask.state === "queued" && queueOf(state.tasks)[0]?.id !== focusedTask.id ? [{ id: "top-task", label: `Move “${focusedTask.title}” to top`, shortcut: "↵", run: () => {
+      const hidden = queueOf(state.tasks).slice(0, queueOf(state.tasks).findIndex((task) => task.id === focusedTask.id)).filter((task) => !visible(task)).length;
+      void sendAction(() => sim.moveToTop(focusedTask.id), `“${focusedTask.title}” moved to the top`, hidden ? `It passed ${hidden} hidden task${hidden === 1 ? "" : "s"}. Their order stays the same.` : undefined);
+    } }] : []),
+  ] : [];
   const blocking = blockingCount(state);
   const themeButton = (
     <button className="btn ghost icon" aria-label={theme === "dark" ? "Use the light theme" : "Use the dark theme"} title="Switch theme" onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
@@ -146,12 +286,13 @@ export function App() {
           <Logo />
           {roomy && "Petrina"}
         </div>
-        <ProductSwitcher state={state} value={product} onChange={setProduct} />
-        {searchField ? (
-          <SearchField query={query} setQuery={setQuery} inputRef={searchRef} />
-        ) : (
-          <SearchButton query={query} setQuery={setQuery} inputRef={searchRef} open={searching} setOpen={setSearching} />
-        )}
+        <ProductSwitcher state={state} value={product} onChange={pickProduct} />
+        <div className="palette-launcher">
+          <button className={searchField ? "search-field palette-trigger" : "btn ghost icon"} aria-label="Find tasks, products or actions" title={`Command palette (${mod}K)`} onClick={() => setPalette(true)}>
+            <Search size={18} aria-hidden="true" />{searchField && <><span>Find tasks or actions</span><kbd>{mod}K</kbd></>}
+          </button>
+          {query && <span className="active-filter"><span title={query}>{query}</span><button aria-label="Clear the board filter" onClick={() => setQuery("")}><X size={14} /></button></span>}
+        </div>
         <div className="spacer" />
         {barExtras && <EnginePill status={status} compact={!roomy} />}
         {blocking > 0 && (
@@ -179,7 +320,7 @@ export function App() {
           {inboxLabel && "Inbox"}
           {state.inbox.length > 0 && <span className="count">{state.inbox.length}</span>}
         </button>
-        <button className="btn primary" onClick={() => setCreating(true)} title="New task (⌘N)">
+        <button className="btn primary" onClick={() => newTask()} title={`New task (${mod}N)`}>
           <Plus size={16} aria-hidden="true" />
           New task
         </button>
@@ -187,15 +328,15 @@ export function App() {
       </header>
 
       <nav className="rail" aria-label="Sections">
-        <button className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={() => setView("board")} title="Board (B)">
+        <button className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={() => go("board")} title="Board (B)">
           <LayoutGrid size={20} aria-hidden="true" />
           Board
         </button>
-        <button className={view === "products" ? "on" : ""} aria-current={view === "products" ? "page" : undefined} onClick={() => setView("products")} title="Products (P)">
+        <button className={view === "products" ? "on" : ""} aria-current={view === "products" ? "page" : undefined} onClick={() => go("products")} title="Products">
           <Boxes size={20} aria-hidden="true" />
           Products
         </button>
-        <button className={view === "agents" ? "on" : ""} aria-current={view === "agents" ? "page" : undefined} onClick={() => setView("agents")} title="Agents (A)">
+        <button className={view === "agents" ? "on" : ""} aria-current={view === "agents" ? "page" : undefined} onClick={() => go("agents")} title="Agents (A)">
           <Bot size={20} aria-hidden="true" />
           Agents
           {blocking > 0 && (
@@ -204,32 +345,31 @@ export function App() {
             </span>
           )}
         </button>
-        <button className={view === "library" ? "on" : ""} aria-current={view === "library" ? "page" : undefined} onClick={() => setView("library")} title="Library (L)">
+        <button className={view === "library" ? "on" : ""} aria-current={view === "library" ? "page" : undefined} onClick={() => go("library")} title="Library (L)">
           <Library size={20} aria-hidden="true" />
           Library
         </button>
+        <button className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={() => go("settings")} title="Settings"><Settings size={20} aria-hidden="true" />Settings</button>
       </nav>
 
       <main className="main">
-        {view === "board" && <Board state={state} find={find} visible={visible} selectedId={sheet?.taskId} onOpen={open} />}
+        {view === "board" && <Board state={state} find={find} visible={visible} selectedId={area === "board" ? currentBoardId : undefined} onOpen={openBoard} onFocus={(id) => { setOwner("board"); if (id) setBoardId(id); }} showDone={showDone} onShowDone={setShowDone} drafts={drafts} onPlace={place} />}
         {view === "products" && (
           <ProductsPage
             state={state}
             {...(mode === "engine" ? { onAdd: () => setAddingProduct(true) } : {})}
-            onPick={(productId) => {
-              setProduct(productId);
-              setView("board");
-            }}
+            onPick={pickProduct}
           />
         )}
         {view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {view === "library" && <LibraryPage state={state} find={find} />}
+        {view === "settings" && <SettingsPage onShortcuts={() => setShortcuts(true)} />}
       </main>
 
-      {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay} onOpen={open} onClose={closeInbox} /> : <div />}
+      {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay && !sheet} onOpen={open} onClose={closeInbox} selectedId={area === "inbox" ? currentInboxId : undefined} onFocus={(id) => { setOwner("inbox"); setInboxId(id ?? currentInboxId ?? inboxIds[0]); }} onOpenItem={openItem} /> : <div />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ taskId: sheetTask.id, tab })} onClose={close} onToast={(title, detail) => toast(title, detail)} />
+        <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} />
       )}
 
       {addingProduct && (
@@ -245,14 +385,19 @@ export function App() {
       {creating && (
         <NewTaskDialog
           state={state}
+          initialTitle={newTitle}
           {...(product !== "all" ? { defaultProduct: product } : {})}
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false);
-            setView("board");
+            go("board");
           }}
         />
       )}
+
+      {palette && <CommandPalette state={state} actions={actions} taskActions={taskActions} onClose={() => setPalette(false)} onTask={(id) => open(id)} onProduct={pickProduct} onNew={newTask} onFilter={(text) => { setQuery(text); go("board"); }} onLimit={(limit) => { void sendAction(() => sim.setPoolLimit(limit), `Pool limit set to ${limit}`, "Lowering the limit never stops anyone."); }} />}
+      {shortcuts && <KeyboardShortcuts onClose={() => setShortcuts(false)} />}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{focusedTask ? `${focusedTask.title}, ${taskState(focusedTask, state)}${area === "inbox" && highlightedItem ? `, ${highlightedItem.title}` : ""}` : ""}</div>
 
       {mode === "engine" && status.desktop && status.link === "starting" && <StartingScreen />}
       {mode === "engine" && status.link === "failed" && <CouldNotStart problem={status.problem} />}
@@ -281,48 +426,6 @@ export function App() {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-interface SearchProps {
-  query: string;
-  setQuery: (query: string) => void;
-  inputRef: RefObject<HTMLInputElement | null>;
-}
-
-function SearchField({ query, setQuery, inputRef, autoFocus }: SearchProps & { autoFocus?: boolean }) {
-  return (
-    <label className="search-field">
-      <Search size={16} aria-hidden="true" />
-      <input ref={inputRef} autoFocus={autoFocus} aria-label="Find a task" placeholder="Find a task" value={query} onChange={(event) => setQuery(event.target.value)} />
-      {query ? (
-        <button className="btn ghost icon" aria-label="Clear the search" onClick={() => setQuery("")}>
-          <X size={14} />
-        </button>
-      ) : (
-        <kbd>⌘K</kbd>
-      )}
-    </label>
-  );
-}
-
-/** In narrow windows search is a button that opens the field. */
-function SearchButton({ open, setOpen, ...search }: SearchProps & { open: boolean; setOpen: (open: boolean) => void }) {
-  const box = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setOpen(false), [setOpen]);
-  useDismiss(box, open, close);
-  return (
-    <div style={{ position: "relative" }} ref={box}>
-      <button className="btn ghost icon" aria-label={search.query ? `Find a task, searching for ${search.query}` : "Find a task"} title="Find a task (⌘K)" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Search size={18} aria-hidden="true" />
-        {search.query && <span className="dot-on" aria-hidden="true" />}
-      </button>
-      {open && (
-        <div className="popover search-pop" style={{ left: 0, right: "auto" }}>
-          <SearchField {...search} autoFocus />
-        </div>
-      )}
     </div>
   );
 }
