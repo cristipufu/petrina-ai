@@ -178,7 +178,10 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, cl
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        event.stopPropagation();
+        const top = traps.at(-1);
+        if (top && ref.current && !top.contains(ref.current)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
         if (ref.current?.contains(document.activeElement)) ref.current.querySelector("button")?.focus();
         close();
       }

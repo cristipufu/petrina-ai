@@ -6,3 +6,4 @@ export * from "./products.js";
 export * from "./sim.js";
 export * from "./demo.js";
 export * from "./board.js";
+export * from "./navigation.js";

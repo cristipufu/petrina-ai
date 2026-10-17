@@ -27,6 +27,8 @@ export interface Actions {
   setPoolPaused(paused: boolean): void;
   setToolCap(toolId: Id, cap: number): void;
   moveInQueue(taskId: Id, index: number): void;
+  placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number | Promise<number>;
+  moveVisibleInQueue(taskId: Id, visibleIds: Id[], direction: -1 | 1): number | Promise<number>;
   moveToTop(taskId: Id): void;
   setHeld(taskId: Id, held: boolean): void;
   setAfter(taskId: Id, after: Id[]): void;
@@ -328,8 +330,12 @@ class EngineClient implements Store {
     });
   }
 
-  private fire(name: string, ...args: unknown[]): void {
-    this.call(name, ...args).catch(() => undefined);
+  private fire(name: string, ...args: unknown[]): Promise<void> {
+    const sent = this.call(name, ...args).then(() => undefined);
+    // Existing pointer controls report failures through the connection pill. Keyboard controls
+    // also await this promise, so their success notes follow the engine's acknowledgement.
+    void sent.catch(() => undefined);
+    return sent;
   }
 
   /** Kept, and shown as unsent, until the engine confirms it saved it. */
@@ -424,6 +430,8 @@ class EngineClient implements Store {
   setPoolPaused = (paused: boolean) => this.fire("setPoolPaused", paused);
   setToolCap = (toolId: Id, cap: number) => this.fire("setToolCap", toolId, cap);
   moveInQueue = (taskId: Id, index: number) => this.fire("moveInQueue", taskId, index);
+  placeInQueue = (taskId: Id, anchorId: Id, side: "before" | "after") => this.call("placeInQueue", taskId, anchorId, side) as Promise<number>;
+  moveVisibleInQueue = (taskId: Id, visibleIds: Id[], direction: -1 | 1) => this.call("moveVisibleInQueue", taskId, visibleIds, direction) as Promise<number>;
   moveToTop = (taskId: Id) => this.fire("moveToTop", taskId);
   setHeld = (taskId: Id, held: boolean) => this.fire("setHeld", taskId, held);
   setAfter = (taskId: Id, after: Id[]) => this.fire("setAfter", taskId, after);
@@ -466,6 +474,8 @@ class DemoStore implements Store {
   setPoolPaused = (paused: boolean) => this.simulator.setPoolPaused(paused);
   setToolCap = (toolId: Id, cap: number) => this.simulator.setToolCap(toolId, cap);
   moveInQueue = (taskId: Id, index: number) => this.simulator.moveInQueue(taskId, index);
+  placeInQueue = (taskId: Id, anchorId: Id, side: "before" | "after") => this.simulator.placeInQueue(taskId, anchorId, side);
+  moveVisibleInQueue = (taskId: Id, visibleIds: Id[], direction: -1 | 1) => this.simulator.moveVisibleInQueue(taskId, visibleIds, direction);
   moveToTop = (taskId: Id) => this.simulator.moveToTop(taskId);
   setHeld = (taskId: Id, held: boolean) => this.simulator.setHeld(taskId, held);
   setAfter = () => undefined;

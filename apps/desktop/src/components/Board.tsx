@@ -1,7 +1,7 @@
 import { useState, type DragEvent } from "react";
 import { ChevronDown, ChevronRight, Hand } from "lucide-react";
 import { boardSections, queueOf, startsNextCount, type State, type Task } from "@petrina/core";
-import { sim } from "../engine";
+import { alt, mod } from "../keyboard";
 import { ago, deliveryText, STATE_LABEL, type Lookup } from "../lib";
 import { ProductName } from "./bits";
 import { TaskCard, type SheetTab } from "./TaskCard";
@@ -12,6 +12,11 @@ interface BoardProps {
   visible: (task: Task) => boolean;
   selectedId: string | undefined;
   onOpen: (taskId: string, tab?: SheetTab) => void;
+  onFocus: (taskId?: string) => void;
+  showDone: boolean;
+  onShowDone: (show: boolean) => void;
+  drafts: Readonly<Record<string, string>>;
+  onPlace: (taskId: string, anchorId: string, side: "before" | "after") => void;
 }
 
 function finishedAgo(task: Task, now: number): string {
@@ -31,10 +36,9 @@ const SECTIONS = [
  * come first, then working ones, then waiting ones, then the queue in priority order (drag to
  * reorder), with finished work folded away at the end.
  */
-export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) {
+export function Board({ state, find, visible, selectedId, onOpen, onFocus, showDone, onShowDone, drafts, onPlace }: BoardProps) {
   const [dragId, setDragId] = useState<string>();
   const [dropIndex, setDropIndex] = useState<number>();
-  const [showDone, setShowDone] = useState(false);
   const sections = boardSections(state.tasks, visible);
 
   const queue = queueOf(state.tasks);
@@ -58,7 +62,7 @@ export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) 
     if (!dragId) return;
     event.preventDefault();
     const cards = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-queue-index]"));
-    let index = queue.length;
+    let index = visibleQueue.length ? queue.indexOf(visibleQueue.at(-1)!) + 1 : 0;
     for (const card of cards) {
       const box = card.getBoundingClientRect();
       if (event.clientY < box.top || (event.clientY <= box.bottom && event.clientX < box.left + box.width / 2)) {
@@ -77,8 +81,9 @@ export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) 
   const onDrop = (event: DragEvent) => {
     event.preventDefault();
     if (dragId !== undefined && dropIndex !== undefined) {
-      const from = queue.findIndex((task) => task.id === dragId);
-      sim.moveInQueue(dragId, from >= 0 && from < dropIndex ? dropIndex - 1 : dropIndex);
+      const anchor = queue[dropIndex];
+      if (anchor && visibleQueue.some((task) => task.id === anchor.id)) onPlace(dragId, anchor.id, "before");
+      else if (lastVisible) onPlace(dragId, lastVisible.id, "after");
     }
     endDrag();
   };
@@ -88,9 +93,9 @@ export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) 
   const nothing = Object.values(sections).every((list) => list.length === 0);
 
   return (
-    <div className="board">
+    <div className="board" tabIndex={-1} onMouseDown={(event) => { if (!(event.target as HTMLElement).closest("[data-task-id]")) onFocus(); }} onFocus={(event) => { if (!(event.target as HTMLElement).closest("[data-task-id]")) onFocus(); }}>
       {nothing && (
-        <div className="board-empty">{state.tasks.length === 0 ? "No tasks yet. New task (⌘N) adds the first one." : "No tasks match this product or search."}</div>
+        <div className="board-empty">{state.tasks.length === 0 ? `No tasks yet. New task (${mod}N) adds the first one.` : "No tasks match this product or search."}</div>
       )}
 
       {SECTIONS.map((section) =>
@@ -103,7 +108,7 @@ export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) 
             </h2>
             <div className="card-grid">
               {sections[section.id].map((task) => (
-                <TaskCard key={task.id} task={task} state={state} find={find} selected={task.id === selectedId} onOpen={onOpen} />
+                <TaskCard key={task.id} task={task} state={state} find={find} selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)} onOpen={onOpen} />
               ))}
             </div>
           </section>
@@ -115,10 +120,10 @@ export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) 
           <h2 className="section-head" id="section-queue">
             Queue
             <span className="n">{visibleQueue.length}</span>
-            {visibleQueue.length > 1 && <span className="hint">Drag to reorder, or ⌥↑ and ⌥↓. The top starts first.</span>}
+            {visibleQueue.length > 1 && <span className="hint">Drag to reorder, or {alt}↑ and {alt}↓. The top starts first.</span>}
           </h2>
           {queue.length === 0 ? (
-            <div className="board-empty">Nothing waiting. New task (⌘N) adds one.</div>
+            <div className="board-empty">Nothing waiting. New task ({mod}N) adds one.</div>
           ) : (
             <div
               className="card-grid"
@@ -130,16 +135,15 @@ export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) 
             >
               {visibleQueue.map((task) => {
                 const index = queue.indexOf(task);
-                const drop = dragId && dragId !== task.id ? (dropIndex === index ? "before" : dropIndex === queue.length && task === lastVisible ? "after" : undefined) : undefined;
+                const drop = dragId && dragId !== task.id ? (dropIndex === index ? "before" : dropIndex === queue.indexOf(lastVisible!) + 1 && task === lastVisible ? "after" : undefined) : undefined;
                 return (
                   <div key={task.id} data-queue-index={index}>
                     <TaskCard
                       task={task}
                       state={state}
                       find={find}
-                      selected={task.id === selectedId}
+                      selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)}
                       queuePosition={index}
-                      queueLength={queue.length}
                       startsNext={nextUp.has(task.id)}
                       onOpen={onOpen}
                       onDragStart={onDragStart}
@@ -157,7 +161,7 @@ export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) 
 
       {sections.done.length > 0 && (
         <section className="board-section" aria-label="Done">
-          <button className="fold" onClick={() => setShowDone((on) => !on)} aria-expanded={showDone}>
+          <button className="fold" onClick={() => onShowDone(!showDone)} aria-expanded={showDone}>
             {showDone ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
             Done
             <span className="n num">{sections.done.length}</span>
@@ -167,7 +171,7 @@ export function Board({ state, find, visible, selectedId, onOpen }: BoardProps) 
               {sections.done.map((task) => {
                 const delivery = deliveryText(task);
                 return (
-                  <button key={task.id} className={`done-row ${task.state}`} onClick={() => onOpen(task.id)}>
+                  <button key={task.id} className={`done-row ${task.state} ${task.id === selectedId ? "selected" : ""}`} data-task-id={task.id} onFocus={() => onFocus(task.id)} onClick={() => onOpen(task.id)}>
                     <span className="title">{task.title}</span>
                     <span className="when num">{finishedAgo(task, state.now)}</span>
                     <span className="sub">

@@ -14,7 +14,7 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
-import { DELIVERY_LABEL, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
+import { inboxOrder, DELIVERY_LABEL, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
 import { desktop, sim, useEngineStatus, useUnsent } from "../engine";
 import { useBrowserPermission } from "../notify/channels";
 import { finishOffer, useNotifySettings } from "../notify/settings";
@@ -51,14 +51,16 @@ interface InboxProps {
   landing?: Landing | undefined;
   onOpen: (taskId: string, tab?: SheetTab) => void;
   onClose: () => void;
+  selectedId: string | undefined;
+  onFocus: (id?: string) => void;
+  onOpenItem: (itemId: string, tab?: SheetTab) => void;
 }
 
 /** How long "Already handled" stays. */
 const NOTE_MS = 6000;
 
-export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state, find, overlay, landing, onOpen, onClose }, ref) {
-  const priorityOf = (item: InboxItem) => find.task(item.taskId)?.startedAt ?? 0;
-  const items = [...state.inbox].sort((a, b) => Number(b.blocking) - Number(a.blocking) || priorityOf(a) - priorityOf(b) || a.at - b.at);
+export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state, find, overlay, landing, onOpenItem, onClose, selectedId, onFocus }, ref) {
+  const items = inboxOrder(state);
   const blocking = items.filter((item) => item.blocking).length;
   const connected = useEngineStatus().link === "live";
   // Answers whose question is gone (a restart dropped it): still shown until the engine has them.
@@ -78,9 +80,8 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state,
       className={`inbox ${overlay ? "overlay" : ""}`}
       aria-label="Needs you"
       tabIndex={-1}
-      onKeyDown={(event) => {
-        if (overlay && event.key === "Escape") onClose();
-      }}
+      onFocus={(event) => { if (!(event.target as HTMLElement).closest("[data-inbox-id]")) onFocus(); }}
+      onMouseDown={(event) => { if (!(event.target as HTMLElement).closest("[data-inbox-id]")) onFocus(); }}
     >
       <div className="inbox-head">
         <h2>
@@ -124,7 +125,9 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state,
           </div>
         )}
         {items.map((item) => (
-          <Ask key={item.id} item={item} state={state} find={find} onOpen={onOpen} />
+          <div key={item.id} data-inbox-id={item.id} tabIndex={-1} className={`inbox-item ${selectedId === item.id ? "selected" : ""}`} onFocus={() => onFocus(item.id)} onMouseDown={() => onFocus(item.id)} onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); onOpenItem(item.id); } }}>
+            <Ask item={item} state={state} find={find} onOpen={(_taskId, tab) => onOpenItem(item.id, tab)} />
+          </div>
         ))}
       </div>
     </aside>
@@ -165,7 +168,7 @@ function NotifyOffer() {
 }
 
 /** One thing waiting on the coordinator. The inbox and the session show it the same way. */
-export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: State; find: Lookup; onOpen: InboxProps["onOpen"] }) {
+export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void }) {
   const [reply, setReply] = useState("");
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState("");
@@ -217,7 +220,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
     );
 
   return (
-    <article className={`ask ${item.blocking ? "blocking" : ""}`} aria-labelledby={titleId} data-item-id={item.id} tabIndex={-1}>
+    <article className={`ask ${item.blocking ? "blocking" : ""}`} aria-labelledby={titleId}>
       <div className={`ask-kind tone-${kind.tone}`}>
         <Icon size={14} strokeWidth={2.3} aria-hidden="true" />
         <span>

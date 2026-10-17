@@ -35,6 +35,8 @@ const Action = z.discriminatedUnion("name", [
     ]),
   }),
   z.object({ name: z.literal("moveInQueue"), args: z.tuple([z.string(), z.number().int()]) }),
+  z.object({ name: z.literal("placeInQueue"), args: z.tuple([z.string(), z.string(), z.enum(["before", "after"])]) }),
+  z.object({ name: z.literal("moveVisibleInQueue"), args: z.tuple([z.string(), z.array(z.string()).max(100000), z.union([z.literal(-1), z.literal(1)])]) }),
   z.object({ name: z.literal("moveToTop"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("setHeld"), args: z.tuple([z.string(), z.boolean()]) }),
   z.object({ name: z.literal("setAfter"), args: z.tuple([z.string(), z.array(z.string()).max(20)]) }),

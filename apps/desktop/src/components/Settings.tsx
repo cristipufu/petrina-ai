@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { State } from "@petrina/core";
 import { desktop, mode } from "../engine";
+import { setSingleKeys, useSingleKeys } from "../keyboard";
 import { BrowserNotices, platform, shell, useBrowserPermission, type BrowserPermission, type Platform } from "../notify/channels";
 import { sendTest, setNotificationsOn, useNotifySettings } from "../notify/settings";
 import { turnOnInBrowser } from "../notify/useNotices";
@@ -50,10 +51,11 @@ function Switch({ on, onToggle, labelledBy, describedBy, disabled = false }: { o
 
 /**
  * Settings for the whole app, one page. Each part of Petrina adds its own section here.
- * Notifications: one switch, an honest line about permission, and a test. Products: each
- * product's name and delivery defaults; `product` is the one open there.
+ * Notifications: one switch, an honest line about permission, and a test. Keyboard: the
+ * single-key shortcuts. Products: each product's name and delivery defaults; `product` is the
+ * one open there.
  */
-export function SettingsPage({ state, product, onProduct }: { state: State; product: string | undefined; onProduct: (productId: string | undefined) => void }) {
+export function SettingsPage({ state, product, onProduct, onShortcuts }: { state: State; product: string | undefined; onProduct: (productId: string | undefined) => void; onShortcuts: () => void }) {
   return (
     <div className="page settings-page">
       <div className="page-head">
@@ -63,6 +65,7 @@ export function SettingsPage({ state, product, onProduct }: { state: State; prod
         </div>
       </div>
       <NotificationSettings />
+      <KeyboardSettings onShortcuts={onShortcuts} />
       <ProductSettings state={state} open={product} onOpen={onProduct} />
     </div>
   );
@@ -140,6 +143,33 @@ function NotificationSettings() {
             {result}
           </span>
         )}
+      </div>
+    </section>
+  );
+}
+
+function KeyboardSettings({ onShortcuts }: { onShortcuts: () => void }) {
+  const singleKeys = useSingleKeys();
+  return (
+    <section className="settings-section" aria-labelledby="settings-keyboard">
+      <h2 className="section-title" id="settings-keyboard">
+        Keyboard
+      </h2>
+      <div className="setting">
+        <div className="setting-text">
+          <div className="setting-name" id="single-keys-name">
+            Single-key shortcuts
+          </div>
+          <p className="setting-hint" id="single-keys-hint">
+            Use J, K, P and M to work with the task in focus. These keys rest while you type.
+          </p>
+        </div>
+        <Switch on={singleKeys} onToggle={() => setSingleKeys(!singleKeys)} labelledBy="single-keys-name" describedBy="single-keys-hint" />
+      </div>
+      <div className="setting-actions">
+        <button className="btn" onClick={onShortcuts}>
+          Keyboard shortcuts
+        </button>
       </div>
     </section>
   );
