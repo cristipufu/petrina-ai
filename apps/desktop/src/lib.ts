@@ -48,7 +48,7 @@ export function deliveryText(task: Task): { text: string; done: boolean } | unde
   if (task.release) return { text: `Released ${task.release.tag}`, done: true };
   if (task.landed) return { text: `Delivered locally to ${task.landed.branch}`, done: true };
   if (task.pr?.state === "merged") return { text: `Pull request #${task.pr.number} merged`, done: true };
-  if (task.pr?.state === "closed") return { text: `Pull request #${task.pr.number} closed without merging`, done: false };
+  if (task.pr && (task.pr.state === "closed" || landingOf(task) === "closed")) return { text: `Pull request #${task.pr.number} closed without merging`, done: false };
   if (task.pr) return { text: `Pull request #${task.pr.number} · awaiting merge`, done: false };
   if (landingOf(task) === "marked-done") return { text: "Marked as done · delivery not confirmed", done: false };
   return undefined;

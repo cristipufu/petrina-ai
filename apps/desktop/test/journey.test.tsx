@@ -162,6 +162,11 @@ describe('unusual endings in words', () => {
   const merged = taskOf(state, 'sentry');
   it('a closed pull request is not awaiting merge, and Mark as done delivers nothing', () => {
     expect(deliveryText(merged)).toEqual({ text: `Pull request #${merged.pr!.number} merged`, done: true });
+    for (const prState of [undefined, 'open'] as const) {
+      const pr = { ...merged.pr!, state: prState };
+      expect(deliveryText({ ...merged, state: 'done', pr })).toEqual({ text: `Pull request #${pr.number} closed without merging`, done: false });
+      expect(deliveryText({ ...merged, state: 'pr-open', pr })).toEqual({ text: `Pull request #${pr.number} · awaiting merge`, done: false });
+    }
     expect(deliveryText({ ...merged, pr: { ...merged.pr!, state: 'closed' } })).toEqual({ text: `Pull request #${merged.pr!.number} closed without merging`, done: false });
     expect(deliveryText({ ...merged, state: 'cancelled', pr: { ...merged.pr!, state: 'closed' } })).toEqual({ text: `Pull request #${merged.pr!.number} closed without merging`, done: false });
     const { pr: _none, ...marked } = merged;
