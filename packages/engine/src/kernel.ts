@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, callCheckBody, queueOf, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, GATE_TITLE, gateStatus, type DeepMutable } from "@petrina/core";
+import { BUILT_IN_ROLES, callCheckBody, queueOf, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
 import { Store } from "./store.js";
@@ -189,7 +189,7 @@ export abstract class Kernel {
     delete task.agent;
     task.holdsSlot = false;
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? deliveryLines(task as unknown as Task) : undefined;
-    this.raise(task, gate, GATE_TITLE[gate](task.title), false, body ? { body } : {});
+    this.raise(task, gate, gateTitle(task as unknown as Task, gate), false, body ? { body } : {});
     task.statusLine = gateStatus(task as unknown as Task, gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     // On disk before the window shows it: an answer to this check must find it after any restart.

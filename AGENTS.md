@@ -25,3 +25,9 @@ Do not add security or sandboxing mechanisms of Petrina's own unless the task is
 
 - `bun run typecheck` and `bun run test` must pass.
 - UI changes: check light and dark, and the demo (`?demo`, `?demo=portfolio`).
+
+## Learnings
+
+What agents learned about working in this repository, added with the coordinator's OK.
+
+- Desktop tests run in happy-dom at 1024px wide, where the inbox opens over the board: to test the docked inbox, widen the window to 1200px or more with `window.happyDOM.setViewport({ width: 1400 })` inside `act()`, and set it back afterwards.

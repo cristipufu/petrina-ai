@@ -147,8 +147,10 @@ export function noticeFor(item: InboxItem, state: State): Notice {
   const detail = item.kind === "question" ? plainWords(item.title, QUESTION_MAX) : item.kind === "permission" ? request(item) : undefined;
   // A stuck task's error never leaves the app; its title already names the task.
   const where = item.kind === "stuck" ? product : product ? `${task}, ${product}` : task;
+  const owner = state.tasks.find((entry) => entry.id === item.taskId);
+  const unsettled = item.kind === "delivery" && (owner?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false);
   return {
-    title: NEED[item.kind](who, task),
+    title: unsettled ? `${who}: review rounds ran out with blocking findings open, your call` : NEED[item.kind](who, task),
     lines: [detail, where].filter((line): line is string => Boolean(line)),
     itemIds: [item.id],
     target: { kind: "item", id: item.id },

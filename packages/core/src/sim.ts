@@ -24,7 +24,7 @@ import type {
   TaskKind,
 } from "./model.js";
 import { extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
-import { afterChangesAsked, columnOf, designRoundEnd, GATE_TITLE, gateStatus, reviewRoundEnd, type DeepMutable } from "./flow.js";
+import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, reviewRoundEnd, type DeepMutable } from "./flow.js";
 import { findingCount } from "./findings.js";
 import type { NewTaskInput } from "./commands.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
@@ -898,7 +898,7 @@ export class Simulator {
     task.holdsSlot = false;
     task.statusLine = gateStatus(task as unknown as Task, gate);
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
-    this.raise(d, task, gate, GATE_TITLE[gate](task.title), false, body ? { body } : {});
+    this.raise(d, task, gate, gateTitle(task as unknown as Task, gate), false, body ? { body } : {});
     task.column = this.columnFor(d, task);
   }
 

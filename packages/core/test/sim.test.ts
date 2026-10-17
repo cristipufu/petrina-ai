@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { gateStatus, gateTitle } from "../src/flow.js";
 import { answerByCall, CALL_WORDS, dueAnswers, unanswered } from "../src/call.js";
 import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS } from "../src/demo.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
@@ -503,5 +504,16 @@ describe("delivery in the demo, as the engine does it", () => {
     expect(lines.filter((line) => line === "Ready to publish")).toHaveLength(1);
     expect(lines.indexOf("Release Manager started")).toBeGreaterThan(-1);
     expect(lines.findIndex((line) => line.startsWith("Petrina pushed main and the tag"))).toBeGreaterThan(lines.indexOf("Ready to publish"));
+  });
+});
+
+describe("a delivery whose review rounds ran out", () => {
+  it("says the coordinator decides, with how many blocking findings are open, never 'ready to ship'", () => {
+    const task = { title: "Fix the focus", findings: [{ status: "open", severity: "blocking" }, { status: "open", severity: "blocking" }, { status: "fixed", severity: "blocking" }] } as unknown as Task;
+    expect(gateTitle(task, "delivery")).toBe("Your call on “Fix the focus”: 2 blocking findings still open");
+    expect(gateStatus(task, "delivery")).toBe("Review rounds ran out with 2 blocking findings open. Your call");
+    const passed = { title: "Fix the focus", findings: [] } as unknown as Task;
+    expect(gateTitle(passed, "delivery")).toBe("Ready to ship “Fix the focus”");
+    expect(gateStatus(passed, "delivery")).toBe("Reviews done. Waiting for your OK to ship");
   });
 });

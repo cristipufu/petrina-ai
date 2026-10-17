@@ -184,7 +184,9 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const [reopened, setReopened] = useState<string>();
   const task = find.task(item.taskId);
   const product = find.product(task?.productId);
-  const kind = KIND[item.kind];
+  // A delivery whose review rounds ran out with Important findings open is a decision, not "ready to ship".
+  const unsettled = item.kind === "delivery" && (task?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false);
+  const kind = unsettled ? { ...KIND.delivery, label: "Your call", tone: "amber" as const } : KIND[item.kind];
   const Icon = kind.icon;
   const role = find.role(item.roleId);
   const profile = find.profile(item.profileId);
