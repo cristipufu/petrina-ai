@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createDemoState, type InboxItem, type InboxKind, type State } from "@petrina/core";
 import { ALREADY_HANDLED, canLand, landingFor, planJump } from "../src/notify/jump";
 import { InboxWatch, Notifier, PAUSE_MS, type NotifierHost } from "../src/notify/notifier";
+import { getSettings, sendTest, setNotificationsOn } from "../src/notify/settings";
 import { noticeFor, plainWords, summaryOf, waitingLine, whoAsks, type Notice } from "../src/notify/words";
 
 const demo = createDemoState(1_000_000_000);
@@ -265,6 +266,27 @@ describe("the off switch", () => {
   });
 });
 
+describe("the test notification", () => {
+  it("a Mac test that is still waiting never goes out once notifications are switched off", async () => {
+    setNotificationsOn(true);
+    const sent: string[] = [];
+    let release = () => undefined as void;
+    const waiting = sendTest(async () => sent.push("test"), 5000, () => new Promise<void>((resolve) => (release = resolve)));
+    setNotificationsOn(false);
+    release();
+    expect(await waiting).toBe("off");
+    expect(sent).toEqual([]);
+    expect(getSettings().on).toBe(false);
+  });
+
+  it("goes out after the wait while notifications stay on", async () => {
+    setNotificationsOn(true);
+    const sent: string[] = [];
+    expect(await sendTest(async () => sent.push("test"), 5000, async () => undefined)).toBe("sent");
+    expect(sent).toEqual(["test"]);
+  });
+});
+
 describe("wording", () => {
   it("says what is needed, for which task and product, and which role asks", () => {
     const permission = item("permission", { title: "Add a new package: Stripe.js", detail: "npm install @stripe/stripe-js", roleId: "builder", body: "Claude Code's own safety check wants your OK before this." });
@@ -313,6 +335,32 @@ describe("wording", () => {
     expect(line!.endsWith("…")).toBe(true);
     expect(plainWords("See docs.example.com/setup.", 80)).toBe("See a link.");
     expect(plainWords("Add a new package: Stripe.js", 80)).toBe("Add a new package: Stripe.js");
+  });
+
+  it("turns every kind of address into 'a link': bare domains, local addresses and IP addresses", () => {
+    const hidden: [string, string][] = [
+      ["Should I use example.com?", "Should I use a link?"],
+      ["Deploy to staging.shop.example.co.uk now", "Deploy to a link now"],
+      ["Is EXAMPLE.COM ours?", "Is a link ours?"],
+      ["Preview at my-app.vercel.app", "Preview at a link"],
+      ["Is `api.example.dev` right?", "Is a link right?"],
+      ["Open localhost:3000/checkout.", "Open a link."],
+      ["Is localhost fine?", "Is a link fine?"],
+      ["Use host.docker.internal:5432 or printer.local:631", "Use a link or a link"],
+      ["Server at 127.0.0.1:8080", "Server at a link"],
+      ["Try 192.168.1.20.", "Try a link."],
+      ["Admin at 10.0.0.1/admin", "Admin at a link"],
+      ["Use [::1]:5173, ::1 or fe80::1", "Use a link, a link or a link"],
+      ["Push to git@github.com:shop/web.git", "Push to a link"],
+      ["Mail a.b@example.org.", "Mail an email address."],
+      ["See [example.com](https://example.com)", "See a link"],
+      ["Run x_https://evil.example", "Run a link"],
+    ];
+    for (const [text, said] of hidden) expect(plainWords(text, 140)).toBe(said);
+    // File names, versions, times and code keep their words.
+    for (const text of ["Edit README.md, setup.py, main.rs and run.sh", "Use node.js 22 and package.json", "Is item.id a string? Use Object.is(a, b)", "Rename App.tsx:42 and .env.local", "Version 1.2.3, at 10:30:00", "Use std::vector", "Done.It works"]) {
+      expect(plainWords(text, 140)).toBe(text);
+    }
   });
 
   it("never shows the command behind a permission", () => {

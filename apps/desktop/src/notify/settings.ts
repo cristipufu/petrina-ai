@@ -69,3 +69,17 @@ export function subscribeSettings(listener: () => void): () => void {
 export function useNotifySettings(): NotifySettings {
   return useSyncExternalStore(subscribeSettings, getSettings);
 }
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The test from Settings, after `delay` (on a Mac, which shows no banner for the app in front).
+ * If notifications are switched off meanwhile, here or after leaving Settings and coming back,
+ * nothing goes out.
+ */
+export async function sendTest(send: () => Promise<unknown>, delay: number, wait: (ms: number) => Promise<void> = sleep): Promise<"sent" | "off"> {
+  if (delay > 0) await wait(delay);
+  if (!getSettings().on) return "off";
+  await send();
+  return "sent";
+}

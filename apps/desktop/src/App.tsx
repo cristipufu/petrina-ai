@@ -3,7 +3,7 @@ import { Bell, Boxes, Bot, Ellipsis, Hand, LayoutGrid, Library, Moon, Plus, Sear
 import type { State, Task } from "@petrina/core";
 import { mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
-import { CouldNotStart, EnginePill, StartingScreen } from "./components/EngineState";
+import { CouldNotStart, EnginePill, EngineRecovery, StartingScreen } from "./components/EngineState";
 import { blockingCount, lookup, type Lookup } from "./lib";
 import { dismissPopovers, hasTyping, Logo, useDismiss, useViewport, viewportSize } from "./components/bits";
 import { Board } from "./components/Board";
@@ -64,6 +64,8 @@ export function App() {
   const [sheet, setSheet] = useState<{ taskId: string; tab: SheetTab }>();
   const [creating, setCreating] = useState(false);
   const [addingProduct, setAddingProduct] = useState(false);
+  // The product open in Settings' Products section.
+  const [productSettings, setProductSettings] = useState<string>();
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [jump, setJump] = useState<Jump>();
@@ -91,6 +93,10 @@ export function App() {
   useEffect(() => startClock(), []);
 
   useEffect(() => applyTheme(theme), [theme]);
+
+  useEffect(() => {
+    if (product !== "all" && !state.products.some((entry) => entry.id === product)) setProduct("all");
+  }, [state.products, product]);
 
   const toast = useCallback((title: string, lines: readonly string[] = [], target?: Target) => {
     const id = (toastId.current += 1);
@@ -153,6 +159,12 @@ export function App() {
   }, []);
   const close = useCallback(() => setSheet(undefined), []);
 
+  /** Settings, with one product's settings open when it comes from the Products page. */
+  const openSettings = useCallback((productId?: string) => {
+    setProductSettings(productId);
+    setView("settings");
+  }, []);
+
   const openInbox = useCallback(() => setInboxOpen(true), []);
   // Closing the inbox hands focus back to the button that opens it.
   const closeInbox = useCallback(() => {
@@ -185,13 +197,14 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
+      if (target.closest('[aria-modal="true"]')) return;
       const typing = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
         setCreating(true);
       } else if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key === ",") {
         event.preventDefault();
-        setView("settings");
+        openSettings();
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setSearching(true);
@@ -209,7 +222,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openInbox, closeInbox]);
+  }, [openInbox, closeInbox, openSettings]);
 
   const visible = useCallback(
     (task: Task) => (product === "all" || task.productId === product) && (!query.trim() || task.title.toLowerCase().includes(query.trim().toLowerCase())),
@@ -224,9 +237,10 @@ export function App() {
     </button>
   );
   const docked = inboxOpen && !overlay;
+  const recovery = mode === "engine" && !status.desktop && status.link !== "live" && status.recovery;
 
   return (
-    <div className="app" style={{ gridTemplateColumns: `var(--rail) minmax(0, 1fr) ${docked ? "auto" : "0px"}` }}>
+    <div className={`app ${recovery ? "with-engine-hint" : ""}`} style={{ gridTemplateColumns: `var(--rail) minmax(0, 1fr) ${docked ? "auto" : "0px"}` }}>
       <header className="topbar">
         <div className="brand" aria-label="Petrina">
           <Logo />
@@ -271,6 +285,7 @@ export function App() {
         </button>
         {barExtras ? themeButton : <MoreMenu state={state} find={find} onOpen={open} status={status} themeButton={themeButton} />}
       </header>
+      {recovery && <EngineRecovery status={status} />}
 
       <nav className="rail" aria-label="Sections">
         <button className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={() => setView("board")} title="Board (B)">
@@ -295,7 +310,7 @@ export function App() {
           Library
         </button>
         <div className="rail-end" />
-        <button className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={() => setView("settings")} title={`Settings (${SETTINGS_KEY})`}>
+        <button className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={() => openSettings()} title={`Settings (${SETTINGS_KEY})`}>
           <Settings size={20} aria-hidden="true" />
           Settings
         </button>
@@ -306,6 +321,7 @@ export function App() {
         {view === "products" && (
           <ProductsPage
             state={state}
+            onSettings={openSettings}
             {...(mode === "engine" ? { onAdd: () => setAddingProduct(true) } : {})}
             onPick={(productId) => {
               setProduct(productId);
@@ -315,7 +331,7 @@ export function App() {
         )}
         {view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {view === "library" && <LibraryPage state={state} find={find} />}
-        {view === "settings" && <SettingsPage />}
+        {view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} />}
       </main>
 
       {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay} landing={landing} onOpen={open} onClose={closeInbox} /> : <div />}
@@ -340,6 +356,7 @@ export function App() {
           onAdded={(productId) => {
             setAddingProduct(false);
             setProduct(productId);
+            setView("board");
           }}
         />
       )}

@@ -57,8 +57,12 @@ describe("one engine per Petrina folder", () => {
 
     // Started by hand while it runs: a plain refusal.
     const byHand = spawnEngine([CLI, "serve"], home);
+    const boardBefore = await first.state();
     expect(await byHand.exited).toBe(1);
-    expect(await new Response(byHand.stderr).text()).toContain("already running");
+    expect(await new Response(byHand.stderr).text()).toBe("Petrina's engine is already running. Open it with bun run open.\n");
+    expect(await new Response(byHand.stdout).text()).toBe("");
+    expect((await first.state()).tasks).toEqual(boardBefore.tasks);
+    expect(readFileSync(logPath, "utf8")).toBe(logBefore.text);
     await first.quit();
   });
 

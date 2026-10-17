@@ -58,6 +58,14 @@ What success feels like: many pull requests a day, little time spent being the t
 - **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
 - **A task** opens as a sheet over the board (840px wide), so the board stays in view.
 
+### Reaching the engine
+
+In a browser, a lost connection shows Reconnecting. After about three seconds a slim line below the top bar says: "Can't reach the Petrina engine. In a terminal, run `bun run engine` and leave it running, then run `bun run open` in another terminal." The commands are easy to select and copy. The line disappears on reconnect, never flashes during shorter blips, and never appears in the demo.
+
+If the engine answers but refuses this window's old key, it says instead: "The Petrina engine restarted. Run `bun run open` for a fresh window, then close this one." Restarts normally keep the key; this covers a changed key too. If the window cannot tell, it uses the first message. The desktop app starts and restarts its own engine, so it keeps its existing recovery message and **Try again**, without terminal instructions.
+
+Starting a second engine prints one line: "Petrina's engine is already running. Open it with bun run open." It stops before opening task data and changes nothing on the board, using the same single-engine check as the desktop app.
+
 ### Window size
 
 - The desktop window opens with 1680×1000 for the app itself, the title bar on top of that, centred and never larger than the screen's usable area: the whole window, title bar included, stays below the menu bar and clear of the Dock or taskbar, on whichever screen it opens. It can shrink to 1100×680, again not counting the title bar. On a screen smaller than that it opens at the minimum in the top-left corner of the usable area, so the title bar is always reachable.
@@ -115,6 +123,18 @@ A coordinator may run twenty products or more, so nothing assumes a handful.
 
 - **Product switcher** (⌘P) in the top bar: a search field, then products grouped as *Needs you*, *Active* and *Quiet*, each saying in quiet text what waits on you, how many agents work and how many tasks are queued. The board keeps its full width.
 - **Products page:** the portfolio on one screen. One row per product with its pipeline (queue, plan, design, build, review, ready), what shipped, and what waits on you, as aligned numbers rather than badges. Products that need you sort first; clicking one filters the board to it. In a small window the table scrolls sideways.
+
+### Product names and settings
+
+- **Add a product** has a folder path and a Name field below it. The folder suggests the name (`petrina-ai` becomes Petrina AI); common abbreviations AI, API, UI, UX, CLI and SDK stay in capitals, and words already containing capitals keep their spelling. Correct the name before adding. Both fields are required; adding an existing repository opens its product without renaming it.
+- Product settings live on the shared Settings page, in its **Products** section: one row per product, A to Z, with its repository and its delivery choice in plain words, such as "Pull request · asks first", and **Edit**. Edit opens that product's settings below its row, one product at a time, with Name focused. Every product row on the Products page has a separate **Settings** button that opens Settings at that product. Escape or Cancel closes them and returns focus to Edit.
+- A product's settings show Name, the same three delivery choices as New task, **Ask me before shipping**, and **Remove product**. They contain no permission controls. Save applies name and delivery defaults together; Cancel or Escape discards the edits. Names are trimmed, one line, at most 60 characters, and unique ignoring capitals, enforced by the engine as well as in the demo. A rejected save changes nothing.
+- Delivery choices apply to new tasks; tasks already on the board keep theirs. A saved name appears everywhere immediately and in the next agent's instructions. Running agents keep the instructions they already received. Working copies, branches and the GitHub repository keep their identities.
+- Removal is unavailable until all tasks are done or cancelled, and says how many must finish or be cancelled first. An open pull request, failed task, paused task or queued task still counts as unfinished. The engine checks this again.
+- Confirmation names the number of finished and cancelled tasks being permanently deleted, including their conversations, timelines, and design and review history, and says this cannot be undone. A separate line says: "Your repository, its local folder, its branches and GitHub are not touched." With no tasks, it says "This product has no task history." The confirm button names the loss: **Remove and delete 12 tasks**. Removal clears those tasks and their inbox entries, closes the product's settings, and returns a board filtered to that product to All products. Petrina's working copies remain on disk.
+- While disconnected, Add product, Save and Remove are disabled and say they are waiting for the engine. The same settings and removal flow work on simulated products in the demo.
+
+A task taking a slot leaves the queue immediately, before its working copy is ready or its planner speaks: no queue number, drag handle, queue count or next-up entry remains. The card's Plan step is current, its planner is named, and the Products page counts it under Plan. Resumed tasks show their own current step immediately too.
 - The queue and the pool stay global: priority is across products, because the pool of agents is shared.
 - Cards always carry their product, so an all-products board stays readable.
 
@@ -126,13 +146,14 @@ How many agents may run at once.
 - Clicking opens a popover:
   - a stepper for the limit (1 to 12),
   - caps per tool (for example Claude Code 3, Codex 2), so one subscription is not exhausted,
-  - **Pause pool**: running stages finish, nothing new starts,
+  - **Pause pool**: running agents finish, no new agent starts,
   - the list of who is in each slot.
 - Rules:
-  - A running stage holds a slot.
+  - Taking a slot immediately records its agent and tool, so each tool's cap counts it before setup finishes.
+  - Before every following agent, even on the same tool, the task checks the limits again. If other tasks fill its tool or the pool, or the pool is paused, it waits at its current step with a line such as "Waiting for a free Codex slot". It keeps its working copy and progress and continues ahead of queued tasks. Work already holding a slot keeps it when there is room.
   - A task at a checkpoint (waiting for your OK between stages) releases its slot.
   - An agent that asked you something mid-stage keeps its slot, and the slot turns amber. The top bar then says "You're blocking 1 agent", because the coordinator is the bottleneck and should know it.
-  - Lowering the limit never kills anyone. Running stages finish, then the pool shrinks.
+  - Lowering the limit never stops a running agent. Each finishes, then its next agent waits until there is room, so the pool shrinks as agents finish.
 - The **Agents** page is the same information large: one tile per slot with the live status line and a Join button.
 
 ## Inbox: "Needs you"
@@ -169,7 +190,7 @@ When something new lands in the inbox and you are not looking at Petrina, you ge
 - **In front or away.** While Petrina is in front (its window focused, or its tab visible and focused), the small in-app message appears instead; its View button does exactly what a click on the notification does. A Petrina window visible on a second screen without focus counts as away.
 - **Calm pacing.** At most one notification every ten seconds. The first goes out at once. What arrives during the pause goes out when it ends: one item on its own, two or more as one summary ("3 more things need you", naming up to two of their tasks). Held items that were handled meanwhile, or that you saw because Petrina came to the front, are dropped; if none are left, nothing goes out.
 - **Nothing shown is taken back.** On macOS and Windows a notification for an item already handled stays in the system's list until you clear it; clicking it shows "Already handled". In a browser a notification closes once its item is handled, and a summary once all of its items are.
-- **Wording.** Plain words: what is needed, who is asking, for which task and product. "Builder needs your permission", then "Add a new package: Stripe.js" and "Guest checkout, Shop". Who is asking is the agent's role when the item records one, otherwise Petrina ("Petrina: Guest checkout is stuck"); never an agent the item does not record, never blank. Questions are shortened and web addresses in them become "a link". A notification never contains the command behind a permission, the error of a stuck task, or any link: those stay in the app, since notifications can show on the lock screen and in the system's history.
+- **Wording.** Plain words: what is needed, who is asking, for which task and product. "Builder needs your permission", then "Add a new package: Stripe.js" and "Guest checkout, Shop". Who is asking is the agent's role when the item records one, otherwise Petrina ("Petrina: Guest checkout is stuck"); never an agent the item does not record, never blank. Questions are shortened, and every web address in them becomes "a link": with or without http or www (example.com), this machine (localhost:3000), local names and IP addresses (192.168.1.20, [::1]:5173). Email addresses become "an email address". File names and code keep their words (README.md, setup.py, node.js, item.id). A notification never contains the command behind a permission, the error of a stuck task, or any link: those stay in the app, since notifications can show on the lock screen and in the system's history.
 - **Clicking one** brings Petrina to the front (restored if minimized), opens the inbox if it is hidden, scrolls to the item, highlights it and moves keyboard focus to it, and briefly highlights its task card when the board shows it. The page and the product filter stay as they are; menus and pop-overs close. An item already handled (here, in another window, or because its task was cancelled) opens the inbox with a short "Already handled" note, and nothing else changes.
 - **Nothing typed is lost.** If New task, Add product, or a task sheet with an unsent message or note is open, it stays open with everything typed in it. A line at its top names what is waiting ("Builder needs your permission. Guest checkout") and says it opens when you are done. As soon as that window closes, finished or cancelled, the inbox opens at the item. A later click replaces an earlier one. A task sheet with nothing typed closes at once, so the item is in view.
 - **Never a guess.** A summary, or a click the system does not trace to one notification, opens the inbox with nothing selected. macOS reports clicks on screen and from Notification Center. Windows reports a click only while the notification is on screen; from the notification list it opens Petrina again, which brings the running one forward with the inbox open and nothing selected (once Petrina has sent a notification in that run).
@@ -228,9 +249,10 @@ This is the "open in terminal" experience, made friendly.
 
 ## Settings
 
-One page for the whole app, from the bottom of the rail or with ⌘, (Ctrl+, on Windows and Linux). It uses the same page header, type and spacing as the other pages, in light and dark. Each part of Petrina adds its own section here (Product settings and the command palette's shortcuts among them), so there is never a second settings surface.
+One page for the whole app, from the bottom of the rail or with ⌘, (Ctrl+, on Windows and Linux). It uses the same page header, type and spacing as the other pages, in light and dark. Each part of Petrina adds its own section here (the command palette's shortcuts will join them), so there is never a second settings surface.
 
 - **Notifications:** one switch ("Notify me when the squad needs me"), a line about permission, and **Send a test notification**. The line is honest: a browser says it allows Petrina's notifications, blocks them (with how to allow them), or has not been asked yet. The desktop app cannot read the system's setting, so it says so, suggests the test, and names where to allow Petrina: System Settings › Notifications on a Mac, Settings › System › Notifications on Windows, the desktop's notification settings on Linux. It never says "allowed" without having checked. On a Mac the test goes out after five seconds, because macOS shows no banner for the app in front. With the switch off the test is unavailable.
+- **Products:** each product's name, what happens when its work is ready, and removal, as described under Product names and settings.
 - Later: pool limit and caps per tool, default checkpoints, appearance (light, dark or system), where data lives. (There is no permission list: Petrina remembers no permission answers.)
 
 ## First run

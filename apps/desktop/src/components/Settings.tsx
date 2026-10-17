@@ -1,8 +1,10 @@
 import { useState } from "react";
+import type { State } from "@petrina/core";
 import { desktop, mode } from "../engine";
 import { BrowserNotices, platform, shell, useBrowserPermission, type BrowserPermission, type Platform } from "../notify/channels";
-import { setNotificationsOn, useNotifySettings } from "../notify/settings";
+import { sendTest, setNotificationsOn, useNotifySettings } from "../notify/settings";
 import { turnOnInBrowser } from "../notify/useNotices";
+import { ProductSettings } from "./ProductSettings";
 
 /** macOS shows no banner for the app in front, so the Mac test waits for the person to switch away. */
 const MAC_TEST_DELAY_MS = 5000;
@@ -48,18 +50,20 @@ function Switch({ on, onToggle, labelledBy, describedBy, disabled = false }: { o
 
 /**
  * Settings for the whole app, one page. Each part of Petrina adds its own section here.
- * Notifications: one switch, an honest line about permission, and a test.
+ * Notifications: one switch, an honest line about permission, and a test. Products: each
+ * product's name and delivery defaults; `product` is the one open there.
  */
-export function SettingsPage() {
+export function SettingsPage({ state, product, onProduct }: { state: State; product: string | undefined; onProduct: (productId: string | undefined) => void }) {
   return (
     <div className="page settings-page">
       <div className="page-head">
         <div>
           <h1>Settings</h1>
-          <p>{desktop ? "Kept on this computer, for the desktop app." : "Kept in this browser, for this site."}</p>
+          <p>For the whole app. Notifications are kept {desktop ? "on this computer, for the desktop app" : "in this browser, for this site"}; products are kept by the engine.</p>
         </div>
       </div>
       <NotificationSettings />
+      <ProductSettings state={state} open={product} onOpen={onProduct} />
     </div>
   );
 }
@@ -69,6 +73,8 @@ function NotificationSettings() {
   const permission = useBrowserPermission();
   const [result, setResult] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // A Mac test waiting to go out. The switch stays usable meanwhile: switching off stops it.
+  const [testing, setTesting] = useState(false);
   // In a browser the switch only shows on while the browser allows them.
   const on = settings.on && (desktop || permission === "granted");
   const line = permissionLine(permission);
@@ -89,17 +95,15 @@ function NotificationSettings() {
     setResult(undefined);
     if (desktop) {
       const mac = platform() === "mac";
-      if (mac) {
-        setBusy(true);
-        setResult("Sending in 5 seconds. macOS only shows a notification while another app is in front, so switch to one now.");
-        await new Promise((resolve) => setTimeout(resolve, MAC_TEST_DELAY_MS));
-        setBusy(false);
-      }
+      if (mac) setResult("Sending in 5 seconds. macOS only shows a notification while another app is in front, so switch to one now.");
+      setTesting(true);
       try {
-        await shell.test();
-        setResult(`Sent. If nothing showed up${mac ? " (look in Notification Center too)" : ""}, allow Petrina in ${SYSTEM_SETTINGS[platform()]}.`);
+        const sent = await sendTest(() => shell.test(), mac ? MAC_TEST_DELAY_MS : 0);
+        setResult(sent === "off" ? "Notifications are off, so the test wasn't sent." : `Sent. If nothing showed up${mac ? " (look in Notification Center too)" : ""}, allow Petrina in ${SYSTEM_SETTINGS[platform()]}.`);
       } catch (error) {
         setResult(typeof error === "string" ? error : "Petrina couldn't send it.");
+      } finally {
+        setTesting(false);
       }
       return;
     }
@@ -127,7 +131,7 @@ function NotificationSettings() {
       </p>
       {mode === "demo" && <p className="setting-hint">The demo's simulated squad never sends notifications or sets the icon's count. The test still works.</p>}
       <div className="setting-actions">
-        <button className="btn" onClick={() => void test()} disabled={!on || busy}>
+        <button className="btn" onClick={() => void test()} disabled={!on || busy || testing}>
           Send a test notification
         </button>
         {!on && !unsupported && <span className="setting-hint">Turn notifications on to send a test.</span>}
