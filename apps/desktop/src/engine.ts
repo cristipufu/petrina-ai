@@ -29,6 +29,7 @@ export interface Actions {
   moveInQueue(taskId: Id, index: number): void;
   moveToTop(taskId: Id): void;
   setHeld(taskId: Id, held: boolean): void;
+  setAfter(taskId: Id, after: Id[]): void;
   pause(taskId: Id): void;
   resume(taskId: Id): void;
   cancel(taskId: Id): void;
@@ -49,12 +50,18 @@ export interface Unsent {
   text: string;
   /** The inbox item it answers. */
   itemId?: Id;
+  /** The engine refused it, in plain words. Kept and shown until the coordinator sends it again or discards it. */
+  refused?: string;
 }
 
 interface Store extends Actions {
   getState(): State;
   subscribe(listener: () => void): () => void;
   unsent(): readonly Unsent[];
+  /** Send something the engine refused once more. */
+  resendUnsent(clientId: string): void;
+  /** Let go of something the engine refused. */
+  discardUnsent(clientId: string): void;
 }
 
 /** How the window is connected to its engine. */
@@ -128,6 +135,11 @@ const NOTHING_UNSENT: readonly Unsent[] = [];
 
 /** The connection closed before the engine answered: worth sending again. */
 class Lost extends Error {}
+
+/** The engine's reason when it is plain words; its checks of what was sent are not, so they get a plain line. */
+function plainReason(error: string): string {
+  return error.length <= 160 && !/[{}[\]<>"`]/.test(error) ? error : "Petrina's engine could not take it.";
+}
 
 function clientId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
@@ -203,7 +215,7 @@ class EngineClient implements Store {
       this.failures = 0;
       this.wasLive = true;
       this.setStatus({ link: "live", desktop: this.source.desktop, ...(this.owned === undefined ? {} : { owned: this.owned }) });
-      for (const entry of this.outbox) this.deliver(entry);
+      for (const entry of this.outbox) if (!entry.refused) this.deliver(entry);
     };
     socket.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as { type: string; state?: State; id?: number; ok?: boolean; result?: unknown; error?: string };
@@ -290,11 +302,32 @@ class EngineClient implements Store {
     this.call(send.name, ...send.args).then(
       () => this.settle(unsent),
       (error: Error) => {
-        // Lost on the way: it goes again after reconnecting. Refused: the engine said why.
-        if (!(error instanceof Lost)) this.settle(unsent);
+        // Lost on the way: it goes again after reconnecting. Refused: it stays, marked, until the coordinator decides.
+        if (!(error instanceof Lost)) this.mark(unsent.clientId, plainReason(error.message));
       },
     );
   }
+
+  private mark(clientId: string, refused: string | undefined): void {
+    this.outbox = this.outbox.map((entry) => {
+      if (entry.clientId !== clientId) return entry;
+      const { refused: _old, ...rest } = entry;
+      return refused ? { ...rest, refused } : rest;
+    });
+    this.emit();
+  }
+
+  resendUnsent = (clientId: string): void => {
+    const entry = this.outbox.find((candidate) => candidate.clientId === clientId);
+    if (!entry?.refused) return;
+    this.mark(clientId, undefined);
+    this.deliver(entry);
+  };
+
+  discardUnsent = (clientId: string): void => {
+    const entry = this.outbox.find((candidate) => candidate.clientId === clientId);
+    if (entry?.refused) this.settle(entry);
+  };
 
   private settle(unsent: Unsent): void {
     this.sends.delete(unsent.clientId);
@@ -347,6 +380,7 @@ class EngineClient implements Store {
   moveInQueue = (taskId: Id, index: number) => this.fire("moveInQueue", taskId, index);
   moveToTop = (taskId: Id) => this.fire("moveToTop", taskId);
   setHeld = (taskId: Id, held: boolean) => this.fire("setHeld", taskId, held);
+  setAfter = (taskId: Id, after: Id[]) => this.fire("setAfter", taskId, after);
   pause = (taskId: Id) => this.fire("pause", taskId);
   resume = (taskId: Id) => this.fire("resume", taskId);
   cancel = (taskId: Id) => this.fire("cancel", taskId);
@@ -367,6 +401,8 @@ class DemoStore implements Store {
   getState = () => this.simulator.getState();
   subscribe = (listener: () => void) => this.simulator.subscribe(listener);
   unsent = () => NOTHING_UNSENT;
+  resendUnsent = () => undefined;
+  discardUnsent = () => undefined;
   answer = (itemId: Id, answer: string) => this.simulator.answer(itemId, answer);
   decideForMe = (itemId: Id) => this.simulator.decideForMe(itemId);
   allow = (itemId: Id, scope: "once" | "always") => this.simulator.allow(itemId, scope);
@@ -383,6 +419,7 @@ class DemoStore implements Store {
   moveInQueue = (taskId: Id, index: number) => this.simulator.moveInQueue(taskId, index);
   moveToTop = (taskId: Id) => this.simulator.moveToTop(taskId);
   setHeld = (taskId: Id, held: boolean) => this.simulator.setHeld(taskId, held);
+  setAfter = () => undefined;
   pause = (taskId: Id) => this.simulator.pause(taskId);
   resume = (taskId: Id) => this.simulator.resume(taskId);
   cancel = (taskId: Id) => this.simulator.cancel(taskId);

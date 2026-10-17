@@ -96,14 +96,16 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const role = find.role(item.roleId);
   const profile = find.profile(item.profileId);
   const unsent = useUnsent().filter((entry) => entry.itemId === item.id);
+  // While an answer is on its way the choices wait; one the engine refused gives them back.
+  const sending = unsent.some((entry) => !entry.refused);
   const connected = useEngineStatus().link === "live";
 
-  const sendBack = (label: string) =>
+  const sendBack = (label: string, placeholder = "What should change?", send = "Send") =>
     noting ? (
       <div className="ask-reply">
         <input
           autoFocus
-          placeholder="What should change?"
+          placeholder={placeholder}
           value={reply}
           onChange={(event) => setReply(event.target.value)}
           onKeyDown={(event) => {
@@ -112,7 +114,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
           }}
         />
         <button className="btn small" disabled={!reply.trim()} onClick={() => sim.requestChanges(item.id, reply.trim())}>
-          Send
+          {send}
         </button>
       </div>
     ) : (
@@ -157,7 +159,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {unsent.length === 0 && item.kind === "question" && (
+      {!sending && item.kind === "question" && (
         <>
           <div className="ask-options">
             {item.options?.map((option, index) => (
@@ -189,7 +191,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </>
       )}
 
-      {unsent.length === 0 && item.kind === "permission" && (
+      {!sending && item.kind === "permission" && (
         <>
           <div className="ask-actions">
             <button className="btn small primary" onClick={() => sim.allow(item.id, "once")}>
@@ -210,7 +212,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </>
       )}
 
-      {unsent.length === 0 && item.kind === "plan" && (
+      {!sending && item.kind === "plan" && (
         <div className="ask-actions">
           <button className="btn small primary" onClick={() => sim.approve(item.id)}>
             Approve plan
@@ -222,7 +224,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {unsent.length === 0 && item.kind === "design" && (
+      {!sending && item.kind === "design" && (
         <div className="ask-actions">
           <button className="btn small primary" onClick={() => sim.approve(item.id)}>
             Approve design
@@ -234,16 +236,19 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {unsent.length === 0 && item.kind === "disagreement" && (
-        <div className="ask-actions">
-          <button className="btn small primary" onClick={() => sim.approve(item.id)}>
-            Side with the architect
-          </button>
-          <button className="btn small" onClick={() => onOpen(item.taskId, "design")}>
-            Read both sides
-          </button>
-          {sendBack("Write my call…")}
-        </div>
+      {!sending && item.kind === "disagreement" && (
+        <>
+          <div className="ask-body">Your call settles the design: the architect follows it, with no further review round, and you check the brief before anything is built.</div>
+          <div className="ask-actions">
+            <button className="btn small primary" onClick={() => sim.approve(item.id)}>
+              Side with the architect
+            </button>
+            <button className="btn small" onClick={() => onOpen(item.taskId, "design")}>
+              Read both sides
+            </button>
+            {sendBack("Write my call…", "Your call: what should the design do?", "Make the call")}
+          </div>
+        </>
       )}
 
       {item.kind === "stuck" && (
@@ -274,7 +279,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {unsent.length === 0 && item.kind === "delivery" && (
+      {!sending && item.kind === "delivery" && (
         <div className="ask-actions">
           <button className="btn small primary" onClick={() => sim.approve(item.id)}>
             <GitPullRequest size={13} />

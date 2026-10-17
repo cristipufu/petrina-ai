@@ -3,12 +3,14 @@
 // request permissions, raise objections and findings, and wait at gates.
 // The UI uses it today; the tests use it to pin down scheduling and gate rules.
 
+import { answerByCall, CALL_WORDS, callCheckBody, callOn, designStageIndex, dueAnswers, followingCall, startCall, type CallAnswer } from "./call.js";
 import { composePlan } from "./library.js";
 import type {
   ActiveAgent,
   Column,
   DeliveryMode,
   DesignBrief,
+  DesignCall,
   GateKind,
   Id,
   InboxItem,
@@ -47,6 +49,8 @@ export interface SimOptions {
   prMergeAfter?: number;
   /** Milliseconds of simulated time per tick when no clock value is given. */
   tickMs?: number;
+  /** Tasks whose design reviewer keeps objecting every round, so the architects end up disagreeing. */
+  disagree?: readonly Id[];
 }
 
 export interface NewTask {
@@ -83,11 +87,15 @@ interface ScriptContext {
   round: number;
   fixing: boolean;
   delivery: DeliveryMode;
+  /** The architect is following the coordinator's call. */
+  following: boolean;
+  /** The design reviewer keeps objecting every round. */
+  objecting: boolean;
 }
 
 /** What each role says while it works, in plain language. */
 function scriptFor(roleId: Id, ctx: ScriptContext): string[] {
-  const { area, product, round, fixing, delivery } = ctx;
+  const { area, product, round, fixing, delivery, following, objecting } = ctx;
   switch (roleId) {
     case "shipper":
       return delivery === "release"
@@ -100,13 +108,14 @@ function scriptFor(roleId: Id, ctx: ScriptContext): string[] {
     case "researcher":
       return [`Looking at how other products handle ${area}`, `Collecting what users expect from ${area}`, "Writing research notes"];
     case "architect":
+      if (following) return ["Reading your call", `Updating the ${area} flow to follow it`, "Answering each open objection", "Brief follows your call"];
       return round === 1
         ? [`Reading the parts of ${product} this touches`, `Sketching the ${area} flow`, "Writing the acceptance checklist", "Design brief ready for review"]
         : ["Reading the objections", `Reworking the ${area} flow`, "Answering each objection", "Updated brief ready"];
     case "design-reviewer":
       return round === 1
         ? ["Reading the design brief", `Looking for gaps in the ${area} flow`, "Writing objections"]
-        : ["Reading the updated brief", "Checking the answer to each objection", "Nothing blocking left"];
+        : ["Reading the updated brief", "Checking the answer to each objection", objecting ? "Writing objections" : "Nothing blocking left"];
     case "ux-designer":
       return [`Sketching the ${area} screens`, "Checking contrast, spacing and wording", "Writing UI notes"];
     case "builder":
@@ -124,9 +133,22 @@ function scriptFor(roleId: Id, ctx: ScriptContext): string[] {
   }
 }
 
+/** What a design reviewer that keeps objecting raises after the first round. */
+function laterObjections(area: string, round: number): { text: string; blocking: boolean }[] {
+  return round === 2
+    ? [
+        { blocking: true, text: `The updated brief still does not say what people see in ${area} when a step fails.` },
+        { blocking: false, text: `Show progress in ${area} so people know how much is left.` },
+      ]
+    : [
+        { blocking: true, text: `The answer for existing accounts adds a confirmation step to ${area} that slows everyone down.` },
+        { blocking: false, text: "Consider a short note telling existing users what changed." },
+      ];
+}
+
 function briefFor(task: DraftTask): DeepMutable<DesignBrief> {
   return {
-    summary: `How ${task.area} should work after this change, agreed by both architects.`,
+    summary: callOn(task as unknown as Task, task.stageIndex) ? `How ${task.area} should work after this change, following your call.` : `How ${task.area} should work after this change, agreed by both architects.`,
     forUsers: [`${capitalize(task.area)} works the way the task describes`, "Nothing changes for people who do not use it"],
     areas: [capitalize(task.area), "Settings"],
     acceptance: [
@@ -148,10 +170,12 @@ export class Simulator {
   private readonly triggers: Triggers;
   private readonly prMergeAfter: number;
   private readonly tickMs: number;
+  private readonly disagree: ReadonlySet<Id>;
 
   constructor(state: State, options: SimOptions = {}) {
     this.state = state;
     this.triggers = options.triggers ?? {};
+    this.disagree = new Set(options.disagree ?? []);
     this.prMergeAfter = options.prMergeAfter ?? 12;
     this.tickMs = options.tickMs ?? 40_000;
   }
@@ -245,20 +269,29 @@ export class Simulator {
     });
   }
 
-  /** Send a gate back with a note: the design goes back to the architects, a delivery back to the builder, a plan back to the planner. */
+  /**
+   * Send a gate back with a note: the design goes back to the architects, a delivery back to the builder,
+   * a plan back to the planner. On a disagreement the note is the coordinator's call, which settles the design.
+   */
   requestChanges(itemId: Id, note: string): void {
     this.resolve(itemId, (d, task, item) => {
-      this.log(d, task, "you", `You asked for changes: ${note}`);
-      this.say(d, task, "you", note);
       const stages = task.plan?.stages ?? [];
-      if (item.kind === "plan") {
+      const call = item.kind === "disagreement" ? startCall(task as unknown as Task, note, d.now) : undefined;
+      this.log(d, task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
+      this.say(d, task, "you", note);
+      if (call && task.plan) {
+        task.plan.stages = call.stages as DeepMutable<Stage>[];
+        task.stageIndex = call.stageIndex;
+        task.call = call.call as DraftTask["call"];
+      } else if (item.kind === "plan") {
         task.stageIndex = -1;
       } else if (item.kind === "design") {
-        const index = stages.findIndex((stage) => stage.kind === "converge");
+        const index = designStageIndex(stages, task.stageIndex);
         if (index >= 0) {
           const stage = stages[index]!;
+          // On a design the call settled, changes go to the architect alone and come back to the same check.
+          if (!callOn(task as unknown as Task, index)) task.rounds[stage.id] = (task.rounds[stage.id] ?? 1) + 1;
           task.stageIndex = index;
-          task.rounds[stage.id] = (task.rounds[stage.id] ?? 1) + 1;
         }
       } else if (item.kind === "delivery") {
         const index = lastIndexWhere(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
@@ -509,6 +542,11 @@ export class Simulator {
     return stage ? (task.rounds[stage.id] ?? 1) : 1;
   }
 
+  /** The call the architect is following, while it works on the design stage the call settled. */
+  private following(task: DraftTask): DesignCall | undefined {
+    return task.sub === 0 ? followingCall(task as unknown as Task) : undefined;
+  }
+
   private columnFor(d: Draft, task: DraftTask): Column {
     if (task.state === "cancelled" || task.state === "done") return "done";
     if (task.state === "pr-open") return "ready";
@@ -569,14 +607,15 @@ export class Simulator {
 
     const product = d.products.find((entry) => entry.id === task.productId)?.name ?? "the product";
     const round = this.round(task);
-    const lines = scriptFor(agent.roleId, { area: task.area, product, round, fixing: task.fixing, delivery: task.delivery });
+    const following = !!this.following(task);
+    const lines = scriptFor(agent.roleId, { area: task.area, product, round, fixing: task.fixing, delivery: task.delivery, following, objecting: this.disagree.has(task.id) });
     const line = lines[agent.step];
     if (line === undefined) {
       this.finish(d, task);
       return;
     }
 
-    task.statusLine = line;
+    task.statusLine = following ? CALL_WORDS.following : line;
     this.say(d, task, "activity", line, agent.roleId, agent.profileId);
     this.log(d, task, "status", line, agent.roleId, agent.profileId);
     const trigger = this.triggers[`${task.id}|${agent.roleId}|${round}|${agent.step}`];
@@ -665,6 +704,23 @@ export class Simulator {
     }
 
     if (stage.kind === "converge") {
+      const call = this.following(task);
+      if (call) {
+        // The call settles the blocking objections; the architect answers the rest itself. None is left open.
+        // After changes asked for at the check, it answers them all again, so the notes match the updated brief.
+        const revising = !task.objections.some((objection) => objection.status === "open");
+        const answers: CallAnswer[] = dueAnswers(task.objections as Task["objections"], call).map((objection) =>
+          objection.blocking
+            ? { id: objection.id, status: "accepted", byCall: true, answer: revising ? `Changed the ${task.area} flow in the brief to your note, still following your call.` : `Changed the ${task.area} flow in the brief to follow your call.` }
+            : { id: objection.id, status: "rejected", byCall: false, answer: revising ? "Still out of scope after your note. Kept in risks." : "Out of scope for this task. Added to risks." },
+        );
+        task.objections = answerByCall(task.objections as Task["objections"], call, answers) as DraftTask["objections"];
+        task.brief = briefFor(task);
+        this.log(d, task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, agent.roleId, agent.profileId);
+        this.log(d, task, "done", CALL_WORDS.settled);
+        this.advance(d, task);
+        return;
+      }
       if (task.sub === 0) {
         for (const objection of task.objections) {
           if (objection.status !== "open") continue;
@@ -676,13 +732,17 @@ export class Simulator {
         this.startAgent(d, task);
         return;
       }
-      if (round === 1) {
-        task.objections.push(
-          { id: this.id(d, task.id), round, blocking: true, raisedBy: agent.profileId, status: "open", text: `What happens to ${task.area} for people who already have an account? The brief does not say.` },
-          { id: this.id(d, task.id), round, blocking: false, raisedBy: agent.profileId, status: "open", text: `Consider remembering the last choice in ${task.area} on this device.` },
-        );
-        this.log(d, task, "warn", "Raised 2 objections, 1 blocking", agent.roleId, agent.profileId);
-        if (round + 1 > (stage.maxRounds ?? 3)) {
+      if (round === 1 || this.disagree.has(task.id)) {
+        const raised =
+          round === 1
+            ? [
+                { blocking: true, text: `What happens to ${task.area} for people who already have an account? The brief does not say.` },
+                { blocking: false, text: `Consider remembering the last choice in ${task.area} on this device.` },
+              ]
+            : laterObjections(task.area, round);
+        for (const objection of raised) task.objections.push({ id: this.id(d, task.id), round, raisedBy: agent.profileId, status: "open", ...objection });
+        this.log(d, task, "warn", `Raised ${raised.length} objections, ${raised.filter((objection) => objection.blocking).length} blocking`, agent.roleId, agent.profileId);
+        if (round >= (stage.maxRounds ?? 3)) {
           this.gateDisagreement(d, task);
           return;
         }
@@ -765,8 +825,9 @@ export class Simulator {
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
     delete task.agent;
     task.holdsSlot = false;
-    task.statusLine = GATE_STATUS[gate];
-    this.raise(d, task, gate, GATE_TITLES[gate](task.title), false);
+    task.statusLine = gate === "design" && callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : GATE_STATUS[gate];
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
+    this.raise(d, task, gate, GATE_TITLES[gate](task.title), false, body ? { body } : {});
     task.column = this.columnFor(d, task);
   }
 
@@ -774,7 +835,7 @@ export class Simulator {
     delete task.agent;
     task.holdsSlot = false;
     task.statusLine = "The architects disagree. Your call";
-    this.raise(d, task, "disagreement", `The architects disagree on “${task.title}”`, false);
+    this.raise(d, task, "disagreement", `The architects disagree on “${task.title}”`, false, { body: CALL_WORDS.disagreement });
   }
 
   private continueAfterGate(d: Draft, task: DraftTask): void {

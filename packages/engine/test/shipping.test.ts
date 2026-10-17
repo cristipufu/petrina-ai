@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { DeliveryMode, State, Task } from "@petrina/core";
-import { readGitHub } from "./fake-gh.js";
+import { readCalls, readGitHub } from "./fake-gh.js";
 import type { Scenario } from "./fake-agent.js";
 import { EngineProcess, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
@@ -16,13 +17,16 @@ async function shipping(mode: DeliveryMode, shipper: NonNullable<Scenario["shipp
   const home = join(root, "home");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "short", builder: "plain", shipper });
+  // GitHub's copy is the bare repository the shipper pushes to.
+  fakes.github((state) => (state.origin = join(root, "origin.git")));
   const engine = await EngineProcess.harness(home, fakes.dir);
   const productId = (await engine.act("addProduct", product)) as string;
   await engine.act("setProductDelivery", productId, mode, false);
   const taskId = (await engine.act("addTask", { productId, title: "Add a greeting" })) as string;
   const github = () => readGitHub(join(fakes.dir, "github.json"));
+  const calls = () => readCalls(join(fakes.dir, "github.json"));
   const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
-  return { root, product, home, fakes, engine, taskId, github, find, origin: join(root, "origin.git") };
+  return { root, product, home, fakes, engine, taskId, github, calls, find, origin: join(root, "origin.git") };
 }
 
 const delivered = (task: Task | undefined) => task?.state === "done" || task?.state === "pr-open";
@@ -59,6 +63,16 @@ describe("shipping is never repeated blindly", () => {
         } else {
           expect(task.landed?.branch).toBe("main");
           expect(git(run.product, "rev-parse", "main")).toStartWith(task.landed!.sha);
+        }
+        if (mode !== "local") {
+          // Petrina asked GitHub about the product's own repository, from outside the working copy:
+          // an agent that rewrites the working copy's remote cannot change the answers.
+          const lookups = run.calls().filter((call) => call.args[1] !== "create");
+          expect(lookups.length).toBeGreaterThan(0);
+          for (const call of lookups) {
+            expect(call.args[0] === "api" ? call.args[1]!.split("/").slice(1, 3).join("/") : call.args[call.args.indexOf("--repo") + 1]).toBe("local/clone");
+            expect(realpathSync(call.cwd).startsWith(realpathSync(run.home))).toBe(false);
+          }
         }
         await engine.quit();
       });
@@ -152,6 +166,28 @@ describe("shipping is never repeated blindly", () => {
     const done = run.find(await run.engine.until((state) => delivered(run.find(state)), "the release to be recorded"));
     expect(done.release?.tag).toBe("v1.0.1");
     expect(done.timeline.some((entry) => entry.text.startsWith("Found that it had already gone out"))).toBe(true);
+    expect(run.fakes.openings("shipper")).toHaveLength(1);
+    expect(run.github().releases).toHaveLength(1);
+    await run.engine.quit();
+  });
+
+  it("pausing while Petrina gets ready to ship keeps the shipper from starting, and resuming ships once", async () => {
+    const run = await shipping("release", "finish");
+    // The latest-release lookup before shipping takes a while: pause the task during it.
+    run.fakes.github((state) => (state.slowLatest = 1500));
+    await waitFor(() => run.calls().some((call) => call.args[0] === "release" && call.args[1] === "view" && call.args[2] === "--json"), "Petrina to get ready to ship");
+    await run.engine.act("pause", run.taskId);
+    await Bun.sleep(2500);
+    const paused = run.find(await run.engine.state());
+    expect(paused.state).toBe("paused");
+    expect(paused.shipping).toBeUndefined();
+    expect(run.fakes.openings("shipper")).toHaveLength(0);
+    expect(run.github().releases).toHaveLength(0);
+
+    run.fakes.github((state) => delete state.slowLatest);
+    await run.engine.act("resume", run.taskId);
+    const done = run.find(await run.engine.until((state) => delivered(run.find(state)), "the release"));
+    expect(done.release?.tag).toBe("v1.0.1");
     expect(run.fakes.openings("shipper")).toHaveLength(1);
     expect(run.github().releases).toHaveLength(1);
     await run.engine.quit();

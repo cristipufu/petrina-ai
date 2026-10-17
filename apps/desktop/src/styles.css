@@ -967,3 +967,4 @@ kbd {
 @keyframes starting { 0%, 100% { opacity: 1; transform: none; } 50% { opacity: 0.6; transform: scale(0.96); } }
 @media (prefers-reduced-motion: reduce) { .engine-card .starting { animation: none; } }
 .queued-msgs .q.unsent { background: var(--amber-soft); color: var(--amber); padding-right: 9px; }
+.queued-msgs .q.unsent.refused { background: var(--red-soft); color: var(--red); padding-right: 4px; }

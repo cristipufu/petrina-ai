@@ -36,6 +36,7 @@ const Action = z.discriminatedUnion("name", [
   z.object({ name: z.literal("moveInQueue"), args: z.tuple([z.string(), z.number().int()]) }),
   z.object({ name: z.literal("moveToTop"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("setHeld"), args: z.tuple([z.string(), z.boolean()]) }),
+  z.object({ name: z.literal("setAfter"), args: z.tuple([z.string(), z.array(z.string()).max(20)]) }),
   z.object({ name: z.literal("setPoolLimit"), args: z.tuple([z.number()]) }),
   z.object({ name: z.literal("setPoolPaused"), args: z.tuple([z.boolean()]) }),
   z.object({ name: z.literal("setToolCap"), args: z.tuple([z.string(), z.number()]) }),

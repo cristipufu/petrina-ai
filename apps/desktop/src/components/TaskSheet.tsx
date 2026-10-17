@@ -426,7 +426,8 @@ function DesignView({ task, find }: { task: Task; find: Lookup }) {
           {task.objections.map((objection) => (
             <div key={objection.id} className="item">
               <span className="text">{objection.text}</span>
-              <span>
+              <span className="row" style={{ gap: 6 }}>
+                {objection.call !== undefined && <span className="pill accent">Your call</span>}
                 <span className={`pill ${objection.status === "open" ? "needs-you" : objection.status === "accepted" ? "ok" : ""}`}>
                   {objection.status === "open" ? "Open" : objection.status === "accepted" ? "Accepted" : "Rejected"}
                 </span>
@@ -436,12 +437,37 @@ function DesignView({ task, find }: { task: Task; find: Lookup }) {
                 Round {objection.round} · raised by
                 <ProfileChip profile={find.profile(objection.raisedBy)} find={find} />
               </span>
-              {objection.answer && <span className="answer">Architect: {objection.answer}</span>}
+              {objection.call !== undefined ? (
+                <>
+                  <CallWords text={objection.call} />
+                  {objection.answer && <span className="answer">Architect's note: {objection.answer}</span>}
+                </>
+              ) : (
+                objection.answer && <span className="answer">Architect: {objection.answer}</span>
+              )}
             </div>
           ))}
         </>
       )}
     </>
+  );
+}
+
+const CALL_PREVIEW = 140;
+
+/** The coordinator's call on an objection it settled: shortened, with a way to read it all. */
+function CallWords({ text }: { text: string }) {
+  const [all, setAll] = useState(false);
+  const long = text.length > CALL_PREVIEW;
+  return (
+    <span className="answer">
+      Your call: “{all || !long ? text : `${text.slice(0, CALL_PREVIEW).trimEnd()}…`}”
+      {long && (
+        <button className="linkish" style={{ marginLeft: 6 }} onClick={() => setAll((on) => !on)}>
+          {all ? "Show less" : "Read all"}
+        </button>
+      )}
+    </span>
   );
 }
 

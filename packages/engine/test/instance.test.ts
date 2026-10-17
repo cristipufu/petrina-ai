@@ -118,6 +118,31 @@ describe("one engine per Petrina folder", () => {
     await next.quit();
   });
 
+  it("keeps its key across restarts when started by hand, unless asked for a new one", async () => {
+    const home = newHome();
+    const serve = async (...flags: string[]) => {
+      const proc = Bun.spawn([process.execPath, CLI, "serve", ...flags], { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: { ...engineEnv(home), PETRINA_PORT: "0" } });
+      const connection = await waitFor(async () => {
+        const found = readConnection(home);
+        return found?.pid === proc.pid && (await answers(found)) ? found : undefined;
+      }, "the engine to start");
+      return { proc, connection };
+    };
+    const stop = async (engine: { proc: { kill(): void; exited: Promise<number> } }) => {
+      engine.proc.kill();
+      await engine.proc.exited;
+    };
+    const first = await serve();
+    await stop(first);
+    const second = await serve();
+    // Windows has no owner-only file mode to trust, so there it always makes a new key.
+    if (process.platform !== "win32") expect(second.connection.token).toBe(first.connection.token);
+    await stop(second);
+    const third = await serve("--new-key");
+    expect(third.connection.token).not.toBe(first.connection.token);
+    await stop(third);
+  });
+
   it("stops by itself within 10 seconds when the app crashes or is force-quit", async () => {
     const home = newHome();
     const shell = Bun.spawn([process.execPath, join(import.meta.dir, "shell-standin.ts"), CLI], { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: engineEnv(home) });

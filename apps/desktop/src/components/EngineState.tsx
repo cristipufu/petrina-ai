@@ -1,5 +1,5 @@
-import { CloudOff } from "lucide-react";
-import { desktop, leaveDemo, mode, openDemo, retryEngine, type EngineStatus, type Unsent } from "../engine";
+import { CloudOff, RotateCw, X } from "lucide-react";
+import { desktop, leaveDemo, mode, openDemo, retryEngine, sim, type EngineStatus, type Unsent } from "../engine";
 import { Logo } from "./bits";
 
 /** Live, reconnecting or the demo. In the desktop app it also says who started the engine, so quitting holds no surprise. */
@@ -82,8 +82,23 @@ const UNSENT_LABEL: Record<Unsent["kind"], string> = {
   changes: "Unsent change request",
 };
 
-/** Something the coordinator said that the engine has not confirmed saving yet. */
+/** Something the coordinator said that the engine has not confirmed saving yet, or refused. */
 export function UnsentNote({ entry, live }: { entry: Unsent; live: boolean }) {
+  if (entry.refused) {
+    return (
+      <span className="q unsent refused" role="alert" title={`Not sent: ${entry.refused}`}>
+        <span>
+          Not sent{entry.text ? `: ${entry.text}` : ""}
+        </span>
+        <button aria-label="Send it again" title="Send it again" onClick={() => sim.resendUnsent(entry.clientId)}>
+          <RotateCw size={12} />
+        </button>
+        <button aria-label="Discard it" title="Discard it" onClick={() => sim.discardUnsent(entry.clientId)}>
+          <X size={12} />
+        </button>
+      </span>
+    );
+  }
   return (
     <span className="q unsent" title={live ? "Sending" : "Petrina is not connected to its engine. This goes out as soon as it is back."}>
       <span>

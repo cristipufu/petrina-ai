@@ -11,7 +11,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Engine, type EngineOptions } from "./engine.js";
 import { loginShellPath, mergePath } from "./env.js";
-import { claimFolder, type Connection, removeConnection, writeConnection } from "./instance.js";
+import { claimFolder, type Connection, previousToken, removeConnection, writeConnection } from "./instance.js";
 import { OutputLog } from "./log.js";
 import { serve } from "./server.js";
 
@@ -26,6 +26,8 @@ export interface LaunchOptions {
   engine?: EngineOptions;
   /** Recover the terminal's PATH (app mode). Tests turn it off to start faster. */
   loginShell?: boolean;
+  /** Make a new key instead of keeping the last run's. */
+  newKey?: boolean;
 }
 
 /** What the engine tells the shell. One line of JSON, `type` first. */
@@ -79,7 +81,9 @@ export async function launch(options: LaunchOptions): Promise<void> {
     } catch (error) {
       console.error("While stopping:", error);
     }
-    removeConnection(home, process.pid);
+    // An app engine takes its connection file with it. One started by hand leaves it, so the next
+    // start keeps the key and open browser windows reconnect; a stale file is never trusted alone.
+    if (app) removeConnection(home, process.pid);
     lock.release();
     console.log(`${new Date().toISOString()} Petrina engine stopped`);
     log.close();
@@ -98,7 +102,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
       if (path) process.env.PATH = mergePath(path, process.env.PATH);
     }
     engine = new Engine(home, options.engine);
-    const token = randomBytes(24).toString("base64url");
+    const token = (!options.newKey && previousToken(home)) || randomBytes(24).toString("base64url");
     server = serve(engine, { port: app ? 0 : (options.port ?? 4317), token, ...(options.ui ? { ui: options.ui } : {}) });
     const connection: Connection = { url: `ws://127.0.0.1:${server.port}/ws`, api: `http://127.0.0.1:${server.port}`, token, pid: process.pid };
     // Scripts keep reading engine.json, whoever started the engine.

@@ -133,8 +133,8 @@ Everything waiting on you, ordered by task priority, then by age. Each item says
 | **Question** | "Should dark mode follow the system setting, or be a manual toggle?" | Suggested answers as buttons, free text, "Decide for me" (the agent takes its own recommendation) |
 | **Permission** | "Builder wants to add a new package: Stripe.js" | Allow once, Always allow in this product, Deny with a note. "Details" shows the exact command |
 | **Plan** | The planner's plan, if you asked to approve plans | Approve, Edit, Re-plan with a note |
-| **Design checkpoint** | The design brief and the disagreement log | Approve, Request changes with a comment |
-| **Disagreement** | The architects did not agree after the round limit | Both positions side by side. Pick one or write your call |
+| **Design checkpoint** | The design brief and the disagreement log | Approve, Request changes with a comment. After your call it says how many objections the call settled, and changes go to the architect only, who answers those objections again and can correct a decision, a "Your call" tag or a note. The call stays: no later check reopens the design it settled |
+| **Disagreement** | The architects did not agree after the round limit | Both positions side by side. Side with the architect, or write your call: it is final, the architect updates the brief to follow it with no further review round, and you check the brief before building (at the plan's own design checkpoint, after steps such as Screens; one is added only if the plan has none before the build) |
 | **Delivery** | Acceptance checklist and review summary | Open pull request, Send back with a note |
 | **Stuck** | A stage failed twice, or a tool needs you to log in | Retry, Switch tool or model, Edit plan, Cancel |
 
@@ -166,7 +166,7 @@ The list is editable in Settings, with overrides per product ("Always allow in S
 
 - **Overview:** the live timeline. One section per stage: who did it, how many rounds, the outcome, and plain-language events. The current stage is expanded with its streaming status lines.
 - **Plan:** the plan card. You can edit it: reorder stages, swap the tool or model on a role, add a reviewer, change round limits, toggle checkpoints. "Re-plan" sends a note to the planner.
-- **Design:** the brief (what changes for users, which parts of the product, the acceptance checklist, risks) and the disagreement log. Each objection shows who raised it, whether it is open, accepted or rejected, and why.
+- **Design:** the brief (what changes for users, which parts of the product, the acceptance checklist, risks) and the disagreement log. Each objection shows who raised it, whether it is open, accepted or rejected, and why. Objections your call settled carry a "Your call" tag, your words, and the architect's note on how the brief follows them.
 - **Review:** the merged findings. Blocking ones first, each with who raised, confirmed or disputed it, plus the result of the tamper check.
 - **Session:** join the agent that is working right now (below).
 

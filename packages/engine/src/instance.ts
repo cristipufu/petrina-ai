@@ -3,7 +3,7 @@
 // engine that answers (one started before the lock existed).
 
 import { Database } from "bun:sqlite";
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** What scripts and the window need to reach an engine. Kept in engine.json, readable by this user only. */
@@ -62,6 +62,21 @@ export function readConnection(home: string): Connection | undefined {
     if (typeof raw.url !== "string" || typeof raw.api !== "string" || typeof raw.token !== "string" || typeof raw.pid !== "number") return undefined;
     if (!LOCAL.test(raw.url) || !LOCAL.test(raw.api) || !TOKEN.test(raw.token)) return undefined;
     return { url: raw.url, api: raw.api, token: raw.token, pid: raw.pid };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The key from the last run, so open windows reconnect after a restart. Only trusted from a
+ * regular file (not a link) that this user owns and nobody else can read; otherwise a new one.
+ */
+export function previousToken(home: string): string | undefined {
+  try {
+    const info = lstatSync(connectionPath(home));
+    if (!info.isFile() || (process.getuid && info.uid !== process.getuid()) || (info.mode & 0o077) !== 0) return undefined;
+    const token = (JSON.parse(readFileSync(connectionPath(home), "utf8")) as { token?: unknown }).token;
+    return typeof token === "string" && /^[A-Za-z0-9_-]{32}$/.test(token) ? token : undefined;
   } catch {
     return undefined;
   }

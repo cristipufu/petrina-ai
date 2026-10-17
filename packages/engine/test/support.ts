@@ -7,6 +7,7 @@ import type { State, Task } from "@petrina/core";
 import { readConnection } from "../src/instance.js";
 import type { ShellMessage } from "../src/launch.js";
 import type { Scenario } from "./fake-agent.js";
+import type { FakeGitHub } from "./fake-gh.js";
 
 export const CLI = join(import.meta.dir, "../src/cli.ts");
 export const HARNESS = join(import.meta.dir, "harness.ts");
@@ -170,7 +171,7 @@ export class Fakes {
     writeFileSync(join(this.dir, "scenario.json"), JSON.stringify(value));
   }
 
-  github(change: (state: { offline?: boolean }) => void): void {
+  github(change: (state: FakeGitHub) => void): void {
     const path = join(this.dir, "github.json");
     const state = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { prs: [], releases: [] };
     change(state);

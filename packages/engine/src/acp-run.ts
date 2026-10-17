@@ -92,6 +92,8 @@ export class AgentRun {
     const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
     if (!adapter) throw new Error(`No adapter for tool ${profile.toolId}`);
+    // Stopped before it started: an aborted signal never fires again, so never start the agent at all.
+    if (signal.aborted) throw new Error("Stopped before the agent started");
 
     const [program, ...args] = options.command ?? ["node", adapterEntry(adapter)];
     // windowsHide: no console window flashes up on Windows when an agent starts.
