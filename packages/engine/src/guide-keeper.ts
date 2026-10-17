@@ -9,7 +9,7 @@ import { addToSection, AGENTS_FILE, appendPoints, cleanPoint, GUIDE, GUIDE_FILE,
 
 /** What AGENTS.md says about the review guide, so every agent reads it, in Petrina or not. */
 const GUIDE_SECTION = "## Review guide";
-const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change may add points to it, but it is judged by the points as the default branch has them.`;
+const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.`;
 import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 
@@ -90,9 +90,9 @@ export class GuideKeeper {
   }
 
   /**
-   * Accepted points reach REVIEW.md on a branch that ships: the task they came from (before its next review
-   * round, so its reviewers check them), or else the next one to reach a review or its delivery check. AGENTS.md
-   * gets a short section pointing to the guide when it has none. Nothing is running in the working copy then.
+   * Accepted points reach REVIEW.md on a branch that ships: the task they came from, or else the next one to
+   * reach its delivery check. AGENTS.md gets a short section pointing to the guide when it has none. Nothing is
+   * running in the working copy at this point.
    */
   async writeGuide(task: MTask): Promise<void> {
     const product = this.k.productOf(task);
@@ -113,6 +113,14 @@ export class GuideKeeper {
     for (const line of due) line.writtenOn = task.id;
     this.k.log(task, "done", `Added to ${GUIDE_FILE}: ${due.map((line) => line.text).join("; ")}`);
     this.k.commit();
+  }
+
+  /** Points the coordinator accepted that the base branch's REVIEW.md does not have yet: reviewers get them with the task. */
+  pendingPoints(task: MTask): string[] {
+    const product = this.k.productOf(task);
+    const ref = task.baseSha ?? task.base;
+    const base = ref && (product?.path ?? task.worktree) ? (git.fileAt((product?.path ?? task.worktree)!, ref, GUIDE_FILE) ?? "") : "";
+    return (product?.reviewGuide ?? []).filter((line) => !hasPoint(base, line.text)).map((line) => line.text);
   }
 
   /** The guide as the base branch has it, plus the points the coordinator accepted: what the Guide keeper weighs a new point against. */

@@ -12,7 +12,6 @@ import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
-import type { GuideKeeper } from "./guide-keeper.js";
 
 /**
  * A later reviewer thinks findings are wrong: each dispute is kept with who and why. One reviewer's
@@ -44,7 +43,7 @@ function sameFinding(text: string): string {
 }
 
 export class Reviews {
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly checks: ProductChecks, private readonly learnings: Learnings, private readonly guide: GuideKeeper) {}
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly checks: ProductChecks, private readonly learnings: Learnings) {}
 
   /**
    * A review round: Petrina's own checks first; then every reviewer looks at the change at once, each on
@@ -56,8 +55,6 @@ export class Reviews {
     if (task.hunt?.stageId !== stage.id || task.hunt.round !== round) {
     // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
     delete task.handChanges;
-    // Points the coordinator accepted reach REVIEW.md first, so these reviewers check them too.
-    await this.guide.writeGuide(task);
     const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
     // Petrina's own findings settle on what it sees now, whatever anyone answered.
     for (const finding of task.findings) {

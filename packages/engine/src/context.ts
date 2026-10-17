@@ -6,6 +6,7 @@ import { formatFindings, formatObjections } from "./prompts.js";
 import { commandText } from "./checks.js";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel, MTask } from "./kernel.js";
+import type { GuideKeeper } from "./guide-keeper.js";
 
 export interface Section {
   title: string;
@@ -19,6 +20,11 @@ export class Context {
     objections: (task, roleId) => this.objections(task, roleId),
     checks: (task) => this.checks(task),
     "findings-to-answer": (task) => this.findingsToAnswer(task),
+    // Task context, like the notes: points accepted during this task, before the delivery that writes them to REVIEW.md.
+    "guide-points": (task) => {
+      const points = this.guide.pendingPoints(task);
+      return points.length ? [{ title: `Points the coordinator accepted for the review guide, not in REVIEW.md on ${task.base ?? "the base branch"} yet (check them too)`, body: points.map((point) => `- ${point}`).join("\n") }] : [];
+    },
     report: (task) => this.report(task),
     "check-results": (task) => this.checkResults(task),
     findings: (task) => (task.findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) }] : []),
@@ -26,7 +32,10 @@ export class Context {
     shipping: (task) => this.shipping(task),
   };
 
-  constructor(private readonly k: Kernel) {}
+  constructor(
+    private readonly k: Kernel,
+    private readonly guide: GuideKeeper,
+  ) {}
 
   sectionsFor(task: MTask, roleId: Id): Section[] {
     // The opening instructions hold every note, so nothing waits in line behind them.
