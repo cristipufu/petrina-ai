@@ -1260,7 +1260,9 @@ export class Engine {
     const live = () => this.task(taskId);
     const command = this.options.agentCommand?.(profile);
     // GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none.
-    const env = roleId === "shipper" && task.delivery !== "local" ? undefined : agentEnv(process.env, await this.emptyGhConfig());
+    const base = roleId === "shipper" && task.delivery !== "local" ? process.env : agentEnv(process.env, await this.emptyGhConfig());
+    // Agents work in the background: tools that would pop a browser tab stay quiet, and Petrina's own `open` refuses.
+    const env = { ...base, BROWSER: "none", PETRINA_AGENT: "1" };
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
     const start = (sessionId?: string) =>
