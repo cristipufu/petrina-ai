@@ -8,7 +8,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
-import { checksFingerprint, detectChecks, runChecks, commandText } from "./checks.js";
+import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText } from "./checks.js";
 import { withoutCredentials } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
@@ -29,6 +29,9 @@ export class ProductChecks {
     const fingerprint = checksFingerprint(task.worktree);
     const unstartable = task.checks?.results.some((run) => run.output.startsWith("Could not start")) ?? false;
     if (product.checks && product.checksFingerprint === fingerprint && !unstartable) return product.checks;
+    // Tasks on different bases have different CI and build files: each reuses what was found for its own.
+    const seen = product.checksSeen?.find((entry) => entry.fingerprint === fingerprint);
+    if (seen && !unstartable) return seen.checks;
     const declared = detectChecks(task.worktree);
     // A side errand inside the step: it leaves the step's own restart bookkeeping as it found it.
     const attempts = task.stepAttempts;
@@ -66,6 +69,7 @@ export class ProductChecks {
     }
     product.checksBy = "finder";
     product.checksFingerprint = fingerprint;
+    product.checksSeen = [...(product.checksSeen ?? []).filter((entry) => entry.fingerprint !== fingerprint), { fingerprint, checks: product.checks ?? [] }].slice(-CHECKS_SEEN);
     this.k.commit();
     return product.checks ?? [];
   }
@@ -158,7 +162,8 @@ export class ProductChecks {
   async failing(task: MTask, signal: AbortSignal): Promise<boolean> {
     if (!task.worktree) return false;
     if ((await this.ranOn(task)) && task.checks!.results.every((run) => run.ok)) return false;
-    return (await this.runProductChecks(task, this.k.productOf(task)?.checks ?? [], signal)) > 0;
+    const product = this.k.productOf(task);
+    return (await this.runProductChecks(task, product ? checksFor(product, task.worktree) : [], signal)) > 0;
   }
 
   /** The repository's commit hooks, as git would run them now, noted on the product for the builder's instructions. */

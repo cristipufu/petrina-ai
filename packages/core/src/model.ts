@@ -533,6 +533,8 @@ export interface Product {
   checksBy?: "finder" | "coordinator";
   /** A fingerprint of the CI and build files the finder read: when they change, it looks again. */
   checksFingerprint?: string;
+  /** What the Check finder found for each recent set of CI and build files: tasks on different bases each reuse theirs. */
+  checksSeen?: readonly { fingerprint: string; checks: readonly ProductCheck[] }[];
   /** The repository's own commit hooks (pre-commit, commit-msg) as git would run them: Petrina runs them on every task's change. */
   hooks?: readonly string[];
 }

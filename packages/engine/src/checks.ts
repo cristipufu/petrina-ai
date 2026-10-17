@@ -178,6 +178,16 @@ export function sameCommands(a: readonly ProductCheck[], b: readonly ProductChec
   return a.length === b.length && a.every((check, index) => commandText(check.argv) === commandText(b[index]!.argv));
 }
 
+/** How many sets of CI and build files a product remembers the checks for. */
+export const CHECKS_SEEN = 6;
+
+/** The checks for a working copy: the coordinator's, else those found for its CI and build files, else the latest found. */
+export function checksFor(product: { checks?: readonly ProductCheck[]; checksBy?: string; checksSeen?: readonly { fingerprint: string; checks: readonly ProductCheck[] }[] }, root: string): readonly ProductCheck[] {
+  if (product.checksBy === "coordinator") return product.checks ?? [];
+  const fingerprint = checksFingerprint(root);
+  return product.checksSeen?.find((entry) => entry.fingerprint === fingerprint)?.checks ?? product.checks ?? [];
+}
+
 /** The files a product's checks come from: CI workflows and build files at the root. */
 const CI_FOLDERS = [".github/workflows", ".gitlab", ".circleci", ".azure-pipelines"];
 const BUILD_FILE = /^(package\.json|bun\.lockb?|Cargo\.toml|go\.mod|pyproject\.toml|pytest\.ini|setup\.cfg|Package\.swift|Makefile|Justfile|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|pom\.xml|global\.json|Directory\.Build\.props|.+\.sln|.+\.csproj|.+\.fsproj|azure-pipelines\.ya?ml|\.gitlab-ci\.ya?ml|turbo\.json|nx\.json)$/;

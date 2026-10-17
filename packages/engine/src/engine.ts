@@ -141,6 +141,7 @@ export class Engine extends Kernel implements Commands {
       delete product.checks;
       delete product.checksBy;
       delete product.checksFingerprint;
+      delete product.checksSeen;
     } else {
       const parsed = checks.map((check) => ({ name: check.name.trim(), argv: parseCommand(check.command) })).filter((check) => check.name && check.argv.length);
       if (!parsed.length) throw new Error("Give at least one check, as a name and a command.");

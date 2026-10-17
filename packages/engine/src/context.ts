@@ -3,7 +3,7 @@
 
 import { dueAnswers, followingCall, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
-import { commandText } from "./checks.js";
+import { checksFor, commandText } from "./checks.js";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel, MTask } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
@@ -83,7 +83,7 @@ export class Context {
 
   private checks(task: MTask): Section[] {
     const product = this.k.productOf(task);
-    const lines = (product?.checks ?? []).map((check) => `- ${check.name}: ${commandText(check.argv)}`);
+    const lines = (product && task.worktree ? checksFor(product, task.worktree) : (product?.checks ?? [])).map((check) => `- ${check.name}: ${commandText(check.argv)}`);
     // The repository's own commit hooks: Petrina runs them on the whole change, as git would when committing it.
     if (product?.hooks?.includes("pre-commit")) lines.push("- Pre-commit hook: the repository's own, which Petrina runs on your whole change as if committing it. Run it yourself with `git add -A`, then `git hook run pre-commit`.");
     if (product?.hooks?.includes("commit-msg")) lines.push(`- Commit message hook: the repository's own, which Petrina runs on the task's commit message (your "title" and summary).`);
