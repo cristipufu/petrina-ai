@@ -47,7 +47,9 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
       }
       return found && state.inbox.some((item) => item.taskId === taskId && item.kind === "delivery") && found;
     }, ship ? "the work to ship" : "the delivery check", 60_000);
-    return { task, fakes, atOnce, repo, before };
+    // One fresh voter per tool that can run here. With none installed, the two tools the reviewers were planned on.
+    const voters = engine.getState().tools.filter((tool) => tool.status === "ready").length || 2;
+    return { task, fakes, atOnce, repo, before, voters };
   } finally {
     unsubscribe();
     engine.shutdown();
@@ -58,23 +60,23 @@ const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("reviews that converge", () => {
   it("has fresh agents vote on an Important finding, the builder answer it, and reviews only what changed next round", async () => {
-    const { task, fakes, atOnce } = await untilDelivery({ reviewer: "important" });
+    const { task, fakes, atOnce, voters } = await untilDelivery({ reviewer: "important" });
 
     const important = task.findings.filter((finding) => finding.severity === "blocking");
     expect(important.map((finding) => finding.text)).toEqual(["The greeting is missing on the welcome page."]);
-    // Raised on one tool only, so one fresh agent per tool voted on it, and both said it is real.
-    expect(important[0]!.votes?.map((vote) => vote.verdict)).toEqual(["real", "real"]);
+    // Raised on one tool only, so one fresh agent per ready tool voted on it, and each said it is real.
+    expect(important[0]!.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("real"));
     expect(important[0]!.verification).toMatchObject({ verdict: "real" });
     expect(important[0]!.answer).toMatchObject({ fixed: true, text: "Fixed it." });
     expect(important[0]!.status).toBe("fixed");
     expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(1);
 
-    expect(fakes.openings("verifier")).toHaveLength(2);
-    // The two reviewers looked at the change at once, and so did the two voters.
-    expect(atOnce).toBe(2);
+    expect(fakes.openings("verifier")).toHaveLength(voters);
+    // The two reviewers looked at the change at once, and so did the voters, up to the pool of three.
+    expect(atOnce).toBe(Math.max(2, Math.min(3, voters)));
     // Each worked in a copy of its own, never the task's, and every copy is gone afterwards.
     const copies = [...fakes.openings("code reviewer").slice(0, 2), ...fakes.openings("verifier")].map((text) => /Your working copy is (.+?), on branch/.exec(text)?.[1]);
-    expect(new Set(copies).size).toBe(4);
+    expect(new Set(copies).size).toBe(2 + voters);
     for (const copy of copies) {
       expect(copy).not.toBe(task.worktree);
       expect(existsSync(copy!)).toBe(false);
@@ -168,9 +170,9 @@ describe.concurrent("reviewers at once, then a vote", () => {
   });
 
   it("takes turns when the pool has one slot, and still gets every review and vote", async () => {
-    const { task, fakes, atOnce } = await untilDelivery({ reviewer: "important" }, 1);
+    const { task, fakes, atOnce, voters } = await untilDelivery({ reviewer: "important" }, 1);
     expect(atOnce).toBe(1);
-    expect(fakes.openings("verifier")).toHaveLength(2);
+    expect(fakes.openings("verifier")).toHaveLength(voters);
     expect(task.findings.find((finding) => finding.severity === "blocking" || finding.status === "fixed")?.verification).toMatchObject({ verdict: "real" });
   });
 });

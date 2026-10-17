@@ -34,11 +34,11 @@
 
 ## How it runs agents
 
-Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com). Claude Code and Codex both have maintained ACP adapters, and any other agent that speaks ACP works the same way, so adding a tool is usually configuration. Everything runs on your machine with the tools you are already logged into: no API keys, no Petrina server, no telemetry. Details are in [docs/design.md](docs/design.md); the UX it is built from is in [docs/ux.md](docs/ux.md).
+Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com). Claude Code and Codex have maintained ACP adapters, and Grok speaks ACP itself (`grok --permission-mode auto agent stdio`). Any other agent that speaks ACP works the same way, so adding a tool is usually configuration. Everything runs on your machine with the tools you are already logged into: no API keys, no Petrina server, no telemetry. Details are in [docs/design.md](docs/design.md); the UX it is built from is in [docs/ux.md](docs/ux.md).
 
 ## Status
 
-Early, and working: the engine runs real Claude Code and Codex agents over ACP in their own git worktrees, with the planner, design convergence, review chain, permissions, questions and delivery (pull request, release, or a commit to main) wired end to end. The desktop app starts its engine by itself. Opened in a browser any other way than `bun run open`, the screens run on a simulated squad (`?demo` or `?demo=portfolio`).
+Early, and working: the engine runs real Claude Code, Codex and Grok agents over ACP in their own git worktrees, with the planner, design convergence, review chain, permissions, questions and delivery (pull request, release, or a commit to main) wired end to end. The desktop app starts its engine by itself. Opened in a browser any other way than `bun run open`, the screens run on a simulated squad (`?demo` or `?demo=portfolio`).
 
 ## Develop
 

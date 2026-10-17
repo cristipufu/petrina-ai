@@ -14,7 +14,7 @@ import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
   /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
-  planner?: "short" | "tester-after" | "limits" | "claude-build";
+  planner?: "short" | "tester-after" | "limits" | "claude-build" | "two-opus";
   /** Scheduling tests: each fresh agent waits for its own release file before answering. */
   controlled?: boolean;
   /**
@@ -141,7 +141,7 @@ async function send(client: acp.AgentContext, sessionId: string, update: acp.Ses
 
 /** The settings Petrina sets: model, effort (each tool's name for it) and the automatic safety mode. */
 const select = (id: string, values: string[]) => ({ type: "select" as const, id, name: id, currentValue: values[0]!, options: values.map((value) => ({ value, name: value })) });
-const configOptions = () => [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("mode", ["default", "auto", "agent"])];
+const configOptions = () => [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol", "grok-4.7"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("mode", ["default", "auto", "agent"])];
 
 /** A turn that only ends when the engine cancels it, or the engine goes away. */
 function hang(sessionId: string, marker: string): Promise<Reply> {
@@ -307,6 +307,14 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 1 },
+          ],
+        });
+      if (plan.planner === "two-opus")
+        return done({
+          rationale: "Build it, then two reviewers on Claude Code.",
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "opus-xhigh"], maxRounds: 1 },
           ],
         });
       if (plan.planner === "limits") return done({

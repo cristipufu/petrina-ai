@@ -91,14 +91,17 @@ describe.concurrent("an agent that runs out of usage", () => {
   it("waits for usage when every tool is out, then goes back to its own conversation by itself", async () => {
     const run = await start({ planner: "claude-build", builder: "plain", reopen: "resume", limited: [{ model: "opus", role: "builder", resetsInMs: 2500 }] });
     try {
-      // Codex is out for longer than Claude Code, so only Claude Code's own conversation can carry on.
+      // Codex and Grok are out for longer than Claude Code, so only Claude Code's own conversation can carry on.
       await waitFor(() => run.find().plan, "the plan");
-      run.engine.s.pool.limited = [{ toolId: "codex", until: Date.now() + 120_000, reason: "Codex's usage limit" }];
+      run.engine.s.pool.limited = [
+        { toolId: "codex", until: Date.now() + 120_000, reason: "Codex's usage limit" },
+        { toolId: "grok", until: Date.now() + 120_000, reason: "Grok's rate limit" },
+      ];
       const waiting = await waitFor(() => {
         const task = run.find();
         return task.state === "waiting" && task.statusLine.startsWith("Waiting for usage") && task;
       }, "the task to wait for usage");
-      expect(waiting.statusLine).toMatch(/^Waiting for usage: Claude Code and Codex are out until \d\d:\d\d$/);
+      expect(waiting.statusLine).toMatch(/^Waiting for usage: Claude Code, Codex and Grok are out until \d\d:\d\d$/);
       expect(waiting.holdsSlot).toBe(false);
       expect(waiting.agent).toBeUndefined();
 
@@ -111,7 +114,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(lines(task).some((line) => line.includes("took over from"))).toBe(false);
       expect(lines(task)).toContain("Picked up where it left off");
       // Claude Code's limit ended and was dropped; Codex's, set to last longer, is still there.
-      expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex"]);
+      expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex", "grok"]);
     } finally {
       run.engine.shutdown();
     }
@@ -164,6 +167,51 @@ describe.concurrent("usage reports", () => {
       run.engine.shutdown();
     }
   });
+
+  it("works the step on Grok when Claude Code and Codex are both out, and leaves the plan as written", async () => {
+    const until = Date.now() + 120_000;
+    const run = await start({ planner: "claude-build", builder: "plain" }, {
+      before: (engine) => {
+        engine.s.pool.limited = [
+          { toolId: "claude-code", until, reason: "Claude Code's usage limit" },
+          { toolId: "codex", until, reason: "Codex's usage limit" },
+        ];
+      },
+    });
+    try {
+      const task = await run.done();
+      const builders = run.fakes.received("builder");
+      expect(builders).toHaveLength(1);
+      expect(run.modelOf(builders[0]!.session)).toBe("grok-4.7");
+      expect(task.plan!.stages.find((stage) => stage.roleId === "builder")!.profileIds).toEqual(["opus-high"]);
+      expect(lines(task).some((line) => line.includes("took over from"))).toBe(false);
+    } finally {
+      run.engine.shutdown();
+    }
+  });
+
+  it("starts the Grok stand-in the review group already accepted, once that seat fills the pool", async () => {
+    const until = Date.now() + 120_000;
+    const run = await start({ builder: "plain", planner: "two-opus" }, {
+      before: (engine) => {
+        engine.s.pool.limited = [{ toolId: "claude-code", until, reason: "Claude Code's 5-hour limit" }];
+        engine.setPoolLimit(2);
+        engine.setToolCap("codex", 1);
+      },
+    });
+    try {
+      const task = await run.done();
+      const reviewers = run.fakes.received("code reviewer");
+      // Claude Code is out and Codex has one seat, so one reviewer stays on Codex and the other is Grok.
+      // Choosing again after the seat is reserved would start a second Codex agent on the Grok seat.
+      expect(reviewers.map((entry) => run.modelOf(entry.session)).sort()).toEqual(["gpt-6.1-sol", "grok-4.7"]);
+      const joined = task.session.find((line) => line.from === "system" && line.text.startsWith("Code reviewer joined · Code reviewer on Grok"));
+      expect(joined?.profileId).toBe("grok-xhigh");
+      expect(new Set(task.findings.flatMap((finding) => [finding.raisedBy, ...finding.confirmedBy]))).toEqual(new Set(["sol-high", "grok-xhigh"]));
+    } finally {
+      run.engine.shutdown();
+    }
+  });
 });
 
 describe("what the tools say about usage", () => {
@@ -211,6 +259,24 @@ describe("what the tools say about usage", () => {
     // Some other internal error is not a usage limit, even if the agent mentioned a limit.
     expect(limitFromFailure(claude, new Error("Internal error: the tool crashed"), "You've hit your stride", now)).toBeUndefined();
     expect(limitFromFailure(claude, { code: -32603, message: "Internal error", data: { errorKind: "server_error" } }, "", now)).toBeUndefined();
+    // The same sentence in what the agent said is not a limit. Only the error text is.
+    expect(limitFromFailure(claude, new Error("Internal error: the tool crashed"), "You've hit the rate limit for your plan.", now)).toBeUndefined();
+  });
+
+  it("reads Grok's rate-limit code, and its one sentence only on the error", () => {
+    const grok: AgentProfile = { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" };
+    expect(limitFromFailure(grok, { message: "You've hit the rate limit for your plan." }, "Working on it", now)).toMatchObject({ toolId: "grok", reason: "Grok's rate limit", until: now + 30 * 60_000 });
+    expect(limitFromFailure(grok, { message: "Internal error", data: { error: "rate_limit" } }, "", now)?.reason).toBe("Grok's rate limit");
+    expect(limitFromFailure(grok, { message: "Rate limited", data: { error: "rate_limit" } }, "", now)?.reason).toBe("Grok's rate limit");
+    expect(limitFromFailure(grok, new Error("You've hit the rate limit for your plan. Try again at 4:10 PM."), "", now)?.until).toBe(new Date(2026, 9, 17, 16, 10).getTime());
+    // Grok files a capacity error (503, 529) under the same code. The sentence says it is a busy service, not the plan's limit.
+    for (const message of ["Server error", "The service is busy. Wait a minute and send again.", "Service unavailable", "Something went wrong on our side. Wait a minute and send again."]) {
+      expect(limitFromFailure(grok, { message, data: { error: "rate_limit" } }, "", now)).toBeUndefined();
+      expect(limitFromFailure(grok, new Error(message), "", now)).toBeUndefined();
+    }
+    expect(limitFromFailure(grok, { message: "Internal error", data: { error: "server_error" } }, "", now)).toBeUndefined();
+    // The same sentence in what the agent said is not a limit. Only the error text is.
+    expect(limitFromFailure(grok, new Error("Internal error"), "You've hit the rate limit for your plan.", now)).toBeUndefined();
   });
 
   it("takes the next time the clock shows what it says", () => {

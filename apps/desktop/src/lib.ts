@@ -70,6 +70,7 @@ export function duration(from: number | undefined, to: number): string {
 export const TOOL_COLORS: Record<string, string> = {
   "claude-code": "#d97757",
   codex: "#10a37f",
+  grok: "#5b6cff",
   gemini: "#4285f4",
   opencode: "#6b7079",
 };

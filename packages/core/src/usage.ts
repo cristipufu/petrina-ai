@@ -89,6 +89,8 @@ export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile } |
 export interface ChoiceRules {
   keep?: boolean;
   awayFrom?: { toolId: Id; modelId?: string };
+  /** Stand-in tools that cannot take a seat right now. The planned profile is never skipped for this. */
+  skipTools?: ReadonlySet<Id>;
 }
 
 export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">, planned: AgentProfile, now: number, rules: ChoiceRules = {}): Choice {
@@ -96,8 +98,9 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   const free = (profile: AgentProfile) => !limitOf(pool, profile, now);
   const near = (profile: AgentProfile) => nearLimit(pool, profile, now);
   const ready = state.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id);
+  const skipped = rules.skipTools;
   // With no tool found ready (tests stand in for the tools), every tool in the list counts.
-  const usable = (profile: AgentProfile) => free(profile) && (!ready.length || ready.includes(profile.toolId));
+  const usable = (profile: AgentProfile) => free(profile) && (!ready.length || ready.includes(profile.toolId)) && !skipped?.has(profile.toolId);
   // How close a stand-in is to the work it must judge: 0 another tool, 1 another model on that tool, 2 the same model.
   const away = rules.awayFrom;
   const sameness = (profile: AgentProfile) => (!away || profile.toolId !== away.toolId ? 0 : profile.modelId !== away.modelId ? 1 : 2);
@@ -116,6 +119,27 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   const pick = sameTool && (!other || sameness(sameTool) <= sameness(other)) ? sameTool : other;
   if (pick) return { kind: "substitute", profile: pick };
   return { kind: "none", waiting: waitingWords(state, now) };
+}
+
+/**
+ * `chooseProfile`, then the next stand-in when the one it picked has no seat (`room` is false).
+ * A planned profile is kept even when its tool is full: the cap is there so another tool's own
+ * task can take the seat. With every stand-in full, the first of them is returned, so the task
+ * waits for that tool's seat rather than for a usage limit.
+ */
+export function chooseWithRoom(state: Pick<State, "profiles" | "tools" | "pool">, planned: AgentProfile, now: number, rules: ChoiceRules = {}, room?: (toolId: Id) => boolean): Choice {
+  const skip = new Set<Id>(rules.skipTools ?? []);
+  let held: Choice | undefined;
+  for (;;) {
+    const choice = chooseProfile(state, planned, now, skip.size ? { ...rules, skipTools: skip } : rules);
+    if (!room || choice.kind !== "substitute" || room(choice.profile.toolId)) {
+      if (choice.kind === "none" && held?.kind === "substitute") return held;
+      return choice;
+    }
+    if (skip.has(choice.profile.toolId)) return choice;
+    held ??= choice;
+    skip.add(choice.profile.toolId);
+  }
 }
 
 const toolName = (state: Pick<State, "tools">, toolId: Id): string => state.tools.find((tool) => tool.id === toolId)?.name ?? toolId;

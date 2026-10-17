@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { followingCall, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
+import { ADAPTERS } from "./tools.js";
 
 export const PlanResult = z.object({
   rationale: z.string().min(3),
@@ -188,7 +189,7 @@ export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
 ], "risk": {"level": "medium", "why": "What it touches, in plain words"}}`,
     instructions: (ctx) => {
       const roles = ctx.roles.filter((entry) => !entry.internal).map((entry) => `- ${entry.id}: ${entry.purpose}`).join("\n");
-      const profiles = ctx.profiles.filter((profile) => !profile.standby).map((profile) => `- ${profile.id}: ${profile.toolId === "codex" ? "Codex" : "Claude Code"} running ${profile.model} at ${profile.effort} effort`).join("\n");
+      const profiles = ctx.profiles.filter((profile) => !profile.standby).map((profile) => `- ${profile.id}: ${ADAPTERS[profile.toolId]?.name ?? profile.toolId} running ${profile.model} at ${profile.effort} effort`).join("\n");
       return `Compose the plan for this task: which roles work on it, on which profiles, in what order. Read the repository enough to judge the size of the work, but change nothing.
 
 Roles you can use:

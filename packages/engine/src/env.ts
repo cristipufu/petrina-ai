@@ -1,16 +1,16 @@
 // The environment Petrina's processes run in. Agents act with the coordinator's own logins (GitHub,
 // git credential helpers, SSH, AWS, Azure): they read freely, and their instructions say never to
 // publish or change shared things, which rests on each tool's own checker (Claude Code's Auto mode,
-// Codex's Auto review): Petrina does not read commands. Petrina's own git steps on working copies, and
+// Codex's Auto review, Grok's auto mode): Petrina does not read commands. Petrina's own git steps on working copies, and
 // the product's checks and hooks it runs, get no login at all.
 // And the PATH: an app opened from the Dock still finds the user's tools.
 
 const CREDENTIAL_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS"];
 /**
- * What marks a process as part of another coding agent's session: an engine started from inside Claude Code
- * or Codex would hand them on, and its agents would take themselves for that session's children (Claude Code
+ * What marks a process as part of another coding agent's session: an engine started from inside Claude Code,
+ * Codex or Grok would hand them on, and its agents would take themselves for that session's children (Claude Code
  * then links to its messaging socket, and CLAUDE_EFFORT overrides the effort Petrina sets). The user's own
- * settings for the tools (CLAUDE_CODE_USE_BEDROCK, say) are not on this list and pass through.
+ * settings for the tools (CLAUDE_CODE_USE_BEDROCK, GROK_HOME) are not on this list and pass through.
  */
 const SESSION_VARS = [
   "CLAUDECODE",
@@ -26,6 +26,8 @@ const SESSION_VARS = [
   "CODEX_SANDBOX",
   "CODEX_SANDBOX_NETWORK_DISABLED",
   "CODEX_THREAD_ID",
+  "GROK_AGENT",
+  "GROK_SESSION_ID",
 ];
 /** A GitHub token by its look, whatever the variable holding it is called (an npm registry's, say). */
 const GITHUB_TOKEN = /^\s*(gh[pousr]_|github_pat_)/;

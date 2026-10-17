@@ -97,7 +97,9 @@ export class Driver {
 
   private seatOf(next: { roleId: Id; profileId: Id } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
     if (!next) return { toolId: "none" };
-    const choice = this.k.choose(next.profileId, task, next.roleId);
+    // This task's own slot does not count: it is the seat being filled. A stand-in whose tool is full yields.
+    const room = task ? (toolId: Id) => !slotWait(this.k.getState(), { taskId: task.id, toolId }) : undefined;
+    const choice = this.k.choose(next.profileId, task, next.roleId, room);
     if (!choice) return { agent: next, toolId: this.k.profile(next.profileId)?.toolId ?? "unknown" };
     if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting };
     return { agent: { roleId: next.roleId, profileId: choice.profile.id }, toolId: choice.profile.toolId };

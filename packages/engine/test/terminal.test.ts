@@ -9,29 +9,23 @@ const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
 const SESSION = "0b6f3c2e-6d2a-4f6e-9a51-2f1f7d5c9a10";
-const PATHS: Record<Platform, { dir: string; worktree: string; claude: string; codex: string }> = {
-  darwin: { dir: "/Users/ana/.petrina/takeover/task-7", worktree: "/Users/ana/.petrina/worktrees/shop/task-7", claude: "/Users/ana/.local/bin/claude", codex: "/opt/homebrew/bin/codex" },
-  linux: { dir: "/home/ana/.petrina/takeover/task-7", worktree: "/home/ana/.petrina/worktrees/shop/task-7", claude: "/home/ana/.local/bin/claude", codex: "/usr/local/bin/codex" },
+const PATHS: Record<Platform, { dir: string; worktree: string; claude: string; codex: string; grok: string }> = {
+  darwin: { dir: "/Users/ana/.petrina/takeover/task-7", worktree: "/Users/ana/.petrina/worktrees/shop/task-7", claude: "/Users/ana/.local/bin/claude", codex: "/opt/homebrew/bin/codex", grok: "/Users/ana/.grok/bin/grok" },
+  linux: { dir: "/home/ana/.petrina/takeover/task-7", worktree: "/home/ana/.petrina/worktrees/shop/task-7", claude: "/home/ana/.local/bin/claude", codex: "/usr/local/bin/codex", grok: "/home/ana/.grok/bin/grok" },
   win32: {
     dir: "C:\\Users\\Ana María\\.petrina\\takeover\\task-7",
     worktree: "C:\\Users\\Ana María\\.petrina\\worktrees\\shop\\task-7",
     claude: "C:\\Users\\Ana María\\AppData\\Roaming\\npm\\claude.cmd",
     codex: "C:\\Program Files (x86)\\Codex\\codex.exe",
+    grok: "C:\\Users\\Ana María\\AppData\\Local\\grok\\grok.exe",
   },
 };
 
-function input(platform: Platform, toolId: "claude-code" | "codex", change: Partial<LaunchInput> = {}): LaunchInput {
+function input(platform: Platform, toolId: "claude-code" | "codex" | "grok", change: Partial<LaunchInput> = {}): LaunchInput {
   const paths = PATHS[platform];
-  return {
-    platform,
-    dir: paths.dir,
-    worktree: paths.worktree,
-    tool: toolId === "claude-code" ? { id: toolId, name: "Claude Code", path: paths.claude } : { id: toolId, name: "Codex", path: paths.codex },
-    sessionId: SESSION,
-    model: toolId === "claude-code" ? "opus" : "gpt-6.1-sol",
-    effort: "xhigh",
-    ...change,
-  };
+  const tool = toolId === "claude-code" ? { id: toolId, name: "Claude Code", path: paths.claude } : toolId === "grok" ? { id: toolId, name: "Grok", path: paths.grok } : { id: toolId, name: "Codex", path: paths.codex };
+  const model = toolId === "claude-code" ? "opus" : toolId === "grok" ? "grok-4.7" : "gpt-6.1-sol";
+  return { platform, dir: paths.dir, worktree: paths.worktree, tool, sessionId: SESSION, model, effort: "xhigh", ...change };
 }
 
 /** Anything that looks like a credential or Petrina's own secrets. */
@@ -39,17 +33,17 @@ const SECRETS = [/token/i, /secret/i, /password/i, /api[_-]?key/i, /GH_|GITHUB_|
 
 describe("each system's launch plan", () => {
   for (const platform of ["darwin", "linux", "win32"] as const) {
-    for (const toolId of ["claude-code", "codex"] as const) {
+    for (const toolId of ["claude-code", "codex", "grok"] as const) {
       it(`${platform}, ${toolId}: the tool on the same conversation in its normal mode, with no credentials`, () => {
         const plan = launchPlan(input(platform, toolId));
         for (const pattern of SECRETS) {
           expect(plan.script).not.toMatch(pattern);
           expect(plan.copy).not.toMatch(pattern);
         }
-        // Never a skip-permissions or auto-approve option.
-        for (const flag of ["dangerously", "bypass", "approve-for-me", "auto_review", "acceptEdits", "dontAsk", "never", "danger-full-access"]) expect(plan.args.join(" ").toLowerCase()).not.toContain(flag.toLowerCase());
+        // Never a skip-permissions, always-approve or yolo option.
+        for (const flag of ["dangerously", "bypass", "approve-for-me", "auto_review", "acceptEdits", "dontAsk", "never", "danger-full-access", "yolo", "always-approve"]) expect(plan.args.join(" ").toLowerCase()).not.toContain(flag.toLowerCase());
         expect(plan.args).toContain(SESSION);
-        expect(plan.args).toContain(toolId === "claude-code" ? "opus" : "gpt-6.1-sol");
+        expect(plan.args).toContain(toolId === "claude-code" ? "opus" : toolId === "grok" ? "grok-4.7" : "gpt-6.1-sol");
         expect(plan.script).toContain(PATHS[platform].worktree);
         // The copied command runs the launcher, nothing else.
         expect(plan.copy).toContain(plan.file);
@@ -71,6 +65,7 @@ describe("each system's launch plan", () => {
     const current = input("darwin", "claude-code");
     expect(toolArgs({ ...current, tool: { ...current.tool, mode: "manual" } }).slice(-2)).toEqual(["--permission-mode", "manual"]);
     expect(toolArgs(input("darwin", "codex"))).toEqual([PATHS.darwin.codex, "resume", SESSION, "--model", "gpt-6.1-sol", "-c", "model_reasoning_effort=xhigh", "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=user", "--no-daemon"]);
+    expect(toolArgs(input("darwin", "grok"))).toEqual([PATHS.darwin.grok, "--resume", SESSION, "--model", "grok-4.7", "--effort", "xhigh"]);
   });
 
   const unsafe: [string, Partial<LaunchInput>][] = [

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProfile, Pool, Tool, UsageLimit, UsageReport } from "../src/model.js";
-import { chooseProfile, liveLimits, nearLimit, nextExpiry, untilWords, usageLines, waitingWords, withLimit, withReport } from "../src/usage.js";
+import { chooseProfile, chooseWithRoom, liveLimits, nearLimit, nextExpiry, untilWords, usageLines, waitingWords, withLimit, withReport } from "../src/usage.js";
 
 const opus: AgentProfile = { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" };
 const opusX: AgentProfile = { id: "opus-xhigh", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "xhigh" };
@@ -67,6 +67,24 @@ describe("who works a step", () => {
     // Never the other way when that tool is close too, and never a stand-in profile for this.
     const both = pool({ usage: [report({ utilization: 0.95 }), report({ toolId: "codex", utilization: 0.95 })] });
     expect(choose(opus, both).kind).toBe("planned");
+  });
+
+  it("keeps a planned profile when its tool is full, and sends a stand-in on to the next tool that has a seat", () => {
+    const grok: AgentProfile = { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" };
+    const list = [opus, sol, grok];
+    const toolList: Tool[] = [...tools, { id: "grok", name: "Grok", command: [], status: "ready", models: [] }];
+    const state = { profiles: list, tools: toolList, pool: pool({ limited: [out("claude-code", now + HOUR)] }) };
+    // Codex is the first equal stand-in, so it still wins while it has a seat.
+    expect(chooseWithRoom(state, opus, now)).toEqual({ kind: "substitute", profile: sol });
+    expect(chooseWithRoom(state, opus, now, {}, (toolId) => toolId !== "codex")).toEqual({ kind: "substitute", profile: grok });
+    // Every stand-in is full: wait for the first of them, not for a usage limit.
+    expect(chooseWithRoom(state, opus, now, {}, () => false)).toEqual({ kind: "substitute", profile: sol });
+    // The planned profile is never skipped just because its tool is full.
+    expect(chooseWithRoom({ ...state, pool: pool() }, opus, now, {}, () => false)).toEqual({ kind: "planned", profile: opus });
+    expect(chooseProfile(state, opus, now, { skipTools: new Set(["codex"]) })).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseProfile({ ...state, pool: pool() }, opus, now, { skipTools: new Set(["claude-code"]) })).toEqual({ kind: "planned", profile: opus });
+    const allOut = pool({ limited: [out("claude-code", now + 2 * HOUR), out("codex", now + HOUR), out("grok", now + HOUR)] });
+    expect(waitingWords({ tools: toolList, pool: allOut }, now)).toBe("Waiting for usage: Claude Code, Codex and Grok are out until 13:00");
   });
 
   it("does not move agents for a report that no longer counts", () => {

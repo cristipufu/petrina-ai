@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, callCheckBody, chooseProfile, nextExpiry, queueOf, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable } from "@petrina/core";
+import { BUILT_IN_ROLES, callCheckBody, chooseWithRoom, nextExpiry, queueOf, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
 import { Store } from "./store.js";
@@ -320,7 +320,7 @@ export abstract class Kernel {
   }
 
   empty(): State {
-    return { now: Date.now(), seq: 0, products: [], roles: BUILT_IN_ROLES, tools: [], profiles: ENGINE_PROFILES, tasks: [], inbox: [], pool: { limit: 3, paused: false, toolCaps: { "claude-code": 3, codex: 3 } } };
+    return { now: Date.now(), seq: 0, products: [], roles: BUILT_IN_ROLES, tools: [], profiles: ENGINE_PROFILES, tasks: [], inbox: [], pool: { limit: 3, paused: false, toolCaps: { "claude-code": 3, codex: 3, grok: 3 } } };
   }
 
   renumberQueue(): void {
@@ -346,14 +346,18 @@ export abstract class Kernel {
     return this.s.profiles.find((profile) => profile.id === id) as AgentProfile | undefined;
   }
 
-  /** Who works a step planned for this profile right now: the planned one, or a stand-in while its tool or model is out of usage. */
-  choose(plannedId: Id, task?: MTask, roleId?: Id): Choice | undefined {
+  /**
+   * Who works a step planned for this profile right now: the planned one, or a stand-in while its tool or
+   * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
+   * yields to another tool that has one, so a cap kept for a tool that is out does not idle a pool slot.
+   */
+  choose(plannedId: Id, task?: MTask, roleId?: Id, room?: (toolId: Id) => boolean): Choice | undefined {
     const planned = this.profile(plannedId);
     if (!planned) return undefined;
     // Reviews keep the tools they were planned on, and a security review's stand-in stays as far from the builder as it can.
     const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
     const made = roleId === "security-reviewer" && builder ? this.profile(builder) : undefined;
-    return chooseProfile(this.getState(), planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) });
+    return chooseWithRoom(this.getState(), planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
   }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */

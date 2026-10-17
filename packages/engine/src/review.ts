@@ -132,9 +132,9 @@ export class Reviews {
       reviewers.map(({ key, profileId }) => ({
         roleId: stage.roleId,
         profileId,
-        work: async (copy) => {
+        work: async (copy, room, seat) => {
           let by = profileId;
-          const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { used: (id) => (by = id) });
+          const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { used: (id) => (by = id), room, seat });
           this.applyReview(task, stage, result, by);
           reported(key);
         },
@@ -219,8 +219,10 @@ export class Reviews {
       voters.map((profileId) => ({
         roleId: "verifier",
         profileId,
-        work: async (copy) => {
+        work: async (copy, room, seat) => {
           const result = await this.turns.parallel(task, "verifier", profileId, copy, () => [...this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(findings) }], VerifyResult, signal, {
+            room,
+            seat,
             check: (value) => {
               const missing = findings.filter((finding) => !value.verdicts.some((verdict) => verdict.id === finding.id));
               return missing.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(missing)}` : undefined;
@@ -267,7 +269,7 @@ export class Reviews {
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
-  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; work: (copy: string) => Promise<void> }[], status: (running: number, waiting: number) => string): Promise<void> {
+  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; work: (copy: string, room: (toolId: Id) => boolean, seat: Id) => Promise<void> }[], status: (running: number, waiting: number) => string): Promise<void> {
     const root = this.k.productOf(task)!.path!;
     const folder = join(this.k.dataDir, "worktrees", task.productId, `${task.id}.copies`);
     const sha = await git.head(task.worktree!);
@@ -288,8 +290,13 @@ export class Reviews {
     const start = () => {
       while (pending.length && failure === undefined) {
         const member = pending[0]!;
-        // Whoever would really work it: its planned profile, or a stand-in while that one is out of usage.
-        const choice = this.k.choose(member.profileId, task, member.roleId);
+        // The first member fills the task's own slot. Each later one needs a seat of its own. That is fixed
+        // here, before this member is counted: work() runs only after the copies are made, by which time
+        // several members may already be in the pool.
+        const extra = running.size > 0;
+        const room = (toolId: Id) => (extra ? extraSlot(this.k.getState(), toolId) : !slotWait(this.k.getState(), { taskId: task.id, toolId }));
+        // Whoever would really work it: its planned profile, or a stand-in. A stand-in whose tool is full yields.
+        const choice = this.k.choose(member.profileId, task, member.roleId, room);
         if (choice?.kind === "none") {
           noOne ??= new WaitingForUsage(choice.waiting);
           pending.shift();
@@ -297,16 +304,14 @@ export class Reviews {
         }
         const seat = choice?.profile.id ?? member.profileId;
         const toolId = this.k.profile(seat)?.toolId ?? "unknown";
-        // The task's own slot was taken for one tool: another agent qualifies for it like anyone else.
-        const free = running.size === 0 ? !slotWait(this.k.getState(), { taskId: task.id, toolId }) : extraSlot(this.k.getState(), toolId);
-        if (!free) break;
+        if (!room(toolId)) break;
         pending.shift();
         const id = next++;
         const agent = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0 };
         const copy = join(folder, `${member.roleId}-${id}-${member.profileId}`);
         const done = git
           .addCopy(root, copy, sha)
-          .then(() => member.work(copy))
+          .then(() => member.work(copy, room, seat))
           .catch((error: unknown) => {
             if (error instanceof WaitingForUsage) noOne ??= error;
             else failure ??= error;

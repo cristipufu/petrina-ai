@@ -7,11 +7,13 @@ const state: Pick<State, "profiles" | "tools"> = {
     { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" },
     { id: "sol-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
     { id: "gem", toolId: "gemini", model: "Gemini", effort: "high" },
+    { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" },
   ],
   tools: [
     { id: "claude-code", name: "Claude Code", command: [], status: "ready", models: [] },
     { id: "codex", name: "Codex", command: [], status: "not-installed", models: [] },
     { id: "gemini", name: "Gemini CLI", command: [], status: "ready", models: [] },
+    { id: "grok", name: "Grok", command: [], status: "ready", models: [] },
   ],
 };
 
@@ -27,9 +29,18 @@ function task(change: Partial<Task> = {}): Task {
 }
 
 describe("whether the coordinator can take over", () => {
-  it("can while an agent other than the Release Manager works or waits on them, on Claude Code or Codex, with its instructions", () => {
+  it("can while an agent other than the Release Manager works or waits on them, on Claude Code, Codex or Grok, with its instructions", () => {
     expect(takeOverBlock(task(), state)).toBeUndefined();
     expect(takeOverBlock(task({ state: "needs-you" }), state)).toBeUndefined();
+    expect(
+      takeOverBlock(
+        task({
+          agent: { roleId: "builder", profileId: "grok-high", since: 0, step: 0 },
+          conversation: { ...task().conversation!, profileId: "grok-high", toolId: "grok", model: "grok-4.7" },
+        }),
+        state,
+      ),
+    ).toBeUndefined();
   });
 
   it("says why not, in one line", () => {

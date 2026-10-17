@@ -160,8 +160,8 @@ export interface LaunchInput {
   /** The take-over folder: the launcher, its lock, records and status file live here. */
   dir: string;
   worktree: string;
-  /** `mode`: Claude Code's ask-before-acting mode, by the name the installed copy lists. */
-  tool: { id: "claude-code" | "codex"; name: string; path: string; mode?: AskMode };
+  /** `mode`: Claude Code's ask-before-acting mode, by the name the installed copy lists. Grok has none: it opens in its usual prompts. */
+  tool: { id: "claude-code" | "codex" | "grok"; name: string; path: string; mode?: AskMode };
   sessionId: string;
   model: string;
   effort: string;
@@ -183,7 +183,7 @@ export type AskMode = "manual" | "default";
 /**
  * The tool on the conversation, with the same model and effort, in its normal mode with its usual
  * prompts: Claude Code's ask-before-acting permission mode, Codex's workspace sandbox with on-request
- * approvals that the coordinator answers. Never a skip-permissions or auto-approve option.
+ * approvals that the coordinator answers, Grok's own prompts. Never a skip-permissions, always-approve or yolo option.
  */
 export function toolArgs(input: Pick<LaunchInput, "tool" | "sessionId" | "model" | "effort">): string[] {
   const path = checkedPath(input.tool.path, `${input.tool.name}'s location`);
@@ -191,6 +191,7 @@ export function toolArgs(input: Pick<LaunchInput, "tool" | "sessionId" | "model"
   const model = checked(input.model, MODEL, "the model's name");
   const effort = checked(input.effort, EFFORT, "the effort");
   if (input.tool.id === "claude-code") return [path, "--resume", session, "--model", model, "--effort", effort, "--permission-mode", checked(input.tool.mode ?? "default", /^(manual|default)$/, "the permission mode")];
+  if (input.tool.id === "grok") return [path, "--resume", session, "--model", model, "--effort", effort];
   // --no-daemon: Codex keeps the conversation in this window only, so the agent can reopen it once the window closes.
   return [path, "resume", session, "--model", model, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=user", "--no-daemon"];
 }

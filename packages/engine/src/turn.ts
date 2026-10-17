@@ -41,7 +41,7 @@ export class Turns {
     if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     let stopped: { profileId: Id; error: UsageLimited } | undefined;
     for (;;) {
-      const choice = this.k.choose(plannedId, task, roleId)!;
+      const choice = this.k.choose(plannedId, task, roleId, (toolId) => !slotWait(this.k.getState(), { taskId: task.id, toolId }))!;
       if (choice.kind === "none") {
         this.k.waitForUsage(task, choice.waiting);
         throw new WaitingForUsage(choice.waiting);
@@ -282,26 +282,42 @@ export class Turns {
     given: () => { title: string; body: string }[],
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: { check?: Check<T>; used?: (profileId: Id) => void } = {},
+    options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id } = {},
   ): Promise<T> {
     if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     if (signal.aborted) throw new Aborted();
     // Out of usage: a stand-in looks at the change instead, told what the first one had said. With none, the
     // group (not this agent) makes the task wait: the others carry on, and this one is left for later.
     let stopped: { profileId: Id; error: UsageLimited; at: number } | undefined;
+    // The group already reserved `seat` (the card shows it). Choosing again after that reservation sees a
+    // full pool and would start the first full stand-in instead, so the first attempt uses the reserved profile.
+    let first = true;
     for (;;) {
-      const choice = this.k.choose(plannedId, task, roleId)!;
-      if (choice.kind === "none") throw new WaitingForUsage(choice.waiting);
-      if (stopped?.profileId === choice.profile.id) throw stopped.error;
-      options.used?.(choice.profile.id);
+      const accepted = first && options.seat ? this.k.profile(options.seat) : undefined;
+      first = false;
+      let profile: AgentProfile;
+      if (accepted) profile = accepted;
+      else {
+        const choice = this.k.choose(plannedId, task, roleId, options.room);
+        if (!choice) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
+        if (choice.kind === "none") throw new WaitingForUsage(choice.waiting);
+        profile = choice.profile;
+      }
+      // A later stand-in still has to fit the seat this member already holds. With no room, the group waits.
+      if (stopped && options.room && !options.room(profile.toolId)) {
+        const tool = this.k.s.tools.find((entry) => entry.id === profile.toolId)?.name ?? profile.toolId;
+        throw new WaitingForUsage(`Waiting for a free ${tool} slot`);
+      }
+      if (stopped && stopped.profileId === profile.id) throw stopped.error;
+      options.used?.(profile.id);
       const since = Date.now();
       try {
-        return await this.attemptTogether(task, roleId, choice.profile, copy, given, schema, signal, { ...options, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at) } } : {}) });
+        return await this.attemptTogether(task, roleId, profile, copy, given, schema, signal, { ...options, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at) } } : {}) });
       } catch (error) {
         if (!(error instanceof UsageLimited) || signal.aborted) throw error;
-        this.keepWords(task, roleId, choice.profile.id, error);
-        this.k.recordLimit(task, roleId, choice.profile.id, error);
-        stopped = { profileId: choice.profile.id, error, at: since };
+        this.keepWords(task, roleId, profile.id, error);
+        this.k.recordLimit(task, roleId, profile.id, error);
+        stopped = { profileId: profile.id, error, at: since };
       }
     }
   }

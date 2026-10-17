@@ -150,7 +150,7 @@ export class AgentRun {
     // Stopped before it started: an aborted signal never fires again, so never start the agent at all.
     if (signal.aborted) throw new Error("Stopped before the agent started");
 
-    const [program, ...args] = options.command ?? ["node", adapterEntry(adapter)];
+    const [program, ...args] = options.command ?? adapter.command ?? ["node", adapterEntry(adapter)];
     // windowsHide: no console window flashes up on Windows when an agent starts.
     const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env, windowsHide: true });
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
@@ -235,13 +235,15 @@ export class AgentRun {
     const open = async (): Promise<{ sessionId: string; configOptions?: unknown; how?: "resume" | "load" }> => {
       const init = await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
       const sessionId = options.reopen;
-      if (sessionId === undefined) return connection.newSession({ cwd, mcpServers: [] });
+      // Grok's auto mode is metadata on the session, not a config option and not always-approve.
+      const meta = adapter.sessionMeta ? { _meta: { ...adapter.sessionMeta } } : {};
+      if (sessionId === undefined) return connection.newSession({ cwd, mcpServers: [], ...meta });
       const how = init.agentCapabilities?.sessionCapabilities?.resume ? "resume" : init.agentCapabilities?.loadSession ? "load" : undefined;
       if (!how) throw new ReopenFailed(`${adapter.name} cannot reopen conversations`);
       const limit = options.reopenTimeoutMs ?? REOPEN_TIMEOUT_MS;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new ReopenFailed(`${adapter.name} did not reopen the conversation within ${duration(limit)}`)), limit)));
-      const params = { sessionId, cwd, mcpServers: [] };
+      const params = { sessionId, cwd, mcpServers: [], ...meta };
       try {
         const opened = await Promise.race([how === "resume" ? connection.resumeSession(params) : connection.loadSession(params), late]);
         return { ...opened, sessionId, how };
@@ -278,8 +280,10 @@ export class AgentRun {
       };
       await set(adapter.options.model, profile.modelId);
       await set(adapter.options.effort, profile.effort);
-      // Mode last: Claude Code drops Auto when the model changes after it.
-      if (!(await set(adapter.options.mode, adapter.mode))) callbacks.onLog?.(`${adapter.name}'s automatic safety mode is not available here, so it will ask you before acting`);
+      // Mode last: Claude Code drops Auto when the model changes after it. A tool whose mode is session
+      // metadata (Grok's auto mode) has already asked for it, and has no config option to set.
+      const automatic = adapter.sessionMeta !== undefined || (adapter.options.mode !== undefined && (await set(adapter.options.mode, adapter.mode)));
+      if (!automatic) callbacks.onLog?.(`${adapter.name}'s automatic safety mode is not available here, so it will ask you before acting`);
       return session;
     })();
     ready.catch(() => undefined);

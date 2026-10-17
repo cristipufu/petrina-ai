@@ -8,6 +8,8 @@ describe("agent safety", () => {
   it("runs every tool in its own automatic safety mode", () => {
     expect(ADAPTERS["claude-code"]!.mode).toBe("auto");
     expect(ADAPTERS.codex!.mode).toBe("agent");
+    expect(ADAPTERS.grok).toMatchObject({ mode: "auto", command: ["grok", "--permission-mode", "auto", "agent", "stdio"], sessionMeta: { autoMode: true } });
+    expect(JSON.stringify(ADAPTERS.grok)).not.toMatch(/yolo|always-approve|bypassPermissions/);
   });
 
   it("gives agents the coordinator's own logins, with nothing waiting for a typed answer and in the background", () => {
@@ -79,10 +81,13 @@ describe("an engine started from inside another coding agent's session", () => {
       CLAUDE_CODE_MESSAGING_TOKEN: "secret",
       CLAUDE_EFFORT: "low",
       CODEX_SANDBOX: "seatbelt",
+      GROK_AGENT: "1",
+      GROK_SESSION_ID: "outer",
+      GROK_HOME: "/home/me/.grok",
     };
     const env = agentEnv(outer);
-    for (const name of ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_EFFORT", "CODEX_SANDBOX"]) expect(env[name]).toBeUndefined();
-    expect(env).toMatchObject({ PATH: "/usr/bin", GH_TOKEN: "ghp_example", CLAUDE_CODE_USE_BEDROCK: "1", PETRINA_AGENT: "1" });
+    for (const name of ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_EFFORT", "CODEX_SANDBOX", "GROK_AGENT", "GROK_SESSION_ID"]) expect(env[name]).toBeUndefined();
+    expect(env).toMatchObject({ PATH: "/usr/bin", GH_TOKEN: "ghp_example", CLAUDE_CODE_USE_BEDROCK: "1", GROK_HOME: "/home/me/.grok", PETRINA_AGENT: "1" });
     expect(withoutCredentials(outer, "/tmp/gh").CLAUDECODE).toBeUndefined();
   });
 });

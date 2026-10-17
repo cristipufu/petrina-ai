@@ -4,7 +4,7 @@
 import type { State, Task } from "./model.js";
 
 /** The tools whose own app Petrina can open on an agent's conversation. */
-export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = { "claude-code": "Claude Code", codex: "Codex" };
+export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok" };
 
 export const TAKE_OVER_WORDS = {
   noAgent: "No agent is working on this right now",
@@ -64,8 +64,8 @@ export function toolName(toolId: string | undefined): string {
 
 /**
  * Why the coordinator cannot take over this task right now, in one line, or undefined when they can.
- * An agent other than the Release Manager must be working or waiting on them, on Claude Code or Codex, in a
- * conversation that already has its instructions.
+ * An agent other than the Release Manager must be working or waiting on them, on Claude Code, Codex or Grok,
+ * in a conversation that already has its instructions.
  */
 export function takeOverBlock(task: Task, state: Pick<State, "profiles" | "tools">): string | undefined {
   if (task.driving) return TAKE_OVER_WORDS.driving;

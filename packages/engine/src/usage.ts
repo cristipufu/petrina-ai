@@ -1,5 +1,6 @@
 // Usage limits as the tools report them: Claude Code says how close it is on every turn, Codex only says
-// it is out. Both end up as the same two things: a report for the pool, and a UsageLimited error.
+// it is out, and Grok says so with a rate-limit code when a turn fails. All end up as the same two things:
+// a report for the pool, and a UsageLimited error.
 
 import { kindWords, UNKNOWN_LIMIT_MS, type AgentProfile, type UsageReport } from "@petrina/core";
 import { ADAPTERS } from "./tools.js";
@@ -105,6 +106,14 @@ export function clockTime(text: string, now: number): number | undefined {
 
 /** Codex `codexErrorInfo` values that mean the account or the session cannot continue. From codex-acp `STRING_CODEX_ERROR_CATEGORIES`. */
 const CODEX_OUT = new Set(["usageLimitExceeded", "rateLimitExceeded", "sessionBudgetExceeded"]);
+/** Grok's StopFailure class for a rate limit, and the sentence `format_rate_limited_user_message` shows when that class has no field. */
+const GROK_RATE = "rate_limit";
+const GROK_RATE_MESSAGE = "You've hit the rate limit for your plan.";
+/**
+ * Grok classifies a capacity error (503, 529) as `rate_limit` too. Those show one of these sentences,
+ * and they are a busy service, not the plan's rate limit. Matched on the error text only.
+ */
+const GROK_BUSY = ["The service is busy.", "Service unavailable", "Something went wrong on our side.", "Server error"] as const;
 /** Claude `errorKind` values the adapter maps to a limit (`providerFailureCategory`). `billing_error` is the spend cap. */
 const CLAUDE_OUT = new Set(["billing_error", "account_on_hold", "rate_limit"]);
 /** Session-failure kinds both adapters use for a limit. */
@@ -145,9 +154,10 @@ const textOf = (error: unknown, said: string): string => {
 
 /**
  * A failed turn that carried no rate-limit report. The decision is the tool's code:
- * Codex `codexErrorInfo`, Claude `errorKind`, or a session-failure kind. The sentence
- * is read only when those fields are absent, and only against Claude's prefix list.
- * A clock time in the sentence ("resets 8:10pm") is when it ends; the code does not say.
+ * Codex `codexErrorInfo`, Claude `errorKind`, Grok's `rate_limit`, or a session-failure kind.
+ * Claude's sentence is read only when those fields are absent, and only against its prefix list.
+ * Grok's one sentence counts on the error text. A busy-service or server sentence does not, even
+ * when Grok filed it under `rate_limit`. A clock time in the sentence ("resets 8:10pm") is when it ends.
  */
 export function limitFromFailure(profile: AgentProfile, error: unknown, said: string, now: number): UsageLimited | undefined {
   const data = payload(error);
@@ -155,13 +165,17 @@ export function limitFromFailure(profile: AgentProfile, error: unknown, said: st
   const errorKind = typeof data.errorKind === "string" ? data.errorKind : undefined;
   const category = typeof data.category === "string" ? data.category : undefined;
   const kind = typeof data.kind === "string" ? data.kind : undefined;
-  const coded = (code !== undefined && CODEX_OUT.has(code)) || (errorKind !== undefined && CLAUDE_OUT.has(errorKind)) || (category !== undefined && LIMIT_KIND.has(category)) || (kind !== undefined && LIMIT_KIND.has(kind));
   const message = typeof (error as { message?: unknown } | undefined)?.message === "string" ? (error as { message: string }).message : "";
-  // The prefix list is for the error text only. An agent's own words ("You've hit your stride") are not a limit.
-  if (!coded && !CLAUDE_USAGE_PREFIXES.some((prefix) => message.includes(prefix))) return undefined;
+  // The prefix list and Grok's sentence are for the error text only. An agent's own words are not a limit.
+  const grok = profile.toolId === "grok";
+  const grokBusy = grok && GROK_BUSY.some((line) => message.includes(line));
+  const grokError = grok && data.error === GROK_RATE && !grokBusy;
+  const grokSentence = grok && !grokBusy && message.includes(GROK_RATE_MESSAGE);
+  const coded = (code !== undefined && CODEX_OUT.has(code)) || (errorKind !== undefined && CLAUDE_OUT.has(errorKind)) || (category !== undefined && LIMIT_KIND.has(category)) || (kind !== undefined && LIMIT_KIND.has(kind)) || grokError;
+  if (!coded && !grokSentence && !CLAUDE_USAGE_PREFIXES.some((prefix) => message.includes(prefix))) return undefined;
   const text = textOf(error, said);
   const tool = ADAPTERS[profile.toolId]?.name ?? profile.toolId;
-  const reason =
-    errorKind === "billing_error" ? `${tool}'s spend limit` : errorKind === "rate_limit" || code === "rateLimitExceeded" ? `${tool}'s rate limit` : `${tool}'s usage limit`;
+  const rate = errorKind === "rate_limit" || code === "rateLimitExceeded" || grokError || grokSentence;
+  const reason = errorKind === "billing_error" ? `${tool}'s spend limit` : rate ? `${tool}'s rate limit` : `${tool}'s usage limit`;
   return new UsageLimited(profile.toolId, clockTime(text, now) ?? now + UNKNOWN_LIMIT_MS, reason);
 }
