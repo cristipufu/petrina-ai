@@ -1,0 +1,373 @@
+// The engine's shared state and the few operations every part of it uses: lookups, the timeline and
+// session, the inbox, and saving. Feature modules get this, never the Engine itself.
+
+import { randomBytes } from "node:crypto";
+import { appendFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { BUILT_IN_ROLES, CALL_WORDS, callCheckBody, callOn, queueOf, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone } from "@petrina/core";
+import { AgentRun } from "./acp-run.js";
+import * as git from "./git.js";
+import { Store } from "./store.js";
+import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
+import { detectTools, ENGINE_PROFILES } from "./tools.js";
+
+export type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
+
+export type MState = DeepMutable<State>;
+
+export type MTask = DeepMutable<Task>;
+
+export type MStage = DeepMutable<Stage>;
+
+export const PLANNER_PROFILE = "opus-high";
+
+export const SHIPPER_PROFILE = "opus-high";
+
+export const CHECK_FINDER_PROFILE = "opus-high";
+
+export const GUIDE_KEEPER_PROFILE = "opus-high";
+
+export const TONES: readonly Tone[] = ["blue", "green", "orange", "violet", "pink", "teal", "indigo", "purple", "amber", "slate"];
+
+export const MAX_SESSION_LINES = 800;
+
+export const MAX_TIMELINE = 400;
+
+export interface EngineOptions {
+  /** Tests: run a fake agent instead of the tool's adapter. */
+  agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
+  /** Tests: a fake GitHub instead of `gh`. */
+  gh?: readonly string[];
+  /** Tests: how long a tool gets to reopen a conversation. */
+  reopenTimeoutMs?: number;
+  /** Tests: the tool's own app that a take-over opens, instead of the one on PATH. */
+  toolPath?: (toolId: Id) => string | undefined;
+  /** Tests: the terminals on this machine. */
+  terminals?: () => FoundTerminal[];
+  /** Tests: how long one of a product's checks may run. */
+  checkTimeoutMs?: number;
+}
+
+export class Aborted extends Error {}
+
+export const RISK_WORD: Record<RiskLevel, string> = { low: "Low", medium: "Medium", high: "High" };
+
+export function lastIndex<T>(items: readonly T[], match: (item: T, index: number) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) if (match(items[index]!, index)) return index;
+  return -1;
+}
+
+/** What the delivery check says beside the work: its risk, and what Petrina's own run of the checks found. */
+function deliveryLines(task: Task): string | undefined {
+  const lines = [task.risk ? `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}` : "", checksLine(task) ?? ""].filter(Boolean);
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+/** One plain line for the delivery check: what Petrina's own run of the checks found. */
+export function checksLine(task: Task): string | undefined {
+  const runs = task.checks?.results;
+  if (!runs?.length) return undefined;
+  const failed = runs.filter((run) => !run.ok);
+  return failed.length
+    ? `Petrina's checks: ${failed.length} of ${runs.length} failed (${failed.map((run) => run.name).join(", ")}).`
+    : `Petrina's checks: all ${runs.length} passed (${runs.map((run) => run.name).join(", ")}).`;
+}
+
+export abstract class Kernel {
+  /** Set by the Engine: what starts drivers and fills free slots. */
+  abstract schedule(): void;
+  abstract startDriver(taskId: Id, resume?: boolean): void;
+
+  constructor(
+    readonly dataDir: string,
+    readonly options: EngineOptions = {},
+  ) {
+    this.store = new Store(join(dataDir, "petrina.db"));
+    const loaded = this.store.load();
+    this.s = (loaded ?? this.empty()) as MState;
+    this.s.roles = BUILT_IN_ROLES as MState["roles"];
+    this.s.profiles = ENGINE_PROFILES as MState["profiles"];
+    // Tests stand in the tools' own apps: those count as installed.
+    this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
+    this.found = options.terminals?.() ?? detectTerminals(this.machine);
+    this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
+  }
+
+  readonly s: MState;
+
+  readonly store: Store;
+
+  readonly listeners = new Set<() => void>();
+
+  readonly drivers = new Map<Id, AbortController>();
+
+  readonly runs = new Map<Id, AgentRun>();
+
+  readonly waiting = new Map<Id, { resolve: (value: string) => void; reject: (error: Error) => void }>();
+
+  saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  readonly timers: ReturnType<typeof setInterval>[] = [];
+
+  stopped = false;
+
+  /** This run of the engine, to tell a restart from a pause. */
+  readonly boot = randomBytes(6).toString("hex");
+
+  /** Each driver until it has fully stopped, clean-up included. */
+  readonly settling = new Map<Id, Promise<void>>();
+
+  /** Tasks Petrina is taking over, opening a terminal for again, or handing back right now. */
+  readonly switching = new Map<Id, keyof typeof TAKE_OVER_WORDS.busy>();
+
+  readonly machine = thisMachine();
+
+  /** The terminals on this machine, the usual one first. */
+  readonly found: FoundTerminal[];
+
+  getState = (): State => this.s as unknown as State;
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  /** The tasks this one still waits for. */
+  blockers(task: MTask): MTask[] {
+    return (task.after ?? []).map((id) => this.task(id)).filter((other): other is MTask => !!other && other.state !== "done" && other.state !== "cancelled");
+  }
+
+  /** The step the coordinator drove finished: its review chain runs again from the first reviewer, without using up a round. */
+  rerun(task: MTask): boolean {
+    const id = task.rereview;
+    if (!id) return false;
+    delete task.rereview;
+    const index = task.plan?.stages.findIndex((stage) => stage.id === id) ?? -1;
+    if (index < 0) return false;
+    task.stageIndex = index;
+    task.sub = 0;
+    task.fixing = false;
+    this.log(task, "milestone", "Reviewing your changes: the review starts again from the first reviewer");
+    this.commit();
+    return true;
+  }
+
+  gate(task: MTask, gate: GateKind): void {
+    delete task.agent;
+    task.holdsSlot = false;
+    const titles: Record<GateKind, string> = {
+      plan: `Approve the plan for “${task.title}”`,
+      design: `Check the design for “${task.title}”`,
+      delivery: `Ready to ship “${task.title}”`,
+    };
+    const status: Record<GateKind, string> = {
+      plan: "Plan ready. Waiting for your OK",
+      design: callOn(task as unknown as Task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check",
+      delivery: "Reviews done. Waiting for your OK to ship",
+    };
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? deliveryLines(task as unknown as Task) : undefined;
+    this.raise(task, gate, titles[gate], false, body ? { body } : {});
+    task.statusLine = status[gate];
+    task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
+    // On disk before the window shows it: an answer to this check must find it after any restart.
+    this.commitNow();
+  }
+
+  raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string } = {}): Id {
+    const id = this.id("inbox");
+    task.state = "needs-you";
+    this.s.inbox.push({
+      id,
+      taskId: task.id,
+      kind,
+      title,
+      at: Date.now(),
+      blocking,
+      ...(task.agent ? { roleId: task.agent.roleId, profileId: task.agent.profileId } : {}),
+      ...(extra.body ? { body: extra.body } : {}),
+      ...(extra.options ? { options: extra.options } : {}),
+      ...(extra.detail ? { detail: extra.detail } : {}),
+    });
+    return id;
+  }
+
+  fail(taskId: Id, error: unknown): void {
+    const task = this.task(taskId);
+    if (!task) return;
+    const message = error instanceof Error ? error.message : String(error);
+    delete task.agent;
+    delete task.conversation;
+    task.holdsSlot = false;
+    task.state = "failed";
+    task.error = message;
+    task.statusLine = "Stuck. Needs you";
+    this.dropBlockingItems(taskId);
+    this.raise(task, "stuck", `“${task.title}” is stuck`, false, { body: message.slice(0, 600) });
+    task.state = "failed";
+    this.log(task, "warn", `Stuck: ${message.slice(0, 300)}`);
+    this.commit();
+  }
+
+  remember(task: MTask, text: string, id?: Id): void {
+    task.notes = [...(task.notes ?? []), { at: Date.now(), text, ...(id ? { id } : {}) }];
+  }
+
+  /** Keep what the coordinator said for the current step, until the step finishes. */
+  stepNote(task: MTask, kind: StepNote["kind"], text: string, extra: { id?: Id; about?: string } = {}): void {
+    task.stepNotes = [...(task.stepNotes ?? []), { id: extra.id ?? this.id(task.id), at: Date.now(), kind, text, ...(extra.about ? { about: extra.about } : {}) }];
+  }
+
+  /** The step handed back its result: the next step starts clean, in a new conversation. */
+  finishStep(task: MTask): void {
+    delete task.stepNotes;
+    delete task.stepAttempts;
+    delete task.conversation;
+  }
+
+  /** False for a resend of something already received (its confirmation was lost on the way back). */
+  firstTime(task: MTask, clientId: Id | undefined): boolean {
+    if (!clientId) return true;
+    if (task.received?.includes(clientId)) return false;
+    task.received = [...(task.received ?? []), clientId].slice(-50);
+    return true;
+  }
+
+  toWaiting(task: MTask): void {
+    task.state = "waiting";
+    task.statusLine = "Waiting for a free slot";
+    task.column = this.columnFor(task);
+  }
+
+  unblock(task: MTask): void {
+    if (task.state !== "needs-you") return;
+    task.state = task.holdsSlot ? "running" : "waiting";
+    task.statusLine = task.holdsSlot ? "Back to work" : "Waiting for a free slot";
+  }
+
+  takeItem(itemId: Id): DeepMutable<InboxItem> | undefined {
+    const item = this.s.inbox.find((entry) => entry.id === itemId);
+    if (item) this.s.inbox = this.s.inbox.filter((entry) => entry.id !== itemId);
+    return item;
+  }
+
+  dropBlockingItems(taskId: Id): void {
+    for (const item of this.s.inbox.filter((entry) => entry.taskId === taskId && entry.blocking)) {
+      this.waiting.get(item.id)?.reject(new Aborted());
+      this.waiting.delete(item.id);
+    }
+    this.s.inbox = this.s.inbox.filter((entry) => !(entry.taskId === taskId && entry.blocking));
+  }
+
+  stopDriver(taskId: Id): void {
+    this.drivers.get(taskId)?.abort();
+    this.drivers.delete(taskId);
+    this.runs.get(taskId)?.close();
+    this.runs.delete(taskId);
+  }
+
+  async undoReadOnly(task: MTask, roleId: Id): Promise<void> {
+    const role = this.role(roleId);
+    if (role && !role.canEdit && task.worktree && !(await git.isClean(task.worktree))) {
+      await git.discardChanges(task.worktree);
+      this.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
+    }
+  }
+
+  columnFor(task: MTask): Column {
+    if (task.state === "cancelled" || task.state === "done") return "done";
+    if (task.state === "pr-open") return "ready";
+    if (task.state === "queued") return "queue";
+    if (task.stageIndex < 0) return "planning";
+    const stage = task.plan?.stages[task.stageIndex];
+    if (!stage) return "ready";
+    if (stage.kind === "gate") return stage.gate === "plan" ? "planning" : stage.gate === "design" ? "designing" : "ready";
+    if (stage.kind === "review-chain") return "reviewing";
+    return this.role(stage.roleId)?.column ?? "building";
+  }
+
+  empty(): State {
+    return { now: Date.now(), seq: 0, products: [], roles: BUILT_IN_ROLES, tools: [], profiles: ENGINE_PROFILES, tasks: [], inbox: [], pool: { limit: 3, paused: false, toolCaps: { "claude-code": 3, codex: 3 } } };
+  }
+
+  renumberQueue(): void {
+    queueOf(this.s.tasks as Task[]).forEach((task, position) => {
+      const entry = this.task(task.id);
+      if (entry) entry.priority = position;
+    });
+  }
+
+  task(id: Id): MTask | undefined {
+    return this.s.tasks.find((task) => task.id === id);
+  }
+
+  productOf(task: MTask) {
+    return this.s.products.find((product) => product.id === task.productId);
+  }
+
+  role(id: Id): Role | undefined {
+    return this.s.roles.find((role) => role.id === id) as Role | undefined;
+  }
+
+  profile(id: Id): AgentProfile | undefined {
+    return this.s.profiles.find((profile) => profile.id === id) as AgentProfile | undefined;
+  }
+
+  describe(roleId: Id, profileId: Id): string {
+    const profile = this.profile(profileId);
+    const tool = this.s.tools.find((entry) => entry.id === profile?.toolId);
+    return `${this.role(roleId)?.name ?? roleId} on ${tool?.name ?? profile?.toolId} · ${profile?.model} · ${profile?.effort}`;
+  }
+
+  id(prefix: string): Id {
+    this.s.seq += 1;
+    return `${prefix}-${this.s.seq}`;
+  }
+
+  log(task: MTask, tone: Task["timeline"][number]["tone"], text: string, roleId?: Id, profileId?: Id): void {
+    task.timeline.push({ id: this.id(task.id), at: Date.now(), text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) });
+    if (task.timeline.length > MAX_TIMELINE) task.timeline.splice(0, task.timeline.length - MAX_TIMELINE);
+  }
+
+  say(task: MTask, from: Task["session"][number]["from"], text: string, roleId?: Id, profileId?: Id): void {
+    const last = task.session.at(-1);
+    if (from === "activity" && last?.from === "activity" && last.text === text) return;
+    task.session.push({ id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) });
+    if (task.session.length > MAX_SESSION_LINES) task.session.splice(0, task.session.length - MAX_SESSION_LINES);
+  }
+
+  async emptyGhConfig(): Promise<string> {
+    const dir = join(this.dataDir, "gh-none");
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    return dir;
+  }
+
+  async agentLog(taskId: Id, text: string): Promise<void> {
+    const dir = join(this.dataDir, "logs");
+    await mkdir(dir, { recursive: true });
+    await appendFile(join(dir, `${taskId}.log`), text).catch(() => undefined);
+  }
+
+  commit(): void {
+    if (this.stopped) return;
+    this.s.now = Date.now();
+    for (const listener of this.listeners) listener();
+    if (!this.saveTimer) {
+      this.saveTimer = setTimeout(() => {
+        this.saveTimer = undefined;
+        if (!this.stopped) this.store.save(this.getState());
+      }, 400);
+    }
+  }
+
+  /** Commit and save right away: what the coordinator said survives a forced kill a moment later. */
+  commitNow(): void {
+    if (this.stopped) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    this.store.save(this.getState());
+    this.s.now = Date.now();
+    for (const listener of this.listeners) listener();
+  }
+}
