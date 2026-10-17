@@ -38,6 +38,8 @@ export interface EngineOptions {
   gh?: readonly string[];
   /** Tests: how long a tool gets to reopen a conversation. */
   reopenTimeoutMs?: number;
+  /** Tests: how long a tool gets to start a fresh conversation. */
+  startTimeoutMs?: number;
   /** Tests: the tool's own app that a take-over opens, instead of the one on PATH. */
   toolPath?: (toolId: Id) => string | undefined;
   /** Tests: the terminals on this machine. */

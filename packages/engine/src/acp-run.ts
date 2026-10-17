@@ -34,6 +34,8 @@ export interface TurnResult {
 
 /** How long Petrina waits for a tool to reopen a conversation before it starts a fresh one. */
 const REOPEN_TIMEOUT_MS = 60_000;
+/** How long a tool gets to start a fresh conversation: handshake, new session and its settings. */
+const START_TIMEOUT_MS = 2 * 60_000;
 
 /** The tool could not reopen the conversation. The message says why, in plain words. */
 export class ReopenFailed extends Error {}
@@ -136,6 +138,7 @@ export class AgentRun {
     env?: NodeJS.ProcessEnv;
     reopen?: string;
     reopenTimeoutMs?: number;
+    startTimeoutMs?: number;
   }): Promise<AgentRun> {
     const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
@@ -238,15 +241,19 @@ export class AgentRun {
     };
 
     // The same rules for a new and a reopened conversation: model, effort, then the automatic safety mode.
-    // Reopening is limited as a whole, handshake and settings included: a tool that never answers
-    // at all falls back to a fresh conversation instead of hanging the step.
+    // Opening is limited as a whole, handshake and settings included, so a tool that never answers never
+    // hangs the step: a reopen falls back to a fresh conversation, and a fresh one fails the step, to try again.
     let whole: ReturnType<typeof setTimeout> | undefined;
-    const reopenLimit = options.reopenTimeoutMs ?? REOPEN_TIMEOUT_MS;
-    const deadline =
-      options.reopen === undefined
-        ? undefined
-        : new Promise<never>((_, reject) => (whole = setTimeout(() => reject(new ReopenFailed(`${adapter.name} did not reopen the conversation within ${duration(reopenLimit)}`)), reopenLimit)));
-    deadline?.catch(() => undefined);
+    const fresh = options.reopen === undefined;
+    const limit = fresh ? (options.startTimeoutMs ?? START_TIMEOUT_MS) : (options.reopenTimeoutMs ?? REOPEN_TIMEOUT_MS);
+    const deadline = new Promise<never>(
+      (_, reject) =>
+        (whole = setTimeout(
+          () => reject(fresh ? new Error(`${adapter.name} did not start within ${duration(limit)}. Try again; if it keeps happening, check that ${adapter.name} starts in a terminal.`) : new ReopenFailed(`${adapter.name} did not reopen the conversation within ${duration(limit)}`)),
+          limit,
+        )),
+    );
+    deadline.catch(() => undefined);
     const ready = (async () => {
       const session = await open();
       const configOptions = (session.configOptions ?? []) as { id: string; options?: { value: string }[] }[];
@@ -266,7 +273,7 @@ export class AgentRun {
     ready.catch(() => undefined);
 
     try {
-      const session = await Promise.race([ready, killed, ...(deadline ? [deadline] : [])]);
+      const session = await Promise.race([ready, killed, deadline]);
       clearTimeout(whole);
       return new AgentRun(child, connection, session.sessionId, state, session.how);
     } catch (error) {

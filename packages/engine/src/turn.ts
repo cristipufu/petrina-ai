@@ -83,6 +83,7 @@ export class Turns {
         cwd: task.worktree!,
         signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
+        ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
         callbacks: {
           onActivity: (line) => {
             const current = live();
@@ -231,6 +232,7 @@ export class Turns {
       env: await this.envFor(task, roleId),
       cwd: copy,
       signal,
+      ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
       callbacks: {
         onActivity: (line) => {
           const current = this.k.task(taskId);
