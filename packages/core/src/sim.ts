@@ -323,6 +323,7 @@ export class Simulator {
           task.stageIndex = index;
         }
       } else if (item.kind === "delivery") {
+        task.sentBack = (task.sentBack ?? 0) + 1;
         const index = lastIndexWhere(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
         if (index >= 0) {
           task.stageIndex = index;

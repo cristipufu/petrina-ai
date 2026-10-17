@@ -343,6 +343,8 @@ export interface Task {
   approvedSha?: string;
   /** The coordinator sent the delivery back with this note: the Guide keeper looks for what reviewers missed. */
   miss?: { note: string; at: number };
+  /** How many times the coordinator sent a delivery back after every reviewer had passed it. */
+  sentBack?: number;
   agent?: ActiveAgent;
   statusLine: string;
   createdAt: number;

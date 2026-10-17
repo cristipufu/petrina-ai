@@ -727,6 +727,7 @@ export class Engine {
     } else if (item.kind === "delivery") {
       // Every reviewer passed what the coordinator sent back: the Guide keeper looks for what they missed.
       task.miss = { note, at: Date.now() };
+      task.sentBack = (task.sentBack ?? 0) + 1;
       const index = lastIndex(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
       if (index >= 0) {
         task.stageIndex = index;
