@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ArrowRight, Send, SquareTerminal, User } from "lucide-react";
 import type { MessageMode, SessionLine, State, Task } from "@petrina/core";
-import { sim } from "../engine";
+import { sim, useEngineStatus, useUnsent } from "../engine";
 import { ago, profileText, type Lookup } from "../lib";
 import { RoleAvatar } from "./bits";
+import { UnsentMessage } from "./EngineState";
 import { Ask } from "./Inbox";
 import type { SheetTab } from "./TaskCard";
 
@@ -39,6 +40,11 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
   const profile = find.profile(task.agent?.profileId);
   const live = task.state === "running";
   const asks = state.inbox.filter((item) => item.taskId === task.id);
+  // Answers to something still waiting show with it below; the rest show here, in the conversation.
+  const unsent = useUnsent().filter((entry) => entry.taskId === task.id && !(entry.itemId && asks.some((item) => item.id === entry.itemId)));
+  const connected = useEngineStatus().link === "live";
+  // A refusal adds its reason and actions under the message.
+  const refused = unsent.filter((entry) => entry.refused).length;
   const pinned = useRef(true);
 
   // Follow new lines only while the reader is at the bottom; reading earlier messages stays put.
@@ -59,13 +65,14 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
   }, [scroller, task.id]);
 
   // Follow new lines only while at the bottom, but always bring what you just sent into view.
-  const sent = useRef({ queued: task.queued.length, lines: task.session.length });
+  const sent = useRef({ queued: task.queued.length, lines: task.session.length, unsent: unsent.length });
   useLayoutEffect(() => {
     const el = scroller.current;
-    const yours = task.queued.length > sent.current.queued || (task.session.length > sent.current.lines && task.session.at(-1)?.from === "you");
-    sent.current = { queued: task.queued.length, lines: task.session.length };
+    const yours =
+      task.queued.length > sent.current.queued || unsent.length > sent.current.unsent || (task.session.length > sent.current.lines && task.session.at(-1)?.from === "you");
+    sent.current = { queued: task.queued.length, lines: task.session.length, unsent: unsent.length };
     if (el && (pinned.current || yours)) el.scrollTop = el.scrollHeight;
-  }, [scroller, task.session.length, task.queued.length, asks.length]);
+  }, [scroller, task.session.length, task.queued.length, unsent.length, refused, asks.length]);
 
   const speaker = (line: SessionLine): ReactNode => {
     const lineRole = find.role(line.roleId);
@@ -160,6 +167,9 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
               </div>
             </div>
           </div>
+        ))}
+        {unsent.map((entry) => (
+          <UnsentMessage key={entry.clientId} entry={entry} live={connected} />
         ))}
       </div>
 

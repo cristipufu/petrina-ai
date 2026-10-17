@@ -78,7 +78,7 @@ ACP gives Petrina what it needs without per-tool code:
 | Interrupt | `session/cancel` |
 | Live activity for the status line | `session/update` notifications (messages, tool calls, plans) |
 | Permission prompts | `session/request_permission`, sent only when the tool's own safety check flags something; the coordinator answers |
-| Resume | `session/load`, when the agent supports it |
+| Pick up after a restart | `session/resume`, or `session/load` (which replays the conversation) when that is all the agent offers |
 
 So a tool is mostly configuration:
 
@@ -92,7 +92,7 @@ So a tool is mostly configuration:
 }
 ```
 
-A dedicated adapter is written only when a tool needs something ACP does not expose (for example reading usage limits). Things to verify per tool before relying on them: model and effort selection through ACP, use of the user's existing login, and `session/load` support.
+A dedicated adapter is written only when a tool needs something ACP does not expose (for example reading usage limits). Things to verify per tool before relying on them: model and effort selection through ACP, use of the user's existing login, and `session/resume` or `session/load` support.
 
 ## The Petrina bridge
 
@@ -154,10 +154,21 @@ packages/core           Domain model, scheduler, plan engine, simulator
 docs/                   This document and the UX brainstorm
 ```
 
-- **Rust is a thin host.** It starts and stops processes, manages worktrees, stores events in SQLite, runs the bridge socket, and opens pull requests with `gh`.
-- **TypeScript holds everything domain-specific:** roles, plans, the scheduler, the engine, ACP handling, and the UI.
+- **Rust is a thin host.** It starts the engine, passes the engine's address and key to the window, and stops the engine it started when the app quits. No web client, no plugins beyond Tauri's core.
+- **TypeScript holds everything domain-specific:** roles, plans, the scheduler, the engine, ACP handling, worktrees, SQLite, and the UI.
 - `@petrina/core` never imports Tauri. It talks to a host interface, so the whole engine runs under Node in tests with fake agents.
 - **State** is an append-only event log per task in SQLite. The UI and the engine read the same state, so tasks pick up where they left off after a restart.
+
+## The engine process
+
+The engine is one Bun process per Petrina folder (`~/.petrina`, or `PETRINA_HOME`).
+
+- **One engine per folder.** The engine holds an exclusive SQLite transaction on `engine.lock` for as long as it runs; the operating system releases it the moment the process ends, crash included. A second engine finds it through the lock, or through `engine.json` for an engine started before the lock existed, and refuses ("already running"), or in app mode steps aside and hands over the running engine's address. The engine decides this, not the shell.
+- **App mode.** The desktop shell starts `cli.ts app` with its stdin and stdout as a private line. The engine picks a free port, writes `engine.json` for scripts, and says it is ready in one JSON line on stdout; that line, with the key, never goes to a log. Everything else the engine prints goes to `engine.log`, written only by the engine that holds the folder. When stdin closes (the app quit, crashed or was force-quit) the engine stops its agents the way pausing does, saves, removes `engine.json` and exits; the shell forces it after 8 seconds. An engine the app did not start is left alone. Started from the Dock, the engine asks the login shell for the PATH the terminal has.
+- **The key.** The window asks the shell for the address and key through a Tauri command that only the main window may call (`capabilities/default.json`), keeps them in memory, and presents the key as a WebSocket subprotocol when the connection opens. The engine refuses any request with the key in its address, a wrong or missing key, and pages that are not Petrina's own.
+- **Restarts are safe.** Everything the coordinator says during a step (messages, answers, the note with a "No", the change request that started the step) is saved before any agent sees it, and kept on the task until the step hands back its result. An agent that starts the step again gets all of it, in order, in its opening instructions. The window keeps what it sent until the engine confirms it, and sends it again after reconnecting, with an id so a resend counts once.
+- **Agents pick up where they left off.** The moment an agent's conversation opens, the engine saves a note of it on the task: the step (stage, design round, reviewer position), the role, the tool and model, the conversation's id, and the working copy's commit when the step first started. The note goes when the step finishes or fails, or the coordinator pauses, cancels or asks for changes; stopping Petrina keeps it. After a restart, a step whose note matches its step, role, tool and model reopens that conversation in the same working copy, with resume, or load when that is all the tool offers (what load replays is not shown again). Model, effort and the automatic safety mode are set again, mode last, and the GitHub login rules are the same as for a new conversation. The agent gets one line (Petrina restarted, the stage, the last thing it was doing, check the working copy and continue), then only what it has not heard: the answer to its open question and messages still in line. The timeline says "Picked up where it left off". When the conversation cannot be reopened (the tool cannot, it is gone, an error, or no answer within a minute), a fresh one starts with the usual opening instructions plus where it was: the stage and role, its last 10 activities in the step, and up to 30 files added, changed or removed since the step started. The timeline says "Started this step again" with the reason. A question open at the restart stays in the inbox without holding a slot, and its answer goes to the conversation that asked it, once; an open permission request is dropped with a note, and the agent asks again if it still needs to. A read-only role's clean-up goes back to the commit from when the step first started. The shipper never reopens a conversation, and pausing, resuming and "Try again" start the step fresh.
+- **Shipping is never repeated blindly.** Before the shipper gets any work, the engine saves that shipping started, with the branch's head, where main was and the latest release. If shipping is interrupted (a quit, a crash, a pause, a failed attempt), the next run looks for the delivery first: a pull request for the branch, the work on the default branch, or a release published since shipping started that contains it. It asks GitHub about the product's own repository, from outside the working copy, so a remote an agent rewrote cannot fake a delivery. Found: it is recorded. Not found, half done, or GitHub unreachable: the coordinator decides ("Check again", "Ship it again", "Mark as done"), and a second shipper is told what the first one left behind.
 
 ## Security model
 

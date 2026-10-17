@@ -119,6 +119,69 @@ export interface QueuedMessage {
   at: number;
 }
 
+/**
+ * Something the coordinator said during a step. Saved the moment Petrina receives it and kept
+ * until the step finishes, so an agent that starts the step again gets all of it.
+ */
+export interface StepNote {
+  /** The queued message's id, when it also waits in `queued`. */
+  id: Id;
+  at: number;
+  /** `changes`: the change request that sent the task into this step. */
+  kind: "message" | "interrupt" | "answer" | "denied" | "changes";
+  text: string;
+  /** The question an answer answers, or what a "No" refused. */
+  about?: string;
+}
+
+/**
+ * The conversation an agent has open for a step. Saved the moment it opens, so after a restart the
+ * agent picks up its own conversation. Removed when the step finishes or fails, or the coordinator
+ * pauses, cancels or asks for changes; Petrina stopping keeps it. The shipper never has one.
+ */
+export interface ConversationNote {
+  /** The step: its stage (or the plan), the design round and the reviewer position. */
+  step: string;
+  roleId: Id;
+  profileId: Id;
+  toolId: Id;
+  /** The model, as the tool takes it. */
+  model: string;
+  /** The tool's id for the conversation. */
+  sessionId: string;
+  /** The working copy's commit when the step first started. */
+  head?: string;
+  /** When the step first started. */
+  startedAt: number;
+  /** The question the agent is waiting on in this conversation, with the coordinator's answer once there is one. */
+  asked?: { itemId: Id; question: string; answer?: string };
+  /** The agent has shown it received its opening instructions. Only then can a restart reopen the conversation. */
+  briefed?: boolean;
+}
+
+/**
+ * Written before the shipper gets any work, so a delivery interrupted by a quit or a crash is
+ * checked, never repeated blindly.
+ */
+export interface ShippingRecord {
+  startedAt: number;
+  /** How many times a shipper has started on this delivery. */
+  attempts: number;
+  /** The task branch's last commit when shipping started. */
+  head?: string;
+  /** The default branch in the local clone and on origin when shipping started. */
+  mainSha?: string;
+  originSha?: string;
+  /** The latest release when shipping started (release mode). */
+  latestRelease?: string;
+  /** What Petrina found after an interruption, in plain words. The next shipper is told. */
+  found?: string;
+  /** The coordinator chose "Ship it again": the next shipper runs without another check. */
+  again?: boolean;
+  /** Which run of the engine started this attempt, to tell a restart from a pause. */
+  boot?: string;
+}
+
 export interface DesignBrief {
   summary: string;
   forUsers: readonly string[];
@@ -227,10 +290,21 @@ export interface Task {
   /** Set when a `local` product committed this task onto its default branch. */
   landed?: { branch: string; sha: string };
   /** Everything the coordinator said about this task, kept for every later agent (latest wins). */
-  notes?: readonly { at: number; text: string }[];
+  notes?: readonly { at: number; text: string; id?: Id }[];
+  /** What the coordinator said during the current step, in order. Cleared when the step finishes. */
+  stepNotes?: readonly StepNote[];
+  /** How many times the current step has started. */
+  stepAttempts?: number;
+  /** The conversation the current step's agent has open, so it can pick it up after a restart. */
+  conversation?: ConversationNote;
+  /** Set while the task is being shipped. */
+  shipping?: ShippingRecord;
+  /** Ids the window gave what it sent lately, so a resend after a lost confirmation counts once. */
+  received?: readonly Id[];
 }
 
-export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck";
+/** `shipping`: a delivery was interrupted and Petrina could not confirm it went out. */
+export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping";
 
 export interface InboxItem {
   id: Id;

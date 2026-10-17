@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Bell, Boxes, Bot, Ellipsis, Hand, LayoutGrid, Library, Moon, Plus, Search, Sun, X } from "lucide-react";
 import type { State, Task } from "@petrina/core";
-import { engineStatus, mode, startClock, useSim } from "./engine";
+import { mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
+import { CouldNotStart, EnginePill, StartingScreen } from "./components/EngineState";
 import { blockingCount, lookup, type Lookup } from "./lib";
 import { Logo, useDismiss, useViewport, viewportSize } from "./components/bits";
 import { Board } from "./components/Board";
@@ -29,6 +30,7 @@ const DOCKED_INBOX = 1200;
 
 export function App() {
   const state = useSim();
+  const status = useEngineStatus();
   const find = useMemo(() => lookup(state), [state]);
   const viewport = useViewport();
   const [view, setView] = useState<View>("board");
@@ -130,7 +132,6 @@ export function App() {
 
   const sheetTask = sheet ? find.task(sheet.taskId) : undefined;
   const blocking = blockingCount(state);
-  const status = mode === "demo" ? { text: "Demo", tone: "", title: "Running on a simulated squad" } : engineStatus().connected ? { text: "Live", tone: "done", title: "Connected to the Petrina engine on this machine" } : { text: "Reconnecting…", tone: "failed", title: "Reconnecting to the Petrina engine" };
   const themeButton = (
     <button className="btn ghost icon" aria-label={theme === "dark" ? "Use the light theme" : "Use the dark theme"} title="Switch theme" onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
       {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
@@ -152,12 +153,7 @@ export function App() {
           <SearchButton query={query} setQuery={setQuery} inputRef={searchRef} open={searching} setOpen={setSearching} />
         )}
         <div className="spacer" />
-        {barExtras && (
-          <span className="engine-status" title={status.title}>
-            <span className={`dot ${status.tone}`} aria-hidden="true" />
-            {roomy ? status.text : <span className="sr-only">{status.text}</span>}
-          </span>
-        )}
+        {barExtras && <EnginePill status={status} compact={!roomy} />}
         {blocking > 0 && (
           <button className="blocking-pill" onClick={openInbox} aria-label={`You're blocking ${blocking} agent${blocking === 1 ? "" : "s"}. Open the inbox`}>
             <Hand size={16} strokeWidth={2.2} aria-hidden="true" />
@@ -258,6 +254,9 @@ export function App() {
         />
       )}
 
+      {mode === "engine" && status.desktop && status.link === "starting" && <StartingScreen />}
+      {mode === "engine" && status.link === "failed" && <CouldNotStart problem={status.problem} />}
+
       <div className="toasts" aria-live="polite">
         {toasts.map((entry) => (
           <div key={entry.id} className="toast">
@@ -332,7 +331,7 @@ interface MoreProps {
   state: State;
   find: Lookup;
   onOpen: (taskId: string, tab?: SheetTab) => void;
-  status: { text: string; tone: string; title: string };
+  status: EngineStatus;
   themeButton: ReactNode;
 }
 
@@ -353,10 +352,7 @@ function MoreMenu({ state, find, onOpen, status, themeButton }: MoreProps) {
             <PoolPanel state={state} find={find} onOpen={onOpen} onDone={close} />
           </div>
           <div className="more-section row between">
-            <span className="row" style={{ gap: 8 }} title={status.title}>
-              <span className={`dot ${status.tone}`} aria-hidden="true" />
-              {status.text}
-            </span>
+            <EnginePill status={status} />
             <span className="row" style={{ gap: 8 }}>
               Theme
               {themeButton}

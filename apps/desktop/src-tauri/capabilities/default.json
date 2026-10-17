@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window gets the core defaults only. No filesystem, shell or network plugins.",
+  "description": "The main window gets the core defaults and may ask the shell for the engine's address and key. No filesystem, shell or network plugins.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "allow-engine-details"]
 }

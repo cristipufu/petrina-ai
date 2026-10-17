@@ -1,19 +1,20 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitAll, ensureWorktree, isClean, riskySettings } from "../src/git.js";
+import { removeDir } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
 
 describe("Petrina's own git steps", () => {
-  afterAll(() => rmSync(temp, { recursive: true, force: true }));
+  afterAll(() => removeDir(temp));
 
   it("never run hooks or the file monitor an agent planted", async () => {
     const repo = join(temp, "repo");
-    execFileSync("mkdir", ["-p", repo]);
+    mkdirSync(repo, { recursive: true });
     git(repo, "init", "-q", "-b", "main");
     git(repo, "config", "user.email", "test@example.com");
     git(repo, "config", "user.name", "Test");
@@ -33,7 +34,7 @@ describe("Petrina's own git steps", () => {
 
   it("will not fetch with the coordinator's login when the repository's settings could misuse it", async () => {
     const repo = join(temp, "risky");
-    execFileSync("mkdir", ["-p", repo]);
+    mkdirSync(repo, { recursive: true });
     git(repo, "init", "-q", "-b", "main");
     git(repo, "remote", "add", "origin", "https://github.com/acme/shop.git");
     git(repo, "config", "branch.main.remote", "origin");
@@ -48,7 +49,7 @@ describe("Petrina's own git steps", () => {
 
   it("never waits on a stalled fetch: it works from the local copy", async () => {
     const origin = join(temp, "origin");
-    execFileSync("mkdir", ["-p", origin]);
+    mkdirSync(origin, { recursive: true });
     git(origin, "init", "-q", "-b", "main");
     git(origin, "config", "user.email", "test@example.com");
     git(origin, "config", "user.name", "Test");

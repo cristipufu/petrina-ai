@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
+import { removeDir } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));
@@ -12,7 +13,7 @@ const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd 
 
 function makeRepo(name = "repo"): string {
   const repo = join(temp, name);
-  execFileSync("mkdir", ["-p", repo]);
+  mkdirSync(repo, { recursive: true });
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "test@example.com");
   git(repo, "config", "user.name", "Test");
@@ -22,7 +23,7 @@ function makeRepo(name = "repo"): string {
   return repo;
 }
 
-afterAll(() => rmSync(temp, { recursive: true, force: true }));
+afterAll(() => removeDir(temp));
 
 /** Wait for a condition on the engine's state, answering the inbox like a coordinator would. */
 async function until(engine: Engine, done: (state: State) => boolean, respond: (engine: Engine, state: State) => void, ms = 60_000): Promise<State> {
@@ -38,7 +39,7 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
 
 describe("Engine with a fake ACP agent", () => {
   const repo = makeRepo();
-  const engine = new Engine(join(temp, "data"), { agentCommand: () => ["bun", fake] });
+  const engine = new Engine(join(temp, "data"), { agentCommand: () => [process.execPath, fake] });
 
   afterAll(() => engine.shutdown());
 
@@ -85,7 +86,7 @@ describe("The coordinator's call on a design disagreement", () => {
   const data = join(temp, "call-data");
   // While this file exists, the architect stops halfway through following a call.
   const hold = join(temp, "hold-call");
-  const start = () => new Engine(data, { agentCommand: () => ["bun", fake, `--hold=${hold}`] });
+  const start = () => new Engine(data, { agentCommand: () => [process.execPath, fake, `--hold=${hold}`] });
   let engine = start();
 
   afterAll(() => engine.shutdown());
@@ -134,6 +135,9 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(after.objections.find((objection) => objection.id === open[1]!.id)).toMatchObject({ status: "accepted", answer: "Added it to the brief." });
     expect(after.objections.find((objection) => objection.id === open[1]!.id)?.call).toBeUndefined();
     expect(after.objections.some((objection) => objection.status === "open")).toBe(false);
+    // Following the call was a step of its own: once done, nothing said in it goes to the next one.
+    expect(after.stepNotes).toBeUndefined();
+    expect(after.stepAttempts).toBeUndefined();
 
     const texts = after.timeline.map((entry) => entry.text);
     expect(texts).toContain(CALL_WORDS.made(CALL));
