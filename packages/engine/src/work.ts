@@ -1,17 +1,23 @@
-// "do" stages: one role on one profile. The builder answers findings and brings work up to date, and Petrina
-// keeps its work as one commit; the tester checks acceptance, and any other role hands back notes. The
-// shipper's stage is Petrina's own delivery (shipping.ts).
+// "do" stages: one role on one profile. The builder answers findings, brings work up to date and writes a pull
+// request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
+// role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
 import type { Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
-import { BuildResult, NotesResult, stepBack, TestResult } from "./roles.js";
+import { BuildResult, NotesResult, stepBack, TestResult, TEXT_LIMITS } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
+
+/** A pull request's description must fit where GitHub puts it, beside Petrina's own part: the builder shortens it, never Petrina. */
+function tooLong(value: { description?: string | undefined }): string | undefined {
+  if (value.description && value.description.length > TEXT_LIMITS.description) return `"description" is longer than a pull request can take (${TEXT_LIMITS.description} characters). Shorten it, then end with the result block.`;
+  return undefined;
+}
 
 export class Work {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly updates: Updates, private readonly learnings: Learnings) {}
@@ -36,11 +42,20 @@ export class Work {
           const missing = given.filter((finding) => !value.answers.some((answer) => answer.id === finding.id));
           if (missing.length) return `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}`;
           const marked = updating ? await git.withMarkers(task.worktree!, updating.files) : [];
-          return marked.length ? `these files still have git's conflict markers: ${marked.join(", ")}. Resolve them, run the checks again, then end with the result block.` : undefined;
+          if (marked.length) return `these files still have git's conflict markers: ${marked.join(", ")}. Resolve them, run the checks again, then end with the result block.`;
+          return tooLong(value);
         },
         ...(back ? { resume: { sessionId: back.sessionId, toolId: back.toolId, model: back.model } } : {}),
       });
-      task.report = { summary: result.summary, changes: result.changes, ...(result.tests ? { tests: result.tests } : {}), ...(result.title ? { title: result.title } : {}) };
+      // A pull request's description: the builder's latest, or what it wrote before when it hands back none this time.
+      const description = result.description?.trim() || task.report?.description;
+      task.report = {
+        summary: result.summary,
+        changes: result.changes,
+        ...(result.tests ? { tests: result.tests } : {}),
+        ...(result.title ? { title: result.title } : {}),
+        ...(description ? { description } : {}),
+      };
       this.learnings.note(task, result.learnings, roleId, profileId);
       // One commit per task: the builder's work joins the branch's one commit, under its title.
       const sha = await git.commitAll(task.worktree!, this.updates.message(task));

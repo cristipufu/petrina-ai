@@ -19,11 +19,40 @@ export type MStage = DeepMutable<Stage>;
 
 export const PLANNER_PROFILE = "opus-high";
 
-export const SHIPPER_PROFILE = "opus-high";
+export const RELEASE_MANAGER_PROFILE = "opus-high";
 
 export const CHECK_FINDER_PROFILE = "opus-high";
 
 export const GUIDE_KEEPER_PROFILE = "opus-high";
+
+/** Role ids that changed: what was saved under the old one keeps working. */
+const RENAMED_ROLES: Readonly<Record<string, string>> = { shipper: "release-manager" };
+
+/**
+ * State saved before a role was renamed, with every role id it holds moved to the new one, once, as it loads:
+ * plan stages, the working agents, conversation and take-over notes, lessons, the timeline, the session and the inbox.
+ */
+export function renameRoles(state: MState): void {
+  const move = (entry: { roleId?: string } | undefined) => {
+    const to = entry?.roleId ? RENAMED_ROLES[entry.roleId] : undefined;
+    if (to) entry!.roleId = to;
+  };
+  for (const task of state.tasks) {
+    for (const stage of task.plan?.stages ?? []) {
+      move(stage);
+      const reviewer = stage.reviewerRoleId ? RENAMED_ROLES[stage.reviewerRoleId] : undefined;
+      if (reviewer) stage.reviewerRoleId = reviewer;
+    }
+    move(task.agent);
+    for (const helper of task.helpers ?? []) move(helper);
+    move(task.conversation);
+    move(task.driving);
+    for (const lesson of task.lessons ?? []) move(lesson);
+    for (const entry of task.timeline) move(entry);
+    for (const line of task.session) move(line);
+  }
+  for (const item of state.inbox) move(item);
+}
 
 export const TONES: readonly Tone[] = ["blue", "green", "orange", "violet", "pink", "teal", "indigo", "purple", "amber", "slate"];
 
@@ -82,6 +111,7 @@ export abstract class Kernel {
     this.store = new Store(join(dataDir, "petrina.db"));
     const loaded = this.store.load();
     this.s = (loaded ?? this.empty()) as MState;
+    if (loaded) renameRoles(this.s);
     this.s.roles = BUILT_IN_ROLES as MState["roles"];
     this.s.profiles = ENGINE_PROFILES as MState["profiles"];
     // Tests stand in the tools' own apps: those count as installed.

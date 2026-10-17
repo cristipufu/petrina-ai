@@ -139,7 +139,7 @@ export interface StepNote {
 /**
  * The conversation an agent has open for a step. Saved the moment it opens, so after a restart the
  * agent picks up its own conversation. Removed when the step finishes or fails, or the coordinator
- * pauses, cancels or asks for changes; Petrina stopping keeps it. The shipper never has one.
+ * pauses, cancels or asks for changes; Petrina stopping keeps it. The Release Manager never has one.
  */
 export interface ConversationNote {
   /** The step: its stage (or the plan), the design round and the reviewer position. */
@@ -187,15 +187,16 @@ export type ShippingStep = "push" | "open" | "release" | "update";
 
 /**
  * Petrina's own record of a delivery, saved before every step, so a restart, pause or cancel never
- * publishes twice. The work is already one commit on top of the latest default branch: the shipper only
- * writes the text, and for a release the version commit. Petrina publishes the exact commit it checked.
+ * publishes twice. The work is already one commit on top of the latest default branch. A pull request's text is
+ * the builder's; a release's version commit is Petrina's, and its notes the Release Manager's. Petrina publishes
+ * the exact commit it checked.
  */
 export interface ShippingRecord {
   /** The task's one commit this preparation started from, on top of `base`. */
   start?: string;
   /** The default branch's commit the work sits on: where Petrina expects it when it publishes. */
   base?: string;
-  /** Releases: the version and tag worked out for this preparation, and the latest release then ("" for none). */
+  /** Releases: the version and tag worked out for this preparation, and the latest release then ("" for none). Petrina sets the version itself. */
   version?: string;
   tag?: string;
   after?: string;
@@ -216,11 +217,11 @@ export interface ShippingRecord {
   pushed?: boolean;
   /** Preparations started again because the default branch moved. */
   moves: number;
-  /** Preparations that failed. */
+  /** Preparations that failed (the checks failing on the version commit). */
   failures: number;
   /**
-   * A delivery a Petrina from before this version saved while its shipper published it with a GitHub
-   * login. Petrina cannot tell what went out, so it never acts on it by itself: nothing happens until
+   * A delivery a Petrina from before Petrina published deliveries saved while its delivery agent published it
+   * with a GitHub login. Petrina cannot tell what went out, so it never acts on it by itself: nothing happens until
    * the coordinator chooses "It went out (mark as done)" or "Ship it again".
    */
   carriedOver?: true;
@@ -442,7 +443,11 @@ export interface Task {
   worktree?: string;
   base?: string;
   /** What the builder reported, in plain language, and its one-line commit title. Goes into the pull request. */
-  report?: { summary: string; changes: readonly string[]; tests?: string; title?: string };
+  /**
+   * What the builder reported, in plain language: its one-line commit title, and a pull request's description,
+   * which Petrina publishes as the builder wrote it.
+   */
+  report?: { summary: string; changes: readonly string[]; tests?: string; title?: string; description?: string };
   /** Why the task failed, when it did. */
   error?: string;
   /** Set when a `release` product published this task. */
@@ -496,7 +501,7 @@ export interface InboxItem {
  * - `pull-request`: push the work's one commit and open a pull request (never merged by Petrina).
  * - `release`: push the work with a version commit to the default branch, with a new version tag, and publish a GitHub release.
  * - `local`: move the local default branch forward to the work. Nothing is pushed.
- * Petrina publishes; the shipper only writes the text, and a release's version commit.
+ * Petrina publishes, and sets a release's version itself; the only agent at delivery is the Release Manager, writing a release's notes.
  */
 export type DeliveryMode = "pull-request" | "release" | "local";
 

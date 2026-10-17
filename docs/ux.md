@@ -179,7 +179,7 @@ Agents start with full permissions inside their own working copy, so they rarely
 - **Allow** lets it go ahead this once. **Deny** blocks it.
 - Nothing is remembered: the next request asks again, in any task and any product. Petrina never picks a tool's own "always" option.
 - Because nothing is remembered, there is no list of saved permissions in the app. Seeing and removing remembered permissions is not available yet; if remembering ever comes back, it belongs to Product settings and board papercuts.
-- Plan, design and delivery checks are the engine's gates, not permissions: an agent cannot skip them, and only Petrina itself ever delivers; the shipper only gets the delivery ready.
+- Plan, design and delivery checks are the engine's gates, not permissions: an agent cannot skip them, and only Petrina itself ever delivers. The only agent at delivery is the Release Manager, which writes a release's notes across everything since the previous release; pull requests and commits to main need none.
 
 ### Notifications
 
@@ -224,7 +224,7 @@ This is the "open in terminal" experience, made friendly.
 - The composer has two modes:
   - **Queue** (default): delivered when the agent finishes its current step. Queued messages wait at the end of the conversation, outlined and marked as queued, each with Remove. They scroll with the conversation, so a long queue never pushes the composer or Send out of view, and sending always brings your message into view.
   - **Interrupt**: stops the current step and delivers now.
-- **Take over in terminal:** you drive the agent yourself, in your own terminal, with your own setup and logins. It is enabled while an agent other than the shipper is working or waiting on you, on Claude Code or Codex; otherwise it is off with a one-line reason (no agent right now, delivery runs on its own, still starting, tool not installed). The demo keeps a notice.
+- **Take over in terminal:** you drive the agent yourself, in your own terminal, with your own setup and logins. It is enabled while an agent other than the Release Manager is working or waiting on you, on Claude Code or Codex; otherwise it is off with a one-line reason (no agent right now, delivery runs on its own, still starting, tool not installed). The demo keeps a notice.
   - After a quick OK, Petrina checks it can open a terminal. If it can't, the agent keeps working and the dialog offers to choose a terminal or to take over and copy a command to run yourself. The OK says what happens to the agent's unsaved work: saved for an editing role, undone for a role that only reads.
   - Petrina then stops the agent cleanly and clears any question or permission request it had open. An editing role's unsaved work (the builder's, say) is saved as that agent's own commit, marked as unfinished; a read-only role's leftovers are undone, as always. If Petrina can't save that work, it says so and the agent carries on instead.
   - The agent's own app (Claude Code or Codex) opens in a new terminal window, in the task's working copy, on the same conversation, with the same model and effort, so you can scroll up and see what it was doing. The app runs in its normal mode with its usual prompts. Some actions may run without a prompt, and you are in charge of the session: Petrina adds no blocks there, so whatever happens there happens for real, outside Petrina's agent protections and review.

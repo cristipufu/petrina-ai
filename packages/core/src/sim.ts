@@ -79,7 +79,6 @@ interface ScriptContext {
   product: string;
   round: number;
   fixing: boolean;
-  delivery: DeliveryMode;
   /** The architect is following the coordinator's call. */
   following: boolean;
   /** The design reviewer keeps objecting every round. */
@@ -88,13 +87,11 @@ interface ScriptContext {
 
 /** What each role says while it works, in plain language. */
 function scriptFor(roleId: Id, ctx: ScriptContext): string[] {
-  const { area, product, round, fixing, delivery, following, objecting } = ctx;
+  const { area, product, round, fixing, following, objecting } = ctx;
   switch (roleId) {
-    // The shipper only gets the delivery ready; Petrina publishes it (see `ship`).
-    case "shipper":
-      return delivery === "release"
-        ? ["Setting the new version", "Writing the release notes", "Running the checks on the version"]
-        : ["Writing the pull request description", "Checking the title and description fit"];
+    // Only a release has one: Petrina sets the version and publishes it (see `ship`).
+    case "release-manager":
+      return ["Reading every commit since the previous release", "Grouping the changes: new, improved, fixed", "Writing the release notes"];
     case "planner":
       return ["Reading the task", `Looking at how ${product} is organised`, "Choosing who should work on this", "Writing the plan"];
     case "researcher":
@@ -651,7 +648,7 @@ export class Simulator {
     const product = d.products.find((entry) => entry.id === task.productId)?.name ?? "the product";
     const round = this.round(task);
     const following = !!this.following(task);
-    const lines = scriptFor(agent.roleId, { area: task.area, product, round, fixing: task.fixing, delivery: task.delivery, following, objecting: this.disagree.has(task.id) });
+    const lines = scriptFor(agent.roleId, { area: task.area, product, round, fixing: task.fixing, following, objecting: this.disagree.has(task.id) });
     const line = lines[agent.step];
     if (line === undefined) {
       this.finish(d, task);
@@ -730,7 +727,7 @@ export class Simulator {
     if (!stage) return;
     const round = this.round(task);
 
-    if (stage.kind === "do" && agent.roleId === "shipper") {
+    if (stage.kind === "do" && agent.roleId === "release-manager") {
       this.ship(d, task);
       return;
     }
@@ -889,10 +886,10 @@ export class Simulator {
     this.startAgent(d, task);
   }
 
-  /** "Commit to main" needs no agent: Petrina moves main forward itself, as the engine does. */
+  /** Pull requests and commits to main need no agent: Petrina publishes them itself, as the engine does. A release's notes come from the Release Manager first. */
   private petrinaDelivers(task: DraftTask): boolean {
     const stage = this.stage(task);
-    return task.delivery === "local" && stage?.kind === "do" && stage.roleId === "shipper";
+    return task.delivery !== "release" && stage?.kind === "do" && stage.roleId === "release-manager";
   }
 
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
@@ -947,9 +944,9 @@ export class Simulator {
     this.log(d, task, "done", `Petrina opened pull request #${number}, and checked it on GitHub`);
   }
 
-  /** The shipper got it ready: Petrina publishes it, the way the task asks. */
+  /** Petrina publishes it, the way the task asks: with the builder's text, or the Release Manager's notes. */
   private ship(d: Draft, task: DraftTask): void {
-    if (task.agent) this.log(d, task, "done", "Ready to publish", "shipper", task.agent.profileId);
+    if (task.agent) this.log(d, task, "done", "Ready to publish", "release-manager", task.agent.profileId);
     if (task.delivery === "pull-request") {
       this.openPullRequest(d, task);
       return;

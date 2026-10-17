@@ -43,6 +43,8 @@ export interface FakeGitHub {
   hold?: Hold;
   /** More holds, each only for calls whose arguments include `match` (a branch or tag). */
   holds?: Hold[];
+  /** While `times` lasts, each `command` call first has a teammate change GitHub: main moves, and with `release`, that release comes out on it. */
+  meanwhile?: { command: string; withTag?: boolean; times: number; release?: string };
   prs: FakePr[];
   releases: FakeRelease[];
   /** Every call's arguments, in order. */
@@ -117,6 +119,19 @@ function main(): void {
   };
 
   if (state.offline) fail("error connecting to api.github.com");
+  const meanwhile = state.meanwhile;
+  if (meanwhile?.times && meanwhile.command === command && (!meanwhile.withTag || (args[2] && !args[2].startsWith("-")))) {
+    meanwhile.times -= 1;
+    const env = { ...process.env, GIT_AUTHOR_NAME: "Teammate", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "Teammate", GIT_COMMITTER_EMAIL: "t@example.com" };
+    const moved = execFileSync("git", ["--git-dir", remote!, "commit-tree", "main^{tree}", "-p", "main", "-m", "A teammate's change"], { env }).toString().trim();
+    execFileSync("git", ["--git-dir", remote!, "update-ref", "refs/heads/main", moved]);
+    if (meanwhile.release) {
+      execFileSync("git", ["--git-dir", remote!, "update-ref", `refs/tags/${meanwhile.release}`, moved]);
+      state.releases.push({ tagName: meanwhile.release, url: `https://github.com/${state.repo}/releases/tag/${meanwhile.release}`, publishedAt: new Date().toISOString(), isDraft: false, name: meanwhile.release, body: "A teammate's release." });
+      delete meanwhile.release;
+    }
+    save();
+  }
   const positional = args[2] && !args[2].startsWith("-") ? args[2] : undefined;
   // `gh repo view` names the repository itself; everything else is pinned with --repo.
   const repo = command === "repo view" ? positional : flag("--repo");

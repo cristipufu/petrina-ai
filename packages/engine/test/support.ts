@@ -1,5 +1,5 @@
 // Shared by the tests: engines run as separate processes, and the delivery tests' world, a product
-// with a folder standing in for GitHub, a fake gh and a scripted shipper. Petrina gets the
+// with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
 // stand-ins only through the Engine's constructor.
 import { setDefaultTimeout } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -11,7 +11,7 @@ import { Engine } from "../src/engine.js";
 import { readConnection } from "../src/instance.js";
 import type { ShellMessage } from "../src/launch.js";
 import { Store } from "../src/store.js";
-import type { Scenario, ShipperScript } from "./fake-agent.js";
+import type { AgentScript, Scenario } from "./fake-agent.js";
 import { readGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
 
 // The tests stand in for the coordinator's own setup: git settings an environment adds (when Petrina runs
@@ -104,7 +104,7 @@ type Spawned = ReturnType<typeof spawnEngine>;
 
 /**
  * The environment test engines run in. Git settings passed down through the environment are
- * dropped (inside a Petrina agent they switch pushing off), so the fake shipper can push to the
+ * dropped (inside a Petrina agent they switch pushing off), so Petrina can push to the
  * test's own bare repository wherever the tests run.
  */
 export function engineEnv(home: string): Record<string, string | undefined> {
@@ -281,13 +281,13 @@ export interface World {
   start(): Engine;
   github(): FakeGitHub;
   setGitHub(change: (state: FakeGitHub) => void): void;
-  script(): ShipperScript;
-  setScript(change: (script: ShipperScript) => void): void;
+  script(): AgentScript;
+  setScript(change: (script: AgentScript) => void): void;
   /** Change the state Petrina saved, between runs. */
   editSaved(change: (state: State) => void): void;
 }
 
-/** A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and a scripted shipper. */
+/** A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and scripted agents. */
 export function makeWorld(name: string, options: { version?: string; address?: string } = {}): World {
   const dir = mkdtempSync(join(tmpdir(), `petrina-${name}-`));
   const remote = join(dir, "github.git");
@@ -305,7 +305,7 @@ export function makeWorld(name: string, options: { version?: string; address?: s
   git(clone, "push", "-q", remote, "main");
   const ghState = join(dir, "github.json");
   writeGitHub(ghState, { repo: REPO, prs: [], releases: [], calls: [] });
-  const scriptPath = join(dir, "shipper.json");
+  const scriptPath = join(dir, "agents.json");
   writeFileSync(scriptPath, "{}");
   const data = join(dir, "data");
   return {
@@ -321,9 +321,9 @@ export function makeWorld(name: string, options: { version?: string; address?: s
       change(state);
       writeGitHub(ghState, state);
     },
-    script: () => JSON.parse(readFileSync(scriptPath, "utf8")) as ShipperScript,
+    script: () => JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript,
     setScript: (change) => {
-      const script = JSON.parse(readFileSync(scriptPath, "utf8")) as ShipperScript;
+      const script = JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript;
       change(script);
       writeFileSync(scriptPath, JSON.stringify(script, null, 2));
     },

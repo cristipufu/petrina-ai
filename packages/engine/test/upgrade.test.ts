@@ -1,4 +1,4 @@
-// A delivery that the Petrina before this version was in the middle of, when its shipper still
+// A delivery that the Petrina before this version was in the middle of, when its delivery agent still
 // published with a GitHub login: after the update Petrina never acts on it by itself. It asks the
 // coordinator to check GitHub and choose, and nothing happens until they do.
 import { afterAll, describe, expect, it } from "bun:test";
@@ -22,13 +22,13 @@ const asks = (state: State, taskId: string) => itemOf(state, taskId, "shipping")
 
 /**
  * A task approved for delivery, saved the way the Petrina before this version left a delivery its
- * shipper was in the middle of: the old record, on the shipper's step, on a product added before
- * Petrina kept its address. `oldShipper` does what that shipper got done before Petrina stopped.
+ * delivery agent was in the middle of: the old record, on the delivery step, on a product added before
+ * Petrina kept its address. `oldAgent` does what that agent got done before Petrina stopped.
  */
 async function interruptedBeforeUpdate(
   w: World,
   mode: DeliveryMode,
-  options: { oldShipper?: (task: Task, head: string) => void; state?: Task["state"]; oldItem?: boolean } = {},
+  options: { oldAgent?: (task: Task, head: string) => void; state?: Task["state"]; oldItem?: boolean } = {},
 ): Promise<{ engine: Engine; taskId: string; head: string; calls: number }> {
   const first = w.start();
   const productId = await first.addProduct(w.clone);
@@ -37,13 +37,13 @@ async function interruptedBeforeUpdate(
   const task = taskOf(await until(first, (state) => itemOf(state, taskId, "delivery") !== undefined, coordinator(["plan", "design"])), taskId);
   first.shutdown();
   const head = git(task.worktree!, "rev-parse", "HEAD");
-  options.oldShipper?.(task, head);
+  options.oldAgent?.(task, head);
   w.editSaved((state) => {
     // The old version's own question about an interrupted delivery, from before the update.
     const oldItem = { id: "old-item", taskId, kind: "shipping", title: "Shipping was interrupted", at: Date.now(), blocking: false, body: "Petrina could not confirm it went out." } as const;
     state.inbox = [...state.inbox.filter((item) => item.taskId !== taskId), ...(options.oldItem ? [oldItem] : [])];
     const saved = state.tasks.find((entry) => entry.id === taskId) as unknown as Record<string, unknown> & Task;
-    const stage = saved.plan!.stages.findIndex((entry) => entry.roleId === "shipper" && entry.kind === "do");
+    const stage = saved.plan!.stages.findIndex((entry) => entry.roleId === "release-manager" && entry.kind === "do");
     expect(stage).toBeGreaterThan(-1);
     Object.assign(saved, {
       state: options.state ?? "running",
@@ -56,7 +56,7 @@ async function interruptedBeforeUpdate(
   return { engine: w.start(), taskId, head, calls: w.github().calls.length };
 }
 
-/** What the old shipper ran: plain git in the task's working copy, straight to GitHub. */
+/** What the old delivery agent ran: plain git in the task's working copy, straight to GitHub. */
 const pushToGitHub = (w: World, cwd: string, ...refspecs: string[]) => execFileSync("git", ["push", "-q", w.remote, ...refspecs], { cwd });
 
 function versionCommit(cwd: string): string {
@@ -64,7 +64,7 @@ function versionCommit(cwd: string): string {
   return git(cwd, "rev-parse", "HEAD");
 }
 
-/** Nothing happened on its own: no shipper, no GitHub, no question about the address. */
+/** Nothing happened on its own: nothing made ready, no agent, no GitHub, no question about the address. */
 function untouched(w: World, state: State, taskId: string, calls: number): void {
   const task = taskOf(state, taskId);
   expect(task.state).toBe("needs-you");
@@ -72,7 +72,8 @@ function untouched(w: World, state: State, taskId: string, calls: number): void 
   expect(task.shipping).toEqual({ moves: 0, failures: 0, carriedOver: true });
   expect(state.inbox.filter((item) => item.taskId === taskId).map((item) => item.kind)).toEqual(["shipping"]);
   expect(itemOf(state, taskId, "shipping")!.body).toStartWith(NOTE);
-  expect(w.script().runs ?? 0).toBe(0);
+  expect(task.timeline.some((entry) => entry.text.startsWith("Ready to publish"))).toBe(false);
+  expect(w.script().releaseManagerPrompts).toBeUndefined();
   expect(w.github().calls.length).toBe(calls);
 }
 
@@ -82,7 +83,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
     let bumped = "";
     const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "release", {
       oldItem: true,
-      oldShipper: (task) => {
+      oldAgent: (task) => {
         bumped = versionCommit(task.worktree!);
         pushToGitHub(w, task.worktree!, "HEAD:refs/heads/main", "HEAD:refs/tags/v0.1.0");
         w.setGitHub((github) => github.releases.push({ tagName: "v0.1.0", url: "https://github.com/acme/demo/releases/tag/v0.1.0", publishedAt: new Date().toISOString(), isDraft: false, name: "v0.1.0", body: "A greeting." }));
@@ -136,7 +137,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       state = await until(engine, (current) => itemOf(current, taskId, "delivery") !== undefined, coordinator(["plan", "design"]));
       expect(taskOf(state, taskId).shipping).toBeUndefined();
       expect(taskOf(state, taskId).approvedFor).toBeUndefined();
-      expect(w.script().runs ?? 0).toBe(0);
+      expect(taskOf(state, taskId).timeline.some((entry) => entry.text.startsWith("Ready to publish"))).toBe(false);
       expect(w.github().prs).toEqual([]);
 
       // The coordinator confirms the address the product was added with, once, and it goes out.
@@ -145,17 +146,17 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(task.state).toBe("pr-open");
       expect(task.pr?.number).toBe(1);
       expect(w.github().prs).toHaveLength(1);
-      expect(w.script().runs).toBe(1);
+      expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
     } finally {
       engine.shutdown();
     }
   });
 
-  it("never releases twice after “Ship it again” when the old shipper already pushed the version's tag", async () => {
+  it("never releases twice after “Ship it again” when the old delivery agent already pushed the version's tag", async () => {
     const w = world("upgrade-pushed");
     let bumped = "";
     const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "release", {
-      oldShipper: (task) => {
+      oldAgent: (task) => {
         bumped = versionCommit(task.worktree!);
         pushToGitHub(w, task.worktree!, "HEAD:refs/heads/main", "HEAD:refs/tags/v0.1.0");
       },

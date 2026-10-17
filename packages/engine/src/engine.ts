@@ -57,7 +57,7 @@ export class Engine extends Kernel implements Commands {
     this.checks = new ProductChecks(this, this.turns, this.context);
     this.connections = new Connections(this);
     this.updates = new Updates(this, this.connections);
-    this.shipping = new Shipping(this, this.turns, this.context, this.updates, this.checks, this.connections);
+    this.shipping = new Shipping(this, this.turns, this.updates, this.checks, this.connections);
     this.learnings = new Learnings(this);
     this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings);
     this.design = new Design(this, this.turns, this.context);
@@ -533,7 +533,7 @@ export class Engine extends Kernel implements Commands {
         if (task.checkedSha) task.approvedSha = task.checkedSha;
         if (task.checkedPatch) task.approvedPatch = task.checkedPatch;
         task.approvedFor = { by: "coordinator", mode: task.delivery, destination: destination(task, this.productOf(task)) };
-        // After review rounds ran out, the check was raised on the shipper's own stage.
+        // After review rounds ran out, the check was raised on the delivery stage itself.
         if (task.plan?.stages[task.stageIndex]?.kind === "gate") task.stageIndex += 1;
         break;
       case "disagreement":

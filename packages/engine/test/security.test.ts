@@ -163,7 +163,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
       const before = process.env.GIT_SSH_COMMAND;
       process.env.GIT_SSH_COMMAND = ssh;
       // No stand-in address through the constructor: Petrina connects to the product's saved address.
-      const engine = new Engine(w.data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${join(w.dir, "shipper.json")}`], gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote] });
+      const engine = new Engine(w.data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${join(w.dir, "agents.json")}`], gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote] });
       try {
         const productId = await engine.addProduct(w.clone);
         engine.setProductDelivery(productId, mode, false);

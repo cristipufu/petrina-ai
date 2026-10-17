@@ -129,14 +129,14 @@ export const BUILT_IN_ROLES: readonly Role[] = [
     column: "building",
   },
   {
-    id: "shipper",
-    name: "Shipper",
+    id: "release-manager",
+    name: "Release Manager",
     icon: "rocket",
     tone: "green",
-    purpose: "Gets approved work ready to go out: writes the pull request or release text, and sets a release's version. Petrina publishes it; the shipper never does.",
-    canEdit: true,
-    sees: "The finished change, the builder's report and the reviews.",
-    handsBack: "Ready, with the text to publish (and a release's version commit), or failed, with the reason.",
+    purpose: "Writes a release's notes, across everything on the default branch since the previous release. The only agent at delivery, and only for releases: Petrina sets the version and publishes; pull requests and commits to main need no agent.",
+    canEdit: false,
+    sees: "Every commit since the previous release, with its message.",
+    handsBack: "The release notes, in plain language.",
     column: "ready",
     internal: true,
   },
@@ -214,11 +214,11 @@ export const DELIVERY_LABEL: Record<DeliveryMode, string> = {
   local: "Commit to main",
 };
 
-/** The end of every plan: the coordinator's check (when asked for), then the shipper. */
-export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDelivery">, shipperProfileId: string = "opus-high"): Stage[] {
-  const ship: Stage = { id: `${task.id}:ship`, kind: "do", title: DELIVERY_LABEL[task.delivery], roleId: "shipper", profileIds: [shipperProfileId] };
+/** The end of every plan: the coordinator's check (when asked for), then the delivery step, the Release Manager's (it only works for releases). */
+export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDelivery">, releaseManagerProfileId: string = "opus-high"): Stage[] {
+  const ship: Stage = { id: `${task.id}:ship`, kind: "do", title: DELIVERY_LABEL[task.delivery], roleId: "release-manager", profileIds: [releaseManagerProfileId] };
   if (!task.approveDelivery) return [ship];
-  return [{ id: `${task.id}:delivery`, kind: "gate", title: "Your delivery check", roleId: "shipper", profileIds: [], gate: "delivery" }, ship];
+  return [{ id: `${task.id}:delivery`, kind: "gate", title: "Your delivery check", roleId: "release-manager", profileIds: [], gate: "delivery" }, ship];
 }
 
 /**

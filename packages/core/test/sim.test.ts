@@ -480,16 +480,28 @@ describe("delivery in the demo, as the engine does it", () => {
     const done = task(sim, id);
     expect(done.landed?.branch).toBe("main");
     const lines = done.timeline.map((entry) => entry.text);
-    expect(lines).not.toContain("Shipper started");
+    expect(lines).not.toContain("Release Manager started");
     expect(lines.some((line) => line.startsWith("Petrina moved main forward to it"))).toBe(true);
   });
 
-  it("has the shipper write a pull request's text, then Petrina opens it, with each step said once", () => {
+  it("opens a pull request with no agent: Petrina opens it with the builder's text, each step said once", () => {
     const sim = new Simulator(emptyState(4), { prMergeAfter: 1_000 });
     const id = sim.addTask({ productId: "p", title: "Small fix", kind: "chore", delivery: "pull-request" });
     runUntil(sim, () => task(sim, id).state === "pr-open");
     const lines = task(sim, id).timeline.map((entry) => entry.text);
+    expect(lines).not.toContain("Release Manager started");
+    expect(lines.filter((line) => line === "Petrina pushed the branch")).toHaveLength(1);
+  });
+
+  it("has the Release Manager write a release's notes, then Petrina publishes it", () => {
+    const sim = new Simulator(emptyState(4), { prMergeAfter: 1_000 });
+    const id = sim.addTask({ productId: "p", title: "Small fix", kind: "chore", delivery: "release" });
+    runUntil(sim, () => task(sim, id).state === "done");
+    const done = task(sim, id);
+    const lines = done.timeline.map((entry) => entry.text);
+    expect(done.release?.tag).toBeDefined();
     expect(lines.filter((line) => line === "Ready to publish")).toHaveLength(1);
-    expect(lines.indexOf("Petrina pushed the branch")).toBeGreaterThan(lines.indexOf("Shipper started"));
+    expect(lines.indexOf("Release Manager started")).toBeGreaterThan(-1);
+    expect(lines.findIndex((line) => line.startsWith("Petrina pushed main and the tag"))).toBeGreaterThan(lines.indexOf("Ready to publish"));
   });
 });

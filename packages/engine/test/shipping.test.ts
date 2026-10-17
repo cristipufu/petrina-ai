@@ -57,7 +57,8 @@ describe.concurrent("shipping is never repeated blindly", () => {
         expect(task.timeline.some((entry) => entry.text.startsWith("Found after a restart that it had already gone out"))).toBe(true);
         expect(task.shipping).toBeUndefined();
         expect(creates(run.w)).toHaveLength(1);
-        expect(run.fakes.openings("shipper")).toHaveLength(1);
+        // Only a release has an agent at delivery, and it wrote the notes once.
+        expect(run.fakes.openings("release manager")).toHaveLength(mode === "release" ? 1 : 0);
         if (mode === "pull-request") {
           expect(task.state).toBe("pr-open");
           expect(task.pr?.number).toBe(1);
@@ -98,8 +99,8 @@ describe.concurrent("shipping is never repeated blindly", () => {
     expect(task.landed?.sha).toBe(done.landed!.sha);
     expect(task.timeline.some((entry) => entry.text === `Found after a restart that it had already gone out: main has the work (${tested.slice(0, 7)})`)).toBe(true);
     expect(git(run.w.clone, "rev-parse", "main")).toBe(tested);
-    // Local delivery needs no shipper.
-    expect(run.fakes.openings("shipper")).toHaveLength(0);
+    // A commit to main needs no agent.
+    expect(run.fakes.openings("release manager")).toHaveLength(0);
     await engine.quit();
   });
 
@@ -116,7 +117,8 @@ describe.concurrent("shipping is never repeated blindly", () => {
     expect(task.pr?.number).toBe(1);
     expect(task.timeline.some((entry) => entry.text === "Checked after a restart: No pull request is open for this work yet. Petrina carries on publishing.")).toBe(true);
     expect(run.w.github().prs).toHaveLength(1);
-    expect(run.fakes.openings("shipper")).toHaveLength(1);
+    // A pull request needs no agent at delivery, however often Petrina gets it ready.
+    expect(run.fakes.openings("release manager")).toHaveLength(0);
     await engine.quit();
   });
 
@@ -174,7 +176,8 @@ describe.concurrent("shipping is never repeated blindly", () => {
     await engine.act("shipAgain", shippingItem(state, run.taskId)!.id);
     const done = run.find(await engine.until((current) => delivered(run.find(current)), "the pull request to be recorded"));
     expect(done.pr?.number).toBe(1);
-    expect(run.fakes.openings("shipper")).toHaveLength(2);
+    expect(done.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(2);
+    expect(run.fakes.openings("release manager")).toHaveLength(0);
     expect(run.w.github().prs).toHaveLength(1);
     expect(creates(run.w)).toHaveLength(1);
     await engine.quit();
@@ -202,7 +205,7 @@ describe.concurrent("shipping is never repeated blindly", () => {
     await engine.quit();
   });
 
-  it("pausing while Petrina works out the version keeps the shipper from starting, and resuming ships once", async () => {
+  it("pausing while Petrina works out the version keeps the Release Manager from starting, and resuming ships once", async () => {
     const run = await shipping("release", { hold: "release view", holdMatch: "tagName" });
     await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to look up the latest release");
     await run.engine.act("pause", run.taskId);
@@ -210,13 +213,13 @@ describe.concurrent("shipping is never repeated blindly", () => {
     await Bun.sleep(1500);
     const paused = run.find(await run.engine.state());
     expect(paused.state).toBe("paused");
-    expect(run.fakes.openings("shipper")).toHaveLength(0);
+    expect(run.fakes.openings("release manager")).toHaveLength(0);
     expect(run.w.github().releases).toHaveLength(0);
 
     await run.engine.act("resume", run.taskId);
     const done = run.find(await run.engine.until((state) => delivered(run.find(state)), "the release"));
     expect(done.release?.tag).toBe("v0.1.0");
-    expect(run.fakes.openings("shipper")).toHaveLength(1);
+    expect(run.fakes.openings("release manager")).toHaveLength(1);
     expect(run.w.github().releases).toHaveLength(1);
     await run.engine.quit();
   });
@@ -234,7 +237,7 @@ describe.concurrent("shipping is never repeated blindly", () => {
     await engine.act("resume", run.taskId);
     const done = run.find(await engine.until((state) => delivered(run.find(state)), "the release to be recorded"));
     expect(done.release?.tag).toBe("v0.1.0");
-    expect(run.fakes.openings("shipper")).toHaveLength(1);
+    expect(run.fakes.openings("release manager")).toHaveLength(1);
     expect(run.w.github().releases).toHaveLength(1);
     expect(creates(run.w)).toHaveLength(1);
     await engine.quit();

@@ -1,36 +1,32 @@
-// Delivering finished work, by Petrina itself. Before anything goes out the work is one commit on top of
-// the latest main, approved for this delivery and destination, with the checks passing on it. The shipper
-// only writes the text (and a release's version commit); Petrina publishes the exact commit it checked: it
-// pushes the branch and opens the pull request, pushes main and the new tag together and creates the release,
-// or moves the local main forward. It has no merge, force-push or delete. Every publishing step is saved
+// Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
+// top of the latest main, approved for this delivery and destination, with the checks passing on it. Petrina
+// publishes the exact commit it checked, with what the builder wrote to go out with it: it pushes the branch and
+// opens the pull request (the builder's description, then Petrina's own part), sets a release's version in the
+// product's version files, pushes main and the new tag together and creates the release with the builder's
+// notes, or moves the local main forward. It has no merge, force-push or delete. Every publishing step is saved
 // before it starts, and an interrupted delivery is looked up before anything goes out again: never twice.
 
 import { lastIndexWhere, type DeliveryMode, type Id, type Product, type ShippingStep } from "@petrina/core";
-import { realpathSync } from "node:fs";
-import type { z } from "zod";
+import { realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import * as git from "./git.js";
-import { ShipResult } from "./roles.js";
-import { Aborted, type Kernel, type MStage, type MTask, SHIPPER_PROFILE } from "./kernel.js";
+import { ReleaseNotesResult, TEXT_LIMITS } from "./roles.js";
+import { Aborted, type Kernel, type MStage, type MTask, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import { type Connections, Unreachable } from "./connection.js";
-import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
 import type { Turns } from "./turn.js";
 import type { Updates } from "./update.js";
-import { declaredVersion, isVersionFile, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, parseVersion } from "./version.js";
+import { declaredVersion, isVersionFile, lockWithVersion, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, ownCrates, parseVersion, withVersion } from "./version.js";
 
 /** Preparations started again because the default branch moved, before Petrina stops and asks. */
 const MAX_MOVES = 3;
-/** Failed preparations before Petrina stops and asks. */
+/** Failed preparations (the checks failing on the version commit) before Petrina stops and asks. */
 const MAX_FAILURES = 2;
-/** GitHub's limits on what Petrina publishes. */
-const LIMITS = { title: 256, body: 65_536, notes: 125_000 };
 /** A delivery from before the update, which Petrina leaves to the coordinator. */
 export const CARRIED_OVER = "This delivery was interrupted before Petrina was updated";
 
 /** What the check before publishing found. `unknown`: GitHub could not be asked. `other`: something that is not this work is there. */
 type Delivery = { found: true; text: string; record: () => Promise<unknown> | unknown } | { found: false; text: string } | { found: "unknown" | "other"; text: string };
-
-type Handoff = z.infer<typeof ShipResult>;
 
 /** Where a delivery goes. Approval is for this destination only. */
 export function destination(task: { delivery: DeliveryMode }, product: Pick<Product, "path" | "repo" | "defaultBranch"> | undefined): string {
@@ -38,9 +34,17 @@ export function destination(task: { delivery: DeliveryMode }, product: Pick<Prod
   return task.delivery === "local" ? `${product?.path ?? ""}#${branch}` : `${product?.repo ?? ""}#${branch}`;
 }
 
-/** Whether the shipper stage needs an agent now: only to get a pull request or a release ready. */
-export function needsShipper(task: MTask): boolean {
-  return task.delivery !== "local" && !task.shipping?.prepared && !task.shipping?.step && !task.shipping?.carriedOver;
+/** The most commits a release's notes are written from, when there is no previous release to start at. */
+const MAX_LOG = 200;
+
+/** Whether the delivery step needs an agent now: only a release, for its notes, until they are written. */
+export function needsReleaseManager(task: MTask): boolean {
+  return task.delivery === "release" && !task.shipping?.prepared && !task.shipping?.step && !task.shipping?.carriedOver;
+}
+
+/** Text cut to fit where GitHub puts it, marked when it was cut. */
+function fit(text: string, limit: number): string {
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
 function realPath(path: string): string {
@@ -63,16 +67,16 @@ export class Shipping {
   constructor(
     private readonly k: Kernel,
     private readonly turns: Turns,
-    private readonly context: Context,
     private readonly updates: Updates,
     private readonly checks: ProductChecks,
     private readonly connections: Connections,
   ) {}
 
   /**
-   * The shipper stage. Interrupted while publishing: what went out is looked up first. Otherwise the work is
-   * made ready to ship, then ready to publish, then Petrina publishes it. "continue": the task went somewhere
-   * else first (back to the builder or the delivery check, or main moved and it gets ready again).
+   * The delivery step. Interrupted while publishing: what went out is looked up first. Otherwise the work is
+   * made ready to ship, then ready to publish, then Petrina publishes it. Only a release runs an agent here, for
+   * its notes. "continue": the task went somewhere else first (back to the builder or the delivery check, or main
+   * moved and it gets ready again).
    */
   async deliver(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     if (signal.aborted) throw new Aborted();
@@ -125,9 +129,10 @@ export class Shipping {
   }
 
   /**
-   * The delivery gets ready. A pull request needs its text, and a release its version (worked out now), a version
-   * commit and notes, all from the shipper, then the checks again on the version commit. Local delivery needs
-   * nothing more. Petrina checks the shipper's handoff, and never commits for it.
+   * The delivery gets ready. A pull request takes the builder's title and description, followed by Petrina's own
+   * part. A release gets its version worked out now and set by Petrina in the product's version files, as one
+   * version commit it checks, the product's checks again on it, and notes from the Release Manager, who reads every commit
+   * since the previous release: a release ships all of them, not only this task. Local delivery needs nothing more.
    */
   private async prepare(task: MTask, stage: MStage, signal: AbortSignal): Promise<"ready" | "continue" | "stop"> {
     const product = this.k.productOf(task)!;
@@ -143,28 +148,139 @@ export class Shipping {
       this.k.commitNow();
       return "ready";
     }
-    if (task.delivery === "release") await this.chooseVersion(task, signal);
+    if (task.delivery === "pull-request") {
+      shipping.prepared = { tested: start, summary: "Ready to open a pull request", title: this.pullRequestTitle(task), body: this.pullRequestBody(task) };
+      this.k.log(task, "status", `Ready to publish: ${start.slice(0, 7)}, with ${task.report?.description ? "the builder's description" : "a description from the builder's report"}`);
+      this.k.commitNow();
+      return "ready";
+    }
+    await this.chooseVersion(task, signal);
+    this.k.log(task, "status", `Getting the release ready: Petrina sets the version to ${shipping.version}`);
     this.k.commitNow();
-    this.k.log(task, "status", task.delivery === "release" ? `Getting the delivery ready: the shipper sets the version to ${shipping.version} and writes the release notes` : "Getting the delivery ready: the shipper writes the pull request");
-    const profileId = stage.profileIds[0] ?? SHIPPER_PROFILE;
-    const result = await this.turns.turn(task, "shipper", profileId, () => this.context.sectionsFor(task, "shipper"), ShipResult, signal, { check: (value) => this.checkHandoff(task, value) });
-    if (result.status === "failed") return this.preparationFailed(task, result.summary, profileId);
-    const tested = task.delivery === "release" ? result.tested! : start;
+    const tested = await this.setVersion(task);
     // A version commit changes what ships: the checks run on it too.
-    if (tested !== start && (await this.checks.failing(task, signal))) return this.preparationFailed(task, "The product's checks fail with the version change", profileId);
-    shipping.prepared = {
-      tested,
-      summary: result.summary,
-      ...(task.delivery === "pull-request" ? { title: result.title!.trim(), body: result.body! } : {}),
-      ...(task.delivery === "release" ? { notes: result.notes! } : {}),
-    };
-    // Petrina publishes from here: the shipper is done.
+    if (tested !== start && (await this.checks.failing(task, signal))) return this.preparationFailed(task, `The product's checks fail with the version set to ${shipping.version}`);
+    // The notes cover everything the release ships: every commit since the previous release, this task's included.
+    const log = await this.sincePreviousRelease(task, signal);
+    const profileId = stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE;
+    const result = await this.turns.turn(task, "release-manager", profileId, () => [log], ReleaseNotesResult, signal, {
+      check: (value) => (!value.notes.trim() ? `"notes" is empty: write the release notes.` : value.notes.length > TEXT_LIMITS.notes ? `the release notes are longer than GitHub allows (${TEXT_LIMITS.notes} characters). Shorten them.` : undefined),
+    });
+    shipping.prepared = { tested, summary: result.summary, notes: result.notes.trim() };
+    // Petrina publishes from here.
     delete task.agent;
+    task.holdsSlot = false;
     this.k.finishStep(task);
-    this.k.log(task, "done", `Ready to publish: ${tested.slice(0, 7)}`, "shipper", profileId);
-    this.k.say(task, "agent", `${result.summary}\n\n${this.k.describe("shipper", profileId)}`, "shipper", profileId);
+    this.k.say(task, "agent", `${result.summary}\n\n${this.k.describe("release-manager", profileId)}`, "release-manager", profileId);
+    this.k.log(task, "done", `Ready to publish: ${tested.slice(0, 7)}, as ${shipping.tag}, with notes on everything since ${shipping.after || "the start"}`, "release-manager", profileId);
     this.k.commitNow();
     return "ready";
+  }
+
+  /**
+   * Every commit on the default branch since the previous release, up to this task's own, oldest first, with its
+   * message: what the Release Manager writes the notes from. With no previous release (or none Petrina can find here),
+   * the most recent ones, at most 200, saying so.
+   */
+  private async sincePreviousRelease(task: MTask, signal: AbortSignal): Promise<{ title: string; body: string }> {
+    const product = this.k.productOf(task)!;
+    const shipping = task.shipping!;
+    const worktree = task.worktree!;
+    const branch = product.defaultBranch ?? "main";
+    let from: string | undefined;
+    if (shipping.after) {
+      const remote = await this.connections.requireConnection(task, signal);
+      const refs = await this.connections.serial(product.id, () => git.remoteRefs(product.path!, remote, [`refs/tags/${shipping.after}`]));
+      if (!refs.ok) throw new Unreachable(`Petrina could not find ${shipping.after} on GitHub (${refs.error}), so it published nothing. Retry when GitHub is reachable.`);
+      const sha = refs.value.get(`refs/tags/${shipping.after}^{}`) ?? refs.value.get(`refs/tags/${shipping.after}`);
+      if (sha && (await git.revParse(worktree, sha))) from = sha;
+    }
+    const commits = await git.commitMessages(worktree, from ? `${from}..${shipping.start}` : shipping.start!, MAX_LOG);
+    const capped = !from && commits.length >= MAX_LOG;
+    const title = from
+      ? `Every commit on ${branch} since ${shipping.after}, oldest first (${commits.length})`
+      : `${shipping.after ? `The commit of ${shipping.after} is not in this copy, so: the` : "The first release:"} ${capped ? `${MAX_LOG} most recent commits` : "every commit"} on ${branch}, oldest first${capped ? " (older ones are left out)" : ` (${commits.length})`}`;
+    return { title, body: commits.map((commit) => `### ${commit.message.split("\n")[0]}\n${commit.message.split("\n").slice(1).join("\n").trim()}`.trim()).join("\n\n") || "(none)" };
+  }
+
+  /** The pull request's title: the builder's one-line commit title, else the task's. */
+  private pullRequestTitle(task: MTask): string {
+    return fit((task.report?.title ?? task.title).replace(/\s+/g, " ").trim(), TEXT_LIMITS.title);
+  }
+
+  /** The builder's words, or when it wrote none, its report: what it did, and what changed for users. */
+  private fromReport(task: MTask): string {
+    const report = task.report;
+    const changes = report?.changes.length ? `## What changed for users\n${report.changes.map((change) => `- ${change}`).join("\n")}` : "";
+    return [report?.summary ?? task.title, changes].filter(Boolean).join("\n\n");
+  }
+
+  /** The pull request's description: the builder's, then Petrina's own part, which says only what Petrina saw. */
+  private pullRequestBody(task: MTask): string {
+    const builder = task.report?.description?.trim() || this.fromReport(task);
+    const parts: string[] = ["## Checked by Petrina"];
+    const acceptance = task.brief?.acceptance ?? [];
+    // Ticked only where a tester checked it.
+    if (acceptance.length) parts.push(`### Acceptance\n${acceptance.map((item) => (item.met === undefined ? `- ${item.text}` : `- [${item.met ? "x" : " "}] ${item.text}`)).join("\n")}`);
+    const runs = task.checks?.results ?? [];
+    if (runs.length) parts.push(`### Checks Petrina ran on this commit\n${runs.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} (\`${run.command}\`)`).join("\n")}`);
+    const reviewers = [...new Set((task.plan?.stages ?? []).filter((stage) => stage.kind === "review-chain").flatMap((stage) => stage.profileIds.map((profileId) => this.k.describe(stage.roleId, profileId))))];
+    if (reviewers.length) parts.push(`### Reviewed by\n${reviewers.map((reviewer) => `- ${reviewer}`).join("\n")}`);
+    const followUps = task.findings.filter((finding) => finding.status === "open" && finding.severity === "pre-existing");
+    if (followUps.length) parts.push(`### Follow-ups (older than this change)\n${followUps.map((finding) => `- ${finding.text}`).join("\n")}`);
+    return fit(`${builder}\n\n${parts.join("\n\n")}`, TEXT_LIMITS.body);
+  }
+
+  /**
+   * Petrina sets the release's version itself, in the product's main version files (and the product's own
+   * entries in the Cargo.lock beside a Cargo.toml it changed), as one version commit on top of the work, and
+   * checks it: only the version changed, and every main version file says it. Anything it cannot set or check
+   * stops the release, with nothing published. Returns the commit to publish: the version commit, or the work
+   * itself when its files already say the version (a first release, or none to set).
+   */
+  private async setVersion(task: MTask): Promise<string> {
+    const worktree = task.worktree!;
+    const shipping = task.shipping!;
+    const start = shipping.start!;
+    const version = shipping.version!;
+    const stop = (why: string): never => {
+      throw new Error(`Petrina could not set the version to ${version}: ${why}. It published nothing. Set it there yourself (only the version) in a task, or release by hand, then retry.`);
+    };
+    const due = this.declaredVersions(worktree, start).filter((entry) => entry.version !== version);
+    if (!due.length) return start;
+    const before = new Map<string, string>();
+    for (const { file, version: from } of due) {
+      const text = git.fileAt(worktree, start, file)!;
+      const next = withVersion(file, text, from!, version);
+      if (next === undefined) return stop(`${file} does not state it in a way Petrina can change on its own`);
+      before.set(file, from!);
+      writeFileSync(join(worktree, file), next);
+      // The product's own entries in the Cargo.lock beside it move with it.
+      if (file.endsWith("Cargo.toml")) {
+        const lockFile = join(dirname(file), "Cargo.lock").replace(/^\.\//, "");
+        const lock = git.fileAt(worktree, start, lockFile);
+        if (lock !== undefined) {
+          const moved = lockWithVersion(lock, ownCrates(text), from!, version);
+          if (moved !== lock) {
+            before.set(lockFile, from!);
+            writeFileSync(join(worktree, lockFile), moved);
+          }
+        }
+      }
+    }
+    const conventional = /^[a-z]+(\([^)]+\))?!?: /.test(task.report?.title ?? "");
+    const message = `${conventional ? `chore(release): ${shipping.tag}` : `Release ${shipping.tag}`}\n\nSet the version to ${version}.\n\nBy Petrina`;
+    const tested = await git.commitAll(worktree, message);
+    if (!tested) return start;
+    // Checked like anyone's version commit: only the version, and every main version file says it.
+    const changed = await git.changedFiles(worktree, start, tested);
+    const more = changed.filter((file) => !isVersionFile(file) || !onlyVersionChanged(file, git.fileAt(worktree, start, file), git.fileAt(worktree, tested, file), version, before.get(file)));
+    const wrong = this.declaredVersions(worktree, tested).filter((entry) => entry.version !== version);
+    if (more.length || wrong.length) {
+      await git.resetTo(worktree, start);
+      stop(more.length ? `the change in ${more.join(", ")} would be more than the version` : `${says(wrong)}`);
+    }
+    return tested;
   }
 
   /** Releases: the latest published release plus the product's bump, worked out now, with its tag still free on GitHub. */
@@ -224,60 +340,11 @@ export class Shipping {
   }
 
   /**
-   * Petrina's check of the shipper's handoff. Anything wrong goes back to the shipper to fix: Petrina never
-   * commits for it. The words are for the shipper.
+   * Not ready (the product's checks fail with the version set): nothing is published, and main and GitHub stay
+   * as they were. The version change goes, and the task goes back to the builder, then review and the delivery
+   * check again. After two failures Petrina stops and asks.
    */
-  private async checkHandoff(task: MTask, value: Handoff): Promise<string | undefined> {
-    if (value.status === "failed") return undefined;
-    const shipping = task.shipping!;
-    const worktree = task.worktree!;
-    const branch = task.branch!;
-    const start = shipping.start!;
-    // The preparation is on the task branch itself: not on a side branch, and not on a detached copy.
-    const onBranch = await git.currentBranch(worktree);
-    if (onBranch !== branch) return `the working copy is ${onBranch ? `on ${onBranch}` : "not on any branch"}, not on ${branch}. Switch back to ${branch}, commit there, and hand back the commit ${branch} is at.`;
-    if (await git.mergeInProgress(worktree)) return "a merge is in progress. Undo it: Petrina already brought the work up to date, so a delivery never merges anything.";
-    const dirty = await git.changes(worktree);
-    if (dirty.length) return `there is uncommitted work on ${branch} (${dirty.slice(0, 5).join("; ")}). Commit the version change, or remove what you left behind, then hand back again.`;
-    const tip = await this.branchTip(task);
-    if (task.delivery === "release") {
-      const tested = value.tested ?? "";
-      if (!git.isSha(tested)) return `"tested" must be the full id of the commit ${branch} is at.`;
-      if (tip !== tested) return `${branch} is at ${tip ?? "no commit"}, not at ${tested}. Commit your version change on ${branch} and hand back the commit the branch is at.`;
-      if (value.version !== shipping.version) return `"version" must be ${shipping.version}, the version Petrina worked out.`;
-      if (tested !== start) {
-        const parents = await git.parents(worktree, tested);
-        if (parents.length !== 1 || parents[0] !== start) return `the version change must be one commit directly on top of ${start}, the work as Petrina checked it.`;
-        const changed = await git.changedFiles(worktree, start, tested);
-        const others = changed.filter((file) => !isVersionFile(file));
-        if (others.length) return `the version commit may change only version files, but it also changes ${others.slice(0, 5).join(", ")}.`;
-        // Nothing but the version, so no dependency, script or setting ships in it unreviewed.
-        const from = parseVersion(shipping.after ?? "")?.version;
-        const more = changed.filter((file) => !onlyVersionChanged(file, git.fileAt(worktree, start, file), git.fileAt(worktree, tested, file), shipping.version!, from));
-        if (more.length) return `the version commit may only set the version, but it changes more than that in ${more.slice(0, 5).join(", ")}. Change nothing else in it.`;
-      }
-      // The product's main version files: every one that states a version says the new one.
-      const wrong = this.declaredVersions(worktree, tested).filter((entry) => entry.version !== shipping.version);
-      if (wrong.length) return `these version files do not say ${shipping.version}: ${says(wrong)}. Set it in each of them, in the version commit on top of the work.`;
-      if (!value.notes?.trim()) return `"notes" is missing: write the release notes.`;
-      if (value.notes.length > LIMITS.notes) return `the release notes are longer than GitHub allows (${LIMITS.notes} characters). Shorten them.`;
-      return undefined;
-    }
-    if (tip !== start) return `${branch} moved from ${start} to ${tip ?? "no commit"}, but a pull request needs only its text. Put it back with \`git reset --hard ${start}\`, then hand back again.`;
-    const title = value.title?.trim() ?? "";
-    if (!title || /[\r\n]/.test(title)) return `"title" must be one line of text.`;
-    if (title.length > LIMITS.title) return `the title is longer than GitHub allows (${LIMITS.title} characters). Shorten it.`;
-    if (!value.body?.trim()) return `"body" is missing: write the pull request description.`;
-    if (value.body.length > LIMITS.body) return `the description is longer than GitHub allows (${LIMITS.body} characters). Shorten it.`;
-    return undefined;
-  }
-
-  /**
-   * Not ready: nothing is published in any delivery mode, and main and GitHub stay as they were. The version
-   * change goes, and the task goes back to the builder, then review and the delivery check again. After two
-   * failures Petrina stops and asks.
-   */
-  private async preparationFailed(task: MTask, summary: string, profileId: Id): Promise<"continue" | "stop"> {
+  private async preparationFailed(task: MTask, summary: string): Promise<"continue" | "stop"> {
     const shipping = task.shipping!;
     await this.backToWork(task);
     const failures = shipping.failures + 1;
@@ -293,7 +360,7 @@ export class Shipping {
       task.sub = 0;
       task.fixing = true;
     }
-    this.k.log(task, "warn", `Not ready to publish: ${reason} Nothing was published; it goes back to the builder.`, "shipper", profileId);
+    this.k.log(task, "warn", `Not ready to publish: ${reason} Nothing was published; it goes back to the builder.`);
     this.k.commitNow();
     if (failures < MAX_FAILURES && builder >= 0) return "continue";
     this.k.fail(task.id, new Error(`Getting the delivery ready failed ${failures} times, so Petrina stopped and published nothing. The last reason: ${reason} Try again to send it back to the builder, or cancel it.`));
@@ -758,7 +825,7 @@ export class Shipping {
   // ── From before this version ───────────────────────────────────────────
 
   /**
-   * Deliveries the Petrina before this version saved while its shipper published them with a GitHub login:
+   * Deliveries a Petrina from before it published deliveries saved while its delivery agent published them with a GitHub login:
    * Petrina cannot tell what went out, so it never acts on one by itself, and asks the coordinator instead.
    */
   carryOverShipping(): void {
@@ -790,7 +857,7 @@ export class Shipping {
     task.statusLine = `${CARRIED_OVER}: check GitHub, then choose`;
     if (!this.k.s.inbox.some((item) => item.taskId === task.id && item.kind === "shipping")) {
       this.k.raise(task, "shipping", `Shipping “${task.title}” was interrupted`, false, {
-        body: `${CARRIED_OVER}: check GitHub, then choose. Its shipper published deliveries itself then, so Petrina cannot tell what went out, and does nothing with it until you choose.`,
+        body: `${CARRIED_OVER}: check GitHub, then choose. Its delivery agent published deliveries itself then, so Petrina cannot tell what went out, and does nothing with it until you choose.`,
       });
       this.k.log(task, "warn", `${CARRIED_OVER}: check GitHub, then choose`);
     }

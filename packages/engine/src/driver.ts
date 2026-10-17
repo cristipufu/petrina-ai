@@ -14,7 +14,7 @@ import type { GuideKeeper } from "./guide-keeper.js";
 import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
 import type { Connections } from "./connection.js";
-import { destination, needsShipper, type Shipping } from "./shipping.js";
+import { destination, needsReleaseManager, type Shipping } from "./shipping.js";
 
 export class Driver {
   constructor(
@@ -98,8 +98,8 @@ export class Driver {
     if (!stage) return undefined;
     switch (stage.kind) {
       case "do":
-        // Petrina publishes by itself: the shipper's seat is needed only to get a pull request or release ready.
-        if (stage.roleId === "shipper" && !needsShipper(task)) return undefined;
+        // Petrina publishes by itself: the Release Manager's seat is needed only for a release's notes.
+        if (stage.roleId === "release-manager" && !needsReleaseManager(task)) return undefined;
         return { roleId: stage.roleId, profileId: stage.profileIds[0] ?? PLANNER_PROFILE };
       case "converge":
         return task.sub === 0
@@ -142,7 +142,7 @@ export class Driver {
         const current = task();
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
         // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
-        if (stage && current.handChanges && (stage.gate === "delivery" || stage.roleId === "shipper")) {
+        if (stage && current.handChanges && (stage.gate === "delivery" || stage.roleId === "release-manager")) {
           const chain = lastIndexWhere(current.plan!.stages, (entry) => entry.kind === "review-chain");
           if (chain >= 0) {
             current.stageIndex = chain;
@@ -214,7 +214,7 @@ export class Driver {
         if (!stage) throw new Error("The plan ended without a delivery");
         const next =
           stage.kind === "do"
-            ? stage.roleId === "shipper"
+            ? stage.roleId === "release-manager"
               ? await this.shipping.deliver(current, stage, signal)
               : await this.work.runDo(current, stage, signal)
             : stage.kind === "converge"

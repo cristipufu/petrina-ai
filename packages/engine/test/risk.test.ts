@@ -54,7 +54,7 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
       expect(f.delivery(f.engine.getState())!.body).toContain("High risk: It changes how people sign in.");
 
       const planner = f.fakes.openings("planner")[0]!;
-      for (const word of ["check-finder", "Check finder", "verifier", "Verifier", "security-reviewer", "Security reviewer", "shipper"]) expect(planner).not.toContain(word);
+      for (const word of ["check-finder", "Check finder", "verifier", "Verifier", "security-reviewer", "Security reviewer", "release-manager"]) expect(planner).not.toContain(word);
     } finally {
       f.engine.shutdown();
     }
@@ -87,7 +87,7 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
       expect(first.risk?.level).toBe("medium");
       f.engine.setPoolPaused(true);
       f.engine.approve(f.delivery(f.engine.getState())!.id);
-      await f.step((_, task) => task?.state === "waiting", "the shipper to wait for the paused pool");
+      await f.step((_, task) => task?.state === "waiting", "the delivery to wait for the paused pool");
       writeFileSync(join(first.worktree!, "late.txt"), "A change after the approval\n");
       git(first.worktree!, "add", "late.txt");
       git(first.worktree!, "commit", "--quiet", "-m", "A late change");
@@ -95,7 +95,7 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
 
       const task = await f.step((state) => f.delivery(state), "the delivery check again");
       expect(lines(task)).toContain("The work changed after you approved the delivery, so Petrina asks you again");
-      expect(f.fakes.openings("shipper")).toHaveLength(0);
+      expect(f.fakes.openings("release manager")).toHaveLength(0);
     } finally {
       f.engine.shutdown();
     }

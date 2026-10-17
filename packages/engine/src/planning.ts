@@ -4,7 +4,7 @@
 import { lastIndexWhere, type DeepMutable, deliveryStages, type Task } from "@petrina/core";
 import type { z } from "zod";
 import { PlanResult } from "./roles.js";
-import { Kernel, type MStage, type MTask, PLANNER_PROFILE, RISK_WORD, SHIPPER_PROFILE } from "./kernel.js";
+import { Kernel, type MStage, type MTask, PLANNER_PROFILE, RISK_WORD, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import type { Turns } from "./turn.js";
 
 export class Planning {
@@ -66,7 +66,7 @@ export class Planning {
       const reviewer = (other.find((entry) => entry.effort === "xhigh") ?? other[0])?.id ?? "opus-xhigh";
       stages.splice(lastIndexWhere(stages, (stage) => stage.kind === "review-chain") + 1, 0, { id: `${task.id}:security`, kind: "review-chain", title: "Security review", roleId: "security-reviewer", profileIds: [reviewer], maxRounds: 2 });
     }
-    stages.push(...(deliveryStages(task as unknown as Task, SHIPPER_PROFILE) as MStage[]));
+    stages.push(...(deliveryStages(task as unknown as Task, RELEASE_MANAGER_PROFILE) as MStage[]));
     return { stages, rationale: result.rationale, plannerProfileId: PLANNER_PROFILE };
   }
 }

@@ -42,14 +42,14 @@ export class Turns {
     if (signal.aborted) throw new Aborted();
 
     // A conversation noted before a restart: the same step and role carry on from where it was. Only the
-    // same tool and model reopen it, and never the shipper: interrupted shipping is checked first.
+    // same tool and model reopen it, and never the Release Manager: interrupted shipping is checked first.
     const step = this.stepKey(task);
     const model = profile.modelId ?? profile.model;
     const saved = task.conversation;
     const same = saved && saved.step === step && saved.roleId === roleId ? saved : undefined;
     // A conversation that never showed it got its instructions (Petrina stopped in between) starts again instead.
-    const reopen = same && same.briefed && roleId !== "shipper" && same.toolId === profile.toolId && same.model === model ? same : undefined;
-    let again = saved && !reopen ? (same ? (same.briefed || roleId === "shipper" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
+    const reopen = same && same.briefed && roleId !== "release-manager" && same.toolId === profile.toolId && same.model === model ? same : undefined;
+    let again = saved && !reopen ? (same ? (same.briefed || roleId === "release-manager" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
     // Back to an earlier step's conversation, unless this step already has one of its own.
     const back = !saved && options.resume?.toolId === profile.toolId && options.resume.model === model ? options.resume : undefined;
     const startedAt = same?.startedAt ?? Date.now();
@@ -145,7 +145,7 @@ export class Turns {
     // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
     // the old note; a reopened one keeps the open question until the conversation hears the answer.
     const asked = picked ? reopen?.asked : undefined;
-    if (roleId !== "shipper") task.conversation = { step, roleId, profileId, toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && handback ? { handback } : {}) };
+    if (roleId !== "release-manager") task.conversation = { step, roleId, profileId, toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && handback ? { handback } : {}) };
     this.k.commitNow();
     const headBefore = !role.canEdit ? head : undefined;
     try {

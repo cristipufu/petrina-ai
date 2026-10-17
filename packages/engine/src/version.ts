@@ -1,4 +1,4 @@
-// Release versions: the next one, and what a product's main version files say. Pure functions.
+// Release versions: the next one, what a product's main version files say, and setting it in them. Pure functions.
 
 export type Bump = "patch" | "minor" | "major";
 
@@ -144,6 +144,66 @@ export function declaredVersion(path: string, text: string): Declared {
     return found[0] ?? "none";
   }
   return "none";
+}
+
+/**
+ * A main version file with the product's own version changed from `from` to `version`, touching nothing else of
+ * the text: the top-level "version" of a JSON file, or the version line of Cargo.toml's [package] or
+ * [workspace.package] table. Undefined when it cannot be set that way (Petrina then stops the release); the
+ * caller checks the result with `onlyVersionChanged` all the same.
+ */
+export function withVersion(path: string, text: string, from: string, version: string): string | undefined {
+  const name = path.split("/").at(-1) ?? "";
+  const quoted = from.replaceAll(".", "\\.");
+  if (name.endsWith(".json")) {
+    const key = new RegExp(`("version"\\s*:\\s*")${quoted}(")`);
+    return key.test(text) ? text.replace(key, `$1${version}$2`) : undefined;
+  }
+  if (name !== "Cargo.toml") return undefined;
+  const lines = text.split("\n");
+  let table = "";
+  for (const [index, line] of lines.entries()) {
+    const header = /^\s*\[([^\]]+)\]\s*(#.*)?$/.exec(line);
+    if (header) {
+      table = header[1]!.replace(/\s+/g, "");
+      continue;
+    }
+    const own = new RegExp(`^(\\s*version\\s*=\\s*")${quoted}("\\s*(#.*)?)$`).exec(line);
+    if (own && (table === "package" || table === "workspace.package" || table === "project")) {
+      lines[index] = `${own[1]}${version}${own[2]}`;
+      return lines.join("\n");
+    }
+  }
+  return undefined;
+}
+
+/** The names of the packages a Cargo.toml defines itself (its [package]), whose entries in Cargo.lock carry its version. */
+export function ownCrates(cargoToml: string): string[] {
+  try {
+    const parsed = Bun.TOML.parse(cargoToml) as { package?: { name?: unknown }; project?: { name?: unknown } };
+    return [parsed.package?.name, parsed.project?.name].filter((name): name is string => typeof name === "string");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Cargo.lock with the product's own entries (`names`, local: no registry source) moved from `from` to `version`,
+ * touching nothing else of the text. The same text when none is there.
+ */
+export function lockWithVersion(text: string, names: readonly string[], from: string, version: string): string {
+  const lines = text.split("\n");
+  const blocks: number[] = [];
+  lines.forEach((line, index) => line.trim() === "[[package]]" && blocks.push(index));
+  for (const [at, start] of blocks.entries()) {
+    const end = blocks[at + 1] ?? lines.length;
+    const block = lines.slice(start, end);
+    const name = block.map((line) => /^name\s*=\s*"([^"]*)"\s*$/.exec(line)?.[1]).find(Boolean);
+    const local = !block.some((line) => /^source\s*=/.test(line));
+    const own = block.findIndex((line) => line === `version = "${from}"`);
+    if (name && names.includes(name) && local && own >= 0) lines[start + own] = `version = "${version}"`;
+  }
+  return lines.join("\n");
 }
 
 /** A version like 1.2.3, or unreadable. */

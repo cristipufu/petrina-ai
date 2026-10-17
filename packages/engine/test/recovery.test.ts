@@ -73,7 +73,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(w.github().prs).toHaveLength(1);
       expect(w.github().calls.filter((call) => call[1] === "create")).toHaveLength(1);
       expect(task.timeline.map((entry) => entry.text)).toContain("Found after a restart that it had already gone out: pull request #1");
-      expect(w.script().runs).toBe(1);
+      expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
     } finally {
       rmSync(first.hold, { force: true });
       engine.shutdown();
@@ -88,7 +88,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.state).toBe("pr-open");
       expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(git(task.worktree!, "rev-parse", "HEAD"));
       expect(w.github().prs).toHaveLength(1);
-      expect(w.script().runs).toBe(1);
+      expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
     } finally {
       engine.shutdown();
     }
@@ -123,7 +123,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.release?.tag).toBe("v0.1.0");
       expect(remoteRef(w.remote, "refs/tags/v0.1.1")).toBeUndefined();
       expect(task.timeline.some((entry) => entry.text.startsWith("Checked: main and the tag v0.1.0 are already on GitHub"))).toBe(true);
-      expect(w.script().runs).toBe(1);
+      expect(w.script().releaseManagerPrompts).toHaveLength(1);
     } finally {
       engine.shutdown();
     }
@@ -167,11 +167,11 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       w.setGitHub((github) => github.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: new Date().toISOString(), isDraft: false, name: "v1.0.0", body: "" }));
       let engine: Engine;
       let taskId: string;
-      const hold = join(w.dir, "hold-shipper");
+      const hold = join(w.dir, "hold-release-manager");
       if (where === "preparing") {
-        // The shipper hangs, and Petrina stops while it does.
+        // The Release Manager hangs, and Petrina stops while it does.
         writeFileSync(hold, "");
-        w.setScript((script) => (script.hold = { title: "Add a greeting", file: hold }));
+        w.setScript((script) => (script.hold = { title: "Add a greeting", file: hold, role: "release manager" }));
         const first = w.start();
         const productId = await first.addProduct(w.clone);
         first.setProductDelivery(productId, "release", false);
@@ -347,8 +347,8 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     const w = world("cancel-queued");
     const listB = join(w.dir, "list-b");
     const listA = join(w.dir, "list-a");
-    const shipA = join(w.dir, "ship-a");
-    for (const file of [listB, listA, shipA]) writeFileSync(file, "");
+    const buildA = join(w.dir, "build-a");
+    for (const file of [listB, listA, buildA]) writeFileSync(file, "");
     const engine = w.start();
     try {
       const productId = await engine.addProduct(w.clone);
@@ -363,11 +363,11 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
             { command: "pr list", file: listA, match: branchName("Task A", a) },
           ]),
       );
-      w.setScript((script) => (script.hold = { title: "Task A", file: shipA }));
+      w.setScript((script) => (script.hold = { title: "Task A", file: buildA }));
       engine.setPoolPaused(false);
-      // B looks for its pull request and is held there; A's shipper is held while it gets A ready.
-      await until(engine, () => existsSync(`${listB}.reached`) && existsSync(`${shipA}.reached`));
-      rmSync(shipA);
+      // B looks for its pull request and is held there; A's builder is held while it builds.
+      await until(engine, () => existsSync(`${listB}.reached`) && existsSync(`${buildA}.reached`));
+      rmSync(buildA);
       // A's look for its pull request waits in line behind B's.
       await until(engine, (state) => taskOf(state, a).statusLine === "Checking: looking for the pull request on GitHub");
       rmSync(listB);

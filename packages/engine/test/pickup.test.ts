@@ -5,7 +5,7 @@ import { Engine } from "../src/engine.js";
 import { EARLIER_ATTEMPT, formatWhereYouWere, WHERE_YOU_WERE } from "../src/prompts.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
-import { EngineProcess, Fakes, git, makeProduct, makeWorld, removeDir, tempDir, waitFor } from "./support.js";
+import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -319,26 +319,27 @@ describe.concurrent("a read-only agent that committed before a restart", () => {
   }
 });
 
-describe.concurrent("a shipper interrupted by a restart", () => {
-  it("never reopens its conversation, even on a tool that can: it gets the delivery ready again from the start", async () => {
-    // Local delivery needs no shipper: this product opens pull requests.
-    const w = makeWorld("pickup-shipper");
+describe.concurrent("a Release Manager interrupted by a restart", () => {
+  it("never reopens its conversation, even on a tool that can: it gets the release ready again from the start", async () => {
+    // Only a release has a Release Manager: this product publishes releases.
+    const w = makeWorld("pickup-release-manager");
     roots.push(w.dir);
     const home = join(w.dir, "home");
     const fakes = new Fakes(w.dir);
-    fakes.scenario({ planner: "short", builder: "plain", shipper: "hang", reopen: "resume" });
+    fakes.scenario({ planner: "short", builder: "plain", releaseManager: "hang", reopen: "resume" });
     let engine = await EngineProcess.harness(home, w.dir, w.remote);
     const productId = (await engine.act("addProduct", w.clone)) as string;
-    await engine.act("setProductDelivery", productId, "pull-request", false);
+    await engine.act("setProductDelivery", productId, "release", false);
     const taskId = (await engine.act("addTask", { productId, title: "Add a greeting" })) as string;
     const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
-    await waitFor(() => fakes.marked("shipper-started"), "the shipper to start");
+    await waitFor(() => fakes.marked("release-manager-started"), "the Release Manager to start");
     expect(find(await engine.state()).conversation).toBeUndefined();
     await engine.kill();
     engine = await EngineProcess.harness(home, w.dir, w.remote);
-    const done = find(await engine.until((state) => find(state).state === "pr-open", "the pull request", 60_000));
-    expect(w.github().prs[0]!.headRefOid).toBe(git(done.worktree!, "rev-parse", "HEAD"));
-    expect(fakes.openings("shipper")).toHaveLength(2);
+    const done = find(await engine.until((state) => find(state).state === "done", "the release", 60_000));
+    expect(done.release?.tag).toBe("v0.1.0");
+    expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(git(done.worktree!, "rev-parse", "HEAD"));
+    expect(fakes.openings("release manager")).toHaveLength(2);
     expect(fakes.opens().some((open) => open.how !== "new")).toBe(false);
     await engine.quit();
   });

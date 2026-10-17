@@ -58,6 +58,17 @@ export const BuildResult = z.object({
   // In a fix round: one answer per finding, by id.
   answers: z.array(z.object({ id: z.string(), fixed: z.boolean(), text: z.string().min(3) })).default([]),
   learnings: LEARNED,
+  // A pull request's description, as Petrina publishes it.
+  description: z.string().optional(),
+});
+
+/** GitHub's limits on what Petrina publishes. A pull request's description leaves room for Petrina's own part. */
+export const TEXT_LIMITS = { title: 256, description: 60_000, body: 65_536, notes: 125_000 } as const;
+
+/** The Release Manager's one job: a release's notes, across everything since the previous release. It changes no files. */
+export const ReleaseNotesResult = z.object({
+  summary: z.string().min(3),
+  notes: z.string(),
 });
 
 export const CheckFinderResult = z.object({
@@ -102,26 +113,8 @@ export const VerifyResult = z.object({
   verdicts: z.array(z.object({ id: z.string(), verdict: z.enum(["real", "not-a-bug", "nit", "pre-existing"]), reason: z.string().min(10) })).min(1),
 });
 
-/** The shipper's handoff. It only gets the delivery ready: Petrina checks it, then publishes the exact commit itself. */
-export const ShipResult = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("ready"),
-    summary: z.string().min(3),
-    /** Releases: the version commit the branch is at (the task's own commit when the product has no version files). */
-    tested: z.string().optional(),
-    title: z.string().optional(),
-    body: z.string().optional(),
-    version: z.string().optional(),
-    notes: z.string().optional(),
-  }),
-  z.object({
-    status: z.literal("failed"),
-    summary: z.string().min(3),
-  }),
-]);
-
 /** The parts of what an agent is shown besides its instructions, in the order they appear. */
-export const CONTEXT_PARTS = ["notes", "brief", "objections", "checks", "findings-to-answer", "guide-points", "report", "check-results", "findings", "review-summary"] as const;
+export const CONTEXT_PARTS = ["notes", "brief", "objections", "checks", "findings-to-answer", "guide-points", "report", "check-results", "findings"] as const;
 export type ContextPart = (typeof CONTEXT_PARTS)[number];
 
 export interface RoleContract {
@@ -168,28 +161,19 @@ Bring the work up to date first. Learn what changed on ${defaultBranch} before r
 }
 
 /**
- * The shipper only gets the delivery ready: the work is already one commit on top of the latest main, and
- * Petrina publishes it. A pull request needs its text; a release its version commit and notes. Local delivery
- * needs no shipper at all.
+ * A pull request's description, written by the builder, who knows the change best. Petrina publishes it as
+ * written, then its own part (the acceptance checklist, the checks it ran, who reviewed). A release's notes come
+ * from the Release Manager, across everything since the previous release; committing to main needs no text.
  */
-function shipperInstructions(ctx: PromptContext, defaultBranch: string): string {
-  const { task, branch } = ctx;
-  const shipping = task.shipping;
-  const ready = `Branch ${branch} is the work as one commit on top of the latest ${defaultBranch}: Petrina brought it up to date and ran the product's checks on it. Stay on ${branch}. Never rebase, merge or change the code.`;
-  const never = `Petrina publishes the delivery itself once it has checked your work: do not push, tag, open pull requests or publish releases, and do not change ${defaultBranch} or the main copy of the repository.`;
-  const failed = 'If you cannot get it ready, hand back {"status": "failed", "summary": "<why, in plain language>"} instead: the work goes back to the builder, and nothing is published.';
-  if (task.delivery === "release") {
-    const version = shipping?.version ?? "the new version";
-    return `The coordinator approved this work. Get it ready to go out as release ${shipping?.tag ?? "(the version Petrina works out)"}. ${ready} ${never}
-1. Set the version to ${version} in the product's main version files: package.json and Cargo.toml at the top of the repository, and tauri.conf.json at the top or in src-tauri, each one that exists and states a version. Petrina checks that every one of them says exactly ${version}. Also update the version wherever else the product keeps its own (lock files, subfolders), not in dependencies or test fixtures. Commit only version changes, as one commit on top of ${branch}'s commit. If the product has no version files, there is no version commit. Do not create a tag.
-2. Write plain-language release notes: what changed for users.
-Hand back "ready" with "tested" (the full id of the commit ${branch} is at: the version commit, or the task's commit when there is none), "version": "${shipping?.version ?? ""}", and the "notes".
-${failed}`;
-  }
-  return `The coordinator approved this work. Get it ready to go out as a pull request into ${defaultBranch}. ${ready} ${never}
-Write the pull request: a clear title (one line, at most 256 characters), and a body in plain language that says what changed for users, the acceptance checklist, and what the reviewers checked. Do not commit anything: a pull request needs only its text.
-Hand back "ready" with the "title" and "body".
-${failed}`;
+function deliveryText(task: Task): string {
+  if (task.delivery !== "pull-request") return "";
+  return `Give "description": the pull request's description, in markdown, for whoever reviews it on GitHub: what changed and why, how you tested it, and anything a reviewer should look at. Plain language, at most ${TEXT_LIMITS.description} characters. Petrina adds the acceptance checklist, the checks it ran and who reviewed. In a fix round or an update, hand back the whole description as it should read now.\n`;
+}
+
+/** The builder's result block, with a pull request's description when the task opens one. */
+function buildShape(task: Task): string {
+  const text = task.delivery === "pull-request" ? `, "description": "The pull request's description, in markdown"` : "";
+  return `{"summary": "What you built, in plain language", "title": "One line for the commit, in the repository's own style"${text}, "changes": ["What changed for users, one per line"], "tests": "What you ran and the result", "answers": [{"id": "<finding id, in a fix round>", "fixed": true, "text": "What you changed, or why you did not"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`;
 }
 
 export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
@@ -272,14 +256,14 @@ If nothing blocking is left, return an empty or non-blocking list.${task.objecti
   "builder": {
     result: BuildResult,
     reads: ["notes", "brief", "checks", "findings-to-answer", "report"],
-    shape: `{"summary": "What you built, in plain language", "title": "One line for the commit, in the repository's own style", "changes": ["What changed for users, one per line"], "tests": "What you ran and the result", "answers": [{"id": "<finding id, in a fix round>", "fixed": true, "text": "What you changed, or why you did not"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
+    shape: ({ task }) => buildShape(task),
     instructions: ({ task, defaultBranch }) => {
       return `${task.updating ? `${updateInstructions(task.updating, defaultBranch)}\n` : ""}Implement the task in this working copy. Follow the design brief and acceptance checklist below when there is one.
 Keep the code consistent with the codebase and add or update tests.
 Before you finish, run the product's full checks (every one listed below, or else its whole type check, lint, test suite and build), not just the tests you touched, and fix whatever fails. ${task.fixing || task.updating ? "This holds after fixing review findings or bringing the work up to date too: the work goes back to review only with every check passing." : "The work goes to review only with every check passing."} Petrina runs them again itself after you finish, and failures come straight back to you.
 ${task.fixing ? `You are fixing the review findings listed below. Fix every Important one, unless you can show it is wrong. Answer every finding by id in "answers": fixed and what you changed, or not fixed and why.${stepBack(task) ? `\nThis is fix round ${reviewRound(task) - 1} and the findings keep coming. Step back before patching again: reconsider the approach, and if a simpler design removes the whole class of problem, take it.` : ""}` : ""}
-Give "title": one line for the commit that carries this whole change, in the repository's own style (look at \`git log\` and any commit-message rules it has). Petrina keeps the branch as one commit with that title.
-${LEARN}
+Give "title": one line for the commit that carries this whole change, in the repository's own style (look at \`git log\` and any commit-message rules it has). Petrina keeps the branch as one commit with that title${task.delivery === "pull-request" ? ", and it is the pull request's title too" : ""}.
+${deliveryText(task)}${LEARN}
 Do not commit, push or open pull requests: Petrina commits your work.`;
     },
   },
@@ -359,16 +343,15 @@ If the note is a change of mind or a new wish rather than a miss, set "missed" t
 Do not change any files.`;
     },
   },
-  "shipper": {
-    result: ShipResult,
-    reads: ["notes", "brief", "report", "check-results", "review-summary"],
-    shape: ({ task }) =>
-      task.delivery === "release"
-        ? `{"status": "ready", "summary": "What you did to get it ready, in plain language", "tested": "<full id of the commit the branch is at>", "version": "<the version>", "notes": "<the release notes>"}`
-        : `{"status": "ready", "summary": "What you did to get it ready, in plain language", "title": "<the pull request's title>", "body": "<the pull request's description>"}`,
-    instructions: (ctx) => {
-      const { defaultBranch } = ctx;
-      return shipperInstructions(ctx, defaultBranch);
+  // The only agent at delivery, and only for a release: everything on the default branch since the previous release
+  // goes out in it, many tasks and agents' work, so its notes need someone to read all of it. Petrina does the rest (shipping.ts).
+  "release-manager": {
+    result: ReleaseNotesResult,
+    reads: [],
+    shape: `{"summary": "What you did, in one sentence", "notes": "The release notes, in markdown"}`,
+    instructions: ({ task, defaultBranch }) => {
+      return `Write the release notes for ${task.shipping?.tag ?? "the next release"} of this product. It ships everything on ${defaultBranch} since the previous release: the commits are listed below, oldest first, each with its message (a task's commit carries its title, a summary and the changes for users). Cover every change that matters to the people who use the product, grouped (for example new, improved, fixed) and in plain language, with no commit ids and nothing about how the work was made. Mention changes users will not notice only in a short closing line, if at all. At most ${TEXT_LIMITS.notes} characters.
+Do not change any files, and do not commit, tag, push or publish anything: Petrina sets the version and publishes the release itself.`;
     },
   },
 };

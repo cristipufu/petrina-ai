@@ -27,7 +27,7 @@ function task(change: Partial<Task> = {}): Task {
 }
 
 describe("whether the coordinator can take over", () => {
-  it("can while an agent other than the shipper works or waits on them, on Claude Code or Codex, with its instructions", () => {
+  it("can while an agent other than the Release Manager works or waits on them, on Claude Code or Codex, with its instructions", () => {
     expect(takeOverBlock(task(), state)).toBeUndefined();
     expect(takeOverBlock(task({ state: "needs-you" }), state)).toBeUndefined();
   });
@@ -36,7 +36,7 @@ describe("whether the coordinator can take over", () => {
     expect(takeOverBlock(task({ agent: undefined }), state)).toBe(TAKE_OVER_WORDS.noAgent);
     expect(takeOverBlock(task({ state: "waiting", holdsSlot: false }), state)).toBe(TAKE_OVER_WORDS.noAgent);
     expect(takeOverBlock(task({ state: "needs-you", holdsSlot: false }), state)).toBe(TAKE_OVER_WORDS.noAgent);
-    expect(takeOverBlock(task({ agent: { roleId: "shipper", profileId: "opus-high", since: 0, step: 0 } }), state)).toBe(TAKE_OVER_WORDS.shipper);
+    expect(takeOverBlock(task({ agent: { roleId: "release-manager", profileId: "opus-high", since: 0, step: 0 } }), state)).toBe(TAKE_OVER_WORDS.releaseManager);
     expect(takeOverBlock(task({ conversation: undefined }), state)).toBe(TAKE_OVER_WORDS.starting);
     expect(takeOverBlock(task({ conversation: { ...task().conversation!, briefed: false } }), state)).toBe(TAKE_OVER_WORDS.starting);
     expect(takeOverBlock(task({ agent: { roleId: "builder", profileId: "gem", since: 0, step: 0 } }), state)).toBe(TAKE_OVER_WORDS.unsupported);

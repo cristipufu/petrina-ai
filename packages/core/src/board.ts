@@ -20,7 +20,7 @@ const ROLE_STEP: Readonly<Record<string, string>> = {
   builder: "Build",
   tester: "Test",
   "code-reviewer": "Review",
-  shipper: "Ship",
+  "release-manager": "Ship",
 };
 
 function stepLabel(stage: Stage): string {

@@ -1,5 +1,5 @@
 // Release versions: worked out by Petrina at publish time from the latest release and the product's main
-// version files, set by the shipper in a version commit of its own, and checked before anything goes out.
+// version files, set by Petrina itself in a version commit of its own, and checked before anything goes out.
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -100,8 +100,9 @@ describe("Release versions", () => {
 });
 
 describe.concurrent("Release versions on real deliveries", () => {
-  it("starts at 0.1.0 with no version files, and two release tasks get the next free version each", async () => {
+  it("starts at 0.1.0 with no version files, and two release tasks get the next free version each, with notes on what each ships", async () => {
     const w = world("first-release");
+    w.setScript((script) => (script.ownFiles = true));
     const [first, second] = await deliver(w, "release", 2);
     expect(first!.error).toBeUndefined();
     expect(first!.release?.tag).toBe("v0.1.0");
@@ -113,6 +114,14 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(remoteRef(w.remote, "refs/heads/main")).toBe(secondTag);
     expect(git(w.clone, "merge-base", "--is-ancestor", firstTag, secondTag)).toBe("");
     expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v0.1.0", "v0.1.1"]);
+    // The first release's notes come from every commit there is; the next one's from what came since.
+    const [firstPrompt, secondPrompt] = w.script().releaseManagerPrompts!;
+    expect(firstPrompt).toContain("## The first release: every commit on main, oldest first (2)");
+    expect(firstPrompt).toContain("### init");
+    expect(firstPrompt).toContain("### Add greeting 1");
+    expect(secondPrompt).toContain("## Every commit on main since v0.1.0, oldest first (1)");
+    expect(secondPrompt).toContain("### Add greeting 2");
+    expect(secondPrompt).not.toContain("### Add greeting 1");
   });
 
   it("uses the version already in the version files for the first release", async () => {
@@ -144,34 +153,52 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(task!.release?.tag).toBe("v0.3.0");
   });
 
-  it("sends the handoff back until every main version file says the new version", async () => {
+  it("sets the version itself in every main version file, and nowhere else", async () => {
     const w = world("main-files", { version: "1.4.0" });
     const tauri = "src-tauri/tauri.conf.json";
-    commitFiles(w, { [tauri]: pkg("1.4.0"), "test/fixtures/old/package.json": pkg("9.9.9") });
+    commitFiles(w, { [tauri]: pkg("1.4.0"), "test/fixtures/old/package.json": pkg("9.9.9"), "apps/desktop/package.json": pkg("1.4.0") });
     release(w, "v1.4.0", remoteRef(w.remote, "refs/heads/main")!);
-    // The shipper sets the new version in package.json and forgets tauri.conf.json.
-    w.setScript((script) => (script.forgetVersionIn = [tauri]));
     const [task] = await deliver(w, "release");
     expect(task!.error).toBeUndefined();
-    expect(w.script().sentBack).toContain(`these version files do not say 1.4.1: ${tauri} says 1.4.0`);
     expect(task!.release?.tag).toBe("v1.4.1");
     const tagged = remoteRef(w.remote, "refs/tags/v1.4.1")!;
     for (const file of ["package.json", tauri]) expect(JSON.parse(git(w.clone, "show", `${tagged}:${file}`)).version).toBe("1.4.1");
+    // A fixture and a package in a subfolder keep theirs, and the version commit changes nothing else.
     expect(JSON.parse(git(w.clone, "show", `${tagged}:test/fixtures/old/package.json`)).version).toBe("9.9.9");
+    expect(JSON.parse(git(w.clone, "show", `${tagged}:apps/desktop/package.json`)).version).toBe("1.4.0");
+    expect(git(w.clone, "diff", "--name-only", `${tagged}^`, tagged).split("\n").sort()).toEqual(["package.json", tauri]);
+    expect(git(w.clone, "show", `${tagged}:package.json`)).toBe(pkg("1.4.1").trim());
   });
 
-  it("never releases while a main version file still says the old version, Cargo.toml included", async () => {
-    const w = world("cargo-left", { version: "1.4.0" });
+  it("sets Cargo.toml's version and the product's own entry in Cargo.lock, never a dependency's", async () => {
+    const w = world("cargo", { version: "1.4.0" });
+    commitFiles(w, {
+      "Cargo.toml": '[package]\nname = "demo"\nversion = "1.4.0" # the product\n\n[dependencies]\nserde = "1"\n',
+      "Cargo.lock": 'version = 3\n\n[[package]]\nname = "demo"\nversion = "1.4.0"\n\n[[package]]\nname = "serde"\nversion = "1.4.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "abc"\n',
+    });
+    release(w, "v1.4.0", remoteRef(w.remote, "refs/heads/main")!);
+    const [task] = await deliver(w, "release");
+    expect(task!.error).toBeUndefined();
+    expect(task!.release?.tag).toBe("v1.4.1");
+    const tagged = remoteRef(w.remote, "refs/tags/v1.4.1")!;
+    expect(git(w.clone, "show", `${tagged}:Cargo.toml`)).toBe('[package]\nname = "demo"\nversion = "1.4.1" # the product\n\n[dependencies]\nserde = "1"');
+    const lock = git(w.clone, "show", `${tagged}:Cargo.lock`);
+    expect(lock).toContain('name = "demo"\nversion = "1.4.1"');
+    expect(lock).toContain('name = "serde"\nversion = "1.4.0"');
+  });
+
+  it("stops, publishing nothing, when it cannot set the version in a main version file on its own", async () => {
+    const w = world("cargo-inline", { version: "1.4.0" });
     commitFiles(w, { "Cargo.toml": 'package = { name = "demo", version = "1.4.0" }\n' });
     release(w, "v1.4.0", remoteRef(w.remote, "refs/heads/main")!);
     const before = remoteRef(w.remote, "refs/heads/main");
-    // The shipper only ever sets package.json.
     const [task] = await deliver(w, "release");
     expect(task!.state).toBe("failed");
-    expect(w.script().sentBack).toContain("these version files do not say 1.4.1: Cargo.toml says 1.4.0");
+    expect(task!.error).toContain("Petrina could not set the version to 1.4.1: Cargo.toml does not state it in a way Petrina can change on its own. It published nothing.");
     expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v1.4.0"]);
     expect(remoteRef(w.remote, "refs/tags/v1.4.1")).toBeUndefined();
     expect(remoteRef(w.remote, "refs/heads/main")).toBe(before);
+    expect(w.script().releaseManagerPrompts).toBeUndefined();
   });
 
   it("stops when a main version file has a version Petrina cannot read", async () => {
@@ -181,7 +208,7 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(task!.state).toBe("failed");
     expect(task!.error).toContain("Petrina cannot read the version in Cargo.toml");
     expect(w.github().releases).toEqual([]);
-    expect(w.script().runs ?? 0).toBe(0);
+    expect(w.script().releaseManagerPrompts).toBeUndefined();
   });
 
   it("never picks a first-release version when the login cannot see the repository, though GitHub says 'not found'", async () => {
@@ -191,7 +218,7 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(task!.state).toBe("failed");
     expect(task!.error).toContain("cannot see acme/demo");
     expect(task!.shipping?.version).toBeUndefined();
-    expect(w.script().runs ?? 0).toBe(0);
+    expect(w.script().releaseManagerPrompts).toBeUndefined();
     expect(remoteRef(w.remote, "refs/tags/v1.4.0")).toBeUndefined();
     expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
   });
@@ -204,7 +231,7 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(task!.error).toContain("The latest release is v1.2.0, but the version files say otherwise (package.json says 2.0.0)");
     expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
     expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v1.2.0"]);
-    expect(w.script().runs ?? 0).toBe(0);
+    expect(w.script().releaseManagerPrompts).toBeUndefined();
   });
 
   it("stops rather than skip a version when the new tag is already on GitHub", async () => {
@@ -216,38 +243,40 @@ describe.concurrent("Release versions on real deliveries", () => {
     expect(task!.error).toContain("The tag v1.0.1 already exists on GitHub");
     expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
     expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v1.0.0"]);
-    expect(w.script().runs ?? 0).toBe(0);
+    expect(w.script().releaseManagerPrompts).toBeUndefined();
   });
 
-  it("works the version out again when a release comes out before its push", async () => {
+  it("works the version and the notes out again when a release comes out before its push", async () => {
     const w = world("meanwhile", { version: "0.1.0" });
-    w.setScript((script) => (script.releaseMeanwhile = { gitDir: w.remote, ghState: join(w.dir, "github.json"), tag: "v0.1.0" }));
+    // A teammate publishes v0.1.0 as Petrina looks for this delivery's release, right after getting it ready.
+    w.setGitHub((github) => (github.meanwhile = { command: "release view", withTag: true, times: 1, release: "v0.1.0" }));
     const [task] = await deliver(w, "release");
     expect(task!.error).toBeUndefined();
     expect(task!.release?.tag).toBe("v0.1.1");
-    expect(w.script().runs).toBe(2);
+    const prompts = w.script().releaseManagerPrompts!;
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("## Every commit on main since v0.1.0, oldest first (1)");
     const tested = remoteRef(w.remote, "refs/tags/v0.1.1")!;
     expect(JSON.parse(git(w.clone, "show", `${tested}:package.json`)).version).toBe("0.1.1");
-    // The first, stale version change is not in what went out.
-    expect(git(w.clone, "log", "--format=%s", tested)).not.toContain("Version 0.1.0");
+    expect(git(w.clone, "log", "-1", "--format=%s", tested)).toBe("Release v0.1.1");
     expect(task!.timeline.map((entry) => entry.text)).toContain("main moved on GitHub, so Petrina gets it ready again (1 of 3)");
   });
 
   it("gets a release ready again when main moves before its push, but not a pull request", async () => {
-    const released = world("moved-release");
-    released.setScript((script) => (script.moveMain = { times: 1, gitDir: released.remote }));
-    const [r] = await deliver(released, "release");
+    const releasing = world("moved-release");
+    releasing.setGitHub((github) => (github.meanwhile = { command: "release view", withTag: true, times: 1 }));
+    const [r] = await deliver(releasing, "release");
     expect(r!.release?.tag).toBe("v0.1.0");
-    expect(released.script().runs).toBe(2);
-    expect(remoteRef(released.remote, "refs/heads/main")).toBe(remoteRef(released.remote, "refs/tags/v0.1.0"));
+    expect(releasing.script().releaseManagerPrompts).toHaveLength(2);
+    expect(remoteRef(releasing.remote, "refs/heads/main")).toBe(remoteRef(releasing.remote, "refs/tags/v0.1.0"));
     // On top of the teammate's change, as one commit: a fast-forward, never a merge.
-    expect(git(released.clone, "log", "-1", "--format=%s", `${remoteRef(released.remote, "refs/heads/main")}^`)).toBe("A teammate's change");
+    expect(git(releasing.clone, "log", "-1", "--format=%s", `${remoteRef(releasing.remote, "refs/heads/main")}^`)).toBe("A teammate's change");
 
     const pr = world("moved-pr");
-    pr.setScript((script) => (script.moveMain = { times: 1, gitDir: pr.remote }));
+    pr.setGitHub((github) => (github.meanwhile = { command: "pr list", times: 1 }));
     const [p] = await deliver(pr, "pull-request");
     expect(p!.state).toBe("pr-open");
-    expect(pr.script().runs).toBe(1);
+    expect(pr.script().releaseManagerPrompts).toBeUndefined();
   });
 
   it("brings local delivery up to date when main moved after the delivery check, and moves main forward on top of it", async () => {
@@ -273,11 +302,11 @@ describe.concurrent("Release versions on real deliveries", () => {
 
   it("stops after three new preparations when main keeps moving", async () => {
     const w = world("keeps-moving");
-    w.setScript((script) => (script.moveMain = { times: 4, gitDir: w.remote }));
+    w.setGitHub((github) => (github.meanwhile = { command: "release view", withTag: true, times: 4 }));
     const [task] = await deliver(w, "release");
     expect(task!.state).toBe("failed");
     expect(task!.error).toContain("main kept moving while Petrina was delivering, so it stopped after 3 new preparations");
-    expect(w.script().runs).toBe(4);
+    expect(w.script().releaseManagerPrompts).toHaveLength(4);
     expect(w.github().releases).toEqual([]);
     expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBeUndefined();
   });

@@ -8,7 +8,7 @@ export const TAKE_OVER_TOOLS: Readonly<Record<string, string>> = { "claude-code"
 
 export const TAKE_OVER_WORDS = {
   noAgent: "No agent is working on this right now",
-  shipper: "Delivery runs on its own, so it can't be taken over",
+  releaseManager: "Delivery runs on its own, so it can't be taken over",
   starting: "The agent is still starting. Try again in a moment",
   unsupported: "This agent's tool can't be opened in a terminal",
   missing: (tool: string) => `${tool} isn't installed on this machine`,
@@ -64,14 +64,14 @@ export function toolName(toolId: string | undefined): string {
 
 /**
  * Why the coordinator cannot take over this task right now, in one line, or undefined when they can.
- * An agent other than the shipper must be working or waiting on them, on Claude Code or Codex, in a
+ * An agent other than the Release Manager must be working or waiting on them, on Claude Code or Codex, in a
  * conversation that already has its instructions.
  */
 export function takeOverBlock(task: Task, state: Pick<State, "profiles" | "tools">): string | undefined {
   if (task.driving) return TAKE_OVER_WORDS.driving;
   const agent = task.agent;
   if (!agent || !task.holdsSlot || (task.state !== "running" && task.state !== "needs-you")) return TAKE_OVER_WORDS.noAgent;
-  if (agent.roleId === "shipper") return TAKE_OVER_WORDS.shipper;
+  if (agent.roleId === "release-manager") return TAKE_OVER_WORDS.releaseManager;
   if (task.helpers?.length) return TAKE_OVER_WORDS.several;
   const toolId = state.profiles.find((profile) => profile.id === agent.profileId)?.toolId;
   if (!toolId || !TAKE_OVER_TOOLS[toolId]) return TAKE_OVER_WORDS.unsupported;

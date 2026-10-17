@@ -25,10 +25,9 @@ export class Context {
       const points = this.guide.pendingPoints(task);
       return points.length ? [{ title: `Points the coordinator accepted for the review guide, not in REVIEW.md on ${task.base ?? "the base branch"} yet (check them too)`, body: points.map((point) => `- ${point}`).join("\n") }] : [];
     },
-    report: (task) => this.report(task),
+    report: (task, roleId) => this.report(task, roleId),
     "check-results": (task) => this.checkResults(task),
     findings: (task) => (task.findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) }] : []),
-    "review-summary": (task) => this.reviewSummary(task),
   };
 
   constructor(
@@ -96,19 +95,17 @@ export class Context {
     return open.length ? [{ title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) }] : [];
   }
 
-  private report(task: MTask): Section[] {
+  private report(task: MTask, roleId: Id): Section[] {
     if (!task.report) return [];
-    return [{ title: "What the builder reports", body: [task.report.summary, ...task.report.changes.map((change) => `- ${change}`), task.report.tests ? `Tests: ${task.report.tests}` : ""].filter(Boolean).join("\n") }];
+    const sections = [{ title: "What the builder reports", body: [task.report.summary, ...task.report.changes.map((change) => `- ${change}`), task.report.tests ? `Tests: ${task.report.tests}` : ""].filter(Boolean).join("\n") }];
+    // The builder keeps what goes out with the work current: what it wrote last time, to hand back as it should read now.
+    if (roleId === "builder" && task.delivery === "pull-request" && task.report.description) sections.push({ title: "The pull request description you wrote last time", body: task.report.description });
+    return sections;
   }
 
   private checkResults(task: MTask): Section[] {
     if (!task.checks?.results.length) return [];
     const lines = task.checks.results.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})`);
     return [{ title: "The product's checks, run by Petrina itself on this commit (evidence, not an agent's word)", body: lines.join("\n") }];
-  }
-
-  private reviewSummary(task: MTask): Section[] {
-    const reviews = task.findings.filter((finding) => finding.status !== "dismissed");
-    return [{ title: "Review summary (list pre-existing findings as follow-ups in what you deliver)", body: reviews.length ? formatFindings(reviews as Task["findings"]) : "Nothing to fix: every reviewer passed it." }];
   }
 }

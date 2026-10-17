@@ -546,6 +546,25 @@ export async function changedFiles(path: string, from: string, to: string): Prom
   return (await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", from, to], path)).stdout.split("\0").filter(Boolean);
 }
 
+/**
+ * The commits in `range` (`from..to`, or everything up to `to`), oldest first, with their messages: the `max` most
+ * recent at most. Merge commits are left out: the commits they bring in are listed themselves.
+ */
+export async function commitMessages(path: string, range: string, max: number): Promise<{ sha: string; message: string }[]> {
+  const [from, to] = range.includes("..") ? range.split("..") : [undefined, range];
+  if (!SHA.test(to ?? "") || (from !== undefined && !SHA.test(from))) return [];
+  const listed = await run(["git", "log", "--no-merges", "--reverse", `--max-count=${max}`, "--format=%H%x1f%B%x1e", range], path);
+  if (listed.code !== 0) return [];
+  return listed.stdout
+    .split("\x1e")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [sha, message] = entry.split("\x1f");
+      return { sha: sha!.trim(), message: (message ?? "").trim() };
+    });
+}
+
 /** The working copies where `branch` is checked out. */
 export async function checkedOut(root: string, branch: string): Promise<string[]> {
   const listed = await run(["git", "worktree", "list", "--porcelain", "-z"], root);
