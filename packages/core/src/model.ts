@@ -109,6 +109,8 @@ export interface TimelineEntry {
   profileId?: Id;
   text: string;
   tone: "status" | "milestone" | "you" | "warn" | "done";
+  /** The journey step it belongs to. */
+  step?: Id;
 }
 
 export interface SessionLine {
@@ -118,6 +120,82 @@ export interface SessionLine {
   roleId?: Id;
   profileId?: Id;
   text: string;
+  /** The journey step it belongs to. */
+  step?: Id;
+}
+
+/** How an arrow out of a step reads: the work moved on, went back (a send-back, changes asked), or got stuck. */
+export type JourneyTone = "on" | "back" | "stuck";
+
+/** What a step of the coordinator's waits for: a check, the call on a disagreement, a stuck task, or interrupted shipping. */
+export type JourneyWait = GateKind | "call" | "stuck" | "shipping";
+
+/** Petrina's own work, with no agent: running the product's checks, finding main moved on, and publishing the delivery. */
+export type JourneyWork = "checks" | "update" | "delivery";
+
+/** A question or permission request asked during a step, with how the coordinator answered. */
+export interface JourneyAsk {
+  /** The inbox item. */
+  id: Id;
+  kind: "question" | "permission";
+  title: string;
+  at: number;
+  endedAt?: number;
+  /** Answered, allowed, said no, decided for you, or withdrawn (a pause, a restart or cancelling dropped it). */
+  how?: "answered" | "allowed" | "denied" | "decided" | "withdrawn";
+  /** The answer, or the note with a "No". */
+  answer?: string;
+}
+
+/**
+ * One step of a task's journey, recorded by the engine (and the simulator) the moment it starts.
+ * A new round, send-back or retry is a new step; picking up after a restart or a pause is the same one.
+ */
+export interface JourneyStep {
+  /** Unique within the task. Timeline and session lines carry it. */
+  id: Id;
+  /**
+   * `agent`: a role at work. `you`: waiting for the coordinator. `wait`: waiting for other tasks to land.
+   * `petrina`: Petrina's own work, with no agent.
+   */
+  kind: "agent" | "you" | "wait" | "petrina";
+  /** The plan stage it belongs to; none while planning. */
+  stageId?: Id;
+  /** The design or review round. */
+  round: number;
+  /** The design position: 0 the architect of a design round and 1 its reviewer. A review round's reviewers share one step. */
+  sub: number;
+  /** The builder fixing review findings or changes asked for at the delivery check. */
+  fixing?: boolean;
+  /** The builder bringing the work up to date with main. */
+  update?: boolean;
+  /** A review round that looks only at the builder's port of an already reviewed change onto a main that moved. */
+  port?: boolean;
+  /** The architect following the coordinator's call. */
+  call?: boolean;
+  roleId?: Id;
+  /** The tool, model and effort. */
+  profileId?: Id;
+  /** Every agent on the step when several work at once (a review round's reviewers, its voters), `profileId` first. */
+  team?: readonly Id[];
+  /** `petrina`: what Petrina did. */
+  work?: JourneyWork;
+  /** `you`: what it waits for. */
+  waitsFor?: JourneyWait;
+  /** `wait`: the tasks it waits for, named as they were then. */
+  waitsOn?: readonly { id: Id; title: string }[];
+  startedAt: number;
+  endedAt?: number;
+  /** How it ended: done, stuck, or stopped by cancelling. */
+  end?: "done" | "failed" | "cancelled";
+  /** What happened, in a few words: "Wrote the brief", "3 objections, 2 blocking", "Approved". */
+  outcome?: string;
+  /** Why the work moved on from here: the words on the arrow out. */
+  reason?: string;
+  tone?: JourneyTone;
+  asks?: readonly JourneyAsk[];
+  /** Made up from the plan for a task that ran before journeys were recorded: no times or rounds. */
+  legacy?: boolean;
 }
 
 export interface QueuedMessage {
@@ -319,6 +397,8 @@ export interface Hunt {
   reported: Readonly<Record<Id, true>>;
   /** Per voter profile, the findings it gave a verdict on. */
   voted?: Readonly<Record<Id, true>>;
+  /** How many findings the task had when the round began: what the round's reviewers raise comes after. */
+  findings?: number;
 }
 
 /** One voter's verdict on an Important finding. */
@@ -346,6 +426,7 @@ export interface FindingDispute {
 export interface PullRequest {
   number: number;
   url: string;
+  /** `closed`: closed on GitHub without merging. */
   state: "open" | "merged" | "closed";
   openedAt: number;
 }
@@ -490,6 +571,8 @@ export interface Task {
   received?: readonly Id[];
   /** The window's id for the request that added it: sending it again after a lost reply finds this task instead of adding another. */
   clientId?: Id;
+  /** Every step the task went through, in order, rounds and send-backs included. Never trimmed. */
+  journey?: readonly JourneyStep[];
 }
 
 /**
@@ -656,4 +739,6 @@ export interface State {
   terminal?: Id;
   /** The work log's counter and when tracking began. Never the log itself. */
   work?: WorkInfo;
+  /** The profile the planner runs on, so a task's journey can name it before it starts. */
+  planner?: Id;
 }

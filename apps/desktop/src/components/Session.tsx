@@ -17,6 +17,9 @@ interface LogProps {
   scroller: RefObject<HTMLDivElement | null>;
   onToast: (title: string, detail?: string) => void;
   onTab: (tab: SheetTab) => void;
+  /** A journey step to read: the conversation opens at its first line, with its lines marked. */
+  step?: { id: string; name: string };
+  onStepDone?: () => void;
 }
 
 /** Consecutive activity lines read as one quiet block between messages. */
@@ -36,7 +39,7 @@ function when(at: number, now: number): string {
 }
 
 /** Join the agent working on a task: its live conversation, with anything it waits on below. */
-function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
+function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone }: LogProps) {
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
   const live = task.state === "running";
@@ -48,6 +51,8 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
   // A refusal adds its reason and actions under the message.
   const refused = unsent.filter((entry) => entry.refused).length;
   const pinned = useRef(true);
+  const marked = step && task.session.some((line) => line.step === step.id) ? step : undefined;
+  const firstMarked = marked ? task.session.find((line) => line.step === marked.id)?.id : undefined;
 
   // Follow new lines only while the reader is at the bottom; reading earlier messages stays put.
   useEffect(() => {
@@ -62,9 +67,18 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
 
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const first = firstMarked ? el.querySelector<HTMLElement>(`[data-line="${firstMarked}"]`) : null;
+    if (first) {
+      // At the step's first line, just below the tabs that stay in view.
+      const tabs = el.querySelector(".tabs")?.getBoundingClientRect().height ?? 0;
+      el.scrollTop += first.getBoundingClientRect().top - el.getBoundingClientRect().top - tabs - 16;
+      pinned.current = false;
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
     pinned.current = true;
-  }, [scroller, task.id]);
+  }, [scroller, task.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follow new lines only while at the bottom, but always bring what you just sent into view.
   const sent = useRef({ queued: task.queued.length, lines: task.session.length, unsent: unsent.length });
@@ -76,11 +90,14 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
     if (el && (pinned.current || yours)) el.scrollTop = el.scrollHeight;
   }, [scroller, task.session.length, task.queued.length, unsent.length, refused, asks.length]);
 
+  const inStep = (line: SessionLine) => (marked && line.step === marked.id ? "in-step" : "");
+  const stepStart = (line: SessionLine) => (line.id === firstMarked && marked ? <span className="sr-only">From {marked.name}: </span> : null);
+
   const speaker = (line: SessionLine): ReactNode => {
     const lineRole = find.role(line.roleId);
     const you = line.from === "you";
     return (
-      <div key={line.id} className={`msg ${you ? "you" : "agent"}`}>
+      <div key={line.id} data-line={line.id} className={`msg ${you ? "you" : "agent"} ${inStep(line)}`}>
         {you ? (
           <span className="avatar tone-violet" style={{ width: 28, height: 28 }} aria-hidden="true">
             <User size={16} />
@@ -90,6 +107,7 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
         )}
         <div style={{ minWidth: 0 }}>
           <div className="name">
+            {stepStart(line)}
             {you ? "You" : (lineRole?.name ?? "Agent")}
             <time className="num">{when(line.at, state.now)}</time>
           </div>
@@ -116,15 +134,26 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
         <TakeOverControls task={task} state={state} onToast={onToast} />
       </div>
 
+      {marked && (
+        <p className="step-marked reading">
+          <span>
+            Lines from <strong>{marked.name}</strong> are marked.
+          </span>
+          <button className="linkish" onClick={onStepDone}>
+            Stop marking
+          </button>
+        </p>
+      )}
       <div className="chat reading" aria-label="Conversation">
         {task.session.length === 0 && <div className="empty-state">The conversation starts when an agent picks this task up.</div>}
         {groupLines(task.session).map((group) => {
           if (Array.isArray(group))
             return (
-              <ul key={group[0]!.id} className="activity" aria-label="What the agent did">
+              <ul key={group[0]!.id} className={`activity ${group.some((line) => inStep(line)) ? "in-step" : ""}`} aria-label="What the agent did">
                 {group.map((line) => (
-                  <li key={line.id}>
+                  <li key={line.id} data-line={line.id} className={inStep(line)}>
                     <ArrowRight size={12} aria-hidden="true" />
+                    {stepStart(line)}
                     {line.text}
                   </li>
                 ))}
@@ -132,9 +161,10 @@ function Log({ task, state, find, scroller, onToast, onTab }: LogProps) {
             );
           if (group.from === "system")
             return (
-              <div key={group.id} className="system">
+              <div key={group.id} data-line={group.id} className={`system ${inStep(group)}`}>
                 <RoleAvatar role={find.role(group.roleId)} size={16} />
                 <span>
+                  {stepStart(group)}
                   {group.text} · <span className="num">{when(group.at, state.now)}</span>
                 </span>
               </div>

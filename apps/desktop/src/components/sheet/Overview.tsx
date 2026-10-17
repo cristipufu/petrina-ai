@@ -1,11 +1,13 @@
 // The task sheet's Overview tab: who is working now, what the task is waiting for, what it used, and how it got here.
 
 import { useState } from "react";
-import { CircleAlert, CircleCheck, User } from "lucide-react";
+import { User } from "lucide-react";
 import type { Role, State, Task } from "@petrina/core";
-import { ago, deliveryText, duration, profileText, type Lookup } from "../../lib";
+import { deliveryText, duration, profileText, type Lookup } from "../../lib";
 import { RoleAvatar } from "../bits";
 import { WhatItUsed } from "./WhatItUsed";
+import { Journey } from "../Journey";
+import { TimelineList } from "../Timeline";
 
 function nowSentence(task: Task, role: Role | undefined): string {
   if (task.driving) return role ? `You're driving the ${role.name.toLowerCase()} in your terminal` : "You're driving in your terminal";
@@ -30,7 +32,7 @@ function nowSentence(task: Task, role: Role | undefined): string {
   }
 }
 
-export function Overview({ task, state, find, onAboutNumbers }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void }) {
+export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void }) {
   const [all, setAll] = useState(false);
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
@@ -38,6 +40,8 @@ export function Overview({ task, state, find, onAboutNumbers }: { task: Task; st
 
   return (
     <>
+      <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} />
+
       {task.description && (
         <section className="sheet-section reading">
           <h2>What you asked for</h2>
@@ -78,33 +82,7 @@ export function Overview({ task, state, find, onAboutNumbers }: { task: Task; st
             Show {task.timeline.length - entries.length} earlier events
           </button>
         )}
-        <ol className="timeline">
-          {entries.map((entry) => {
-            const entryRole = find.role(entry.roleId);
-            return (
-              <li key={entry.id} className={`tl ${entry.tone}`}>
-                <span className="when">{ago(entry.at, state.now)}</span>
-                <span className="icon" aria-hidden="true">
-                  {entry.tone === "you" ? (
-                    <User size={14} />
-                  ) : entry.tone === "warn" ? (
-                    <CircleAlert size={14} />
-                  ) : entry.tone === "done" ? (
-                    <CircleCheck size={14} />
-                  ) : entryRole ? (
-                    <RoleAvatar role={entryRole} size={24} />
-                  ) : (
-                    <span className="dot" />
-                  )}
-                </span>
-                <span className="text">
-                  {entryRole && entry.tone !== "you" && <span className="sr-only">{entryRole.name}: </span>}
-                  {entry.text}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
+        <TimelineList entries={entries} now={state.now} find={find} />
       </section>
     </>
   );

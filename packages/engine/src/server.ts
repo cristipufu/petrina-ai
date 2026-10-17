@@ -13,7 +13,7 @@ const ALLOWED_ORIGINS = new Set(["http://localhost:1430", "http://127.0.0.1:1430
 
 /** The window's id for something it sent, so a resend after a lost confirmation counts once. */
 const ClientId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
-const Said = z.object({ taskId: z.string().optional(), about: z.string().max(4000).optional(), clientId: ClientId.optional() });
+const Said = z.object({ taskId: z.string().optional(), about: z.string().max(4000).optional(), decided: z.boolean().optional(), clientId: ClientId.optional() });
 const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
 const NewTask = z.object({

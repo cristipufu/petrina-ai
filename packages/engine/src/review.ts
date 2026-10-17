@@ -1,7 +1,7 @@
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { extraSlot, findingCount, noteRoundEnd, reviewRoundEnd, slotWait, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { endAgentStep, extraSlot, findingCount, JOURNEY_WORDS as W, noteRoundEnd, openStep, portReviewerIndex, reviewRoundEnd, slotWait, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -85,25 +85,34 @@ export class Reviews {
       this.k.log(task, "warn", "Reviewers wait until the checks pass");
       return this.closeReviewRound(task, stage, round, false);
     }
-      task.hunt = { stageId: stage.id, round, reported: {} };
+      task.hunt = { stageId: stage.id, round, reported: {}, findings: task.findings.length };
       this.k.commit();
     }
     const reviewers = this.pendingReviewers(task, stage);
     if (reviewers.length) {
       await this.hunt(task, stage, reviewers, signal);
       this.k.finishStep(task);
+      // Changes made by hand: the round's box ends, and the review starts again from the first reviewer.
+      if (task.rereview) endAgentStep(task, { outcome: this.raised(task), reason: W.reviewAgain }, Date.now());
       this.k.rerun(task);
       // The voters' first slot qualifies again, maybe on another tool: back to the driver.
       return "continue";
     }
     const vote = this.pendingVote(task, stage);
     if (vote?.voters.length) {
+      // The reviewers' box ends with what they raised; the voters get a box of their own.
+      if (openStep(task)?.roleId === stage.roleId) endAgentStep(task, { outcome: this.raised(task), reason: W.toCheck(vote.findings.length) }, Date.now());
       await this.vote(task, vote.findings, vote.voters, signal);
       return "continue";
     }
-    if (vote) this.tally(task, vote.findings);
+    const outcome = vote ? this.tally(task, vote.findings) : this.raised(task);
     delete task.hunt;
-    return this.closeReviewRound(task, stage, round, true);
+    return this.closeReviewRound(task, stage, round, true, outcome);
+  }
+
+  /** What this round's reviewers raised, in plain counts. */
+  private raised(task: MTask): string {
+    return findingCount(task.findings.slice(task.hunt?.findings ?? 0));
   }
 
   /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */
@@ -124,8 +133,8 @@ export class Reviews {
   }
 
   private portReviewer(task: MTask, planned: { key: string; profileId: Id }[]): { key: string; profileId: Id } {
-    const builder = this.k.profile(task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "")?.toolId;
-    return planned.find((entry) => this.k.profile(entry.profileId)?.toolId !== builder) ?? planned[0]!;
+    // The journey's faint step ahead names the same reviewer.
+    return planned[portReviewerIndex(task as unknown as Task, planned.map((entry) => entry.profileId), (id) => this.k.profile(id)?.toolId)]!;
   }
 
   /**
@@ -267,8 +276,8 @@ export class Reviews {
     );
   }
 
-  /** Every voter has voted: each finding stands or falls by its votes. */
-  private tally(task: MTask, findings: Task["findings"]): void {
+  /** Every voter has voted: each finding stands or falls by its votes. Says how the vote went. */
+  private tally(task: MTask, findings: Task["findings"]): string {
     const ids = new Set(findings.map((finding) => finding.id));
     const at = Date.now();
     let real = 0;
@@ -286,6 +295,7 @@ export class Reviews {
     }
     this.k.log(task, real ? "warn" : "done", `${ids.size} checked: ${real} real${ids.size > real ? `, ${ids.size - real} not holding the work back` : ""}`);
     this.k.commit();
+    return W.voted(real, ids.size);
   }
 
   /**
@@ -386,8 +396,11 @@ export class Reviews {
     }
   }
 
-  /** The end of a review round: back to the builder with what is Important, or on towards delivery. */
-  private async closeReviewRound(task: MTask, stage: MStage, round: number, reviewed: boolean): Promise<"continue" | "stop"> {
+  /**
+   * The end of a review round: back to the builder with what is Important, or on towards delivery. `outcome`: what
+   * the round's last box (its reviewers', or its voters') says, when reviewers looked at all.
+   */
+  private async closeReviewRound(task: MTask, stage: MStage, round: number, reviewed: boolean, outcome?: string): Promise<"continue" | "stop"> {
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
     const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
     noteRoundEnd(task, stage.id, open.length);
@@ -395,6 +408,10 @@ export class Reviews {
     const port = task.portReview !== undefined;
     delete task.portReview;
     this.k.tracking.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
+    if (outcome !== undefined) {
+      const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: W.reviewPassed };
+      endAgentStep(task, { outcome, ...reason }, Date.now());
+    }
     if (end.kind === "send back") {
       // The next round reviews only what changed since what the reviewers looked at in this one.
       const sha = reviewed ? await git.head(task.worktree!).catch(() => undefined) : undefined;

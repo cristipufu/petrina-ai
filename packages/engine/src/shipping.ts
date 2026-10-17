@@ -6,7 +6,22 @@
 // notes, or moves the local main forward. It has no merge, force-push or delete. Every publishing step is saved
 // before it starts, and an interrupted delivery is looked up before anything goes out again: never twice.
 
-import { lastIndexWhere, type DeliveryMode, type Id, type Product, type ShippingStep } from "@petrina/core";
+import {
+  beginPetrinaStep,
+  beginYouStep,
+  endAgentStep,
+  endOpenStep,
+  endPetrinaStep,
+  endYouStep,
+  JOURNEY_WORDS as W,
+  lastIndexWhere,
+  openStep,
+  petrinaMoment,
+  type DeliveryMode,
+  type Id,
+  type Product,
+  type ShippingStep,
+} from "@petrina/core";
 import { realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as git from "./git.js";
@@ -92,6 +107,8 @@ export class Shipping {
         if (prepared !== "ready") return prepared;
       }
     }
+    // Petrina's own step on the journey, from its first look on GitHub until it went out.
+    beginPetrinaStep(task, "delivery", Date.now());
     // Looked up before publishing, and first after an interruption: what is already there is recorded, not made again.
     if ((await this.checkDelivery(task, signal)) === "stop") return "stop";
     return (await this.publish(task, signal)) === "done" ? "stop" : "continue";
@@ -113,6 +130,7 @@ export class Shipping {
       this.clearDelivery(task);
       task.stageIndex = check;
       task.sub = 0;
+      petrinaMoment(task, "delivery", { outcome: W.askAgain, reason: W.changedSinceApproval, tone: "back" }, Date.now());
       this.k.log(task, "warn", line);
       this.k.commit();
       return "back";
@@ -172,6 +190,7 @@ export class Shipping {
       check: (value) => (!value.notes.trim() ? `"notes" is empty: write the release notes.` : value.notes.length > TEXT_LIMITS.notes ? `the release notes are longer than GitHub allows (${TEXT_LIMITS.notes} characters). Shorten them.` : undefined),
     });
     shipping.prepared = { tested, summary: result.summary, notes: result.notes.trim() };
+    endAgentStep(task, { outcome: W.notes, reason: W.releaseNotesReady }, Date.now());
     // Petrina publishes from here.
     delete task.agent;
     task.holdsSlot = false;
@@ -386,6 +405,7 @@ export class Shipping {
     // The version change goes: the work is brought up to date again, and gets a fresh version.
     await this.backToWork(task);
     task.shipping = { ...(shipping.start ? { start: shipping.start } : {}), moves: shipping.moves + 1, failures: shipping.failures };
+    endPetrinaStep(task, { outcome: W.mainMovedOn, reason: W.readyAgain }, Date.now());
     this.k.log(task, "warn", `${why}, so Petrina gets it ready again (${shipping.moves + 1} of ${MAX_MOVES})`);
     this.k.commitNow();
     return "again";
@@ -720,6 +740,8 @@ export class Shipping {
     delete task.agent;
     task.holdsSlot = false;
     task.statusLine = "Shipping was interrupted. Your call";
+    endPetrinaStep(task, { outcome: W.interrupted, reason: W.shippingInterrupted, tone: "back" }, Date.now());
+    beginYouStep(task, "shipping", Date.now());
     this.k.raise(task, "shipping", `Shipping “${task.title}” was interrupted`, false, {
       body: `${delivery.text} Petrina will not publish it again on its own: check again, ship it again (it gets ready again, and Petrina checks GitHub before publishing), or mark it as done if it went out another way.`,
     });
@@ -773,6 +795,7 @@ export class Shipping {
     } else {
       if (how) this.k.log(task, "done", `Petrina opened pull request #${pr.number}, and checked it on GitHub`);
       this.k.tracking.delivered(task);
+      endPetrinaStep(task, { outcome: how ? W.openedPr(pr.number) : W.alreadyOut(`pull request #${pr.number}`) }, Date.now());
       if (pr.state === "open") {
         delete task.agent;
         task.holdsSlot = false;
@@ -794,6 +817,7 @@ export class Shipping {
     else {
       if (how) this.k.log(task, "done", `Petrina published release ${release.tag}, and checked it on GitHub`);
       this.k.tracking.delivered(task);
+      endPetrinaStep(task, { outcome: how ? W.released(release.tag) : W.alreadyOut(`release ${release.tag}`) }, Date.now());
       this.finished(task, `Released ${release.tag}`);
     }
     this.k.commitNow();
@@ -807,6 +831,7 @@ export class Shipping {
     else {
       this.k.tracking.delivered(task);
       if (how) this.k.log(task, "done", how === "found" ? `Checked: ${branch} already has it (${sha.slice(0, 7)})` : `Petrina moved ${branch} forward to it (${sha.slice(0, 7)}), and checked the main copy`);
+      endPetrinaStep(task, { outcome: how === "moved" ? W.movedMain(branch) : W.alreadyOut(`${branch} has it`) }, Date.now());
       this.finished(task, `Committed to ${branch}`);
     }
     this.k.commitNow();
@@ -900,6 +925,9 @@ export class Shipping {
     task.holdsSlot = false;
     task.statusLine = `${CARRIED_OVER}: check GitHub, then choose`;
     if (!this.k.s.inbox.some((item) => item.taskId === task.id && item.kind === "shipping")) {
+      // The step that was delivering ends as interrupted, and the task waits for the coordinator's choice.
+      if (openStep(task)?.kind !== "you") endOpenStep(task, { outcome: W.interrupted, reason: W.shippingInterrupted, tone: "back" }, Date.now());
+      beginYouStep(task, "shipping", Date.now());
       this.k.raise(task, "shipping", `Shipping “${task.title}” was interrupted`, false, {
         body: `${CARRIED_OVER}: check GitHub, then choose. Its delivery agent published deliveries itself then, so Petrina cannot tell what went out, and does nothing with it until you choose.`,
       });
@@ -922,6 +950,7 @@ export class Shipping {
     const task = this.takeShippingItem(itemId);
     if (!task) return;
     this.k.log(task, "you", "You asked Petrina to check again");
+    endYouStep(task, { outcome: W.checkedAgain, reason: W.checkAgain }, Date.now());
     this.k.toWaiting(task);
     this.k.commit();
     this.k.schedule();
@@ -949,6 +978,7 @@ export class Shipping {
       task.shipping = { ...(shipping.start ? { start: shipping.start } : {}), moves: 0, failures: shipping.failures };
     }
     this.k.log(task, "you", "You asked to ship it again");
+    endYouStep(task, { outcome: W.shippedAgain, reason: W.shipAgain }, Date.now());
     this.k.toWaiting(task);
     this.k.commitNow();
     this.k.schedule();
@@ -966,6 +996,7 @@ export class Shipping {
     task.finishedAt = Date.now();
     task.statusLine = "Marked as done by you";
     this.k.log(task, "you", "You marked it as done");
+    endYouStep(task, { outcome: W.markedDone, reason: W.youMarkedDone }, Date.now());
     this.k.commitNow();
     this.k.schedule();
   }

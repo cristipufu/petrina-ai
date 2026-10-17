@@ -3,7 +3,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DeliveryMode, State, Task } from "@petrina/core";
+import { journeyProblems, type DeliveryMode, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
 import { EngineProcess, Fakes, git, makeWorld, removeDir, waitFor, type World } from "./support.js";
 
@@ -16,12 +16,17 @@ afterAll(() => {
 });
 
 /** A product delivering in `mode` without asking, a task on its way there, and an engine running it. `hold`: a gh command that waits after doing its work. */
-async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?: string } = {}) {
-  const w = makeWorld(`shipping-${mode}`);
+async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?: string; notes?: "hang" } = {}) {
+  const w = makeWorld(`shipping-${mode}`, options.notes ? { version: "1.0.0" } : {});
   worlds.push(w);
+  if (options.notes) {
+    // An existing version and release make preparation change the version, so its checks rerun on resume.
+    git(w.remote, "update-ref", "refs/tags/v1.0.0", w.initial);
+    w.setGitHub((github) => github.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "The previous release." }));
+  }
   const home = join(w.dir, "home");
   const fakes = new Fakes(w.dir);
-  fakes.scenario({ planner: "short", builder: "plain" });
+  fakes.scenario({ planner: "short", builder: "plain", ...(options.notes ? { releaseManager: options.notes } : {}) });
   const hold = join(w.dir, "hold");
   if (options.hold) {
     writeFileSync(hold, "");
@@ -57,6 +62,9 @@ describe.concurrent("shipping is never repeated blindly", () => {
         expect(task.timeline.some((entry) => entry.text.startsWith("Found after a restart that it had already gone out"))).toBe(true);
         expect(task.shipping).toBeUndefined();
         expect(creates(run.w)).toHaveLength(1);
+        expect(journeyProblems(task)).toEqual([]);
+        expect(task.journey!.filter((step) => step.roleId === "release-manager")).toHaveLength(mode === "release" ? 1 : 0);
+        expect(task.journey!.at(-1)).toMatchObject({ kind: "petrina", work: "delivery", end: "done" });
         // Only a release has an agent at delivery, and it wrote the notes once.
         expect(run.fakes.openings("release manager")).toHaveLength(mode === "release" ? 1 : 0);
         if (mode === "pull-request") {
@@ -134,10 +142,22 @@ describe.concurrent("shipping is never repeated blindly", () => {
     await Bun.sleep(300);
     expect(run.w.github().prs).toHaveLength(1);
 
-    run.w.setGitHub((github) => (github.offline = false));
+    // Still unreachable: checking again records Petrina's lookup and another question, with no agent run.
+    const waiting = run.find(await engine.state());
+    const agents = waiting.journey!.filter((step) => step.kind === "agent");
     await engine.act("checkShipping", shippingItem(state, run.taskId)!.id);
+    const askedAgain = await engine.until((current) => !!shippingItem(current, run.taskId), "the new interrupted-shipping item");
+    const next = run.find(askedAgain);
+    expect(next.journey!.filter((step) => step.kind === "agent")).toEqual(agents);
+    expect(next.journey!.at(-1)).toMatchObject({ kind: "you", waitsFor: "shipping" });
+    expect(next.journey!.filter((step) => step.kind === "you" && step.waitsFor === "shipping")).toHaveLength(2);
+    expect(journeyProblems(next)).toEqual([]);
+
+    run.w.setGitHub((github) => (github.offline = false));
+    await engine.act("checkShipping", shippingItem(askedAgain, run.taskId)!.id);
     const done = run.find(await engine.until((current) => delivered(run.find(current)), "the delivery to be recorded"));
     expect(done.pr?.number).toBe(1);
+    expect(journeyProblems(done)).toEqual([]);
     expect(run.w.github().prs).toHaveLength(1);
     expect(creates(run.w)).toHaveLength(1);
     await engine.quit();
@@ -222,6 +242,68 @@ describe.concurrent("shipping is never repeated blindly", () => {
     expect(run.fakes.openings("release manager")).toHaveLength(1);
     expect(run.w.github().releases).toHaveLength(1);
     await run.engine.quit();
+  });
+
+  for (const stop of ["pause", "restart"] as const) {
+    it(`${stop} while writing release notes continues the same Journey box through repeated preparation checks`, async () => {
+      const run = await shipping("release", { notes: "hang" });
+      let engine: EngineProcess | undefined = run.engine;
+      try {
+        await waitFor(() => run.fakes.marked("release-manager-started"), "the Release Manager to start writing notes");
+        const before = run.find(await engine.state());
+        const notes = before.journey!.at(-1)!;
+        expect(notes).toMatchObject({ kind: "agent", roleId: "release-manager" });
+        expect(notes.endedAt).toBeUndefined();
+        const earlierChecks = before.timeline.filter((entry) => entry.text.startsWith("Checks passed:")).length;
+        if (stop === "pause") {
+          await engine.act("pause", run.taskId);
+          const paused = run.find(await engine.state());
+          expect(paused.state).toBe("paused");
+          expect(paused.journey!.at(-1)).toEqual(notes);
+          await engine.act("resume", run.taskId);
+        } else {
+          await engine.quit();
+          engine = undefined;
+          engine = await run.restart();
+        }
+        const done = run.find(await engine.until((state) => delivered(run.find(state)), "the release to finish after resuming notes"));
+        expect(done.journey!.filter((step) => step.roleId === "release-manager")).toEqual([
+          expect.objectContaining({ id: notes.id, startedAt: notes.startedAt, end: "done", outcome: "Wrote the release notes", reason: "release notes ready" }),
+        ]);
+        // The checks still run on the work and the version commit; their repeated run belongs to the resumed step.
+        const repeated = done.timeline.filter((entry) => entry.text.startsWith("Checks passed:")).slice(earlierChecks);
+        expect(repeated.length).toBeGreaterThanOrEqual(2);
+        expect(repeated.every((entry) => entry.step === notes.id)).toBe(true);
+        expect(run.fakes.openings("release manager")).toHaveLength(2);
+        expect(done.release?.tag).toBe("v1.0.1");
+        expect(creates(run.w)).toHaveLength(1);
+        expect(journeyProblems(done)).toEqual([]);
+      } finally {
+        await engine?.quit();
+      }
+    });
+  }
+
+  it("failed preparation checks interrupt resumed notes without marking them complete", async () => {
+    const run = await shipping("release", { notes: "hang" });
+    try {
+      await waitFor(() => run.fakes.marked("release-manager-started"), "the Release Manager to start writing notes");
+      const before = run.find(await run.engine.state());
+      const notes = before.journey!.at(-1)!;
+      await run.engine.act("pause", run.taskId);
+      await run.engine.act("setProductChecks", before.productId, [{ name: "Tests", command: "git no-such-subcommand-petrina" }]);
+      await run.engine.act("resume", run.taskId);
+      const state = await run.engine.until((state) => run.find(state).journey!.some((step) => step.id === notes.id && step.end === "failed"), "failed preparation checks to interrupt the notes");
+      const task = run.find(state);
+      expect(task.journey!.filter((step) => step.roleId === "release-manager")).toEqual([
+        expect.objectContaining({ id: notes.id, startedAt: notes.startedAt, end: "failed", outcome: "Interrupted", reason: "1 check failed" }),
+      ]);
+      expect(task.timeline.some((entry) => entry.step === notes.id && entry.text.startsWith("Checks: 1 of 1 failed"))).toBe(true);
+      expect(creates(run.w)).toHaveLength(0);
+      expect(journeyProblems(task)).toEqual([]);
+    } finally {
+      await run.engine.quit();
+    }
   });
 
   it("resuming a delivery paused while GitHub published it, even after Petrina is reopened, checks first", async () => {

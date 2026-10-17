@@ -4,6 +4,23 @@
 // The UI uses it today; the tests use it to pin down scheduling and gate rules.
 
 import { answerByCall, CALL_WORDS, callCheckBody, callOn, dueAnswers, followingCall, type CallAnswer } from "./call.js";
+import {
+  addAsk,
+  AFTER_WORDS,
+  beginAgentStep,
+  beginPetrinaStep,
+  beginYouStep,
+  endAgentStep,
+  endOpenStep,
+  endPetrinaStep,
+  endYouStep,
+  JOURNEY_WORDS as W,
+  openStep,
+  settleAsk,
+  stepTag,
+  syncWait,
+  withdrawAsks,
+} from "./journey.js";
 import { composePlan } from "./library.js";
 import { queueNeighbour, queuePlacement } from "./navigation.js";
 import type {
@@ -264,6 +281,7 @@ export class Simulator {
 
   answer(itemId: Id, answer: string): void {
     this.resolve(itemId, (d, task, item) => {
+      settleAsk(task, item.id, "answered", d.now, answer);
       this.say(d, task, "you", answer);
       this.log(d, task, "you", `You answered: ${answer}`);
       this.say(d, task, "agent", `Thanks. Going with: ${answer}.`, item.roleId, item.profileId);
@@ -277,6 +295,7 @@ export class Simulator {
     const pick = item?.options?.[0];
     if (!item || !pick) return;
     this.resolve(itemId, (d, task) => {
+      settleAsk(task, itemId, "decided", d.now, pick);
       this.log(d, task, "you", `You let the agent decide. It chose: ${pick}`);
       this.say(d, task, "agent", `I'll go with: ${pick}.`, item.roleId, item.profileId);
       this.unblock(task);
@@ -285,6 +304,7 @@ export class Simulator {
 
   allow(itemId: Id, _scope: "once" | "always" = "once"): void {
     this.resolve(itemId, (d, task, item) => {
+      settleAsk(task, item.id, "allowed", d.now);
       this.log(d, task, "you", `You allowed: ${item.title}`);
       this.say(d, task, "agent", "Thanks, continuing.", item.roleId, item.profileId);
       this.unblock(task);
@@ -293,6 +313,7 @@ export class Simulator {
 
   deny(itemId: Id, note?: string): void {
     this.resolve(itemId, (d, task, item) => {
+      settleAsk(task, item.id, "denied", d.now, note);
       this.log(d, task, "you", note ? `You said no: ${note}` : `You said no to: ${item.title}`);
       if (note) this.say(d, task, "you", note);
       this.say(d, task, "agent", "Understood. I'll find a way without it.", item.roleId, item.profileId);
@@ -306,14 +327,17 @@ export class Simulator {
       switch (item.kind) {
         case "plan":
           this.log(d, task, "you", "You approved the plan");
+          endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
           this.continueAfterGate(d, task);
           break;
         case "design":
           this.log(d, task, "you", "You approved the design");
+          endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
           this.continueAfterGate(d, task);
           break;
         case "disagreement":
           this.log(d, task, "you", "You sided with the architect");
+          endYouStep(task, { outcome: W.sided, reason: W.youSided }, d.now);
           for (const objection of task.objections) {
             if (objection.status !== "open") continue;
             objection.status = "rejected";
@@ -324,6 +348,7 @@ export class Simulator {
           break;
         case "delivery":
           this.log(d, task, "you", "You approved the delivery");
+          endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
           this.continueAfterGate(d, task);
           break;
         case "guide": {
@@ -373,6 +398,7 @@ export class Simulator {
       const call = item.kind === "disagreement";
       this.log(d, task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
       this.say(d, task, "you", note);
+      endYouStep(task, call ? { outcome: W.madeCall, reason: W.yourCall, tone: "back" } : { outcome: W.changes, reason: W.changesAsked, tone: "back" }, d.now);
       afterChangesAsked(task, item.kind, note, d.now);
       task.state = "waiting";
       task.statusLine = "Waiting for a free slot";
@@ -524,6 +550,33 @@ export class Simulator {
     });
   }
 
+  /** Start this task only after the given tasks have landed. An empty list removes the wait. */
+  setAfter(taskId: Id, after: readonly Id[]): void {
+    const ids = [...new Set(after)];
+    const state = this.state;
+    if (!state.tasks.some((task) => task.id === taskId)) throw new Error("Unknown task");
+    for (const id of ids) {
+      if (id === taskId) throw new Error("A task cannot wait for itself");
+      if (!state.tasks.some((task) => task.id === id)) throw new Error(`Unknown task: ${id}`);
+    }
+    // No loops: none of the tasks it waits for may (indirectly) wait for it.
+    const reaches = (from: Id, seen = new Set<Id>()): boolean => {
+      if (from === taskId) return true;
+      if (seen.has(from)) return false;
+      seen.add(from);
+      return (state.tasks.find((task) => task.id === from)?.after ?? []).some((next) => reaches(next, seen));
+    };
+    if (ids.some((id) => reaches(id))) throw new Error("That would make tasks wait for each other");
+    this.updateTask(taskId, (d, task) => {
+      task.after = ids;
+      const find = (id: Id) => d.tasks.find((entry) => entry.id === id);
+      // The wait is a step of its own on the journey, so what is said about it belongs to it.
+      syncWait(task, ids.map((id) => find(id)!).filter((other) => other.state !== "done" && other.state !== "cancelled"), find, d.now);
+      this.log(d, task, "you", ids.length ? AFTER_WORDS.starts(ids.map((id) => find(id)!.title)) : AFTER_WORDS.none);
+      this.schedule(d);
+    });
+  }
+
   pause(taskId: Id): void {
     this.updateTask(taskId, (d, task) => {
       if (!["running", "needs-you", "waiting"].includes(task.state)) return;
@@ -531,6 +584,7 @@ export class Simulator {
       task.state = "paused";
       task.holdsSlot = false;
       task.statusLine = "Paused by you";
+      withdrawAsks(task, d.inbox.filter((item) => item.taskId === taskId && item.blocking).map((item) => item.id), d.now);
       d.inbox = d.inbox.filter((item) => item.taskId !== taskId || !item.blocking);
       this.log(d, task, "you", "You paused it");
       this.schedule(d);
@@ -560,6 +614,7 @@ export class Simulator {
       task.finishedAt = d.now;
       task.statusLine = "Cancelled";
       d.inbox = d.inbox.filter((item) => item.taskId !== task.id);
+      endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, d.now);
       this.log(d, task, "you", "You cancelled it");
       this.schedule(d);
     });
@@ -698,11 +753,13 @@ export class Simulator {
   }
 
   private log(d: Draft, task: DraftTask, tone: Task["timeline"][number]["tone"], text: string, roleId?: Id, profileId?: Id): void {
-    task.timeline.push({ id: this.id(d, task.id), at: d.now, text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) });
+    const step = stepTag(task);
+    task.timeline.push({ id: this.id(d, task.id), at: d.now, text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
   }
 
   private say(d: Draft, task: DraftTask, from: Task["session"][number]["from"], text: string, roleId?: Id, profileId?: Id): void {
-    task.session.push({ id: this.id(d, task.id), at: d.now, from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) });
+    const step = stepTag(task);
+    task.session.push({ id: this.id(d, task.id), at: d.now, from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
   }
 
   private stage(task: DraftTask): DeepMutable<Stage> | undefined {
@@ -723,9 +780,14 @@ export class Simulator {
     return columnOf(task as unknown as Task, d.roles as Role[]);
   }
 
+  /** The profile the planner runs on, kept in the state so a queued task's journey can name it. */
+  private planner(d: Draft): Id {
+    return d.planner ?? PLANNER_PROFILE;
+  }
+
   /** Who should be working right now, given the stage and the sub-step. */
   private nextAgent(task: DraftTask): { roleId: Id; profileId: Id } | undefined {
-    if (task.stageIndex < 0) return { roleId: "planner", profileId: task.plan?.plannerProfileId ?? PLANNER_PROFILE };
+    if (task.stageIndex < 0) return { roleId: "planner", profileId: task.plan?.plannerProfileId ?? this.state.planner ?? PLANNER_PROFILE };
     const stage = this.stage(task);
     if (!stage) return undefined;
     switch (stage.kind) {
@@ -759,12 +821,20 @@ export class Simulator {
       task.statusLine = waiting;
       return;
     }
+    const current = this.stage(task);
+    // A review round starts with Petrina's own run of the product's checks, as the engine's does.
+    const round = this.round(task);
+    if (current?.kind === "review-chain" && (task.hunt?.stageId !== current.id || task.hunt.round !== round)) {
+      this.runChecks(d, task);
+      task.hunt = { stageId: current.id, round, reported: {}, findings: task.findings.length };
+    }
+    // A review round's reviewers share its step on the journey; each joins it as it starts.
+    beginAgentStep(task, next.roleId, next.profileId, d.now, current?.kind === "review-chain" ? current.profileIds : undefined);
     const agent: ActiveAgent = { ...next, since: d.now, step: 0 };
     task.agent = agent;
     // Reviewers look at the change together, as the engine's do: the ones still to report work beside this
     // one, each in a slot of its own while the pool and its tool allow.
     delete task.helpers;
-    const current = this.stage(task);
     for (const profileId of current?.kind === "review-chain" ? current.profileIds.slice(task.sub + 1) : []) {
       const tool = d.profiles.find((profile) => profile.id === profileId)?.toolId ?? "unknown";
       if (!extraSlot(d as State, tool)) break;
@@ -819,6 +889,14 @@ export class Simulator {
     this.say(d, task, "agent", "Got it. I'll take that into account from here.", task.agent?.roleId, task.agent?.profileId);
   }
 
+  /** Petrina's own run of the product's checks, before a review round's reviewers. In the demo they pass. */
+  private runChecks(d: Draft, task: DraftTask): void {
+    beginPetrinaStep(task, "checks", d.now);
+    task.checks = { at: d.now, results: DEMO_CHECKS };
+    this.log(d, task, "done", `Checks passed: ${DEMO_CHECKS.map((run) => run.name).join(", ")}`);
+    endPetrinaStep(task, { outcome: W.checks(0, DEMO_CHECKS.length), reason: W.checksPassed }, d.now);
+  }
+
   private ask(d: Draft, task: DraftTask, trigger: Trigger): void {
     const agent = task.agent;
     // A question ends the agent's turn; a permission is answered inside it, and the wait is not work.
@@ -827,7 +905,8 @@ export class Simulator {
       const open = this.openTurns.get(task.id);
       if (open) open.waitingSince = d.now;
     }
-    this.raise(d, task, trigger.kind, trigger.title, true, trigger);
+    const id = this.raise(d, task, trigger.kind, trigger.title, true, trigger);
+    addAsk(task, { id, kind: trigger.kind, title: trigger.title, at: d.now });
     task.statusLine = trigger.kind === "question" ? "Waiting for your answer" : "Waiting for your permission";
     this.say(d, task, "agent", trigger.title, agent?.roleId, agent?.profileId);
     this.log(d, task, "warn", trigger.kind === "question" ? `Asked you: ${trigger.title}` : `Asked your permission: ${trigger.title}`, agent?.roleId, agent?.profileId);
@@ -840,11 +919,12 @@ export class Simulator {
     title: string,
     blocking: boolean,
     extra: { body?: string; options?: readonly string[]; detail?: string } = {},
-  ): void {
+  ): Id {
     task.state = "needs-you";
     const agent = task.agent;
+    const id = this.id(d, "inbox");
     d.inbox.push({
-      id: this.id(d, "inbox"),
+      id,
       taskId: task.id,
       kind,
       title,
@@ -856,6 +936,7 @@ export class Simulator {
       ...(extra.detail ? { detail: extra.detail } : {}),
     });
     if (ASKS.has(kind)) this.askMoment(d, task, d.inbox.at(-1)!);
+    return id;
   }
 
   private unblock(task: DraftTask): void {
@@ -877,6 +958,7 @@ export class Simulator {
       this.log(d, task, "milestone", `Plan ready: ${count} stages. ${task.plan.rationale}`, agent.roleId, agent.profileId);
       this.say(d, task, "agent", task.plan.rationale, agent.roleId, agent.profileId);
       this.endStage(d, task, "done");
+      endAgentStep(task, { outcome: W.planned(count), reason: W.planReady }, d.now);
       if (task.approvePlan) this.gate(d, task, "plan");
       else this.advance(d, task);
       return;
@@ -894,16 +976,24 @@ export class Simulator {
 
     if (stage.kind === "do") {
       if (agent.roleId === "builder" && task.fixing) {
+        let count = 0;
         for (const finding of task.findings) {
           if (finding.status !== "open" || finding.severity === "pre-existing") continue;
           const fixed = finding.severity === "blocking";
           finding.answer = { fixed, text: fixed ? "Fixed, with a test for addresses with a plus sign." : "Kept as is: the current message matches the rest of the product.", at: d.now };
           if (fixed) finding.status = "fixed";
+          if (fixed) count += 1;
         }
         task.fixing = false;
         this.log(d, task, "done", "Fixed the blocking findings", agent.roleId, agent.profileId);
+        endAgentStep(task, { outcome: W.fixed(count), reason: W.fixesReady }, d.now);
       } else {
         this.log(d, task, "done", `${stage.title} done`, agent.roleId, agent.profileId);
+        endAgentStep(
+          task,
+          agent.roleId === "builder" ? { outcome: W.built, reason: W.readyForReview } : agent.roleId === "tester" ? { outcome: W.checks(0, task.brief?.acceptance.length ?? 0), reason: W.checksPassed } : { outcome: W.wroteNotes, reason: W.notesReady },
+          d.now,
+        );
       }
       this.endStage(d, task, "done");
       this.advance(d, task);
@@ -926,6 +1016,7 @@ export class Simulator {
         this.log(d, task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, agent.roleId, agent.profileId);
         this.log(d, task, "done", CALL_WORDS.settled);
         this.endStage(d, task, "settled");
+        endAgentStep(task, { outcome: W.followed, reason: W.followsCall }, d.now);
         this.advance(d, task);
         return;
       }
@@ -936,6 +1027,7 @@ export class Simulator {
           objection.answer = objection.blocking ? "Changed the design to cover it." : "Out of scope for this task. Added to risks.";
         }
         this.log(d, task, "done", round === 1 ? "Design brief ready" : "Answered every objection", agent.roleId, agent.profileId);
+        endAgentStep(task, round === 1 ? { outcome: W.wroteBrief, reason: W.briefReady } : { outcome: W.answeredAll, reason: W.objectionsAnswered }, d.now);
         task.sub = 1;
         this.startAgent(d, task);
         return;
@@ -955,6 +1047,7 @@ export class Simulator {
         this.log(d, task, "warn", `Raised ${raised.length} objections, ${blocking} blocking`, agent.roleId, agent.profileId);
         this.designRound(d, task, stage, round, raised.length, blocking);
         logged = true;
+        endAgentStep(task, blocking ? { outcome: W.objections(raised.length, blocking), reason: W.blocking(blocking), tone: "back" } : { outcome: W.objections(raised.length, 0), reason: W.noBlocking }, d.now);
         const end = designRoundEnd(blocking, round, stage as Stage);
         if (end === "disagreement") {
           this.moment(d, task, { kind: "design-end", outcome: "to-you", rounds: round, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) });
@@ -971,6 +1064,7 @@ export class Simulator {
       }
       task.brief = briefFor(task);
       this.log(d, task, "done", "Design settled: no blocking objections", agent.roleId, agent.profileId);
+      endAgentStep(task, { outcome: W.objections(0, 0), reason: W.noBlocking }, d.now);
       if (!logged) this.designRound(d, task, stage, round, 0, 0);
       this.moment(d, task, { kind: "design-end", outcome: "settled", rounds: round, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) });
       this.endStage(d, task, "settled");
@@ -979,8 +1073,6 @@ export class Simulator {
     }
 
     if (stage.kind === "review-chain") {
-      // Petrina runs the product's checks itself before the first reviewer of each round.
-      if (task.sub === 0) task.checks = { at: d.now, results: DEMO_CHECKS };
       if (round === 1 && task.sub === 0) {
         task.findings.push({
           id: this.id(d, task.id),
@@ -1028,6 +1120,14 @@ export class Simulator {
       const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
       const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
       noteRoundEnd(task, stage.id, open.length);
+      // The round's step says what its reviewers raised, and where the work goes.
+      const raised = task.findings.slice(task.hunt?.findings ?? 0);
+      delete task.hunt;
+      endAgentStep(
+        task,
+        { outcome: findingCount(raised), ...(end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" } : { reason: W.reviewPassed }) },
+        d.now,
+      );
       if (end.kind === "send back") {
         task.rounds[stage.id] = round + 1;
         task.stageIndex = end.builder;
@@ -1076,6 +1176,7 @@ export class Simulator {
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
     delete task.agent;
     delete task.helpers;
+    beginYouStep(task, gate, d.now);
     task.holdsSlot = false;
     task.statusLine = gateStatus(task as unknown as Task, gate);
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
@@ -1085,6 +1186,7 @@ export class Simulator {
 
   private gateDisagreement(d: Draft, task: DraftTask): void {
     delete task.agent;
+    beginYouStep(task, "call", d.now);
     task.holdsSlot = false;
     task.statusLine = "The architects disagree. Your call";
     this.raise(d, task, "disagreement", `The architects disagree on “${task.title}”`, false, { body: CALL_WORDS.disagreement });
@@ -1112,6 +1214,7 @@ export class Simulator {
   }
 
   private openPullRequest(d: Draft, task: DraftTask): void {
+    beginPetrinaStep(task, "delivery", d.now);
     const product = d.products.find((entry) => entry.id === task.productId);
     const number = 100 + (d.seq % 900);
     task.pr = { number, url: `https://github.com/${product?.repo ?? "owner/repo"}/pull/${number}`, state: "open", openedAt: d.now };
@@ -1124,16 +1227,21 @@ export class Simulator {
     this.log(d, task, "status", "Petrina pushed the branch");
     this.log(d, task, "done", `Petrina opened pull request #${number}, and checked it on GitHub`);
     this.moment(d, task, { kind: "task-end", outcome: "delivered" });
+    endPetrinaStep(task, { outcome: W.openedPr(number) }, d.now);
   }
 
   /** Petrina publishes it, the way the task asks: with the builder's text, or the Release Manager's notes. */
   private ship(d: Draft, task: DraftTask): void {
-    if (task.agent) this.log(d, task, "done", "Ready to publish", "release-manager", task.agent.profileId);
+    if (task.agent) {
+      this.log(d, task, "done", "Ready to publish", "release-manager", task.agent.profileId);
+      endAgentStep(task, { outcome: W.notes, reason: W.releaseNotesReady }, d.now);
+    }
     if (task.delivery === "pull-request") {
       this.openPullRequest(d, task);
       return;
     }
     const product = d.products.find((entry) => entry.id === task.productId);
+    beginPetrinaStep(task, "delivery", d.now);
     delete task.agent;
     task.holdsSlot = false;
     task.state = "done";
@@ -1146,11 +1254,13 @@ export class Simulator {
       task.statusLine = `Released ${tag}`;
       this.log(d, task, "status", `Petrina pushed main and the tag ${tag}`);
       this.log(d, task, "done", `Petrina published release ${tag}, and checked it on GitHub`);
+      endPetrinaStep(task, { outcome: W.released(tag) }, d.now);
     } else {
       const sha = (d.seq * 2654435761).toString(16).slice(0, 7);
       task.landed = { branch: product?.defaultBranch ?? "main", sha };
       task.statusLine = `Committed to ${task.landed.branch} (${sha})`;
       this.log(d, task, "done", `Petrina moved ${task.landed.branch} forward to it (${sha}), and checked the main copy`);
+      endPetrinaStep(task, { outcome: W.movedMain(task.landed.branch) }, d.now);
     }
   }
 
@@ -1319,9 +1429,22 @@ export class Simulator {
   /** Fill free slots: tasks already in progress first (the tool with more of its limit left first), then the queue, in priority order. */
   private schedule(d: Draft): void {
     const toolOf = new Map(d.profiles.map((profile) => [profile.id, profile.toolId]));
+    const find = (id: Id) => d.tasks.find((entry) => entry.id === id);
+    // A task waiting for others to land stays out of the running and says what it waits for.
+    const blocked = (task: DraftTask): boolean => {
+      const waitingFor = (task.after ?? []).map(find).filter((other): other is DraftTask => !!other && other.state !== "done" && other.state !== "cancelled");
+      syncWait(task, waitingFor, find, d.now);
+      if (!waitingFor.length) {
+        if (task.state === "queued" && task.statusLine.startsWith("Waiting for “")) task.statusLine = task.held ? "On hold" : "In the queue";
+        return false;
+      }
+      task.statusLine = AFTER_WORDS.waiting(waitingFor.map((other) => other.title));
+      return true;
+    };
     const inProgress = d.tasks.filter((task) => task.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
     const continuing: Candidate[] = [];
     for (const task of inProgress) {
+      if (blocked(task)) continue;
       const next = this.nextAgent(task);
       if (next) {
         const candidate = { taskId: task.id, toolId: toolOf.get(next.profileId) ?? "unknown" };
@@ -1330,9 +1453,11 @@ export class Simulator {
       }
     }
     const candidates = balanced(continuing, d.pool, d.now);
-    for (const task of queueOf(d.tasks as Task[])) {
-      if (task.held) continue;
-      candidates.push({ taskId: task.id, toolId: toolOf.get(PLANNER_PROFILE) ?? "unknown" });
+    for (const queued of queueOf(d.tasks as Task[])) {
+      const task = find(queued.id)!;
+      // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
+      if (blocked(task) || task.held) continue;
+      candidates.push({ taskId: task.id, toolId: toolOf.get(this.planner(d)) ?? "unknown" });
     }
 
     const starts = pickStarts({ candidates, inUse: slotUses(d as unknown as State), pool: d.pool, now: d.now });

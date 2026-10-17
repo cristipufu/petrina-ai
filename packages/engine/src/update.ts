@@ -3,7 +3,7 @@
 // on top of the latest main itself, with git plumbing that never leaves a working copy halfway through a
 // rebase. When main's changes and the task's overlap, the builder brings the work up to date.
 
-import { lastIndexWhere } from "@petrina/core";
+import { JOURNEY_WORDS as W, lastIndexWhere, petrinaMoment } from "@petrina/core";
 import * as git from "./git.js";
 import type { Connections } from "./connection.js";
 import type { Kernel, MTask } from "./kernel.js";
@@ -122,6 +122,8 @@ export class Updates {
     this.k.commitNow();
     await git.openOn(worktree, latest.sha, merged.tree);
     const files = merged.conflicts.length === 1 ? "1 file conflicts" : `${merged.conflicts.length} files conflict`;
+    // A moment of Petrina's own on the journey: why the builder gets the work back.
+    petrinaMoment(task, "update", { outcome: W.mainMoved(merged.conflicts.length), reason: W.conflicts, tone: "back" }, Date.now());
     this.k.log(task, "warn", `Main moved on (${commits}) and ${files} with this work, so the builder brings it up to date`);
     this.k.commit();
     return "conflict";

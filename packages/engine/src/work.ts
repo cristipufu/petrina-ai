@@ -2,7 +2,7 @@
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import { lastIndexWhere, type Task } from "@petrina/core";
+import { endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, NotesResult, stepBack, TestResult, TEXT_LIMITS } from "./roles.js";
@@ -71,17 +71,25 @@ export class Work {
       // The next fix round or update goes back to this conversation.
       const conversation = task.conversation;
       if (conversation?.briefed && conversation.roleId === roleId) task.builderSession = { stageId: stage.id, profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId };
-      if (task.fixing) {
+      const fixing = task.fixing;
+      let fixed = 0;
+      if (fixing) {
         const at = Date.now();
         for (const answer of result.answers) {
           const finding = given.find((entry) => entry.id === answer.id && entry.status === "open");
           if (!finding) continue;
           finding.answer = { fixed: answer.fixed, text: answer.text, at };
           if (answer.fixed) finding.status = "fixed";
+          if (answer.fixed) fixed += 1;
         }
         task.fixing = false;
       }
       if (!updating) this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, profileId);
+      endAgentStep(
+        task,
+        updating ? { outcome: W.broughtUpToDate, reason: W.upToDate } : fixing ? { outcome: W.fixed(fixed), reason: W.fixesReady } : { outcome: sha ? W.built : W.unchanged, reason: W.readyForReview },
+        Date.now(),
+      );
     } else if (roleId === "tester") {
       const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal);
       this.learnings.note(task, result.learnings, roleId, profileId);
@@ -89,6 +97,7 @@ export class Work {
       const failed = result.checks.filter((check) => !check.pass);
       for (const check of failed) task.findings.push({ id: this.k.id(task.id), text: `Failed acceptance check: ${check.text}`, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });
       this.k.log(task, failed.length ? "warn" : "done", failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, profileId);
+      endAgentStep(task, { outcome: W.checks(failed.length, result.checks.length), reason: failed.length ? W.checksFailed(failed.length) : W.checksPassed }, Date.now());
       task.testedPatch = (await this.updates.patch(task)) ?? task.testedPatch;
       if (task.retest) {
         // The final pass before the delivery check: on to the check, or back to the builder with what failed.
@@ -112,6 +121,7 @@ export class Work {
       const result = await this.turns.turn(task, roleId, profileId, sections, NotesResult, signal);
       this.k.say(task, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, profileId);
       this.k.log(task, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, profileId);
+      endAgentStep(task, { outcome: W.wroteNotes, reason: W.notesReady }, Date.now());
     }
     if (role && !role.canEdit && task.worktree && !(await git.isClean(task.worktree))) {
       await git.discardChanges(task.worktree);

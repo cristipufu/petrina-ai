@@ -328,8 +328,11 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
 
 describe.skipIf(!posix)("opening the terminal again", () => {
   it("never overlaps with a hand back or another reopen, and an earlier session's end never lets a hand back through", async () => {
-    // A stand-in terminal that takes two seconds to run the launcher, as a real one may.
-    const run = await start({ planner: "short", builder: "work", reopen: "resume" }, "", (launcher) => ["/bin/sh", "-c", 'sleep 2; exec /bin/sh "$1"', "terminal", launcher]);
+    // The stand-in terminal waits until the assertions finish, instead of racing a two-second delay.
+    let opening: string | undefined;
+    const run = await start({ planner: "short", builder: "work", reopen: "resume" }, "", (launcher) => opening
+      ? ["/bin/sh", "-c", 'while [ -e "$1" ]; do sleep 0.03; done; exec /bin/sh "$2"', "terminal", opening, launcher]
+      : ["/bin/sh", launcher]);
     await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
     await run.working("builder");
     run.cli({});
@@ -340,6 +343,8 @@ describe.skipIf(!posix)("opening the terminal again", () => {
 
     // Two quick clicks on Reopen terminal, and Hand back while it opens: only the first goes ahead.
     const hold = join(run.root, "hold");
+    opening = join(run.root, "opening");
+    writeFileSync(opening, "");
     writeFileSync(hold, "");
     run.cli({ hold, write: { "again.txt": "Again\n" } });
     const first = engine.reopenTerminal(run.taskId);
@@ -352,6 +357,7 @@ describe.skipIf(!posix)("opening the terminal again", () => {
     expect(run.launched()).toHaveLength(1);
     expect((await engine.handBackPreview(run.taskId)).open).toBe("unknown");
     await expect(engine.handBack(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.cannotTell("Codex"));
+    rmSync(opening);
     await waitFor(async () => run.launched().length === 2 && (await sessionState(takeoverDir(run.data, run.taskId))) === "running", "the app to open again");
 
     // Open: no hand back, even anyway, and no third copy.

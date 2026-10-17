@@ -2,8 +2,9 @@
 // Tasks are fast-forwarded through the real simulator, so their histories (and the work
 // log behind every usage number) are consistent.
 
+import { AFTER_WORDS, syncWait } from "./journey.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
-import type { DeliveryMode, Id, InboxItem, Product, State, Task, TaskKind, UsageReport } from "./model.js";
+import type { DeliveryMode, Id, InboxItem, JourneyStep, Product, State, Task, TaskKind, UsageReport } from "./model.js";
 import { Simulator, type SimOpenWork, type SimQuirk, type Trigger, type Triggers } from "./sim.js";
 import { askMomentId, MemoryWorkLog } from "./worklog.js";
 import type { Clone } from "./setup.js";
@@ -119,6 +120,7 @@ function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): St
     tasks,
     inbox,
     pool: { limit: 5, paused: false, toolCaps: { "claude-code": 3, codex: 2 }, usage: demoUsage(now) },
+    planner: "sonnet-medium",
   };
 }
 
@@ -228,6 +230,17 @@ function shift(placed: Placed, now: number, ago: number, priority: number): Plac
       ...(task.checks ? { checks: { ...task.checks, at: at(task.checks.at) } } : {}),
       timeline: task.timeline.map((entry) => ({ ...entry, at: at(entry.at) })),
       session: task.session.map((line) => ({ ...line, at: at(line.at) })),
+      ...(task.journey
+        ? {
+            journey: task.journey.map((step) => ({
+              ...step,
+              startedAt: at(step.startedAt),
+              ...(step.endedAt !== undefined ? { endedAt: at(step.endedAt) } : {}),
+              // A question or request is its inbox item, renamed below like the item.
+              ...(step.asks ? { asks: step.asks.map((ask) => ({ ...ask, id: `${task.id}:${ask.id}`, at: at(ask.at), ...(ask.endedAt !== undefined ? { endedAt: at(ask.endedAt) } : {}) })) } : {}),
+            })),
+          }
+        : {}),
     },
     inbox: shiftedInbox,
     log: placed.log,
@@ -241,6 +254,14 @@ function shiftOpen(open: SimOpenWork, delta: number): SimOpenWork {
     stages: open.stages.map(([taskId, stage]) => [taskId, { ...stage, startedAt: stage.startedAt + delta }]),
     runs: open.runs,
   };
+}
+
+/** A queued task that starts after `on` lands: it says so, and its journey starts with the wait. */
+function waitingFor(task: Task, on: Task, at: number): Task {
+  const draft: Task & { journey: JourneyStep[] } = { ...task, after: [on.id], journey: [] };
+  syncWait(draft, [on], (id) => (id === on.id ? on : undefined), at);
+  const said = { id: `${task.id}-after`, at, text: AFTER_WORDS.starts([on.title]), tone: "you" as const, step: draft.journey[0]!.id };
+  return { ...draft, statusLine: AFTER_WORDS.waiting([on.title]), timeline: [...task.timeline, said] };
 }
 
 const byId = (id: string): Spec => {
@@ -452,7 +473,9 @@ function buildDemo(now: number): Demo {
 
   ["export-pdf", "onboarding", "tag-search", "stripe-retries"].forEach((id, priority) => {
     const task = queuedTask(byId(id), priority, now - (40 - priority * 7) * MINUTE);
-    builder.tasks.push(id === "stripe-retries" ? { ...task, held: true, statusLine: "On hold" } : task);
+    // Search by tag builds on the dark theme, so it waits for Dark mode to land.
+    const darkMode = builder.tasks.find((entry) => entry.id === "dark-mode")!;
+    builder.tasks.push(id === "stripe-retries" ? { ...task, held: true, statusLine: "On hold" } : id === "tag-search" ? waitingFor(task, darkMode, task.createdAt + MINUTE) : task);
   });
 
   recordProducts(builder.log, DEMO_PRODUCTS, now);
@@ -603,8 +626,11 @@ function buildPortfolioDemo(now: number): Demo {
       description: work.description,
       area: work.area,
       kind,
-      approvePlan: target === "plan-gate",
-      ...(target === "delivery-gate" ? { approveDelivery: true } : {}),
+      approvePlan: target === "plan-gate" || (target === "done" && kind === "new"),
+      // A full journey: plan and design checks, a send-back, and release notes before Petrina publishes.
+      ...(target === "done" && kind === "new" ? { delivery: "release" as const } : {}),
+      // New products that already shipped went through every check, so their journeys run long.
+      ...(target === "delivery-gate" || (target === "done" && kind === "new") ? { approveDelivery: true } : {}),
       ...(target === "pr-open" ? { delivery: "pull-request" as const } : {}),
     };
 

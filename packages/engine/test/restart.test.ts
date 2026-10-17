@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import type { Task } from "@petrina/core";
+import { journeyProblems, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { EARLIER_ATTEMPT } from "../src/prompts.js";
 import { EngineProcess, Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
@@ -26,6 +26,8 @@ describe("what the coordinator says during a step survives a restart", () => {
 
       const asked = await engine.until((state) => state.inbox.some((item) => item.taskId === taskId && item.kind === "question"), "the builder's question");
       const question = asked.inbox.find((item) => item.taskId === taskId && item.kind === "question")!;
+      const box = asked.tasks.find((task) => task.id === taskId)!.journey!.at(-1)!;
+      expect(box).toMatchObject({ kind: "agent", roleId: "builder" });
       await engine.act("answer", question.id, "Blue, please", { taskId, about: question.title, clientId: "c1" });
       await waitFor(() => fakes.marked("builder-answered"), "the builder to get the answer");
       await engine.act("sendMessage", taskId, "Keep it short", "queue", "c2");
@@ -59,6 +61,13 @@ describe("what the coordinator says during a step survives a restart", () => {
       expect(said.every((at) => at >= 0)).toBe(true);
       expect([...said].sort((a, b) => a - b)).toEqual(said);
       expect(task.timeline.some((entry) => entry.text === "Handed on 4 things you said in an earlier attempt at this step")).toBe(true);
+      // The journey survived it: one builder box throughout, from when the step first started, its question answered under it.
+      const builderBoxes = task.journey!.filter((step) => step.roleId === "builder");
+      expect(builderBoxes).toHaveLength(1);
+      expect(builderBoxes[0]).toMatchObject({ id: box.id, startedAt: box.startedAt, end: "done" });
+      expect(builderBoxes[0]!.asks).toEqual([expect.objectContaining({ title: "Which colour should the greeting be?", how: "answered", answer: "Blue, please" })]);
+      expect(task.timeline.filter((entry) => entry.text.startsWith("You said") || entry.text === "You answered: Blue, please").every((entry) => entry.step === box.id)).toBe(true);
+      expect(journeyProblems(task)).toEqual([]);
 
       // The step finished: the next one does not get them again.
       const reviewers = fakes.openings("code reviewer");

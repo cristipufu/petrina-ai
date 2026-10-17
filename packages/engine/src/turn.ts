@@ -1,7 +1,7 @@
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { limitOf, slotWait, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason, type CheckId } from "@petrina/core";
+import { addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, slotWait, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason, type CheckId } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
@@ -136,6 +136,13 @@ export class Turns {
     task.state = "running";
     task.holdsSlot = true;
     task.column = this.k.columnFor(task);
+    // A stand-in is a new box, so the first agent's tool, time and lines stay with its own work.
+    const previous = openStep(task);
+    if (previous?.kind === "agent" && previous.roleId === roleId && !previous.team && previous.profileId !== profileId) {
+      endAgentStep(task, { outcome: W.handedOn, reason: W.agentChanged, tone: "back" }, Date.now());
+    }
+    // Its box on the journey: picking up after a restart, a pause or a hand back continues the same one.
+    beginAgentStep(task, roleId, profileId, Date.now());
     if (saved) {
       task.statusLine = options.status ?? `${role.name} is getting back to work`;
     } else {
@@ -361,6 +368,10 @@ export class Turns {
     const profileId = profile.id;
     this.mustBeReady(profile);
     const taskId = task.id;
+    // The group records the profiles that actually start, including stand-ins, rather than the plan.
+    const group = openStep(task);
+    const team = group?.kind === "agent" && group.roleId === roleId ? group.team ?? (group.profileId ? [group.profileId] : []) : [];
+    beginAgentStep(task, roleId, profileId, Date.now(), [...new Set([...team, profileId])]);
     if (options.took) {
       const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ran out of usage`;
       this.k.say(task, "system", words, roleId, profileId);
@@ -505,6 +516,8 @@ export class Turns {
 
   private wait(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string }, signal: AbortSignal, status: string, by: { roleId: Id; profileId: Id }, main: boolean): Promise<string> {
     const id = this.k.raise(task, kind, title, blocking, extra, by);
+    // It hangs under the step that asked, a reviewer's or a voter's among others included.
+    if (kind === "question" || kind === "permission") addAsk(task, { id, kind, title, at: Date.now() });
     task.statusLine = status;
     if (kind === "question" && main && task.conversation) {
       // A question survives a restart for the conversation that asked it.

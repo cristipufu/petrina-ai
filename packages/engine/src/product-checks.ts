@@ -1,7 +1,7 @@
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
-import { lastIndexWhere, type Id, type ProductCheck } from "@petrina/core";
+import { beginPetrinaStep, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, type Id, type ProductCheck } from "@petrina/core";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -99,6 +99,7 @@ export class ProductChecks {
       );
       restore();
       product.checks = result.checks.map((check) => ({ name: check.name, argv: check.argv, why: check.why }));
+      endAgentStep(task, { outcome: W.foundChecks(product.checks.length), reason: W.checksFound }, Date.now());
       this.k.log(task, "done", `Found how to check ${product.name} (${why}): ${product.checks.map((check) => check.name).join(", ")}`, "check-finder", ran);
     } catch (error) {
       if (signal.aborted || error instanceof Aborted) throw error;
@@ -107,6 +108,7 @@ export class ProductChecks {
       if (error instanceof WaitingForUsage) throw error;
       // Petrina carries on without it, but it is still a failure in Analytics.
       this.k.tracking.failed(task, error, { roleId: "check-finder", profileId: ran });
+      endAgentStep(task, { outcome: W.couldNotFinish, reason: W.checksAsBefore }, Date.now());
       const fallback: ProductCheck[] = product.checks ? [...product.checks] : declared;
       product.checks = fallback.map((check) => ({ name: check.name, argv: [...check.argv], ...(check.why ? { why: check.why } : {}) }));
       this.k.log(task, "warn", `The Check finder could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`);
@@ -127,6 +129,12 @@ export class ProductChecks {
     if (!task.worktree) return 0;
     const hooks = await this.noteHooks(task);
     if (!checks.length && !hooks.length) return 0;
+    // Resuming unfinished release notes revalidates the preparation first. Those repeated checks belong
+    // to the same step's timeline: they do not complete the notes or start another agent step.
+    const open = openStep(task);
+    const resumingNotes = open?.kind === "agent" && open.roleId === "release-manager" && open.stageId === task.plan?.stages[task.stageIndex]?.id;
+    // A checks step's elapsed time includes waiting for another task's run.
+    if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now());
     const finished = await this.turnToRun(task, signal);
     try {
       return await this.runAll(task, checks, hooks, signal);
@@ -174,6 +182,11 @@ export class ProductChecks {
       task.findings.push({ id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
     }
     this.k.log(task, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : `Checks passed: ${results.map((run) => run.name).join(", ")}`);
+    if (failed.length && openStep(task)?.roleId === "release-manager") {
+      endAgentStep(task, { outcome: W.interrupted, reason: W.checksFailed(failed.length), tone: "back", end: "failed" }, Date.now());
+    } else {
+      endPetrinaStep(task, failed.length ? { outcome: W.checks(failed.length, results.length), reason: W.checksFailed(failed.length), tone: "back" } : { outcome: W.checks(0, results.length), reason: W.checksPassed }, Date.now());
+    }
     this.k.commit();
     return failed.length;
   }

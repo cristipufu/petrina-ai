@@ -29,6 +29,8 @@ export interface SaidContext {
   taskId?: Id;
   /** The question, or what a "No" refused. */
   about?: string;
+  /** The coordinator chose “Decide for me”, rather than answering themselves. */
+  decided?: boolean;
   /** The window's id for what it sent: a resend after a lost confirmation counts once. */
   clientId?: Id;
 }

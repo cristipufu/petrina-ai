@@ -11,11 +11,47 @@
 
 import { realpathSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { CALL_WORDS, productHistory, productName, queueOf, queueNeighbour, queuePlacement, suggestProductName, validateProductSettings, type DeliveryMode, type HandBackPreview, type Id, type Launched, type ProductSettings, type Task, afterChangesAsked, type AskAnswer, type Commands, type NewTaskInput, type SaidContext, type UsageRequest, type UsageViewFor, fixFor, isGuide, SETUP_STEPS, type Clone, type SetupStep } from "@petrina/core";
+import {
+  fixFor,
+  isGuide,
+  SETUP_STEPS,
+  type Clone,
+  type SetupStep,
+  AFTER_WORDS,
+  CALL_WORDS,
+  endOpenStep,
+  endYouStep,
+  JOURNEY_WORDS as W,
+  legacyJourney,
+  openStep,
+  productHistory,
+  productName,
+  queueOf,
+  queueNeighbour,
+  queuePlacement,
+  settleAsk,
+  suggestProductName,
+  syncWait,
+  validateProductSettings,
+  type DeliveryMode,
+  type HandBackPreview,
+  type Id,
+  type InboxItem,
+  type Launched,
+  type ProductSettings,
+  type Task,
+  afterChangesAsked,
+  type Commands,
+  type NewTaskInput,
+  type SaidContext,
+  type AskAnswer,
+  type UsageRequest,
+  type UsageViewFor,
+} from "@petrina/core";
 import * as git from "./git.js";
 import { parseCommand } from "./checks.js";
 import { CODEX_USAGE_EVERY_MS } from "./codex-usage.js";
-import { Kernel, TONES, type EngineOptions } from "./kernel.js";
+import { Kernel, TONES, type EngineOptions, type MTask } from "./kernel.js";
 import { browserCommand, expandPath, findClones } from "./setup.js";
 import { ToolChecks } from "./tool-checks.js";
 import { Turns } from "./turn.js";
@@ -72,6 +108,8 @@ export class Engine extends Kernel implements Commands {
     this.work = new Work(this, this.turns, this.context, this.guide, this.updates, this.learnings);
     this.takeover = new TakeOver(this);
     this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections);
+    // Tasks from before journeys were recorded: one step per finished stage, and the step under way, so new steps follow on from there.
+    for (const task of this.s.tasks) if (!task.journey && task.startedAt !== undefined) task.journey = legacyJourney(task as unknown as Task, this.s.inbox as InboxItem[]) as MTask["journey"];
     // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
     this.shipping.carryOverShipping();
     this.driver.recover();
@@ -393,8 +431,9 @@ export class Engine extends Kernel implements Commands {
     };
     if (ids.some((id) => reaches(id))) throw new Error("That would make tasks wait for each other");
     task.after = ids;
-    const names = ids.map((id) => `“${this.task(id)!.title}”`).join(" and ");
-    this.log(task, "you", ids.length ? `It starts after ${names} land${ids.length === 1 ? "s" : ""}` : "It no longer waits for other tasks");
+    // The wait is a step of its own on the journey, so what is said about it belongs to it.
+    syncWait(task, this.blockers(task), (id) => this.task(id), Date.now());
+    this.log(task, "you", ids.length ? AFTER_WORDS.starts(ids.map((id) => this.task(id)!.title)) : AFTER_WORDS.none);
     this.commit();
     this.schedule();
   }
@@ -473,6 +512,7 @@ export class Engine extends Kernel implements Commands {
     task.statusLine = task.shipping?.carriedOver ? `Cancelled. ${CARRIED_OVER}: check GitHub for what went out` : "Cancelled";
     this.dropBlockingItems(taskId);
     this.s.inbox = this.s.inbox.filter((item) => item.taskId !== taskId);
+    endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, Date.now());
     this.log(task, "you", "You cancelled it");
     this.commit();
     // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now.
@@ -497,6 +537,7 @@ export class Engine extends Kernel implements Commands {
     task.state = "waiting";
     task.statusLine = "Waiting for a free slot";
     this.log(task, "you", "You asked to try again");
+    endYouStep(task, { outcome: W.triedAgain, reason: W.tryAgain }, Date.now());
     this.commit();
     this.schedule();
   }
@@ -566,7 +607,9 @@ export class Engine extends Kernel implements Commands {
     if (!task || !this.firstTime(task, context.clientId)) return;
     if (!item && (!about || ["done", "cancelled"].includes(task.state))) return;
     this.takeItem(itemId);
-    this.tracking.answered(task, item ?? itemId, how);
+    const answerKind = context.decided ? "decided" : how;
+    this.tracking.answered(task, item ?? itemId, answerKind);
+    settleAsk(task, itemId, answerKind === "decided" ? "decided" : "answered", Date.now(), answer);
     this.stepNote(task, "answer", answer, { ...(about ? { about } : {}) });
     this.say(task, "you", answer);
     this.log(task, "you", `You answered: ${answer}`);
@@ -595,6 +638,7 @@ export class Engine extends Kernel implements Commands {
     const task = this.task(item.taskId);
     if (task) {
       this.tracking.answered(task, item, "allowed");
+      settleAsk(task, itemId, "allowed", Date.now());
       this.log(task, "you", `You allowed: ${item.title}`);
       this.unblock(task);
     }
@@ -615,6 +659,7 @@ export class Engine extends Kernel implements Commands {
     if (!item && (!said || ["done", "cancelled"].includes(task.state))) return;
     this.takeItem(itemId);
     if (item) this.tracking.answered(task, item, "denied");
+    settleAsk(task, itemId, "denied", Date.now(), said);
     this.log(task, "you", said ? `You said no: ${said}` : `You said no to: ${about}`);
     if (said) {
       const id = this.id(task.id);
@@ -654,14 +699,17 @@ export class Engine extends Kernel implements Commands {
     switch (item.kind) {
       case "plan":
         this.log(task, "you", "You approved the plan");
+        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
         task.stageIndex = 0;
         break;
       case "design":
         this.log(task, "you", "You approved the design");
+        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
         task.stageIndex += 1;
         break;
       case "delivery":
         this.log(task, "you", "You approved the delivery");
+        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
         // The coordinator's approval: for the work they were shown, this delivery and where it goes. Saved right away.
         if (task.checkedSha) task.approvedSha = task.checkedSha;
         if (task.checkedPatch) task.approvedPatch = task.checkedPatch;
@@ -671,6 +719,7 @@ export class Engine extends Kernel implements Commands {
         break;
       case "disagreement":
         this.log(task, "you", "You sided with the architect");
+        endYouStep(task, { outcome: W.sided, reason: W.youSided }, Date.now());
         for (const objection of task.objections) {
           if (objection.status !== "open") continue;
           objection.status = "rejected";
@@ -698,6 +747,7 @@ export class Engine extends Kernel implements Commands {
     const call = item.kind === "disagreement";
     this.log(task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
     this.say(task, "you", note);
+    endYouStep(task, call ? { outcome: W.madeCall, reason: W.yourCall, tone: "back" } : { outcome: W.changes, reason: W.changesAsked, tone: "back" }, Date.now());
     const id = this.id(task.id);
     this.remember(task, note, id);
     // The call reaches the architect in a section of its own; any other note goes to the next agent.

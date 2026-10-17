@@ -1,7 +1,7 @@
 // The review guide that learns from misses: the Guide keeper's proposals, the coordinator's yes or no,
 // and accepted points reaching REVIEW.md. Reading and writing the file is in points.ts.
 
-import { type DeepMutable, type Id, type GuideLine, type Task } from "@petrina/core";
+import { endAgentStep, JOURNEY_WORDS as W, type DeepMutable, type Id, type GuideLine, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { GuideResult } from "./roles.js";
@@ -75,6 +75,8 @@ export class GuideKeeper {
         { status: "Looking for what the reviewers missed", used: (id) => (ran = id) },
       );
       restore();
+      const proposed = !!result.missed && !!result.line && !hasPoint(guide, result.line);
+      endAgentStep(task, { outcome: proposed ? W.guidePoint : W.noGuidePoint, reason: W.backToBuilder }, Date.now());
       if (!result.missed || !result.line) this.k.log(task, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", ran);
       else if (hasPoint(guide, result.line)) this.k.log(task, "done", "The review guide already has that point", "guide-keeper", ran);
       else {
@@ -90,6 +92,7 @@ export class GuideKeeper {
       if (error instanceof WaitingForUsage) throw error;
       // Petrina carries on without it, but it is still a failure in Analytics.
       this.k.tracking.failed(task, error, { roleId: "guide-keeper", profileId: ran });
+      endAgentStep(task, { outcome: W.couldNotFinish, reason: W.backToBuilder }, Date.now());
       this.k.log(task, "warn", "The Guide keeper could not finish, so nothing was proposed for the review guide");
     }
     delete task.miss;

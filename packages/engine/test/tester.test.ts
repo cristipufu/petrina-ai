@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import type { Task } from "@petrina/core";
+import { journeyProblems, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
@@ -44,6 +44,13 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(acceptance[0]!.status).toBe("fixed");
       expect(task.testedPatch).toBeDefined();
       expect(task.retest).toBeUndefined();
+      // Every real tester pass stays on the journey, including the final-code failure and its retry.
+      const testers = task.journey!.filter((step) => step.roleId === "tester");
+      expect(testers).toHaveLength(3);
+      expect(new Set(testers.map((step) => step.id)).size).toBe(3);
+      expect(testers.map((step) => step.reason)).toEqual(["checks passed", "1 check failed", "checks passed"]);
+      expect(task.timeline.filter((entry) => entry.text === "Tester started").map((entry) => entry.step)).toEqual(testers.map((step) => step.id));
+      expect(journeyProblems(task)).toEqual([]);
     } finally {
       engine.shutdown();
     }

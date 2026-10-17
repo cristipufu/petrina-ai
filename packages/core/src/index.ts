@@ -1,5 +1,6 @@
 export * from "./model.js";
 export * from "./call.js";
+export * from "./journey.js";
 export * from "./library.js";
 export * from "./scheduler.js";
 export * from "./products.js";

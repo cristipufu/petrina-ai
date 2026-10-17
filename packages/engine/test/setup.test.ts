@@ -600,6 +600,14 @@ describe("The squad uses tools that are ready", () => {
         for (const role of ["planner", "architect", "design-reviewer", "builder", "code-reviewer", "release-manager"]) {
           expect(task.timeline.some((entry) => entry.roleId === role)).toBe(true);
         }
+        // Journey records the tools that actually worked, rather than the planner's original choices.
+        const steps = task.journey!.filter((step) => step.kind === "agent");
+        expect(steps.some((step) => step.roleId === "planner")).toBe(true);
+        for (const step of steps) {
+          for (const profileId of step.team ?? [step.profileId!]) {
+            expect(state.profiles.find((profile) => profile.id === profileId)?.toolId).toBe(only);
+          }
+        }
       } finally {
         engine.shutdown();
       }
@@ -687,6 +695,10 @@ describe("The squad uses tools that are ready", () => {
       expect(item.body).toContain("to see whether Codex works");
       const task = taskOf(state, taskId);
       expect(task.timeline.some((entry) => entry.text === "Planner started" && entry.profileId === "sol-high")).toBe(true);
+      const planner = task.journey!.find((step) => step.roleId === "planner")!;
+      expect(planner).toMatchObject({ profileId: "sol-high", end: "failed", outcome: "Stuck", reason: "stuck" });
+      expect(task.timeline.find((entry) => entry.text === "Stuck: Codex wouldn't start")?.step).toBe(planner.id);
+      expect(task.journey!.at(-1)).toMatchObject({ kind: "you", waitsFor: "stuck" });
       // Never on the tool that is not logged in.
       expect(toolsUsed(engine, task).has("claude-code")).toBe(false);
     } finally {
@@ -729,6 +741,8 @@ describe("The squad uses tools that are ready", () => {
       expect(item.body).toContain("not logged in");
       // Petrina never started the agent: its fix came first.
       expect(fakes.prompts()).toEqual([]);
+      // No agent ever started: show only the wait for the coordinator, never a failed agent box.
+      expect(taskOf(state, taskId).journey).toEqual([expect.objectContaining({ kind: "you", waitsFor: "stuck" })]);
       await engine.retry(item.id);
       expect(engine.getState().inbox.some((entry) => entry.id === item.id)).toBe(true);
       expect(taskOf(engine.getState(), taskId).timeline.at(-1)?.text).toBe("Checked Claude Code again: it is still not logged in");

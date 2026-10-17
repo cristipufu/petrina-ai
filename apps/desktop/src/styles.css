@@ -1615,3 +1615,142 @@ ul.plain strong { color: var(--text); font-weight: 620; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .squad-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Journey ───────────────────────────────────────────────────────── */
+
+.journey { position: relative; }
+.journey-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.journey-head h2 { font-size: var(--fs-reading); line-height: var(--lh-reading); font-weight: 600; letter-spacing: -0.005em; }
+.journey-controls { display: flex; align-items: center; gap: 4px; }
+.journey-now { background: var(--accent-soft); color: var(--accent-text); }
+.journey-now:hover { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--suggest-line); }
+/* The steps as a list, for screen readers and the keyboard: the box it is on shows the focus ring. */
+.journey-list { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; list-style: none; }
+
+/* Edge to edge across the sheet, on the quieter surface, so the boxes stand out on it. */
+.journey-canvas { position: relative; margin: 0 calc(-1 * var(--pad)); background: var(--sunken); border-block: 1px solid var(--line); }
+.journey-diagram { position: relative; width: 100%; }
+/* Watched for text size changes: it is always 1rem square. */
+.journey-rem { position: absolute; top: 0; left: 0; width: 1rem; height: 1rem; visibility: hidden; pointer-events: none; }
+.journey-flow, .journey-flow > .react-flow { position: absolute; inset: 0; }
+.journey-flow .react-flow { background: transparent; }
+.journey-flow .react-flow__pane { cursor: grab; }
+.journey-flow .react-flow__pane.dragging { cursor: grabbing; }
+.journey-flow .react-flow__node { cursor: pointer; }
+.journey-flow .react-flow__attribution { background: transparent; padding: 2px 8px; margin: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.journey-flow .react-flow__attribution a { color: var(--text-3); text-decoration: none; }
+.journey-flow .react-flow__attribution a:hover { color: var(--text-2); text-decoration: underline; }
+.jn-handle { opacity: 0; pointer-events: none; width: 1px; height: 1px; min-width: 0; min-height: 0; border: 0; background: none; }
+
+.jn-item { position: relative; display: flex; flex-direction: column; align-items: center; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--text); }
+.jn { width: 100%; flex: none; min-width: 0; }
+.jn-name { min-width: 0; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.jn-tool { color: var(--text-2); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.jn-foot { color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.jn-foot .dot { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.jn-mark { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; }
+.jn-mark.done { background: var(--green-soft); color: var(--green-text); }
+.jn-mark.failed { background: var(--red-soft); color: var(--red-text); }
+.jn-mark.cancelled { background: var(--hover); color: var(--text-2); }
+
+/* An agent's step: role, tool and model, time and outcome. Outlines on the journey use --field, a boundary that must be seen (3:1 on the canvas in both themes). */
+.jn.k-box { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--field); box-shadow: var(--shadow-card); overflow: hidden; }
+.jn-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.jn-head .jn-name { flex: 1; }
+.jn.k-box.s-now { border: 2px solid var(--blue); box-shadow: 0 0 0 4px var(--blue-soft), var(--shadow-lift); }
+.jn.k-box.s-now.r-paused, .jn.k-box.s-now.r-waiting { border: 2px solid var(--field); box-shadow: var(--shadow-card); }
+.jn.k-box.s-now .jn-foot { color: var(--text); }
+.jn.k-box.s-you { background: var(--amber-soft); border: 2px solid var(--amber); }
+.jn.k-box.s-you .jn-foot { color: var(--amber-text); font-weight: 600; }
+.jn.k-box.s-failed { background: var(--red-soft); border: 2px solid var(--red); }
+.jn.k-box.s-failed .jn-foot { color: var(--red-text); font-weight: 600; }
+.jn.k-box.s-cancelled { background: var(--surface); }
+
+/* What waits for you: a capsule with your icon. */
+.jn.k-you { display: flex; align-items: center; gap: 8px; padding: 8px 20px 8px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--shadow-card); }
+.jn.k-you.s-you { background: var(--amber-soft); border: 2px solid var(--amber); }
+.jn.k-you.s-you .jn-foot { color: var(--amber-text); font-weight: 600; }
+.jn.k-you .jn-foot { -webkit-line-clamp: 1; display: -webkit-box; }
+.jn-you-icon { width: 24px; height: 24px; flex: none; }
+.jn-you-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* Where it started and where it ended. */
+.jn.k-start, .jn.k-end, .jn.k-rest { display: flex; align-items: center; gap: 8px; padding: 4px 16px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); color: var(--text-2); font-weight: 500; }
+.jn-start-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--text-3); }
+.jn-point-text { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.jn.k-end { color: var(--text); font-weight: 600; }
+.jn.k-end.e-done { border: 2px solid var(--green); color: var(--green-text); }
+.jn.k-end.e-pending { border: 2px solid var(--field); }
+.jn.k-end.e-cancelled, .jn.k-end.e-unconfirmed { color: var(--text-2); }
+.jn.k-rest { background: transparent; border: 1.5px dashed var(--field); }
+.jn.k-start .jn-point-text { white-space: nowrap; }
+
+/* Steps still ahead: dashed outlines and no fill, with text as readable as the rest. */
+.jn.s-next, .jn.s-ahead { background: transparent; border: 1.5px dashed var(--field); box-shadow: none; }
+.jn.s-next .jn-foot { color: var(--text); font-weight: 600; }
+/* The chosen step has a soft halo; the step the keyboard is on has the usual focus ring. */
+.jn.selected { box-shadow: 0 0 0 4px var(--suggest-line); }
+.jn.focused { outline: 2px solid var(--focus); outline-offset: 5px; }
+
+/* Questions and permission requests hang under the step that asked. */
+.jn-asks { position: relative; list-style: none; margin: 0.75rem 0 0; padding: 0; width: 11rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.jn-asks::before { content: ""; position: absolute; left: 50%; top: -0.75rem; height: 0.75rem; border-left: 1.5px solid var(--field); }
+.jn-ask { height: 4rem; display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); }
+.jn-ask.open { background: var(--amber-soft); border: 2px solid var(--amber); }
+.jn-ask .jn-you-icon { width: 20px; height: 20px; }
+.jn-ask-text { min-width: 0; display: flex; flex-direction: column; }
+.jn-ask-label { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.jn-ask-title, .jn-ask-outcome { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jn-ask-title { font-weight: 600; }
+.jn-ask-outcome { color: var(--text-2); }
+.jn-ask.open .jn-ask-outcome { color: var(--amber-text); font-weight: 600; }
+
+/* Arrows: why the work moved, in a few words. Amber when it went back or waits for you, red when stuck. */
+.je-line { stroke: var(--field); stroke-width: 1.5; }
+.je-tip { fill: var(--field); }
+.je-line.back, .je-line.you { stroke: var(--amber); stroke-width: 2; }
+.je-tip.back, .je-tip.you { fill: var(--amber); }
+.je-line.stuck { stroke: var(--red); stroke-width: 2; }
+.je-tip.stuck { fill: var(--red); }
+/* The arrow into the live step moves; with reduced motion it is solid and stronger instead. */
+.je-line.live { stroke: var(--blue); stroke-width: 2.5; }
+.je-tip.live { fill: var(--blue); }
+.je-line.moving { stroke-width: 2; stroke-dasharray: 6 5; animation: je-flow 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .je-line.is-live { stroke-width: 3; stroke-dasharray: none; }
+}
+@keyframes je-flow { to { stroke-dashoffset: -11; } }
+.je-line.paused { stroke-width: 2; }
+.je-line.ahead { stroke-dasharray: 4 4; }
+.je-label, .journey-label-measure { position: absolute; pointer-events: none; text-align: center; padding: 0 2px 2px; font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 500; color: var(--text-2); overflow-wrap: anywhere; }
+/* Same text layout as the labels, outside React Flow's zoom, so long messages get enough space. */
+.journey-label-measure { visibility: hidden; width: max-content; top: 0; left: 0; }
+.je-label.back, .je-label.you { color: var(--amber-text); }
+.je-label.stuck { color: var(--red-text); }
+
+/* A step's details, under the diagram. */
+.journey-hint { margin-top: -4px; }
+.journey-details { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); }
+.journey-details-head { display: flex; align-items: center; gap: 8px; }
+.journey-details-head h3 { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: var(--fs-reading); line-height: var(--lh-reading); font-weight: 600; }
+.journey-details-head .label { font-size: var(--fs-control); line-height: var(--lh-control); }
+.journey-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; }
+.journey-facts dt { color: var(--text-3); }
+.journey-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.journey-waits { display: block; }
+.journey-asked h4, .journey-part h4 { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+.journey-asked { display: grid; gap: 8px; }
+.journey-asked ul { list-style: none; display: grid; gap: 8px; }
+.journey-asked li { display: grid; gap: 2px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }
+.journey-asked li.open { background: var(--amber-soft); }
+.journey-ask-title { font-weight: 600; }
+.journey-part { display: grid; gap: 8px; justify-items: start; }
+.journey-part .timeline { width: 100%; }
+.warn-text { color: var(--amber-text); }
+.bad-text { color: var(--red-text); }
+
+/* Reading one step in the Session: its lines are marked. */
+.step-marked { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 16px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--text); }
+.chat .in-step:not(ul) { position: relative; }
+.chat .in-step:not(ul)::before { content: ""; position: absolute; left: -12px; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: var(--accent); }
+.chat .activity { position: relative; }

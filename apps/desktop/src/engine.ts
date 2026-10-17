@@ -441,7 +441,9 @@ class EngineClient {
   };
   decideForMe = (itemId: Id) => {
     const item = this.item(itemId);
-    if (item) this.answer(itemId, item.options?.[0] ?? "Use your best judgment.");
+    if (!item) return;
+    const answer = item.options?.[0] ?? "Use your best judgment.";
+    this.durable({ taskId: item.taskId, kind: "answer", text: answer, itemId }, "answer", (id) => [itemId, answer, { taskId: item.taskId, about: item.title, clientId: id, decided: true }]);
   };
   deny = (itemId: Id, note?: string) => {
     const item = this.item(itemId);
@@ -498,7 +500,6 @@ const DEMO_OWN = {
   checkShipping: () => () => undefined,
   shipAgain: () => () => undefined,
   markDone: () => () => undefined,
-  setAfter: () => () => undefined,
   setTerminal: () => () => undefined,
   setProductChecks: () => async () => undefined,
   /** Only first run's demo adds products: the made-up clones it "found". */

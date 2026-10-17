@@ -41,6 +41,8 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
 export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, waiting }: SheetProps) {
   const [menu, setMenu] = useState(false);
   const [titleGone, setTitleGone] = useState(false);
+  // "Read this step in the Session": the Session opens at the step's first line, with its lines marked.
+  const [sessionStep, setSessionStep] = useState<{ id: string; name: string }>();
   const [scrolled, setScrolled] = useState(false);
   const sheet = useRef<HTMLElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -83,7 +85,9 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
     const el = scroller.current;
     const top = hero.current?.offsetHeight ?? 0;
     if (el && tab !== "session" && el.scrollTop > top) el.scrollTop = top;
+    if (tab !== "session") setSessionStep(undefined);
   }, [tab]);
+  useEffect(() => setSessionStep(undefined), [task.id]);
 
   const counts: Partial<Record<SheetTab, number>> = {
     review: task.findings.filter((finding) => finding.status === "open").length,
@@ -220,11 +224,23 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
           </nav>
 
           <div className="sheet-body" id="sheet-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
-            {tab === "overview" && <Overview task={task} state={state} find={find} onAboutNumbers={onAboutNumbers} />}
+            {tab === "overview" && (
+              <Overview
+                task={task}
+                state={state}
+                find={find}
+                onAboutNumbers={onAboutNumbers}
+                onReadSession={(id, name) => {
+                  setSessionStep({ id, name });
+                  onTab("session");
+                }}
+                onPlan={() => onTab("plan")}
+              />
+            )}
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
             {tab === "review" && <ReviewView task={task} find={find} />}
-            {tab === "session" && <Session.Log task={task} state={state} find={find} scroller={scroller} onToast={onToast} onTab={onTab} />}
+            {tab === "session" && <Session.Log key={sessionStep?.id ?? "latest"} task={task} state={state} find={find} scroller={scroller} onToast={onToast} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
           </div>
         </div>
 

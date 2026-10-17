@@ -1,4 +1,4 @@
-import type { AgentProfile, Effort, Id, Role, RunState, State, Task, Tool } from "@petrina/core";
+import { landingOf, type AgentProfile, type Effort, type Id, type Role, type RunState, type State, type Task, type Tool } from "@petrina/core";
 
 export function lookup(state: State) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
@@ -43,13 +43,14 @@ export function profileText(profile: AgentProfile | undefined, find: Lookup, ful
   return `${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profile.model} · ${EFFORT_LABEL[profile.effort]}`;
 }
 
-/** Where delivered work stands, in words, or undefined before delivery. */
+/** Where delivered work stands, in words, or undefined before delivery. A closed pull request and "Mark as done" deliver nothing. */
 export function deliveryText(task: Task): { text: string; done: boolean } | undefined {
   if (task.release) return { text: `Released ${task.release.tag}`, done: true };
   if (task.landed) return { text: `Delivered locally to ${task.landed.branch}`, done: true };
   if (task.pr?.state === "merged") return { text: `Pull request #${task.pr.number} merged`, done: true };
   if (task.pr?.state === "closed") return { text: `Pull request #${task.pr.number} closed without merging`, done: false };
   if (task.pr) return { text: `Pull request #${task.pr.number} · awaiting merge`, done: false };
+  if (landingOf(task) === "marked-done") return { text: "Marked as done · delivery not confirmed", done: false };
   return undefined;
 }
 

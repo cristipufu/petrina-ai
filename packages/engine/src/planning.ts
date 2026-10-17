@@ -1,7 +1,7 @@
 // The planner's turn, and turning its answer into a plan Petrina can run: only roles the planner was told
 // about, always a builder and a review, a security review for high risk, and the delivery stages.
 
-import { lastIndexWhere, type DeepMutable, deliveryStages, type Task } from "@petrina/core";
+import { endAgentStep, JOURNEY_WORDS as W, lastIndexWhere, type DeepMutable, deliveryStages, type Task } from "@petrina/core";
 import type { z } from "zod";
 import { PlanResult } from "./roles.js";
 import { Kernel, type MStage, type MTask, PLANNER_PROFILE, RISK_WORD, RELEASE_MANAGER_PROFILE } from "./kernel.js";
@@ -19,6 +19,7 @@ export class Planning {
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
     this.k.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", planner);
     this.k.log(task, "milestone", `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}`, "planner", planner);
+    endAgentStep(task, { outcome: W.planned(count), reason: W.planReady }, Date.now());
     this.k.finishStep(task);
     this.k.tracking.endStage(task, "done");
     this.k.commit();

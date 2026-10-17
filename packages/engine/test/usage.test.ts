@@ -1,7 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import type { AgentProfile, Task } from "@petrina/core";
-import { usageLines } from "@petrina/core";
+import { journeyProblems, usageLines, type AgentProfile, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { failureReason } from "../src/tracking.js";
 import { claudeReport, claudeReports, clockTime, limitFromFailure, limitFromReport, UsageLimited, WaitingForUsage } from "../src/usage.js";
@@ -108,6 +107,16 @@ describe.concurrent("an agent that runs out of usage", () => {
       const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
       expect(details.failuresByReason).toContainEqual({ label: "usage limit reached", count: 1 });
       expect(details.retries).toBe(1);
+      // Each tool keeps its own work and lines, rather than the stand-in overwriting the first box.
+      const steps = task.journey!.filter((step) => step.roleId === "builder");
+      expect(steps).toMatchObject([
+        { profileId: "opus-high", outcome: "Work handed on", reason: "another agent took over", end: "done" },
+        { profileId: "sol-high", outcome: "Change ready", end: "done" },
+      ]);
+      expect(steps[0]!.endedAt).toBeLessThanOrEqual(steps[1]!.startedAt);
+      expect(task.timeline.find((entry) => entry.text.startsWith("Builder on Claude Code") && entry.text.includes("ran out of usage"))?.step).toBe(steps[0]!.id);
+      expect(task.session.find((line) => line.text.startsWith("Builder on Codex · sol took over"))?.step).toBe(steps[1]!.id);
+      expect(journeyProblems(task)).toEqual([]);
     } finally {
       run.engine.shutdown();
     }
@@ -143,6 +152,11 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(waiting.statusLine).toMatch(/^Waiting for usage: Claude Code, Codex and Grok are out until \d\d:\d\d$/);
       expect(waiting.holdsSlot).toBe(false);
       expect(waiting.agent).toBeUndefined();
+      const box = waiting.journey!.at(-1)!;
+      const boxId = box.id;
+      const startedAt = box.startedAt;
+      expect(box).toMatchObject({ roleId: "builder", profileId: "opus-high" });
+      expect(box.endedAt).toBeUndefined();
 
       const task = await run.done();
       const builders = run.fakes.received("builder");
@@ -152,8 +166,9 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(builders[1]!.text).toStartWith("Petrina restarted while you were on");
       expect(lines(task).some((line) => line.includes("took over from"))).toBe(false);
       expect(lines(task)).toContain("Picked up where it left off");
-      // Claude Code's limit ended and was dropped; Codex's, set to last longer, is still there.
+      // Claude Code's limit ended and was dropped; Codex's and Grok's, set to last longer, are still there.
       expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex", "grok"]);
+      expect(task.journey!.filter((step) => step.roleId === "builder")).toEqual([expect.objectContaining({ id: boxId, startedAt, end: "done" })]);
       // Picking the step up after the wait is a retry, counted once, with nothing left owed.
       const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
       expect(details.failuresByReason).toEqual([{ label: "usage limit reached", count: 1 }]);
@@ -194,6 +209,26 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(lines(task)).toContain("Code reviewer on Claude Code · Sonnet 5.5 took over from Claude Code · Opus 5.5, which ran out of usage");
       // Both reviewers reported, the stand-in under its own profile.
       expect(new Set(task.findings.flatMap((finding) => [finding.raisedBy, ...finding.confirmedBy]))).toEqual(new Set(["sol-high", "sonnet-high"]));
+      const review = task.journey!.find((step) => step.roleId === "code-reviewer")!;
+      expect(new Set(review.team)).toEqual(new Set(["opus-high", "sol-high", "sonnet-high"]));
+      expect(task.session.filter((line) => line.roleId === "code-reviewer").every((line) => line.step === review.id && review.team!.includes(line.profileId!))).toBe(true);
+      expect(journeyProblems(task)).toEqual([]);
+    } finally {
+      run.engine.shutdown();
+    }
+  });
+
+  it("records only the reviewers who actually start when a planned model was already out of usage", async () => {
+    const run = await start({ builder: "plain" }, { before: (engine) => {
+      engine.s.pool.limited = [{ toolId: "claude-code", model: "opus", until: Date.now() + 120_000, reason: "Claude Code's weekly Opus limit" }];
+    } });
+    try {
+      const task = await run.done();
+      const review = task.journey!.find((step) => step.roleId === "code-reviewer")!;
+      expect(new Set(review.team)).toEqual(new Set(["sonnet-high", "sol-high"]));
+      expect(task.plan!.stages.find((stage) => stage.roleId === "code-reviewer")!.profileIds).toEqual(["opus-high", "sol-high"]);
+      expect(task.session.filter((line) => line.roleId === "code-reviewer").every((line) => line.step === review.id && review.team!.includes(line.profileId!))).toBe(true);
+      expect(journeyProblems(task)).toEqual([]);
     } finally {
       run.engine.shutdown();
     }
@@ -226,6 +261,7 @@ describe.concurrent("usage reports", () => {
       expect(details.failuresByReason).toEqual([]);
       expect(details.retries).toBe(0);
       expect(run.engine.getState().pool.limited ?? []).toEqual([]);
+      expect(task.journey!.filter((step) => step.roleId === "builder")).toEqual([expect.objectContaining({ profileId: "sol-high" })]);
     } finally {
       run.engine.shutdown();
     }
@@ -271,6 +307,10 @@ describe.concurrent("usage reports", () => {
       expect(run.modelOf(builders[0]!.session)).toBe("grok-4.7");
       expect(task.plan!.stages.find((stage) => stage.roleId === "builder")!.profileIds).toEqual(["opus-high"]);
       expect(lines(task).some((line) => line.includes("took over from"))).toBe(false);
+      const steps = task.journey!.filter((step) => step.roleId === "builder");
+      expect(steps).toEqual([expect.objectContaining({ profileId: "grok-high", end: "done", outcome: "Change ready" })]);
+      expect(task.session.filter((line) => line.roleId === "builder").every((line) => line.step === steps[0]!.id && line.profileId === "grok-high")).toBe(true);
+      expect(journeyProblems(task)).toEqual([]);
     } finally {
       run.engine.shutdown();
     }
@@ -294,6 +334,11 @@ describe.concurrent("usage reports", () => {
       const joined = task.session.find((line) => line.from === "system" && line.text.startsWith("Code reviewer joined · Code reviewer on Grok"));
       expect(joined?.profileId).toBe("grok-xhigh");
       expect(new Set(task.findings.flatMap((finding) => [finding.raisedBy, ...finding.confirmedBy]))).toEqual(new Set(["sol-high", "grok-xhigh"]));
+      const review = task.journey!.find((step) => step.roleId === "code-reviewer")!;
+      expect(new Set(review.team)).toEqual(new Set(["sol-high", "grok-xhigh"]));
+      expect(joined?.step).toBe(review.id);
+      expect(task.session.filter((line) => line.roleId === "code-reviewer").every((line) => line.step === review.id && review.team!.includes(line.profileId!))).toBe(true);
+      expect(journeyProblems(task)).toEqual([]);
     } finally {
       run.engine.shutdown();
     }

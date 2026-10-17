@@ -277,6 +277,7 @@ Adding a role is one entry in `roles.ts` (and its data in `@petrina/core`'s libr
 - **TypeScript holds everything domain-specific:** roles, plans, the scheduler, the engine, ACP handling, worktrees, SQLite, and the UI.
 - `@petrina/core` never imports Tauri. It talks to a host interface, so the whole engine runs under Node in tests with fake agents.
 - **State** is one snapshot in SQLite, saved shortly after every change and at once for anything the coordinator says. The UI and the engine read the same state, so tasks pick up where they left off after a restart.
+- **Each task keeps its journey:** one entry per step, recorded the moment it starts (stage, round, reviewer position, role, profile, start and end, outcome, why the work moved on, and the questions and permission requests asked during it). Reviewers working together share a step per round, naming the profiles that actually start, including replacements; fresh voters and Petrina’s own checks and publishing have their own steps. A new round, send-back or retry is a new step; picking up after a restart or a pause continues the same one. A replacement agent gets a new step, keeping the first agent's tool, elapsed time and lines on its own step. Timeline and session lines carry the step they belong to. The journey is never trimmed the way the timeline and the conversation are. The engine and the simulator record it through the same helpers and words in `@petrina/core` (`journey.ts`), which also work out the steps still ahead from the plan; the screen only draws it.
 
 ## The engine process
 

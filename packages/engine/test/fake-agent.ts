@@ -24,8 +24,9 @@ export interface Scenario {
   /**
    * "restart": ask a question, then work until cancelled, then finish once the step restarts. "plain": no questions.
    * "work": draft a file and work (through interruptions) until the step restarts `restarts` times.
+   * "fail-once": the first builder never hands back a result, so the task gets stuck; the next one finishes.
    */
-  builder?: "restart" | "plain" | "work";
+  builder?: "restart" | "plain" | "work" | "fail-once";
   /**
    * "commit": commit a stray file, read-only as it is, then work until the step restarts.
    * "work": the first reviewer to start works until the coordinator takes over and hands back; later ones pass.
@@ -88,6 +89,8 @@ interface Conversation {
   terminal?: number;
   /** The model Petrina chose for it ("opus", "gpt-6.1-sol"). */
   model?: string;
+  /** "fail-once": this conversation never hands back a result. */
+  failing?: boolean;
   /** The session's settings as the tool keeps them. */
   options: ConfigOption[];
 }
@@ -496,6 +499,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       // This turn reports no usage at all.
       return { ...done({ objections: [] }), silent: true };
     case "builder": {
+      if (plan.builder === "fail-once" && dir) {
+        if (roleOf(text) && !existsSync(join(dir, "builder-failed"))) {
+          session.failing = true;
+          mark("builder-failed");
+        }
+        if (session.failing) return { text: "Something went wrong, so there is no result this time." };
+      }
       if (handedBack) {
         writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
         return done({ summary: "Finished the greeting after the hand back.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) }, terminal);

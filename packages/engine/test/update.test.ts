@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Task } from "@petrina/core";
+import { BUILT_IN_ROLES, journeyProblems, stepName, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
@@ -125,6 +125,17 @@ describe.concurrent("work brought up to date with main", () => {
     const port = fakes.openings("code reviewer").at(-1)!;
     expect(port).toContain("Review only the port: run `git range-diff ");
     expect(port).toContain("resolving conflicts in: greeting.txt");
+    // The journey shows the move, the builder's update and the one reviewer on the port, never as a repeat of a round.
+    const steps = task.journey ?? [];
+    const names = steps.map((step, index) => stepName(step, steps.slice(0, index), BUILT_IN_ROLES));
+    const moved = names.indexOf("Main moved on");
+    expect(moved).toBeGreaterThan(-1);
+    expect(names[moved + 1]).toBe("Builder (update)");
+    expect(names.slice(moved + 2).filter((name) => name.startsWith("Code reviewer"))[0]).toBe("Code reviewer (port)");
+    const portStep = steps.find((step) => step.port && step.kind === "agent")!;
+    expect(portStep.team ?? [portStep.profileId]).toHaveLength(1);
+    expect(names.some((name) => name.includes("again"))).toBe(false);
+    expect(journeyProblems(task)).toEqual([]);
     expect(deliveryChecks).toBe(1);
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
     expect(git(repo, "show", "main:greeting.txt")).not.toContain("<<<<<<<");

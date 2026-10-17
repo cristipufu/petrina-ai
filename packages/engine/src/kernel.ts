@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, nextExpiry, queueOf, UNKNOWN_LIMIT_MS, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
+import { beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, endOpenStep, JOURNEY_WORDS as W, nextExpiry, openStep, queueOf, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { agentEnv } from "./env.js";
@@ -160,6 +160,7 @@ export abstract class Kernel {
     // Tests stand in the tools' own apps: those count as installed.
     this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
     this.s.setup = setupOf(loaded) as MState["setup"];
+    this.s.planner = this.onUsable(PLANNER_PROFILE);
     this.found = options.terminals?.() ?? detectTerminals(this.machine);
     this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
     this.tracking = new Tracking(this);
@@ -287,6 +288,7 @@ export abstract class Kernel {
   gate(task: MTask, gate: GateKind): void {
     delete task.agent;
     task.holdsSlot = false;
+    beginYouStep(task, gate, Date.now());
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? deliveryLines(task as unknown as Task) : undefined;
     this.raise(task, gate, gateTitle(task as unknown as Task, gate), false, body ? { body } : {});
     task.statusLine = gateStatus(task as unknown as Task, gate);
@@ -331,6 +333,8 @@ export abstract class Kernel {
     task.error = message;
     task.statusLine = "Stuck. Needs you";
     this.dropBlockingItems(taskId);
+    // What went wrong belongs to the step that got stuck (an agent's, or Petrina's own); then the task waits for the coordinator.
+    if (openStep(task)?.kind !== "you") endOpenStep(task, { outcome: W.stuck, reason: W.stuckReason, tone: "stuck", end: "failed" }, Date.now());
     if (error instanceof ToolProblem) {
       // Named, with its fix in one sentence; what the tool said stays behind Details.
       const name = CHECK_NAMES[error.toolId];
@@ -339,11 +343,13 @@ export abstract class Kernel {
       const platform = this.s.setup?.platform ?? "linux";
       const fix = kind === "wont-start" ? wontStartFix(error.toolId, platform) : fixFor(error.toolId, kind, platform);
       task.statusLine = `Stuck: ${problem}`;
-      this.raise(task, "stuck", `${problem}, so “${task.title}” is stuck`, false, { ...(fix ? { body: fix.sentence } : {}), ...(kind === "wont-start" ? { detail: message.slice(0, 600) } : {}), toolId: error.toolId, toolProblem: kind });
       this.log(task, "warn", `Stuck: ${problem}`);
+      beginYouStep(task, "stuck", Date.now());
+      this.raise(task, "stuck", `${problem}, so “${task.title}” is stuck`, false, { ...(fix ? { body: fix.sentence } : {}), ...(kind === "wont-start" ? { detail: message.slice(0, 600) } : {}), toolId: error.toolId, toolProblem: kind });
     } else {
-      this.raise(task, "stuck", `“${task.title}” is stuck`, false, { body: message.slice(0, 600) });
       this.log(task, "warn", `Stuck: ${message.slice(0, 300)}`);
+      beginYouStep(task, "stuck", Date.now());
+      this.raise(task, "stuck", `“${task.title}” is stuck`, false, { body: message.slice(0, 600) });
     }
     task.state = "failed";
     this.commit();
@@ -410,7 +416,10 @@ export abstract class Kernel {
   }
 
   dropBlockingItems(taskId: Id): void {
-    for (const item of this.s.inbox.filter((entry) => entry.taskId === taskId && entry.blocking)) {
+    const task = this.task(taskId);
+    const dropped = this.s.inbox.filter((entry) => entry.taskId === taskId && entry.blocking);
+    if (task) withdrawAsks(task, dropped.map((item) => item.id), Date.now());
+    for (const item of dropped) {
       this.waiting.get(item.id)?.reject(new Aborted());
       this.waiting.delete(item.id);
     }
@@ -589,14 +598,16 @@ export abstract class Kernel {
   }
 
   log(task: MTask, tone: Task["timeline"][number]["tone"], text: string, roleId?: Id, profileId?: Id): void {
-    task.timeline.push({ id: this.id(task.id), at: Date.now(), text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) });
+    const step = stepTag(task);
+    task.timeline.push({ id: this.id(task.id), at: Date.now(), text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
     if (task.timeline.length > MAX_TIMELINE) task.timeline.splice(0, task.timeline.length - MAX_TIMELINE);
   }
 
   say(task: MTask, from: Task["session"][number]["from"], text: string, roleId?: Id, profileId?: Id): void {
     const last = task.session.at(-1);
     if (from === "activity" && last?.from === "activity" && last.text === text) return;
-    task.session.push({ id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}) });
+    const step = stepTag(task);
+    task.session.push({ id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
     if (task.session.length > MAX_SESSION_LINES) task.session.splice(0, task.session.length - MAX_SESSION_LINES);
   }
 
@@ -614,6 +625,7 @@ export abstract class Kernel {
 
   commit(): void {
     if (this.stopped) return;
+    this.s.planner = this.onUsable(PLANNER_PROFILE);
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
     if (!this.saveTimer) {
@@ -627,6 +639,7 @@ export abstract class Kernel {
   /** Commit and save right away: what the coordinator said survives a forced kill a moment later. */
   commitNow(): void {
     if (this.stopped) return;
+    this.s.planner = this.onUsable(PLANNER_PROFILE);
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     this.store.save(this.getState());

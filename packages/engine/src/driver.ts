@@ -2,7 +2,7 @@
 // checkpoints, and putting interrupted work back in line after a restart.
 
 import { join } from "node:path";
-import { balanced, lastIndexWhere, pickStarts, queueOf, slotWait, slotUses, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
+import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, slotWait, slotUses, syncWait, withdrawAsks, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { Kernel, Aborted, type MTask, PLANNER_PROFILE } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
@@ -44,8 +44,9 @@ export class Driver {
     // A task waiting for others to land stays out of the running and says what it waits for.
     const blocked = (task: MTask): boolean => {
       const waitingFor = this.k.blockers(task);
+      syncWait(task, waitingFor, (id) => this.k.task(id), Date.now());
       if (!waitingFor.length) return false;
-      const line = `Waiting for “${waitingFor[0]!.title}”${waitingFor.length > 1 ? ` and ${waitingFor.length - 1} more` : ""} to land`;
+      const line = AFTER_WORDS.waiting(waitingFor.map((other) => other.title));
       if (task.statusLine !== line) task.statusLine = line;
       return true;
     };
@@ -70,9 +71,11 @@ export class Driver {
     // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
     const candidates = balanced(continuing, this.k.s.pool, now);
     for (const task of queueOf(this.k.s.tasks as Task[])) {
-      if (task.held || blocked(task as MTask)) continue;
+      // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
+      if (blocked(task as MTask)) continue;
       // What it waited for landed or was cancelled: back to plain queue words.
       if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) (task as MTask).statusLine = "In the queue";
+      if (task.held) continue;
       const seat = this.seatOf({ roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) });
       if (seat.waiting) {
         (task as MTask).statusLine = seat.waiting;
@@ -349,9 +352,12 @@ export class Driver {
       const task = this.k.task(item.taskId);
       return item.kind === "question" && task?.state === "needs-you" && task.conversation?.asked?.itemId === item.id;
     };
-    for (const item of this.k.s.inbox.filter((entry) => entry.kind === "permission" && !keep(entry))) {
+    for (const item of this.k.s.inbox.filter((entry) => !keep(entry))) {
       const task = this.k.task(item.taskId);
-      if (task) this.k.log(task, "warn", `Petrina restarted before you answered “${item.title}”, so it left your inbox. The agent will ask again if it still needs to`, item.roleId, item.profileId);
+      if (!task) continue;
+      // On the journey too: what went unanswered hangs under its step as withdrawn.
+      withdrawAsks(task, [item.id], Date.now());
+      if (item.kind === "permission") this.k.log(task, "warn", `Petrina restarted before you answered “${item.title}”, so it left your inbox. The agent will ask again if it still needs to`, item.roleId, item.profileId);
     }
     this.k.s.inbox = this.k.s.inbox.filter(keep);
     for (const task of this.k.s.tasks) {
