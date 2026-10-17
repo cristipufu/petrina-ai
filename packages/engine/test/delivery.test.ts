@@ -210,7 +210,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     }
   });
 
-  it("commits to main locally with no agent: moves main forward to the checked commit with no network, and the main copy's files with it", async () => {
+  it("commits to main locally with no agent: moves main forward to the checked commit, the main copy's files with it, then pushes main to GitHub", async () => {
     const w = world("local");
     const engine = w.start();
     try {
@@ -226,12 +226,60 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(task.landed).toEqual({ branch: "main", sha: tested.slice(0, 7) });
       expect(checkedOut(join(w.clone, "greeting.txt"))).toBe("Hello (with left-pad)\n");
       expect(git(w.clone, "status", "--porcelain")).toBe("");
-      // Nothing touched GitHub, and no agent ran at delivery.
+      // GitHub's main got the push, nothing else was asked of GitHub, and no agent ran at delivery.
       expect(w.github().calls).toEqual([]);
       noReleaseManager(task);
       expect(w.script().releaseManagerPrompts).toBeUndefined();
-      expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
+      expect(remoteRef(w.remote, "refs/heads/main")).toBe(tested);
       expect(task.timeline.map((entry) => entry.text)).toContain(`Petrina moved main forward to it (${tested.slice(0, 7)}), and checked the main copy`);
+      expect(task.timeline.map((entry) => entry.text)).toContain(`Petrina pushed main to GitHub (${tested.slice(0, 7)})`);
+    } finally {
+      engine.shutdown();
+    }
+  });
+
+  it("refuses to push over a teammate's commit on GitHub's main, lands locally, and pushes once the coordinator pulled and retried", async () => {
+    const w = world("local-push");
+    const engine = w.start();
+    try {
+      const productId = await engine.addProduct(w.clone);
+      engine.setProductDelivery(productId, "local", true);
+      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      // Right before the coordinator approves, a teammate's commit reaches GitHub's main, unknown to the main copy.
+      let teammate = "";
+      const approving = coordinator();
+      let state = await finish(engine, taskId, (current, snapshot) => {
+        const delivery = itemOf(snapshot, taskId, "delivery");
+        if (delivery && !teammate) {
+          const other = join(w.dir, "teammate");
+          git(w.dir, "clone", "-q", w.remote, other);
+          writeFileSync(join(other, "teammate.txt"), "theirs\n");
+          git(other, "add", "teammate.txt");
+          git(other, "-c", "user.email=t@example.com", "-c", "user.name=Teammate", "commit", "-q", "-m", "A teammate's commit");
+          git(other, "push", "-q", "origin", "main");
+          teammate = git(other, "rev-parse", "main");
+        }
+        approving(current, snapshot);
+      });
+      let task = taskOf(state, taskId);
+      const tested = git(task.worktree!, "rev-parse", "HEAD");
+      expect(task.state).toBe("failed");
+      expect(task.error).toContain("could not push it to GitHub");
+      expect(task.error).toContain("pull them into the main copy first");
+      // Landed locally, and GitHub's main was never forced.
+      expect(git(w.clone, "rev-parse", "main")).toBe(tested);
+      expect(remoteRef(w.remote, "refs/heads/main")).toBe(teammate);
+      // The coordinator pulls the teammate's commit into the main copy and retries: Petrina pushes.
+      git(w.clone, "-c", "user.email=me@example.com", "-c", "user.name=Me", "pull", "-q", "--no-rebase", "--no-edit", w.remote, "main");
+      engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
+      state = await finish(engine, taskId);
+      task = taskOf(state, taskId);
+      expect(task.error).toBeUndefined();
+      expect(task.state).toBe("done");
+      const now = git(w.clone, "rev-parse", "main");
+      expect(remoteRef(w.remote, "refs/heads/main")).toBe(now);
+      expect(git(w.clone, "merge-base", "--is-ancestor", tested, now)).toBe("");
+      expect(task.timeline.map((entry) => entry.text)).toContain(`Petrina pushed main to GitHub (${now.slice(0, 7)})`);
     } finally {
       engine.shutdown();
     }

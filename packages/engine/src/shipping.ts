@@ -26,7 +26,7 @@ const MAX_FAILURES = 2;
 export const CARRIED_OVER = "This delivery was interrupted before Petrina was updated";
 
 /** What the check before publishing found. `unknown`: GitHub could not be asked. `other`: something that is not this work is there. */
-type Delivery = { found: true; text: string; record: () => Promise<unknown> | unknown } | { found: false; text: string } | { found: "unknown" | "other"; text: string };
+type Delivery = { found: true; text: string; record: (signal: AbortSignal) => Promise<unknown> | unknown } | { found: false; text: string } | { found: "unknown" | "other"; text: string };
 
 /** Where a delivery goes. Approval is for this destination only. */
 export function destination(task: { delivery: DeliveryMode }, product: Pick<Product, "path" | "repo" | "defaultBranch"> | undefined): string {
@@ -615,11 +615,11 @@ export class Shipping {
     const branch = product.defaultBranch ?? "main";
     const root = product.path!;
     // Coordinated with the product's other git steps: nothing else moves its branches meanwhile.
-    const outcome = await this.connections.serial(product.id, async (): Promise<"done" | { again: string }> => {
+    const outcome = await this.connections.serial(product.id, async (): Promise<"found" | "moved" | { again: string }> => {
       this.checking(task, `Checking: looking at ${branch} in the main copy`);
       const current = await git.revParse(root, `refs/heads/${branch}`);
       if (!current) throw new Error(`${branch} does not exist in ${product.name}'s main copy, so Petrina published nothing`);
-      if (current === tested || (await git.contains(root, current, tested))) return this.verifyLocal(task, root, branch, tested, "found");
+      if (current === tested || (await git.contains(root, current, tested))) return "found";
       if (current !== shipping.base) return { again: `${branch} moved in the main copy` };
       const places = (await git.checkedOut(root, branch)).map((place) => realPath(place));
       const here = places.includes(realPath(root));
@@ -636,18 +636,53 @@ export class Shipping {
         throw new Error(`Git would not move ${branch} forward, so Petrina published nothing (${moved.error}). Retry once that is sorted.`);
       }
       this.stopIfAsked(signal);
-      return this.verifyLocal(task, root, branch, tested, "moved");
+      return "moved";
     });
-    return outcome === "done" ? "done" : this.prepareAgain(task, outcome.again);
+    if (typeof outcome !== "string") return this.prepareAgain(task, outcome.again);
+    return this.landLocal(task, signal, tested, outcome);
   }
 
-  /** Checked in the main copy itself: the branch has the tested work, and its files match when it is checked out there. */
-  private async verifyLocal(task: MTask, root: string, branch: string, tested: string, how?: "found" | "moved"): Promise<"done"> {
+  /**
+   * The local default branch has the tested work: checked in the main copy itself, then pushed to the saved
+   * GitHub address when the product has one, and only then recorded as landed. A product with no GitHub
+   * repository, or whose address the coordinator refused, lands locally and that is all.
+   */
+  private async landLocal(task: MTask, signal: AbortSignal, tested: string, how?: "found" | "moved"): Promise<"done"> {
+    const product = this.k.productOf(task)!;
+    const branch = product.defaultBranch ?? "main";
+    const at = await this.verifyLocal(product.path!, branch, tested);
+    await this.pushMain(task, signal, branch, at);
+    return this.recordLanded(task, branch, tested, how);
+  }
+
+  /** Checked in the main copy itself: the branch has the tested work, and its files match when it is checked out there. Returns where the branch is. */
+  private async verifyLocal(root: string, branch: string, tested: string): Promise<string> {
     const at = await git.revParse(root, `refs/heads/${branch}`);
     if (!at || !(await git.contains(root, at, tested))) throw new Error(`${branch} in the main copy does not have the tested work. Retry to check again.`);
     const here = (await git.checkedOut(root, branch)).some((place) => realPath(place) === realPath(root));
     if (here && ((await git.head(root)) !== at || (await git.changes(root, true)).length)) throw new Error(`${branch} has the tested work, but the files in the main copy at ${root} do not match it. Look at the main copy.`);
-    return this.recordLanded(task, branch, tested, how);
+    return at;
+  }
+
+  /**
+   * The local default branch, as it is now, pushed to GitHub: never forced, so if GitHub's branch has commits this
+   * computer does not, the push is refused and the coordinator pulls them first, then retries. Nothing to push
+   * when GitHub already has it.
+   */
+  private async pushMain(task: MTask, signal: AbortSignal, branch: string, at: string): Promise<void> {
+    const product = this.k.productOf(task)!;
+    const connection = await this.connections.connection(task, signal);
+    if (!connection.ok) {
+      if (!connection.missing) this.k.log(task, "warn", `${branch} was not pushed to GitHub: ${connection.reason}`);
+      return;
+    }
+    const ref = `refs/heads/${branch}`;
+    const there = await this.connections.serial(product.id, () => git.remoteRefs(product.path!, connection.remote, [ref]));
+    if (there.ok && there.value.get(ref) === at) return;
+    this.stopIfAsked(signal);
+    const pushed = await this.publishStep(task, signal, "push", `Publishing: pushing ${branch} to GitHub`, () => git.push(product.path!, connection.remote, [{ sha: at, ref }]));
+    if (!pushed.ok) throw new Error(`${branch} has the work in the main copy, but Petrina could not push it to GitHub (${pushed.error}). If GitHub's ${branch} has commits this computer does not, pull them into the main copy first, then retry: Petrina pushes it then.`);
+    this.k.log(task, "done", `Petrina pushed ${branch} to GitHub (${at.slice(0, 7)})`);
   }
 
   // ── What went out ──────────────────────────────────────────────────────
@@ -669,7 +704,7 @@ export class Shipping {
     if (signal.aborted) throw new Aborted();
     if (delivery.found === true) {
       this.k.log(task, "done", `Found${when} that it had already gone out: ${delivery.text}`);
-      await delivery.record();
+      await delivery.record(signal);
       return "stop";
     }
     if (delivery.found === false) {
@@ -717,7 +752,7 @@ export class Shipping {
         return { found: true, text: `release ${release.tag}`, record: () => this.recordRelease(task, release) };
       }
       const at = await git.revParse(product.path!, `refs/heads/${branch}`);
-      if (at && (await git.contains(product.path!, at, tested))) return { found: true, text: `${branch} has the work (${tested.slice(0, 7)})`, record: () => this.verifyLocal(task, product.path!, branch, tested) };
+      if (at && (await git.contains(product.path!, at, tested))) return { found: true, text: `${branch} has the work (${tested.slice(0, 7)})`, record: (signal) => this.landLocal(task, signal, tested, "found") };
       return { found: false, text: `${branch} does not have the work yet.` };
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
@@ -795,7 +830,7 @@ export class Shipping {
     try {
       const delivery = await this.lookForDelivery(task);
       if (delivery.found === "unknown") return;
-      if (delivery.found === true) await delivery.record();
+      if (delivery.found === true) await delivery.record(new AbortController().signal);
       else if (delivery.found === "other") this.k.log(task, "warn", `After you cancelled it, Petrina could not tell what went out: ${delivery.text}`);
       else if (task.delivery === "release") await this.pushedWhileCancelled(task);
       // Looked up: what went out is recorded, and the delivery is over.

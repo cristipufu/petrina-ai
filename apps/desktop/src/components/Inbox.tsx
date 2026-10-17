@@ -70,6 +70,8 @@ const NOTE_MS = 6000;
 export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state, find, overlay, landing, onOpenItem, onClose, selectedId, onFocus }, ref) {
   const items = inboxOrder(state);
   const blocking = items.filter((item) => item.blocking).length;
+  // A stuck task holds no agent, so it is not "blocking", but it is the first thing to say.
+  const stuck = items.filter((item) => item.kind === "stuck").length;
   const connected = useEngineStatus().link === "live";
   // Answers whose question is gone (a restart dropped it): still shown until the engine has them.
   const orphans = useUnsent().filter((entry) => entry.itemId && !state.inbox.some((item) => item.id === entry.itemId));
@@ -102,9 +104,19 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state,
       <p className="inbox-sub">
         {items.length === 0 ? (
           "You're not blocking anyone."
-        ) : blocking > 0 ? (
+        ) : blocking > 0 || stuck > 0 ? (
           <>
-            <span className="num">{blocking}</span> agent{blocking === 1 ? " is" : "s are"} waiting on you. The rest wait at checkpoints.
+            {blocking > 0 && (
+              <>
+                <span className="num">{blocking}</span> agent{blocking === 1 ? " is" : "s are"} waiting on you.{" "}
+              </>
+            )}
+            {stuck > 0 && (
+              <>
+                <span className="num">{stuck}</span> task{stuck === 1 ? " is" : "s are"} stuck.{" "}
+              </>
+            )}
+            The rest wait at checkpoints.
           </>
         ) : (
           "Nobody is stuck. These wait at checkpoints."
