@@ -288,8 +288,9 @@ enum Target {
     App,
 }
 
-/// How many shown notifications a click can still be traced to.
-const REMEMBERED: usize = 200;
+/// How many shown notifications a click can still be traced to: a full day at the fastest
+/// pace (one every ten seconds), a megabyte or so at most.
+const REMEMBERED: usize = 24 * 60 * 6;
 
 /// The notifications this run has shown, newest last, so a click finds what it was about.
 #[derive(Default)]
