@@ -155,6 +155,8 @@ export interface ConversationNote {
   startedAt: number;
   /** The question the agent is waiting on in this conversation, with the coordinator's answer once there is one. */
   asked?: { itemId: Id; question: string; answer?: string };
+  /** The agent has shown it received its opening instructions. Only then can a restart reopen the conversation. */
+  briefed?: boolean;
 }
 
 /**

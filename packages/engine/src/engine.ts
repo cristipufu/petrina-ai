@@ -1238,8 +1238,9 @@ export class Engine {
     const model = profile.modelId ?? profile.model;
     const saved = task.conversation;
     const same = saved && saved.step === step && saved.roleId === roleId ? saved : undefined;
-    const reopen = same && roleId !== "shipper" && same.toolId === profile.toolId && same.model === model ? same : undefined;
-    let again = saved && !reopen ? (same ? "it now runs on a different tool or model" : "the saved conversation was for another step") : undefined;
+    // A conversation that never showed it got its instructions (Petrina stopped in between) starts again instead.
+    const reopen = same && same.briefed && roleId !== "shipper" && same.toolId === profile.toolId && same.model === model ? same : undefined;
+    let again = saved && !reopen ? (same ? (same.briefed || roleId === "shipper" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
     const startedAt = same?.startedAt ?? Date.now();
     task.stepAttempts = (task.stepAttempts ?? 0) + 1;
 
@@ -1273,6 +1274,7 @@ export class Engine {
         callbacks: {
           onActivity: (line) => {
             const current = live();
+            if (current) this.briefed(current);
             if (!current || current.state !== "running") return;
             current.statusLine = options.status ?? line;
             this.say(current, "activity", line, roleId, profileId);
@@ -1281,6 +1283,7 @@ export class Engine {
           onPlanStep: (line) => {
             const current = live();
             if (!current) return;
+            this.briefed(current);
             if (current.state === "running") current.statusLine = options.status ?? line;
             if (current.timeline.at(-1)?.text !== line) this.log(current, "status", line, roleId, profileId);
             this.commit();
@@ -1312,7 +1315,7 @@ export class Engine {
     // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
     // the old note; a reopened one keeps the open question until the conversation hears the answer.
     const asked = picked ? reopen?.asked : undefined;
-    if (roleId !== "shipper") task.conversation = { step, roleId, profileId, toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}) };
+    if (roleId !== "shipper") task.conversation = { step, roleId, profileId, toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}) };
     this.commitNow();
     const headBefore = !role.canEdit ? head : undefined;
     try {
@@ -1343,6 +1346,7 @@ export class Engine {
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
       this.commitNow();
       let reply = await run.prompt(opening);
+      this.briefed(task);
       for (let repairs = 0; ; ) {
         if (signal.aborted) throw new Aborted();
         const current = live();
@@ -1687,6 +1691,13 @@ export class Engine {
     const dir = join(this.dataDir, "gh-none");
     await mkdir(dir, { recursive: true, mode: 0o700 });
     return dir;
+  }
+
+  /** The agent showed it has its instructions: from now on a restart may reopen its conversation. */
+  private briefed(task: MTask): void {
+    if (!task.conversation || task.conversation.briefed) return;
+    task.conversation.briefed = true;
+    this.commitNow();
   }
 
   private async agentLog(taskId: Id, text: string): Promise<void> {

@@ -227,6 +227,25 @@ describe("a builder working when Petrina restarts", () => {
     await engine.quit();
   });
 
+  it("starts the step again when Petrina stopped before the agent got its instructions", async () => {
+    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+    await waitFor(() => run.fakes.marked("builder-working"), "the builder to start working");
+    await run.engine.kill();
+    const store = new Store(join(run.home, "petrina.db"));
+    const saved = store.load()!;
+    expect(saved.tasks.find((task) => task.id === run.taskId)?.conversation?.briefed).toBe(true);
+    // As if Petrina had stopped between noting the conversation and the agent hearing its instructions.
+    store.save({ ...saved, tasks: saved.tasks.map((task) => (task.conversation ? { ...task, conversation: { ...task.conversation, briefed: false } } : task)) });
+    store.close();
+
+    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
+    const done = await run.finished(engine);
+    expect(run.fakes.opens().some((open) => open.how !== "new")).toBe(false);
+    expect(run.fakes.openings("builder")[1]).toContain(`## ${WHERE_YOU_WERE}`);
+    expect(done.timeline.some((entry) => entry.text === "Started this step again: it had not received its instructions yet")).toBe(true);
+    await engine.quit();
+  });
+
   it("starts the step again as before for a task an older Petrina saved, with no conversation note", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
     await waitFor(() => run.fakes.marked("builder-working"), "the builder to start working");
