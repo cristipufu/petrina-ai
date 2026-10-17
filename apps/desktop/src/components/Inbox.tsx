@@ -1,5 +1,6 @@
-import { forwardRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useState, type ReactNode } from "react";
 import {
+  BellRing,
   CircleHelp,
   Compass,
   GitPullRequest,
@@ -14,7 +15,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DELIVERY_LABEL, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
-import { sim, useEngineStatus, useUnsent } from "../engine";
+import { desktop, sim, useEngineStatus, useUnsent } from "../engine";
+import { useBrowserPermission } from "../notify/channels";
+import { finishOffer, useNotifySettings } from "../notify/settings";
+import { realSquad, turnOnInBrowser } from "../notify/useNotices";
 import { ago, type Lookup } from "../lib";
 import { ProductName, ProfileText, RoleAvatar } from "./bits";
 import { UnsentNote } from "./EngineState";
@@ -31,22 +35,42 @@ const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> =
   shipping: { label: "Shipping was interrupted", icon: PackageSearch, tone: "amber" },
 };
 
+/** Where the inbox opens after a click on a notification: at an item, or at its top with a note. */
+export interface Landing {
+  /** Counts up, so the same item can be landed on twice. */
+  n: number;
+  itemId?: string;
+  note?: string;
+}
+
 interface InboxProps {
   state: State;
   find: Lookup;
   /** Over the board, in narrow windows. */
   overlay: boolean;
+  landing?: Landing | undefined;
   onOpen: (taskId: string, tab?: SheetTab) => void;
   onClose: () => void;
 }
 
-export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state, find, overlay, onOpen, onClose }, ref) {
+/** How long "Already handled" stays. */
+const NOTE_MS = 6000;
+
+export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state, find, overlay, landing, onOpen, onClose }, ref) {
   const priorityOf = (item: InboxItem) => find.task(item.taskId)?.startedAt ?? 0;
   const items = [...state.inbox].sort((a, b) => Number(b.blocking) - Number(a.blocking) || priorityOf(a) - priorityOf(b) || a.at - b.at);
   const blocking = items.filter((item) => item.blocking).length;
   const connected = useEngineStatus().link === "live";
   // Answers whose question is gone (a restart dropped it): still shown until the engine has them.
   const orphans = useUnsent().filter((entry) => entry.itemId && !state.inbox.some((item) => item.id === entry.itemId));
+  const [note, setNote] = useState<string>();
+
+  useEffect(() => {
+    setNote(landing?.note);
+    if (!landing?.note) return;
+    const timer = setTimeout(() => setNote(undefined), NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [landing?.n, landing?.note]);
 
   return (
     <aside
@@ -77,7 +101,13 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state,
           "Nobody is stuck. These wait at checkpoints."
         )}
       </p>
+      {note && (
+        <p className="inbox-note" role="status">
+          {note}
+        </p>
+      )}
       <div className="inbox-list">
+        <NotifyOffer />
         {orphans.length > 0 && (
           <div className="unsent-list" aria-label="Not sent yet">
             {orphans.map((entry) => (
@@ -100,6 +130,39 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state,
     </aside>
   );
 });
+
+/**
+ * In a browser tab on the real squad, once: an offer to turn on browser notifications. Gone for
+ * good once answered or dismissed, or once they are turned on in Settings. Never in the desktop
+ * app, where they are on by default.
+ */
+function NotifyOffer() {
+  const settings = useNotifySettings();
+  const permission = useBrowserPermission();
+  if (desktop || !realSquad || settings.offerDone || settings.on || permission === "unsupported" || permission === "denied") return null;
+  return (
+    <section className="offer" aria-labelledby="notify-offer-title">
+      <div className="offer-head">
+        <BellRing size={16} aria-hidden="true" />
+        <h3 id="notify-offer-title">Get notified in this browser?</h3>
+      </div>
+      <p>Petrina can tell you when the squad needs you while this tab is in the background. Your browser asks first.</p>
+      <div className="ask-actions">
+        <button
+          className="btn lead small"
+          onClick={() => {
+            void turnOnInBrowser().finally(finishOffer);
+          }}
+        >
+          Turn on notifications
+        </button>
+        <button className="btn quiet small" onClick={finishOffer}>
+          Not now
+        </button>
+      </div>
+    </section>
+  );
+}
 
 /** One thing waiting on the coordinator. The inbox and the session show it the same way. */
 export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: State; find: Lookup; onOpen: InboxProps["onOpen"] }) {
@@ -154,7 +217,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
     );
 
   return (
-    <article className={`ask ${item.blocking ? "blocking" : ""}`} aria-labelledby={titleId}>
+    <article className={`ask ${item.blocking ? "blocking" : ""}`} aria-labelledby={titleId} data-item-id={item.id} tabIndex={-1}>
       <div className={`ask-kind tone-${kind.tone}`}>
         <Icon size={14} strokeWidth={2.3} aria-hidden="true" />
         <span>

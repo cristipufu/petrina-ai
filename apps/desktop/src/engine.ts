@@ -57,6 +57,8 @@ export interface Unsent {
 interface Store extends Actions {
   getState(): State;
   subscribe(listener: () => void): () => void;
+  /** The state is the squad's own: the engine has sent it at least once (the demo always has it). */
+  synced(): boolean;
   unsent(): readonly Unsent[];
   /** Send something the engine refused once more. */
   resendUnsent(clientId: string): void;
@@ -148,6 +150,7 @@ function clientId(): string {
 
 class EngineClient implements Store {
   private state: State = EMPTY;
+  private received = false;
   private status: EngineStatus;
   private outbox: readonly Unsent[] = NOTHING_UNSENT;
   /** How to send each unsent entry, by its client id. */
@@ -221,6 +224,7 @@ class EngineClient implements Store {
       const message = JSON.parse(String(event.data)) as { type: string; state?: State; id?: number; ok?: boolean; result?: unknown; error?: string };
       if (message.type === "state" && message.state) {
         this.state = message.state;
+        this.received = true;
         this.emit();
       } else if (message.type === "result" && typeof message.id === "number") {
         const call = this.calls.get(message.id);
@@ -340,6 +344,7 @@ class EngineClient implements Store {
   }
 
   getState = (): State => this.state;
+  synced = (): boolean => this.received;
   getStatus = (): EngineStatus => this.status;
   unsent = (): readonly Unsent[] => this.outbox;
   subscribe = (listener: () => void): (() => void) => {
@@ -400,6 +405,7 @@ class DemoStore implements Store {
   constructor(private readonly simulator: Simulator) {}
   getState = () => this.simulator.getState();
   subscribe = (listener: () => void) => this.simulator.subscribe(listener);
+  synced = () => true;
   unsent = () => NOTHING_UNSENT;
   resendUnsent = () => undefined;
   discardUnsent = () => undefined;

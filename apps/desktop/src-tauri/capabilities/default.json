@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window gets the core defaults and may ask the shell for the engine's address and key. No filesystem, shell or network plugins.",
+  "description": "The main window gets the core defaults and may ask the shell for the engine's address and key, show a notification, and set the icon's count. No filesystem, shell or network plugins, and none of the notification plugin's own commands: the shell shows notifications for the window.",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-engine-details"]
+  "permissions": ["core:default", "allow-engine-details", "allow-notify", "allow-set-badge"]
 }

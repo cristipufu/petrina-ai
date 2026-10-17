@@ -53,7 +53,7 @@ What success feels like: many pull requests a day, little time spent being the t
 ```
 
 - **Top bar** (56px): product switcher, search (⌘K), the pool indicator, the inbox button with its count, and **New task**, the only solid violet button in the workspace. It stays quiet: no border, neutral buttons.
-- **Left rail** (64px): Board, Products, Agents, Library. Icons with labels.
+- **Left rail** (64px): Board, Products, Agents, Library, and Settings at the bottom. Icons with labels.
 - **Main area:** the board by default.
 - **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
 - **A task** opens as a sheet over the board (840px wide), so the board stays in view.
@@ -162,9 +162,23 @@ Agents start with full permissions inside their own working copy, so they rarely
 
 ### Notifications
 
-- A system notification for anything blocking. Clicking it opens that inbox item.
-- The dock or taskbar badge shows the inbox count.
-- Optional sound. Quiet hours.
+When something new lands in the inbox and you are not looking at Petrina, you get a notification: system notifications in the desktop app, the browser's own in a browser tab once you allow them. They only arrive while Petrina (or its tab) is open; minimized is fine.
+
+- **What notifies:** a question, a permission request, a stuck task, a task waiting at a checkpoint (plan, design, disagreement, ready to ship), and a delivery Petrina could not confirm.
+- **Only what is new.** Items already waiting when the app opens only show in the counts. After the connection to the engine drops and comes back, only what arrived during the gap notifies. No item notifies twice.
+- **In front or away.** While Petrina is in front (its window focused, or its tab visible and focused), the small in-app message appears instead; its View button does exactly what a click on the notification does. A Petrina window visible on a second screen without focus counts as away.
+- **Calm pacing.** At most one notification every ten seconds. The first goes out at once. What arrives during the pause goes out when it ends: one item on its own, two or more as one summary ("3 more things need you", naming up to two of their tasks). Held items that were handled meanwhile, or that you saw because Petrina came to the front, are dropped; if none are left, nothing goes out.
+- **Nothing shown is taken back.** On macOS and Windows a notification for an item already handled stays in the system's list until you clear it; clicking it shows "Already handled". In a browser a notification closes once its item is handled, and a summary once all of its items are.
+- **Wording.** Plain words: what is needed, who is asking, for which task and product. "Builder needs your permission", then "Add a new package: Stripe.js" and "Guest checkout, Shop". Who is asking is the agent's role when the item records one, otherwise Petrina ("Petrina: Guest checkout is stuck"); never an agent the item does not record, never blank. Questions are shortened and web addresses in them become "a link". A notification never contains the command behind a permission, the error of a stuck task, or any link: those stay in the app, since notifications can show on the lock screen and in the system's history.
+- **Clicking one** brings Petrina to the front (restored if minimized), opens the inbox if it is hidden, scrolls to the item, highlights it and moves keyboard focus to it, and briefly highlights its task card when the board shows it. The page and the product filter stay as they are; menus and pop-overs close. An item already handled (here, in another window, or because its task was cancelled) opens the inbox with a short "Already handled" note, and nothing else changes.
+- **Nothing typed is lost.** If New task, Add product, or a task sheet with an unsent message or note is open, it stays open with everything typed in it. A line at its top names what is waiting ("Builder needs your permission. Guest checkout") and says it opens when you are done. As soon as that window closes, finished or cancelled, the inbox opens at the item. A later click replaces an earlier one. A task sheet with nothing typed closes at once, so the item is in view.
+- **Never a guess.** A summary, or a click the system does not trace to one notification, opens the inbox with nothing selected. macOS reports clicks on screen and from Notification Center. Windows reports a click only while the notification is on screen; from the notification list it opens Petrina again, which brings the running one forward with the inbox open and nothing selected (once Petrina has sent a notification in that run).
+- **One Petrina.** Opening Petrina while it runs, by hand or by the system for a notification, brings the running one to the front. There is never a second window.
+- **Counts.** The Dock badge (macOS), a small number drawn over the taskbar button (Windows), or the launcher's badge (Linux desktops that show one) has the same number as the Inbox button, disappears at zero, and keeps working with notifications switched off. In a browser the tab's title starts with it: "(3) Petrina".
+- **On or off** in Settings: on by default in the desktop app, off in a browser until you turn them on, which asks the browser for permission. In a browser the inbox panel also offers it once; the offer never comes back after it is answered or dismissed, and never shows in the desktop app. With the switch off nothing goes to the system or the browser; in-app messages and counts still work. The desktop app and each browser remember their own choice.
+- **The demo** never sends notifications or sets the icon's count. Its in-app messages work, and so does the test.
+- If the desktop app and a browser tab are both open with notifications on, each notifies.
+- Later: an optional sound, quiet hours, and keeping Petrina alive in the background after its window closes.
 
 ## Task sheet
 
@@ -214,7 +228,10 @@ This is the "open in terminal" experience, made friendly.
 
 ## Settings
 
-Pool limit and caps per tool. Notifications. Default checkpoints. Appearance: light, dark or system. Where data lives. (There is no permission list: Petrina remembers no permission answers.)
+One page for the whole app, from the bottom of the rail or with ⌘, (Ctrl+, on Windows and Linux). It uses the same page header, type and spacing as the other pages, in light and dark. Each part of Petrina adds its own section here (Product settings and the command palette's shortcuts among them), so there is never a second settings surface.
+
+- **Notifications:** one switch ("Notify me when the squad needs me"), a line about permission, and **Send a test notification**. The line is honest: a browser says it allows Petrina's notifications, blocks them (with how to allow them), or has not been asked yet. The desktop app cannot read the system's setting, so it says so, suggests the test, and names where to allow Petrina: System Settings › Notifications on a Mac, Settings › System › Notifications on Windows, the desktop's notification settings on Linux. It never says "allowed" without having checked. On a Mac the test goes out after five seconds, because macOS shows no banner for the app in front. With the switch off the test is unavailable.
+- Later: pool limit and caps per tool, default checkpoints, appearance (light, dark or system), where data lives. (There is no permission list: Petrina remembers no permission answers.)
 
 ## First run
 
@@ -278,6 +295,7 @@ Inter, bundled with the app (the window's security policy only loads fonts from 
 |---|---|
 | ⌘K | Command palette |
 | ⌘N | New task |
+| ⌘, | Settings (Ctrl+, on Windows and Linux) |
 | I / B / A | Inbox, Board, Agents |
 | J / K | Move between cards or inbox items |
 | ↵ | Open |

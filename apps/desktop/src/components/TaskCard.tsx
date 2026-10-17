@@ -79,7 +79,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, queueLeng
   };
 
   return (
-    <article className={classes.join(" ")} draggable={queued} onDragStart={(event) => onDragStart?.(event, task.id)} onDragEnd={onDragEnd} aria-label={task.title}>
+    <article className={classes.join(" ")} data-task-id={task.id} draggable={queued} onDragStart={(event) => onDragStart?.(event, task.id)} onDragEnd={onDragEnd} aria-label={task.title}>
       <div className="card-meta">
         <span className="where">
           {queued && <GripVertical size={14} className="grip" aria-hidden="true" />}

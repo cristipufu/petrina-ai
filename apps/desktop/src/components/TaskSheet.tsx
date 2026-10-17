@@ -19,7 +19,7 @@ import {
 import type { Finding, Objection, Role, Stage, State, Task } from "@petrina/core";
 import { sim } from "../engine";
 import { ago, deliveryText, duration, profileText, safeUrl, STATE_LABEL, type Lookup } from "../lib";
-import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport } from "./bits";
+import { ProductName, ProfileText, RoleAvatar, Stepper, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
 import { Session } from "./Session";
 import type { SheetTab } from "./TaskCard";
 
@@ -31,6 +31,8 @@ interface SheetProps {
   onTab: (tab: SheetTab) => void;
   onClose: () => void;
   onToast: (title: string, detail?: string) => void;
+  /** A notification's item that opens once the sheet closes, because something typed in it is not sent yet. */
+  waiting?: string;
 }
 
 const TABS: readonly { id: SheetTab; label: string }[] = [
@@ -41,7 +43,7 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
   { id: "session", label: "Session" },
 ];
 
-export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: SheetProps) {
+export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, waiting }: SheetProps) {
   const [menu, setMenu] = useState(false);
   const [titleGone, setTitleGone] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -109,6 +111,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast }: S
     <>
       <div className="scrim" onClick={onClose} />
       <section ref={sheet} className={`sheet ${compact ? "compact" : ""} ${short ? "short" : ""}`} role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabIndex={-1}>
+        <WaitingLine text={waiting} />
         <div className={`sheet-bar ${scrolled ? "scrolled" : ""}`}>
           {compact || titleGone ? (
             <div className="compact-title" title={task.title}>

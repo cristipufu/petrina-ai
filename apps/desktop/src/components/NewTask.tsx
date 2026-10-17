@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { DELIVERY_LABEL, type DeliveryMode, type State, type TaskKind } from "@petrina/core";
 import { sim } from "../engine";
-import { useFocusTrap } from "./bits";
+import { useFocusTrap, WaitingLine } from "./bits";
 
 const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
   { id: "feature", label: "Feature", hint: "Designed, built and reviewed" },
@@ -10,7 +10,8 @@ const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
   { id: "chore", label: "Small change", hint: "Quick build, one reviewer" },
 ];
 
-export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { state: State; defaultProduct?: string; onClose: () => void; onCreated: () => void }) {
+/** `waiting`: a notification's item that opens once this dialog closes. */
+export function NewTaskDialog({ state, defaultProduct, waiting, onClose, onCreated }: { state: State; defaultProduct?: string; waiting?: string; onClose: () => void; onCreated: () => void }) {
   const [productId, setProductId] = useState(defaultProduct ?? state.products[0]?.id ?? "");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -49,6 +50,7 @@ export function NewTaskDialog({ state, defaultProduct, onClose, onCreated }: { s
     <>
       <div className="dialog-scrim" onClick={onClose} />
       <div ref={box} className="dialog" role="dialog" aria-modal="true" aria-label="New task" tabIndex={-1}>
+        <WaitingLine text={waiting} />
         {state.products.length <= 5 ? (
           <div className="segmented" role="radiogroup" aria-label="Product" style={{ marginBottom: 8 }}>
             {state.products.map((product) => (

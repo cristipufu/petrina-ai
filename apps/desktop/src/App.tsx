@@ -1,29 +1,52 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Bell, Boxes, Bot, Ellipsis, Hand, LayoutGrid, Library, Moon, Plus, Search, Sun, X } from "lucide-react";
+import { Bell, Boxes, Bot, Ellipsis, Hand, LayoutGrid, Library, Moon, Plus, Search, Settings, Sun, X } from "lucide-react";
 import type { State, Task } from "@petrina/core";
 import { mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
 import { CouldNotStart, EnginePill, StartingScreen } from "./components/EngineState";
 import { blockingCount, lookup, type Lookup } from "./lib";
-import { Logo, useDismiss, useViewport, viewportSize } from "./components/bits";
+import { dismissPopovers, hasTyping, Logo, useDismiss, useViewport, viewportSize } from "./components/bits";
 import { Board } from "./components/Board";
-import { Inbox } from "./components/Inbox";
+import { Inbox, type Landing } from "./components/Inbox";
 import { NewTaskDialog } from "./components/NewTask";
 import { AgentsPage, LibraryPage } from "./components/Pages";
 import { PoolButton, PoolPanel } from "./components/Pool";
 import { ProductsPage, ProductSwitcher } from "./components/Products";
+import { SettingsPage } from "./components/Settings";
 import type { SheetTab } from "./components/TaskCard";
 import { TaskSheet } from "./components/TaskSheet";
+import { platform } from "./notify/channels";
+import { canLand, landingFor, planJump } from "./notify/jump";
+import { useNotices } from "./notify/useNotices";
+import { waitingLine, type Notice, type Target } from "./notify/words";
 import { applyTheme, initialTheme, type Theme } from "./theme";
 
-type View = "board" | "products" | "agents" | "library";
+type View = "board" | "products" | "agents" | "library" | "settings";
 
 interface Toast {
   id: number;
   title: string;
-  detail?: string;
-  taskId?: string;
+  lines: readonly string[];
+  /** What View opens: an inbox item, like a click on its notification. */
+  target?: Target;
 }
+
+/**
+ * A click on a notification, or View on an in-app message, while New task, Add product, or a task
+ * sheet with something typed in it is open. It waits for that window to close, so nothing typed
+ * is lost; a later click replaces it.
+ */
+interface Jump {
+  target: Target;
+  /** What is waiting, for the line at the top of the open window. */
+  line: string;
+  /** A task sheet holds it: something typed there is not sent yet. */
+  sheet: boolean;
+}
+
+/** How long a task card stays highlighted after a notification's item opens. */
+const FLASH_MS = 1800;
+const SETTINGS_KEY = platform() === "mac" ? "⌘," : "Ctrl+,";
 
 /** Below this width the inbox opens over the board instead of beside it. */
 const DOCKED_INBOX = 1200;
@@ -43,11 +66,16 @@ export function App() {
   const [addingProduct, setAddingProduct] = useState(false);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [jump, setJump] = useState<Jump>();
+  const [landing, setLanding] = useState<Landing>();
   const searchRef = useRef<HTMLInputElement>(null);
   const inboxButton = useRef<HTMLButtonElement>(null);
   const inboxPanel = useRef<HTMLElement>(null);
-  const seenInbox = useRef(new Set(state.inbox.map((item) => item.id)));
   const toastId = useRef(0);
+  const landings = useRef(0);
+  // Read by notification clicks, which arrive outside React's renders.
+  const latest = useRef({ state, creating, addingProduct, sheet });
+  latest.current = { state, creating, addingProduct, sheet };
 
   // What the top bar gives up as the window narrows (or zooms, or text grows), in this order: the
   // wordmark and repeated wording, then the search field, the pool's squares, then pool and theme
@@ -64,22 +92,60 @@ export function App() {
 
   useEffect(() => applyTheme(theme), [theme]);
 
-  const toast = useCallback((title: string, detail?: string, taskId?: string) => {
+  const toast = useCallback((title: string, lines: readonly string[] = [], target?: Target) => {
     const id = (toastId.current += 1);
-    setToasts((list) => [...list.slice(-2), { id, title, ...(detail ? { detail } : {}), ...(taskId ? { taskId } : {}) }]);
+    setToasts((list) => [...list.slice(-2), { id, title, lines, ...(target ? { target } : {}) }]);
     setTimeout(() => setToasts((list) => list.filter((entry) => entry.id !== id)), 6000);
   }, []);
 
-  // Anything new that needs the coordinator gets a toast (a system notification in the desktop build).
-  useEffect(() => {
-    for (const item of state.inbox) {
-      if (seenInbox.current.has(item.id)) continue;
-      seenInbox.current.add(item.id);
-      const task = find.task(item.taskId);
-      const role = find.role(item.roleId);
-      toast(item.title, `${task?.title ?? ""}${role ? ` · ${role.name}` : ""}`, item.taskId);
+  /**
+   * Open the inbox where a notification points: at its item, scrolled into view, highlighted and
+   * focused, with its task card highlighted briefly on the board. An item already handled opens
+   * the inbox with a short note; a summary, or a click the system did not trace, opens the inbox
+   * with nothing selected. The page and the product filter stay as they are.
+   */
+  const land = useCallback((target: Target) => {
+    const { item, note } = landingFor(target, latest.current.state.inbox);
+    setInboxOpen(true);
+    landings.current += 1;
+    setLanding({ n: landings.current, ...(item ? { itemId: item.id } : {}), ...(note ? { note } : {}) });
+    const card = item && document.querySelector<HTMLElement>(`.card[data-task-id="${CSS.escape(item.taskId)}"]`);
+    if (card) {
+      card.classList.remove("flash");
+      void card.offsetWidth;
+      card.classList.add("flash");
+      setTimeout(() => card.classList.remove("flash"), FLASH_MS);
     }
-  }, [state.inbox, find, toast]);
+  }, []);
+
+  /** A click on a notification, or View on an in-app message. Nothing typed is ever lost. */
+  const requestJump = useCallback(
+    (target: Target) => {
+      dismissPopovers();
+      const now = latest.current;
+      const plan = planJump({ dialog: now.creating || now.addingProduct, sheet: now.sheet !== undefined, sheetTyped: hasTyping(document.querySelector(".sheet")) });
+      if (plan.closeSheet) setSheet(undefined);
+      if (!plan.wait) {
+        setJump(undefined);
+        land(target);
+        return;
+      }
+      const { item } = landingFor(target, now.state.inbox);
+      const line = item ? waitingLine(item, now.state) : target.kind === "inbox" ? "Things in your inbox need you" : "Something you were notified about";
+      setJump({ target, line, sheet: plan.sheetHolds });
+    },
+    [land],
+  );
+
+  // As soon as the window holding a jump closes, finished or cancelled, the inbox opens at it.
+  useEffect(() => {
+    if (!jump || !canLand({ dialog: creating || addingProduct, sheet: sheet !== undefined }, jump.sheet)) return;
+    setJump(undefined);
+    land(jump.target);
+  }, [jump, creating, addingProduct, sheet, land]);
+
+  const toastNotice = useCallback((notice: Notice) => toast(notice.title, notice.lines, notice.target), [toast]);
+  useNotices({ onJump: requestJump, onToast: toastNotice });
 
   const open = useCallback((taskId: string, tab: SheetTab = "overview") => {
     setSheet({ taskId, tab });
@@ -94,10 +160,27 @@ export function App() {
     inboxButton.current?.focus();
   }, []);
 
-  // Over the board, the inbox takes focus when it opens.
+  // Over the board, the inbox takes focus when it opens (unless a notification's item already has it).
   useEffect(() => {
-    if (inboxOpen && overlay) inboxPanel.current?.focus();
+    if (inboxOpen && overlay && !inboxPanel.current?.contains(document.activeElement)) inboxPanel.current?.focus();
   }, [inboxOpen, overlay]);
+
+  // Landing in the inbox: the item comes into view, highlighted and focused, or the inbox itself.
+  useEffect(() => {
+    if (!landing) return;
+    const panel = inboxPanel.current;
+    const article = landing.itemId ? panel?.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(landing.itemId)}"]`) : undefined;
+    if (!article) {
+      panel?.focus();
+      return;
+    }
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    article.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
+    article.focus({ preventScroll: true });
+    article.classList.remove("landed");
+    void article.offsetWidth;
+    article.classList.add("landed");
+  }, [landing]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -106,6 +189,9 @@ export function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
         setCreating(true);
+      } else if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key === ",") {
+        event.preventDefault();
+        setView("settings");
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setSearching(true);
@@ -208,6 +294,11 @@ export function App() {
           <Library size={20} aria-hidden="true" />
           Library
         </button>
+        <div className="rail-end" />
+        <button className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={() => setView("settings")} title={`Settings (${SETTINGS_KEY})`}>
+          <Settings size={20} aria-hidden="true" />
+          Settings
+        </button>
       </nav>
 
       <main className="main">
@@ -224,16 +315,27 @@ export function App() {
         )}
         {view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {view === "library" && <LibraryPage state={state} find={find} />}
+        {view === "settings" && <SettingsPage />}
       </main>
 
-      {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay} onOpen={open} onClose={closeInbox} /> : <div />}
+      {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay} landing={landing} onOpen={open} onClose={closeInbox} /> : <div />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ taskId: sheetTask.id, tab })} onClose={close} onToast={(title, detail) => toast(title, detail)} />
+        <TaskSheet
+          task={sheetTask}
+          state={state}
+          find={find}
+          tab={sheet.tab}
+          onTab={(tab) => setSheet({ taskId: sheetTask.id, tab })}
+          onClose={close}
+          onToast={(title, detail) => toast(title, detail ? [detail] : [])}
+          {...(jump?.sheet ? { waiting: jump.line } : {})}
+        />
       )}
 
       {addingProduct && (
         <AddProductDialog
+          {...(jump ? { waiting: jump.line } : {})}
           onClose={() => setAddingProduct(false)}
           onAdded={(productId) => {
             setAddingProduct(false);
@@ -246,6 +348,7 @@ export function App() {
         <NewTaskDialog
           state={state}
           {...(product !== "all" ? { defaultProduct: product } : {})}
+          {...(jump ? { waiting: jump.line } : {})}
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false);
@@ -265,14 +368,20 @@ export function App() {
             </span>
             <div style={{ minWidth: 0 }}>
               <div className="t">{entry.title}</div>
-              {entry.detail && <div className="s">{entry.detail}</div>}
+              {entry.lines.map((line, index) => (
+                <div key={index} className="s">
+                  {line}
+                </div>
+              ))}
             </div>
-            {entry.taskId && (
+            {entry.target && (
               <button
                 className="btn small"
                 onClick={() => {
-                  openInbox();
+                  // Exactly like a click on its notification.
+                  const target = entry.target!;
                   setToasts((list) => list.filter((item) => item.id !== entry.id));
+                  requestJump(target);
                 }}
               >
                 View
