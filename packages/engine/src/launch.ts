@@ -33,6 +33,8 @@ export interface LaunchOptions {
 /** What the engine tells the shell. One line of JSON, `type` first. */
 export type ShellMessage = { type: "ready" | "running"; owned: boolean; url: string; token: string } | { type: "error"; message: string };
 
+/** How long a stopping engine waits for reviewers, voters and a delivery in flight to hand back. */
+const DRAIN_MS = 4 * 60_000;
 const ALREADY_RUNNING = "Petrina's engine is already running. Open it with bun run open.";
 const BUSY = "Another Petrina engine holds this folder but does not answer. Wait a moment and try again; if it stays like this, stop the other engine";
 
@@ -93,8 +95,29 @@ export async function launch(options: LaunchOptions): Promise<void> {
     console.error("Petrina's engine crashed:", error);
     stop(1);
   });
-  process.on("SIGINT", () => stop());
-  process.on("SIGTERM", () => stop());
+  // Asked to stop by hand: reviewers and voters in flight start over after a restart, so they get a few minutes
+  // to hand back first, and nothing new starts meanwhile. A second signal stops at once.
+  let draining = false;
+  const stopGently = () => {
+    if (stopping) return;
+    if (draining || !engine) {
+      if (draining) console.log(`${new Date().toISOString()} Stopping now, as asked twice`);
+      stop();
+      return;
+    }
+    draining = true;
+    const limit = Number(process.env.PETRINA_DRAIN_MS) || DRAIN_MS;
+    void engine
+      .drain(limit, (left) => {
+        if (left) console.log(`${new Date().toISOString()} Petrina is stopping: waiting for ${left} agent${left === 1 ? "" : "s"} to hand back, up to ${Math.max(1, Math.round(limit / 60_000))} minute${limit >= 90_000 ? "s" : ""} (a second Ctrl-C stops now)`);
+      })
+      .then((left) => {
+        if (left) console.log(`${new Date().toISOString()} ${left} agent${left === 1 ? "" : "s"} did not hand back in time: stopping anyway`);
+        stop();
+      });
+  };
+  process.on("SIGINT", stopGently);
+  process.on("SIGTERM", stopGently);
 
   try {
     if (app && options.loginShell !== false) {

@@ -308,6 +308,8 @@ export class Reviews {
     };
     const start = () => {
       while (pending.length && failure === undefined) {
+        // Petrina is stopping: members not started yet run after the restart, with their copies made then.
+        if (this.k.draining) break;
         const member = pending[0]!;
         // The first member fills the task's own slot. Each later one needs a seat of its own. That is fixed
         // here, before this member is counted: work() runs only after the copies are made, by which time

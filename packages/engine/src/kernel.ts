@@ -149,6 +149,36 @@ export abstract class Kernel {
   readonly timers: ReturnType<typeof setInterval>[] = [];
 
   stopped = false;
+  /** Stopping is under way: no new agent starts, and reviewers and voters in flight hand back first. */
+  draining = false;
+
+  /** Agents whose work is lost by a restart: reviewers and voters working side by side (never reopened) and a Release Manager mid-delivery. */
+  inFlight(): number {
+    let count = 0;
+    for (const runs of this.helperRuns.values()) count += runs.size;
+    for (const task of this.s.tasks) if (task.state === "running" && task.agent?.roleId === "release-manager") count += 1;
+    return count;
+  }
+
+  /**
+   * Before stopping: no new agent starts, and the ones a restart would make start over get up to `limitMs` to
+   * hand back. `onWait` hears how many are left each time it changes. Returns how many were still in flight.
+   */
+  async drain(limitMs: number, onWait?: (left: number) => void): Promise<number> {
+    this.draining = true;
+    const started = Date.now();
+    let last = -1;
+    while (!this.stopped) {
+      const left = this.inFlight();
+      if (left !== last) {
+        onWait?.(left);
+        last = left;
+      }
+      if (left === 0 || Date.now() - started > limitMs) return left;
+      await Bun.sleep(500);
+    }
+    return 0;
+  }
 
   /** This run of the engine, to tell a restart from a pause. */
   readonly boot = randomBytes(6).toString("hex");

@@ -36,7 +36,7 @@ export class Driver {
   ) {}
 
   schedule(): void {
-    if (this.k.stopped) return;
+    if (this.k.stopped || this.k.draining) return;
     // Limits that ended no longer hold anyone back.
     this.k.expireLimits();
     const candidates: Candidate[] = [];
@@ -225,6 +225,16 @@ export class Driver {
             }
           }
           this.k.gate(current, stage.gate ?? "delivery");
+          return;
+        }
+        // Petrina is stopping: the step waits for the restart instead of starting an agent it would cut short.
+        if (this.k.draining) {
+          current.state = "waiting";
+          current.holdsSlot = false;
+          delete current.agent;
+          current.column = this.k.columnFor(current);
+          current.statusLine = "Waiting: Petrina is restarting";
+          this.k.commit();
           return;
         }
         // Running agents finish; every following agent must qualify again, even on the same tool.
