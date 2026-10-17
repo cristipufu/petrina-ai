@@ -47,7 +47,9 @@ export function profileText(profile: AgentProfile | undefined, find: Lookup, ful
 export function deliveryText(task: Task): { text: string; done: boolean } | undefined {
   if (task.release) return { text: `Released ${task.release.tag}`, done: true };
   if (task.landed) return { text: `Delivered locally to ${task.landed.branch}`, done: true };
-  if (task.pr) return task.pr.state === "merged" ? { text: `Pull request #${task.pr.number} merged`, done: true } : { text: `Pull request #${task.pr.number} · awaiting merge`, done: false };
+  if (task.pr?.state === "merged") return { text: `Pull request #${task.pr.number} merged`, done: true };
+  if (task.pr?.state === "closed") return { text: `Pull request #${task.pr.number} closed without merging`, done: false };
+  if (task.pr) return { text: `Pull request #${task.pr.number} · awaiting merge`, done: false };
   return undefined;
 }
 

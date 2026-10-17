@@ -1,21 +1,35 @@
-// The environment Petrina's processes run in. Credentials: what keeps "only the shipper
-// publishes" true whatever an agent runs. Everything else about safety is each tool's own
-// checker (Claude Code's Auto mode, Codex's Auto review): Petrina does not read commands.
+// The environment Petrina's processes run in. Agents act with the coordinator's own logins (GitHub,
+// git credential helpers, SSH, AWS, Azure): they read freely, and their instructions say never to
+// publish or change shared things, which rests on each tool's own checker (Claude Code's Auto mode,
+// Codex's Auto review): Petrina does not read commands. Petrina's own git steps on working copies, and
+// the product's checks and hooks it runs, get no login at all.
 // And the PATH: an app opened from the Dock still finds the user's tools.
 
 const CREDENTIAL_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS"];
+/** A GitHub token by its look, whatever the variable holding it is called (an npm registry's, say). */
+const GITHUB_TOKEN = /^\s*(gh[pousr]_|github_pat_)/;
 
 /**
- * The environment for agents that must not publish anything. They get no GitHub credentials
- * at all: no tokens, an empty gh config, git credential helpers reset, and no SSH for git.
+ * The environment every agent runs in: the coordinator's own, logins included, with nothing that waits
+ * for a typed answer, and in the background (tools that would open a browser stay quiet, and Petrina's
+ * own `open` refuses).
  */
-export function agentEnv(env: NodeJS.ProcessEnv, emptyGhConfig: string): NodeJS.ProcessEnv {
+export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", BROWSER: "none", PETRINA_AGENT: "1" };
+}
+
+/**
+ * The environment for what Petrina runs itself that needs no login (its git steps on working copies, the
+ * product's checks and hooks): no tokens, an empty gh config, git credential helpers reset, and no SSH for git.
+ */
+export function withoutCredentials(env: NodeJS.ProcessEnv, emptyGhConfig: string): NodeJS.ProcessEnv {
   const clean = withGitConfig(env, [
     ["credential.helper", ""],
-    ["remote.origin.pushurl", "petrina-push-disabled://only-the-shipper-pushes"],
+    ["remote.origin.pushurl", "petrina-push-disabled://only-petrina-publishes"],
     ["core.sshCommand", "petrina-ssh-disabled"],
   ]);
   for (const name of CREDENTIAL_VARS) delete clean[name];
+  for (const [name, value] of Object.entries(clean)) if (value && GITHUB_TOKEN.test(value)) delete clean[name];
   clean.GIT_SSH_COMMAND = "petrina-ssh-disabled";
   clean.GIT_TERMINAL_PROMPT = "0";
   clean.GH_CONFIG_DIR = emptyGhConfig;

@@ -13,9 +13,23 @@ import type { ProductChecks } from "./product-checks.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
+import type { Connections } from "./connection.js";
+import { destination, needsShipper, type Shipping } from "./shipping.js";
 
 export class Driver {
-  constructor(private readonly k: Kernel, private readonly planning: Planning, private readonly work: Work, private readonly design: Design, private readonly reviews: Reviews, private readonly checks: ProductChecks, private readonly guide: GuideKeeper, private readonly updates: Updates, private readonly learnings: Learnings) {}
+  constructor(
+    private readonly k: Kernel,
+    private readonly planning: Planning,
+    private readonly work: Work,
+    private readonly design: Design,
+    private readonly reviews: Reviews,
+    private readonly checks: ProductChecks,
+    private readonly guide: GuideKeeper,
+    private readonly updates: Updates,
+    private readonly learnings: Learnings,
+    private readonly shipping: Shipping,
+    private readonly connections: Connections,
+  ) {}
 
   schedule(): void {
     if (this.k.stopped) return;
@@ -79,6 +93,8 @@ export class Driver {
     if (!stage) return undefined;
     switch (stage.kind) {
       case "do":
+        // Petrina publishes by itself: the shipper's seat is needed only to get a pull request or release ready.
+        if (stage.roleId === "shipper" && !needsShipper(task)) return undefined;
         return { roleId: stage.roleId, profileId: stage.profileIds[0] ?? PLANNER_PROFILE };
       case "converge":
         return task.sub === 0
@@ -110,7 +126,12 @@ export class Driver {
       return found;
     };
     try {
-      await this.prepare(task());
+      // A delivery from before the update: nothing happens, not even an update from GitHub, until the coordinator chooses.
+      if (task().shipping?.carriedOver) {
+        this.shipping.askCarriedOver(task());
+        return;
+      }
+      await this.prepare(task(), signal);
       for (;;) {
         if (signal.aborted) throw new Aborted();
         const current = task();
@@ -129,24 +150,6 @@ export class Driver {
           }
           delete current.handChanges;
         }
-        // What ships is the change the coordinator approved, one commit on top of the latest main, with the checks passing on it.
-        if (stage?.roleId === "shipper" && stage.kind !== "gate" && !current.shipping && current.worktree) {
-          // Before anything moves (an approval from before patch-ids were kept goes by its commit).
-          const approved = current.approvedPatch ?? (current.approvedSha ? await this.updates.patch(current, current.approvedSha) : undefined);
-          const update = await this.updates.upToDate(current);
-          if (update === "conflict") continue;
-          const check = lastIndexWhere(current.plan!.stages, (entry, index) => index < current.stageIndex && entry.gate === "delivery");
-          if (approved && check >= 0 && (await this.updates.patch(current)) !== approved) {
-            delete current.approvedSha;
-            delete current.approvedPatch;
-            current.stageIndex = check;
-            current.sub = 0;
-            this.k.log(current, "warn", update === "moved" ? "Main moved on, and on top of it this change reads differently from what you approved, so Petrina asks you again" : "The work changed after you approved the delivery, so Petrina asks you again");
-            this.k.commit();
-            continue;
-          }
-          if (await this.checks.checksBeforeShipping(current, signal)) continue;
-        }
         // Checkpoints need no new agent, so a paused or full pool must not hold them back.
         if (stage?.kind === "gate") {
           // On the way back to the check where changes were asked, earlier design checks are not asked again.
@@ -162,7 +165,7 @@ export class Driver {
             await this.guide.writeGuide(current);
             await this.learnings.write(current);
             // What the coordinator checks is the work as it would land: one commit on top of the latest main.
-            if ((await this.updates.upToDate(current)) === "conflict") continue;
+            if ((await this.updates.upToDate(current, signal)) === "conflict") continue;
             // Right before the coordinator is asked to ship, the checks run again on what would ship.
             if (await this.checks.checksBeforeDelivery(current, signal)) continue;
             const head = await git.head(current.worktree!).catch(() => undefined);
@@ -174,6 +177,7 @@ export class Driver {
             if (this.shipsUnasked(current)) {
               if (head) current.approvedSha = head;
               if (patch) current.approvedPatch = patch;
+              current.approvedFor = { by: "task", mode: current.delivery, destination: destination(current, this.k.productOf(current)) };
               this.k.log(current, "milestone", "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
               current.stageIndex += 1;
               current.sub = 0;
@@ -203,7 +207,14 @@ export class Driver {
           continue;
         }
         if (!stage) throw new Error("The plan ended without a delivery");
-        const next = stage.kind === "do" ? await this.work.runDo(current, stage, signal) : stage.kind === "converge" ? await this.design.runConverge(current, stage, signal) : await this.reviews.runReview(current, stage, signal);
+        const next =
+          stage.kind === "do"
+            ? stage.roleId === "shipper"
+              ? await this.shipping.deliver(current, stage, signal)
+              : await this.work.runDo(current, stage, signal)
+            : stage.kind === "converge"
+              ? await this.design.runConverge(current, stage, signal)
+              : await this.reviews.runReview(current, stage, signal);
         if (next === "stop") return;
       }
     } catch (error) {
@@ -211,18 +222,27 @@ export class Driver {
       this.k.fail(taskId, error);
     } finally {
       if (this.k.drivers.get(taskId) === controller) this.k.drivers.delete(taskId);
+      // Cancelled during a publishing step: what went out is looked up and kept.
+      if (signal.aborted && !this.k.stopped) await this.shipping.settleCancelled(taskId, true);
       if (!this.k.stopped) this.schedule();
     }
   }
 
-  private async prepare(task: MTask): Promise<void> {
+  private async prepare(task: MTask, signal: AbortSignal): Promise<void> {
     const product = this.k.productOf(task);
     if (!product?.path) throw new Error(`${product?.name ?? "This product"} has no local copy`);
     const branch = task.branch ?? git.branchName(task.title, task.id);
     const worktree = task.worktree ?? join(this.k.dataDir, "worktrees", product.id, task.id);
-    const { base, skippedFetch, fetchTimedOut } = await git.ensureWorktree(product.path, worktree, branch, product.defaultBranch ?? "main");
-    if (fetchTimedOut) this.k.log(task, "warn", "GitHub did not answer in time, so this task starts from the local copy");
-    if (skippedFetch) this.k.log(task, "warn", `Did not update from GitHub: the repository's git settings include ${skippedFetch.slice(0, 3).join(", ")}, which could misuse your GitHub login. Working from the local copy.`);
+    const defaultBranch = product.defaultBranch ?? "main";
+    let base = defaultBranch;
+    // A new working copy starts from the latest main: GitHub's for GitHub deliveries, the main clone's own for local ones.
+    if (!task.worktree && task.delivery !== "local") {
+      const fetched = await this.connections.fetchDefault(task, signal);
+      // A stalled or refused fetch never holds a task: it works from the local copy.
+      if (!fetched.ok && !fetched.missing) this.k.log(task, "warn", `${fetched.timedOut ? "GitHub did not answer in time" : `Did not update from GitHub: ${this.connections.why(task, fetched)}`}, so this task starts from the local copy`);
+      if (await git.revParse(product.path, `refs/remotes/origin/${defaultBranch}`)) base = `origin/${defaultBranch}`;
+    }
+    await git.ensureWorktree(product.path, worktree, branch, base);
     if (!task.branch) this.k.log(task, "milestone", "Set up a fresh working copy");
     task.branch = branch;
     task.worktree = worktree;

@@ -5,7 +5,7 @@ import { Engine } from "../src/engine.js";
 import { EARLIER_ATTEMPT, formatWhereYouWere, WHERE_YOU_WERE } from "../src/prompts.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
-import { EngineProcess, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { EngineProcess, Fakes, git, makeProduct, makeWorld, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -163,12 +163,12 @@ describe.concurrent("a builder working when Petrina restarts", () => {
         expect(done.session.filter((entry) => entry.from === "activity" && entry.text === "Editing notes.txt")).toHaveLength(1);
         expect(done.session.filter((entry) => entry.text === "Use a friendly tone")).toHaveLength(1);
         expect(done.session.filter((entry) => entry.text === "Keep it short")).toHaveLength(1);
-        // The same rules as a fresh one: model, effort, then the safety mode; and no GitHub login.
+        // The same rules as a fresh one: model, effort, then the safety mode; and in the background.
         const rules = ["model=gpt-6.1-sol", "reasoning_effort=xhigh", "mode=agent"];
         expect(run.fakes.settings(session)).toEqual([...rules, ...rules]);
         expect(run.fakes.opens().filter((open) => open.session === session)).toEqual([
-          { session, how: "new", github: false },
-          { session, how: reopen, github: false },
+          { session, how: "new", background: true },
+          { session, how: reopen, background: true },
         ]);
       } else {
         const fresh = run.fakes.openings("builder")[1]!;
@@ -320,15 +320,26 @@ describe.concurrent("a read-only agent that committed before a restart", () => {
 });
 
 describe.concurrent("a shipper interrupted by a restart", () => {
-  it("never reopens its conversation, even on a tool that can: the shipping check comes first", async () => {
-    const run = await start({ planner: "short", builder: "plain", shipper: "deliver-then-hang", reopen: "resume" });
-    await waitFor(() => run.fakes.marked("delivered"), "the shipper to deliver");
-    expect(run.find(await run.engine.state()).conversation).toBeUndefined();
-    const engine = await run.restart(run.engine, "kill");
-    const done = await run.finished(engine);
-    expect(done.timeline.some((entry) => entry.text.startsWith("Found after a restart that it had already gone out"))).toBe(true);
-    expect(run.fakes.openings("shipper")).toHaveLength(1);
-    expect(run.fakes.opens().some((open) => open.how !== "new")).toBe(false);
+  it("never reopens its conversation, even on a tool that can: it gets the delivery ready again from the start", async () => {
+    // Local delivery needs no shipper: this product opens pull requests.
+    const w = makeWorld("pickup-shipper");
+    roots.push(w.dir);
+    const home = join(w.dir, "home");
+    const fakes = new Fakes(w.dir);
+    fakes.scenario({ planner: "short", builder: "plain", shipper: "hang", reopen: "resume" });
+    let engine = await EngineProcess.harness(home, w.dir, w.remote);
+    const productId = (await engine.act("addProduct", w.clone)) as string;
+    await engine.act("setProductDelivery", productId, "pull-request", false);
+    const taskId = (await engine.act("addTask", { productId, title: "Add a greeting" })) as string;
+    const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
+    await waitFor(() => fakes.marked("shipper-started"), "the shipper to start");
+    expect(find(await engine.state()).conversation).toBeUndefined();
+    await engine.kill();
+    engine = await EngineProcess.harness(home, w.dir, w.remote);
+    const done = find(await engine.until((state) => find(state).state === "pr-open", "the pull request", 60_000));
+    expect(w.github().prs[0]!.headRefOid).toBe(git(done.worktree!, "rev-parse", "HEAD"));
+    expect(fakes.openings("shipper")).toHaveLength(2);
+    expect(fakes.opens().some((open) => open.how !== "new")).toBe(false);
     await engine.quit();
   });
 });

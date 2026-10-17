@@ -1,212 +1,242 @@
+// Shipping is never repeated blindly, even across an ordinary quit or a forced kill: engines run as
+// separate processes, the way the desktop app starts them.
 import { afterAll, describe, expect, it } from "bun:test";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DeliveryMode, State, Task } from "@petrina/core";
-import { readCalls, readGitHub } from "./fake-gh.js";
-import type { Scenario } from "./fake-agent.js";
-import { EngineProcess, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Store } from "../src/store.js";
+import { EngineProcess, Fakes, git, makeWorld, removeDir, waitFor, type World } from "./support.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const worlds: World[] = [];
+const holds: string[] = [];
+afterAll(() => {
+  // A fake gh left holding by a killed engine lets go.
+  for (const hold of holds) rmSync(hold, { force: true });
+  for (const made of worlds) removeDir(made.dir);
+});
 
-/** A product delivering in `mode`, a task on its way to the shipper, and an engine running it. */
-async function shipping(mode: DeliveryMode, shipper: NonNullable<Scenario["shipper"]>) {
-  const root = tempDir("petrina-shipping-");
-  roots.push(root);
-  const product = makeProduct(root);
-  const home = join(root, "home");
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario({ planner: "short", builder: "plain", shipper });
-  // GitHub's copy is the bare repository the shipper pushes to.
-  fakes.github((state) => (state.origin = join(root, "origin.git")));
-  const engine = await EngineProcess.harness(home, fakes.dir);
-  const productId = (await engine.act("addProduct", product)) as string;
+/** A product delivering in `mode` without asking, a task on its way there, and an engine running it. `hold`: a gh command that waits after doing its work. */
+async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?: string } = {}) {
+  const w = makeWorld(`shipping-${mode}`);
+  worlds.push(w);
+  const home = join(w.dir, "home");
+  const fakes = new Fakes(w.dir);
+  fakes.scenario({ planner: "short", builder: "plain" });
+  const hold = join(w.dir, "hold");
+  if (options.hold) {
+    writeFileSync(hold, "");
+    holds.push(hold);
+    w.setGitHub((github) => (github.hold = { command: options.hold!, file: hold, ...(options.holdMatch ? { match: options.holdMatch } : {}) }));
+  }
+  const engine = await EngineProcess.harness(home, w.dir, w.remote);
+  const productId = (await engine.act("addProduct", w.clone)) as string;
   await engine.act("setProductDelivery", productId, mode, false);
   const taskId = (await engine.act("addTask", { productId, title: "Add a greeting" })) as string;
-  const github = () => readGitHub(join(fakes.dir, "github.json"));
-  const calls = () => readCalls(join(fakes.dir, "github.json"));
   const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
-  return { root, product, home, fakes, engine, taskId, github, calls, find, origin: join(root, "origin.git") };
+  const restart = () => EngineProcess.harness(home, w.dir, w.remote);
+  return { w, home, fakes, engine, taskId, find, hold, restart };
 }
 
 const delivered = (task: Task | undefined) => task?.state === "done" || task?.state === "pr-open";
 const shippingItem = (state: State, taskId: string) => state.inbox.find((item) => item.taskId === taskId && item.kind === "shipping");
+const creates = (w: World) => w.github().calls.filter((call) => call[1] === "create");
 
 describe.concurrent("shipping is never repeated blindly", () => {
-  for (const mode of ["pull-request", "release", "local"] as const) {
+  for (const mode of ["pull-request", "release"] as const) {
     for (const stop of ["quit", "kill"] as const) {
-      it(`${mode}: finds a delivery that went out before ${stop === "quit" ? "an ordinary quit" : "a forced kill"}, and records it`, async () => {
-        const run = await shipping(mode, "deliver-then-hang");
-        await waitFor(() => run.fakes.marked("delivered"), "the shipper to deliver");
-        // Saved before the shipper got any work.
-        const recorded = run.find(await run.engine.state()).shipping;
-        expect(recorded).toMatchObject({ attempts: 1 });
-        expect(recorded?.head).toMatch(/^[0-9a-f]{40}$/);
-        expect(recorded?.mainSha).toMatch(/^[0-9a-f]{40}$/);
+      it(`${mode}: finds what GitHub published just before ${stop === "quit" ? "an ordinary quit" : "a forced kill"}, and records it`, async () => {
+        const run = await shipping(mode, { hold: mode === "pull-request" ? "pr create" : "release create" });
+        await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to publish");
+        // Saved before the step started.
+        expect(run.find(await run.engine.state()).shipping?.step).toBe(mode === "pull-request" ? "open" : "release");
         if (stop === "quit") await run.engine.quit();
         else await run.engine.kill();
 
-        const engine = await EngineProcess.harness(run.home, run.fakes.dir);
+        const engine = await run.restart();
         const task = run.find(await engine.until((state) => delivered(run.find(state)), "the delivery to be recorded"));
-        expect(run.fakes.openings("shipper")).toHaveLength(1);
         expect(task.timeline.some((entry) => entry.text.startsWith("Found after a restart that it had already gone out"))).toBe(true);
         expect(task.shipping).toBeUndefined();
+        expect(creates(run.w)).toHaveLength(1);
+        expect(run.fakes.openings("shipper")).toHaveLength(1);
         if (mode === "pull-request") {
           expect(task.state).toBe("pr-open");
           expect(task.pr?.number).toBe(1);
-          expect(run.github().prs).toHaveLength(1);
-        } else if (mode === "release") {
-          // Published but not yet recorded when Petrina stopped: exactly one release.
-          expect(task.release?.tag).toBe("v1.0.1");
-          expect(task.release?.url).toContain("/releases/tag/v1.0.1");
-          expect(run.github().releases).toHaveLength(1);
+          expect(run.w.github().prs).toHaveLength(1);
         } else {
-          expect(task.landed?.branch).toBe("main");
-          expect(git(run.product, "rev-parse", "main")).toStartWith(task.landed!.sha);
+          expect(task.release?.tag).toBe("v0.1.0");
+          expect(run.w.github().releases).toHaveLength(1);
         }
-        if (mode !== "local") {
-          // Petrina asked GitHub about the product's own repository, from outside the working copy:
-          // an agent that rewrites the working copy's remote cannot change the answers.
-          const lookups = run.calls().filter((call) => call.args[1] !== "create");
-          expect(lookups.length).toBeGreaterThan(0);
-          for (const call of lookups) {
-            expect(call.args[0] === "api" ? call.args[1]!.split("/").slice(1, 3).join("/") : call.args[call.args.indexOf("--repo") + 1]).toBe("local/clone");
-            expect(realpathSync(call.cwd).startsWith(realpathSync(run.home))).toBe(false);
-          }
-        }
+        // Every lookup was pinned to the product's repository and ran outside any working copy and Petrina's folder.
+        for (const call of run.w.github().calls) expect(call[0] === "repo" ? call[2] : call[call.indexOf("--repo") + 1]).toBe("acme/demo");
+        for (const cwd of run.w.github().cwds ?? []) expect(realpathSync(cwd).startsWith(realpathSync(run.w.dir))).toBe(false);
+        expect(run.w.github().cwds?.length).toBe(run.w.github().calls.length);
         await engine.quit();
       });
     }
   }
 
-  it("asks the coordinator when nothing went out, and 'Ship it again' ships once", async () => {
-    const run = await shipping("pull-request", "hang");
-    await waitFor(() => run.fakes.marked("shipper-started"), "the shipper to start");
+  it("local: finds a move of main that went through but was not saved, after a forced kill", async () => {
+    const run = await shipping("local");
+    const done = run.find(await run.engine.until((state) => delivered(run.find(state)), "the local delivery"));
+    const tested = git(run.w.clone, "rev-parse", "main");
     await run.engine.kill();
+    // As if Petrina was killed right after git moved main, before it saved that.
+    const store = new Store(join(run.home, "petrina.db"));
+    const state = store.load()!;
+    const saved = state.tasks.find((task) => task.id === run.taskId) as unknown as Record<string, unknown>;
+    for (const key of ["landed", "finishedAt"]) delete saved[key];
+    Object.assign(saved, {
+      state: "waiting",
+      column: "ready",
+      shipping: { start: tested, base: run.w.initial, prepared: { tested, summary: "Ready." }, step: "update", boot: "an earlier run", moves: 0, failures: 0 },
+    });
+    store.save(state);
+    store.close();
 
-    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
-    const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");
-    const item = shippingItem(state, run.taskId)!;
-    expect(item.body).toContain("No pull request was opened for this task's branch.");
-    expect(run.find(state).state).toBe("needs-you");
-    expect(run.fakes.openings("shipper")).toHaveLength(1);
-
-    await engine.act("shipAgain", item.id);
-    const done = run.find(await engine.until((current) => delivered(run.find(current)), "the second attempt to ship"));
-    expect(done.state).toBe("pr-open");
-    const shippers = run.fakes.openings("shipper");
-    expect(shippers).toHaveLength(2);
-    expect(shippers[1]).toContain("An earlier attempt to ship this was interrupted");
-    expect(shippers[1]).toContain("No pull request was opened");
-    expect(run.github().prs).toHaveLength(1);
+    const engine = await run.restart();
+    const task = run.find(await engine.until((current) => delivered(run.find(current)), "the delivery to be recorded"));
+    expect(task.landed?.sha).toBe(done.landed!.sha);
+    expect(task.timeline.some((entry) => entry.text === `Found after a restart that it had already gone out: main has the work (${tested.slice(0, 7)})`)).toBe(true);
+    expect(git(run.w.clone, "rev-parse", "main")).toBe(tested);
+    // Local delivery needs no shipper.
+    expect(run.fakes.openings("shipper")).toHaveLength(0);
     await engine.quit();
   });
 
-  it("asks when a version change was pushed with no release, and finishes that attempt: one release, one version change", async () => {
-    const run = await shipping("release", "push-then-hang");
-    await waitFor(() => run.fakes.marked("pushed"), "the version change to be pushed");
-    await run.engine.kill();
-
-    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
-    const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");
-    const item = shippingItem(state, run.taskId)!;
-    expect(item.body).toContain("was pushed to main on GitHub, but no release containing it was published");
-    expect(run.github().releases).toHaveLength(0);
-
-    await engine.act("shipAgain", item.id);
-    const done = run.find(await engine.until((current) => delivered(run.find(current)), "the release"));
-    expect(done.release?.tag).toBe("v1.0.1");
-    expect(run.github().releases.map((release) => release.tagName)).toEqual(["v1.0.1"]);
-    expect(git(run.origin, "log", "--oneline", "main").split("\n").filter((line) => line.includes("Bump version"))).toHaveLength(1);
-    expect(run.fakes.openings("shipper")[1]).toContain("was pushed to main");
-    await engine.quit();
-  });
-
-  it("asks when GitHub cannot be reached, and 'Check again' records the delivery", async () => {
-    const run = await shipping("pull-request", "deliver-then-hang");
-    await waitFor(() => run.fakes.marked("delivered"), "the shipper to deliver");
-    await run.engine.kill();
-    run.fakes.github((state) => (state.offline = true));
-
-    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
-    const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");
-    const item = shippingItem(state, run.taskId)!;
-    expect(item.body).toContain("could not reach GitHub");
-
-    run.fakes.github((current) => (current.offline = false));
-    await engine.act("checkShipping", item.id);
-    const done = run.find(await engine.until((current) => delivered(run.find(current)), "the delivery to be recorded"));
-    expect(done.pr?.number).toBe(1);
-    expect(done.timeline.some((entry) => entry.text.startsWith("Found after a restart that it had already gone out"))).toBe(true);
-    expect(run.fakes.openings("shipper")).toHaveLength(1);
-    await engine.quit();
-  });
-
-  it("'Mark as done' finishes the task without shipping", async () => {
-    const run = await shipping("local", "hang");
-    await waitFor(() => run.fakes.marked("shipper-started"), "the shipper to start");
+  it("carries on publishing when GitHub clearly has nothing, and 'Try again' on a stuck step checks first", async () => {
+    const run = await shipping("pull-request");
+    run.w.setGitHub((github) => (github.fail = { "pr create": 1 }));
+    const stuck = await run.engine.until((state) => state.inbox.some((item) => item.taskId === run.taskId && item.kind === "stuck"), "the publishing step to get stuck");
+    expect(run.find(stuck).shipping?.step).toBe("open");
     await run.engine.quit();
 
-    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
+    const engine = await run.restart();
+    await engine.act("retry", (await engine.state()).inbox.find((item) => item.taskId === run.taskId && item.kind === "stuck")!.id);
+    const task = run.find(await engine.until((state) => delivered(run.find(state)), "the pull request"));
+    expect(task.pr?.number).toBe(1);
+    expect(task.timeline.some((entry) => entry.text === "Checked after a restart: No pull request is open for this work yet. Petrina carries on publishing.")).toBe(true);
+    expect(run.w.github().prs).toHaveLength(1);
+    expect(run.fakes.openings("shipper")).toHaveLength(1);
+    await engine.quit();
+  });
+
+  it("waits for 'Check again' while GitHub cannot be reached, and never takes that for nothing published", async () => {
+    const run = await shipping("pull-request", { hold: "pr create" });
+    await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to open the pull request");
+    await run.engine.kill();
+    run.w.setGitHub((github) => (github.offline = true));
+
+    const engine = await run.restart();
     const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");
-    expect(shippingItem(state, run.taskId)!.body).toContain("The work is not on main yet.");
+    expect(shippingItem(state, run.taskId)!.body).toContain("could not check GitHub");
+    await Bun.sleep(300);
+    expect(run.w.github().prs).toHaveLength(1);
+
+    run.w.setGitHub((github) => (github.offline = false));
+    await engine.act("checkShipping", shippingItem(state, run.taskId)!.id);
+    const done = run.find(await engine.until((current) => delivered(run.find(current)), "the delivery to be recorded"));
+    expect(done.pr?.number).toBe(1);
+    expect(run.w.github().prs).toHaveLength(1);
+    expect(creates(run.w)).toHaveLength(1);
+    await engine.quit();
+  });
+
+  it("waits while the login cannot see the repository, though GitHub says 'not found', and 'Ship it again' still publishes once", async () => {
+    const run = await shipping("release", { hold: "release create" });
+    await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to create the release");
+    await run.engine.kill();
+    run.w.setGitHub((github) => (github.hidden = true));
+
+    const engine = await run.restart();
+    const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");
+    expect(shippingItem(state, run.taskId)!.body).toContain("cannot see acme/demo");
+    expect(run.w.github().releases).toHaveLength(1);
+    expect(creates(run.w)).toHaveLength(1);
+
+    run.w.setGitHub((github) => (github.hidden = false));
+    await engine.act("shipAgain", shippingItem(state, run.taskId)!.id);
+    const done = run.find(await engine.until((current) => delivered(run.find(current)), "the release to be recorded"));
+    expect(done.release?.tag).toBe("v0.1.0");
+    expect(run.w.github().releases).toHaveLength(1);
+    expect(creates(run.w)).toHaveLength(1);
+    await engine.quit();
+  });
+
+  it("'Ship it again' gets it ready again and still opens only one pull request", async () => {
+    const run = await shipping("pull-request", { hold: "pr create" });
+    await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to open the pull request");
+    await run.engine.kill();
+    run.w.setGitHub((github) => (github.offline = true));
+
+    const engine = await run.restart();
+    const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");
+    run.w.setGitHub((github) => (github.offline = false));
+    await engine.act("shipAgain", shippingItem(state, run.taskId)!.id);
+    const done = run.find(await engine.until((current) => delivered(run.find(current)), "the pull request to be recorded"));
+    expect(done.pr?.number).toBe(1);
+    expect(run.fakes.openings("shipper")).toHaveLength(2);
+    expect(run.w.github().prs).toHaveLength(1);
+    expect(creates(run.w)).toHaveLength(1);
+    await engine.quit();
+  });
+
+  it("asks when something else is on GitHub, and 'Mark as done' finishes the task without publishing", async () => {
+    const run = await shipping("pull-request", { hold: "pr create" });
+    await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to open the pull request");
+    await run.engine.kill();
+    // Someone pushed more to the task's branch on GitHub: the pull request is no longer this work.
+    const branch = run.w.github().prs[0]!.headRefName;
+    const clone = join(run.w.dir, "teammate");
+    git(run.w.dir, "clone", "-q", "--branch", branch, run.w.remote, clone);
+    git(clone, "-c", "user.email=t@example.com", "-c", "user.name=Teammate", "commit", "-q", "--allow-empty", "-m", "More");
+    git(clone, "push", "-q", "origin", branch);
+
+    const engine = await run.restart();
+    const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");
+    expect(shippingItem(state, run.taskId)!.body).toContain("but it is not this work");
     await engine.act("markDone", shippingItem(state, run.taskId)!.id);
     const done = run.find(await engine.until((current) => run.find(current).state === "done", "the task to be done"));
     expect(done.statusLine).toBe("Marked as done by you");
-    expect(done.landed).toBeUndefined();
-    expect(run.fakes.openings("shipper")).toHaveLength(1);
+    expect(done.pr).toBeUndefined();
+    expect(creates(run.w)).toHaveLength(1);
     await engine.quit();
   });
 
-  it("'Try again' on a stuck shipping step checks first, so a release is not published twice", async () => {
-    const run = await shipping("release", "bad-tag");
-    const stuck = await run.engine.until((state) => state.inbox.some((item) => item.taskId === run.taskId && item.kind === "stuck"), "the shipping step to get stuck");
-    expect(run.github().releases).toHaveLength(1);
-    await run.engine.act("retry", stuck.inbox.find((item) => item.taskId === run.taskId && item.kind === "stuck")!.id);
-    const done = run.find(await run.engine.until((state) => delivered(run.find(state)), "the release to be recorded"));
-    expect(done.release?.tag).toBe("v1.0.1");
-    expect(done.timeline.some((entry) => entry.text.startsWith("Found that it had already gone out"))).toBe(true);
-    expect(run.fakes.openings("shipper")).toHaveLength(1);
-    expect(run.github().releases).toHaveLength(1);
-    await run.engine.quit();
-  });
-
-  it("pausing while Petrina gets ready to ship keeps the shipper from starting, and resuming ships once", async () => {
-    const run = await shipping("release", "finish");
-    // The latest-release lookup before shipping takes a while: pause the task during it.
-    run.fakes.github((state) => (state.slowLatest = 1500));
-    await waitFor(() => run.calls().some((call) => call.args[0] === "release" && call.args[1] === "view" && call.args[2] === "--json"), "Petrina to get ready to ship");
+  it("pausing while Petrina works out the version keeps the shipper from starting, and resuming ships once", async () => {
+    const run = await shipping("release", { hold: "release view", holdMatch: "tagName" });
+    await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to look up the latest release");
     await run.engine.act("pause", run.taskId);
-    await Bun.sleep(2500);
+    rmSync(run.hold, { force: true });
+    await Bun.sleep(1500);
     const paused = run.find(await run.engine.state());
     expect(paused.state).toBe("paused");
-    expect(paused.shipping).toBeUndefined();
     expect(run.fakes.openings("shipper")).toHaveLength(0);
-    expect(run.github().releases).toHaveLength(0);
+    expect(run.w.github().releases).toHaveLength(0);
 
-    run.fakes.github((state) => delete state.slowLatest);
     await run.engine.act("resume", run.taskId);
     const done = run.find(await run.engine.until((state) => delivered(run.find(state)), "the release"));
-    expect(done.release?.tag).toBe("v1.0.1");
+    expect(done.release?.tag).toBe("v0.1.0");
     expect(run.fakes.openings("shipper")).toHaveLength(1);
-    expect(run.github().releases).toHaveLength(1);
+    expect(run.w.github().releases).toHaveLength(1);
     await run.engine.quit();
   });
 
-  it("resuming a shipper paused after it published, even after Petrina is reopened, checks first", async () => {
-    const run = await shipping("release", "deliver-then-hang");
-    await waitFor(() => run.fakes.marked("delivered"), "the shipper to publish");
+  it("resuming a delivery paused while GitHub published it, even after Petrina is reopened, checks first", async () => {
+    const run = await shipping("release", { hold: "release create" });
+    await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to create the release");
     await run.engine.act("pause", run.taskId);
+    rmSync(run.hold, { force: true });
     expect(run.find(await run.engine.state()).state).toBe("paused");
     await run.engine.quit();
 
-    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
+    const engine = await run.restart();
     expect(run.find(await engine.state()).state).toBe("paused");
     await engine.act("resume", run.taskId);
     const done = run.find(await engine.until((state) => delivered(run.find(state)), "the release to be recorded"));
-    expect(done.release?.tag).toBe("v1.0.1");
+    expect(done.release?.tag).toBe("v0.1.0");
     expect(run.fakes.openings("shipper")).toHaveLength(1);
-    expect(run.github().releases).toHaveLength(1);
+    expect(run.w.github().releases).toHaveLength(1);
+    expect(creates(run.w)).toHaveLength(1);
     await engine.quit();
   });
 });

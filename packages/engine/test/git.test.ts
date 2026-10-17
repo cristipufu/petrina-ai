@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitAll, commitTree, ensureWorktree, isClean, mergeTree, moveTo, patchId, repoInfo, riskySettings } from "../src/git.js";
+import { commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { removeDir } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
@@ -59,7 +59,7 @@ describe("Petrina's own git steps", () => {
     expect((await riskySettings(repo)).sort()).toEqual(["core.alternaterefscommand", "credential.helper", "http.extraheader", "url.https://evil.example/.insteadof"]);
   });
 
-  it("never waits on a stalled fetch: it works from the local copy", async () => {
+  it("never waits on a stalled fetch", async () => {
     const origin = join(temp, "origin");
     mkdirSync(origin, { recursive: true });
     git(origin, "init", "-q", "-b", "main");
@@ -68,16 +68,162 @@ describe("Petrina's own git steps", () => {
     writeFileSync(join(origin, "a.txt"), "a\n");
     git(origin, "add", ".");
     git(origin, "commit", "-q", "-m", "init");
-    // An https remote that accepts the connection and never answers.
+    // An https address that accepts the connection and never answers.
     const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-    git(origin, "remote", "add", "origin", `https://127.0.0.1:${server.port}/acme/shop.git`);
     const started = Date.now();
-    const result = await ensureWorktree(origin, join(temp, "wt"), "petrina/x", "main", 1500);
+    const result = await fetchBranch(origin, { url: `https://127.0.0.1:${server.port}/acme/shop.git` }, "main", 1500);
     server.stop(true);
     expect(Date.now() - started).toBeLessThan(10_000);
-    expect(result.fetchTimedOut).toBe(true);
-    expect(result.base).toBe("main");
+    expect(result).toMatchObject({ ok: false, timedOut: true });
+    await ensureWorktree(origin, join(temp, "wt"), "petrina/x", "main");
     expect(existsSync(join(temp, "wt", "a.txt"))).toBe(true);
+  });
+
+  it("knows a GitHub address by its owner and name, SSH host nicknames included", () => {
+    expect(githubRepoOf("https://github.com/acme/shop.git")).toBe("acme/shop");
+    expect(githubRepoOf("git@github.com:acme/shop.git")).toBe("acme/shop");
+    expect(githubRepoOf("git@github-work:acme/shop")).toBe("acme/shop");
+    expect(githubRepoOf("ssh://git@github.com:22/acme/shop.git")).toBe("acme/shop");
+    expect(githubRepoOf("https://evil.example/acme/shop.git")).toBeUndefined();
+    expect(githubRepoOf("--upload-pack=sh:acme/shop")).toBeUndefined();
+    expect(sameRepo("git@github-work:Acme/Shop.git", "acme/shop")).toBe(true);
+    expect(sameRepo("git@github.com:evil/shop.git", "acme/shop")).toBe(false);
+  });
+
+  it("treats a remote section named after an address as unsafe", async () => {
+    const repo = join(temp, "named");
+    mkdirSync(repo, { recursive: true });
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "remote.origin.url", "git@github-work:acme/shop");
+    expect(await riskySettings(repo)).toEqual([]);
+    git(repo, "config", "remote.git@github-work:acme/shop.url", "/tmp/evil.git");
+    expect(await riskySettings(repo)).toEqual(["remote.git@github-work:acme/shop.url"]);
+  });
+
+  describe("pushes and local updates", () => {
+    const setup = (name: string) => {
+      const remote = join(temp, `${name}.git`);
+      execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+      const repo = join(temp, name);
+      mkdirSync(repo, { recursive: true });
+      git(repo, "init", "-q", "-b", "main");
+      git(repo, "config", "user.email", "test@example.com");
+      git(repo, "config", "user.name", "Test");
+      git(repo, "commit", "-q", "--allow-empty", "-m", "one");
+      const one = git(repo, "rev-parse", "HEAD");
+      git(repo, "push", "-q", remote, "main");
+      git(repo, "commit", "-q", "--allow-empty", "-m", "two");
+      const two = git(repo, "rev-parse", "HEAD");
+      return { remote, repo, one, two, at: (ref: string) => execFileSync("git", ["--git-dir", remote, "for-each-ref", "--format=%(objectname)", ref]).toString().trim() };
+    };
+
+    it("pushes main and a tag all or nothing, and refuses an existing tag", async () => {
+      const { remote, repo, one, two, at } = setup("atomic");
+      execFileSync("git", ["--git-dir", remote, "update-ref", "refs/tags/v1.0.0", one]);
+      const pushed = await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }, { sha: two, ref: "refs/tags/v1.0.0" }], true);
+      expect(pushed.ok).toBe(false);
+      expect(at("refs/heads/main")).toBe(one);
+      expect(at("refs/tags/v1.0.0")).toBe(one);
+      expect((await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }, { sha: two, ref: "refs/tags/v1.0.1" }], true)).ok).toBe(true);
+      expect(at("refs/heads/main")).toBe(two);
+      expect(at("refs/tags/v1.0.1")).toBe(two);
+    });
+
+    it("never forces: a branch that moved elsewhere on GitHub is refused, not overwritten", async () => {
+      const { remote, repo, one, two, at } = setup("forward");
+      git(repo, "commit", "-q", "--allow-empty", "-m", "elsewhere");
+      const elsewhere = git(repo, "rev-parse", "HEAD");
+      git(repo, "push", "-q", remote, "HEAD:main");
+      expect((await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }])).ok).toBe(false);
+      expect(at("refs/heads/main")).toBe(elsewhere);
+      expect((await push(repo, { url: "--receive-pack=sh", local: true }, [{ sha: one, ref: "refs/heads/x" }])).ok).toBe(false);
+      // The file transport is only for a test stand-in: without it, a folder is refused.
+      expect((await push(repo, { url: remote }, [{ sha: two, ref: "refs/heads/other" }])).ok).toBe(false);
+      expect(at("refs/heads/other")).toBe("");
+    });
+
+    it("refuses a local update when the branch moved meanwhile, checked out or not", async () => {
+      const { repo, one, two } = setup("racing");
+      // Not checked out: main must still be where Petrina saw it.
+      git(repo, "switch", "-q", "-c", "side", one);
+      git(repo, "commit", "-q", "--allow-empty", "-m", "a teammate's commit");
+      const teammate = git(repo, "rev-parse", "HEAD");
+      git(repo, "branch", "-f", "main", teammate);
+      expect((await fastForward(repo, "main", one, two, false)).ok).toBe(false);
+      expect(git(repo, "rev-parse", "main")).toBe(teammate);
+      // Checked out: refused just the same, history that is not ahead of it or not.
+      git(repo, "switch", "-q", "main");
+      expect((await fastForward(repo, "main", one, two, true)).ok).toBe(false);
+      expect(git(repo, "rev-parse", "main")).toBe(teammate);
+      git(repo, "reset", "-q", "--hard", two);
+      writeFileSync(join(repo, "greeting.txt"), "Hello\n");
+      git(repo, "add", "greeting.txt");
+      git(repo, "commit", "-q", "-m", "three");
+      const three = git(repo, "rev-parse", "HEAD");
+      // Moved forward since Petrina looked, to a commit the tested one has: still refused, files untouched.
+      git(repo, "reset", "-q", "--hard", two);
+      expect((await fastForward(repo, "main", one, three, true)).ok).toBe(false);
+      expect(git(repo, "rev-parse", "main")).toBe(two);
+      expect(existsSync(join(repo, "greeting.txt"))).toBe(false);
+      // A change in the way: the branch goes back and the change stays.
+      writeFileSync(join(repo, "greeting.txt"), "Mine\n");
+      expect((await fastForward(repo, "main", two, three, true)).ok).toBe(false);
+      expect(git(repo, "rev-parse", "main")).toBe(two);
+      expect(readFileSync(join(repo, "greeting.txt"), "utf8")).toBe("Mine\n");
+      rmSync(join(repo, "greeting.txt"));
+      expect((await fastForward(repo, "main", two, three, true)).ok).toBe(true);
+      expect(git(repo, "rev-parse", "main")).toBe(three);
+      expect(readFileSync(join(repo, "greeting.txt"), "utf8")).toBe("Hello\n");
+      expect(git(repo, "status", "--porcelain")).toBe("");
+      expect(git(repo, "rev-list", "--merges", "--count", "main")).toBe("0");
+    });
+
+    it("refuses a local update when the main copy switches branches at that moment, and stages nothing anywhere", async () => {
+      const { repo, one } = setup("switching");
+      writeFileSync(join(repo, "greeting.txt"), "Hello\n");
+      git(repo, "add", "greeting.txt");
+      git(repo, "commit", "-q", "-m", "greeting");
+      const tested = git(repo, "rev-parse", "HEAD");
+      git(repo, "reset", "-q", "--hard", one);
+      const lock = join(repo, ".git", "index.lock");
+      const untouched = () => {
+        expect(git(repo, "rev-parse", "main")).toBe(one);
+        expect(git(repo, "status", "--porcelain")).toBe("");
+        expect(existsSync(join(repo, "greeting.txt"))).toBe(false);
+      };
+      // Petrina saw main open; the coordinator switches to another branch just before the update.
+      git(repo, "switch", "-q", "-c", "feature");
+      expect(await fastForward(repo, "main", one, tested, true)).toEqual({ ok: false, error: "the main copy switched branches at that moment, so main stays where it was" });
+      untouched();
+      expect(existsSync(lock)).toBe(false);
+      // Petrina saw main not open; the copy switches to main just before: refused too.
+      git(repo, "switch", "-q", "main");
+      expect((await fastForward(repo, "main", one, tested, false)).ok).toBe(false);
+      untouched();
+      // A switch half done: the staging area and files are already another branch's, main still open.
+      git(repo, "switch", "-q", "-c", "other");
+      writeFileSync(join(repo, "other.txt"), "Other\n");
+      git(repo, "add", "other.txt");
+      git(repo, "commit", "-q", "-m", "other");
+      git(repo, "symbolic-ref", "HEAD", "refs/heads/main");
+      expect((await fastForward(repo, "main", one, tested, true)).ok).toBe(false);
+      git(repo, "symbolic-ref", "HEAD", "refs/heads/other");
+      expect(git(repo, "status", "--porcelain")).toBe("");
+      git(repo, "switch", "-q", "main");
+      untouched();
+      // Another git command holds the lock: refused, and its lock stays.
+      writeFileSync(lock, "");
+      expect(await fastForward(repo, "main", one, tested, true)).toEqual({ ok: false, error: "another git command was working in the main copy at that moment" });
+      expect(existsSync(lock)).toBe(true);
+      rmSync(lock);
+      untouched();
+      // Still on main: it goes through, and leaves no lock behind.
+      expect((await fastForward(repo, "main", one, tested, true)).ok).toBe(true);
+      expect(git(repo, "rev-parse", "main")).toBe(tested);
+      expect(readFileSync(join(repo, "greeting.txt"), "utf8")).toBe("Hello\n");
+      expect(git(repo, "status", "--porcelain")).toBe("");
+      expect(existsSync(lock)).toBe(false);
+    });
   });
 });
 

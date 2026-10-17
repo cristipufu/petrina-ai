@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { agentEnv, loginShellPath, mergePath, pathFromEnv } from "../src/env.js";
+import { agentEnv, loginShellPath, mergePath, pathFromEnv, withoutCredentials } from "../src/env.js";
 import { ADAPTERS } from "../src/tools.js";
 import { BACKGROUND } from "../src/prompts.js";
 import { join } from "node:path";
@@ -10,8 +10,13 @@ describe("agent safety", () => {
     expect(ADAPTERS.codex!.mode).toBe("agent");
   });
 
-  it("gives non-shipper agents no GitHub credentials", () => {
-    const env = agentEnv({ GH_TOKEN: "secret", GITHUB_TOKEN: "secret", SSH_AUTH_SOCK: "/tmp/agent", PATH: "/bin" }, "/tmp/empty-gh");
+  it("gives agents the coordinator's own logins, with nothing waiting for a typed answer and in the background", () => {
+    const logins = { GH_TOKEN: "token", GITHUB_TOKEN: "token", SSH_AUTH_SOCK: "/tmp/agent", AWS_PROFILE: "work", AZURE_CONFIG_DIR: "/u/.azure", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "manager", PATH: "/bin" };
+    expect(agentEnv(logins)).toEqual({ ...logins, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", BROWSER: "none", PETRINA_AGENT: "1" });
+  });
+
+  it("runs Petrina's own git steps on working copies with no login at all", () => {
+    const env = withoutCredentials({ GH_TOKEN: "secret", GITHUB_TOKEN: "secret", SSH_AUTH_SOCK: "/tmp/agent", PATH: "/bin" }, "/tmp/empty-gh");
     expect(env.GH_TOKEN).toBeUndefined();
     expect(env.GITHUB_TOKEN).toBeUndefined();
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
@@ -19,6 +24,15 @@ describe("agent safety", () => {
     expect(env.GIT_CONFIG_KEY_0).toBe("credential.helper");
     expect(env.GIT_CONFIG_VALUE_0).toBe("");
     expect(env.GIT_SSH_COMMAND).toBe("petrina-ssh-disabled");
+    expect(env.PATH).toBe("/bin");
+  });
+
+  it("drops GitHub tokens from those steps whatever the variable is called", () => {
+    const env = withoutCredentials({ NPM_REGISTRY_TOKEN: "ghp_example", OTHER_PAT: "github_pat_example", APP_TOKEN: "gho_example", NOT_A_TOKEN: "ghost_town", PATH: "/bin" }, "/tmp/empty-gh");
+    expect(env.NPM_REGISTRY_TOKEN).toBeUndefined();
+    expect(env.OTHER_PAT).toBeUndefined();
+    expect(env.APP_TOKEN).toBeUndefined();
+    expect(env.NOT_A_TOKEN).toBe("ghost_town");
     expect(env.PATH).toBe("/bin");
   });
 });

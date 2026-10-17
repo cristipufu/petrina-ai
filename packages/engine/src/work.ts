@@ -1,20 +1,20 @@
 // "do" stages: one role on one profile. The builder answers findings and brings work up to date, and Petrina
-// keeps its work as one commit; the shipper delivers, the tester checks acceptance, any other role hands back notes.
+// keeps its work as one commit; the tester checks acceptance, and any other role hands back notes. The
+// shipper's stage is Petrina's own delivery (shipping.ts).
 
 import type { Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
-import { BuildResult, NotesResult, ShipResult, stepBack, TestResult } from "./roles.js";
+import { BuildResult, NotesResult, stepBack, TestResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { GuideKeeper } from "./guide-keeper.js";
-import type { Shipping } from "./shipping.js";
 import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
 
 export class Work {
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly shipping: Shipping, private readonly updates: Updates, private readonly learnings: Learnings) {}
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly updates: Updates, private readonly learnings: Learnings) {}
 
   async runDo(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const roleId = stage.roleId;
@@ -67,13 +67,6 @@ export class Work {
         task.fixing = false;
       }
       if (!updating) this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, profileId);
-    } else if (roleId === "shipper") {
-      // Shipping is never repeated blindly: after an interruption, look for the delivery first.
-      if (task.shipping && !task.shipping.again) return this.shipping.checkDelivery(task, signal);
-      await this.shipping.startShipping(task, signal);
-      const result = await this.turns.turn(task, roleId, profileId, sections, ShipResult, signal);
-      await this.shipping.verifyDelivery(task, result);
-      return "stop";
     } else if (roleId === "tester") {
       const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal);
       this.learnings.note(task, result.learnings, roleId, profileId);

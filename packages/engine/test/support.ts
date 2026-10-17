@@ -1,14 +1,22 @@
-// Shared by the tests that run engines as separate processes.
+// Shared by the tests: engines run as separate processes, and the delivery tests' world, a product
+// with a folder standing in for GitHub, a fake gh and a scripted shipper. Petrina gets the
+// stand-ins only through the Engine's constructor.
 import { setDefaultTimeout } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { State, Task } from "@petrina/core";
+import type { InboxKind, State, Task } from "@petrina/core";
+import { Engine } from "../src/engine.js";
 import { readConnection } from "../src/instance.js";
 import type { ShellMessage } from "../src/launch.js";
-import type { Scenario } from "./fake-agent.js";
-import type { FakeGitHub } from "./fake-gh.js";
+import { Store } from "../src/store.js";
+import type { Scenario, ShipperScript } from "./fake-agent.js";
+import { readGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
+
+// The tests stand in for the coordinator's own setup: git settings an environment adds (when Petrina runs
+// the tests as a product's check, say) would stop the tests' own pushes, so they do not apply.
+for (const key of Object.keys(process.env)) if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(key)) delete process.env[key];
 
 /**
  * How much longer the time limits are on this machine. A Windows runner takes several times longer to start
@@ -113,9 +121,9 @@ export class EngineProcess {
     return new EngineProcess(proc, JSON.parse(line) as ShellMessage, home);
   }
 
-  /** The engine on fake agents, with its fake dir. */
-  static harness(home: string, dir: string): Promise<EngineProcess> {
-    return EngineProcess.start(home, [HARNESS, home, dir]);
+  /** The engine on fake agents, with its fake dir, and the folder standing in for GitHub when there is one. */
+  static harness(home: string, dir: string, remote?: string): Promise<EngineProcess> {
+    return EngineProcess.start(home, [HARNESS, home, dir, ...(remote ? [remote] : [])]);
   }
 
   async act(name: string, ...args: unknown[]): Promise<unknown> {
@@ -183,9 +191,9 @@ export class Fakes {
 
   github(change: (state: FakeGitHub) => void): void {
     const path = join(this.dir, "github.json");
-    const state = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { prs: [], releases: [] };
+    const state = readGitHub(path);
     change(state);
-    writeFileSync(path, JSON.stringify(state));
+    writeGitHub(path, state);
   }
 
   marked(name: string): boolean {
@@ -202,8 +210,8 @@ export class Fakes {
     return this.lines<{ role: string; session: string; text: string }>("prompts.jsonl").filter((entry) => !role || entry.role === role);
   }
 
-  /** How each conversation was opened, and whether its agent had the coordinator's GitHub login. */
-  opens(): { session: string; how: "new" | "resume" | "load"; github: boolean }[] {
+  /** How each conversation was opened, and whether its agent ran in the agents' environment. */
+  opens(): { session: string; how: "new" | "resume" | "load"; background: boolean }[] {
     return this.lines("opens.jsonl");
   }
 
@@ -231,5 +239,131 @@ export class Fakes {
   /** The opening prompt of each agent of a role (the ones that say who they are). */
   openings(role: string): string[] {
     return this.prompts(role).filter((text) => /You are the [A-Za-z ]+ in Petrina/.test(text));
+  }
+}
+
+// ── The delivery tests' world ──────────────────────────────────────────
+
+export const FAKE_AGENT = join(import.meta.dir, "fake-agent.ts");
+export const FAKE_GH = join(import.meta.dir, "fake-gh.ts");
+export const REPO = "acme/demo";
+export const ADDRESS = "https://github.com/acme/demo.git";
+
+/** A ref on the stand-in GitHub, or undefined. */
+export const remoteRef = (remote: string, ref: string): string | undefined => {
+  try {
+    return execFileSync("git", ["--git-dir", remote, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).toString().trim() || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export interface World {
+  dir: string;
+  /** The coordinator's clone of the product. */
+  clone: string;
+  /** The folder standing in for GitHub's copy. */
+  remote: string;
+  data: string;
+  /** main on the stand-in GitHub when the world was made. */
+  initial: string;
+  start(): Engine;
+  github(): FakeGitHub;
+  setGitHub(change: (state: FakeGitHub) => void): void;
+  script(): ShipperScript;
+  setScript(change: (script: ShipperScript) => void): void;
+  /** Change the state Petrina saved, between runs. */
+  editSaved(change: (state: State) => void): void;
+}
+
+/** A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and a scripted shipper. */
+export function makeWorld(name: string, options: { version?: string; address?: string } = {}): World {
+  const dir = mkdtempSync(join(tmpdir(), `petrina-${name}-`));
+  const remote = join(dir, "github.git");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+  const clone = join(dir, "clone");
+  mkdirSync(clone);
+  git(clone, "init", "-q", "-b", "main");
+  git(clone, "config", "user.email", "test@example.com");
+  git(clone, "config", "user.name", "Test");
+  writeFileSync(join(clone, "README.md"), "# Demo\n");
+  if (options.version) writeFileSync(join(clone, "package.json"), `${JSON.stringify({ name: "demo", version: options.version }, null, 2)}\n`);
+  git(clone, "add", ".");
+  git(clone, "commit", "-q", "-m", "init");
+  git(clone, "remote", "add", "origin", options.address ?? ADDRESS);
+  git(clone, "push", "-q", remote, "main");
+  const ghState = join(dir, "github.json");
+  writeGitHub(ghState, { repo: REPO, prs: [], releases: [], calls: [] });
+  const scriptPath = join(dir, "shipper.json");
+  writeFileSync(scriptPath, "{}");
+  const data = join(dir, "data");
+  return {
+    dir,
+    clone,
+    remote,
+    data,
+    initial: git(clone, "rev-parse", "HEAD"),
+    start: () => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote }),
+    github: () => readGitHub(ghState),
+    setGitHub: (change) => {
+      const state = readGitHub(ghState);
+      change(state);
+      writeGitHub(ghState, state);
+    },
+    script: () => JSON.parse(readFileSync(scriptPath, "utf8")) as ShipperScript,
+    setScript: (change) => {
+      const script = JSON.parse(readFileSync(scriptPath, "utf8")) as ShipperScript;
+      change(script);
+      writeFileSync(scriptPath, JSON.stringify(script, null, 2));
+    },
+    editSaved: (change) => {
+      const store = new Store(join(data, "petrina.db"));
+      const state = store.load()!;
+      change(state);
+      store.save(state);
+      store.close();
+    },
+  };
+}
+
+export const taskOf = (state: State, taskId: string): Task => state.tasks.find((task) => task.id === taskId)!;
+export const itemOf = (state: State, taskId: string, kind: InboxKind) => state.inbox.find((item) => item.taskId === taskId && item.kind === kind);
+
+/** Wait for a condition on the engine's state, answering the inbox along the way. */
+export async function until(engine: Engine, done: (state: State) => boolean, respond: (engine: Engine, state: State) => void = coordinator(), ms = 60_000): Promise<State> {
+  const started = Date.now();
+  for (;;) {
+    const state = engine.getState();
+    if (done(state)) return state;
+    if (Date.now() - started > ms * SLOW) throw new Error(`Timed out. Tasks: ${JSON.stringify(state.tasks.map((task) => [task.state, task.statusLine, task.error]))} Inbox: ${JSON.stringify(state.inbox.map((item) => [item.kind, item.title]))}`);
+    respond(engine, state);
+    await Bun.sleep(40);
+  }
+}
+
+/** A coordinator who answers questions with the first option, allows permissions and approves the checkpoints listed. */
+export function coordinator(approve: readonly InboxKind[] = ["plan", "design", "delivery"]): (engine: Engine, state: State) => void {
+  return (engine, state) => {
+    for (const item of state.inbox) {
+      if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
+      else if (item.kind === "permission") engine.allow(item.id, "once");
+      else if (approve.includes(item.kind)) engine.approve(item.id);
+    }
+  };
+}
+
+const settled = ["pr-open", "done", "failed", "cancelled"];
+
+/** Run a task until it is delivered, stuck or cancelled. */
+export function finish(engine: Engine, taskId: string, respond = coordinator()): Promise<State> {
+  return until(engine, (state) => settled.includes(taskOf(state, taskId).state), respond);
+}
+
+/** Wait until a file exists (the fake gh writes one when it starts holding). */
+export async function waitForFile(path: string, ms = 60_000): Promise<void> {
+  const started = Date.now();
+  while (!existsSync(path)) {
+    if (Date.now() - started > ms * SLOW) throw new Error(`Timed out waiting for ${path}`);
+    await Bun.sleep(30);
   }
 }

@@ -74,6 +74,9 @@ Check what you build without windows:
 - Native Mac app screens (SwiftUI, AppKit): render views offscreen to images in snapshot tests, never by launching the app.
 If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.`;
 
+/** Agents act with the coordinator's own logins: to read and investigate, never to publish. */
+export const LOGINS = `You act with the coordinator's own logins on this computer: GitHub (gh and git), SSH, AWS, Azure and Azure DevOps. Use them to read and investigate freely: code and repositories, private dependencies, pull requests, reviews and CI logs. Never push, open, merge, close or comment on pull requests, create tags or releases, or change anything else on GitHub: Petrina publishes the work itself after the coordinator approves it. Do not publish, merge or change shared resources anywhere else either (cloud accounts, Azure DevOps, registries), unless the task asks for it.`;
+
 export function buildPrompt(ctx: PromptContext): string {
   const { task, product, role, worktree, branch } = ctx;
   const contract = contractFor(role);
@@ -84,6 +87,8 @@ The coordinator who reads your work is a product person, not a developer: everyt
 Your working copy is ${worktree}, on branch ${branch}. Stay inside it.
 
 ${BACKGROUND}
+
+${LOGINS}
 
 # The task: ${task.title}
 ${task.description || "(no further description)"}
@@ -117,7 +122,7 @@ ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
 
 export function repairPrompt(error: string): string {
   return `Your result block could not be used: ${error}
-Reply with only the corrected \`\`\`petrina block, nothing else.`;
+If that asks you to fix something in the working copy, fix it first. Then reply with only the corrected \`\`\`petrina block, nothing else.`;
 }
 
 export function formatObjections(objections: readonly Objection[]): string {

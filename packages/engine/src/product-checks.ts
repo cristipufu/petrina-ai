@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
 import { checksFingerprint, detectChecks, runChecks, commandText } from "./checks.js";
-import { agentEnv } from "./env.js";
+import { withoutCredentials } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
@@ -83,7 +83,7 @@ export class ProductChecks {
     this.k.commit();
     // Checks and hooks are the repository's own code: whatever they commit or change, the work stays as it was.
     const before = await git.head(task.worktree);
-    const env = { ...agentEnv(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
+    const env = { ...withoutCredentials(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
     let results: CheckRun[];
     try {
       const ran = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal);
@@ -146,6 +146,7 @@ export class ProductChecks {
     if (check < 0) throw new Error("The product's checks fail on the work about to ship");
     delete task.approvedSha;
     delete task.approvedPatch;
+    delete task.approvedFor;
     task.stageIndex = check;
     task.sub = 0;
     this.k.log(task, "warn", "The checks fail on what was about to ship, so Petrina asks you again");
@@ -154,7 +155,7 @@ export class ProductChecks {
   }
 
   /** Whether the checks (and the repository's commit hooks) fail on the code the task has now, running them unless they already passed on it. */
-  private async failing(task: MTask, signal: AbortSignal): Promise<boolean> {
+  async failing(task: MTask, signal: AbortSignal): Promise<boolean> {
     if (!task.worktree) return false;
     if ((await this.ranOn(task)) && task.checks!.results.every((run) => run.ok)) return false;
     return (await this.runProductChecks(task, this.k.productOf(task)?.checks ?? [], signal)) > 0;

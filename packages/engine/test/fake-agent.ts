@@ -4,9 +4,9 @@
 // bun fake-agent.ts [dir]: with a dir (the restart tests), it records every prompt it gets in
 // dir/prompts.jsonl, keeps its conversations in dir/conversations so the next engine can reopen
 // them, notes how each was opened in dir/opens.jsonl and every setting it was given in
-// dir/config.jsonl, follows dir/scenario.json, drops marker files there at the moments a test
-// waits for, and uses the fake GitHub in dir/github.json.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// dir/config.jsonl, follows dir/scenario.json, and drops marker files there at the moments a test
+// waits for. With "--script=<file>", the shipper follows the ShipperScript in that file.
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -39,8 +39,8 @@ export interface Scenario {
   verifier?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
   tester?: "work";
-  /** How the shipper behaves until the engine tells it an earlier attempt was interrupted. */
-  shipper?: "finish" | "hang" | "deliver-then-hang" | "push-then-hang" | "bad-tag";
+  /** "hang": the first shipper works until cancelled. Later ones get it ready as usual. */
+  shipper?: "hang";
   /**
    * How it reopens a conversation: "resume" (it offers load too), "load" (it replays the conversation
    * first), or "stall" (it offers resume and never answers). Unset: it cannot reopen conversations.
@@ -77,8 +77,9 @@ interface Conversation {
 
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
 // "[no-check]" leaves the design check out of the plan, "[screens]" puts Screens between the design and
-// its check, and "[two-checks]" adds Screens and a second design check after the first. With "--hold=<file>",
-// the architect stops halfway through following a call for as long as that file exists.
+// its check, and "[two-checks]" adds Screens and a second design check after the first. "[quick]" plans just a
+// build and one review. With "--hold=<file>", the architect stops halfway through following a call for as long
+// as that file exists.
 const dir = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
@@ -93,8 +94,8 @@ const marked = (name: string) => !!dir && existsSync(join(dir, name));
  * the silence on to the fresh agent that starts next.
  */
 const silent = process.argv.includes("--silent");
-const run =(cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
-const gh = (cwd: string, ...args: string[]) => execFileSync(process.execPath, [join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json"), ...args], { cwd }).toString().trim();
+/** The agent's own git: none of the programs a security test plants. */
+const run = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
 type Reply = { text: string; stop?: "cancelled" };
 
@@ -118,8 +119,8 @@ function reopen(sessionId: string, how: "resume" | "load"): Conversation {
 }
 
 function opened(sessionId: string, how: "new" | "resume" | "load"): void {
-  // Whether this agent got the coordinator's GitHub login (only a shipper delivering to GitHub does).
-  if (dir) appendFileSync(join(dir, "opens.jsonl"), `${JSON.stringify({ session: sessionId, how, github: process.env.GIT_SSH_COMMAND !== "petrina-ssh-disabled" })}\n`);
+  // Whether this agent runs in the agents' environment: the coordinator's logins, in the background.
+  if (dir) appendFileSync(join(dir, "opens.jsonl"), `${JSON.stringify({ session: sessionId, how, background: process.env.PETRINA_AGENT === "1" && process.env.BROWSER === "none" })}\n`);
 }
 
 /** Send an update and keep it in the conversation's history. */
@@ -172,6 +173,134 @@ const check = { kind: "gate", title: "Your design check", roleId: "architect", g
 const screens = { kind: "do", title: "Screens", roleId: "ux-designer", profileIds: ["opus-high"] };
 const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
 const hold = process.argv.find((arg) => arg.startsWith("--hold="))?.slice("--hold=".length);
+const scriptPath = process.argv.find((arg) => arg.startsWith("--script="))?.slice("--script=".length);
+
+/** What the shipper (and, for a submodule, the builder) does, read before every run and counted down as it goes. */
+export interface ShipperScript {
+  /** Hand back "failed" the next N times. */
+  fail?: number;
+  /** Leave a file behind the next N times, so Petrina sends the handoff back. */
+  leftover?: number;
+  /** Once: commit a file for a pull request, which needs only its text. */
+  commit?: boolean;
+  /** Right after getting it ready, move the default branch in this git folder the next N times, like a teammate. */
+  moveMain?: { times: number; gitDir: string };
+  /** Right after getting it ready, once: a teammate publishes this release (main moves, the tag and release appear). */
+  releaseMeanwhile?: { gitDir: string; ghState: string; tag: string };
+  /** Once: get it ready on a side branch, or on no branch, and hand that back; the task branch stays behind until Petrina sends it back. */
+  offBranch?: "side" | "detached";
+  /** Version files left out of the version change until Petrina sends the handoff back. */
+  forgetVersionIn?: string[];
+  /** What Petrina said when it last sent a handoff back. */
+  sentBack?: string;
+  /** For the task with this title, the shipper waits while `file` exists (`file`.reached once waiting). */
+  hold?: { title: string; file: string };
+  /** The builder points this submodule at this commit, in its work. */
+  gitlink?: { path: string; sha: string };
+  title?: string;
+  body?: string;
+  notes?: string;
+  /** Write the logins the shipper could see here. */
+  envOut?: string;
+  /** How many times a shipper started. */
+  runs?: number;
+}
+
+const readScript = (): ShipperScript => (scriptPath && existsSync(scriptPath) ? (JSON.parse(readFileSync(scriptPath, "utf8")) as ShipperScript) : {});
+
+/** A teammate's empty commit on main: main moves, its files stay the same. */
+function teammate(gitDir: string): string {
+  const env = { ...process.env, GIT_AUTHOR_NAME: "Teammate", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "Teammate", GIT_COMMITTER_EMAIL: "t@example.com" };
+  const moved = execFileSync("git", ["--git-dir", gitDir, "commit-tree", "main^{tree}", "-p", "main", "-m", "A teammate's change"], { env }).toString().trim();
+  execFileSync("git", ["--git-dir", gitDir, "update-ref", "refs/heads/main", moved]);
+  return moved;
+}
+
+/** The last handoff in this conversation, handed back again after cleaning up. */
+const last: { branch?: string; extra?: Record<string, string> } = {};
+
+/** Set the version in the project's JSON version files, but not in `except`. True when one changed. */
+function setVersion(cwd: string, version: string, except: readonly string[] = []): boolean {
+  let changed = false;
+  for (const file of run(cwd, "ls-files").split("\n")) {
+    // Like the instructions say: not in dependencies or test fixtures.
+    if (!/(^|\/)(package|tauri\.conf)\.json$/.test(file) || /(^|\/)(node_modules|fixtures)\//.test(file) || except.includes(file)) continue;
+    const json = JSON.parse(readFileSync(join(cwd, file), "utf8"));
+    if (typeof json.version !== "string" || json.version === version) continue;
+    writeFileSync(join(cwd, file), `${JSON.stringify({ ...json, version }, null, 2)}\n`);
+    changed = true;
+  }
+  return changed;
+}
+
+/** The shipper gets the delivery ready: the text, and for a release the version commit. Petrina publishes. */
+function shipper(cwd: string, text: string): string {
+  const script = readScript();
+  const save = () => scriptPath && writeFileSync(scriptPath, JSON.stringify(script, null, 2));
+  if (text.includes("Your result block could not be used")) {
+    script.sentBack = text;
+    save();
+    // Sent back: back on the task branch, clean up what was left behind, finish the version change, and hand back again.
+    if (last.branch && run(cwd, "rev-parse", "--abbrev-ref", "HEAD") !== last.branch) {
+      const prepared = run(cwd, "rev-parse", "HEAD");
+      run(cwd, "switch", "--quiet", last.branch);
+      run(cwd, "merge", "--quiet", "--ff-only", prepared);
+    }
+    const reset = /git reset --hard ([0-9a-f]{40})/.exec(text)?.[1];
+    if (reset) run(cwd, "reset", "--quiet", "--hard", reset);
+    rmSync(join(cwd, "test-output.log"), { force: true });
+    const version = last.extra?.version;
+    if (version && setVersion(cwd, version)) run(cwd, "commit", "--quiet", "--amend", "--no-edit", "-a");
+    return block({ status: "ready", summary: "Cleaned up.", ...(version ? { tested: run(cwd, "rev-parse", "HEAD") } : {}), ...last.extra });
+  }
+  script.runs = (script.runs ?? 0) + 1;
+  if (script.envOut) {
+    let helper = "(none)";
+    try {
+      helper = execFileSync("git", ["config", "--get-all", "credential.helper"], { cwd }).toString();
+    } catch {}
+    const names = ["GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "AWS_PROFILE", "GH_CONFIG_DIR", "GIT_SSH_COMMAND", "GIT_TERMINAL_PROMPT", "GH_PROMPT_DISABLED", "BROWSER", "PETRINA_AGENT"];
+    writeFileSync(script.envOut, JSON.stringify({ ...Object.fromEntries(names.map((name) => [name, process.env[name]])), helper }));
+  }
+  const version = /Set the version to (\d+\.\d+\.\d+) in the product's main version files/.exec(text)?.[1];
+  last.branch = run(cwd, "symbolic-ref", "--short", "HEAD");
+  if (script.offBranch) {
+    run(cwd, "switch", "--quiet", ...(script.offBranch === "side" ? ["-c", "getting-ready"] : ["--detach"]));
+    delete script.offBranch;
+  }
+  if (script.fail) {
+    script.fail -= 1;
+    save();
+    return block({ status: "failed", summary: "The release notes could not be written." });
+  }
+  if (version && setVersion(cwd, version, script.forgetVersionIn)) run(cwd, "commit", "--quiet", "-am", `Version ${version}`);
+  if (script.moveMain?.times) {
+    script.moveMain.times -= 1;
+    teammate(script.moveMain.gitDir);
+  }
+  if (script.releaseMeanwhile) {
+    const { gitDir, ghState, tag } = script.releaseMeanwhile;
+    delete script.releaseMeanwhile;
+    const moved = teammate(gitDir);
+    execFileSync("git", ["--git-dir", gitDir, "update-ref", `refs/tags/${tag}`, moved]);
+    const github = JSON.parse(readFileSync(ghState, "utf8"));
+    github.releases.push({ tagName: tag, url: `https://github.com/${github.repo}/releases/tag/${tag}`, publishedAt: new Date().toISOString(), isDraft: false, name: tag, body: "A teammate's release." });
+    writeFileSync(ghState, JSON.stringify(github, null, 2));
+  }
+  if (script.leftover) {
+    script.leftover -= 1;
+    writeFileSync(join(cwd, "test-output.log"), "12 passed\n");
+  }
+  if (script.commit && !version) {
+    delete script.commit;
+    writeFileSync(join(cwd, "extra.txt"), "Not for a pull request\n");
+    run(cwd, "add", "extra.txt");
+    run(cwd, "commit", "--quiet", "-m", "Something extra");
+  }
+  save();
+  last.extra = version ? { version, notes: script.notes ?? "People see a greeting." } : { title: script.title ?? "Add a greeting", body: script.body ?? "People see a greeting." };
+  return block({ status: "ready", summary: "Got it ready.", ...(version ? { tested: run(cwd, "rev-parse", "HEAD") } : {}), ...last.extra });
+}
 
 async function answer(sessionId: string, text: string, client: acp.AgentContext): Promise<Reply> {
   const session = sessions.get(sessionId)!;
@@ -217,6 +346,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "opus-xhigh", "sol-high"], maxRounds: 2 },
         ],
       });
+      if (text.includes("[quick]"))
+        return done({
+          rationale: "A small change: build it, one reviewer.",
+          ...riskOf(plan),
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 2 },
+          ],
+        });
       if (plan.planner === "short")
         return done({
           rationale: "A small change: build it, one reviewer.",
@@ -318,6 +456,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       writeFileSync(join(session.cwd, "greeting.txt"), allowed ? "Hello (with left-pad)\n" : "Hello\n");
       if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "welcome.txt"), "Hello\n");
       if (plan.leak && !text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "greeting.txt"), "Hello from internal-db-07\n");
+      // The work points a submodule at a commit only this computer has.
+      const gitlink = readScript().gitlink;
+      if (gitlink && run(session.cwd, "rev-parse", `HEAD:${gitlink.path}`) !== gitlink.sha) {
+        run(session.cwd, "update-index", "--cacheinfo", `160000,${gitlink.sha},${gitlink.path}`);
+        run(session.cwd, "add", "greeting.txt");
+        run(session.cwd, "commit", "--quiet", "-m", "Bring the submodule up to date");
+      }
       return done({ ...(plan.title ? { title: plan.title } : {}), summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
     }
     case "code reviewer":
@@ -370,43 +515,19 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return hang(sessionId, "tester-working");
       }
       return done({ summary: "Tried it: it works.", checks: [] });
-    case "shipper":
-      return ship(sessionId, session.cwd, text, plan.shipper ?? "finish");
+    case "shipper": {
+      if (plan.shipper === "hang" && !marked("shipper-started")) return hang(sessionId, "shipper-started");
+      await say("Writing what goes out with it");
+      const script = readScript();
+      if (script.hold && text.includes(script.hold.title) && existsSync(script.hold.file)) {
+        writeFileSync(`${script.hold.file}.reached`, "");
+        while (existsSync(script.hold.file)) await Bun.sleep(30);
+      }
+      return { text: shipper(session.cwd, text) };
+    }
     default:
       return done({ summary: "Nothing to do.", notes: [] });
   }
-}
-
-async function ship(sessionId: string, cwd: string, text: string, plan: NonNullable<Scenario["shipper"]>): Promise<Reply> {
-  const again = text.includes("An earlier attempt to ship this was interrupted");
-  const first = !again;
-  if (plan === "hang" && first) return hang(sessionId, "shipper-started");
-  const root = dirname(run(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"));
-  const branch = run(cwd, "rev-parse", "--abbrev-ref", "HEAD");
-  const finish = (value: Record<string, unknown>): Promise<Reply> | Reply => (plan === "deliver-then-hang" && first ? hang(sessionId, "delivered") : { text: block({ summary: "Delivered.", ...value }) });
-
-  if (text.includes("Deliver it as a pull request")) {
-    run(cwd, "push", "--quiet", "origin", branch);
-    const url = gh(cwd, "pr", "create", "--head", branch, "--title", "A greeting");
-    return finish({ prNumber: Number(url.split("/").at(-1)), prUrl: url });
-  }
-  if (text.includes("Deliver it as a release")) {
-    // The interrupted attempt already pushed its version change: finish that one, no new version.
-    if (!(again && text.includes("was pushed to main"))) {
-      const [major, minor, patch] = readFileSync(join(cwd, "VERSION"), "utf8").trim().split(".").map(Number);
-      writeFileSync(join(cwd, "VERSION"), `${major}.${minor}.${patch! + 1}\n`);
-      run(cwd, "commit", "--quiet", "-am", "Bump version");
-      run(cwd, "push", "--quiet", "origin", "HEAD:main");
-    }
-    if (plan === "push-then-hang" && first) return hang(sessionId, "pushed");
-    const tag = `v${readFileSync(join(cwd, "VERSION"), "utf8").trim()}`;
-    run(cwd, "tag", tag);
-    run(cwd, "push", "--quiet", "origin", tag);
-    gh(cwd, "release", "create", tag, "--target", "main", "--notes", "A greeting");
-    return finish({ tag: plan === "bad-tag" ? "v9.9.9" : tag });
-  }
-  run(root, "merge", "--quiet", "--ff-only", branch);
-  return finish({ sha: run(root, "rev-parse", "HEAD") });
 }
 
 acp

@@ -5,10 +5,14 @@
 
 import { lastIndexWhere } from "@petrina/core";
 import * as git from "./git.js";
+import type { Connections } from "./connection.js";
 import type { Kernel, MTask } from "./kernel.js";
 
 export class Updates {
-  constructor(private readonly k: Kernel) {}
+  constructor(
+    private readonly k: Kernel,
+    private readonly connections: Connections,
+  ) {}
 
   /** The task's one commit message: the builder's title in the repository's style, what changed for users, who built it. */
   message(task: MTask): string {
@@ -37,12 +41,13 @@ export class Updates {
    * The task's work as one commit on top of the latest main. "current": it already was. "moved": Petrina put
    * it on top, and says so. "conflict": main's changes and this one overlap, so the task is back on its
    * builder step, with the working copy on main and the change applied, conflict markers and all.
+   * `fresh`: right before shipping, where only main freshly fetched from GitHub counts for a GitHub delivery.
    */
-  async upToDate(task: MTask): Promise<"current" | "moved" | "conflict"> {
+  async upToDate(task: MTask, signal: AbortSignal, fresh = false): Promise<"current" | "moved" | "conflict"> {
     const worktree = task.worktree;
     if (!worktree) return "current";
     await this.fold(task);
-    const latest = await this.latestMain(task);
+    const latest = await this.latestMain(task, signal, fresh);
     if (!latest) return "current";
     const fork = await git.mergeBase(worktree, "HEAD", latest.sha);
     if (!fork) throw new Error(`The work and ${latest.ref} share no history, so Petrina could not bring the work up to date`);
@@ -67,6 +72,7 @@ export class Updates {
     // The builder ports the change by hand: whatever was approved before, the coordinator checks it again.
     delete task.approvedSha;
     delete task.approvedPatch;
+    delete task.approvedFor;
     task.baseSha = latest.sha;
     task.base = latest.ref;
     task.stageIndex = builder;
@@ -90,19 +96,24 @@ export class Updates {
     await git.openOn(task.worktree, updating.onto, merged.tree);
   }
 
-  /** Where the work lands, as of now: the local default branch for "Commit to main", else the default branch on GitHub, fetched now. */
-  private async latestMain(task: MTask): Promise<{ ref: string; sha: string } | undefined> {
+  /**
+   * Where the work lands, as of now: the local default branch for "Commit to main", with no network; else the
+   * default branch on GitHub, fetched now from the product's saved address. A fetch that did not happen falls
+   * back to the last copy fetched, except right before shipping (`fresh`): an old copy is never published on.
+   */
+  private async latestMain(task: MTask, signal: AbortSignal, fresh: boolean): Promise<{ ref: string; sha: string } | undefined> {
     const product = this.k.productOf(task);
     if (!product?.path) return undefined;
     const branch = product.defaultBranch ?? "main";
-    let ref = branch;
     if (task.delivery !== "local") {
-      const fetched = await git.fetchBase(product.path, branch);
-      if (fetched.fetchTimedOut) this.k.log(task, "warn", "GitHub did not answer in time, so Petrina compared the work with the local copy of main");
-      if (fetched.skippedFetch) this.k.log(task, "warn", `Did not update from GitHub: the repository's git settings include ${fetched.skippedFetch.slice(0, 3).join(", ")}, which could misuse your GitHub login. Compared with the local copy of main.`);
-      ref = fetched.base;
+      const fetched = await this.connections.fetchDefault(task, signal);
+      if (fetched.ok) return { ref: `origin/${branch}`, sha: fetched.sha };
+      if (fresh && !fetched.missing) throw new Error(`Petrina could not get the latest ${branch} from GitHub (${this.connections.why(task, fetched)}), so it published nothing. Retry when that is sorted.`);
+      if (!fetched.missing) this.k.log(task, "warn", `${fetched.timedOut ? "GitHub did not answer in time" : `Did not update from GitHub: ${this.connections.why(task, fetched)}`}, so Petrina compared the work with the local copy of ${branch}`);
+      const remote = await git.revParse(product.path, `refs/remotes/origin/${branch}`);
+      if (remote) return { ref: `origin/${branch}`, sha: remote };
     }
-    const sha = await git.revParse(product.path, ref === branch ? `refs/heads/${branch}` : ref);
-    return sha ? { ref, sha } : undefined;
+    const sha = await git.revParse(product.path, `refs/heads/${branch}`);
+    return sha ? { ref: branch, sha } : undefined;
   }
 }

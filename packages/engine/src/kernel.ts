@@ -36,6 +36,8 @@ export interface EngineOptions {
   agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
   /** Tests: a fake GitHub instead of `gh`. */
   gh?: readonly string[];
+  /** Tests: a folder standing in for every product's copy on GitHub. Never from settings or saved data. */
+  remote?: string;
   /** Tests: how long a tool gets to reopen a conversation. */
   reopenTimeoutMs?: number;
   /** Tests: how long a tool gets to start a fresh conversation. */

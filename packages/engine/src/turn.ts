@@ -71,7 +71,7 @@ export class Turns {
     this.k.commitNow();
 
     const live = () => this.k.task(taskId);
-    const env = await this.envFor(task, roleId);
+    const env = this.envFor();
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
@@ -229,7 +229,7 @@ export class Turns {
     const run = await AgentRun.start({
       profile,
       ...(command ? { command } : {}),
-      env: await this.envFor(task, roleId),
+      env: this.envFor(),
       cwd: copy,
       signal,
       ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
@@ -308,11 +308,12 @@ export class Turns {
     }
   }
 
-  /** What an agent runs with. GitHub credentials only for a shipper that publishes to GitHub; local delivery needs none. */
-  private async envFor(task: MTask, roleId: Id): Promise<NodeJS.ProcessEnv> {
-    const base = roleId === "shipper" && task.delivery !== "local" ? process.env : agentEnv(process.env, await this.k.emptyGhConfig());
-    // Agents work in the background: tools that would pop a browser tab stay quiet, and Petrina's own `open` refuses.
-    return { ...base, BROWSER: "none", PETRINA_AGENT: "1" };
+  /**
+   * What every agent runs with: the coordinator's own environment and logins, with nothing waiting for a typed
+   * answer, in the background (tools that would pop a browser tab stay quiet, and Petrina's own `open` refuses).
+   */
+  private envFor(): NodeJS.ProcessEnv {
+    return agentEnv(process.env);
   }
 
   /** The tool's own safety check flagged something: the coordinator decides. Petrina adds no rules of its own. */

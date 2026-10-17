@@ -388,19 +388,30 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {item.kind === "shipping" && (
-        <div className="ask-actions">
-          <button className="btn lead" onClick={() => sim.checkShipping(item.id)} title="Look on GitHub and in the repository again">
-            Check again
-          </button>
-          <button className="btn" onClick={() => sim.shipAgain(item.id)} title="The shipper finishes the interrupted attempt">
-            Ship it again
-          </button>
-          <button className="btn quiet" onClick={() => sim.markDone(item.id)} title="It went out another way">
-            Mark as done
-          </button>
-        </div>
-      )}
+      {item.kind === "shipping" &&
+        (task?.shipping?.carriedOver ? (
+          // From before the update: Petrina cannot look it up, so the coordinator checks GitHub and chooses.
+          <div className="ask-actions">
+            <button className="btn lead" onClick={() => sim.markDone(item.id)} title="You found it on GitHub">
+              It went out (mark as done)
+            </button>
+            <button className="btn" onClick={() => sim.shipAgain(item.id)} title="A fresh delivery; Petrina checks GitHub before it publishes">
+              Ship it again
+            </button>
+          </div>
+        ) : (
+          <div className="ask-actions">
+            <button className="btn lead" onClick={() => sim.checkShipping(item.id)} title="Look on GitHub and in the repository again">
+              Check again
+            </button>
+            <button className="btn" onClick={() => sim.shipAgain(item.id)} title="The delivery gets ready again; Petrina checks GitHub before it publishes">
+              Ship it again
+            </button>
+            <button className="btn quiet" onClick={() => sim.markDone(item.id)} title="It went out another way">
+              Mark as done
+            </button>
+          </div>
+        ))}
 
       {item.kind === "driving" && (
         <>

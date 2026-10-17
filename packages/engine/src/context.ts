@@ -29,7 +29,6 @@ export class Context {
     "check-results": (task) => this.checkResults(task),
     findings: (task) => (task.findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) }] : []),
     "review-summary": (task) => this.reviewSummary(task),
-    shipping: (task) => this.shipping(task),
   };
 
   constructor(
@@ -111,15 +110,5 @@ export class Context {
   private reviewSummary(task: MTask): Section[] {
     const reviews = task.findings.filter((finding) => finding.status !== "dismissed");
     return [{ title: "Review summary (list pre-existing findings as follow-ups in what you deliver)", body: reviews.length ? formatFindings(reviews as Task["findings"]) : "Nothing to fix: every reviewer passed it." }];
-  }
-
-  private shipping(task: MTask): Section[] {
-    if (!task.shipping?.found) return [];
-    return [
-      {
-        title: "An earlier attempt to ship this was interrupted",
-        body: `What Petrina found: ${task.shipping.found}\nFinish that attempt instead of starting over. Reuse what it already did (a pushed branch, a version change, a tag). Do not choose a new version if one is already pushed, and never open a second pull request or publish a second release for this work.`,
-      },
-    ];
   }
 }

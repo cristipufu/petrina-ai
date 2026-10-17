@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS } from "@petrina/core";
-import { buildPrompt } from "../src/prompts.js";
+import { BACKGROUND, buildPrompt, LOGINS } from "../src/prompts.js";
 
 describe("prompts", () => {
   it("tells every role to put its recommended answer first when it asks the coordinator", () => {
@@ -20,6 +20,9 @@ describe("prompts", () => {
       });
       expect(prompt).toContain("put the answer you recommend first");
       expect(prompt).toContain('"options": ["The answer you recommend", "Another option"]');
+      // Every agent reads with the coordinator's logins and publishes nothing, in the background.
+      expect(prompt).toContain(LOGINS);
+      expect(prompt).toContain(BACKGROUND);
     }
   });
 });

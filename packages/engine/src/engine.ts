@@ -17,7 +17,8 @@ import { Turns } from "./turn.js";
 import { GuideKeeper } from "./guide-keeper.js";
 import { Context } from "./context.js";
 import { ProductChecks } from "./product-checks.js";
-import { Shipping } from "./shipping.js";
+import { CARRIED_OVER, destination, Shipping } from "./shipping.js";
+import { Connections } from "./connection.js";
 import { Updates } from "./update.js";
 import { Learnings } from "./learnings.js";
 import { Reviews } from "./review.js";
@@ -38,6 +39,7 @@ export class Engine extends Kernel implements Commands {
   private readonly context: Context;
   private readonly checks: ProductChecks;
   private readonly shipping: Shipping;
+  private readonly connections: Connections;
   private readonly updates: Updates;
   private readonly learnings: Learnings;
   private readonly reviews: Reviews;
@@ -53,17 +55,26 @@ export class Engine extends Kernel implements Commands {
     this.guide = new GuideKeeper(this, this.turns);
     this.context = new Context(this, this.guide);
     this.checks = new ProductChecks(this, this.turns, this.context);
-    this.shipping = new Shipping(this);
-    this.updates = new Updates(this);
+    this.connections = new Connections(this);
+    this.updates = new Updates(this, this.connections);
+    this.shipping = new Shipping(this, this.turns, this.context, this.updates, this.checks, this.connections);
     this.learnings = new Learnings(this);
     this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings);
     this.design = new Design(this, this.turns, this.context);
     this.planning = new Planning(this, this.turns);
-    this.work = new Work(this, this.turns, this.context, this.guide, this.shipping, this.updates, this.learnings);
+    this.work = new Work(this, this.turns, this.context, this.guide, this.updates, this.learnings);
     this.takeover = new TakeOver(this);
-    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings);
+    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections);
+    // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
+    this.shipping.carryOverShipping();
     this.driver.recover();
-    this.timers.push(setInterval(() => void this.shipping.pollPullRequests(), 60_000));
+    this.timers.push(
+      setInterval(() => {
+        void this.shipping.pollPullRequests();
+        this.shipping.settleCancelledTasks();
+      }, 60_000),
+    );
+    this.shipping.settleCancelledTasks();
     this.schedule();
   }
 
@@ -101,6 +112,8 @@ export class Engine extends Kernel implements Commands {
       id,
       name: displayName,
       repo: `${info.owner}/${info.name}`,
+      // Exactly as configured now: every fetch and push with the coordinator's login goes to this address.
+      ...(info.remote ? { remote: info.remote } : {}),
       tone: TONES[this.s.products.length % TONES.length]!,
       path: info.root,
       defaultBranch: info.defaultBranch,
@@ -332,11 +345,14 @@ export class Engine extends Kernel implements Commands {
     delete task.helpers;
     delete task.conversation;
     task.finishedAt = Date.now();
-    task.statusLine = "Cancelled";
+    // A delivery from before the update keeps its note: what went out is for the coordinator to check.
+    task.statusLine = task.shipping?.carriedOver ? `Cancelled. ${CARRIED_OVER}: check GitHub for what went out` : "Cancelled";
     this.dropBlockingItems(taskId);
     this.s.inbox = this.s.inbox.filter((item) => item.taskId !== taskId);
     this.log(task, "you", "You cancelled it");
     this.commit();
+    // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now.
+    void this.shipping.settleCancelled(taskId);
     this.schedule();
   }
 
@@ -512,9 +528,12 @@ export class Engine extends Kernel implements Commands {
         break;
       case "delivery":
         this.log(task, "you", "You approved the delivery");
+        // The coordinator's approval: for the work they were shown, this delivery and where it goes. Saved right away.
         if (task.checkedSha) task.approvedSha = task.checkedSha;
         if (task.checkedPatch) task.approvedPatch = task.checkedPatch;
-        task.stageIndex += 1;
+        task.approvedFor = { by: "coordinator", mode: task.delivery, destination: destination(task, this.productOf(task)) };
+        // After review rounds ran out, the check was raised on the shipper's own stage.
+        if (task.plan?.stages[task.stageIndex]?.kind === "gate") task.stageIndex += 1;
         break;
       case "disagreement":
         this.log(task, "you", "You sided with the architect");
@@ -552,8 +571,11 @@ export class Engine extends Kernel implements Commands {
     this.finishStep(task);
     if (!call) this.stepNote(task, "changes", note, { id });
     afterChangesAsked(task, item.kind, note, Date.now());
-    // Every reviewer passed what the coordinator sent back: the Guide keeper looks for what they missed.
-    if (item.kind === "delivery") task.miss = { note, at: Date.now() };
+    if (item.kind === "delivery") {
+      // Every reviewer passed what the coordinator sent back: the Guide keeper looks for what they missed.
+      task.miss = { note, at: Date.now() };
+      this.shipping.clearDelivery(task);
+    }
     this.toWaiting(task);
     this.commitNow();
     this.schedule();

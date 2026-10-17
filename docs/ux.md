@@ -179,7 +179,7 @@ Agents start with full permissions inside their own working copy, so they rarely
 - **Allow** lets it go ahead this once. **Deny** blocks it.
 - Nothing is remembered: the next request asks again, in any task and any product. Petrina never picks a tool's own "always" option.
 - Because nothing is remembered, there is no list of saved permissions in the app. Seeing and removing remembered permissions is not available yet; if remembering ever comes back, it belongs to Product settings and board papercuts.
-- Plan, design and delivery checks are the engine's gates, not permissions: an agent cannot skip them, and only the shipper ever delivers.
+- Plan, design and delivery checks are the engine's gates, not permissions: an agent cannot skip them, and only Petrina itself ever delivers; the shipper only gets the delivery ready.
 
 ### Notifications
 

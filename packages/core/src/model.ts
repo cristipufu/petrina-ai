@@ -182,27 +182,48 @@ export interface Driving {
   problem?: string;
 }
 
+/** What Petrina publishes for a delivery, step by step. */
+export type ShippingStep = "push" | "open" | "release" | "update";
+
 /**
- * Written before the shipper gets any work, so a delivery interrupted by a quit or a crash is
- * checked, never repeated blindly.
+ * Petrina's own record of a delivery, saved before every step, so a restart, pause or cancel never
+ * publishes twice. The work is already one commit on top of the latest default branch: the shipper only
+ * writes the text, and for a release the version commit. Petrina publishes the exact commit it checked.
  */
 export interface ShippingRecord {
-  startedAt: number;
-  /** How many times a shipper has started on this delivery. */
-  attempts: number;
-  /** The task branch's last commit when shipping started. */
-  head?: string;
-  /** The default branch in the local clone and on origin when shipping started. */
-  mainSha?: string;
-  originSha?: string;
-  /** The latest release when shipping started (release mode). */
-  latestRelease?: string;
-  /** What Petrina found after an interruption, in plain words. The next shipper is told. */
-  found?: string;
-  /** The coordinator chose "Ship it again": the next shipper runs without another check. */
-  again?: boolean;
-  /** Which run of the engine started this attempt, to tell a restart from a pause. */
+  /** The task's one commit this preparation started from, on top of `base`. */
+  start?: string;
+  /** The default branch's commit the work sits on: where Petrina expects it when it publishes. */
+  base?: string;
+  /** Releases: the version and tag worked out for this preparation, and the latest release then ("" for none). */
+  version?: string;
+  tag?: string;
+  after?: string;
+  /** What Petrina checked and publishes. */
+  prepared?: {
+    /** The exact commit Petrina publishes: the work itself, or for a release the version commit on top of it. */
+    tested: string;
+    summary: string;
+    title?: string;
+    body?: string;
+    notes?: string;
+  };
+  /** The step Petrina is on. Saved before the step starts; recovery looks the result up. */
+  step?: ShippingStep;
+  /** Which run of the engine saved the step, to tell a restart from a pause. */
   boot?: string;
+  /** Releases: the push of the default branch and the tag went out, so its version and commit stay. */
+  pushed?: boolean;
+  /** Preparations started again because the default branch moved. */
+  moves: number;
+  /** Preparations that failed. */
+  failures: number;
+  /**
+   * A delivery a Petrina from before this version saved while its shipper published it with a GitHub
+   * login. Petrina cannot tell what went out, so it never acts on it by itself: nothing happens until
+   * the coordinator chooses "It went out (mark as done)" or "Ship it again".
+   */
+  carriedOver?: true;
 }
 
 export interface DesignBrief {
@@ -319,7 +340,7 @@ export interface FindingDispute {
 export interface PullRequest {
   number: number;
   url: string;
-  state: "open" | "merged";
+  state: "open" | "merged" | "closed";
   openedAt: number;
 }
 
@@ -343,7 +364,7 @@ export interface Task {
   approvePlan: boolean;
   /** What happens once the work is ready. Defaults to the product's setting. */
   delivery: DeliveryMode;
-  /** Ask the coordinator before the shipper delivers. */
+  /** Ask the coordinator before Petrina delivers. */
   approveDelivery: boolean;
   plan?: Plan;
   /** -1 while the planner runs, then the index into `plan.stages`. */
@@ -376,6 +397,11 @@ export interface Task {
    */
   checkedPatch?: string;
   approvedPatch?: string;
+  /**
+   * Who allowed the delivery (the coordinator at the delivery check, or the task's own setting to ship
+   * without asking) and for what: this delivery mode and destination only. Nothing an agent says counts.
+   */
+  approvedFor?: { by: "coordinator" | "task"; mode: DeliveryMode; destination: string };
   /**
    * Main moved on and the task's change no longer applies cleanly: the working copy is on main with the
    * change applied and these files conflicting, until the builder brings it up to date.
@@ -443,7 +469,10 @@ export interface Task {
   received?: readonly Id[];
 }
 
-/** `shipping`: a delivery was interrupted and Petrina could not confirm it went out. `driving`: the coordinator took over a step in their terminal. */
+/**
+ * `shipping`: a delivery was interrupted, and Petrina could not tell whether it went out, or found something
+ * else there. `driving`: the coordinator took over a step in their terminal.
+ */
 export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide" | "learnings";
 
 export interface InboxItem {
@@ -464,9 +493,10 @@ export interface InboxItem {
 
 /**
  * What "ready" means for a product.
- * - `pull-request`: open a pull request (never merged by Petrina).
- * - `release`: merge into the default branch, push, and publish a GitHub release.
- * - `local`: commit onto the local default branch. Nothing is pushed.
+ * - `pull-request`: push the work's one commit and open a pull request (never merged by Petrina).
+ * - `release`: push the work with a version commit to the default branch, with a new version tag, and publish a GitHub release.
+ * - `local`: move the local default branch forward to the work. Nothing is pushed.
+ * Petrina publishes; the shipper only writes the text, and a release's version commit.
  */
 export type DeliveryMode = "pull-request" | "release" | "local";
 
@@ -475,6 +505,13 @@ export interface Product {
   name: string;
   /** owner/name on GitHub. */
   repo: string;
+  /**
+   * The address Petrina fetches from and publishes to, exactly as configured when the product was added
+   * (no address rewrites). Products added before Petrina kept it ask the coordinator once.
+   */
+  remote?: string;
+  /** An address the coordinator said is wrong: no fetching or publishing with it. */
+  remoteRefused?: string;
   tone: Tone;
   /** The local clone Petrina makes worktrees from. */
   path?: string;
@@ -488,7 +525,7 @@ export interface Product {
   shipLowRisk?: boolean;
   /** Lines the coordinator accepted for the review guide (REVIEW.md). Reviewers see them at once; Petrina adds them to the file. */
   reviewGuide?: readonly GuideLine[];
-  /** Lessons the coordinator accepted for LEARNINGS.md, until a delivery adds them. */
+  /** Lessons the coordinator accepted for AGENTS.md's Learnings section, until a delivery adds them. */
   learnings?: readonly GuideLine[];
   /** The commands that prove this product works. Petrina runs them itself; unset until found. */
   checks?: readonly ProductCheck[];

@@ -90,12 +90,13 @@ interface ScriptContext {
 function scriptFor(roleId: Id, ctx: ScriptContext): string[] {
   const { area, product, round, fixing, delivery, following, objecting } = ctx;
   switch (roleId) {
+    // The shipper only gets the delivery ready; Petrina publishes it (see `ship`).
     case "shipper":
       return delivery === "release"
-        ? ["Merging into main", "Bumping the version", "Writing the release notes", "Published the release"]
+        ? ["Setting the new version", "Writing the release notes", "Ready to publish"]
         : delivery === "local"
-          ? ["Merging into main", "Committed on main"]
-          : ["Pushing the branch", "Writing the pull request description", "Opened the pull request"];
+          ? ["Ready to publish"]
+          : ["Writing the pull request description", "Ready to publish"];
     case "planner":
       return ["Reading the task", `Looking at how ${product} is organised`, "Choosing who should work on this", "Writing the plan"];
     case "researcher":
@@ -930,11 +931,13 @@ export class Simulator {
     task.prAge = 0;
     task.statusLine = `Pull request #${number} is open. Merge it on GitHub when you are happy`;
     task.column = "ready";
-    this.log(d, task, "done", `Opened pull request #${number}`);
+    this.log(d, task, "status", "Petrina pushed the branch");
+    this.log(d, task, "done", `Petrina opened pull request #${number}, and checked it on GitHub`);
   }
 
-  /** The shipper finished: what that means depends on the task's delivery mode. */
+  /** The shipper got it ready: Petrina publishes it, the way the task asks. */
   private ship(d: Draft, task: DraftTask): void {
+    this.log(d, task, "done", "Ready to publish", "shipper", task.agent?.profileId);
     if (task.delivery === "pull-request") {
       this.openPullRequest(d, task);
       return;
@@ -949,12 +952,13 @@ export class Simulator {
       const tag = `v1.${(d.seq % 40) + 1}.0`;
       task.release = { tag, url: `https://github.com/${product?.repo ?? "owner/repo"}/releases/tag/${tag}` };
       task.statusLine = `Released ${tag}`;
-      this.log(d, task, "done", `Published release ${tag}`);
+      this.log(d, task, "status", `Petrina pushed main and the tag ${tag}`);
+      this.log(d, task, "done", `Petrina published release ${tag}, and checked it on GitHub`);
     } else {
       const sha = (d.seq * 2654435761).toString(16).slice(0, 7);
       task.landed = { branch: product?.defaultBranch ?? "main", sha };
       task.statusLine = `Committed to ${task.landed.branch} (${sha})`;
-      this.log(d, task, "done", `Committed to ${task.landed.branch}`);
+      this.log(d, task, "done", `Petrina moved ${task.landed.branch} forward to it (${sha}), and checked the main copy`);
     }
   }
 

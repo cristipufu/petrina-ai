@@ -102,17 +102,26 @@ export const VerifyResult = z.object({
   verdicts: z.array(z.object({ id: z.string(), verdict: z.enum(["real", "not-a-bug", "nit", "pre-existing"]), reason: z.string().min(10) })).min(1),
 });
 
-export const ShipResult = z.object({
-  summary: z.string().min(3),
-  prNumber: z.number().int().optional(),
-  prUrl: z.string().optional(),
-  tag: z.string().optional(),
-  releaseUrl: z.string().optional(),
-  sha: z.string().optional(),
-});
+/** The shipper's handoff. It only gets the delivery ready: Petrina checks it, then publishes the exact commit itself. */
+export const ShipResult = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("ready"),
+    summary: z.string().min(3),
+    /** Releases: the version commit the branch is at (the task's own commit when the product has no version files). */
+    tested: z.string().optional(),
+    title: z.string().optional(),
+    body: z.string().optional(),
+    version: z.string().optional(),
+    notes: z.string().optional(),
+  }),
+  z.object({
+    status: z.literal("failed"),
+    summary: z.string().min(3),
+  }),
+]);
 
 /** The parts of what an agent is shown besides its instructions, in the order they appear. */
-export const CONTEXT_PARTS = ["notes", "brief", "objections", "checks", "findings-to-answer", "guide-points", "report", "check-results", "findings", "review-summary", "shipping"] as const;
+export const CONTEXT_PARTS = ["notes", "brief", "objections", "checks", "findings-to-answer", "guide-points", "report", "check-results", "findings", "review-summary"] as const;
 export type ContextPart = (typeof CONTEXT_PARTS)[number];
 
 export interface RoleContract {
@@ -158,26 +167,29 @@ function updateInstructions(updating: NonNullable<Task["updating"]>, defaultBran
 Bring the work up to date first. Learn what changed on ${defaultBranch} before resolving anything, from the commits it gained since this work started (\`git log --stat ${updating.from}..${updating.onto}\`), and read the code as it is now. Port this task's change to where that code lives now, keep ${defaultBranch}'s version of everything this task did not change, and never bring back code ${defaultBranch} moved or removed. Leave no conflict markers.`;
 }
 
+/**
+ * The shipper only gets the delivery ready: the work is already one commit on top of the latest main, and
+ * Petrina publishes it. A pull request needs its text; a release its version commit and notes. Local delivery
+ * needs no shipper at all.
+ */
 function shipperInstructions(ctx: PromptContext, defaultBranch: string): string {
   const { task, branch } = ctx;
-  const ready = `Branch ${branch} is one commit on top of the latest ${defaultBranch}: Petrina brought it up to date and ran the product's checks on it. Never rebase, merge or change the code.`;
-  switch (task.delivery) {
-    case "pull-request":
-      return `The coordinator approved this work. ${ready} Deliver it as a pull request:
-1. Push ${branch} to origin with \`git push --force-with-lease origin ${branch}\`: the commit is new, so it replaces an earlier push of this branch.
-2. Open a pull request into ${defaultBranch} with \`gh pr create\`: a clear title, and a body in plain language that says what changed for users, the acceptance checklist, and what the reviewers checked.
-Never merge the pull request. Return its number and URL.`;
-    case "release":
-      return `The coordinator approved this work. ${ready} Deliver it as a release:
-1. Work out the next version from the latest release or tag (bump the ${ctx.product.releaseBump ?? "patch"} number) and update every version file in the project consistently (package.json, Cargo.toml, tauri.conf.json, and the like), then commit it on ${branch} as one version commit.
-2. Bring ${defaultBranch} up to ${branch} as a fast-forward only (never a merge commit), push ${defaultBranch}, then publish the release with \`gh release create <tag> --target ${defaultBranch}\`, with plain-language release notes.
-If the fast-forward or the push is refused because ${defaultBranch} moved on, stop and say so in your summary.
-Return the tag and the release URL.`;
-    case "local":
-      return `The coordinator approved this work. ${ready} Commit it onto ${defaultBranch} locally:
-Bring ${defaultBranch} up to ${branch} in the main clone at ${ctx.product.path ?? "the repository root"}, as a fast-forward only: if ${defaultBranch} is checked out there and clean, run \`git merge --ff-only ${branch}\` in that clone; if it is not checked out there, run \`git branch -f ${defaultBranch} ${branch}\` only if ${defaultBranch} is an ancestor of ${branch}. If the clone has uncommitted changes, stop and ask the coordinator. If the fast-forward is refused because ${defaultBranch} moved on, stop and say so in your summary.
-Do not push anything. Return the commit sha now on ${defaultBranch}.`;
+  const shipping = task.shipping;
+  const ready = `Branch ${branch} is the work as one commit on top of the latest ${defaultBranch}: Petrina brought it up to date and ran the product's checks on it. Stay on ${branch}. Never rebase, merge or change the code.`;
+  const never = `Petrina publishes the delivery itself once it has checked your work: do not push, tag, open pull requests or publish releases, and do not change ${defaultBranch} or the main copy of the repository.`;
+  const failed = 'If you cannot get it ready, hand back {"status": "failed", "summary": "<why, in plain language>"} instead: the work goes back to the builder, and nothing is published.';
+  if (task.delivery === "release") {
+    const version = shipping?.version ?? "the new version";
+    return `The coordinator approved this work. Get it ready to go out as release ${shipping?.tag ?? "(the version Petrina works out)"}. ${ready} ${never}
+1. Set the version to ${version} in the product's main version files: package.json and Cargo.toml at the top of the repository, and tauri.conf.json at the top or in src-tauri, each one that exists and states a version. Petrina checks that every one of them says exactly ${version}. Also update the version wherever else the product keeps its own (lock files, subfolders), not in dependencies or test fixtures. Commit only version changes, as one commit on top of ${branch}'s commit. If the product has no version files, there is no version commit. Do not create a tag.
+2. Write plain-language release notes: what changed for users.
+Hand back "ready" with "tested" (the full id of the commit ${branch} is at: the version commit, or the task's commit when there is none), "version": "${shipping?.version ?? ""}", and the "notes".
+${failed}`;
   }
+  return `The coordinator approved this work. Get it ready to go out as a pull request into ${defaultBranch}. ${ready} ${never}
+Write the pull request: a clear title (one line, at most 256 characters), and a body in plain language that says what changed for users, the acceptance checklist, and what the reviewers checked. Do not commit anything: a pull request needs only its text.
+Hand back "ready" with the "title" and "body".
+${failed}`;
 }
 
 export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
@@ -349,8 +361,11 @@ Do not change any files.`;
   },
   "shipper": {
     result: ShipResult,
-    reads: ["notes", "brief", "report", "check-results", "review-summary", "shipping"],
-    shape: `{"summary": "What you delivered", "prNumber": 12, "prUrl": "https://github.com/...", "tag": "v1.2.3", "releaseUrl": "https://github.com/...", "sha": "<commit sha on the default branch>"}`,
+    reads: ["notes", "brief", "report", "check-results", "review-summary"],
+    shape: ({ task }) =>
+      task.delivery === "release"
+        ? `{"status": "ready", "summary": "What you did to get it ready, in plain language", "tested": "<full id of the commit the branch is at>", "version": "<the version>", "notes": "<the release notes>"}`
+        : `{"status": "ready", "summary": "What you did to get it ready, in plain language", "title": "<the pull request's title>", "body": "<the pull request's description>"}`,
     instructions: (ctx) => {
       const { defaultBranch } = ctx;
       return shipperInstructions(ctx, defaultBranch);

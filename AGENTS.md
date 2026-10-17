@@ -10,10 +10,10 @@ Petrina is a desktop app for people who run products with a squad of coding agen
 
 ## Safety model
 
-Petrina relies on each coding tool's own safety checker (Claude Code's Auto mode, Codex's Auto review) for what agents may run. Petrina itself only:
+Agents act with the coordinator's own logins: GitHub (gh, git's credential helpers, SSH), AWS, Azure CLI and Azure DevOps (`packages/engine/src/env.ts`). They can read with them and, in principle, write. Their instructions say to read and investigate freely and never to publish, merge or change shared things; that rule rests on those instructions and on each coding tool's own safety checker (Claude Code's Auto mode, Codex's Auto review), which also decides what agents may run. Petrina itself only:
 
-- keeps GitHub logins away from every agent except a shipper delivering to GitHub (`packages/engine/src/env.ts`),
-- runs its own git steps with hooks off and credentials only where GitHub needs them (`packages/engine/src/git.ts`),
+- publishes deliveries itself, after its gates allow it, with no merge, force-push or delete,
+- runs its own git steps with hooks off, and credentials only where GitHub needs them, to the product's saved address (`packages/engine/src/git.ts`),
 - enforces its checkpoints (plan, design, delivery) in the engine, and
 - undoes whatever a read-only role leaves behind.
 
