@@ -175,6 +175,7 @@ function shift(task: Task, inbox: readonly InboxItem[], endedAt: number, now: nu
       ...(task.finishedAt !== undefined ? { finishedAt: at(task.finishedAt) } : {}),
       ...(task.agent ? { agent: { ...task.agent, since: at(task.agent.since) } } : {}),
       ...(task.pr ? { pr: { ...task.pr, openedAt: at(task.pr.openedAt) } } : {}),
+      ...(task.checks ? { checks: { ...task.checks, at: at(task.checks.at) } } : {}),
       timeline: task.timeline.map((entry) => ({ ...entry, at: at(entry.at) })),
       session: task.session.map((line) => ({ ...line, at: at(line.at) })),
     },
