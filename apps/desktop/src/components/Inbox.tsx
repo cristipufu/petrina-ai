@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useState, type ReactNode } from "react";
 import {
   BellRing,
+  BookOpen,
   CircleHelp,
   Compass,
   GitPullRequest,
@@ -37,6 +38,7 @@ const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> =
   stuck: { label: "Stuck", icon: TriangleAlert, tone: "slate" },
   shipping: { label: "Shipping was interrupted", icon: PackageSearch, tone: "amber" },
   driving: { label: "You're driving", icon: SquareTerminal, tone: "blue" },
+  guide: { label: "Review guide", icon: BookOpen, tone: "teal" },
 };
 
 /** Where the inbox opens after a click on a notification: at an item, or at its top with a note. */
@@ -403,6 +405,20 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
               {reopened}
             </p>
           )}
+        </>
+      )}
+
+      {item.kind === "guide" && (
+        <>
+          {item.detail && <p className="ask-note">{item.detail}</p>}
+          <div className="ask-actions">
+            <button className="btn lead" onClick={() => sim.approve(item.id)} title="Reviewers check it from now on, and Petrina adds it to REVIEW.md">
+              Add it
+            </button>
+            <button className="btn quiet" onClick={() => sim.declineGuide(item.id)}>
+              Not this time
+            </button>
+          </div>
         </>
       )}
 

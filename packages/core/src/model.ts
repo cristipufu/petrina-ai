@@ -263,6 +263,16 @@ export interface Finding {
 
 export type RiskLevel = "low" | "medium" | "high";
 
+/** A point reviewers missed once, now in the product's review guide. */
+export interface GuideLine {
+  text: string;
+  at: number;
+  /** The task whose delivery the coordinator sent back for it. */
+  fromTask: Id;
+  /** The task whose branch adds it to REVIEW.md. */
+  writtenOn?: Id;
+}
+
 export interface FindingVerification {
   /** The verifier's profile. */
   by: Id;
@@ -329,6 +339,8 @@ export interface Task {
   /** The commit the delivery check showed the coordinator, and the one they approved: a change after that asks again. */
   checkedSha?: string;
   approvedSha?: string;
+  /** The coordinator sent the delivery back with this note: the Guide keeper looks for what reviewers missed. */
+  miss?: { note: string; at: number };
   agent?: ActiveAgent;
   statusLine: string;
   createdAt: number;
@@ -378,7 +390,7 @@ export interface Task {
 }
 
 /** `shipping`: a delivery was interrupted and Petrina could not confirm it went out. `driving`: the coordinator took over a step in their terminal. */
-export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving";
+export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide";
 
 export interface InboxItem {
   id: Id;
@@ -420,6 +432,8 @@ export interface Product {
   releaseBump?: "patch" | "minor" | "major";
   /** With "ask before shipping" on: low-risk work ships without asking. Off unless the coordinator opts in. */
   shipLowRisk?: boolean;
+  /** Lines the coordinator accepted for the review guide (REVIEW.md). Reviewers see them at once; Petrina adds them to the file. */
+  reviewGuide?: readonly GuideLine[];
   /** The commands that prove this product works. Petrina runs them itself; unset until found. */
   checks?: readonly ProductCheck[];
   /** Who set the checks: the Check finder agent, or the coordinator by hand (never replaced on its own). */

@@ -94,6 +94,18 @@ export const BUILT_IN_ROLES: readonly Role[] = [
     internal: true,
   },
   {
+    id: "guide-keeper",
+    name: "Guide keeper",
+    icon: "book",
+    tone: "teal",
+    purpose: "When the coordinator sends back work every reviewer passed, proposes one line for the product's review guide so the miss does not happen again.",
+    canEdit: false,
+    sees: "The coordinator's note, the review findings and the product's review guide.",
+    handsBack: "One line for REVIEW.md and why, or nothing when the note was a change of mind.",
+    column: "building",
+    internal: true,
+  },
+  {
     id: "verifier",
     name: "Verifier",
     icon: "scale",

@@ -68,6 +68,7 @@ import {
   BriefResult,
   BuildResult,
   CheckFinderResult,
+  GuideResult,
   VerifyResult,
   buildPrompt,
   EARLIER_ATTEMPT,
@@ -97,6 +98,7 @@ import { Store } from "./store.js";
 import { askMode, clearEnded, detectTerminals, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, thisMachine, writeLauncher } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import { checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "./checks.js";
+import { appendToGuide, GUIDE_FILE, guideText, inGuide, readGuide } from "./guide.js";
 
 type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
 type MState = DeepMutable<State>;
@@ -106,6 +108,7 @@ type MStage = DeepMutable<Stage>;
 const PLANNER_PROFILE = "opus-high";
 const SHIPPER_PROFILE = "opus-high";
 const CHECK_FINDER_PROFILE = "opus-high";
+const GUIDE_KEEPER_PROFILE = "opus-high";
 const TONES: readonly Tone[] = ["blue", "green", "orange", "violet", "pink", "teal", "indigo", "purple", "amber", "slate"];
 const MAX_SESSION_LINES = 800;
 const MAX_TIMELINE = 400;
@@ -624,6 +627,10 @@ export class Engine {
       this.checkShipping(itemId);
       return;
     }
+    if (kind === "guide") {
+      this.acceptGuideLine(itemId);
+      return;
+    }
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
@@ -657,6 +664,27 @@ export class Engine {
     this.toWaiting(task);
     this.commit();
     this.schedule();
+  }
+
+  /** "Add it": the proposed point joins the product's review guide. Reviewers see it from their next turn. */
+  private acceptGuideLine(itemId: Id): void {
+    const item = this.takeItem(itemId);
+    const task = item && this.task(item.taskId);
+    const product = task && this.productOf(task);
+    if (!item?.body || !task || !product) return;
+    if (!product.reviewGuide?.some((line) => line.text === item.body)) product.reviewGuide = [...(product.reviewGuide ?? []), { text: item.body, at: Date.now(), fromTask: task.id }];
+    this.log(task, "you", `You added to the review guide: ${item.body}`);
+    this.commit();
+  }
+
+  /** "Not this time": the review guide stays as it is. */
+  declineGuide(itemId: Id): void {
+    const item = this.s.inbox.find((entry) => entry.id === itemId && entry.kind === "guide");
+    if (!item) return;
+    this.takeItem(itemId);
+    const task = this.task(item.taskId);
+    if (task) this.log(task, "you", "You left the review guide as it is");
+    this.commit();
   }
 
   requestChanges(itemId: Id, note: string): void {
@@ -695,6 +723,8 @@ export class Engine {
         task.stageIndex = index;
       }
     } else if (item.kind === "delivery") {
+      // Every reviewer passed what the coordinator sent back: the Guide keeper looks for what they missed.
+      task.miss = { note, at: Date.now() };
       const index = lastIndex(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
       if (index >= 0) {
         task.stageIndex = index;
@@ -1182,6 +1212,7 @@ export class Engine {
             continue;
           }
           delete current.returnToCheck;
+          if (stage.gate === "delivery") await this.writeGuide(current);
           // Right before the coordinator is asked to ship, the checks run again on what would ship.
           if (stage.gate === "delivery" && (await this.checksBeforeDelivery(current, signal))) continue;
           if (stage.gate === "delivery") {
@@ -1312,6 +1343,7 @@ export class Engine {
     const sections = () => this.sectionsFor(task, roleId);
 
     if (roleId === "builder") {
+      if (task.miss) await this.proposeGuideLine(task, signal);
       // In a fix round the builder answers every finding it was given, by id.
       const given = task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing") : [];
       const result = await this.turn(task, roleId, profileId, sections, BuildResult, signal, {
@@ -1835,6 +1867,8 @@ export class Engine {
       if (open.length) sections.push({ title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) });
     }
     const reviewer = roleId === "code-reviewer" || roleId === "security-reviewer";
+    const guide = (reviewer || roleId === "verifier" || roleId === "builder") && task.worktree ? guideText(task.worktree, this.productOf(task)?.reviewGuide ?? []) : "";
+    if (guide) sections.push({ title: `The product's review guide (${GUIDE_FILE}): ${roleId === "builder" ? "reviewers check every point" : "check the change against every point"}`, body: guide });
     if ((reviewer || roleId === "verifier" || roleId === "shipper" || roleId === "tester") && task.report) {
       sections.push({ title: "What the builder reports", body: [task.report.summary, ...task.report.changes.map((change) => `- ${change}`), task.report.tests ? `Tests: ${task.report.tests}` : ""].filter(Boolean).join("\n") });
     }
@@ -2254,6 +2288,75 @@ export class Engine {
     this.log(task, "warn", "Sent back to the builder: the checks failed right before your delivery check");
     this.commit();
     return true;
+  }
+
+  /**
+   * The coordinator sent back a delivery every reviewer passed: the Guide keeper proposes one point for
+   * the product's review guide, offered in the inbox without holding the task up. A side errand inside
+   * the builder's step: it leaves the step's own restart bookkeeping as it found it.
+   */
+  private async proposeGuideLine(task: MTask, signal: AbortSignal): Promise<void> {
+    const product = this.productOf(task);
+    const miss = task.miss;
+    if (!product || !miss || !task.worktree) return;
+    const attempts = task.stepAttempts;
+    const conversation = task.conversation;
+    const restore = () => {
+      if (attempts === undefined) delete task.stepAttempts;
+      else task.stepAttempts = attempts;
+      if (conversation === undefined) delete task.conversation;
+      else task.conversation = conversation;
+    };
+    try {
+      const guide = guideText(task.worktree, product.reviewGuide ?? []);
+      const result = await this.turn(
+        task,
+        "guide-keeper",
+        GUIDE_KEEPER_PROFILE,
+        () => [
+          { title: "The coordinator's note when sending the delivery back", body: miss.note },
+          { title: `The review guide now (${GUIDE_FILE})`, body: guide || "There is none yet." },
+          ...(task.findings.length ? [{ title: "What the reviewers did raise", body: formatFindings(task.findings as Task["findings"]) }] : []),
+        ],
+        GuideResult,
+        signal,
+        { status: "Looking for what the reviewers missed" },
+      );
+      restore();
+      if (!result.missed || !result.line) this.log(task, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", GUIDE_KEEPER_PROFILE);
+      else if (inGuide(guide, result.line)) this.log(task, "done", "The review guide already has that point", "guide-keeper", GUIDE_KEEPER_PROFILE);
+      else {
+        // An offer, not a stop: the task carries on while the coordinator decides.
+        const state = task.state;
+        this.raise(task, "guide", `Add a point to ${product.name}'s review guide?`, false, { body: result.line, detail: result.why });
+        task.state = state;
+        this.log(task, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", GUIDE_KEEPER_PROFILE);
+      }
+    } catch (error) {
+      if (signal.aborted || error instanceof Aborted) throw error;
+      restore();
+      this.log(task, "warn", "The Guide keeper could not finish, so nothing was proposed for the review guide");
+    }
+    delete task.miss;
+    this.commit();
+  }
+
+  /**
+   * Accepted points reach REVIEW.md on a branch that ships: the task they came from, or else the next
+   * one to reach its delivery check. Nothing is running in the working copy at this point.
+   */
+  private async writeGuide(task: MTask): Promise<void> {
+    const product = this.productOf(task);
+    if (!product?.reviewGuide?.length || !task.worktree) return;
+    const file = readGuide(task.worktree);
+    const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || ["cancelled", "failed"].includes(this.task(line.writtenOn)?.state ?? "cancelled");
+    const due = product.reviewGuide.filter((line) => !inGuide(file, line.text) && free(line));
+    if (!due.length) return;
+    appendToGuide(task.worktree, due.map((line) => line.text));
+    await git.commitAll(task.worktree, `Review guide: ${due.length === 1 ? "one more point" : `${due.length} more points`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina: the coordinator accepted ${due.length === 1 ? "it" : "them"} after reviewers missed something.`);
+    for (const line of due) line.writtenOn = task.id;
+    this.log(task, "done", `Added to ${GUIDE_FILE}: ${due.map((line) => line.text).join("; ")}`);
+    this.commit();
   }
 
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */

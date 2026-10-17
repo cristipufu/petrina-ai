@@ -66,6 +66,12 @@ export const CheckFinderResult = z.object({
     .max(8),
 });
 
+export const GuideResult = z.object({
+  missed: z.boolean(),
+  line: z.string().trim().max(240).default(""),
+  why: z.string().trim().min(3).max(400),
+});
+
 export const TestResult = z.object({
   summary: z.string().min(3),
   checks: z.array(z.object({ text: z.string(), pass: z.boolean() })).default([]),
@@ -172,6 +178,7 @@ const SHAPES: Record<string, string> = {
   "check-finder": `{"summary": "How this product is checked, in one sentence", "checks": [{"name": "Tests", "argv": ["dotnet", "test"], "why": "CI runs it on every pull request"}]}`,
   "code-reviewer": `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}]}`,
   "security-reviewer": `{"verdict": "pass", "findings": [{"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": [], "disputes": []}`,
+  "guide-keeper": `{"missed": true, "line": "One point a reviewer can check on any change, in plain words", "why": "What was missed, and how this point would have caught it"}`,
   verifier: `{"verdicts": [{"id": "<finding id>", "verdict": "real", "reason": "What you checked and what it showed"}]}`,
   shipper: `{"summary": "What you delivered", "prNumber": 12, "prUrl": "https://github.com/...", "tag": "v1.2.3", "releaseUrl": "https://github.com/...", "sha": "<commit sha on the default branch>"}`,
 };
@@ -250,6 +257,11 @@ Do not change any files.`;
       return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`) for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
 Each finding says where it is and how someone could misuse it. Tag it "important" only if the change should not ship with it, "nit" for hardening that can wait, and "pre-existing" for a problem the change did not cause. Report a whole class of problem once, listing every place. Never repeat a finding listed below: confirm or dispute it by id instead.
+Do not change any files.`;
+    case "guide-keeper":
+      return `The coordinator sent back work that every reviewer had passed, with the note below. Decide whether the reviewers missed something they should have caught. If they did, write one point for the product's review guide (REVIEW.md) so reviewers catch that whole class of problem next time.
+The point is a check a reviewer can make on any change, in plain words, not about this task alone (for example "Every page behind sign-in handles an expired session"). Do not repeat a point the guide already has.
+If the note is a change of mind or a new wish rather than a miss, set "missed" to false and leave "line" empty.
 Do not change any files.`;
     case "verifier":
       return `Reviewers raised the Important findings below about the change on branch ${branch} (see \`git diff ${base}...HEAD\`). Before any of them can send the work back to the builder, check each one yourself, with fresh eyes: read the code, and run a single test when that is the quickest proof. For each finding, by id, give your verdict:

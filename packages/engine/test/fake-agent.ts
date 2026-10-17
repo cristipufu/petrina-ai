@@ -28,6 +28,8 @@ export interface Scenario {
    */
   /** "important": the first round's reviewers raise one Important finding (the second in other words); later rounds pass. */
   reviewer?: "commit" | "work" | "important";
+  /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. */
+  guide?: "change of mind";
   /** How the planner rates the task's risk (unrated by default). */
   risk?: "low" | "high";
   /** The verifier's verdict on every finding it is given (default "real"). */
@@ -311,6 +313,12 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
     case "security reviewer":
       return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
+    case "guide keeper":
+      return done(
+        plan.guide === "change of mind"
+          ? { missed: false, line: "", why: "The note asks for a new colour: a change of mind, not a miss." }
+          : { missed: true, line: "Every greeting also shows on the welcome page.", why: "The reviewers checked the greeting only where it was added." },
+      );
     case "verifier":
       return done({
         verdicts: findingIds(text, "Important findings to check (a verdict on every one, by id)").map((id) => ({

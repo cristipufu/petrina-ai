@@ -18,6 +18,7 @@ export interface Actions {
   allow(itemId: Id, scope: "once" | "always"): void;
   deny(itemId: Id, note?: string): void;
   approve(itemId: Id): void;
+  declineGuide(itemId: Id): void;
   requestChanges(itemId: Id, note: string): void;
   retry(itemId: Id): void;
   checkShipping(itemId: Id): void;
@@ -424,6 +425,7 @@ class EngineClient implements Store {
     this.durable({ taskId: item.taskId, kind: "no", text: note ?? "", itemId }, "deny", (id) => [itemId, note ?? "", { taskId: item.taskId, about: item.title, clientId: id }]);
   };
   approve = (itemId: Id) => this.fire("approve", itemId);
+  declineGuide = (itemId: Id) => this.fire("declineGuide", itemId);
   requestChanges = (itemId: Id, note: string) => {
     const item = this.item(itemId);
     if (!item) return;
@@ -480,6 +482,7 @@ class DemoStore implements Store {
   allow = (itemId: Id, scope: "once" | "always") => this.simulator.allow(itemId, scope);
   deny = (itemId: Id, note?: string) => this.simulator.deny(itemId, note);
   approve = (itemId: Id) => this.simulator.approve(itemId);
+  declineGuide = (itemId: Id) => this.simulator.declineGuide(itemId);
   requestChanges = (itemId: Id, note: string) => this.simulator.requestChanges(itemId, note);
   retry = (itemId: Id) => this.simulator.approve(itemId);
   checkShipping = () => undefined;

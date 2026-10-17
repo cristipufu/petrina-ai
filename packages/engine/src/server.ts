@@ -59,6 +59,7 @@ const Action = z.discriminatedUnion("name", [
   z.object({ name: z.literal("allow"), args: z.tuple([z.string(), z.enum(["once", "always"])]) }),
   z.object({ name: z.literal("deny"), args: z.tuple([z.string(), z.string().max(4000).optional(), Said.optional()]) }),
   z.object({ name: z.literal("approve"), args: z.tuple([z.string()]) }),
+  z.object({ name: z.literal("declineGuide"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("requestChanges"), args: z.tuple([z.string(), z.string().min(1).max(4000)]) }),
   z.object({ name: z.literal("checkShipping"), args: z.tuple([z.string()]) }),
   z.object({ name: z.literal("shipAgain"), args: z.tuple([z.string()]) }),

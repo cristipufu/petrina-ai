@@ -211,6 +211,23 @@ export function createDemoState(now: number): State {
   place("sentry", 3 * 60 * MINUTE, (task) => task.state === "done", 105);
   place("footer-typo", 26 * 60 * MINUTE, (task) => task.state === "done", 106);
 
+  // The coordinator sent back what every reviewer passed: the Guide keeper offers a point for the review guide.
+  const sentry = tasks.find((task) => task.title === "Report errors to Sentry");
+  if (sentry) {
+    inbox.push({
+      id: "guide-offer",
+      taskId: sentry.id,
+      kind: "guide",
+      title: "Add a point to Shop's review guide?",
+      body: "Every error report leaves out personal data such as email addresses.",
+      detail: "The reviewers checked that errors were sent, not what they carried: the first reports included customers' email addresses.",
+      roleId: "guide-keeper",
+      profileId: "opus-high",
+      at: now - 2 * 60 * MINUTE,
+      blocking: false,
+    });
+  }
+
   ["export-pdf", "onboarding", "tag-search", "stripe-retries"].forEach((id, priority) => {
     const task = queuedTask(byId(id), priority, now - (40 - priority * 7) * MINUTE);
     tasks.push(id === "stripe-retries" ? { ...task, held: true, statusLine: "On hold" } : task);

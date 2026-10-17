@@ -135,6 +135,7 @@ const NEED: Record<InboxKind, (who: string, task: string) => string> = {
   stuck: (who, task) => `${who}: ${task} is stuck`,
   shipping: (who) => `${who}: shipping a task was interrupted`,
   driving: () => "You're driving",
+  guide: (who) => `${who}: a point for the review guide`,
 };
 
 /** The notification for one inbox item. */

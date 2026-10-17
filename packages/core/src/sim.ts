@@ -281,10 +281,21 @@ export class Simulator {
           this.log(d, task, "you", "You approved the delivery");
           this.continueAfterGate(d, task);
           break;
+        case "guide": {
+          const product = d.products.find((entry) => entry.id === task.productId);
+          if (product && item.body) product.reviewGuide = [...(product.reviewGuide ?? []), { text: item.body, at: d.now, fromTask: task.id }];
+          this.log(d, task, "you", `You added to the review guide: ${item.body ?? ""}`);
+          break;
+        }
         default:
           break;
       }
     });
+  }
+
+  /** "Not this time": the review guide stays as it is. */
+  declineGuide(itemId: Id): void {
+    this.resolve(itemId, (d, task) => this.log(d, task, "you", "You left the review guide as it is"));
   }
 
   /**
