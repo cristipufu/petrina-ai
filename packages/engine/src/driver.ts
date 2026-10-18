@@ -215,7 +215,7 @@ export class Driver {
           this.k.commit();
           continue;
         }
-        // Checkpoints need no new agent, so a paused or full pool must not hold them back.
+        // Plan and design checkpoints need no work; delivery preparation can update files and run checks.
         if (stage?.kind === "gate") {
           // On the way back to the check where changes were asked, earlier design checks are not asked again.
           if (stage.gate === "design" && current.returnToCheck !== undefined && current.stageIndex < current.returnToCheck) {
@@ -227,6 +227,15 @@ export class Driver {
           }
           delete current.returnToCheck;
           if (stage.gate === "delivery") {
+            if (this.k.s.pool.paused || this.k.draining) {
+              current.state = "waiting";
+              current.holdsSlot = false;
+              delete current.agent;
+              current.column = this.k.columnFor(current);
+              current.statusLine = this.k.draining ? "Waiting: Petrina is restarting" : "Waiting for the pool to resume";
+              this.k.commit();
+              return;
+            }
             await this.guide.writeGuide(current);
             await this.learnings.write(current);
             // What the coordinator checks is the work as it would land: one commit on top of the latest main.

@@ -6,7 +6,7 @@ import { Engine } from "../src/engine.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
-import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, tempDir, taskOf, until } from "./support.js";
+import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, tempDir, taskOf, until, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -62,6 +62,46 @@ const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 const checkSteps = (task: Task) => task.journey!.filter((step) => step.kind === "petrina" && step.work === "checks");
 
 describe.concurrent("failed checks are evidence until something changes", () => {
+  it("finishes the current reviewer but starts no delivery preparation while the pool is paused", async () => {
+    const f = await fixture(true, { planner: "short", builder: "plain", controlled: true });
+    const release = (session: string) => writeFileSync(join(f.fakes.dir, `release-${session}`), "go");
+    try {
+      f.setCheck("--pass");
+      await waitFor(() => {
+        for (const prompt of f.fakes.received()) if (prompt.role !== "code reviewer") release(prompt.session);
+        coordinator(["plan"])(f.engine, f.engine.getState());
+        return f.fakes.received("code reviewer").length > 0;
+      }, "the final reviewer to start");
+      expect(f.runs()).toEqual(["passed"]);
+      f.engine.setPoolPaused(true);
+      f.setCheck("--pass", "--new-definition");
+      for (const prompt of f.fakes.received("code reviewer")) release(prompt.session);
+      const waiting = await until(f.engine, (state) => taskOf(state, f.taskId).state === "waiting");
+      expect(taskOf(waiting, f.taskId).statusLine).toBe("Waiting for the pool to resume");
+      expect(taskOf(waiting, f.taskId).holdsSlot).toBe(false);
+      expect(f.runs()).toEqual(["passed"]);
+      expect(itemOf(waiting, f.taskId, "delivery")).toBeUndefined();
+      f.engine.setPoolPaused(false);
+      await f.delivery();
+      expect(f.runs()).toEqual(["passed", "passed"]);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(1);
+    } finally { f.engine.shutdown(); }
+  });
+
+  it("still presents a finished plan checkpoint while the pool is paused", async () => {
+    const f = await fixture(true, { planner: "short", controlled: true });
+    try {
+      const planner = await waitFor(() => f.fakes.received("planner")[0], "the planner to start");
+      f.engine.task(f.taskId)!.approvePlan = true;
+      f.engine.setPoolPaused(true);
+      writeFileSync(join(f.fakes.dir, `release-${planner.session}`), "go");
+      const state = await until(f.engine, (state) => !!itemOf(state, f.taskId, "plan"));
+      expect(taskOf(state, f.taskId).holdsSlot).toBe(false);
+      expect(f.fakes.received("builder")).toHaveLength(0);
+      expect(f.runs()).toEqual([]);
+    } finally { f.engine.shutdown(); }
+  });
+
   it("reuses one passing run through read-only reviewers, acceptance and delivery without dropping an acceptance pass", async () => {
     const f = await fixture(true, { planner: "tester-first", builder: "plain" });
     try {
