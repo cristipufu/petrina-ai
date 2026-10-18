@@ -16,6 +16,7 @@ import {
   isGuide,
   SETUP_STEPS,
   type Clone,
+  type CheckId,
   type SetupStep,
   AFTER_WORDS,
   CALL_WORDS,
@@ -116,6 +117,13 @@ export class Engine extends Kernel implements Commands {
     // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
     this.shipping.carryOverShipping();
     this.driver.recover();
+    // Recovered Builders get a short login check on their saved tool before fallback selection.
+    // Other roles keep their existing recovery rules; the usual check timeout bounds this wait.
+    for (const task of this.s.tasks.filter((task) => task.state === "waiting")) {
+      const planned = task.plan?.stages[task.stageIndex]?.profileIds[0];
+      const own = planned ? this.builderConversation(task, planned) : undefined;
+      if (own) void this.tools.check(own.toolId as CheckId).then(() => { if (!this.stopped) this.schedule(); });
+    }
     this.timers.push(
       setInterval(() => {
         void this.shipping.pollPullRequests();
@@ -297,7 +305,7 @@ export class Engine extends Kernel implements Commands {
 
   /** Check every tool again, each on its own, so a slow one never holds up the others. */
   checkTools(): Promise<void> {
-    return this.tools.checkAll();
+    return this.tools.checkAll().then(() => { if (!this.stopped) this.schedule(); });
   }
 
   /** GitHub clones in the usual code folders, most recently changed first, without the ones already added. */

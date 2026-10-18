@@ -285,6 +285,8 @@ export interface ConversationNote {
   step: string;
   roleId: Id;
   profileId: Id;
+  /** Builder's planned profile when this conversation opened, before any usage handoff. Older notes omit it. */
+  plannedProfileId?: Id;
   toolId: Id;
   /** The model, as the tool takes it. */
   model: string;

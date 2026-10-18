@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, endOpenStep, JOURNEY_WORDS as W, nextExpiry, openStep, queueOf, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
+import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, headroom, kindWords, limitOf, nearLimit, endOpenStep, JOURNEY_WORDS as W, nextExpiry, openStep, queueOf, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { GrokUsage } from "./grok-usage.js";
@@ -16,6 +16,7 @@ import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js"
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import type { UsageInfo, UsageLimited } from "./usage.js";
 import { Tracking } from "./tracking.js";
+import { stepBack } from "./roles.js";
 
 export type MState = DeepMutable<State>;
 
@@ -114,6 +115,13 @@ export class ToolProblem extends Error {
 
 /** Not installed or not logged in: a tool Petrina does not start. */
 export const notReady = (status: CheckStatus) => status === "not-installed" || status === "logged-out";
+
+/** A conversation belongs to this stage, round and position, including a fix round. */
+export function stepKey(task: MTask): string {
+  if (task.stageIndex < 0) return "plan";
+  const stage = task.plan?.stages[task.stageIndex];
+  return `${stage?.id ?? task.stageIndex} round ${stage ? (task.rounds[stage.id] ?? 1) : 1} position ${task.sub}${task.fixing ? " fixing" : ""}`;
+}
 
 /** First run's record. An install that already has products or tasks never sees first run. */
 function setupOf(loaded: State | undefined): DeepMutable<NonNullable<State["setup"]>> {
@@ -500,6 +508,27 @@ export abstract class Kernel {
     return this.s.profiles.find((profile) => profile.id === id) as AgentProfile | undefined;
   }
 
+  /** Only Builders return to an earlier step's conversation; an interrupted Builder keeps its current one. */
+  builderConversation(task: MTask, plannedId: Id) {
+    const stage = task.plan?.stages[task.stageIndex];
+    if (stage?.kind !== "do") return undefined;
+    const current = task.conversation;
+    const role = current?.roleId === stage.roleId && current.role ? current.role : this.role(stage.roleId);
+    if (role?.result !== "build") return undefined;
+    const own = task.builderSession;
+    const saved = current
+      ? current.roleId === stage.roleId && current.briefed && current.step === stepKey(task) && (!current.plannedProfileId || current.plannedProfileId === plannedId) ? current : undefined
+      : (task.fixing || task.updating) && own?.stageId === stage.id && own.profileId === plannedId && !(task.fixing && stepBack(task as Task)) ? own : undefined;
+    const planned = this.profile(plannedId);
+    if (!saved || !planned) return undefined;
+    // The saved tool/model must still be offered. Prefer the planned effort for an earlier
+    // step; an active conversation already names the actual fallback profile it ran on.
+    const matches = (profile: AgentProfile) => profile.toolId === saved.toolId && (profile.modelId ?? profile.model) === saved.model;
+    const exact = current ? this.profile(current.profileId) : undefined;
+    const profile = exact && matches(exact) ? exact : this.s.profiles.find((profile) => matches(profile) && profile.effort === planned.effort) ?? this.s.profiles.find(matches);
+    return profile ? { sessionId: saved.sessionId, toolId: saved.toolId, model: saved.model, profile } : undefined;
+  }
+
   /**
    * Who works a step planned for this profile right now: the planned one, or a stand-in while its tool or
    * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
@@ -552,7 +581,32 @@ export abstract class Kernel {
       tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
     } : state;
     const reviewing = roleId !== undefined && ["findings", "objections", "votes"].includes(this.role(roleId)?.result ?? "");
-    return chooseWithRoom(candidates, planned, Date.now(), { keep: reviewing, awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
+    const own = task && roleId !== undefined && roleId === stage?.roleId ? this.builderConversation(task, plannedId) : undefined;
+    const now = Date.now();
+    if (own && !limitOf(state.pool, own.profile, now) && !nearLimit(state.pool, own.profile, now) && headroom(state.pool, own.profile, now) !== 0 && (!room || room(own.toolId))) {
+      const check = state.setup?.checks.find((check) => check.id === own.toolId);
+      // Recovery checks are bounded by the normal tool-check timeout. Checking is temporary;
+      // let it answer before replacing a healthy saved Builder with a permanent fresh start.
+      if (check?.checking) return { kind: "none", waiting: `Checking ${this.toolName(own.toolId)} before the Builder returns` };
+      if (candidates.profiles.some((profile) => profile.id === own.profile.id) && (!checked || usable.includes(own.toolId))) {
+        const ready = candidates.tools.filter((tool) => tool.status === "ready");
+        if (!ready.length || ready.some((tool) => tool.id === own.toolId)) return { kind: own.profile.id === plannedId ? "planned" : "substitute", profile: own.profile };
+      }
+    }
+    const rules = { keep: reviewing, awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) };
+    const choice = chooseWithRoom(candidates, planned, now, rules, room);
+    if (own && room && choice.kind !== "none" && !room(choice.profile.toolId)) {
+      // A returning Builder must not get stuck on a full planned tool that recovered since
+      // its last handoff. Try tools with seats; if none can work, keep the normal wait.
+      const ready = candidates.tools.filter((tool) => tool.status === "ready");
+      const seated = (ready.length ? ready : candidates.tools).filter((tool) => room(tool.id));
+      if (seated.length) {
+        const available = { ...candidates, tools: seated.map((tool) => ({ ...tool, status: "ready" as const })), profiles: candidates.profiles.filter((profile) => seated.some((tool) => tool.id === profile.toolId)) };
+        const next = chooseWithRoom(available, planned, now, rules, room);
+        if (next.kind !== "none") return next;
+      }
+    }
+    return choice;
   }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */

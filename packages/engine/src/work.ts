@@ -37,7 +37,9 @@ export class Work {
       // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
       const own = task.builderSession;
       const back = (task.fixing || updating) && own?.stageId === stage.id && own.profileId === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
+      let used = profileId;
       const result = await this.turns.turn(task, roleId, profileId, sections, BuildResult, signal, {
+        used: (profile) => { used = profile; },
         check: async (value) => {
           const missing = given.filter((finding) => !value.answers.some((answer) => answer.id === finding.id));
           if (missing.length) return `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}`;
@@ -56,7 +58,7 @@ export class Work {
         ...(result.title ? { title: result.title } : {}),
         ...(description ? { description } : {}),
       };
-      await this.learnings.note(task, result.learnings, roleId, profileId);
+      await this.learnings.note(task, result.learnings, roleId, used);
       // One commit per task: the builder's work joins the branch's one commit, under its title.
       const sha = await git.commitAll(task.worktree!, this.updates.message(task));
       if (updating) {
@@ -65,7 +67,7 @@ export class Work {
         delete task.reviewedSha;
         delete task.hunt;
         if (updating.head) task.portReview = { from: updating.from, head: updating.head, onto: updating.onto, files: updating.files };
-        this.k.log(task, "done", `Brought up to date with main: ${result.summary}`, roleId, profileId);
+        this.k.log(task, "done", `Brought up to date with main: ${result.summary}`, roleId, used);
       }
       await this.updates.fold(task);
       // The next fix round or update goes back to this conversation.
@@ -84,7 +86,7 @@ export class Work {
         }
         task.fixing = false;
       }
-      if (!updating) this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, profileId);
+      if (!updating) this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, used);
       endAgentStep(
         task,
         updating ? { outcome: W.broughtUpToDate, reason: W.upToDate } : fixing ? { outcome: W.fixed(fixed), reason: W.fixesReady } : { outcome: sha ? W.built : W.unchanged, reason: W.readyForReview },

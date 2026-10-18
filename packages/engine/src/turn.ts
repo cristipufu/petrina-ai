@@ -9,7 +9,7 @@ import { agentEnv } from "./env.js";
 import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
 import { ADAPTERS } from "./tools.js";
-import { Kernel, Aborted, notReady, ToolProblem, type MTask } from "./kernel.js";
+import { Kernel, Aborted, notReady, stepKey, ToolProblem, type MTask } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
@@ -78,7 +78,7 @@ export class Turns {
         this.k.log(task, "warn", `Security review on the builder's tool (${this.k.named(profile.id)}): no other tool is available for this review`);
       }
       try {
-        return await this.attempt(task, roleId, profile, given, schema, signal, options);
+        return await this.attempt(task, roleId, plannedId, profile, given, schema, signal, options);
       } catch (error) {
         if (!(error instanceof UsageLimited) || signal.aborted) throw error;
         this.keepWords(task, roleId, profile.id, error);
@@ -105,7 +105,7 @@ export class Turns {
   }
 
   /** One attempt at the step by one agent on one profile. */
-  private async attempt<T>(task: MTask, roleId: Id, profile: AgentProfile, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T>): Promise<T> {
+  private async attempt<T>(task: MTask, roleId: Id, plannedId: Id, profile: AgentProfile, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T>): Promise<T> {
     let role = this.k.role(roleId);
     const product = this.k.productOf(task);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
@@ -117,7 +117,7 @@ export class Turns {
 
     // A conversation noted before a restart: the same step and role carry on from where it was. Only the
     // same tool and model reopen it, and never the Release Manager: interrupted shipping is checked first.
-    const step = this.stepKey(task);
+    const step = stepKey(task);
     const model = profile.modelId ?? profile.model;
     const saved = task.conversation;
     const same = saved && saved.step === step && saved.roleId === roleId ? saved : undefined;
@@ -127,7 +127,7 @@ export class Turns {
     role.canEdit = access.canEdit;
     if (access.afterReview && !same) this.k.log(task, "warn", `${role.name} works read-only on this task: its step comes after the final review`, roleId, profileId);
     // A conversation that never showed it got its instructions (Petrina stopped in between) starts again instead.
-    const reopen = same && same.briefed && roleId !== "release-manager" && same.toolId === profile.toolId && same.model === model ? same : undefined;
+    const reopen = same && same.briefed && roleId !== "release-manager" && same.toolId === profile.toolId && same.model === model && (role.result !== "build" || !same.plannedProfileId || same.plannedProfileId === plannedId) ? same : undefined;
     let again = saved && !reopen ? (same ? (same.briefed || roleId === "release-manager" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
     // Back to an earlier step's conversation, unless this step already has one of its own.
     const back = !saved && options.resume?.toolId === profile.toolId && options.resume.model === model ? options.resume : undefined;
@@ -247,7 +247,7 @@ export class Turns {
     // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
     // the old note; a reopened one keeps the open question until the conversation hears the answer.
     const asked = picked ? reopen?.asked : undefined;
-    if (roleId !== "release-manager") task.conversation = { step, roleId, profileId, role, access, toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && handback ? { handback } : {}) };
+    if (roleId !== "release-manager") task.conversation = { step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && handback ? { handback } : {}) };
     this.k.commitNow();
     const headBefore = !role.canEdit ? head : undefined;
     try {
@@ -552,13 +552,6 @@ export class Turns {
       this.k.waiting.set(id, { resolve, reject });
       signal.addEventListener("abort", () => reject(new Aborted()), { once: true });
     });
-  }
-
-  /** Which step a task is on: its stage (or the plan), the design round and the reviewer position. */
-  private stepKey(task: MTask): string {
-    if (task.stageIndex < 0) return "plan";
-    const stage = task.plan?.stages[task.stageIndex];
-    return `${stage?.id ?? task.stageIndex} round ${stage ? (task.rounds[stage.id] ?? 1) : 1} position ${task.sub}${task.fixing ? " fixing" : ""}`;
   }
 
   /** The step in the coordinator's words, for an agent coming back to it. */

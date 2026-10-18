@@ -788,6 +788,11 @@ acp
   .onRequest("session/new", async (ctx) => {
     if (loggedOut) throw acp.RequestError.authRequired();
     if (hangs) await new Promise(() => undefined);
+    const holdOpen = process.argv.find((arg) => arg.startsWith("--hold-open="))?.slice("--hold-open=".length);
+    if (holdOpen) {
+      writeFileSync(`${holdOpen}.reached`, "");
+      while (existsSync(holdOpen)) await Bun.sleep(20);
+    }
     const sessionId = crypto.randomUUID();
     sessions.set(sessionId, { cwd: ctx.params.cwd, role: "", turns: 0, restarts: 0, history: [], options: configOptions() });
     keep(sessionId);
