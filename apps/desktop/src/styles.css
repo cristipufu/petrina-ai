@@ -629,7 +629,14 @@ kbd {
 .card-status { display: flex; align-items: flex-start; gap: 8px; color: var(--text-2); overflow-wrap: anywhere; }
 .card-status .dot { margin-top: 6px; }
 .card-status > span:last-child { min-width: 0; }
-.card-desc { color: var(--text-2); overflow-wrap: anywhere; }
+.card-desc {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
 /* What comes next: one quiet line under the main one. When it is clipped, hovering or focusing the card shows all of it in place, in the same quiet small text. */
 .card-next { position: relative; min-width: 0; margin-top: -4px; padding-left: 16px; pointer-events: none; }
 .card-next p,
@@ -1125,6 +1132,10 @@ kbd {
 .stage .head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-weight: 600; padding-top: 4px; }
 .stage .kind { color: var(--text-3); font-weight: 400; font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .stage .who { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
+.stage .who.converge-people { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.stage-person { display: grid; gap: 6px; min-width: 0; }
+.stage-role { display: flex; align-items: center; gap: 8px; }
+.stage-person .select { width: 100%; min-width: 0; box-sizing: border-box; }
 
 .list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; color: var(--text); font-size: var(--fs-reading); line-height: var(--lh-reading); }
 .checks { list-style: none; display: flex; flex-direction: column; gap: 8px; }

@@ -1,7 +1,7 @@
 import { TaskStart } from "../TaskStart";
 // The task sheet's Plan tab: why this plan, its risk, and its stages, with who works on each.
 
-import { Check, Repeat, ShieldCheck } from "lucide-react";
+import { Check, ShieldCheck } from "lucide-react";
 import { reviewerAt, type RiskLevel, type Stage, type State, type Task } from "@petrina/core";
 import { sim } from "../../engine";
 import { profileText, type Lookup } from "../../lib";
@@ -83,7 +83,7 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
                     {now && <span className="label running">Now</span>}
                     {past && <span className="sr-only">Done</span>}
                   </div>
-                  <div className="who">
+                  <div className={`who${stage.kind === "converge" ? " converge-people" : ""}`}>
                     {stage.kind === "gate" ? (
                       <>
                         <ShieldCheck size={16} aria-hidden="true" />
@@ -91,13 +91,14 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
                       </>
                     ) : stage.kind === "converge" ? (
                       <>
-                        <RoleAvatar role={role} size={20} />
-                        {role?.name}
-                        {select(stage, "profileIds", 0, stage.profileIds[0] ?? "", editable)}
-                        <Repeat size={14} aria-label="with" />
-                        <RoleAvatar role={reviewerRole} size={20} />
-                        {reviewerRole?.name}
-                        {select(stage, "reviewerProfileIds", 0, stage.reviewerProfileIds?.[0] ?? "", editable)}
+                        <div className="stage-person">
+                          <span className="stage-role"><RoleAvatar role={role} size={20} />{role?.name}</span>
+                          {select(stage, "profileIds", 0, stage.profileIds[0] ?? "", editable)}
+                        </div>
+                        <div className="stage-person">
+                          <span className="stage-role"><RoleAvatar role={reviewerRole} size={20} />{reviewerRole?.name}</span>
+                          {select(stage, "reviewerProfileIds", 0, stage.reviewerProfileIds?.[0] ?? "", editable)}
+                        </div>
                       </>
                     ) : (
                       <>
