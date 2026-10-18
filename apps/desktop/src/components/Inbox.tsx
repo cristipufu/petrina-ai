@@ -18,7 +18,7 @@ import {
   Undo2,
   type LucideIcon,
 } from "lucide-react";
-import { CHECK_NAMES, checkOf, DELIVERY_LABEL, fixFor, inboxOrder, inboxSummary, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
+import { CHECK_NAMES, checkOf, deliveryLabel, fixFor, inboxOrder, inboxSummary, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
 import { desktop, sim, useEngineStatus, useUnsent } from "../engine";
 import { useBrowserPermission } from "../notify/channels";
 import { finishOffer, useNotifySettings } from "../notify/settings";
@@ -342,7 +342,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {!sending && item.kind === "plan" && (
         <div className="ask-actions">
-          <button className="btn lead" onClick={() => sim.approve(item.id)}>
+          <button className="btn lead" disabled={!!task?.workError} onClick={() => sim.approve(item.id)}>
             Approve plan
           </button>
           <button className="btn" onClick={() => onOpen(item.taskId, "plan")}>
@@ -467,7 +467,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         <div className="ask-actions">
           <button className="btn lead" onClick={() => sim.approve(item.id)}>
             <GitPullRequest size={16} aria-hidden="true" />
-            {task ? DELIVERY_LABEL[task.delivery] : "Ship it"}
+            {task ? deliveryLabel(task) : "Ship it"}
           </button>
           <button className="btn" onClick={() => onOpen(item.taskId, "review")}>
             See the reviews

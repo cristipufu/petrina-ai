@@ -1,5 +1,6 @@
 // The domain model shared by the engine, the simulator and the UI.
 // Everything here is plain data so it can be stored, diffed and rendered.
+import type { PullRequestBackground, TaskSource, WorkChoice } from "./source.js";
 
 import type { WorkInfo } from "./worklog.js";
 import type { CheckId, Setup } from "./setup.js";
@@ -380,6 +381,8 @@ export type ShippingStep = "push" | "open" | "release" | "update";
  * the exact commit it checked.
  */
 export interface ShippingRecord {
+  /** A completed local branch update is distinct from its push to GitHub. */
+  localUpdated?: string;
   /** The task's one commit this preparation started from, on top of `base`. */
   start?: string;
   /** The default branch's commit the work sits on: where Petrina expects it when it publishes. */
@@ -567,6 +570,16 @@ export interface Cleanup {
 }
 
 export interface Task {
+  workChoice?: WorkChoice;
+  workProduct?: TaskSource["product"];
+  /** Explicit New task choices stay authoritative until the coordinator approves a change. */
+  explicitStart?: boolean;
+  source?: TaskSource;
+  proposedSource?: TaskSource;
+  workProposal?: readonly WorkChoice[];
+  workError?: string;
+  confirmWork?: boolean;
+  prBackground?: PullRequestBackground;
   id: Id;
   productId: Id;
   title: string;
@@ -701,8 +714,10 @@ export interface Task {
   error?: string;
   /** Set when a `release` product published this task. */
   release?: { tag: string; url: string };
-  /** Set when a `local` product committed this task onto its default branch. */
+  /** Set when commit delivery advanced the approved branch and confirmed its push, if it has GitHub. */
   landed?: { branch: string; sha: string };
+  /** The destination was advanced locally; its push is a separate, possibly unfinished step. */
+  localUpdate?: { branch: string; sha: string; pushed: boolean };
   /** Everything the coordinator said about this task, kept for every later agent (latest wins). */
   notes?: readonly { at: number; text: string; id?: Id }[];
   /** What the coordinator said during the current step, in order. Cleared when the step finishes. */
@@ -757,7 +772,7 @@ export interface InboxItem {
  * What "ready" means for a product.
  * - `pull-request`: push the work's one commit and open a pull request (never merged by Petrina).
  * - `release`: push the work with a version commit to the default branch, with a new version tag, and publish a GitHub release.
- * - `local`: move the local default branch forward to the work. Nothing is pushed.
+ * - `local`: advance the approved branch in the local copy and push the tested work to its saved GitHub address. Commit to main does the same for the default branch.
  * Petrina publishes, and sets a release's version itself; the only agent at delivery is the Release Manager, writing a release's notes.
  */
 export type DeliveryMode = "pull-request" | "release" | "local";

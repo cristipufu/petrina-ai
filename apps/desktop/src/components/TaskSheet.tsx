@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, ArrowUpToLine, Ban, CheckCircle2, ChevronRight, Clock3, Ellipsis, ExternalLink, GitPullRequest, Hand, ListOrdered, LoaderCircle, MessageSquare, Pause, Play, TriangleAlert, X } from "lucide-react";
-import { TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
+import { sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { duration, safeUrl, STATE_LABEL, type Lookup } from "../lib";
 import { ProductName, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
@@ -128,7 +128,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
           <button className="btn quiet small" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" /> Back</button>
           <div className="task-workspace-title">
             <h1 className="sheet-title" id="sheet-title" title={task.title}>{task.title}</h1>
-            <div className="sheet-meta"><ProductName product={product} /><span aria-hidden="true">·</span><span>{stateLabel}</span>{task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}</div>
+            <div className="sheet-meta"><ProductName product={product} />{task.source && <span className="source-label">{sourceLabel(task.source)}</span>}<span aria-hidden="true">·</span><span>{stateLabel}</span>{task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}</div>
           </div>
           <div className="sheet-actions">
             {prUrl && (
@@ -199,7 +199,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
             <div className="task-list-scroll">
               {listed.map((entry) => (
                 <button key={entry.id} className={`task-list-item ${entry.id === task.id ? "selected" : ""}`} aria-current={entry.id === task.id ? "true" : undefined} onClick={() => { onTask(entry.id); setPane("flow"); }}>
-                  <span className="task-list-meta"><span className="task-list-product"><ProductName product={find.product(entry.productId)} /></span><TaskActivity task={entry} /></span>
+                  <span className="task-list-meta"><span className="task-list-product"><ProductName product={find.product(entry.productId)} />{entry.source && <> <span className="source-label">{sourceLabel(entry.source)}</span></>}</span><TaskActivity task={entry} /></span>
                   <span className="task-list-title">{entry.title}</span>
                   <span className="task-list-status">{entry.held && entry.state === "queued" ? "On hold" : entry.statusLine || STATE_LABEL[entry.state]}</span>
                   {entry.id === task.id && <ChevronRight className="task-list-arrow" size={16} aria-hidden="true" />}

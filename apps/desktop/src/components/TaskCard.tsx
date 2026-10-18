@@ -1,3 +1,4 @@
+import { sourceLabel } from "@petrina/core";
 import { useCallback, useRef, useState, type DragEvent } from "react";
 import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
@@ -78,6 +79,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
         <span className="where">
           {queued && <GripVertical size={14} className="grip" aria-hidden="true" />}
           <ProductName product={find.product(task.productId)} />
+          {task.source && <span className="source-label">{sourceLabel(task.source)}</span>}
           {queued && queuePosition !== undefined && <span className="num">#{queuePosition + 1} in queue</span>}
           {startsNext && <span className="next-up">Starts next</span>}
         </span>

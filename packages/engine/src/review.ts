@@ -194,7 +194,7 @@ export class Reviews {
         work: async (copy, room, seat, used, agent) => {
           let by = profileId;
           const roleId = reviewerAt(stage, Number(key));
-          const result = await this.turns.parallel(task, roleId, profileId, copy, () => this.context.sectionsFor(task, roleId), ReviewResult, signal, { key: `reviewer:${key}`, reviewerKey: key, used: (id) => { by = id; used(id); }, room, seat, agent });
+          const result = await this.turns.parallel(task, roleId, profileId, copy, () => this.context.sectionsFor(task, roleId), ReviewResult, signal, { key: `reviewer:${key}`, reviewerKey: key, used: (id) => { by = id; used(id); }, room, seat, agent, refresh: false });
           await this.applyReview(task, stage, result, by, roleId);
           reported(key);
         },
@@ -312,6 +312,7 @@ export class Reviews {
             room,
             seat,
             agent,
+            refresh: false,
             used: (id) => { by = id; used(id); },
             check: (value) => {
               const toolId = this.k.profile(by)!.toolId;
@@ -376,6 +377,9 @@ export class Reviews {
     const sha = await git.head(task.worktree!);
     // Copies a crash left behind go first.
     await git.removeCopies(root, folder);
+    // One read for every partner of this step. Each of them skipping its own first read keeps the same brief.
+    // A usage replacement reads again on that later attempt.
+    await this.turns.refresh(task);
     const pending = [...members];
     const running = new Map<number, { agent: ActiveAgent; done: Promise<void> }>();
     let failure: unknown;

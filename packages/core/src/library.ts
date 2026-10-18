@@ -1,3 +1,4 @@
+import { deliveryLabel } from "./source.js";
 import type { AgentProfile, DeliveryMode, Plan, Role, Stage, Task, Tool } from "./model.js";
 
 /**
@@ -264,9 +265,9 @@ export const DELIVERY_LABEL: Record<DeliveryMode, string> = {
   local: "Commit to main",
 };
 
-/** The end of every plan: the coordinator's check (when asked for), then the delivery step, the Release Manager's (it only works for releases). */
-export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDelivery">, releaseManagerProfileId: string = "opus-high"): Stage[] {
-  const ship: Stage = { id: `${task.id}:ship`, kind: "do", title: DELIVERY_LABEL[task.delivery], roleId: "release-manager", profileIds: [releaseManagerProfileId] };
+/** The end of every plan: the coordinator's check (when asked for), then the delivery step. The Release Manager only writes a release's notes. */
+export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDelivery" | "source">, releaseManagerProfileId: string = "opus-high"): Stage[] {
+  const ship: Stage = { id: `${task.id}:ship`, kind: "do", title: task.source ? deliveryLabel(task) : DELIVERY_LABEL[task.delivery], roleId: "release-manager", profileIds: [releaseManagerProfileId] };
   if (!task.approveDelivery) return [ship];
   return [{ id: `${task.id}:delivery`, kind: "gate", title: "Your delivery check", roleId: "release-manager", profileIds: [], gate: "delivery" }, ship];
 }
@@ -277,7 +278,7 @@ export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDeli
  * reviewers in the review, and on features and new things, notes roles get a step of their own
  * (read-only ones before the build, ones that change the product after it), always before the review.
  */
-export function composePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery">, roles: readonly Role[] = BUILT_IN_ROLES): Plan {
+export function composePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery" | "source">, roles: readonly Role[] = BUILT_IN_ROLES): Plan {
   const plan = basePlan(task);
   const added = roles.filter((role) => role.added && !role.removed);
   if (!added.length) return plan;
@@ -304,7 +305,7 @@ export function composePlan(task: Pick<Task, "id" | "kind" | "delivery" | "appro
   return { ...plan, stages, rationale: names.length ? `${plan.rationale} With the ${list} you added.` : plan.rationale };
 }
 
-function basePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery">): Plan {
+function basePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery" | "source">): Plan {
   const id = task.id;
   const deliveryGate = () => deliveryStages(task, "sonnet-medium");
   switch (task.kind) {

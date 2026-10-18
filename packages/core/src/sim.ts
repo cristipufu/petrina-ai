@@ -1,3 +1,4 @@
+import { deliveryLabel, workSummary, type WorkChoice, type TaskSource } from "./source.js";
 // A deterministic stand-in for real agents. It drives the same state the real engine
 // will: tasks move through their plan, agents report status lines, ask questions,
 // request permissions, raise objections and findings, and wait at gates.
@@ -636,6 +637,8 @@ export class Simulator {
     this.resolve(itemId, (d, task, item) => {
       switch (item.kind) {
         case "plan":
+          task.confirmWork = false;
+          if (task.source) task.source.confirmed = true;
           this.log(d, task, "you", "You approved the plan");
           endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
           this.continueAfterGate(d, task);
@@ -1020,6 +1023,19 @@ export class Simulator {
     });
   }
 
+  async setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
+    this.updateTask(taskId, (d, task) => {
+      const product = d.products.find((entry) => entry.id === choice.productId);
+      if (!product) throw new Error("Add the product first.");
+      task.workChoice = choice;
+      task.productId = choice.productId;
+      task.delivery = choice.delivery;
+      task.source = demoSource(product, choice);
+      for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = deliveryLabel(task);
+      delete task.workError;
+    });
+  }
+
   addTask(input: NewTask): Id {
     let created = "";
     this.update((d) => {
@@ -1027,10 +1043,14 @@ export class Simulator {
       const id = this.id(d, "task");
       created = id;
       const top = input.position === "top";
-      const product = d.products.find((entry) => entry.id === input.productId);
+      const product = d.products.find((entry) => entry.id === input.productId) ?? d.products[0];
+      const choice: WorkChoice = { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" };
       d.tasks.push({
         id,
-        productId: input.productId,
+        productId: product?.id ?? input.productId,
+        workChoice: choice,
+        confirmWork: !input.productId || choice.startFrom.kind === "pull-request",
+        ...(product ? { source: demoSource(product, choice) } : {}),
         title: input.title.trim(),
         description: input.description?.trim() ?? "",
         area: input.area?.trim() || areaFromTitle(input.title),
@@ -1310,7 +1330,7 @@ export class Simulator {
       this.say(d, task, "agent", task.plan.rationale, agent.roleId, agent.profileId);
       this.endStage(d, task, "done");
       endAgentStep(task, { outcome: W.planned(count), reason: W.planReady }, d.now);
-      if (task.approvePlan) this.gate(d, task, "plan");
+      if (task.approvePlan || task.confirmWork) this.gate(d, task, "plan");
       else this.advance(d, task);
       return;
     }
@@ -1531,7 +1551,7 @@ export class Simulator {
     beginYouStep(task, gate, d.now);
     task.holdsSlot = false;
     task.statusLine = gateStatus(task as unknown as Task, gate);
-    const body = gate === "design" ? callCheckBody(task as unknown as Task) : undefined;
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : task.source && (gate === "plan" || gate === "delivery") ? workSummary(task.source) : undefined;
     this.raise(d, task, gate, gateTitle(task as unknown as Task, gate), false, body ? { body } : {});
     task.column = this.columnFor(d, task);
   }
@@ -1588,6 +1608,21 @@ export class Simulator {
       this.log(d, task, "done", "Ready to publish", "release-manager", task.agent.profileId);
       endAgentStep(task, { outcome: W.notes, reason: W.releaseNotesReady }, d.now);
     }
+    if (task.source?.start.kind === "pull-request") {
+      const start = task.source.start;
+      beginPetrinaStep(task, "delivery", d.now);
+      task.pr = { number: start.number, url: start.url, state: "open", openedAt: d.now };
+      delete task.agent;
+      task.holdsSlot = false;
+      task.state = "pr-open";
+      task.column = "ready";
+      task.prAge = 0;
+      task.statusLine = `Updated PR #${start.number}. Merge it on GitHub when you are happy`;
+      this.log(d, task, "done", `Updated PR #${start.number} in ${start.headRepo} · ${start.branch}`);
+      this.moment(d, task, { kind: "task-end", outcome: "delivered" });
+      endPetrinaStep(task, { outcome: `Updated pull request #${start.number}` }, d.now);
+      return;
+    }
     if (task.delivery === "pull-request") {
       this.openPullRequest(d, task);
       return;
@@ -1609,7 +1644,7 @@ export class Simulator {
       endPetrinaStep(task, { outcome: W.released(tag) }, d.now);
     } else {
       const sha = (d.seq * 2654435761).toString(16).slice(0, 7);
-      task.landed = { branch: product?.defaultBranch ?? "main", sha };
+      task.landed = { branch: task.source?.destination.branch ?? product?.defaultBranch ?? "main", sha };
       task.statusLine = `Committed to ${task.landed.branch} (${sha})`;
       this.log(d, task, "done", `Petrina moved ${task.landed.branch} forward to it (${sha}), and checked the main copy`);
       endPetrinaStep(task, { outcome: W.movedMain(task.landed.branch) }, d.now);
@@ -1881,4 +1916,12 @@ function simReport(seed: string, toolId: Id, model: string, roleId: Id, workMs: 
   }
   // The main figure counts the main agent loop only, so it is smaller than the breakdown. Petrina never adds the two.
   return { main: { ...counts, output: Math.round(counts.output * 0.9) }, models };
+}
+
+/** The demo shows resolved choices without contacting GitHub. */
+function demoSource(product: TaskSource["product"], choice: WorkChoice): TaskSource {
+  const branch = choice.startFrom.kind === "branch" ? choice.startFrom.name : choice.startFrom.kind === "pull-request" ? "review-fixes" : product.defaultBranch ?? "main";
+  const number = choice.startFrom.kind === "pull-request" ? Number(/(?:pull\/|#)?(\d+)\/?$/.exec(choice.startFrom.value)?.[1] ?? 123) : 0;
+  const start: TaskSource["start"] = choice.startFrom.kind === "pull-request" ? { kind: "pull-request", number, url: `https://github.com/${product.repo}/pull/${number}`, headRepo: product.repo, branch } : { kind: choice.startFrom.kind, branch };
+  return { product, start, destination: { mode: choice.delivery, kind: start.kind === "pull-request" ? "update-pr" : choice.delivery === "local" ? "branch" : choice.delivery === "release" ? "release" : "new-pr", repo: product.repo, branch, remote: product.remote }, confirmed: true };
 }

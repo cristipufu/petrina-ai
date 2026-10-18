@@ -7,8 +7,10 @@ import { z } from "zod";
 import { activeRoles, BUILT_IN_ROLES, stepOf, followingCall, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
+import { WorkChoiceSchema } from "./source-schema.js";
 
 export const PlanResult = z.object({
+  worksOn: z.array(WorkChoiceSchema).optional(),
   rationale: z.string().min(3),
   stages: z
     .array(
@@ -195,7 +197,7 @@ export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
   "planner": {
     result: PlanResult,
     reads: [],
-    shape: `{"rationale": "Why this plan, in one or two plain sentences", "stages": [
+    shape: `{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request"}], "rationale": "Why this plan, in one or two plain sentences", "stages": [
   {"kind": "converge", "title": "Design", "roleId": "architect", "profileIds": ["<profile id>"], "reviewerRoleId": "design-reviewer", "reviewerProfileIds": ["<another tool's profile id>"], "maxRounds": 3},
   {"kind": "gate", "title": "Your design check", "roleId": "architect", "gate": "design"},
   {"kind": "do", "title": "Build", "roleId": "builder", "profileIds": ["<profile id>"]},

@@ -1,3 +1,4 @@
+import type { WorkChoice } from "@petrina/core";
 // A scripted ACP agent for tests. It reads which role it is from the prompt and answers
 // like that role would, so the engine can be tested end to end without spending tokens.
 //
@@ -22,7 +23,10 @@ export interface Scenario {
   /** Shutdown tests: never answer the initial handshake. */
   silent?: boolean;
   /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. "pair": build, then two reviewers at once, one on each tool. */
-  planner?: "short" | "tester-after" | "tester-first" | "tester-with-design" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair";
+  worksOn?: WorkChoice[];
+  planner?: "short" | "tester-after" | "tester-first" | "tester-with-design" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
+  /** An added Security specialist passes instead of blocking once. The roles scenario still blocks. */
+  addedReviewer?: "pass";
   notes?: "work";
   /** The architect leaves product changes for the engine to save, in rounds and after a call. */
   architect?: "writes";
@@ -277,7 +281,7 @@ function findingIds(text: string, title: string): string[] {
 
 /** The planner's risk rating, when the scenario sets one. */
 function riskOf(plan: Scenario) {
-  return plan.risk ? { risk: { level: plan.risk, why: plan.risk === "high" ? "It changes how people sign in." : "Only the greeting's words change." } } : {};
+  return { ...(plan.worksOn ? { worksOn: plan.worksOn } : {}), ...(plan.risk ? { risk: { level: plan.risk, why: plan.risk === "high" ? "It changes how people sign in." : "Only the greeting's words change." } } : {}) };
 }
 
 /** A builder in a fix round answers every finding it was given, by id. */
@@ -535,6 +539,33 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 2 },
+          ],
+        });
+      if (plan.planner === "build-review")
+        return done({
+          rationale: "Build it, then two reviewers.",
+          ...riskOf(plan),
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 1 },
+          ],
+        });
+      if (plan.planner === "source-brief")
+        return done({
+          rationale: "Build it, then a review with the security reviewer.",
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 1 },
+          ],
+        });
+      if (plan.planner === "source-roles")
+        return done({
+          rationale: "Build it, then the copywriter, a review with the security reviewer, and a fact check.",
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 1 },
+            { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
+            { kind: "do", title: "Fact check", roleId: addedId(text, "Fact checker"), profileIds: ["opus-high"] },
           ],
         });
       if (plan.planner === "roles")
@@ -823,6 +854,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return { text: releaseManager(session.cwd, text) };
     }
     default: {
+      // Source-start tests only need the added reviewer to see the brief. Blocking would open a vote and a fix round.
+      if (plan.addedReviewer === "pass" && roleOf(text) === "security specialist") return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
       // A reviewer the coordinator added answers in the review's shape: it blocks once, then passes.
       // The first time, it disputes the code reviewer's suggestion without a reason, then gives one when Petrina refuses that.
       const blocks = { verdict: "fail", findings: [{ text: SECURITY_FINDING, where: "greeting.txt:1", severity: "important", evidence: "Nothing limits it." }], confirms: [] };

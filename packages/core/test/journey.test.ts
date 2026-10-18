@@ -468,7 +468,7 @@ describe("recorded the way the engine records", () => {
     // Round 2 starts by putting the work on top of main, which conflicts: the builder gets it back.
     task.stageIndex = review;
     task.rounds = { ...task.rounds, [stages[review]!.id]: 2 };
-    petrinaMoment(task, "update", { outcome: W.mainMoved(1), reason: W.conflicts, tone: "back" }, t + 110);
+    petrinaMoment(task, "update", { outcome: W.mainMoved(1), reason: W.conflicts(), tone: "back" }, t + 110);
     task.stageIndex = build;
     task.updating = { from: "a", onto: "b", head: "c", files: ["greeting.txt"] };
     // A saved head alone (including an older task) does not prove the feature completed review.

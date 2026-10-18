@@ -1,3 +1,6 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import type { Sources } from "./sources.js";
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
@@ -7,7 +10,7 @@ import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
 import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox.js";
-import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
+import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
 import { ADAPTERS } from "./tools.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
@@ -35,6 +38,7 @@ export class Turns {
   constructor(
     private readonly k: Kernel,
     private readonly tools: ToolChecks,
+    private readonly sources: Sources,
   ) {}
 
   /**
@@ -50,7 +54,7 @@ export class Turns {
    * is reopened when a limit ends.
    */
   async turn<T>(task: MTask, roleId: Id, plannedId: Id, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T> = {}): Promise<T> {
-    if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
+    if (!this.k.role(roleId) || !this.k.profile(plannedId) || (this.k.role(roleId)?.result !== "plan" && !this.k.productOf(task))) throw new Error(`Unknown role or product: ${roleId} on ${plannedId}`);
     let stopped: { profileId: Id; error: UsageLimited } | undefined;
     for (;;) {
       const choice = this.k.choose(plannedId, task, roleId, (toolId) => !slotWait(this.k.getState(), { taskId: task.id, toolId }), options.reviewerKey)!;
@@ -128,13 +132,16 @@ export class Turns {
   /** One attempt at the step by one agent on one profile. */
   private async attempt<T>(task: MTask, roleId: Id, plannedId: Id, profile: AgentProfile, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T>): Promise<T> {
     let role = this.k.role(roleId);
-    const product = this.k.productOf(task);
+    const product = this.k.repositoryOf(task) ?? (role?.result === "plan" ? { id: "", name: "To be chosen", repo: "", tone: "blue" as const } : undefined);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
     const profileId = profile.id;
+    const workingCopy = task.worktree ?? join(this.k.dataDir, "planning", task.id);
+    if (!task.worktree) mkdirSync(workingCopy, { recursive: true });
     const taskId = task.id;
     // Paused, cancelled or stopped while getting here: no agent starts, and the task stays as the coordinator left it.
     if (signal.aborted) throw new Aborted();
     this.mustBeReady(profile);
+    if (role.result !== "plan") await this.sources.refresh(task);
 
     // A conversation noted before a restart: the same step and role carry on from where it was. Only the
     // same tool and model reopen it, and never the Release Manager: interrupted shipping is checked first.
@@ -194,7 +201,7 @@ export class Turns {
         ...(command ? { command } : {}),
         ...(env ? { env } : {}),
         ...(sandbox ? { sandbox } : {}),
-        cwd: task.worktree!,
+        cwd: workingCopy,
         signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
@@ -280,12 +287,13 @@ export class Turns {
     try {
       // The last moment to notice a pause before the agent gets any work.
       if (signal.aborted || !live()) throw new Aborted();
+      const withBackground = async (): Promise<Section[]> => [...await given(), ...(task.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(task.prBackground) }] : [])];
       let opening: string;
       if (wentBack) {
         // Its job as it stands now and the context, from the same sections a fresh conversation gets.
-        const sections = await given();
+        const sections = await withBackground();
         this.recordJourneyInput(task, roleId, profileId, sections, "continued");
-        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", access, sections });
+        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: task.branch ?? "planning", base: task.baseSha ?? task.base ?? "", defaultBranch: task.source?.start.branch ?? product.defaultBranch ?? "main", access, sections });
       } else if (picked) {
         // One line about the restart (or the hand back), then only what the conversation has not heard: the answer to its open question, and messages still in line.
         const answer = asked?.answer !== undefined ? { question: asked.question, text: asked.answer } : undefined;
@@ -300,19 +308,20 @@ export class Turns {
         }
         const texts = messages.map((message) => message.text);
         opening = handback ? handBackPrompt(handback, texts) : restartPrompt(where!, { ...(answer ? { answer } : {}), messages: texts });
+        if (task.prBackground) opening += `\n\n## Refreshed pull request background\n${pullRequestBackground(task.prBackground)}`;
       } else {
         // Starting the step again: everything the coordinator said in it so far, in order, and after a restart, where it was.
         const files = where && !handback && head && task.worktree ? await git.changedSince(task.worktree, head) : [];
         if (signal.aborted || !live()) throw new Aborted();
         const earlier = task.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
         if (earlier.length) this.k.log(task, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
-        const sections = [...await given()];
+        const sections = await withBackground();
         if (earlier.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt)) });
         else if (where) sections.push({ title: WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "") });
         this.recordJourneyInput(task, roleId, profileId, sections, "fresh");
-        opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", access, sections });
+        opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: task.branch ?? "planning", base: task.baseSha ?? task.base ?? "", defaultBranch: task.source?.start.branch ?? product.defaultBranch ?? "main", access, sections });
       }
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
       if (signal.aborted || !live()) throw new Aborted();
@@ -355,7 +364,7 @@ export class Turns {
     given: Given,
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string; key?: string; agent?: ActiveAgent } = {},
+    options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string; key?: string; agent?: ActiveAgent; refresh?: boolean } = {},
   ): Promise<T> {
     if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     if (signal.aborted) throw new Aborted();
@@ -367,6 +376,8 @@ export class Turns {
     // The group already reserved `seat` (the card shows it). Choosing again after that reservation sees a
     // full pool and would start the first full stand-in instead, so the first attempt uses the reserved profile.
     let first = true;
+    // Partners of one step share the read the group just did. A usage replacement is another attempt and reads again.
+    let refresh = options.refresh !== false;
     for (;;) {
       const accepted = first && options.seat ? this.k.profile(options.seat) : undefined;
       first = false;
@@ -400,9 +411,10 @@ export class Turns {
       options.used?.(profile.id);
       const since = Date.now();
       try {
-        return await this.attemptTogether(task, role, profile, copy, given, schema, signal, { ...options, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at) } } : {}) });
+        return await this.attemptTogether(task, role, profile, copy, given, schema, signal, { ...options, refresh, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at) } } : {}) });
       } catch (error) {
         if (!(error instanceof UsageLimited) || signal.aborted) throw error;
+        refresh = true;
         this.keepWords(task, roleId, profile.id, error);
         this.k.recordLimit(task, roleId, profile.id, error);
         stopped = { profileId: profile.id, error, at: since };
@@ -410,13 +422,19 @@ export class Turns {
     }
   }
 
+  /** The latest pull-request conversation, for the agents about to share one step. A task that did not start from a pull request has nothing to read. */
+  refresh(task: MTask): Promise<void> {
+    return this.sources.refresh(task);
+  }
+
   /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
-  private async attemptTogether<T>(task: MTask, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; took?: { from: string; words: string }; agent?: ActiveAgent }): Promise<T> {
+  private async attemptTogether<T>(task: MTask, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; took?: { from: string; words: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
     const roleId = role.id;
-    const product = this.k.productOf(task);
+    const product = this.k.repositoryOf(task);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
     const profileId = profile.id;
     this.mustBeReady(profile);
+    if (options.refresh !== false) await this.sources.refresh(task);
     const taskId = task.id;
     // A usage handoff can change tools: the group's record describes this attempt, not the previous one.
     if (options.agent) {
@@ -481,11 +499,11 @@ export class Turns {
     this.k.readUsage(profile.toolId);
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
-      const sections = [...await given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
+      const sections = [...await given(), ...(task.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(task.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
       if (signal.aborted) throw new Aborted();
       if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words) });
       this.recordJourneyInput(task, roleId, profileId, sections, "fresh");
-      const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
+      const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: task.branch ?? "planning", base: task.baseSha ?? task.base ?? "", defaultBranch: task.source?.start.branch ?? product.defaultBranch ?? "main", sections });
       return await this.converse(task, run, agent, opening, "first", role, profileId, schema, signal, { ...options, main: false });
     } catch (error) {
       if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);

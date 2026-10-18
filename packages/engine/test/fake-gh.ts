@@ -17,6 +17,8 @@ export interface FakePr {
   isCrossRepository: boolean;
   title: string;
   body: string;
+  headRepository?: { nameWithOwner: string };
+  headRepositoryOwner?: { login: string };
 }
 
 export interface FakeRelease {
@@ -37,6 +39,10 @@ export interface FakeGitHub {
   loggedOut?: boolean;
   /** How many times Petrina checked the login (gh auth status). Those calls are about the coordinator, not the repository, so they are not in `calls`. */
   logins?: number;
+  /** Local repositories standing in for forks, keyed by owner/name. */
+  forks?: Record<string, string>;
+  /** Full paginated API answers keyed by the endpoint after repos/owner/name/. */
+  pages?: Record<string, unknown[]>;
   /** The login cannot see the repository: GitHub answers "not found" for everything in it. */
   hidden?: boolean;
   /** Commands ("pr list", "release create", …) that fail the next N times. */
@@ -188,7 +194,7 @@ function main(): void {
   }
   const positional = args[2] && !args[2].startsWith("-") ? args[2] : undefined;
   // `gh repo view` names the repository itself; everything else is pinned with --repo.
-  const repo = command === "repo view" ? positional : flag("--repo");
+  const repo = noun === "api" ? (verb?.startsWith(`repos/${state.repo}/`) ? state.repo : undefined) : command === "repo view" ? positional : flag("--repo");
   if (repo !== state.repo) fail(`fake gh only knows ${state.repo}, not ${repo}`);
   if (count(state.fail)) fail("HTTP 502: Bad Gateway (https://api.github.com/graphql)");
   if (state.hidden) {
@@ -198,6 +204,33 @@ function main(): void {
     fail(`GraphQL: Could not resolve to a Repository with the name '${state.repo}'. (repository)`);
   }
 
+  const refreshPr = (pr: FakePr): void => {
+    if (pr.state !== "OPEN") return;
+    const folder = pr.isCrossRepository ? state.forks?.[pr.headRepository?.nameWithOwner ?? ""] : remote;
+    if (!folder) return;
+    try {
+      const sha = execFileSync("git", ["--git-dir", folder, "rev-parse", `refs/heads/${pr.headRefName}`]).toString().trim();
+      if (folder !== remote) execFileSync("git", ["--git-dir", remote!, "fetch", "-q", folder, sha]);
+      execFileSync("git", ["--git-dir", remote!, "update-ref", `refs/pull/${pr.number}/head`, sha]);
+      pr.headRefOid = sha;
+      save();
+    } catch { /* A deleted branch remains visible as a PR with its former head. */ }
+  };
+  if (noun === "api") {
+    const endpoint = verb!.slice(`repos/${state.repo}/`.length);
+    if (!args.includes("--paginate") || !args.includes("--slurp")) fail("API lists must read every page");
+    const pages = state.pages?.[endpoint];
+    if (pages) answer(JSON.stringify(pages));
+    if (endpoint.startsWith("branches/")) {
+      const sha = ref(`refs/heads/${decodeURIComponent(endpoint.slice(9))}`);
+      if (!sha) fail("HTTP 404: branch not found");
+      answer(JSON.stringify([{ commit: { sha } }]));
+    }
+    if (endpoint.includes("/check-runs")) answer(JSON.stringify([{ check_runs: [] }]));
+    if (endpoint.includes("/status?")) answer(JSON.stringify([{ statuses: [] }]));
+    if (/^(pulls|issues)\/\d+\/(reviews|comments)/.test(endpoint)) answer("[[]]");
+    fail("Unknown API endpoint");
+  }
   if (command === "repo view") answer(flag("--jq") === ".nameWithOwner" ? state.repo : JSON.stringify({ nameWithOwner: state.repo }));
 
   if (command === "pr list") {
@@ -212,6 +245,7 @@ function main(): void {
   if (command === "pr view") {
     const pr = state.prs.find((entry) => String(entry.number) === positional || entry.headRefName === positional);
     if (!pr) fail(`no pull requests found for branch "${positional}"`);
+    refreshPr(pr!);
     answer(flag("--jq") === ".state" ? pr!.state : JSON.stringify(pick(pr!)));
   }
   if (command === "pr create") {

@@ -41,10 +41,22 @@ export class Connections {
    */
   async connection(task: MTask, signal: AbortSignal): Promise<Connection> {
     for (;;) {
-      const product = this.k.productOf(task);
+      const product = this.k.repositoryOf(task);
       const name = product?.name ?? "This product";
       if (!product?.path || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(product.repo) || product.repo.startsWith("local/")) return { ok: false, reason: `${name} has no GitHub repository`, missing: true };
       if (product.remote) return this.remoteFor(product, product.remote);
+      // Another task may have completed the existing product-address confirmation while this
+      // task waited. Fill only an address that was missing; never replace a pinned address.
+      const saved = this.k.productOf(task)?.remote;
+      if (saved && git.sameRepo(saved, product.repo)) {
+        if (task.source) {
+          task.source.product.remote = saved;
+          if (task.source.destination.repo === product.repo) task.source.destination.remote ??= saved;
+        }
+        if (task.workProduct) task.workProduct.remote = saved;
+        this.k.commitNow();
+        return this.remoteFor(product, saved);
+      }
       const pending = this.confirming.get(product.id);
       if (pending) {
         await pending.catch(() => undefined);
@@ -68,7 +80,7 @@ export class Connections {
 
   /** The saved address, for a delivery whose connection was already in use: nothing needs confirming. */
   savedRemote(task: MTask): git.Remote {
-    const product = this.k.productOf(task)!;
+    const product = this.k.repositoryOf(task)!;
     const connection = product.remote ? this.remoteFor(product, product.remote) : undefined;
     if (!connection?.ok) throw new Error(connection?.reason ?? `${product.name} has no saved GitHub address`);
     return connection.remote;
@@ -76,13 +88,13 @@ export class Connections {
 
   async requireConnection(task: MTask, signal: AbortSignal): Promise<git.Remote> {
     const connection = await this.connection(task, signal);
-    if (!connection.ok) throw new Error(`Petrina published nothing: ${connection.reason}. Delivering to main in this repository still works.`);
+    if (!connection.ok) throw new Error(`Petrina published nothing: ${connection.reason}. Retry after correcting the connection.`);
     return connection.remote;
   }
 
   /** Fetch the default branch from the saved address, in the product's line, right after checking the repository's settings. */
   async fetchDefault(task: MTask, signal: AbortSignal): Promise<Fetch> {
-    const product = this.k.productOf(task)!;
+    const product = this.k.repositoryOf(task)!;
     const connection = await this.connection(task, signal);
     if (!connection.ok) return { ok: false, error: connection.reason, ...(connection.missing ? { missing: true } : {}) };
     return this.serial(product.id, () => git.fetchBranch(product.path!, connection.remote, product.defaultBranch ?? "main"));
@@ -92,7 +104,7 @@ export class Connections {
   why(task: MTask, fetched: Extract<Fetch, { ok: false }>): string {
     if (fetched.risky) return `the repository's git settings include ${fetched.risky.slice(0, 3).join(", ")}, which could misuse your GitHub login`;
     if (fetched.timedOut) return "GitHub did not answer in time";
-    return fetched.error || `${this.k.productOf(task)?.name ?? "the product"} could not be reached`;
+    return fetched.error || `${this.k.repositoryOf(task)?.name ?? "the product"} could not be reached`;
   }
 
   /** A saved address, used only when it is the product's repository on GitHub. Tests stand in a folder for GitHub. */
@@ -125,6 +137,8 @@ export class Connections {
     if (!live) return undefined;
     if (answer === CONFIRM_ADDRESS || /^\s*yes\b/i.test(answer)) {
       live.remote = address;
+      if (task.source) { task.source.product.remote = address; task.source.destination.remote ??= address; }
+      if (task.workProduct) task.workProduct.remote = address;
       delete live.remoteRefused;
     } else {
       live.remoteRefused = address;

@@ -74,6 +74,7 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
       </section>
 
       <WhatItUsed task={task} state={state} find={find} onAbout={onAboutNumbers} />
+      {task.localUpdate && !task.localUpdate.pushed && <p className="note">{task.localUpdate.branch} was updated in the local copy. Its push to GitHub is unfinished; the work is saved.</p>}
 
       <section className="sheet-section">
         <h2>Timeline</h2>

@@ -1,3 +1,4 @@
+import { StartFromSchema, WorkChoiceSchema } from "./source-schema.js";
 // The local API the UI (and scripts) use. It only listens on 127.0.0.1, every request
 // needs the random token, and Host/Origin are checked so a web page cannot reach it.
 // The token never travels in an address: requests that carry it there are refused.
@@ -17,6 +18,7 @@ const Said = z.object({ taskId: z.string().optional(), about: z.string().max(400
 const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
 const NewTask = z.object({
+  startFrom: StartFromSchema.optional(),
   productId: z.string(),
   title: z.string().min(1).max(200),
   description: z.string().max(8000).optional(),
@@ -53,6 +55,7 @@ const ARGS = {
   setProductChecks: z.tuple([z.string(), z.union([z.null(), z.array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) })).max(12)])]),
   updateProduct: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean(), shipLowRisk: z.boolean().optional() })]),
   setProductDelivery: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]),
+  setTaskStart: z.tuple([z.string(), WorkChoiceSchema]),
   addTask: z.tuple([NewTask]),
   checkTools: z.tuple([]),
   findClones: z.tuple([]),

@@ -262,7 +262,9 @@ This is the "open in terminal" experience, made friendly.
 ⌘N from anywhere.
 
 - **What do you want?** A title and a description in plain words.
-- **Product.**
+- **Product.** Pick one registered product, or let the planner propose one. A changed proposal requires confirmation in the existing plan check.
+- **Start from:** Default branch, Branch (an exact name), or Pull request (number or GitHub link). A link must match the product's repository. The plan's editable Works on line shows the resolved source and exact destination, including a fork's working repository and branch. Invalid choices stay visible for correction. Releases use the default branch.
+- Branch work keeps the selected delivery mode: open a PR into that branch, or commit onto it and push it. PR work updates the original PR. Cards and the task sheet retain “from PR #123” or “from release-2.x”; delivery records name where the work went. A local update whose push is unfinished says so.
 - **Where in the queue:** Bottom (default) or Top.
 - **Plan:** Auto (the planner decides) or a template.
 - **Ask me before starting:** off by default.

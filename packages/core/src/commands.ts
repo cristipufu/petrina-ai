@@ -10,9 +10,11 @@ import type { ProductSettings } from "./products.js";
 import type { Clone, SetupStep } from "./setup.js";
 import type { HandBackPreview, Launched } from "./takeover.js";
 import type { UsageRequest, UsageViewFor } from "./analytics.js";
+import type { StartFrom, WorkChoice } from "./source.js";
 
 /** A new task as the window sends it. */
 export interface NewTaskInput {
+  startFrom?: StartFrom;
   productId: Id;
   title: string;
   description?: string;
@@ -64,6 +66,7 @@ export interface Commands {
   openGuide(url: string): void;
   // The queue and the pool
   addTask(input: NewTaskInput): Id;
+  setTaskStart(taskId: Id, choice: WorkChoice): Promise<void>;
   moveInQueue(taskId: Id, index: number): void;
   moveToTop(taskId: Id): void;
   placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number;
@@ -125,6 +128,7 @@ export const COMMAND_NAMES = [
   "dismissTip",
   "openGuide",
   "addTask",
+  "setTaskStart",
   "moveInQueue",
   "moveToTop",
   "placeInQueue",

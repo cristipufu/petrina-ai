@@ -475,11 +475,11 @@ describe('the app keyboard', () => {
     expect(el('.inbox-item.selected').getAttribute('data-inbox-id')).not.toBe(id);
     await key('i'); expect(host.querySelector('.inbox')).toBeNull();
   });
-  it('prefills New task without picking a product or creating anything, and ignores Ctrl K in it', async () => {
+  it('prefills New task with the planner free to choose a product, and ignores Ctrl K in it', async () => {
     const count = simulator.getState().tasks.length;
     await palette('An entirely new task'); await key('Enter');
     expect(el<HTMLInputElement>('.title-input').value).toBe('An entirely new task');
-    expect(el<HTMLButtonElement>('.dialog .btn.lead').disabled).toBe(true);
+    expect(el<HTMLButtonElement>('.dialog .btn.lead').disabled).toBe(false);
     expect(host.querySelector('[role=radio][aria-checked=true].tone-violet')).toBeNull();
     await key('k', {ctrlKey:true}); expect(host.querySelector('.command-palette')).toBeNull();
     expect(simulator.getState().tasks.length).toBe(count);

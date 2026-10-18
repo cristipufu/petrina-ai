@@ -375,7 +375,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     }
   });
 
-  it("refuses to push over a teammate's commit on GitHub's main, lands locally, and pushes once the coordinator pulled and retried", async () => {
+  it("brings in a teammate's newer GitHub commit before advancing and pushing main", async () => {
     const w = world("local-push");
     let engine = w.start();
     try {
@@ -385,7 +385,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       // Right before the coordinator approves, a teammate's commit reaches GitHub's main, unknown to the main copy.
       let teammate = "";
       const approving = coordinator();
-      let state = await finish(engine, taskId, (current, snapshot) => {
+      const state = await finish(engine, taskId, (current, snapshot) => {
         const delivery = itemOf(snapshot, taskId, "delivery");
         if (delivery && !teammate) {
           const other = join(w.dir, "teammate");
@@ -398,37 +398,21 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
         }
         approving(current, snapshot);
       });
-      let task = taskOf(state, taskId);
-      const tested = git(task.worktree!, "rev-parse", "HEAD");
-      expect(task.state).toBe("failed");
-      expect(task.error).toContain("could not push it to GitHub");
-      expect(task.error).toContain("pull them into the main copy first");
-      // Landed locally, and GitHub's main was never forced.
-      expect(git(w.clone, "rev-parse", "main")).toBe(tested);
-      expect(remoteRef(w.remote, "refs/heads/main")).toBe(teammate);
-      // Until the push is verified, this is failed work, not a finished copy eligible for cleanup.
-      expect(task.cleanup).toBeUndefined();
-      await engine.shutdown();
-      engine = w.start();
-      expect(taskOf(engine.getState(), taskId).state).toBe("failed");
-      expect(existsSync(task.worktree!)).toBe(true);
-      expect(taskOf(engine.getState(), taskId).cleanup).toBeUndefined();
-      // The coordinator pulls the teammate's commit into the main copy and retries: Petrina pushes.
-      git(w.clone, "-c", "user.email=me@example.com", "-c", "user.name=Me", "pull", "-q", "--no-rebase", "--no-edit", w.remote, "main");
-      engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
-      state = await finish(engine, taskId);
-      task = taskOf(state, taskId);
+      const task = taskOf(state, taskId);
       expect(task.error).toBeUndefined();
       expect(task.state).toBe("done");
-      task = taskOf(await until(engine, (snapshot) => taskOf(snapshot, taskId).cleanup?.removedAt !== undefined), taskId);
+      // Cleanup may already have removed the working copy. The task branch in the product copy still names the commit.
+      const tested = git(w.clone, "rev-parse", task.branch!);
+      expect(git(w.clone, "rev-parse", "main")).toBe(tested);
+      expect(remoteRef(w.remote, "refs/heads/main")).toBe(tested);
+      expect(git(w.clone, "merge-base", "--is-ancestor", teammate, tested)).toBe("");
+      expect(git(w.clone, "show", "main:teammate.txt")).toBe("theirs");
+      expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
+      expect(task.timeline.map((entry) => entry.text)).toContain(`Petrina pushed main to GitHub (${tested.slice(0, 7)})`);
+      const cleaned = taskOf(await until(engine, (snapshot) => taskOf(snapshot, taskId).cleanup?.removedAt !== undefined), taskId);
       expect(existsSync(task.worktree!)).toBe(false);
-      expect(git(w.clone, "rev-parse", task.branch!)).toBe(tested);
-      const now = git(w.clone, "rev-parse", "main");
-      expect(remoteRef(w.remote, "refs/heads/main")).toBe(now);
-      expect(git(w.clone, "merge-base", "--is-ancestor", tested, now)).toBe("");
-      expect(task.timeline.map((entry) => entry.text)).toContain(`Petrina pushed main to GitHub (${now.slice(0, 7)})`);
-      const history = task.timeline.map((entry) => entry.text);
-      expect(history.indexOf(`Petrina pushed main to GitHub (${now.slice(0, 7)})`)).toBeLessThan(history.indexOf(CLEANUP_WORDS.removed));
+      const history = cleaned.timeline.map((entry) => entry.text);
+      expect(history.indexOf(`Petrina pushed main to GitHub (${tested.slice(0, 7)})`)).toBeLessThan(history.indexOf(CLEANUP_WORDS.removed));
     } finally {
       await engine.shutdown();
     }
@@ -526,7 +510,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     }
   });
 
-  it("asks again when where it goes changes after the coordinator approved", async () => {
+  it("keeps the approved destination when the product default branch changes", async () => {
     const w = world("destination");
     const engine = w.start();
     try {
@@ -540,12 +524,13 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       // The product's default branch changes before anything gets ready.
       (engine.getState().products.find((entry) => entry.id === productId) as { defaultBranch?: string }).defaultBranch = "trunk";
       engine.setPoolPaused(false);
-      state = await until(engine, (current) => !!itemOf(current, taskId, "delivery"), coordinator(["plan", "design"]));
+      state = await finish(engine, taskId);
       const task = taskOf(state, taskId);
-      expect(task.timeline.map((entry) => entry.text)).toContain("Where it goes changed after it was approved, so it needs your OK again");
-      expect(task.approvedFor).toBeUndefined();
-      expect(w.github().calls.filter((call) => call[1] === "create")).toEqual([]);
-      engine.cancel(taskId);
+      expect(task.state).toBe("pr-open");
+      expect(task.approvedFor?.destination).toBe(`${REPO}#main`);
+      expect(task.source?.destination.branch).toBe("main");
+      expect(w.github().prs[0]?.baseRefName).toBe("main");
+      expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
     } finally {
       engine.shutdown();
     }
