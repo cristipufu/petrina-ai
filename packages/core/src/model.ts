@@ -526,8 +526,7 @@ export interface Finding {
 
 export type RiskLevel = "low" | "medium" | "high";
 
-/** A point reviewers missed once, now in the product's review guide. */
-/** A line the coordinator accepted for one of the repository's points files (REVIEW.md, LEARNINGS.md). */
+/** A line the coordinator accepted for the repository's review guide or AGENTS.md. */
 export interface GuideLine {
   text: string;
   at: number;
@@ -535,6 +534,8 @@ export interface GuideLine {
   fromTask: Id;
   /** The task whose branch adds it to the file. */
   writtenOn?: Id;
+  /** The default-branch commit that already contains a review rule; older task bases still need it as context. */
+  incorporatedOn?: string;
 }
 
 /** Something an agent learned about working in the repository, waiting for the coordinator at the delivery check. */
@@ -874,7 +875,7 @@ export interface Product {
   shipLowRisk?: boolean;
   /** Lines the coordinator accepted for the review guide (REVIEW.md). Reviewers see them at once; Petrina adds them to the file. */
   reviewGuide?: readonly GuideLine[];
-  /** Lessons the coordinator accepted for AGENTS.md's Learnings section, until a delivery adds them. */
+  /** Lessons accepted for AGENTS.md, until their incorporation in the default branch is confirmed. */
   learnings?: readonly GuideLine[];
   /** Lessons the coordinator said no to (declined or left unticked): never offered again. */
   learningsDeclined?: readonly string[];

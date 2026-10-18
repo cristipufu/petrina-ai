@@ -701,7 +701,7 @@ export class Simulator {
           const product = d.products.find((entry) => entry.id === task.productId);
           const lessons = (item.body ?? "").split("\n").map((line) => line.replace(/^- /, "").trim()).filter(Boolean);
           if (product) product.learnings = [...(product.learnings ?? []), ...lessons.map((text) => ({ text, at: d.now, fromTask: task.id }))];
-          this.log(d, task, "you", `You added ${lessons.length === 1 ? "a lesson" : `${lessons.length} lessons`} to LEARNINGS.md`);
+          this.log(d, task, "you", `You added ${lessons.length === 1 ? "a lesson" : `${lessons.length} lessons`} to AGENTS.md`);
           break;
         }
         case "screen":
@@ -732,7 +732,7 @@ export class Simulator {
 
   /** "Not this time" on an offer: the review guide, or AGENTS.md, stays as it is. */
   decline(itemId: Id): void {
-    this.resolve(itemId, (d, task, item) => this.log(d, task, "you", item.kind === "learnings" ? "You left LEARNINGS.md as it is" : "You left the review guide as it is"));
+    this.resolve(itemId, (d, task, item) => this.log(d, task, "you", item.kind === "learnings" ? "You left AGENTS.md as it is" : "You left the review guide as it is"));
   }
 
   /**
@@ -1174,7 +1174,7 @@ export class Simulator {
     });
   }
 
-  /** `answer`: how the coordinator answered an agent or a checkpoint, for the work log. An offer (the review guide, LEARNINGS.md) has none. */
+  /** `answer`: how the coordinator answered an agent or a checkpoint, for the work log. An offer (the review guide, AGENTS.md) has none. */
   private resolve(itemId: Id, change: (draft: Draft, task: DraftTask, item: DeepMutable<InboxItem>) => void, answer?: AskAnswer): void {
     this.update((d) => {
       const item = d.inbox.find((entry) => entry.id === itemId);

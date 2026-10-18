@@ -24,7 +24,14 @@ export class GuideKeeper {
     const product = task && this.k.productOf(task);
     const point = cleanPoint(item?.body ?? "");
     if (!point || !task || !product) return;
-    if (!product.reviewGuide?.some((line) => line.text === point)) product.reviewGuide = [...(product.reviewGuide ?? []), { text: point, at: Date.now(), fromTask: task.id }];
+    const existing = product.reviewGuide?.find((line) => line.text === point);
+    if (existing?.incorporatedOn) {
+      // Explicitly accepting a removed rule again is a new instruction, with a new delivery owner.
+      existing.at = Date.now();
+      existing.fromTask = task.id;
+      delete existing.writtenOn;
+      delete existing.incorporatedOn;
+    } else if (!existing) product.reviewGuide = [...(product.reviewGuide ?? []), { text: point, at: Date.now(), fromTask: task.id }];
     this.k.log(task, "you", `You added to the review guide: ${point}`);
     this.k.commit();
   }
@@ -119,7 +126,7 @@ export class GuideKeeper {
     let due: DeepMutable<GuideLine>[];
     try {
       const file = localPoints(task.worktree, GUIDE_FILE);
-      due = product.reviewGuide.filter((line) => !hasPoint(file, line.text) && free(line));
+      due = product.reviewGuide.filter((line) => !line.incorporatedOn && !hasPoint(file, line.text) && free(line));
       if (!due.length) return;
       appendPoints(task.worktree, GUIDE, due.map((line) => line.text));
       if (!localPoints(task.worktree, AGENTS_FILE).includes(GUIDE_FILE)) addToSection(task.worktree, GUIDE_SECTION, GUIDE_POINTER, []);
@@ -135,18 +142,39 @@ export class GuideKeeper {
 
   /** Points the coordinator accepted that the base branch's REVIEW.md does not have yet: reviewers get them with the task. */
   async pendingPoints(task: MTask): Promise<string[]> {
-    const product = this.k.productOf(task);
-    if (!product?.reviewGuide?.length) return [];
-    const ref = task.baseSha ?? task.base;
-    const base = ref && (product.path ?? task.worktree) ? ((await git.fileAt((product.path ?? task.worktree)!, ref, GUIDE_FILE)) ?? "") : "";
-    return (product?.reviewGuide ?? []).filter((line) => !hasPoint(base, line.text)).map((line) => line.text);
+    if (!this.k.productOf(task)?.reviewGuide?.length) return [];
+    return (await this.guidance(task)).pending.map((line) => line.text);
   }
 
   /** The guide as the base branch has it, plus the points the coordinator accepted: what the Guide keeper weighs a new point against. */
   async reviewGuide(task: MTask): Promise<string> {
+    const { base, pending } = await this.guidance(task);
+    return pointsText(GUIDE, base, pending);
+  }
+
+  private async guidance(task: MTask): Promise<{ base: string; pending: GuideLine[] }> {
     const product = this.k.productOf(task);
+    const root = product?.path ?? task.worktree;
     const ref = task.baseSha ?? task.base;
-    const base = ref && (product?.path ?? task.worktree) ? ((await git.fileAt((product?.path ?? task.worktree)!, ref, GUIDE_FILE)) ?? "") : "";
-    return pointsText(GUIDE, base, product?.reviewGuide ?? []);
+    const base = root && ref ? ((await git.fileAt(root, ref, GUIDE_FILE)) ?? "") : "";
+    const candidates = (product?.reviewGuide ?? []).filter((line) => !hasPoint(base, line.text));
+    if (!root || !ref || !candidates.some((line) => line.incorporatedOn)) return { base, pending: candidates };
+    const sha = task.baseSha ?? await git.revParse(root, ref);
+    const contained = new Map<string, boolean>();
+    const pending: GuideLine[] = [];
+    for (const line of candidates) {
+      const receipt = line.incorporatedOn;
+      if (sha && receipt) {
+        let included = contained.get(receipt);
+        if (included === undefined) {
+          included = await git.contains(root, sha, receipt);
+          contained.set(receipt, included);
+        }
+        // This base already incorporated the rule. Its later removal is authoritative.
+        if (included) continue;
+      }
+      pending.push(line);
+    }
+    return { base, pending };
   }
 }
