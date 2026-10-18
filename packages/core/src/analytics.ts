@@ -4,7 +4,7 @@
 import { limitsOverTime, tokensOverTime, type LimitsOverTime, type OverTimeView } from "./charts.js";
 import type { AgentProfile, Id, State } from "./model.js";
 import { atLeastLine, count, durationText, type Figure, listWords } from "./numbers.js";
-import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, emptyTally, addTurn, lineModelLabel, modelLabel, sessionModelLabel, turnModelLabel, type Tally, type TokenLine, type WorkLogReader, type WorkMoment, type WorkTurn } from "./worklog.js";
+import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, emptyTally, addTurn, lineModelLabel, modelLabel, sameModel, sessionModelLabel, turnModelLabel, type Tally, type TokenLine, type WorkLogReader, type WorkMoment, type WorkTurn } from "./worklog.js";
 
 export type UsagePeriod = "today" | "7d" | "30d";
 
@@ -293,12 +293,12 @@ type Names = ReturnType<typeof names>;
 // ── Settings: what was asked and what ran ──────────────────────────────────
 
 const askedName = (turn: WorkTurn) => turn.modelAskedName ?? turn.modelAsked ?? "the default";
-const ranName = (turn: WorkTurn) => turn.modelRanName ?? turn.modelRan ?? "";
+const ranName = (turn: WorkTurn) => turn.toolId === "grok" ? modelLabel(turn.modelRan) : turn.modelRanName ?? turn.modelRan ?? "";
 const finalEffort = (turn: WorkTurn) => turn.effortChangedTo ?? turn.effortRan;
 
 /** The turn ran on exactly the model and effort that were asked for, start to end. */
 export function ranAsAsked(turn: WorkTurn): boolean {
-  return turn.modelRan !== undefined && turn.effortRan !== undefined && turn.modelRan === turn.modelAsked && turn.effortRan === turn.effortAsked && turn.modelChangedTo === undefined && turn.effortChangedTo === undefined;
+  return turn.modelRan !== undefined && turn.effortRan !== undefined && sameModel(turn.toolId, turn.modelAsked, turn.modelRan) && turn.effortRan === turn.effortAsked && turn.modelChangedTo === undefined && turn.effortChangedTo === undefined;
 }
 
 const confirmed = (turn: WorkTurn) => turn.modelRan !== undefined && turn.effortRan !== undefined;
@@ -312,7 +312,7 @@ function settingsWords(turns: readonly WorkTurn[]): { text: string; differs: boo
   const change = turns.filter((turn) => turn.modelChangedTo !== undefined || turn.effortChangedTo !== undefined).at(-1);
   const to = change ? [change.modelChangedTo ? modelLabel(change.modelChangedTo) : "", change.effortChangedTo ? `${change.effortChangedTo} effort` : ""].filter(Boolean).join(" at ") : "";
   const switched = change ? `, switched to ${to} during a turn` : "";
-  const differs = turns.some((turn) => turn.modelRan !== turn.modelAsked || (turn.effortRan !== undefined && turn.effortRan !== turn.effortAsked));
+  const differs = turns.some((turn) => !sameModel(turn.toolId, turn.modelAsked, turn.modelRan) || (turn.effortRan !== undefined && turn.effortRan !== turn.effortAsked));
   const notConfirmed = turns.some((turn) => turn.effortRan === undefined);
   const ranText = distinct.length > 1 ? `ran ${listWords(distinct)}` : `ran ${distinct[0]}`;
   if (differs) return { text: `asked for ${askedName(last)} at ${last.effortAsked ?? "the default effort"}, ${ranText}${switched}`, differs, notConfirmed };

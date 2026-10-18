@@ -4,7 +4,7 @@ import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js
 import type { State, Task } from "../src/model.js";
 import { agoText, atLeastLine, codexLimits, durationText, figureText, limitWords, nearestLimit, nearestLimitWords, nextReset, tokensText } from "../src/numbers.js";
 import { Simulator } from "../src/sim.js";
-import { periodRange, usageView } from "../src/analytics.js";
+import { periodRange, ranAsAsked, usageView } from "../src/analytics.js";
 import { CHANGED_LABEL, MemoryWorkLog, NOT_CONFIRMED_LABEL, modelLabel, turnTokens, type TokenLine, type WorkMoment, type WorkTurn } from "../src/worklog.js";
 
 const NOW = new Date(2026, 9, 17, 15, 0, 0).getTime();
@@ -181,6 +181,9 @@ describe("Counting tokens", () => {
     expect(modelLabel("claude-opus-5-5")).toBe("Opus 5.5");
     expect(modelLabel("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
     expect(modelLabel("gpt-6.1-sol")).toBe("gpt-6.1-sol");
+    expect(modelLabel("grok-4.7")).toBe("Grok 4.7");
+    expect(modelLabel("grok-4.7-build")).toBe("Grok 4.7");
+    expect(modelLabel("grok-4.7-build[fast]")).toBe("grok-4.7-build[fast]");
     expect(modelLabel("some-new-model")).toBe("some-new-model");
     // A name Petrina doesn't recognise, bracketed ending and all, stays exactly as reported.
     expect(modelLabel("claude-sonnet-5[1m]")).toBe("claude-sonnet-5[1m]");
@@ -207,6 +210,24 @@ describe("Counting tokens", () => {
 });
 
 describe("The task sheet", () => {
+  it("groups Grok's verified session alias with its response model without treating alias resolution as a fallback", () => {
+    const a = turn({ taskId: "grok", roleId: "builder", profileId: "codex-high", toolId: "grok", modelAsked: "grok-4.7", modelAskedName: "Grok 4.7", modelRan: "grok-4.7-build", modelRanName: "grok-4.7", tokens: { total: 100 } });
+    const b = turn({ ...a, id: "alias-turn", sessionId: "another-session", modelRan: "grok-4.7", tokens: { total: 200 } });
+    const log = logWith([{ turn: a, lines: [line(a.id, "grok-4.7-build", 100)] }, { turn: b, lines: [line(b.id, "grok-4.7", 200)] }]);
+    const ctx = { now: NOW, state: state([task("grok", "shop")]) };
+    const analytics = usageView(log, { view: "analytics", period: "7d" }, ctx);
+    expect(analytics.byModel).toHaveLength(1);
+    expect(analytics.headline.tokens.value).toBe(300);
+    expect(analytics.byModel[0]).toMatchObject({ label: "Grok 4.7", tokens: { value: 300 }, time: { value: 20 * MIN } });
+    expect(analytics.overTime.splits.model.series.map((s) => s.label)).toEqual(["Grok 4.7"]);
+    expect(ranAsAsked(a)).toBe(true);
+    expect(ranAsAsked({ ...a, modelRan: "grok-4.7-build[fast]" })).toBe(false);
+    expect(ranAsAsked({ ...a, toolId: "codex" })).toBe(false);
+    expect(ranAsAsked({ ...a, effortRan: "other" })).toBe(false);
+    const sheet = usageView(log, { view: "task", taskId: "grok" }, ctx);
+    expect(sheet.stages[0]!.agents[0]).toMatchObject({ settings: `Grok 4.7 at ${a.effortRan}`, differs: false });
+  });
+
   it("adds up each stage and agent in plan order, planning first, with rounds and models", () => {
     const t = task("a", "shop");
     const plan = turn({ taskId: "a", roleId: "planner", profileId: "sonnet-medium", stageId: "a:plan", stageTitle: "Planning", stageKind: "plan" });

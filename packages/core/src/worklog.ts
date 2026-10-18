@@ -338,14 +338,23 @@ export function turnTokens(input: { toolId: Id; report?: TurnReport; model?: str
 const CLAUDE_ID = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/;
 const PLAIN_NAME = /^(Opus|Sonnet|Haiku|Fable) \d+(?:\.\d+)?$/;
 
+/** The installed Grok resolves this session alias to this exact response model. */
+const GROK_47 = new Set(["grok-4.7", "grok-4.7-build"]);
+
+/** Resolve only a verified alias; unknown names and variants stay distinct. */
+export function sameModel(toolId: Id, asked: string | undefined, ran: string | undefined): boolean {
+  return asked === ran || (toolId === "grok" && asked !== undefined && ran !== undefined && GROK_47.has(asked) && GROK_47.has(ran));
+}
+
 /**
  * A model name as people read it. Names Petrina recognises are shown plainly ("claude-opus-5-5"
- * reads "Opus 5.5"). Any other name, a bracketed ending or other variant included, is shown
+ * reads "Opus 5.5"), and Grok’s verified alias and build id as "Grok 4.7". Any other name is shown
  * exactly as reported, so two different names never land on one line.
  */
 export function modelLabel(raw: string | undefined): string {
   const name = raw ?? "";
   if (!name.trim()) return "";
+  if (GROK_47.has(name)) return "Grok 4.7";
   if (PLAIN_NAME.test(name)) return name;
   const claude = CLAUDE_ID.exec(name);
   if (claude) {

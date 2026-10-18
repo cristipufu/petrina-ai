@@ -42,7 +42,7 @@ describe("Grok whole-prompt token accounting", () => {
       log.endTurn("resolved", { end: "finished", endedAt: 11, workMs: 10, mainOnly: false, helpers: 0, modelRan: "grok-4.7-build", tokens: { input: 100, cacheRead: 1000, output: 50, total: 1150 } }, [{ model: "grok-4.7-build", input: 100, cacheRead: 1000, output: 50, total: 1150 }]);
       const rows = modelSplit(log.turns({}), log.lines({}));
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ label: "grok-4.7-build", tokens: { value: 1150 }, time: { value: 10 } });
+      expect(rows[0]).toMatchObject({ label: "Grok 4.7", tokens: { value: 1150 }, time: { value: 10 } });
       expect(log.turns({})[0]?.modelAsked).toBe("grok-4.7");
     } finally { db.close(); }
   });
