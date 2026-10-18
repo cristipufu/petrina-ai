@@ -111,10 +111,13 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
 
         // "It went out (mark as done)": the coordinator found the release on GitHub.
         again.markDone(itemOf(state, taskId, "shipping")!.id);
-        const task = taskOf(again.getState(), taskId);
+        state = await until(again, (current) => taskOf(current, taskId).cleanup?.pullRequest === "none");
+        const task = taskOf(state, taskId);
         expect(task.state).toBe("done");
         expect(task.shipping).toBeUndefined();
-        expect(w.github().calls.length).toBe(calls);
+        const followUp = w.github().calls.slice(calls);
+        expect(followUp.some((call) => call[0] === "pr" && call[1] === "list")).toBe(true);
+        expect(followUp.every((call) => call[0] === "pr" && call[1] === "list" || call[0] === "repo" && call[1] === "view")).toBe(true);
         expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v0.1.0"]);
         expect(remoteRef(w.remote, "refs/heads/main")).toBe(bumped);
       } finally {
