@@ -3,10 +3,12 @@
 // arrays, never a shell, and they run in the task's working copy without credentials.
 
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
+import { descendants } from "./process-tree.js";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
 export const CHECK_TIMEOUT_MS = 20 * 60_000;
@@ -157,6 +159,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     let done = false;
     let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
+    let stopping: Promise<void> | undefined;
     const readers: { cancel(): Promise<void> }[] = [];
     const finish = (code: number | null, error?: string) => {
       if (done) return;
@@ -165,9 +168,14 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
       clearTimeout(grace);
       signal?.removeEventListener("abort", stop);
       for (const reader of readers) void reader.cancel().catch(() => undefined);
-      resolve({ code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, ...(error ? { error } : {}) });
+      const result = { code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, ...(error ? { error } : {}) };
+      // The parent can exit before detached workers. Do not release the working copy until their stop settles.
+      void (stopping ?? Promise.resolve()).then(() => resolve(result));
     };
-    const stop = () => stopAll(child?.pid, windows);
+    const stop = () => {
+      stopping ??= stopAll(child?.pid, windows);
+      grace ??= setTimeout(() => finish(null), 5000);
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       stop();
@@ -222,13 +230,16 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
 }
 
 /** End a check and everything it started. */
-function stopAll(pid: number | undefined, windows: boolean): void {
+async function stopAll(pid: number | undefined, windows: boolean): Promise<void> {
   if (!pid) return;
-  try {
-    if (windows) Bun.spawn(["taskkill", "/pid", String(pid), "/T", "/F"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
-    else process.kill(-pid, "SIGKILL");
-  } catch {
-    // Already gone.
+  if (windows) {
+    await new Promise<void>((resolve) => execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, () => resolve()));
+    return;
+  }
+  // A worker can detach into a new process group. Capture its ancestry while the command is still alive.
+  const workers = await descendants([pid], 1000);
+  for (const target of [-pid, ...workers.reverse(), pid]) {
+    try { process.kill(target, "SIGKILL"); } catch { /* Already gone. */ }
   }
 }
 

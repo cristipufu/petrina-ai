@@ -8,6 +8,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { grokTurnReport } from "./grok-usage.js";
+import { descendants } from "./process-tree.js";
 import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 
 export interface PermissionInfo {
@@ -245,24 +246,6 @@ function send(pids: readonly number[], signal: NodeJS.Signals): void {
       // Already gone.
     }
   }
-}
-
-/** Every process started (directly or not) by these ones, read from the process table. */
-function descendants(roots: readonly number[], timeout = 4_000): Promise<number[]> {
-  return new Promise((resolve) => {
-    execFile("ps", ["-A", "-o", "pid=,ppid="], { timeout }, (error, stdout) => {
-      if (error) return resolve([]);
-      const children = new Map<number, number[]>();
-      for (const line of stdout.split("\n")) {
-        const [pid, ppid] = line.trim().split(/\s+/).map(Number);
-        if (pid && ppid) children.set(ppid, [...(children.get(ppid) ?? []), pid]);
-      }
-      const found = new Set<number>();
-      const queue = [...roots];
-      while (queue.length) for (const pid of children.get(queue.shift()!) ?? []) if (!found.has(pid)) found.add(pid), queue.push(pid);
-      resolve([...found].filter((pid) => !roots.includes(pid)));
-    });
-  });
 }
 
 async function exited(pids: readonly number[], ms: number): Promise<boolean> {

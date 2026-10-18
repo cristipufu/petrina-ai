@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
@@ -144,6 +145,49 @@ describe("a product's checks", () => {
 });
 
 describe("a check that misbehaves", () => {
+  for (const ending of ["abort", "timeout"] as const) it.skipIf(process.platform === "win32")(`stops detached children and grandchildren on ${ending}, leaving an unrelated process alive`, async () => {
+    const dir = root("petrina-checks-detached-");
+    const worker = join(dir, "worker.ts");
+    const parent = join(dir, "parent.ts");
+    const childPid = join(dir, "child.pid");
+    const grandPid = join(dir, "grandchild.pid");
+    const ready = join(dir, "ready");
+    writeFileSync(worker, `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
+writeFileSync(process.argv[2], String(process.pid));
+if (process.argv[3]) spawn(process.execPath, [${JSON.stringify(worker)}, process.argv[3]], { detached: true, stdio: "ignore" }).unref();
+setInterval(() => {}, 1000);`);
+    writeFileSync(parent, `import { spawn } from "node:child_process"; import { existsSync, writeFileSync } from "node:fs";
+spawn(process.execPath, [${JSON.stringify(worker)}, ${JSON.stringify(childPid)}, ${JSON.stringify(grandPid)}], { detached: true, stdio: "ignore" }).unref();
+while (!existsSync(${JSON.stringify(grandPid)})) await Bun.sleep(20);
+writeFileSync(${JSON.stringify(ready)}, "ready"); console.log("The check started both detached workers");
+setInterval(() => {}, 1000);`);
+    const sentinel = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const stop = new AbortController();
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const workers = () => [childPid, grandPid].filter(existsSync).map((file) => Number(readFileSync(file, "utf8")));
+    let running: Promise<unknown> | undefined;
+    try {
+      running = runChecks(dir, [{ name: "Detached workers", argv: [process.execPath, parent] }], process.env, 20_000, stop.signal, join(dir, "logs"));
+      await waitFor(() => existsSync(ready), "both detached check workers to start");
+      expect(workers()).toHaveLength(2);
+      expect(workers().every(alive)).toBe(true);
+      const stoppingAt = Date.now();
+      if (ending === "abort") stop.abort();
+      const [run] = await running as Awaited<ReturnType<typeof runChecks>>;
+      expect(run!.ok).toBe(false);
+      expect(!!run!.timedOut).toBe(ending === "timeout");
+      expect(readFileSync(run!.logPath!, "utf8")).toContain("both detached workers");
+      if (ending === "abort") expect(Date.now() - stoppingAt).toBeLessThan(5000);
+      await waitFor(() => workers().every((pid) => !alive(pid)), "the detached workers to exit", 3000);
+      expect(alive(sentinel.pid!)).toBe(true);
+    } finally {
+      stop.abort();
+      await running;
+      for (const pid of workers()) { try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ } }
+      sentinel.kill("SIGKILL");
+    }
+  });
+
   it("reports fast failures when many checks finish together, without waiting for their timeout", async () => {
     // A minute leaves room for 24 programs starting at once while the load climbs after SLOW was measured.
     // A failure Petrina missed would still be cut off at that limit and show as timed out.
