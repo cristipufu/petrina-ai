@@ -147,6 +147,12 @@ export class Engine extends Kernel implements Commands {
         if (this.runs.size || [...this.helperRuns.values()].some((runs) => runs.size)) this.readUsage();
       }, CODEX_USAGE_EVERY_MS),
     );
+    // A long command may send no activity. Save its working time too, so a forced stop loses little of it.
+    this.timers.push(
+      setInterval(() => {
+        if (!this.stopped && this.s.tasks.some((task) => task.stepClock?.since !== undefined || Object.values(task.hunt?.work ?? {}).some((work) => work.clock?.since !== undefined))) this.save();
+      }, 15_000),
+    );
     this.shipping.settleCancelledTasks();
     void this.shipping.pollPullRequests();
     this.schedule();
@@ -185,6 +191,9 @@ export class Engine extends Kernel implements Commands {
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
     this.shutdownDone = Promise.allSettled([this.tools.shutdown(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
+    // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
+    this.s.now = Date.now();
+    for (const task of this.s.tasks) this.pauseStep(task, this.s.now);
     try {
       this.store.save(this.getState());
     } catch (error) {
@@ -593,6 +602,7 @@ export class Engine extends Kernel implements Commands {
     delete task.conversation;
     this.discardScreenTurns(task);
     this.releaseScreen(task);
+    this.stopStep(task);
     task.statusLine = "Paused by you";
     this.dropBlockingItems(taskId);
     this.log(task, "you", "You paused it");
@@ -625,6 +635,7 @@ export class Engine extends Kernel implements Commands {
     delete task.conversation;
     this.discardScreenTurns(task);
     this.releaseScreen(task);
+    this.stopStep(task);
     task.finishedAt = Date.now();
     // A delivery from before the update keeps its note: what went out is for the coordinator to check.
     task.statusLine = task.shipping?.carriedOver ? `Cancelled. ${CARRIED_OVER}: check GitHub for what went out` : "Cancelled";
@@ -889,7 +900,8 @@ export class Engine extends Kernel implements Commands {
     // The call reaches the architect in a section of its own; any other note goes to the next agent.
     if (!call) task.queued.push({ id, text: note, at: Date.now() });
     // The change request starts the next step: it is the first thing that step keeps (a call is kept on the task).
-    this.finishStep(task);
+    // Nothing was working on a step at a check, so it leaves no record.
+    this.clearStep(task);
     if (!call) this.stepNote(task, "changes", note, { id });
     afterChangesAsked(task, item.kind, note, Date.now());
     if (item.kind === "delivery") {

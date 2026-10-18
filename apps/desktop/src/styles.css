@@ -547,13 +547,14 @@ kbd {
 /* ── Card ──────────────────────────────────────────────────────────── */
 
 .card {
+  --card-face: var(--surface);
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
   padding: var(--card-pad);
-  background: var(--surface);
+  background: var(--card-face);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow-card);
@@ -564,7 +565,7 @@ kbd {
 .card.needs-you { border-color: var(--amber-line); box-shadow: inset 4px 0 0 var(--amber), var(--shadow-card); }
 .card.needs-you:hover { box-shadow: inset 4px 0 0 var(--amber), var(--shadow-lift); }
 .card.failed { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); box-shadow: inset 4px 0 0 var(--red), var(--shadow-card); }
-.card.held { background: var(--held); box-shadow: none; }
+.card.held { --card-face: var(--held); box-shadow: none; }
 .card.dragging { opacity: 0.45; }
 .card.selected { border-color: var(--accent); }
 .card.selected, .done-row.selected, .inbox-item.selected {
@@ -627,7 +628,39 @@ kbd {
 .card-open::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); }
 .card-status { display: flex; align-items: flex-start; gap: 8px; color: var(--text-2); overflow-wrap: anywhere; }
 .card-status .dot { margin-top: 6px; }
+.card-status > span:last-child { min-width: 0; }
 .card-desc { color: var(--text-2); overflow-wrap: anywhere; }
+/* What comes next: one quiet line under the main one. When it is clipped, hovering or focusing the card shows all of it in place, in the same quiet small text. */
+.card-next { position: relative; min-width: 0; margin-top: -4px; padding-left: 16px; pointer-events: none; }
+.card-next p,
+.now .now-line {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-weight: 400;
+}
+.card-next p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card:is(:hover, :focus-within) .card-next[data-full]::after {
+  content: attr(data-full);
+  position: absolute;
+  z-index: 3;
+  top: -4px;
+  left: 8px;
+  right: -8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--card-face);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lift);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+/* A pipeline step's own tooltip wins. */
+.card:has(.pipeline li:hover, .pipeline li:focus-visible) .card-next::after { display: none; }
 
 .card-foot {
   display: flex;
@@ -1051,6 +1084,8 @@ kbd {
 .now .tool { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
 .now .what { color: var(--text-2); margin-top: 4px; display: flex; align-items: flex-start; gap: 8px; overflow-wrap: anywhere; }
 .now .what .dot { margin-top: 6px; }
+/* The latest action, the time left and what comes next: quiet small lines under what the agent is working on. */
+.now .now-line { margin-top: 4px; padding-left: 16px; overflow-wrap: anywhere; }
 .now .now-action { margin-top: 12px; }
 
 .timeline { list-style: none; display: flex; flex-direction: column; }

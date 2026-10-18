@@ -50,11 +50,17 @@ export class GuideKeeper {
     if (!product || !miss || !task.worktree) return;
     const attempts = task.stepAttempts;
     const conversation = task.conversation?.roleId === "guide-keeper" ? undefined : task.conversation;
+    const { todo, stepClock } = task;
     const restore = () => {
       if (attempts === undefined) delete task.stepAttempts;
       else task.stepAttempts = attempts;
       if (conversation === undefined) delete task.conversation;
       else task.conversation = conversation;
+      // The errand's own to-do item and working time are not the step's.
+      if (todo === undefined) delete task.todo;
+      else task.todo = todo;
+      if (stepClock === undefined) delete task.stepClock;
+      else task.stepClock = stepClock;
     };
     // On a tool the squad can use, like every other step.
     const keeper = this.k.onUsable(GUIDE_KEEPER_PROFILE);

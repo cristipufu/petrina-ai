@@ -165,10 +165,56 @@ const humanizeCommand = (command: string): string => {
 // Windows tools report paths with backslashes.
 const baseName = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 
-export function describeTool(update: { title?: string | null; kind?: string | null; locations?: { path: string }[] | null; rawInput?: unknown }): string {
-  const kind = update.kind ?? "other";
+interface ToolActivity {
+  title?: string | null;
+  kind?: string | null;
+  locations?: { path: string }[] | null;
+  rawInput?: unknown;
+  _meta?: Record<string, unknown> | null;
+}
+
+function grokTool(update: ToolActivity): Record<string, unknown> | undefined {
+  const value = update._meta?.["x.ai/tool"];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+// Grok puts the kind in its metadata, and older tools sometimes send only their name.
+// All of them use the same descriptions below once the action is identified.
+const TOOL_NAMES: Record<string, string> = {
+  read: "read", readfile: "read", hashlineread: "read", listdir: "read",
+  grep: "search", hashlinegrep: "search", glob: "search",
+  bash: "execute", shell: "execute", execcommand: "execute", runterminalcmd: "execute", runterminalcommand: "execute", monitor: "execute",
+  edit: "edit", write: "edit", searchreplace: "edit", hashlineedit: "edit", strreplace: "edit", editnotebook: "edit", applypatch: "edit",
+  delete: "delete", websearch: "fetch", webfetch: "fetch", xsearch: "fetch",
+};
+
+function kindOf(update: ToolActivity): string {
+  if (update.kind && update.kind !== "other") return update.kind;
+  const tool = grokTool(update);
+  const kind = tool?.kind;
+  if (typeof kind === "string") {
+    if (["read", "search", "edit", "delete", "move", "execute", "think", "fetch"].includes(kind)) return kind;
+    if (kind === "write") return "edit";
+    if (kind === "list") return "read";
+    if (kind === "monitor") return "execute";
+  }
+  const name = typeof tool?.name === "string" ? tool.name : update.title ?? "";
+  return TOOL_NAMES[name.trim().replace(/_/g, "").toLowerCase()] ?? "other";
+}
+
+function fileOf(update: ToolActivity): string | undefined {
+  const location = update.locations?.[0]?.path;
+  if (location) return location;
+  if (!update.rawInput || typeof update.rawInput !== "object") return undefined;
+  const input = update.rawInput as Record<string, unknown>;
+  const file = input.target_file ?? input.file_path ?? input.path ?? input.filePath;
+  return typeof file === "string" && file.trim() ? file : undefined;
+}
+
+export function describeTool(update: ToolActivity): string {
+  const kind = kindOf(update);
   const command = commandOf(update.rawInput);
-  const file = update.locations?.[0]?.path;
+  const file = fileOf(update);
   switch (kind) {
     case "read":
       return file ? `Reading ${baseName(file)}` : "Reading the code";
@@ -181,7 +227,7 @@ export function describeTool(update: { title?: string | null; kind?: string | nu
     case "move":
       return "Moving files";
     case "execute": {
-      // Claude Code says what each command is for; that reads far better than "Running a command".
+      // Use the agent's description when it says what the command is for.
       const purpose = purposeOf(update.rawInput);
       return purpose ?? (command ? humanizeCommand(command) : "Running a command");
     }
@@ -206,10 +252,12 @@ function purposeOf(rawInput: unknown): string | undefined {
 }
 
 /** The tools' own plumbing (loading tools, to-do bookkeeping): never shown as what the agent is doing. */
-const PLUMBING = /^(ToolSearch|TodoWrite|TodoRead|Task(Output|Stop|Create|Update|Get|List)?|Skill|EnterPlanMode|ExitPlanMode|ListMcpResourcesTool|ReadMcpResourceTool)$/;
+const PLUMBING = /^(ToolSearch|TodoWrite|TodoRead|Task(Output|Stop|Create|Update|Get|List)?|Skill|EnterPlanMode|ExitPlanMode|ListMcpResourcesTool|ReadMcpResourceTool|todo_write|search_tool|enter_plan_mode|exit_plan_mode|get_task_output|get_command_or_subagent_output|wait_tasks|wait_commands_or_subagents|kill_task|kill_command_or_subagent)$/i;
 
-export function isPlumbing(update: { title?: string | null; kind?: string | null }): boolean {
-  return (update.kind ?? "other") === "other" && PLUMBING.test((update.title ?? "").trim());
+export function isPlumbing(update: ToolActivity): boolean {
+  const tool = grokTool(update);
+  const name = typeof tool?.name === "string" ? tool.name : update.title ?? "";
+  return kindOf(update) === "other" && (tool?.kind === "plan" || PLUMBING.test(name.trim()));
 }
 
 function commandOf(rawInput: unknown): string | undefined {
@@ -402,7 +450,7 @@ export class AgentRun {
         state.turn.rerouted = true;
       }
     };
-    const titles = new Map<string, { title?: string | null; kind?: string | null; locations?: { path: string }[] | null; rawInput?: unknown }>();
+    const titles = new Map<string, ToolActivity>();
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
 
     const connection = new acp.ClientSideConnection(
@@ -414,7 +462,7 @@ export class AgentRun {
           const merged = { ...known, ...call };
           const info: PermissionInfo = {
             title: describeTool(merged),
-            kind: merged.kind ?? "other",
+            kind: kindOf(merged),
             ...(commandOf(merged.rawInput) ? { command: commandOf(merged.rawInput)! } : {}),
             paths: (merged.locations ?? []).map((location) => location.path),
           };

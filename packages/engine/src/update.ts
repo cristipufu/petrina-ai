@@ -19,8 +19,9 @@ export class Updates {
   /** The task's one commit message: the builder's title in the repository's style, what changed for users, who built it. */
   message(task: MTask): string {
     const builder = task.plan?.stages.find((stage) => stage.roleId === "builder");
+    const by = task.builderSession?.profileId ?? builder?.profileIds[0];
     const changes = (task.report?.changes ?? []).map((change) => `- ${change}`).join("\n");
-    return [task.report?.title ?? task.title, task.report?.summary ?? "", changes, `Built by Petrina${builder?.profileIds[0] ? `: ${this.k.describe("builder", builder.profileIds[0])}` : ""}`].filter(Boolean).join("\n\n");
+    return [task.report?.title ?? task.title, task.report?.summary ?? "", changes, `Built by Petrina${by ? `: ${this.k.describe("builder", by)}` : ""}`].filter(Boolean).join("\n\n");
   }
 
   /** The branch as one commit on top of where it forked, with the same code and the task's message. */

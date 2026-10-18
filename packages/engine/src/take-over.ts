@@ -74,9 +74,12 @@ export class TakeOver {
         throw new Error(`Petrina couldn't save the ${role.name}'s work before you took over, so the ${role.name} carries on. ${error instanceof Error ? error.message : String(error)}`);
       }
       delete current.conversation.asked;
+      current.conversation.handbackBoot = this.k.boot;
       current.agent = agent as MTask["agent"];
       current.holdsSlot = true;
       current.statusLine = TAKE_OVER_WORDS.status;
+      // The coordinator's own time in the terminal is not the agent's: its clock goes on after the hand back.
+      this.k.pauseStep(current);
       this.k.raise(current, "driving", `Hand back “${current.title}” when you're done`, false, {
         body: `${tool.name} is open in your terminal on the ${role.name}'s conversation. Close it there, then hand back: the ${role.name} carries on from what you did.`,
       });

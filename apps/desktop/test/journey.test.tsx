@@ -44,7 +44,7 @@ describe('the journey as a list, for screen readers and the keyboard', () => {
     const list = host.querySelector('ol')!;
     expect(list.getAttribute('aria-label')).toBe(`Journey, ${view.nodes.length} steps`);
     const items = [...list.querySelectorAll('li')].map((item) => item.textContent);
-    expect(items[3]).toBe('4. Code reviewer. Done. Codex · sol · high effort. 3m elapsed. 1 important. Moved on: sent back: 1 important.');
+    expect(items[3]).toBe('4. Code reviewer. Done. Codex · sol · high effort. 9m elapsed. 1 important. Moved on: sent back: 1 important.');
     expect(items[7]).toMatch(/^8\. Your delivery check\. Waiting for you\. Waiting \d+m so far\. Reviews done/);
     expect(items[8]).toBe('9. Publish delivery. Next.');
   });
@@ -83,7 +83,7 @@ describe('the journey in the task sheet', () => {
     await render(<App />);
   }
   async function openTask(id: string) {
-    await act(async () => host.querySelector<HTMLElement>(`.card-open[aria-describedby="status-${id}"]`)!.click());
+    await act(async () => host.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${id}"]`)!.click());
   }
 
   it('opens first in the Overview, and keeps the timeline and conversation in their own tabs', async () => {
@@ -229,6 +229,22 @@ describe('the journey in the task sheet', () => {
     const canvasStep = host.querySelector<HTMLElement>('.react-flow__node[data-id="tester-2"] .jn-name')!;
     expect(canvasStep.closest('.jn.k-box')?.querySelector('.jn-foot .jn-step-marks')).not.toBeNull();
     expect(canvasStep.textContent).not.toContain('(');
+  });
+
+  it('labels an older planner profile as planned, without claiming it actually ran', async () => {
+    const state = createDemoState(NOW);
+    await mount({ ...state, tasks: state.tasks.map((task) => {
+      if (task.id !== 'pricing-refresh') return task;
+      const { journey: _gone, ...older } = task;
+      return older;
+    }) });
+    await openTask('pricing-refresh');
+    const planner = host.querySelector<HTMLElement>('.journey-list li')!;
+    expect(planner.textContent).toContain('Planned: Claude Code');
+    await act(async () => planner.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Planned tool and model');
+    expect(details.textContent).toContain('who actually ran it, its time and outcome were not recorded');
   });
 
   it('stops following the live step while you read another one, until Back to now', async () => {

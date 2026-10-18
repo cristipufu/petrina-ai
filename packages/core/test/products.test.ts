@@ -40,7 +40,7 @@ describe("product names and settings", () => {
     expect(sim.getState().tasks.find((task) => task.id === id)).toMatchObject({ delivery: "local", approveDelivery: false });
     sim.setPoolPaused(false);
     sim.tick(); sim.tick();
-    expect(sim.getState().tasks[0]!.session.some((line) => line.text.includes("Petrina HQ"))).toBe(true);
+    expect(sim.getState().tasks[0]!.timeline.some((entry) => entry.text.includes("Petrina HQ"))).toBe(true);
   });
 
   it("refuses removal until every task is finished or cancelled, then removes tasks and their inbox together", () => {

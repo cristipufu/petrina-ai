@@ -14,14 +14,15 @@ export class Planning {
 
   async runPlanner(task: MTask, signal: AbortSignal): Promise<void> {
     const planner = this.k.onUsable(PLANNER_PROFILE);
-    const result = await this.turns.turn(task, "planner", planner, () => [{ title: "Registered products and starting choices", body: `Registered products (choose exactly one by its id):\n${this.k.s.products.map((product) => JSON.stringify({ id: product.id, name: product.name, repo: product.repo, defaultBranch: product.defaultBranch ?? "main", existingLocalCopy: product.path })).join("\n")}\nCurrent coordinator choices: ${JSON.stringify(task.workChoice)}. The selected product and delivery mode are authoritative. ${task.explicitStart ? "The starting point was explicitly chosen too." : "You may propose a starting point from the task words."} Changes require the coordinator’s confirmation. Return worksOn as an array with exactly one structured choice: productId, startFrom ({kind: default}, {kind: branch, name}, or {kind: pull-request, value: number or link as text}), delivery (pull-request, local, release). Unknown products must be named honestly; never substitute another product. Never fetch, clone, create a worktree or change existing local work.` }], PlanResult, signal);
+    let by = planner;
+    const result = await this.turns.turn(task, "planner", planner, () => [{ title: "Registered products and starting choices", body: `Registered products (choose exactly one by its id):\n${this.k.s.products.map((product) => JSON.stringify({ id: product.id, name: product.name, repo: product.repo, defaultBranch: product.defaultBranch ?? "main", existingLocalCopy: product.path })).join("\n")}\nCurrent coordinator choices: ${JSON.stringify(task.workChoice)}. The selected product and delivery mode are authoritative. ${task.explicitStart ? "The starting point was explicitly chosen too." : "You may propose a starting point from the task words."} Changes require the coordinator’s confirmation. Return worksOn as an array with exactly one structured choice: productId, startFrom ({kind: default}, {kind: branch, name}, or {kind: pull-request, value: number or link as text}), delivery (pull-request, local, release). Unknown products must be named honestly; never substitute another product. Never fetch, clone, create a worktree or change existing local work.` }], PlanResult, signal, { used: (id) => (by = id) });
     // Unrated work is treated as medium: never shipped unasked, never short of reviewers.
     task.risk = result.risk ?? { level: "medium", why: "The planner did not rate it." };
     await this.sources.propose(task, result.worksOn);
-    task.plan = this.normalizePlan(task, result, planner);
+    task.plan = this.normalizePlan(task, result, by);
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
-    this.k.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", planner);
-    this.k.log(task, "milestone", `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}`, "planner", planner);
+    this.k.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", by);
+    this.k.log(task, "milestone", `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}`, "planner", by);
     endAgentStep(task, { outcome: W.planned(count), reason: W.planReady }, Date.now());
     this.k.finishStep(task);
     this.k.tracking.endStage(task, "done");

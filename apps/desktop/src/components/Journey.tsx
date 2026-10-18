@@ -58,7 +58,7 @@ function profilesOf(node: JourneyNode, find: Lookup) {
 /** Tool and model, or the tasks a waiting step waits for. */
 function toolLine(node: JourneyNode, find: Lookup): string | undefined {
   if (node.kind === "wait") return node.waitsOn?.length ? quoteTitles(node.waitsOn.map((entry) => entry.title)) : undefined;
-  return profilesOf(node, find).map((profile) => `${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profile.model}`).join("\n") || undefined;
+  return profilesOf(node, find).map((profile) => `${node.legacy ? "Planned: " : ""}${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profile.model}`).join("\n") || undefined;
 }
 
 /** The last line of a box: its time and how it ended, or what it is doing now. Your steps say it in two short lines. */
@@ -124,7 +124,7 @@ export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: 
   const marks = [node.roundMark ? `round ${node.roundMark}` : "", node.updateMark ? "update" : "", node.fixMark ? `fix ${node.fixMark}` : "", node.portMark ? "port review" : "", node.callMark ? "your call" : "", node.repeatMark ? "repeated" : ""].filter(Boolean);
   const name = [visibleStepName(node), ...marks].join(", ");
   const parts = [`${index + 1}. ${name}`, stateWords(node)];
-  for (const profile of profilesOf(node, find)) parts.push(profileText(profile, find, true));
+  for (const profile of profilesOf(node, find)) parts.push(`${node.legacy ? "Planned: " : ""}${profileText(profile, find, true)}`);
   if (node.kind === "wait" && node.waitsOn?.length) parts.push(`Waits for ${quoteTitles(node.waitsOn.map((entry) => entry.title))}`);
   const time = timeOf(node, now);
   if (time) parts.push(node.kind === "you" ? (node.endedAt === undefined ? `Waiting ${time} so far` : `Waited ${time}`) : node.endedAt === undefined ? `${time} elapsed so far` : `${time} elapsed`);
@@ -588,7 +588,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
         <dl className="journey-facts">
           {profiles.length > 0 && (
             <>
-              <dt>Tool and model</dt>
+              <dt>{node.legacy ? "Planned tool and model" : "Tool and model"}</dt>
               <dd>{profiles.map((profile) => <span key={profile.id} className="journey-waits">{profileText(profile, find, true)}</span>)}</dd>
             </>
           )}
@@ -630,7 +630,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
         </dl>
       )}
 
-      {node.legacy && <p className="note">This step ran before Petrina kept each task's journey, so its time and outcome were not recorded.</p>}
+      {node.legacy && <p className="note">This step ran before Petrina kept each task's journey. Its saved profile is what was planned; who actually ran it, its time and outcome were not recorded.</p>}
 
       {node.kind === "agent" && (() => {
         const priorName = previousJourneyStep?.roleId

@@ -640,7 +640,10 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(task(sim, id).call?.text).toBe(CALL);
     sim.tick();
     expect(task(sim, id).agent?.roleId).toBe("architect");
-    expect(task(sim, id).statusLine).toBe(CALL_WORDS.following);
+    expect(task(sim, id).todo).toBe("Reading your call");
+    sim.tick();
+    expect(task(sim, id).statusLine).toBe("Reading the brief");
+    expect(task(sim, id).todo).toBe("Reading your call");
 
     const check = tickUntil(sim, "design");
     const after = task(sim, id);

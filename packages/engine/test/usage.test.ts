@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { journeyProblems, usageLines, type AgentProfile, type Task } from "@petrina/core";
+import { journeyProblems, journeyView, usageLines, type AgentProfile, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { failureReason } from "../src/tracking.js";
 import { claudeReport, claudeReports, clockTime, limitFromFailure, limitFromReport, UsageLimited, WaitingForUsage } from "../src/usage.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -45,6 +45,89 @@ async function start(scenario: Scenario, options: { description?: string; before
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("an agent that runs out of usage", () => {
+  it("credits the planner's replacement after readiness checks already moved planning to another tool", async () => {
+    const run = await start({ planner: "research-first", builder: "plain", limited: [{ model: "gpt-6.1-sol", role: "planner" }] }, {
+      before: (engine) => {
+        engine.s.setup!.checks = [
+          { id: "claude-code", status: "logged-out" },
+          { id: "codex", status: "ready" },
+          { id: "grok", status: "ready" },
+        ];
+      },
+    });
+    try {
+      const task = await waitFor(() => run.find().plan && run.find(), "the replacement planner's result");
+      const turns = run.engine.tracking.log.turns({ taskId: task.id }).filter((turn) => turn.roleId === "planner");
+      expect(turns[0]!.toolId).toBe("codex");
+      const finished = turns.find((turn) => turn.end === "finished")!;
+      expect(finished.toolId).toBe("grok");
+      expect(task.plan!.plannerProfileId).toBe(finished.profileId);
+      const state = run.engine.getState();
+      expect(task.journey!.findLast((step) => step.roleId === "planner")!.profileId).toBe(finished.profileId);
+      expect(journeyView(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox }).nodes.findLast((node) => node.roleId === "planner")!.profileId).toBe(finished.profileId);
+      expect(task.timeline.find((entry) => entry.text.startsWith("Plan ready:"))!.profileId).toBe(finished.profileId);
+      expect(task.plan!.stages.flatMap((stage) => stage.profileIds).every((id) => run.engine.profile(id)!.toolId !== "claude-code")).toBe(true);
+    } finally {
+      run.engine.shutdown();
+    }
+  });
+
+  for (const [role, roleId, prefix] of [["planner", "planner", "Plan ready:"], ["researcher", "researcher", "Researcher done:"], ["check finder", "check-finder", "Found how to check"]] as const) {
+    it(`credits the ${role}'s completion to the stand-in`, async () => {
+      const run = await start({ planner: "research-first", builder: "plain", limited: [{ model: "opus", role }] });
+      try {
+        const task = await run.done();
+        const finished = run.engine.tracking.log.turns({ taskId: task.id }).find((turn) => turn.roleId === roleId && turn.end === "finished")!;
+        expect(finished.toolId).toBe("codex");
+        expect(task.timeline.find((entry) => entry.text.startsWith(prefix))!.profileId).toBe(finished.profileId);
+        if (role === "planner") expect(task.plan!.plannerProfileId).toBe(finished.profileId);
+        if (role === "researcher") expect(task.handedBack!.find((entry) => entry.roleId === roleId)!.profileId).toBe(finished.profileId);
+      } finally {
+        run.engine.shutdown();
+      }
+    });
+  }
+
+  it("credits review votes to the verifier that finished after a model handoff", async () => {
+    const run = await start({ builder: "plain", reviewer: "important", limited: [{ model: "opus", role: "verifier", type: "seven_day_opus" }] });
+    try {
+      const task = await run.done();
+      const actual = run.engine.tracking.log.turns({ taskId: task.id }).find((turn) => turn.roleId === "verifier" && turn.end === "finished" && turn.modelAsked === "sonnet")!;
+      expect(actual).toBeDefined();
+      expect(task.findings.flatMap((finding) => finding.votes ?? []).some((vote) => vote.by === actual.profileId)).toBe(true);
+      expect(task.findings.flatMap((finding) => finding.votes ?? []).some((vote) => run.engine.profile(vote.by)?.modelId === "opus")).toBe(false);
+    } finally {
+      run.engine.shutdown();
+    }
+  });
+
+  it("drops a limited voter's place instead of borrowing another tool's vote", async () => {
+    const run = await start({ builder: "plain", reviewer: "important", verifier: "split" }, {
+      before: (engine) => {
+        engine.s.setup!.checks = [
+          { id: "claude-code", status: "ready" },
+          { id: "codex", status: "ready" },
+          { id: "grok", status: "logged-out" },
+        ];
+        engine.s.pool.limited = [{ toolId: "codex", until: Date.now() + 3_600_000, reason: "Codex's usage limit" }];
+      },
+    });
+    try {
+      const task = await run.done();
+      const finding = task.findings.find((entry) => entry.text === "The greeting is missing on the welcome page.")!;
+      expect(run.fakes.openings("verifier")).toHaveLength(1);
+      expect(finding.votes).toHaveLength(1);
+      const vote = finding.votes![0]!;
+      expect(run.engine.profile(vote.by)!.toolId).toBe("claude-code");
+      expect(vote.toolId).toBe("claude-code");
+      expect(vote.plannedProfileId).toBe(vote.by);
+      expect(vote.verdict).toBe("real");
+      expect(finding.verification!.verdict).toBe("real");
+      expect(finding.status).toBe("fixed");
+      expect(lines(task)).toContain("Sent back to the builder: 1 important");
+    } finally { run.engine.shutdown(); }
+  });
+
   it("keeps the security review off the builder's replacement tool while another tool is available", async () => {
     const run = await start({ planner: "claude-build", risk: "high", builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] });
     try {
@@ -80,7 +163,7 @@ describe.concurrent("an agent that runs out of usage", () => {
   });
 
   it("is taken over in the same step by an agent on another tool, who is told what the first one did and said", async () => {
-    const run = await start({ planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder" }] });
+    const run = await start({ planner: "claude-build", builder: "plain", learnings: true, limited: [{ model: "opus", role: "builder" }] });
     try {
       const task = await run.done();
       const builders = run.fakes.received("builder");
@@ -104,6 +187,12 @@ describe.concurrent("an agent that runs out of usage", () => {
       // Who is out is kept, and the plan is not rewritten.
       expect(run.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", reason: "Claude Code's 5-hour limit" }]);
       expect(task.plan!.stages.find((stage) => stage.roleId === "builder")!.profileIds).toEqual(["opus-high"]);
+      const actual = task.builderSession!.profileId;
+      expect(task.builderSession!.plannedProfileId).toBe("opus-high");
+      expect(run.engine.profile(actual)!.toolId).toBe("codex");
+      expect(task.timeline.find((entry) => entry.text.startsWith("Build done"))!.profileId).toBe(actual);
+      expect(task.lessons!.filter((lesson) => lesson.roleId === "builder").map((lesson) => lesson.profileId)).toEqual([actual, actual]);
+      expect(git(run.engine.getState().products[0]!.path!, "log", "-1", "--format=%B", "main")).toContain("Built by Petrina: Builder on Codex");
       const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
       expect(details.failuresByReason).toContainEqual({ label: "usage limit reached", count: 1 });
       expect(details.retries).toBe(1);

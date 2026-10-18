@@ -25,6 +25,8 @@ export class Work {
   async runDo(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const roleId = stage.roleId;
     const profileId = stage.profileIds[0] ?? "opus-xhigh";
+    let by = profileId;
+    const used = (id: string) => (by = id);
     const role = task.conversation?.roleId === roleId && task.conversation.role ? task.conversation.role : this.k.role(roleId);
     const sections = () => this.context.sectionsFor(task, roleId);
 
@@ -37,12 +39,11 @@ export class Work {
       const given = task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing") : [];
       // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
       const own = task.builderSession;
-      const back = (task.fixing || updating) && own?.stageId === stage.id && own.profileId === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
+      const back = (task.fixing || updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
       const builderStep = openStep(task);
       if (task.fixing && builderStep?.kind === "agent" && builderStep.roleId === roleId) builderStep.builderConversation = back ? "resumed" : "new";
-      let used = profileId;
       const result = await this.turns.turn(task, roleId, profileId, sections, BuildResult, signal, {
-        used: (profile) => { used = profile; },
+        used,
         check: async (value) => {
           const missing = given.filter((finding) => !value.answers.some((answer) => answer.id === finding.id));
           if (missing.length) return `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}`;
@@ -61,7 +62,7 @@ export class Work {
         ...(result.title ? { title: result.title } : {}),
         ...(description ? { description } : {}),
       };
-      await this.learnings.note(task, result.learnings, roleId, used);
+      await this.learnings.note(task, result.learnings, roleId, by);
       // One commit per task: the builder's work joins the branch's one commit, under its title.
       const sha = await git.commitAll(task.worktree!, this.updates.message(task));
       if (updating) {
@@ -76,12 +77,12 @@ export class Work {
         delete task.portReview;
         if (portOnly && updating.head) task.portReview = { from: updating.from, head: updating.head, onto: updating.onto, files: updating.files };
         else delete task.reviewedTree;
-        this.k.log(task, "done", `Brought up to date with ${sourceName}: ${result.summary}`, roleId, used);
+        this.k.log(task, "done", `Brought up to date with ${sourceName}: ${result.summary}`, roleId, by);
       } else delete task.reviewedTree;
       await this.updates.fold(task);
-      // The next fix round or update goes back to this conversation.
+      // The next fix round or update goes back to the conversation that really completed this build.
       const conversation = task.conversation;
-      if (conversation?.briefed && conversation.roleId === roleId) task.builderSession = { stageId: stage.id, profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId };
+      if (conversation?.briefed && conversation.roleId === roleId) task.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId };
       const fixing = task.fixing;
       let fixed = 0;
       if (fixing) {
@@ -95,7 +96,7 @@ export class Work {
         }
         task.fixing = false;
       }
-      if (!updating) this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, used);
+      if (!updating) this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, by);
       endAgentStep(
         task,
         updating ? { outcome: W.broughtUpToDate, reason: sourceName === "main" ? W.upToDate : `up to date with ${sourceName}` } : fixing ? { outcome: W.fixed(fixed), reason: W.fixesReady } : { outcome: sha ? W.built : W.unchanged, reason: W.readyForReview },
@@ -103,6 +104,7 @@ export class Work {
       );
     } else if (role?.result === "checks") {
       const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal, {
+        used,
         check: (value) => {
           const missing = task.brief?.acceptance.filter((item) => !value.checks.some((check) => check.text === item.text));
           return missing?.length ? `Report pass, fail, or blocked for every acceptance item, using its exact text. For blocked checks, include a reason naming what prevented verification. These are missing:\n${missing.map((item) => `- ${item.text}`).join("\n")}` : undefined;
@@ -112,7 +114,7 @@ export class Work {
       if (testerStep?.kind === "agent" && testerStep.roleId === roleId) {
         testerStep.acceptanceChecks = result.checks.map((check) => ({ text: check.text, result: check.result, ...("reason" in check && check.reason ? { reason: check.reason } : {}) }));
       }
-      await this.learnings.note(task, result.learnings, roleId, profileId);
+      await this.learnings.note(task, result.learnings, roleId, by);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => {
         const check = result.checks.find((entry) => entry.text === item.text);
         if (!check) return item;
@@ -136,13 +138,13 @@ export class Work {
           else if (check.result === "pass") delete earlier.evidence;
         } else if (check.result === "fail") task.findings.push({
           id: this.k.id(task.id), text,
-          severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open",
+          severity: "blocking", raisedBy: by, confirmedBy: [], status: "open",
         });
       }
       const unverified = blocked.length > 0;
       this.k.log(task, failed.length || unverified ? "warn" : "done", unverified
         ? `${blocked.length} acceptance check${blocked.length === 1 ? "" : "s"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}`
-        : failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, profileId);
+        : failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, by);
       endAgentStep(task, {
         outcome: unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : W.checks(failed.length, result.checks.length),
         reason: unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : W.checksPassed,
@@ -177,14 +179,14 @@ export class Work {
         return "continue";
       }
     } else {
-      const result = await this.turns.turn(task, roleId, profileId, sections, NotesResult, signal);
-      const handed = { at: Date.now(), profileId, stageId: stage.id, roleId, roleName: task.conversation?.role?.name ?? role?.name ?? roleId, title: stage.title, summary: result.summary, notes: result.notes };
+      const result = await this.turns.turn(task, roleId, profileId, sections, NotesResult, signal, { used });
+      const handed = { at: Date.now(), profileId: by, stageId: stage.id, roleId, roleName: task.conversation?.role?.name ?? role?.name ?? roleId, title: stage.title, summary: result.summary, notes: result.notes };
       task.handedBack = [...(task.handedBack ?? []).filter((entry) => entry.stageId !== stage.id), handed];
-      this.k.say(task, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, profileId);
-      this.k.log(task, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, profileId);
+      this.k.say(task, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, by);
+      this.k.log(task, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, by);
       endAgentStep(task, { outcome: W.wroteNotes, reason: W.notesReady }, Date.now());
     }
-    if (role?.result !== "build") await this.k.saveRoleEdits(task, roleId, profileId);
+    if (role?.result !== "build") await this.k.saveRoleEdits(task, roleId, by);
     this.k.finishStep(task);
     this.k.tracking.endStage(task, "done");
     if (this.k.rerun(task)) return "continue";

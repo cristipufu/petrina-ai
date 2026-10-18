@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, headroom, kindWords, limitOf, nearLimit, endOpenStep, JOURNEY_WORDS as W, nextExpiry, onScreen, openStep, queueOf, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
+import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, headroom, kindWords, limitOf, nearLimit, endOpenStep, JOURNEY_WORDS as W, nextExpiry, onScreen, openStep, queueOf, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { GrokUsage } from "./grok-usage.js";
@@ -177,7 +177,11 @@ export abstract class Kernel {
     this.store = new Store(join(dataDir, "petrina.db"));
     const loaded = this.store.load();
     this.s = (loaded ?? this.empty()) as MState;
-    if (loaded) renameRoles(this.s);
+    if (loaded) {
+      renameRoles(this.s);
+      // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
+      for (const task of this.s.tasks) this.pauseStep(task, this.s.now);
+    }
     this.s.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as MState["roleChanges"];
     this.s.roles = libraryRoles(this.s.roleChanges) as MState["roles"];
     this.s.profiles = ENGINE_PROFILES as MState["profiles"];
@@ -240,6 +244,9 @@ export abstract class Kernel {
   readonly waiting = new Map<Id, { resolve: (value: string) => void; reject: (error: Error) => void }>();
 
   saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** A to-do item is in memory and not in the snapshot on disk yet. */
+  private todoPending = false;
 
   /** Wakes the scheduler when the first usage limit in force ends. */
   limitTimer: ReturnType<typeof setTimeout> | undefined;
@@ -344,7 +351,7 @@ export abstract class Kernel {
   }
 
   /** `by`: the agent asking, when it is not the task's main one (a reviewer working beside others). */
-  raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string; toolId?: CheckId; toolProblem?: InboxItem["toolProblem"] } = {}, by: { roleId: Id; profileId: Id } | undefined = task.agent): Id {
+  raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string; toolId?: CheckId; toolProblem?: InboxItem["toolProblem"]; reviewKey?: string } = {}, by: { roleId: Id; profileId: Id } | undefined = task.agent): Id {
     const id = this.id("inbox");
     task.state = "needs-you";
     this.s.inbox.push({
@@ -360,6 +367,7 @@ export abstract class Kernel {
       ...(extra.detail ? { detail: extra.detail } : {}),
       ...(extra.toolId ? { toolId: extra.toolId } : {}),
       ...(extra.toolProblem ? { toolProblem: extra.toolProblem } : {}),
+      ...(extra.reviewKey ? { reviewKey: extra.reviewKey } : {}),
     });
     this.tracking.asked(task, this.s.inbox.at(-1)!);
     return id;
@@ -376,6 +384,7 @@ export abstract class Kernel {
     delete task.conversation;
     this.discardScreenTurns(task);
     this.releaseScreen(task);
+    this.stopStep(task);
     task.holdsSlot = false;
     task.state = "failed";
     task.error = message;
@@ -430,12 +439,22 @@ export abstract class Kernel {
     task.stepNotes = [...(task.stepNotes ?? []), { id: extra.id ?? this.id(task.id), at: Date.now(), kind, text, ...(extra.about ? { about: extra.about } : {}) }];
   }
 
-  /** The step handed back its result: the next step starts clean, in a new conversation, and the screen is free again. */
+  /**
+   * The step handed back its result: a short record of it is kept for estimates, unless it was started again
+   * (a restart, a pause, Try again, a stand-in), and the next step starts clean, in a new conversation.
+   */
   finishStep(task: MTask): void {
+    if (task.stepClock && task.stepAttempts === 1) task.steps = [...(task.steps ?? []), stepRecord(task.stepClock, Date.now())].slice(-MAX_STEP_RECORDS);
+    this.clearStep(task);
+  }
+
+  /** The next step starts clean: nothing said in this one, no conversation, no to-do item, no clock. */
+  clearStep(task: MTask): void {
     delete task.stepNotes;
     delete task.stepAttempts;
     delete task.conversation;
     this.releaseScreen(task);
+    this.stopStep(task);
   }
 
   /** A reopened reviewer or voter still works in its own copy, including during terminal take-over. */
@@ -556,6 +575,53 @@ export abstract class Kernel {
     this.screenTimer = setTimeout(() => this.schedule(), Math.max(0, screen.until - Date.now()) + 20);
   }
 
+  /** The step stops before handing back its result: its to-do item and clock go, and it starts fresh next time. */
+  stopStep(task: MTask): void {
+    delete task.todo;
+    delete task.stepClock;
+    for (const work of Object.values(task.hunt?.work ?? {})) {
+      delete work.todo;
+      delete work.activity;
+      delete work.clock;
+      delete work.waiting;
+    }
+  }
+
+  /** The agent stops working on the step for a while (it waits for the coordinator or for usage): the wait is not working time. */
+  pauseStep(task: MTask, now = Date.now()): void {
+    if (task.stepClock) task.stepClock = pauseClock(task.stepClock, Math.max(now, task.stepClock.since ?? 0));
+    for (const work of Object.values(task.hunt?.work ?? {})) {
+      if (work.clock) work.clock = pauseClock(work.clock, Math.max(now, work.clock.since ?? 0));
+    }
+  }
+
+  /** One steady member's summary, switching to whoever needs the coordinator while they wait. */
+  showReviewWork(task: MTask): void {
+    const agents = [task.agent, ...(task.helpers ?? [])].filter((agent): agent is DeepMutable<ActiveAgent> => agent?.reviewKey !== undefined);
+    if (!agents.length) return;
+    const working = (agent: (typeof agents)[number]) => task.hunt?.work?.[agent.reviewKey!];
+    const agent = agents.find((entry) => working(entry)?.waiting) ?? agents.find((entry) => working(entry)) ?? agents[0]!;
+    task.agent = agent;
+    const helpers = agents.filter((entry) => entry !== agent);
+    if (helpers.length) task.helpers = helpers;
+    else delete task.helpers;
+    const work = working(agent);
+    if (work?.todo) task.todo = work.todo;
+    else delete task.todo;
+    if (work?.clock) task.stepClock = work.clock;
+    else delete task.stepClock;
+    if (task.state === "running" && work?.activity) task.statusLine = work.activity;
+    else if (task.state === "needs-you" && work?.waiting) task.statusLine = work.waiting;
+  }
+
+  /** Each completed reviewer or voter leaves its own record; interrupted attempts do not. */
+  finishReviewWork(task: MTask, key: string): void {
+    const work = task.hunt?.work?.[key];
+    if (work?.clock && work.attempts === 1) task.steps = [...(task.steps ?? []), stepRecord(work.clock, Date.now())].slice(-MAX_STEP_RECORDS);
+    if (task.hunt?.work) delete task.hunt.work[key];
+    this.showReviewWork(task);
+  }
+
   /** False for a resend of something already received (its confirmation was lost on the way back). */
   firstTime(task: MTask, clientId: Id | undefined): boolean {
     if (!clientId) return true;
@@ -575,6 +641,7 @@ export abstract class Kernel {
     if (this.s.inbox.some((item) => item.taskId === task.id && item.blocking)) return;
     task.state = task.holdsSlot ? "running" : "waiting";
     task.statusLine = task.holdsSlot ? "Back to work" : "Waiting for a free slot";
+    if (task.holdsSlot && task.stepClock && !task.agent?.reviewKey) task.stepClock = resumeClock(task.stepClock, Date.now());
   }
 
   takeItem(itemId: Id): DeepMutable<InboxItem> | undefined {
@@ -673,7 +740,7 @@ export abstract class Kernel {
     const own = task.builderSession;
     const saved = current
       ? current.roleId === stage.roleId && current.briefed && current.step === stepKey(task) && (!current.plannedProfileId || current.plannedProfileId === plannedId) ? current : undefined
-      : (task.fixing || task.updating) && own?.stageId === stage.id && own.profileId === plannedId && !(task.fixing && stepBack(task as Task)) ? own : undefined;
+      : (task.fixing || task.updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === plannedId && !(task.fixing && stepBack(task as Task)) ? own : undefined;
     const planned = this.profile(plannedId);
     if (!saved || !planned) return undefined;
     // The saved tool/model must still be offered. Prefer the planned effort for an earlier
@@ -859,6 +926,7 @@ export abstract class Kernel {
 
   /** The task lets go of its slot and waits until a limit ends: the driver stops, and the scheduler starts it again. */
   waitForUsage(task: MTask, words: string): void {
+    this.pauseStep(task);
     task.state = "waiting";
     task.holdsSlot = false;
     delete task.agent;
@@ -906,19 +974,27 @@ export abstract class Kernel {
 
   commit(): void {
     if (this.stopped) return;
+    // An activity or other update is about to be shown. The to-do item is written first, so a forced
+    // kill once that update is visible still has the item.
+    this.savePendingTodo();
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
-    if (!this.saveTimer) {
-      this.saveTimer = setTimeout(() => {
-        this.saveTimer = undefined;
-        try {
-          if (!this.stopped) this.store.save(this.getState());
-        } catch {
-          // A full disk, for example: the next change saves again.
-        }
-      }, 400);
-    }
+    this.armSave();
+  }
+
+  /**
+   * The agent's current to-do item changed. Show it now. Writing the whole snapshot waits for a quiet
+   * moment, so a run of plan updates does not stall the scheduler on the disk. The next update writes
+   * the item first.
+   */
+  noteTodo(): void {
+    if (this.stopped) return;
+    this.todoPending = true;
+    this.s.planner = this.onUsable(PLANNER_PROFILE);
+    this.s.now = Date.now();
+    for (const listener of this.listeners) listener();
+    this.armSave();
   }
 
   /** Commit and save right away: what the coordinator said survives a forced kill a moment later. */
@@ -927,8 +1003,40 @@ export abstract class Kernel {
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
-    this.store.save(this.getState());
-    this.s.now = Date.now();
+    this.todoPending = false;
+    this.save();
     for (const listener of this.listeners) listener();
+  }
+
+  /** One ordinary save for a burst of updates. A later update does not reset the wait. */
+  private armSave(): void {
+    if (this.saveTimer || this.stopped) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined;
+      try {
+        if (!this.stopped) this.save();
+      } catch {
+        // A full disk, for example: the next change saves again.
+      }
+    }, 400);
+  }
+
+  /** Write a to-do item that listeners have not yet followed with another update. */
+  private savePendingTodo(): void {
+    if (!this.todoPending || this.stopped) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    this.todoPending = false;
+    this.save();
+  }
+
+  /**
+   * Save now. The saved time and the step clocks belong to the same snapshot: after a forced stop, a step's
+   * working time ends at the last save, so the time Petrina was not running is never counted.
+   */
+  save(): void {
+    this.todoPending = false;
+    this.s.now = Date.now();
+    this.store.save(this.getState());
   }
 }

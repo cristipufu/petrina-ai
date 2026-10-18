@@ -208,7 +208,9 @@ export class Shipping {
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
     const log = await this.sincePreviousRelease(task, signal);
     const profileId = stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE;
+    let by = profileId;
     const result = await this.turns.turn(task, "release-manager", profileId, () => [log], ReleaseNotesResult, signal, {
+      used: (id) => (by = id),
       check: (value) => (!value.notes.trim() ? `"notes" is empty: write the release notes.` : value.notes.length > TEXT_LIMITS.notes ? `the release notes are longer than GitHub allows (${TEXT_LIMITS.notes} characters). Shorten them.` : undefined),
     });
     shipping.prepared = { tested, summary: result.summary, notes: result.notes.trim() };
@@ -217,8 +219,8 @@ export class Shipping {
     delete task.agent;
     task.holdsSlot = false;
     this.k.finishStep(task);
-    this.k.say(task, "agent", `${result.summary}\n\n${this.k.describe("release-manager", profileId)}`, "release-manager", profileId);
-    this.k.log(task, "done", `Ready to publish: ${tested.slice(0, 7)}, as ${shipping.tag}, with notes on everything since ${shipping.after || "the start"}`, "release-manager", profileId);
+    this.k.say(task, "agent", `${result.summary}\n\n${this.k.describe("release-manager", by)}`, "release-manager", by);
+    this.k.log(task, "done", `Ready to publish: ${tested.slice(0, 7)}, as ${shipping.tag}, with notes on everything since ${shipping.after || "the start"}`, "release-manager", by);
     this.k.commitNow();
     return "ready";
   }
@@ -407,7 +409,8 @@ export class Shipping {
     task.shipping = { moves: 0, failures };
     this.clearApproval(task);
     delete task.agent;
-    this.k.finishStep(task);
+    // Nothing was handed back, so no record for estimates.
+    this.k.clearStep(task);
     const builder = lastIndexWhere(task.plan?.stages ?? [], (entry) => entry.roleId === "builder" && entry.kind === "do");
     if (builder >= 0) {
       task.stageIndex = builder;
@@ -1221,7 +1224,7 @@ export class Shipping {
     if (!task) return;
     if (!task.pr && (task.delivery === "pull-request" || task.shipping?.carriedOver)) task.cleanup = { ...task.cleanup, pullRequest: "unconfirmed" };
     delete task.shipping;
-    this.k.finishStep(task);
+    this.k.clearStep(task);
     this.k.tracking.delivered(task);
     task.state = "done";
     task.column = "done";

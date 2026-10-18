@@ -83,7 +83,7 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
       expect(builders.every((entry) => entry.session === original.session)).toBe(true);
       expect(builders[1]!.text).toStartWith("Petrina is back with more work on this task");
       expect(f.fakes.received("builder").some((entry) => f.model(entry.session) === "grok-4.7")).toBe(false);
-      expect(f.task().builderSession).toEqual(expect.objectContaining({ profileId: "opus-high", toolId: "codex", sessionId: original.session }));
+      expect(f.task().builderSession).toEqual(expect.objectContaining({ profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", sessionId: original.session }));
       expect(f.task().timeline.filter((entry) => entry.text.startsWith("Build done")).every((entry) => entry.profileId === "sol-high")).toBe(true);
       expect(f.task().findings.filter((finding) => finding.severity === "blocking").every((finding) => finding.answer?.fixed)).toBe(true);
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
@@ -227,6 +227,12 @@ describe("Builder continuity boundaries", () => {
       for (const [why, change] of handoffs) {
         reset(); change(); expect(tool(), why).toBe("grok");
       }
+      reset();
+      // A fallback build records who finished it, and still resumes for the profile the plan asked for.
+      task.builderSession = { stageId: "build", profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "saved" };
+      expect(tool()).toBe("codex");
+      task.builderSession.plannedProfileId = "opus-xhigh";
+      expect(tool()).toBe("grok");
       reset();
       expect(choose("grok-high")).toEqual(expect.objectContaining({ kind: "planned", profile: expect.objectContaining({ id: "grok-high" }) }));
       reset();

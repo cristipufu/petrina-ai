@@ -113,6 +113,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(task.state).toBe("needs-you");
     expect(task.holdsSlot).toBe(true);
     expect(task.statusLine).toBe(TAKE_OVER_WORDS.status);
+    expect(task.stepClock!.since).toBeUndefined();
     expect(slotUses(engine.getState())).toEqual([{ taskId: run.taskId, toolId: "codex", roleId: "builder", profileId: "sol-xhigh" }]);
     const item = engine.getState().inbox.find((entry) => entry.taskId === run.taskId)!;
     expect(item).toMatchObject({ kind: "driving", blocking: false, roleId: "builder" });
@@ -189,6 +190,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(done.timeline.some((entry) => entry.text === "Took the step back on the same conversation")).toBe(true);
     expect(done.timeline.filter((entry) => entry.text === "Reviewing your changes: the review starts again from the first reviewer")).toHaveLength(0);
     expect(done.handChanges).toBeUndefined();
+    expect(done.steps!.filter((step) => step.roleId === "builder")).toHaveLength(1);
     // Everything done by hand and by the agent landed.
     for (const file of ["notes.txt", "by-hand.txt", "committed-by-hand.txt"]) expect(git(run.product, "show", `main:${file}`)).toBeTruthy();
     expect(git(run.product, "show", "main:greeting.txt")).toBe("Hello");
@@ -228,6 +230,8 @@ describe.skipIf(!posix)("take over a reviewer, which is read-only", () => {
     expect(done.timeline.filter((entry) => entry.text === "Reviewing your changes: the review starts again from the first reviewer")).toHaveLength(1);
     expect(done.timeline.filter((entry) => entry.text === "Code reviewer started")).toHaveLength(2);
     expect(done.rounds[review.id]).toBeUndefined();
+    // The fresh conversation after the hand back is excluded; only the later full review is recorded.
+    expect(done.steps!.filter((step) => step.roleId === "code-reviewer")).toHaveLength(1);
     const texts = done.timeline.map((entry) => entry.text);
     expect(texts.lastIndexOf("Tamper check passed: no tests removed or skipped")).toBeGreaterThan(texts.indexOf("Reviewing your changes: the review starts again from the first reviewer"));
     // What was changed by hand is kept, even though the role is read-only, and ships inside the task's one commit.
@@ -332,6 +336,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     const done = await run.finished();
     expect(git(run.product, "show", "main:late.txt")).toBe("Late");
     expect(done.timeline.some((entry) => entry.text === "Took the step back on the same conversation")).toBe(true);
+    expect(done.steps!.filter((step) => step.roleId === "builder")).toHaveLength(0);
     engine.shutdown();
   });
 

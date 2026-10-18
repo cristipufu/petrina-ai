@@ -163,7 +163,7 @@ ${contract.instructions(ctx)}${roleCard(ctx)}
 
 ${sections}
 
-Keep a short to-do list as you work, written in plain language: the coordinator watches it live.
+Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.
 ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
 }
 
@@ -181,7 +181,7 @@ ${contract.instructions(ctx)}${roleCard(ctx)}
 
 ${sections}
 
-${screenNow(ctx.screen ?? (mayAskScreen(ctx.role) ? "ask" : undefined))}Keep a short to-do list as you work, written in plain language: the coordinator watches it live.
+${screenNow(ctx.screen ?? (mayAskScreen(ctx.role) ? "ask" : undefined))}Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.
 ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
 }
 

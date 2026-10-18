@@ -94,7 +94,7 @@ Empty groups are not shown. The product switcher and search filter the whole boa
 
 The run state is written on the card, never shown by dimming it:
 
-- **Working:** a soft pulsing dot and the live status line.
+- **Working:** a soft pulsing dot and the current item of the agent's own to-do list. Reading, searching and running commands never replace it. Tools that share no to-do list fall back to their latest action. When several reviewers or voters work at once, the card keeps one agent's summary, switching to whoever needs your answer while they wait.
 - **Needs you:** these cards sit under the Needs you heading with an amber edge, and their status line says what they wait for ("Waiting for your permission"). They carry no extra badge.
 - **On hold, Paused, Waiting for a slot, Waiting for the screen, Failed, Awaiting merge, Completed, Cancelled:** said in words at the top of the card. Held cards sit on a quieter surface; failed ones get a red edge.
 - **Waiting for the screen:** the status line says "Needs the screen for: …" in the agent's words, and an always-visible **Allow now** sits on the card. Once allowed, while another agent is on the screen, it says "Waiting its turn on the screen", with no button.
@@ -110,14 +110,17 @@ The run state is written on the card, never shown by dimming it:
 
 ```
 ┌────────────────────────────────────────────┐
-│ ● Shop · #2 in queue              On hold │  product, queue position, state
+│ ● Shop                                     │  product
 │ Guest checkout                             │  title, semibold, wraps
-│ ● Waiting for your permission              │  live status line, wraps
+│ ● Connecting guest checkout                │  current to-do item, wraps
+│   Next: code review (Codex · sol), then…    │  quiet, clipped to one line
 │ ✓ ✓ ✓ ◉ Build ○ ○                          │  its own pipeline: done steps checked, the current one named
 │ 🔨 Builder  Opus 5.5  ◷ 19m  Round 2  ✉ ⏸ … │  agent, model (quiet), time, rounds · shortcuts
 └────────────────────────────────────────────┘
 ```
 
+- The main line is one plain-text summary, wrapping so its words stay readable. To-do items have formatting removed and at most about 100 characters. When the task needs you, waits for a slot, is paused, stuck, cancelled or delivered, it says that first instead of the to-do item. The Agents page uses the same main line. Without a to-do list, an architect following your call keeps saying so; its tool activity stays in the sheet.
+- Working cards, cards that need you, waiting cards and paused cards have a quiet **Next** line when a step follows. It names up to two steps and who does each (tool and model); a review is one step naming all its reviewers, who look at once, and checkpoints say "your plan check", "your design check" and "your OK to ship". Delivery says what Petrina does itself: "Petrina opens the pull request", "Petrina commits to main", or for a release, the Release Manager's notes and then "Petrina publishes the release". A step with an alternative is shown on its own: "or another design round if the reviewer objects", "or your call if they still disagree", or "or fixes by the builder if blocking issues are found". It follows the current plan, rounds and edits, leaving out reviewers who have already reported and skipping earlier design checks on the way back to the one where you asked for changes. While the Check finder or the Guide keeper prepares a step, Next still names that step. The line stays clipped; hovering or focusing the card reveals the full sentence, and screen readers always hear it. Queued, stuck and finished cards have no Next line.
 - The pipeline comes from the task's plan, for example Plan, Design, Your check, Build, Review, Ship. Stages the plan does not have are absent. Hovering or focusing any step names it in a small tooltip ("Plan, done", "Build, now", "Review, next"), so the whole pipeline is readable without opening the task. The strip is one tab stop; the arrow keys move between its steps. It always fits on one line: on long plans (seven steps or more) the gaps tighten and the finished steps fold into one check with a count ("✓ 4", named in its tooltip: "Plan, Research, Design and Screens, done"); a very long plan also folds its furthest steps into "+N". The task sheet lists every step by name too.
 - Delivery shows in the footer in words: "Pull request #237 · awaiting merge", "Released v1.4.0", "Delivered locally to main".
 - Shortcuts (Message, Pause or Resume, Move to top, and More: Open, Join the session, Hold, Cancel) appear on hover and on keyboard focus, in space the footer always keeps for them, so nothing moves or gets covered.
@@ -227,13 +230,15 @@ When something new lands in the inbox and you are not looking at Petrina, you ge
 
 **Tabs:**
 
-- **Overview:** anything waiting for you, what you asked for, who is on it right now (role, tool, model and effort in words), and the timeline: one row per event with its time aligned on the left, and a clear break at each stage change.
+- **Overview:** anything waiting for you, what you asked for, who is on it right now (role, tool, model and effort in words), and the timeline: one row per event with its time aligned on the left, and a clear break at each stage change. **Right now** puts the current to-do item first, with the time worked on this step. The latest action sits below in quiet small text, left out if it repeats the first line. While the agent waits for your answer or permission, the first line says what it waits for and the second keeps the to-do item it was on. Time waiting for you does not count. Next is always shown in full below, when a step follows.
 - **Plan:** why this plan, then the stages as a spacious numbered list. Stages that have not started can change tool or model, and a review can gain a reviewer. "Re-plan" sends a note to the planner.
 - **Design:** the brief in one reading column (what changes for users, which parts of the product, the acceptance checklist, risks), then the disagreements. Acceptance items that could not be checked say so with the reason; they stay unchecked and require the coordinator's decision before delivery. Each disagreement separates the issue, its status, who raised it and the architect's answer, with open blockers first. Objections your call settled carry a "Your call" tag, your words, and the architect's note on how the brief follows them.
 - **Review:** the tamper check, then the findings: open blockers first, each with its status, who raised it and who confirmed it.
 - **Session:** join the agent that is working right now (below).
 
 Prose (the plan's reasoning, the brief, the conversation and questions) sits in a reading column about 620px wide, roughly 60 to 70 characters a line. The timeline and the reviews use the full width.
+
+Only Right now shows a rough time left, and only while an agent works. It needs at least three finished steps of the same role and pass (first pass or repeat), anywhere in Petrina. The typical time of the last ten such steps, less the time already worked, becomes "A few minutes left", "About 15 minutes left", "About an hour left" or "About 2 hours left". Past that typical time it says "Taking longer than usual". With too little history, it shows nothing. Steps started again after a restart, a pause or Try again do not enter that history.
 
 ### Journey
 
@@ -248,7 +253,7 @@ Pausing or restarting unfinished release notes keeps the same Release Manager bo
 - Boxes run left to right across the canvas and wrap onto new rows like text; the arrow from the end of a row runs back under it. The view fits the panel on open (a long journey opens at readable size on its live step, or its end) and follows the live step. Choosing a step to read, by click or keyboard, the live one included, stops following, so a handoff never moves the diagram away while you read; Back to now resumes it. The scroll wheel pans the canvas independently of the task list and details; dragging the background pans; pinch, or ⌘/Ctrl with the wheel, zooms. Zoom in, zoom out and Show the whole journey are small buttons; Back to now appears once you move away.
 - Clicking a box switches the right panel to that step: tool, model and effort, start, elapsed time, outcome, why it moved on, what it asked you, its part of the timeline and its conversation inline. Agent actions expand in place. Clicking the same step again, the blank canvas, or Back to task returns to the previous task tab and reading position. Typed answers, messages and notes stay intact. Faint steps say what is planned and link to the Plan tab.
 - Screen readers and keyboard users get the same steps as an ordered list, one tab stop, moved through with the arrow keys; the matching box shows the focus ring and Enter opens its details. With reduced motion nothing moves.
-- Tasks that ran before journeys were recorded show one box per finished plan stage, then the step under way with any question it waits on. The details state when exact timing or conversation was not saved; no banner interrupts the canvas.
+- Tasks that ran before journeys were recorded show one box per finished plan stage, then the step under way with any question it waits on. The details state when exact timing or conversation was not saved, and an older profile is labelled as planned: who actually ran it is not confirmed. No banner interrupts the canvas.
 
 ## Session: join an agent
 

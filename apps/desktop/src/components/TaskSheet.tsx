@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, ArrowUpToLine, Ban, Check, CheckCircle2, ChevronRight, Clock3, Ellipsis, ExternalLink, GitPullRequest, Hand, ListOrdered, LoaderCircle, MessageSquare, Monitor, Pause, Play, TriangleAlert, X } from "lucide-react";
-import { sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
+import { mainLine, sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { duration, safeUrl, STATE_LABEL, stateLabel, type Lookup } from "../lib";
 import { ProductName, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
@@ -70,7 +70,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
   useDismiss(menuBox, menu, closeMenu);
   // Focus moves into the sheet, and back to whatever opened it when it closes: the task's card if
   // that moved meanwhile (pausing moves it between sections).
-  useFocusTrap(sheet, onClose, () => document.querySelector<HTMLElement>(`.card-open[aria-describedby="status-${task.id}"]`));
+  useFocusTrap(sheet, onClose, () => document.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${task.id}"]`));
   const viewport = useViewport();
   // Narrow or short sheets keep the one-line title in the bar from the start.
   const compact = viewport.width < 900 || viewport.height < 640;
@@ -207,7 +207,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
                 <button key={entry.id} className={`task-list-item ${entry.id === task.id ? "selected" : ""}`} aria-current={entry.id === task.id ? "true" : undefined} onClick={() => { onTask(entry.id); setPane("flow"); }}>
                   <span className="task-list-meta"><span className="task-list-product"><ProductName product={find.product(entry.productId)} />{entry.source && <> <span className="source-label">{sourceLabel(entry.source)}</span></>}</span><TaskActivity task={entry} /></span>
                   <span className="task-list-title">{entry.title}</span>
-                  <span className="task-list-status">{entry.held && entry.state === "queued" ? "On hold" : entry.statusLine || STATE_LABEL[entry.state]}</span>
+                  <span className="task-list-status">{entry.held && entry.state === "queued" ? "On hold" : mainLine(entry) || STATE_LABEL[entry.state]}</span>
                   {entry.id === task.id && <ChevronRight className="task-list-arrow" size={16} aria-hidden="true" />}
                 </button>
               ))}

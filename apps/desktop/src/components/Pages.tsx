@@ -1,5 +1,5 @@
 import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
-import { queueOf, slotUses, type State } from "@petrina/core";
+import { mainLine, queueOf, slotUses, type State } from "@petrina/core";
 import { mode, sim } from "../engine";
 import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
 import { ProductName, RoleAvatar } from "./bits";
@@ -57,7 +57,7 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
               <div className="title">{task.title}</div>
               <p className="card-status">
                 <span className={`dot ${task.state}`} aria-hidden="true" />
-                <span>{task.statusLine}</span>
+                <span>{mainLine(task)}</span>
               </p>
               <div className="grow" />
               <div className="foot">

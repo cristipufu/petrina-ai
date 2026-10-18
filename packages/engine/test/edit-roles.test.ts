@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, draftOf, journeyProblems, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
+import { BUILT_IN_ROLES, draftOf, journeyProblems, mainLine, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { dispatch } from "../src/server.js";
@@ -132,6 +132,13 @@ describe("roles the coordinator edits and adds", () => {
         if (interruption === "usage replacement") expect(during.hunt?.profiles?.["0"]).not.toBe("opus-high");
         expect(during.hunt?.roles?.["reviewer:0"]?.instructions).toBe(reviewers.find((role) => role.id === "code-reviewer")!.instructions);
         expect(during.hunt?.roles?.["reviewer:1"]?.instructions).toBe(reviewers.find((role) => role.id === security)!.instructions);
+        // The summary and clock belong to the individual role, including one the coordinator added.
+        for (const [key, roleId] of [["reviewer:0", "code-reviewer"], ["reviewer:1", security]] as const) {
+          expect(during.hunt?.work?.[key]?.clock?.roleId).toBe(roleId);
+          expect(during.hunt?.work?.[key]?.todo).toBe(`${reviewers.find((role) => role.id === roleId)!.name.toLowerCase()} is working`);
+        }
+        expect(mainLine(during)).toBe("code reviewer is working");
+        expect(during.statusLine).toBe(interruption === "usage replacement" ? "Editing notes.txt" : "2 reviewers looking at the change at once");
         for (const role of reviewers) for (const opening of fakes.openings(role.name.toLowerCase())) {
           expect(opening).toContain(role.instructions);
           expect(opening).not.toContain("Use this new wording in the next review.");
@@ -140,6 +147,8 @@ describe("roles the coordinator edits and adds", () => {
         // The first round blocked on the added reviewer's finding. Its next round is a new step.
         for (const role of reviewers) expect(fakes.openings(role.name.toLowerCase()).at(-1)).toContain("Use this new wording in the next review.");
         expect(finished.tasks.find((entry) => entry.id === taskId)!.hunt).toBeUndefined();
+        const history = finished.tasks.find((entry) => entry.id === taskId)!.steps ?? [];
+        for (const role of reviewers) expect(history.some((step) => step.roleId === role.id && step.repeat)).toBe(true);
       } finally {
         await engine.quit();
       }

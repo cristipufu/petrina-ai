@@ -235,6 +235,8 @@ function shift(placed: Placed, now: number, ago: number, priority: number): Plac
       ...(task.startedAt !== undefined ? { startedAt: at(task.startedAt) } : {}),
       ...(task.finishedAt !== undefined ? { finishedAt: at(task.finishedAt) } : {}),
       ...(task.agent ? { agent: { ...task.agent, since: at(task.agent.since) } } : {}),
+      ...(task.stepClock?.since !== undefined ? { stepClock: { ...task.stepClock, since: at(task.stepClock.since) } } : {}),
+      ...(task.steps ? { steps: task.steps.map((record) => ({ ...record, at: at(record.at) })) } : {}),
       ...(task.pr ? { pr: { ...task.pr, openedAt: at(task.pr.openedAt) } } : {}),
       ...(task.cleanup?.removedAt !== undefined ? { cleanup: { ...task.cleanup, removedAt: at(task.cleanup.removedAt) } } : {}),
       ...(task.checks ? { checks: { ...task.checks, at: at(task.checks.at) } } : {}),
@@ -440,7 +442,8 @@ function buildDemo(now: number): Demo {
 
   addHistory(builder, DEMO_PRODUCTS, quirks);
   place("guest-checkout", 2 * MINUTE, (_task, items) => items.some((item) => item.kind === "permission"), 100);
-  place("login-loop", 0, (task) => task.column === "reviewing" && task.sub === 0 && (task.agent?.step ?? 0) === 2, 101);
+  // Mid-step: its to-do item "Trying to prove done wrong", with its first action under it.
+  place("login-loop", 0, (task) => task.column === "reviewing" && task.sub === 0 && (task.agent?.step ?? 0) === 5, 101);
   place("dark-mode", 4 * MINUTE, (_task, items) => items.some((item) => item.kind === "question"), 102);
   place("gift-cards", 6 * MINUTE, (_task, items) => items.some((item) => item.kind === "disagreement"), 107);
   place("quick-note", 3 * MINUTE, (_task, items) => items.some((item) => item.kind === "screen"), 108);
@@ -589,9 +592,10 @@ const PORTFOLIO_TARGETS: readonly Target[] = [
 ];
 
 const reach: Record<Exclude<Target, "queued" | "held">, (task: Task, inbox: readonly InboxItem[]) => boolean> = {
-  "design-running": (task) => task.column === "designing" && task.state === "running" && (task.agent?.step ?? 0) >= 1,
+  // Running agents are caught after an action under a to-do item.
+  "design-running": (task) => task.column === "designing" && task.state === "running" && (task.agent?.step ?? 0) >= 2,
   "build-running": (task) => task.column === "building" && task.state === "running" && (task.agent?.step ?? 0) >= 2,
-  "review-running": (task) => task.column === "reviewing" && task.state === "running" && (task.agent?.step ?? 0) >= 1,
+  "review-running": (task) => task.column === "reviewing" && task.state === "running" && (task.agent?.step ?? 0) >= 2,
   question: (_task, inbox) => inbox.some((item) => item.kind === "question"),
   permission: (_task, inbox) => inbox.some((item) => item.kind === "permission"),
   screen: (_task, inbox) => inbox.some((item) => item.kind === "screen"),
@@ -666,7 +670,7 @@ function buildPortfolioDemo(now: number): Demo {
     }
 
     const reached = fastForward(spec, reach[target], triggers, products, quirks);
-    const ago = target === "done" ? Math.min(index + 2, 8) * 60 * MINUTE : (index % 9) * 3 * MINUTE;
+    const ago = target === "done" ? Math.min(index + 2, 8) * 60 * MINUTE : target.endsWith("-running") ? (index % 2) * MINUTE : (index % 9) * 3 * MINUTE;
     builder.place(reached, now, ago, 100 + index);
   });
 

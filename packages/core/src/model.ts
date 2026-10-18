@@ -159,6 +159,8 @@ export interface ActiveAgent {
   step: number;
   /** Whether its commands run in its tool's own sandbox, and why not when they don't. Unset until its conversation opens. */
   sandbox?: { on: true } | { on: false; reason: string };
+  /** Stable place in a grouped review, independent of a usage stand-in profile. */
+  reviewKey?: string;
 }
 
 export interface TimelineEntry {
@@ -350,6 +352,8 @@ export interface ConversationNote {
   briefed?: boolean;
   /** The coordinator handed the step back: the note of what changed, until the agent hears it. */
   handback?: string;
+  /** Engine boot that paused this conversation; restart remains a fresh attempt. */
+  handbackBoot?: string;
 }
 
 /**
@@ -464,6 +468,12 @@ export interface Objection {
   call?: string;
 }
 
+/** Current-step working time, excluding time waiting on the coordinator. */
+export interface StepClock { roleId: Id; repeat: boolean; worked: number; since?: number }
+
+/** Finished step timing used for rough duration estimates. */
+export interface StepRecord { roleId: Id; repeat: boolean; worked: number; at: number }
+
 /** The coordinator's call on a design disagreement. It is final: the architect follows it and nobody reviews the design again. */
 export interface DesignCall {
   /** The coordinator's own words. */
@@ -538,6 +548,16 @@ export interface Hunt {
   findings?: number;
   /** Each parallel agent's starting role, by reviewer place or voter profile, through interruptions. */
   roles?: Readonly<Record<string, Role>>;
+  /** Unfinished reviewers and voters, each with its own summary and working time. */
+  work?: Readonly<Record<string, ReviewWork>>;
+}
+
+export interface ReviewWork {
+  todo?: string;
+  activity?: string;
+  clock?: StepClock;
+  attempts: number;
+  waiting?: string;
 }
 
 /** One voter's verdict on an Important finding. */
@@ -545,6 +565,7 @@ export interface Vote {
   by: Id;
   /** The actual independent tool. Absent in older votes whose planned attribution cannot prove who ran. */
   toolId?: Id;
+  plannedProfileId?: Id;
   verdict: FindingVerification["verdict"];
   reason: string;
 }
@@ -697,7 +718,7 @@ export interface Task {
   /** The tester is trying the final code right before the delivery check; the check follows, or the builder if it fails. */
   retest?: boolean;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
-  builderSession?: { stageId: Id; profileId: Id; toolId: Id; model: string; sessionId: string };
+  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string };
   /** The coordinator sent the delivery back with this note: the Guide keeper looks for what reviewers missed. */
   miss?: { note: string; at: number };
   /** How many times the coordinator sent a delivery back after every reviewer had passed it. */
@@ -708,6 +729,10 @@ export interface Task {
   /** A review round's parallel work so far, so a restart only redoes what had not finished. */
   hunt?: Hunt;
   statusLine: string;
+  /** Agent-owned current to-do, kept separate from changing tool activity. */
+  todo?: string;
+  stepClock?: StepClock;
+  steps?: readonly StepRecord[];
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;
@@ -792,6 +817,8 @@ export interface InboxItem {
   at: number;
   /** The asking agent keeps its slot while it waits. */
   blocking: boolean;
+  /** Member asking in grouped review. */
+  reviewKey?: string;
   /** A Stuck item about a tool that is not ready or would not start: the item shows that tool's fix, and Retry checks it again first. */
   toolId?: CheckId;
   /** With `toolId`: what was wrong with the tool when the item was raised. */

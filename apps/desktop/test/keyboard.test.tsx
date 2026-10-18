@@ -557,7 +557,8 @@ describe('the app keyboard', () => {
       simulator.setPoolLimit(12);
       simulator.setPoolPaused(false);
       simulator.addTask({ productId: 'shop', title: 'Another plan to approve', approvePlan: true });
-      for (let step = 0; step < 60; step++) simulator.tick(1_000_002_200 + step * 2200);
+      // Long enough for new requests: scripted agents take several actions under each item of their to-do lists.
+      for (let step = 0; step < 120; step++) simulator.tick(1_000_002_200 + step * 2200);
     });
     expect(simulator.getState().inbox.length).toBeGreaterThan(before);
     expect(document.activeElement).toBe(field);

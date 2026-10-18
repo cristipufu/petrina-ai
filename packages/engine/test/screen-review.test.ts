@@ -368,6 +368,10 @@ it.each([false, true])("keeps a replacement reviewer's position and conversation
     const session = f.task().conversation!.sessionId;
     expect(f.task().hunt?.profiles?.["0"]).toBe(replacement);
     expect(f.task().screen?.profileId).toBe(replacement);
+    expect(f.task().screen?.member).toBe("review-0");
+    const summary = f.task().hunt!.work!["reviewer:0"]!;
+    expect(summary.todo).toBe("Finished the background checks");
+    expect(summary.clock?.since).toBeUndefined();
 
     // The original tool recovers while this reviewer is waiting. Its own saved conversation still continues.
     f.engine.s.pool.limited = [];
@@ -377,6 +381,9 @@ it.each([false, true])("keeps a replacement reviewer's position and conversation
     expect(f.task().hunt?.profiles?.["0"]).toBe(replacement);
     f.engine.allowScreen(f.id);
     await waitFor(() => f.onScreen().includes(session), "the same replacement conversation on the screen");
+    expect(f.task().agent?.reviewKey).toBe("reviewer:0");
+    expect(f.task().hunt!.work!["reviewer:0"]!.todo).toBe(summary.todo);
+    expect(f.task().hunt!.work!["reviewer:0"]!.clock?.since).toBeDefined();
     expect(f.task().screen?.profileId).toBe(replacement);
     expect(f.fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new", "resume"]);
     f.engine.setScreenUse("on");

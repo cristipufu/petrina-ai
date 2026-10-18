@@ -144,7 +144,9 @@ describe("first run's demo", () => {
     const request = { productId: product.id, title: "Add a greeting", approvePlan: true, clientId: "first-task" };
     const taskId = sim.startFirstTask(request);
     expect(sim.startFirstTask(request)).toBe(taskId);
-    for (let tick = 0; tick < 6; tick += 1) sim.tick();
+    // The planner takes several actions under each to-do item: advance to its result, not a fixed action count.
+    for (let tick = 0; tick < 30 && !sim.getState().inbox.some((item) => item.kind === "plan"); tick += 1) sim.tick();
+    expect(sim.getState().inbox.some((item) => item.kind === "plan")).toBe(true);
     expect(sim.getState().tasks).toHaveLength(1);
     const usage = sim.usage({ view: "analytics", period: "today" });
     expect(usage.headline.turns).toBeGreaterThan(0);

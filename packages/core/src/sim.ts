@@ -57,6 +57,7 @@ import { productHistory, validateProductSettings, type ProductSettings } from ".
 import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js";
 import { askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type TurnReport, type WorkMoment, type WorkStageKind } from "./worklog.js";
 import { SETUP_STEPS, type SetupStep } from "./setup.js";
+import { MAX_STEP_RECORDS, pauseClock, plainTodo, resumeClock, startClock, stepRecord } from "./summary.js";
 
 type Draft = DeepMutable<State>;
 type DraftTask = DeepMutable<Task>;
@@ -70,7 +71,7 @@ export interface Trigger {
   detail?: string;
 }
 
-/** Keyed by `taskId|roleId|round|step`. */
+/** Keyed by `taskId|roleId|round|item`: the agent stops when it starts that item of its to-do list. */
 export type Triggers = Readonly<Record<string, Trigger>>;
 
 /** How the simulated tools behave for one agent (keyed by `taskId|roleId`), so the demos show every case. */
@@ -150,42 +151,65 @@ interface ScriptContext {
   objecting: boolean;
 }
 
-/** What each role says while it works, in plain language. */
-function scriptFor(role: Role | undefined, ctx: ScriptContext): string[] {
+/** One item of an agent's to-do list, with the actions it takes under it ("Reading the code", "Editing files"). */
+type Item = readonly [todo: string, ...actions: string[]];
+
+/** One moment of a scripted agent: it starts the next item of its to-do list, or takes an action under it. */
+type Moment = { todo: string } | { action: string };
+
+/** What each role works on, as its own to-do list in plain language, and what it does under each item. */
+function itemsFor(role: Role | undefined, ctx: ScriptContext): Item[] {
   const { area, product, round, fixing, following, objecting } = ctx;
-  if (role?.added) return role.result === "findings" ? ["Reading the design and the acceptance checklist", `Going through the change to ${area}`, "Writing findings"] : [`Reading what the task needs from the ${role.name.toLowerCase()}`, `Working on ${area}`, "Writing notes for the squad"];
+  if (role?.added) return role.result === "findings"
+    ? [["Reading the design and the acceptance checklist", "Reading the task", "Reading the brief"], [`Going through the change to ${area}`, "Reading the code", "Searching the code"], ["Writing findings", "Writing up the review", "Findings ready"]]
+    : [[`Reading what the task needs from the ${role.name.toLowerCase()}`, "Reading the task", "Reading the brief"], [`Working on ${area}`, "Reading the code", "Thinking it through"], ["Writing notes for the squad", "Writing up the notes", "Notes ready"]];
   switch (role?.id) {
     // Only a release has one: Petrina sets the version and publishes it (see `ship`).
     case "release-manager":
-      return ["Reading every commit since the previous release", "Grouping the changes: new, improved, fixed", "Writing the release notes"];
+      return [
+        ["Reading every commit since the previous release", "Reading the release history", "Reading the changes"],
+        ["Grouping the changes: new, improved, fixed", "Thinking it through", "Sorting 12 changes"],
+        ["Writing the release notes", "Writing up the changes", "Release notes ready"],
+      ];
     case "planner":
-      return ["Reading the task", `Looking at how ${product} is organised`, "Choosing who should work on this", "Writing the plan"];
+      return [[`Looking at how ${product} is organised`, "Reading the code", "Searching the code"], ["Choosing who should work on this", "Reading the available roles", "Thinking it through"], ["Writing the plan", "Writing up the stages", "Plan ready"]];
     case "researcher":
-      return [`Looking at how other products handle ${area}`, `Collecting what users expect from ${area}`, "Writing research notes"];
+      return [[`Looking at how other products handle ${area}`, "Looking something up", "Reading 4 articles"], [`Collecting what users expect from ${area}`, "Reading the research", "Thinking it through"], ["Writing research notes", "Writing up the findings", "Research notes ready"]];
     case "architect":
-      if (following) return ["Reading your call", `Updating the ${area} flow to follow it`, "Answering each open objection", "Brief follows your call"];
+      if (following) return [["Reading your call", "Reading the brief", "Reading the objections"], [`Updating the ${area} flow to follow it`, "Thinking it through", "Writing the brief"], ["Answering each open objection", "Writing up the answers", "Brief follows your call"]];
       return round === 1
-        ? [`Reading the parts of ${product} this touches`, `Sketching the ${area} flow`, "Writing the acceptance checklist", "Design brief ready for review"]
-        : ["Reading the objections", `Reworking the ${area} flow`, "Answering each objection", "Updated brief ready"];
+        ? [[`Reading the parts of ${product} this touches`, "Reading the code", "Searching the code"], [`Sketching the ${area} flow`, "Reading the brief", "Thinking it through"], ["Writing the acceptance checklist", "Checking the task", "Writing the brief"], ["Getting the brief ready for review", "Checking the brief", "Design brief ready for review"]]
+        : [["Reading the objections", "Reading the brief", "Reading the code"], [`Reworking the ${area} flow`, "Thinking it through", "Writing the brief"], ["Answering each objection", "Writing up the answers", "Updated brief ready"]];
     case "design-reviewer":
       return round === 1
-        ? ["Reading the design brief", `Looking for gaps in the ${area} flow`, "Writing objections"]
-        : ["Reading the updated brief", "Checking the answer to each objection", objecting ? "Writing objections" : "Nothing blocking left"];
+        ? [["Reading the design brief", "Reading the task", "Reading the brief"], [`Looking for gaps in the ${area} flow`, "Reading the code", "Thinking it through"], ["Writing objections", "Writing up the findings", "Objections ready"]]
+        : [["Reading the updated brief", "Reading the brief", "Reading the objections"], ["Checking the answer to each objection", "Reading the code", "Thinking it through"], objecting ? ["Writing objections", "Writing up the findings", "Objections ready"] : ["Wrapping up the review", "Checking the answers", "Nothing blocking left"]];
     case "ux-designer":
-      return [`Sketching the ${area} screens`, "Checking contrast, spacing and wording", "Writing UI notes"];
+      return [[`Sketching the ${area} screens`, "Reading the code", "Drawing 3 screens"], ["Checking contrast, spacing and wording", "Reading the brief", "Thinking it through"], ["Writing UI notes", "Writing up the screens", "UI notes ready"]];
     case "builder":
       return fixing
-        ? ["Reading the review findings", "Fixing the blocking issue", "Ran the tests: 44 passed", "Fixes ready for review"]
-        : ["Setting up a fresh working copy", `Updating the ${area} screens`, `Connecting ${area} to the backend`, `Writing tests for ${area}`, "Ran the tests: 42 passed", "Change ready for review"];
+        ? [["Reading the review findings", "Reading the brief", "Reading the code"], ["Fixing the blocking issue", "Editing files", "Running the tests"], ["Checking the fixes", "Ran the tests: 44 passed", "Fixes ready for review"]]
+        : [
+            ["Setting up a fresh working copy", "Reading the task", "Running a command"],
+            [`Updating the ${area} screens`, "Reading the code", "Editing 3 files"],
+            [`Connecting ${area} to the backend`, "Searching the code", "Editing files"],
+            [`Writing tests for ${area}`, "Editing files", "Ran the tests: 42 passed"],
+            ["Writing up the change for review", "Reading the changes", "Change ready for review"],
+          ];
     case "tester":
-      return ["Starting the app", `Going through ${area} like a user would`, "Took 4 screenshots", "Every acceptance check passes"];
+      return [["Starting the app", "Reading the brief", "Running a command"], [`Going through ${area} like a user would`, "Checking the screens", "Took 4 screenshots"], ["Checking every acceptance item", "Running the checks", "Every acceptance check passes"]];
     case "code-reviewer":
       return round === 1
-        ? ["Reading the design and the acceptance checklist", "Trying to prove “done” wrong", "Checking no test was weakened or skipped", "Writing findings"]
-        : ["Checking the fixes", "Re-running the acceptance checks", "Passed"];
+        ? [["Reading the design and the acceptance checklist", "Reading the task", "Reading the brief"], ["Trying to prove “done” wrong", "Reading the code", "Running the tests"], ["Checking no test was weakened or skipped", "Reading the changes", "Searching the code"], ["Writing findings", "Writing up the review", "Findings ready"]]
+        : [["Checking the fixes", "Reading the changes", "Reading the code"], ["Re-running the acceptance checks", "Running the tests", "Passed"]];
     default:
-      return ["Working"];
+      return [["Working", "Reading the task", "Thinking it through"]];
   }
+}
+
+/** Every moment of a scripted agent's step, in order. */
+function scriptFor(role: Role | undefined, ctx: ScriptContext): Moment[] {
+  return itemsFor(role, ctx).flatMap(([todo, ...actions]): Moment[] => [{ todo }, ...actions.map((action) => ({ action }))]);
 }
 
 /** What a design reviewer that keeps objecting raises after the first round. */
@@ -598,7 +622,7 @@ export class Simulator {
       this.say(d, task, "you", answer);
       this.log(d, task, "you", `You answered: ${answer}`);
       this.say(d, task, "agent", `Thanks. Going with: ${answer}.`, item.roleId, item.profileId);
-      this.unblock(task);
+      this.unblock(d, task);
     }, "answered");
   }
 
@@ -611,7 +635,7 @@ export class Simulator {
       settleAsk(task, itemId, "decided", d.now, pick);
       this.log(d, task, "you", `You let the agent decide. It chose: ${pick}`);
       this.say(d, task, "agent", `I'll go with: ${pick}.`, item.roleId, item.profileId);
-      this.unblock(task);
+      this.unblock(d, task);
     }, "decided");
   }
 
@@ -620,7 +644,7 @@ export class Simulator {
       settleAsk(task, item.id, "allowed", d.now);
       this.log(d, task, "you", `You allowed: ${item.title}`);
       this.say(d, task, "agent", "Thanks, continuing.", item.roleId, item.profileId);
-      this.unblock(task);
+      this.unblock(d, task);
     }, "allowed");
   }
 
@@ -630,7 +654,7 @@ export class Simulator {
       this.log(d, task, "you", note ? `You said no: ${note}` : `You said no to: ${item.title}`);
       if (note) this.say(d, task, "you", note);
       this.say(d, task, "agent", "Understood. I'll find a way without it.", item.roleId, item.profileId);
-      this.unblock(task);
+      this.unblock(d, task);
     }, "denied");
   }
 
@@ -664,7 +688,8 @@ export class Simulator {
         case "delivery":
           this.log(d, task, "you", "You approved the delivery");
           endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
-          this.continueAfterGate(d, task);
+          // After review rounds ran out, the check was raised on the delivery stage itself.
+          this.continueAfterGate(d, task, this.stage(task)?.kind === "gate");
           break;
         case "guide": {
           const product = d.products.find((entry) => entry.id === task.productId);
@@ -934,6 +959,9 @@ export class Simulator {
       this.endTurn(d, task, "stopped");
       task.state = "paused";
       task.holdsSlot = false;
+      // Resuming starts the step fresh.
+      delete task.todo;
+      delete task.stepClock;
       task.statusLine = "Paused by you";
       withdrawAsks(task, d.inbox.filter((item) => item.taskId === taskId && item.blocking).map((item) => item.id), d.now);
       this.releaseScreen(d, task);
@@ -964,6 +992,8 @@ export class Simulator {
       task.holdsSlot = false;
       delete task.agent;
       this.releaseScreen(d, task);
+      delete task.todo;
+      delete task.stepClock;
       task.finishedAt = d.now;
       task.statusLine = "Cancelled";
       d.inbox = d.inbox.filter((item) => item.taskId !== task.id);
@@ -1252,6 +1282,10 @@ export class Simulator {
       if (!extraSlot(d as State, tool)) break;
       task.helpers = [...(task.helpers ?? []), { roleId: library.reviewerAt(current!, task.sub + 1 + index), profileId, since: d.now, step: 0 }];
     }
+    // Each start is a fresh one: a step started again after a pause leaves no record.
+    delete task.todo;
+    task.stepAttempts = (task.stepAttempts ?? 0) + 1;
+    task.stepClock = startClock(task as unknown as Task, next.roleId, d.now);
     task.state = "running";
     task.holdsSlot = true;
     task.column = this.columnFor(d, task);
@@ -1284,26 +1318,30 @@ export class Simulator {
     const product = d.products.find((entry) => entry.id === task.productId)?.name ?? "the product";
     const round = this.round(task);
     const following = !!this.following(task);
-    const lines = scriptFor(d.roles.find((role) => role.id === agent.roleId), { area: task.area, product, round, fixing: task.fixing, following, objecting: this.disagree.has(task.id) });
-    const line = lines[agent.step];
-    if (line === undefined) {
+    const moments = scriptFor(d.roles.find((role) => role.id === agent.roleId), { area: task.area, product, round, fixing: task.fixing, following, objecting: this.disagree.has(task.id) });
+    const moment = moments[agent.step];
+    if (moment === undefined) {
       this.finish(d, task);
       return;
     }
 
-    task.statusLine = following ? CALL_WORDS.following : line;
-    this.say(d, task, "activity", line, agent.roleId, agent.profileId);
-    this.log(d, task, "status", line, agent.roleId, agent.profileId);
-    const trigger = this.triggers[`${task.id}|${agent.roleId}|${round}|${agent.step}`];
+    // As with real agents: the to-do item goes on the timeline, actions are the status line and the session's activity.
     agent.step += 1;
+    if ("action" in moment) {
+      task.statusLine = moment.action;
+      this.say(d, task, "activity", moment.action, agent.roleId, agent.profileId);
+      return;
+    }
+    const todo = plainTodo(moment.todo);
+    if (todo) task.todo = todo;
+    this.log(d, task, "status", todo ?? moment.todo, agent.roleId, agent.profileId);
+    const item = moments.slice(0, agent.step).filter((entry) => "todo" in entry).length - 1;
+    const trigger = this.triggers[`${task.id}|${agent.roleId}|${round}|${item}`] ?? this.triggers[`${task.id}|${agent.roleId}|${round}|${agent.step - 1}`];
     if (trigger?.kind === "screen") this.askScreen(d, task, trigger.title);
     else if (trigger) this.ask(d, task, trigger);
   }
 
-  /**
-   * The agent did what it could in the background and needs the screen. Allowed and free: it has it now and
-   * keeps its slot. Otherwise its task waits without a slot, for the coordinator's OK or its turn.
-   */
+  /** The agent did what it could in the background and needs the screen. */
   private askScreen(d: Draft, task: DraftTask, text: string): void {
     const agent = task.agent;
     if (!agent) return;
@@ -1327,9 +1365,8 @@ export class Simulator {
     this.syncScreen(d);
   }
 
-  /** Each waiting request's status line and quiet inbox item follow who may use the screen now. */
+  /** Screen requests and their quiet inbox items follow the active request. */
   private syncScreen(d: Draft): void {
-    // For an hour ran out: Off from now on.
     if (d.pool.screen && d.pool.screen.mode !== screenMode(d.pool, d.now)) d.pool.screen = { mode: "off" };
     for (const task of d.tasks) {
       const wait = screenWait(task as Task, d as State, d.now);
@@ -1337,17 +1374,14 @@ export class Simulator {
       if (wait === "ask" && !item) {
         const request = task.screen!;
         d.inbox.push({ id: this.id(d, "inbox"), taskId: task.id, kind: "screen", title: SCREEN_WORDS.needs(request.reason), body: SCREEN_WORDS.body, at: request.at, blocking: false, roleId: request.roleId, profileId: request.profileId });
-      } else if (wait !== "ask" && item) {
-        d.inbox = d.inbox.filter((entry) => entry !== item);
-      }
+      } else if (wait !== "ask" && item) d.inbox = d.inbox.filter((entry) => entry !== item);
       if (wait === "ask") task.statusLine = SCREEN_WORDS.needs(task.screen!.reason);
       else if (wait === "turn") task.statusLine = SCREEN_WORDS.turn;
-      // Its turn on the screen: it waits for a slot like any other task (the scheduler says which).
       else if (task.state === "waiting" && task.screen && !task.screen.granted) task.statusLine = "Waiting for a free slot";
     }
   }
 
-  /** The step ended (or was paused or cancelled): the screen is free for the next request. */
+  /** The step ended, was paused or cancelled: free the screen. */
   private releaseScreen(d: Draft, task: DraftTask): void {
     delete task.screen;
     d.inbox = d.inbox.filter((item) => !(item.taskId === task.id && item.kind === "screen"));
@@ -1383,6 +1417,7 @@ export class Simulator {
     const id = this.raise(d, task, trigger.kind, trigger.title, true, trigger);
     addAsk(task, { id, kind: trigger.kind, title: trigger.title, at: d.now });
     task.statusLine = trigger.kind === "question" ? "Waiting for your answer" : "Waiting for your permission";
+    if (task.stepClock) task.stepClock = pauseClock(task.stepClock, d.now);
     this.say(d, task, "agent", trigger.title, agent?.roleId, agent?.profileId);
     this.log(d, task, "warn", trigger.kind === "question" ? `Asked you: ${trigger.title}` : `Asked your permission: ${trigger.title}`, agent?.roleId, agent?.profileId);
   }
@@ -1414,10 +1449,11 @@ export class Simulator {
     return id;
   }
 
-  private unblock(task: DraftTask): void {
+  private unblock(d: Draft, task: DraftTask): void {
     if (task.state !== "needs-you") return;
     task.state = task.holdsSlot ? "running" : "waiting";
     task.statusLine = task.holdsSlot ? "Back to work" : "Waiting for a free slot";
+    if (task.holdsSlot && task.stepClock) task.stepClock = resumeClock(task.stepClock, d.now);
   }
 
   /** The agent finished its step list: hand the result to the stage. */
@@ -1426,6 +1462,7 @@ export class Simulator {
     if (!agent) return;
     this.endTurn(d, task, "finished");
     this.releaseScreen(d, task);
+    this.finishStep(d, task);
 
     if (task.stageIndex < 0) {
       task.plan = composePlan(task, library.activeRoles(d.roles)) as DeepMutable<NonNullable<Task["plan"]>>;
@@ -1619,8 +1656,25 @@ export class Simulator {
       this.log(d, task, end.kind === "used up" ? "warn" : "done", end.kind === "used up" ? `Review rounds used up: ${findingCount(open)} still open` : `Review passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
       this.moment(d, task, { kind: "review-end", outcome: end.kind === "used up" ? "rounds-used" : "passed" });
       this.endStage(d, task, end.kind === "used up" ? "rounds-used" : "passed");
+      // With blocking findings left, the coordinator always looks before anything ships, as in the engine.
+      const next = task.plan?.stages[task.stageIndex + 1];
+      if (end.kind === "used up" && next && next.kind !== "gate") {
+        delete task.helpers;
+        task.stageIndex += 1;
+        task.sub = 0;
+        this.gate(d, task, "delivery");
+        return;
+      }
       this.advance(d, task);
     }
+  }
+
+  /** The step handed back its result: a short record of it, unless it was started again, and a clean start for the next one. */
+  private finishStep(d: Draft, task: DraftTask): void {
+    if (task.stepClock && task.stepAttempts === 1) task.steps = [...(task.steps ?? []), stepRecord(task.stepClock, d.now)].slice(-MAX_STEP_RECORDS);
+    delete task.todo;
+    delete task.stepClock;
+    delete task.stepAttempts;
   }
 
   private advance(d: Draft, task: DraftTask): void {
@@ -1669,8 +1723,8 @@ export class Simulator {
     this.raise(d, task, "disagreement", `The architects disagree on “${task.title}”`, false, { body: CALL_WORDS.disagreement });
   }
 
-  private continueAfterGate(d: Draft, task: DraftTask): void {
-    task.stageIndex += 1;
+  private continueAfterGate(d: Draft, task: DraftTask, advance = true): void {
+    if (advance) task.stageIndex += 1;
     task.sub = 0;
     const stage = this.stage(task);
     if (!stage) {

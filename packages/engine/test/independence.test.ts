@@ -324,7 +324,7 @@ describe.concurrent("one vote per actual usable tool", () => {
       await f.advance(f.delivery);
       const finding = checkedFinding(f);
       expect(f.fakes.openings("verifier")).toHaveLength(1);
-      expect(finding.votes).toEqual([{ by: "sol-high", toolId: "codex", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
+      expect(finding.votes).toEqual([{ by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
       expect(finding.verification?.by).toBe("sol-high");
       expect(finding.status).toBe("dismissed");
       expect(f.fakes.openings("builder")).toHaveLength(1);
@@ -428,7 +428,7 @@ describe.concurrent("one vote per actual usable tool", () => {
       expect(opening.slice(opening.indexOf("## Important findings to check"))).not.toContain(`- [${partial.id}]`);
       expect(f.task().findings.find((finding) => finding.id === partial.id)?.votes).toEqual(partial.votes);
       const remaining = f.task().findings.find((finding) => finding.id !== partial.id && finding.votes?.length)!;
-      expect(remaining.votes).toEqual([{ by: "sonnet-high", toolId: "claude-code", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
+      expect(remaining.votes).toEqual([{ by: "sonnet-high", toolId: "claude-code", plannedProfileId: "opus-high", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
       expect(f.engine.role("verifier")?.purpose).toBe("Use the new voting instructions next round.");
     } finally { f.engine.shutdown(); }
   });
@@ -458,11 +458,11 @@ describe.concurrent("one vote per actual usable tool", () => {
       const votes = independentVotes(finding.votes);
       const reason = `After checking every finding, this one ${corrected === "real" ? "is a real problem" : "is not a bug"}.`;
       expect(finding.verification?.verdict).toBe(corrected);
-      expect(votes.find((vote) => vote.toolId === "codex")).toEqual({ by: "sol-high", toolId: "codex", verdict: corrected, reason });
+      expect(votes.find((vote) => vote.toolId === "codex")).toEqual({ by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: corrected, reason });
       expect(votes).toHaveLength(restart ? 2 : 1);
       expect(finding.votes?.filter((vote) => vote.toolId === "codex")).toEqual([
-        { by: "sol-high", toolId: "codex", verdict: initial, reason: initial === "real" ? "The welcome page has no greeting: confirmed by opening it." : "The welcome page shows the greeting already." },
-        { by: "sol-high", toolId: "codex", verdict: corrected, reason },
+        { by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: initial, reason: initial === "real" ? "The welcome page has no greeting: confirmed by opening it." : "The welcome page shows the greeting already." },
+        { by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: corrected, reason },
       ]);
       if (saved) expect(finding.votes?.filter((vote) => vote.toolId === "codex")).toEqual([...saved]);
       expect(f.fakes.received("verifier").filter((entry) => f.model(entry.session) === "gpt-6.1-sol")).toHaveLength(2);

@@ -4,7 +4,7 @@ import type { Sources } from "./sources.js";
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason, type CheckId } from "@petrina/core";
+import { addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason, type CheckId, pauseClock, plainTodo, resumeClock, startClock } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
@@ -33,6 +33,8 @@ interface TurnOptions<T> {
   resume?: { sessionId: string; toolId: Id; model: string };
   used?: (profileId: Id) => void;
   reviewerKey?: string;
+  /** Parallel review work whose summary and clock this conversation is continuing. */
+  reviewKey?: string;
   /** The individual member whose saved screen conversation is being resumed. */
   member?: string;
   /** A parallel member replaces only its own reserved seat when it continues. */
@@ -62,8 +64,8 @@ export class Turns {
   }
 
   /**
-   * One agent, one stage: run turns until it hands back a valid result. `status` keeps the task's
-   * status line fixed while the agent works; `check` turns a valid but incomplete result into a repair.
+   * One agent, one stage: run turns until it hands back a valid result. `status` names what it starts
+   * on before its first activity; `check` turns a valid but incomplete result into a repair.
    * `given` builds the opening instructions' sections, only when a fresh conversation gets them.
    * After a restart, the step's agent picks up its own conversation when the tool can reopen it.
    * `resume` names an earlier step's conversation to go back to (same tool and model): the agent keeps what
@@ -202,8 +204,18 @@ export class Turns {
     // Only the agent that has the screen is told it may use it.
     const screenWords = screen ? { reason: screen.reason } : mayAskScreen(role) ? ("ask" as const) : undefined;
     task.stepAttempts = (task.stepAttempts ?? 0) + 1;
+    // A step that starts fresh (a new step, after a pause, Try again) drops the old to-do item and starts its clock again.
+    // After a restart, or with a stand-in taking over, both stay: the to-do item shows until the agent names its own.
+    if (!same) delete task.todo;
+    const reviewWork = options.reviewKey ? task.hunt?.work?.[options.reviewKey] : undefined;
+    if (reviewWork) {
+      reviewWork.attempts = (reviewWork.attempts ?? 0) + 1;
+      reviewWork.clock = reviewWork.clock ? resumeClock(reviewWork.clock, Date.now()) : startClock(task as unknown as Task, roleId, Date.now());
+      delete reviewWork.waiting;
+      task.stepClock = reviewWork.clock;
+    } else task.stepClock = same && task.stepClock ? resumeClock(task.stepClock, Date.now()) : startClock(task as unknown as Task, roleId, Date.now());
 
-    task.agent = { roleId, profileId, since: Date.now(), step: 0 };
+    task.agent = { roleId, profileId, since: Date.now(), step: 0, ...(options.reviewKey ? { reviewKey: options.reviewKey } : {}) };
     task.state = this.k.s.inbox.some((item) => item.taskId === taskId && item.blocking) ? "needs-you" : "running";
     task.holdsSlot = true;
     task.column = this.k.columnFor(task);
@@ -249,19 +261,32 @@ export class Turns {
             const current = live();
             if (current) this.briefed(current);
             if (!current || current.state !== "running") return;
-            current.statusLine = options.status ?? line;
+            if (reviewWork) {
+              reviewWork.activity = line;
+              this.k.showReviewWork(current);
+            } else current.statusLine = line;
             this.k.say(current, "activity", line, roleId, profileId);
             this.k.commit();
           },
+          // The to-do item is kept apart from the status line: tool activity never overwrites it, nor it the activity.
           onPlanStep: (line) => {
             const current = live();
-            if (!current) return;
+            const text = plainTodo(line);
+            if (!current || !text) return;
             this.briefed(current);
-            if (current.state === "running") current.statusLine = options.status ?? line;
-            if (current.timeline.at(-1)?.text !== line) this.k.log(current, "status", line, roleId, profileId);
-            this.k.commit();
+            if (current.state !== "running" && current.state !== "needs-you") return;
+            if (reviewWork) {
+              if (reviewWork.todo === text) return;
+              reviewWork.todo = text;
+              this.k.showReviewWork(current);
+            } else {
+              if (current.todo === text) return;
+              current.todo = text;
+            }
+            if (current.timeline.at(-1)?.text !== text) this.k.log(current, "status", text, roleId, profileId);
+            this.k.noteTodo();
           },
-          onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits),
+          onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits, options.reviewKey),
           onLog: (text) => void this.k.agentLog(taskId, text),
           onCleanupIncomplete: () => { const current = live(); if (current) this.k.log(current, "warn", CLEANUP_INCOMPLETE); },
           onUsage: (info) => this.k.recordUsage(info),
@@ -290,6 +315,9 @@ export class Turns {
     const picked = run.reopened !== undefined;
     const sandbox = this.sandboxState(task, opened.off, roleId, profileId, picked);
     if (task.agent) task.agent.sandbox = sandbox;
+    // Handing the same conversation back continues its work. A fresh conversation or a Petrina
+    // restart is still another attempt, so neither can enter the timing history.
+    if (picked && handback && same?.handbackBoot === this.k.boot && task.stepAttempts > 1) task.stepAttempts -= 1;
     const wentBack = picked && !reopen && back !== undefined;
     const where = saved ? this.whereYouWere(task, role, startedAt) : undefined;
     if (wentBack) {
@@ -415,7 +443,7 @@ export class Turns {
    * of its own (`copy`) so none disturbs another. The caller saves each result as it arrives. Asking for
    * the screen keeps this member's copy and conversation, then the usual turn reopens it on its own.
    * Its starting role stays with the round through interruptions and usage replacements.
-   * Background activity leaves the task's status line to its group.
+   * Each member keeps its own summary and clock; background activity leaves the task's status line to its group.
    * `agent` is its group's record of it, which learns whether it is sandboxed.
    */
   async parallel<T>(
@@ -471,12 +499,26 @@ export class Turns {
         }
       }
       options.used?.(profile.id);
+      const previous = task.hunt?.work?.[key];
+      const work = {
+        ...previous,
+        attempts: (previous?.attempts ?? 0) + 1,
+        clock: previous?.clock ? resumeClock(previous.clock, Date.now()) : startClock(task as unknown as Task, roleId, Date.now()),
+      };
+      delete work.waiting;
+      task.hunt!.work = { ...task.hunt!.work, [key]: work };
+      const active = [task.agent, ...(task.helpers ?? [])].find((agent) => agent?.reviewKey === key);
+      if (active) active.profileId = profile.id;
+      this.k.showReviewWork(task);
+      this.k.commitNow();
       const since = Date.now();
       try {
-        return await this.attemptTogether(task, role, profile, copy, given, schema, signal, { ...options, refresh, plannedId, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at) } } : {}) });
+        return await this.attemptTogether(task, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at) } } : {}) });
       } catch (error) {
         if (!(error instanceof UsageLimited) || signal.aborted) throw error;
         refresh = true;
+        // This member has stopped, even while its peers keep working. A stand-in resumes its clock.
+        work.clock = pauseClock(work.clock, Date.now());
         this.keepWords(task, roleId, profile.id, error);
         this.k.recordLimit(task, roleId, profile.id, error);
         stopped = { profileId: profile.id, error, at: since };
@@ -490,7 +532,7 @@ export class Turns {
   }
 
   /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
-  private async attemptTogether<T>(task: MTask, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; member: string; plannedId: Id; took?: { from: string; words: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
+  private async attemptTogether<T>(task: MTask, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { key: string; check?: Check<T>; member: string; plannedId: Id; took?: { from: string; words: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
     const roleId = role.id;
     const product = this.k.repositoryOf(task);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
@@ -533,19 +575,27 @@ export class Turns {
         callbacks: {
           onActivity: (line) => {
             const current = this.k.task(taskId);
-            if (!current) return;
+            const work = current?.hunt?.work?.[options.key];
+            if (!current || !work || signal.aborted || (current.state !== "running" && current.state !== "needs-you")) return;
+            work.activity = line;
+            this.k.showReviewWork(current);
             this.k.say(current, "activity", line, roleId, profileId);
             this.k.commit();
           },
           onPlanStep: (line) => {
             const current = this.k.task(taskId);
-            if (current && !current.timeline.slice(-5).some((entry) => entry.text === line && entry.profileId === profileId)) this.k.log(current, "status", line, roleId, profileId);
-            this.k.commit();
+            const work = current?.hunt?.work?.[options.key];
+            const text = plainTodo(line);
+            if (!current || !work || !text || signal.aborted || work.todo === text || (current.state !== "running" && current.state !== "needs-you")) return;
+            work.todo = text;
+            this.k.showReviewWork(current);
+            this.k.log(current, "status", text, roleId, profileId);
+            this.k.noteTodo();
           },
-          onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits),
+          onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits, options.key),
           onLog: (text) => void this.k.agentLog(taskId, text),
-          onUsage: (info) => this.k.recordUsage(info),
           onCleanupIncomplete: () => { const current = this.k.task(taskId); if (current) this.k.log(current, "warn", CLEANUP_INCOMPLETE); },
+          onUsage: (info) => this.k.recordUsage(info),
         },
       }),
     ).catch(async (error: unknown) => {
@@ -570,6 +620,7 @@ export class Turns {
       return await this.converse(task, run, agent, opening, "first", role, profileId, schema, signal, {
         ...options,
         main: false,
+        reviewKey: options.key,
         askScreen: (reason) => {
           // Each member keeps its own request. Only the first can be represented by task.screen;
           // the rest follow after it, without overwriting its conversation or permission.
@@ -615,7 +666,7 @@ export class Turns {
    * coordinator, and an unusable result back to it twice at most. Only the step's main agent hears the
    * coordinator's messages as they come. An open question is kept for the conversation that asked it.
    */
-  private async converse<T>(task: MTask, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean }): Promise<T> {
+  private async converse<T>(task: MTask, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string }): Promise<T> {
     const by = { roleId: role.id, profileId };
     // Every message to the agent and the reply it waits for is one entry in the work log.
     const send = (text: string, why: TurnReason) => this.k.tracking.turn(this.k.task(task.id) ?? task, agent, run, text, why, signal);
@@ -636,6 +687,10 @@ export class Turns {
           repairs += 1;
           if (repairs > 2) throw new Error(`${role.name} kept asking for the screen it already has`);
         } else if (!(options.askScreen ? options.askScreen(screenReason(parsed.reason)) : this.k.askScreen(current, role.id, profileId, screenReason(parsed.reason)))) {
+          if (options.main) this.k.pauseStep(current);
+          const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
+          if (work?.clock) work.clock = pauseClock(work.clock, Date.now());
+          this.k.commitNow();
           throw new ScreenWait();
         }
         // Given at once, in this conversation: the agent keeps its slot.
@@ -677,7 +732,7 @@ export class Turns {
       if (parsed.ok === "input") {
         this.k.say(current, "agent", parsed.question, role.id, profileId);
         this.k.log(current, "warn", `Asked you: ${parsed.question}`, role.id, profileId);
-        const answer = await this.wait(current, "question", parsed.question, true, { options: parsed.options }, signal, "Waiting for your answer", by, options.main);
+        const answer = await this.wait(current, "question", parsed.question, true, { options: parsed.options }, signal, "Waiting for your answer", by, options.main, options.reviewKey);
         // Heard from here on: a restart does not hand the answer over again.
         const note = current.conversation;
         if (note && (options.main || (note.roleId === role.id && note.profileId === profileId))) delete note.asked;
@@ -686,7 +741,13 @@ export class Turns {
         continue;
       }
       const error = parsed.ok === true ? await options.check?.(parsed.value) : parsed.ok === "screen" ? NO_SCREEN_HERE : parsed.error;
-      if (parsed.ok === true && !error) return parsed.value;
+      if (parsed.ok === true && !error) {
+        // The result ends the agent's work. Repository cleanup and saving the result are Petrina's time.
+        if (options.main) this.k.pauseStep(current);
+        const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
+        if (work?.clock) work.clock = pauseClock(work.clock, Date.now());
+        return parsed.value;
+      }
       repairs += 1;
       if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${error}`);
       this.k.tracking.redo(current, role.id, agent.profile);
@@ -748,24 +809,24 @@ export class Turns {
   }
 
   /** The tool's own safety check flagged something: the coordinator decides. Petrina adds no rules of its own. */
-  private async permission(taskId: Id, info: PermissionInfo, signal: AbortSignal, by: { roleId: Id; profileId: Id }, waits: WaitClock): Promise<"allow" | "deny"> {
+  private async permission(taskId: Id, info: PermissionInfo, signal: AbortSignal, by: { roleId: Id; profileId: Id }, waits: WaitClock, reviewKey?: string): Promise<"allow" | "deny"> {
     const task = this.k.task(taskId);
     if (!task) return "deny";
     const tool = ADAPTERS[this.k.profile(by.profileId)?.toolId ?? ""]?.name ?? "The agent's tool";
     const detail = info.command ?? info.paths.join("\n");
-    const main = task.agent?.profileId === by.profileId && task.agent.roleId === by.roleId;
+    const main = !reviewKey && task.agent?.profileId === by.profileId && task.agent.roleId === by.roleId;
     // Waiting for the coordinator is not agent work: the wait is left out of the turn's working time.
     waits.start(taskId);
     try {
-      const answer = await this.wait(task, "permission", info.title, true, { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) }, signal, "Waiting for your permission", by, main);
+      const answer = await this.wait(task, "permission", info.title, true, { body: `${tool}'s own safety check wants your OK before this.`, ...(detail ? { detail } : {}) }, signal, "Waiting for your permission", by, main, reviewKey);
       return answer === "allow" ? "allow" : "deny";
     } finally {
       waits.stop(taskId);
     }
   }
 
-  private wait(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string }, signal: AbortSignal, status: string, by: { roleId: Id; profileId: Id }, main: boolean): Promise<string> {
-    const id = this.k.raise(task, kind, title, blocking, extra, by);
+  private async wait(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string }, signal: AbortSignal, status: string, by: { roleId: Id; profileId: Id }, main: boolean, reviewKey?: string): Promise<string> {
+    const id = this.k.raise(task, kind, title, blocking, { ...extra, ...(reviewKey ? { reviewKey } : {}) }, by);
     // It hangs under the step that asked, a reviewer's or a voter's among others included.
     if (kind === "question" || kind === "permission") addAsk(task, { id, kind, title, at: Date.now() });
     task.statusLine = status;
@@ -775,14 +836,34 @@ export class Turns {
     const owns = !!note && note.roleId === by.roleId && note.profileId === by.profileId;
     if (kind === "question" && note && (main || owns)) {
       note.asked = { itemId: id, question: title };
-      this.k.commitNow();
-    } else {
-      this.k.commit();
     }
-    return new Promise<string>((resolve, reject) => {
-      this.k.waiting.set(id, { resolve, reject });
-      signal.addEventListener("abort", () => reject(new Aborted()), { once: true });
-    });
+    // Time spent waiting for the coordinator is not the agent's working time.
+    if (main) this.k.pauseStep(task);
+    const work = reviewKey ? task.hunt?.work?.[reviewKey] : undefined;
+    if (work) {
+      if (work.clock) work.clock = pauseClock(work.clock, Date.now());
+      work.waiting = status;
+      this.k.showReviewWork(task);
+    }
+    if (kind === "question" && note && (main || owns)) this.k.commitNow();
+    else this.k.commit();
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        this.k.waiting.set(id, { resolve, reject });
+        signal.addEventListener("abort", () => reject(new Aborted()), { once: true });
+      });
+    } finally {
+      if (work && !signal.aborted) {
+        const pending = this.k.s.inbox.find((item) => item.taskId === task.id && item.blocking && item.reviewKey === reviewKey);
+        if (pending) work.waiting = pending.kind === "permission" ? "Waiting for your permission" : "Waiting for your answer";
+        else {
+          delete work.waiting;
+          if (work.clock) work.clock = resumeClock(work.clock, Date.now());
+        }
+        this.k.showReviewWork(task);
+        this.k.commitNow();
+      }
+    }
   }
 
   /** The step in the coordinator's words, for an agent coming back to it. */

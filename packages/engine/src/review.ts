@@ -116,7 +116,8 @@ export class Reviews {
     const reviewers = this.pendingReviewers(task, stage);
     if (reviewers.length) {
       await this.hunt(task, stage, reviewers, signal);
-      this.k.finishStep(task);
+      if (stage.profileIds.length === 1) this.k.finishStep(task);
+      else this.k.clearStep(task);
       // Changes made by hand: the round's box ends, and the review starts again from the first reviewer.
       if (task.rereview) endAgentStep(task, { outcome: this.raised(task), reason: W.reviewAgain }, Date.now());
       this.k.rerun(task);
@@ -189,6 +190,7 @@ export class Reviews {
       task,
       reviewers.map(({ key, profileId }) => ({
         key: `review-${key}`,
+        reviewKey: `reviewer:${key}`,
         roleId: reviewerAt(stage, Number(key)),
         profileId,
         reviewerKey: key,
@@ -198,9 +200,10 @@ export class Reviews {
           const used = (id: Id) => { by = id; onUsed(id); };
           const given = () => this.context.sectionsFor(task, roleId);
           const result = continuing
-            ? await this.turns.turn(task, roleId, profileId, given, ReviewResult, signal, { copy, member: `review-${key}`, used, room, reviewerKey: key })
+            ? await this.turns.turn(task, roleId, profileId, given, ReviewResult, signal, { copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key })
             : await this.turns.parallel(task, roleId, profileId, copy, given, ReviewResult, signal, { key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, reviewerKey: key, agent, refresh: false });
           await this.applyReview(task, stage, result, by, roleId);
+          this.k.finishReviewWork(task, `reviewer:${key}`);
           reported(key);
         },
       })),
@@ -303,12 +306,17 @@ export class Reviews {
    */
   private async vote(task: MTask, findings: Task["findings"], voters: readonly Id[], signal: AbortSignal): Promise<void> {
     const ids = new Set(findings.map((finding) => finding.id));
-    // Keep the starting role under the stage's voter profile through model fallbacks and restarts.
+    // Keep each review position stable through model fallbacks and restarts.
     const planned = this.voters(task.plan!.stages[task.stageIndex]!);
     await this.together(
       task,
-      voters.map((profileId) => ({
-        key: `vote-${profileId}`,
+      voters.map((profileId) => {
+        const plannedId = planned.find((id) => this.k.profile(id)?.toolId === this.k.profile(profileId)?.toolId) ?? profileId;
+        const key = `vote-${profileId}`;
+        const reviewKey = `verifier:${plannedId}`;
+        return {
+        key,
+        reviewKey,
         roleId: "verifier",
         profileId,
         work: async (copy, room, seat, used, agent, continuing, signal) => {
@@ -323,7 +331,7 @@ export class Reviews {
               const previous = finding.votes?.findLast((vote) => vote.toolId === toolId);
               if (previous?.by === by && previous.verdict === verdict.verdict && previous.reason === verdict.reason) continue;
               // A repair can revise an earlier verdict. Keep both reasons; the latest one counts for this tool.
-              finding.votes = [...(finding.votes ?? []), { by, toolId, verdict: verdict.verdict, reason: verdict.reason }];
+              finding.votes = [...(finding.votes ?? []), { by, toolId, plannedProfileId: plannedId, verdict: verdict.verdict, reason: verdict.reason }];
             }
             // A partial report is finished work too. Keep its reasons before asking for the rest,
             // so a limit or restart only redoes the missing verdicts on this tool.
@@ -332,21 +340,23 @@ export class Reviews {
             return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left)}` : undefined;
           };
           const heard = (id: Id) => { by = id; used(id); };
-          if (continuing) await this.turns.turn(task, "verifier", profileId, given, VerifyResult, signal, { copy, member: `vote-${profileId}`, check, used: heard, room });
+          if (continuing) await this.turns.turn(task, "verifier", profileId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room });
           else await this.turns.parallel(task, "verifier", profileId, copy, given, VerifyResult, signal, {
-            key: `verifier:${planned.find((id) => this.k.profile(id)?.toolId === this.k.profile(profileId)?.toolId) ?? profileId}`,
+            key: reviewKey,
             room,
             seat,
             used: heard,
-            member: `vote-${profileId}`,
+            member: key,
             check,
             agent,
             refresh: false,
           });
           task.hunt = { ...task.hunt!, voted: { ...task.hunt?.voted, [by]: true } };
+          this.k.finishReviewWork(task, reviewKey);
           this.k.commit();
         },
-      })),
+      };
+      }),
       signal,
       (running, waiting) => `${running} fresh agent${running === 1 ? "" : "s"} voting on ${findings.length} important finding${findings.length === 1 ? "" : "s"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
       () => finishedVoters(findings).size > 0,
@@ -384,7 +394,7 @@ export class Reviews {
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
-  private async together(task: MTask, members: readonly { key: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
+  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
     const stop = new AbortController();
     const signal = AbortSignal.any([parentSignal, stop.signal]);
     const root = this.k.repositoryOf(task)!.path!;
@@ -416,7 +426,8 @@ export class Reviews {
       if (agents.length > 1) task.helpers = agents.slice(1);
       else delete task.helpers;
       task.state = this.k.s.inbox.some((item) => item.taskId === task.id && item.blocking) ? "needs-you" : task.screen && !task.screen.granted ? "waiting" : "running";
-      task.statusLine = status(running.size, pending.length);
+      if (task.state === "running") task.statusLine = status(running.size, pending.length);
+      this.k.showReviewWork(task);
       this.k.syncScreen();
     };
     // A handoff replaces this member's seat; its working peers still count against every cap.
@@ -431,7 +442,7 @@ export class Reviews {
       return pickStarts({ candidates: [{ taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
     };
     const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id) => boolean, seat: Id, continuing: boolean) => {
-      const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0 };
+      const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0, reviewKey: member.reviewKey };
       let completed = false;
       if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, seat);
       const used = (profileId: Id) => {

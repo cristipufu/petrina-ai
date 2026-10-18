@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { draftOf, journeyProblems, type Task } from "@petrina/core";
+import { draftOf, journeyProblems, JOURNEY_WORDS as W, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
@@ -157,13 +157,13 @@ describe("the tester tries the change once, and the final code once more", () =>
     }
   });
 
-  it("skips the tester in fix rounds, tries the final code before the delivery check, and sends a failure there back to the builder", async () => {
+  for (const handoff of [false, true]) it(`skips the tester in fix rounds, tries the final code before the delivery check, and sends a failure there back to the builder${handoff ? ", crediting the stand-in" : ""}`, async () => {
     const root = tempDir("petrina-tester-");
     roots.push(root);
     const fakes = new Fakes(join(root, "fake"));
     // Build, try it, two reviewers; the first review raises an Important finding; the fix changes the code; the
     // tester's pass on the final code fails once.
-    fakes.scenario({ planner: "tester-first", reviewer: "important", fixes: "change", tester: "fail-once" });
+    fakes.scenario({ planner: "tester-first", reviewer: handoff ? "important-twice" : "important", fixes: "change", tester: "fail-once", ...(handoff ? { learnings: "tester", limited: [{ model: "opus", role: "tester" }] } : {}) });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
     try {
       const productId = await engine.addProduct(makeProduct(root));
@@ -191,14 +191,27 @@ describe("the tester tries the change once, and the final code once more", () =>
       const acceptance = task.findings.filter((finding) => finding.text.startsWith("Failed acceptance check"));
       expect(acceptance).toHaveLength(1);
       expect(acceptance[0]!.status).toBe("fixed");
+      if (handoff) {
+        const actual = acceptance[0]!.raisedBy;
+        expect(engine.profile(actual)!.toolId).toBe("codex");
+        expect(task.timeline.find((entry) => entry.text === "1 acceptance check failed")!.profileId).toBe(actual);
+        expect(task.timeline.filter((entry) => entry.text === "Tried it: it works.").every((entry) => entry.profileId === actual)).toBe(true);
+        expect(engine.getState().inbox.find((entry) => entry.taskId === taskId && entry.kind === "learnings")!.profileId).toBe(actual);
+      }
       expect(task.testedPatch).toBeDefined();
       expect(task.retest).toBeUndefined();
-      // Every real tester pass stays on the journey, including the final-code failure and its retry.
-      const testers = task.journey!.filter((step) => step.roleId === "tester");
+      // Every pass stays on the journey; a handoff keeps the interrupted tool's box too.
+      const attempts = task.journey!.filter((step) => step.roleId === "tester");
+      expect(attempts).toHaveLength(handoff ? 4 : 3);
+      if (handoff) {
+        expect(attempts[0]).toEqual(expect.objectContaining({ reason: W.agentChanged, outcome: W.handedOn }));
+        expect(engine.profile(attempts[0]!.profileId!)!.toolId).toBe("claude-code");
+      }
+      const testers = attempts.filter((step) => step.reason !== W.agentChanged);
       expect(testers).toHaveLength(3);
       expect(new Set(testers.map((step) => step.id)).size).toBe(3);
       expect(testers.map((step) => step.reason)).toEqual(["checks passed", "1 check failed", "checks passed"]);
-      expect(task.timeline.filter((entry) => entry.text === "Tester started").map((entry) => entry.step)).toEqual(testers.map((step) => step.id));
+      expect(task.timeline.filter((entry) => entry.text === "Tester started").map((entry) => entry.step)).toEqual([attempts[0]!.id, ...testers.slice(1).map((step) => step.id)]);
       expect(journeyProblems(task)).toEqual([]);
     } finally {
       engine.shutdown();

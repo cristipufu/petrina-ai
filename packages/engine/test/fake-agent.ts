@@ -24,10 +24,10 @@ export interface Scenario {
   silent?: boolean;
   /** "short": build and one reviewer. "parallel": two reviewers at once. "pair": build, then two reviewers at once, one on each tool. "tester-after": build, one reviewer, then a tester. */
   worksOn?: WorkChoice[];
-  /** An added Security specialist passes instead of blocking once. The roles scenario still blocks. */
+  /** An added Security specialist passes instead of blocking once. */
   addedReviewer?: "pass";
   /** Retain scenarios used by source-start and screen coverage. */
-  planner?: "short" | "parallel" | "tester-after" | "tester-first" | "tester-with-design" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
+  planner?: "short" | "parallel" | "tester-after" | "tester-first" | "tester-with-design" | "research-first" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
   notes?: "work";
   /** The architect leaves product changes for the engine to save, in rounds and after a call. */
   architect?: "writes";
@@ -37,8 +37,12 @@ export interface Scenario {
    * "restart": ask a question, then work until cancelled, then finish once the step restarts. "plain": no questions.
    * "work": draft a file and work (through interruptions) until the step restarts `restarts` times.
    * "fail-once": the first builder never hands back a result, so the task gets stuck; the next one finishes.
+   * "todo": keep a to-do list while acting under it, then work until the step restarts; after a restart, wait for
+   * go-todo before naming its own item and for go-finish before finishing. A second attempt finishes at once.
    */
-  builder?: "restart" | "plain" | "work" | "fail-once";
+  builder?: "restart" | "plain" | "work" | "fail-once" | "todo";
+  /** Native Grok ACP calls omit the top-level kind and locations, and supply tool metadata instead. */
+  activity?: "grok";
   /**
    * "commit": commit a stray file, read-only as it is, then work until the step restarts.
    * "work": the first reviewer to start works until the coordinator takes over and hands back; later ones pass.
@@ -47,13 +51,14 @@ export interface Scenario {
    * "important": in the first round the reviewer on Opus raises one Important finding, the others a nit.
    * "important-twice": every reviewer raises it, each in its own words. Later rounds pass.
    */
+  reviewTodo?: boolean;
   reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed" | "question";
   /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. "broken": it never hands back a usable result. */
   guide?: "change of mind" | "broken";
   /** How the planner rates the task's risk (unrated by default). */
   risk?: "low" | "high";
-  /** The verifier's verdict on every finding it is given (default "real"). */
-  verifier?: "real" | "not-a-bug";
+  /** The verifier's verdict (default "real"). "split": the first voter says real, later voters not-a-bug. "hold": wait until released. */
+  verifier?: "real" | "not-a-bug" | "hold" | "split";
   /** Voting regressions: independent tools can disagree, or stop after a partial report. */
   verifierByModel?: Record<string, "real" | "not-a-bug" | "nit" | "pre-existing">;
   partialVerification?: boolean;
@@ -96,7 +101,7 @@ export interface Scenario {
   /** The builder's commit title. */
   title?: string;
   /** The builder and the code reviewers pass on what they learned about the repository (one lesson twice). */
-  learnings?: boolean;
+  learnings?: boolean | "tester";
   /**
    * Agents on these models run out of usage: the first time one gets a turn it does some work, says so and fails
    * the turn, and every agent on that model fails the same way until `resetsInMs` (default an hour) later. A
@@ -123,6 +128,7 @@ interface Conversation {
   model?: string;
   /** "fail-once": this conversation never hands back a result. */
   failing?: boolean;
+  effort?: string;
   /** The session's settings as the tool keeps them. */
   options: ConfigOption[];
 }
@@ -449,13 +455,45 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   keep(sessionId);
   if (dir) appendFileSync(join(dir, "prompts.jsonl"), `${JSON.stringify({ role: session.role, session: sessionId, text })}\n`);
   const say = (line: string) => send(client, sessionId, { sessionUpdate: "plan", entries: [{ content: line, status: "in_progress", priority: "medium" }] });
-  const learned = scenario().learnings ? (session.role === "builder" ? ["Run the tests with bun test: they take a second.", "Greetings live at the repository root."] : session.role === "code reviewer" ? ["Greetings live at the repository root!"] : []) : [];
+  const learned = scenario().learnings === "tester"
+    ? (session.role === "tester" ? ["Check the welcome page from the guest view."] : [])
+    : scenario().learnings ? (session.role === "builder" ? ["Run the tests with bun test: they take a second.", "Greetings live at the repository root."] : session.role === "code reviewer" ? [scenario().reviewTodo ? "Check the greeting from the guest view." : "Greetings live at the repository root!"] : []) : [];
   const done = (value: unknown, prose?: string): Reply => ({ text: block(learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value, prose) });
   const plan = scenario();
   for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage));
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);
   if (limit && until && !limit.afterRelease) await runOut(limit, until, session, sessionId, client);
+  if (plan.reviewTodo && dir && ["code reviewer", "security reviewer", "verifier"].includes(session.role)) {
+    const tag = `${session.role.replaceAll(" ", "-")}-${session.model}-${session.effort}`;
+    const gate = async (name: string) => { while (!existsSync(join(dir, `${name}-${tag}`))) await Bun.sleep(20); };
+    if (session.turns === 1) {
+      const attemptFile = join(dir, `summary-attempt-${tag}`);
+      const attempt = existsSync(attemptFile) ? Number(readFileSync(attemptFile, "utf8")) + 1 : 1;
+      writeFileSync(attemptFile, String(attempt));
+      mark(`summary-ready-${tag}-${attempt}`);
+      await gate(`publish-${attempt}`);
+      await say(session.role === "verifier" ? "Checking the reported problem" : session.role === "security reviewer" ? "Checking access to the greeting" : "Checking the greeting");
+      await gate(`action-${attempt}`);
+      await send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: "summary-read", kind: "read", status: "completed", title: "Read" });
+      mark(`summary-action-${tag}-${attempt}`);
+      await gate(`result-${attempt}`);
+      if (existsSync(join(dir, `ask-question-${tag}`))) return done({ needsInput: { question: "Should I check the guest view?", options: ["Yes"] } });
+      if (existsSync(join(dir, `ask-permission-${tag}`))) {
+        const count = existsSync(join(dir, `ask-permission-twice-${tag}`)) ? 2 : 1;
+        await Promise.all(Array.from({ length: count }, (_, index) => client.request(acp.methods.client.session.requestPermission, {
+          sessionId,
+          toolCall: { toolCallId: `summary-permission-${index}`, title: index ? "Check the signed-in view" : "Check the guest view", kind: "execute", status: "pending" },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "reject", name: "Reject", kind: "reject_once" }],
+        })));
+      }
+    } else {
+      // The question's next turn still uses the original review instructions and finding ids.
+      const original = session.history.find((entry) => entry.sessionUpdate === "user_message_chunk" && entry.content.type === "text");
+      if (original?.sessionUpdate === "user_message_chunk" && original.content.type === "text") text = `${original.content.text}\n${text}`;
+    }
+    await gate("finish");
+  }
   if (plan.controlled && session.turns === 1 && dir) {
     await say(`${session.role} is working`);
     while (!existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
@@ -507,6 +545,14 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           _meta: { "_claude/model": "claude-opus-5-5", "_claude/rateLimit": { status: "allowed", rateLimitType: "five_hour", utilization: 0.81, resetsAt: Math.round(Date.now() / 1000) + 7200 } },
         } as acp.SessionNotification["update"]);
       }
+      if (plan.planner === "research-first") return done({
+        rationale: "Research it, build it, then review it.",
+        stages: [
+          { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] },
+          { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-high"] },
+          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 1 },
+        ],
+      });
       if (plan.planner === "tester-first")
         return done({
           rationale: "Build it, try it, then two reviewers.",
@@ -737,6 +783,52 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         if (text.includes("The coordinator answered")) return hang(sessionId, "builder-answered");
         return hang(sessionId, "builder-interrupted");
       }
+      if (plan.builder === "todo" && dir) {
+        const waitFor = async (name: string) => {
+          while (!existsSync(join(dir, name))) await Bun.sleep(20);
+        };
+        const tool = (id: string, update: Record<string, unknown>) => send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: `${id}-${session.turns}`, status: "completed", ...update } as acp.SessionNotification["update"]);
+        if (restarted) {
+          mark("builder-back");
+          await waitFor("go-todo");
+          await say("Finishing the greeting");
+          mark("builder-renamed");
+          await waitFor("go-finish");
+        } else if (!existsSync(join(dir, "builder-todo"))) {
+          // Formatting marks, two items in progress (the first one counts) and tool activity under it.
+          await send(client, sessionId, {
+            sessionUpdate: "plan",
+            entries: [
+              { content: "- **Drafting** the `greeting` file", status: "in_progress", priority: "high" },
+              { content: "Checking the greeting", status: "in_progress", priority: "medium" },
+              { content: "Writing it up", status: "pending", priority: "low" },
+            ],
+          });
+          if (plan.activity === "grok") {
+            const call = (name: string, kind: string, rawInput: unknown) => tool(name, { title: name, rawInput, _meta: { "x.ai/tool": { version: 1, name, kind, namespace: "grok_build" } } });
+            await call("grep", "search", { pattern: "greeting", glob: "*.txt" });
+            await call("read_file", "read", { target_file: join(session.cwd, "notes.txt") });
+            await call("run_terminal_command", "execute", { command: "bun test" });
+            await call("todo_write", "plan", { todos: [] });
+            await call("run_terminal_command", "execute", { command: "ls -la" });
+          } else {
+            await tool("edit", { title: "Edit notes.txt", kind: "edit", locations: [{ path: join(session.cwd, "notes.txt") }] });
+            await tool("read", { title: "ls", kind: "execute", rawInput: { command: "ls -la" } });
+          }
+          // Nothing in progress any more: the last item stays.
+          await send(client, sessionId, {
+            sessionUpdate: "plan",
+            entries: [
+              { content: "Drafting the greeting file", status: "completed", priority: "high" },
+              { content: "Checking the greeting", status: "completed", priority: "medium" },
+            ],
+          });
+          await Bun.sleep(50);
+          return hang(sessionId, "builder-todo");
+        }
+        writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
+        return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
+      }
       if (plan.builder === "work" && !earlierAttempt && session.restarts < (plan.restarts ?? 1)) {
         if (roleOf(text)) {
           writeFileSync(join(session.cwd, "notes.txt"), "A first draft\n");
@@ -860,8 +952,21 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           return { id, verdict, reason: `After checking every finding, this one ${verdict === "real" ? "is a real problem" : "is not a bug"}.` };
         }) });
       }
+      let notABug = plan.verifier === "not-a-bug";
+      if (plan.verifier === "split" && dir) {
+        // An atomic claim keeps the two replies different even when both run on the same model.
+        try { writeFileSync(join(dir, "first-vote"), sessionId, { flag: "wx" }); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          notABug = true;
+        }
+      }
+      if (plan.verifier === "hold" && dir) {
+        mark("verifier-voting");
+        while (!existsSync(join(dir, "release-vote"))) await Bun.sleep(20);
+      }
       const ids = findingIds(text, "Important findings to check (a verdict on every one, by id)");
-      const verdict = plan.verifierByModel?.[session.model ?? ""] ?? plan.verifier ?? "real";
+      const verdict = plan.verifierByModel?.[session.model ?? ""] ?? (plan.verifier === "split" ? (notABug ? "not-a-bug" : "real") : plan.verifier === "hold" ? "real" : plan.verifier) ?? "real";
       return done({
         verdicts: (plan.partialVerification ? ids.slice(0, 1) : ids).map((id) => ({
           id,
@@ -1021,6 +1126,7 @@ acp
   .onRequest("session/set_config_option", (ctx) => {
     const session = sessions.get(ctx.params.sessionId)!;
     if (ctx.params.configId === "model") session.model = String(ctx.params.value);
+    if (ctx.params.configId === "effort" || ctx.params.configId === "reasoning_effort") session.effort = String(ctx.params.value);
     if (dir) appendFileSync(join(dir, "config.jsonl"), `${JSON.stringify({ session: ctx.params.sessionId, configId: ctx.params.configId, value: ctx.params.value })}\n`);
     const option = session.options.find((entry) => entry.id === ctx.params.configId);
     const value = (ctx.params as { value?: unknown }).value;
