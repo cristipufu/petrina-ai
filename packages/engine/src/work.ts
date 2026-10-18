@@ -2,7 +2,7 @@
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import { endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, type Task } from "@petrina/core";
+import { endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, openStep, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, NotesResult, stepBack, TestResult, TEXT_LIMITS } from "./roles.js";
@@ -37,6 +37,8 @@ export class Work {
       // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
       const own = task.builderSession;
       const back = (task.fixing || updating) && own?.stageId === stage.id && own.profileId === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
+      const builderStep = openStep(task);
+      if (task.fixing && builderStep?.kind === "agent" && builderStep.roleId === roleId) builderStep.builderConversation = back ? "resumed" : "new";
       let used = profileId;
       const result = await this.turns.turn(task, roleId, profileId, sections, BuildResult, signal, {
         used: (profile) => { used = profile; },
@@ -105,6 +107,10 @@ export class Work {
           return missing?.length ? `Report pass, fail, or blocked for every acceptance item, using its exact text. For blocked checks, include a reason naming what prevented verification. These are missing:\n${missing.map((item) => `- ${item.text}`).join("\n")}` : undefined;
         },
       });
+      const testerStep = openStep(task);
+      if (testerStep?.kind === "agent" && testerStep.roleId === roleId) {
+        testerStep.acceptanceChecks = result.checks.map((check) => ({ text: check.text, result: check.result, ...("reason" in check && check.reason ? { reason: check.reason } : {}) }));
+      }
       await this.learnings.note(task, result.learnings, roleId, profileId);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => {
         const check = result.checks.find((entry) => entry.text === item.text);

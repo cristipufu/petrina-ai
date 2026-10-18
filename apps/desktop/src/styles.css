@@ -1915,6 +1915,12 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 .journey-waits { display: block; }
 .journey-asked h4, .journey-part h4 { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+.journey-context { display: grid; gap: 8px; }
+.journey-context h4 { margin-top: 4px; font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+.journey-context p { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.journey-check-list { list-style: none; display: grid; gap: 8px; padding: 0; margin: 0; }
+.journey-check-list li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }
+.journey-check-list li > span:not(.label) { color: var(--text-2); }
 .journey-asked { display: grid; gap: 8px; }
 .journey-asked ul { list-style: none; display: grid; gap: 8px; }
 .journey-asked li { display: grid; gap: 2px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }

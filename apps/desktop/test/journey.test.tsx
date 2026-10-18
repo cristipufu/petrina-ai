@@ -106,6 +106,38 @@ describe('the journey in the task sheet', () => {
     expect([...details.querySelectorAll('button')].some((button) => button.textContent?.includes('Read this step'))).toBe(false);
   });
 
+  it('explains a Builder fix assignment and shows the exact failed Tester check', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const builder = task.journey!.find((step) => step.roleId === 'builder')!;
+    builder.fixing = true;
+    builder.findingIds = ['finding-fix-1'];
+    builder.builderConversation = 'resumed';
+    task.findings = [...task.findings, { id: 'finding-fix-1', text: 'The checkout total drops the selected shipping fee.', severity: 'blocking', raisedBy: 'code-reviewer', confirmedBy: [], status: 'open', evidence: 'The displayed total excludes shipping after changing the delivery method.' }];
+    task.brief = { summary: 'Keep the checkout total accurate.', forUsers: [], areas: [], risks: [], acceptance: [
+      { text: 'The total includes the selected shipping fee.', verification: 'passed', met: true },
+      { text: 'Type checks and all tests pass.', verification: 'failed', met: false },
+    ] };
+    const tester = task.journey!.findLast((step) => step.work === 'checks' && step.endedAt !== undefined)!;
+    delete tester.acceptanceChecks;
+    await mount(state);
+    await openTask('pricing-refresh');
+    const builderItem = [...host.querySelectorAll<HTMLElement>('.journey-list li')].find((item) => item.textContent?.includes('Builder (fixes)'))!;
+    await act(async () => builderItem.click());
+    let details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Task request');
+    expect(details.textContent).toContain(task.description);
+    expect(details.textContent).toContain('The total includes the selected shipping fee.');
+    expect(details.textContent).toContain('resumed the builder’s saved conversation');
+    expect(details.textContent).toContain('The checkout total drops the selected shipping fee.');
+
+    const testerItem = [...host.querySelectorAll<HTMLElement>('.journey-list li')].find((item) => item.textContent?.includes('Automated checks (round 2)'))!;
+    await act(async () => testerItem.click());
+    details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Type checks and all tests pass.');
+    expect(details.textContent).toContain('Failed');
+  });
+
   it('stops following the live step while you read another one, until Back to now', async () => {
     await mount(createDemoState(NOW));
     await openTask('pricing-refresh');

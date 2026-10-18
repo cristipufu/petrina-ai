@@ -566,6 +566,53 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
 
       {node.legacy && <p className="note">This step ran before Petrina kept each task's journey, so its time and outcome were not recorded.</p>}
 
+      {node.kind === "agent" && node.roleId === "builder" && (
+        <div className="journey-context">
+          <h4>Task request</h4>
+          <p>{task.description}</p>
+          {task.brief?.summary && <><h4>What success requires</h4><p>{task.brief.summary}</p></>}
+          {task.brief?.acceptance.length ? (
+            <>
+              <h4>Acceptance requirements</h4>
+              <ul className="journey-check-list">
+                {task.brief.acceptance.map((check) => <li key={check.text}>{check.text}</li>)}
+              </ul>
+            </>
+          ) : null}
+          {node.fixing && (() => {
+            const ids = node.findingIds ?? (node.state === "now" && task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id) : []);
+            const findings = ids.map((id) => task.findings.find((finding) => finding.id === id)).filter((finding): finding is Task["findings"][number] => !!finding);
+            const journey = task.journey ?? [];
+            const stepIndex = journey.findIndex((step) => step.id === node.id);
+            const previous = stepIndex > 0 ? journey[stepIndex - 1] : undefined;
+            const sentBy = previous?.roleId ? find.role(previous.roleId)?.name : previous?.work === "checks" ? "Automated checks" : previous?.kind === "petrina" ? "Petrina" : "The previous step";
+            return <>
+              <h4>Why this fix started</h4>
+              <p>{previous?.reason ? `${sentBy} sent the work back: ${previous.reason}.` : "The previous review or check sent the work back for fixes."}</p>
+              <h4>Builder conversation</h4>
+              <p>{node.builderConversation === "resumed" ? "Petrina resumed the builder’s saved conversation for this fix round." : node.builderConversation === "new" ? "Petrina started a new builder conversation for this fix round." : "The conversation used for this fix round was not recorded."}</p>
+              <h4>Findings assigned to this fix</h4>
+              {findings.length ? <ul className="journey-check-list">{findings.map((finding) => (
+                <li key={finding.id}><strong>{finding.text}</strong>{finding.answer ? <span>Builder’s last answer: {finding.answer.text}</span> : null}</li>
+              ))}</ul> : <p className="note">This fix round’s assigned findings were not recorded.</p>}
+            </>;
+          })()}
+        </div>
+      )}
+
+      {node.acceptanceChecks?.length ? (
+        <div className="journey-context">
+          <h4>Acceptance checks</h4>
+          <ul className="journey-check-list">
+            {node.acceptanceChecks.map((check) => <li key={check.text}>
+              <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" ? "bad" : "needs-you"}`}>{check.result === "pass" ? "Passed" : check.result === "fail" ? "Failed" : "Could not verify"}</span>
+              <strong>{check.text}</strong>
+              {check.reason ? <span>{check.reason}</span> : null}
+            </li>)}
+          </ul>
+        </div>
+      ) : null}
+
       {node.asks.length > 0 && (
         <div className="journey-asked">
           <h4>What it asked you</h4>

@@ -4,7 +4,7 @@
 // The screen only draws what they recorded, and what the plan says comes next.
 
 import { callOn, followingCall } from "./call.js";
-import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, Role, Stage, Task } from "./model.js";
+import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, Role, Stage, Task } from "./model.js";
 import { queueOf } from "./scheduler.js";
 import { reviewerAt } from "./roles.js";
 
@@ -145,7 +145,7 @@ export const PETRINA_STEP_NAMES: Readonly<Record<JourneyWork, string>> = {
 // ── Recording: the engine and the simulator call these as the task moves ───────────────────
 
 /** What the recording helpers read and write: the engine's and the simulator's working copies of a task. */
-export type JourneyTask = Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "updating" | "portReview"> & { journey?: JourneyStep[] };
+export type JourneyTask = Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "updating" | "portReview"> & Partial<Pick<Task, "findings">> & { journey?: JourneyStep[] };
 
 /** How a step ended, in a few words, and why the work moved on. */
 export interface StepEnd {
@@ -250,7 +250,10 @@ export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at:
     return open;
   }
   if (open) close(open, at);
-  return push(task, { kind: "agent", ...key, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
+  const fixingFindings = task.fixing && roleId === "builder"
+    ? { findingIds: (task.findings ?? []).filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id) }
+    : {};
+  return push(task, { kind: "agent", ...key, ...fixingFindings, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
 }
 
 /** Petrina starts on work of its own, with no agent: running the product's checks, or publishing the delivery. */
@@ -458,6 +461,9 @@ export interface JourneyNode {
   profileId?: Id;
   /** Every agent on the step when several worked at once, `profileId` first. */
   team?: readonly Id[];
+  fixing?: boolean;
+  findingIds?: readonly Id[];
+  builderConversation?: JourneyStep["builderConversation"];
   /** `petrina`: what Petrina did. */
   work?: JourneyWork;
   stageId?: Id;
@@ -466,6 +472,7 @@ export interface JourneyNode {
   startedAt?: number;
   endedAt?: number;
   outcome?: string;
+  acceptanceChecks?: readonly JourneyAcceptanceCheck[];
   /** Why the work moved on: the words on the arrow out. */
   reason?: string;
   tone: JourneyTone;
@@ -610,6 +617,7 @@ function endOf(task: Task): JourneyView["end"] {
 export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
   const recorded: readonly JourneyStep[] = task.journey ?? legacyJourney(task, ctx.inbox);
   const open = openStep({ journey: recorded });
+  const latestCompletedTester = recorded.reduce((latest, step, index) => ((step.kind === "agent" && step.roleId === "tester") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
   const finished = FINISHED.includes(task.state);
   const run: JourneyNode["run"] = task.state === "running" ? "working" : task.state === "paused" ? "paused" : "waiting";
 
@@ -629,12 +637,18 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...(step.roleId ? { roleId: step.roleId } : {}),
       ...(step.profileId ? { profileId: step.profileId } : {}),
       ...(step.team ? { team: step.team } : {}),
+      ...(step.fixing ? { fixing: true } : {}),
+      ...(step.findingIds ? { findingIds: step.findingIds } : {}),
+      ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}),
       ...(step.work ? { work: step.work } : {}),
       ...(step.stageId ? { stageId: step.stageId } : {}),
       ...(step.waitsFor ? { waitsFor: step.waitsFor } : {}),
       ...(step.waitsOn ? { waitsOn: step.waitsOn } : {}),
       ...(step.legacy ? { legacy: true } : { startedAt: step.startedAt, ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}) }),
       ...(step.outcome ? { outcome: step.outcome } : {}),
+      ...(step.acceptanceChecks ? { acceptanceChecks: step.acceptanceChecks } : index === latestCompletedTester && !step.acceptanceChecks && task.brief?.acceptance.some((check) => check.verification)
+        ? { acceptanceChecks: task.brief.acceptance.filter((check) => check.verification).map((check) => ({ text: check.text, result: check.verification === "passed" ? "pass" as const : check.verification === "failed" ? "fail" as const : "blocked" as const, ...(check.reason ? { reason: check.reason } : {}) })) }
+        : {}),
       ...(step.reason ? { reason: step.reason } : {}),
       tone: step.tone ?? "on",
       asks: step.asks ?? [],

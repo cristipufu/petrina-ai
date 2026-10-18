@@ -61,6 +61,20 @@ function runUntil(sim: Simulator, done: () => boolean, respond: (kind: string, i
 }
 
 describe("a task's journey", () => {
+  it("records exactly which open findings were assigned to a Builder fix round", () => {
+    const task: JourneyTask = {
+      plan: { stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["codex"] }], rationale: "", plannerProfileId: "planner" },
+      stageIndex: 0, rounds: {}, sub: 0, fixing: true, journey: [],
+      findings: [
+        { id: "open", text: "Fix this", severity: "blocking", raisedBy: "reviewer", confirmedBy: [], status: "open" },
+        { id: "fixed", text: "Already fixed", severity: "blocking", raisedBy: "reviewer", confirmedBy: [], status: "fixed" },
+        { id: "old", text: "Pre-existing", severity: "pre-existing", raisedBy: "reviewer", confirmedBy: [], status: "open" },
+      ],
+    };
+    const step = beginAgentStep(task, "builder", "codex", 10);
+    expect(step.findingIds).toEqual(["open"]);
+  });
+
   it("keeps the view key stable for conversation updates and unrelated task activity", () => {
     const sim = new Simulator(emptyState());
     const id = sim.addTask({ productId: "p", title: "Greeting", kind: "feature" });

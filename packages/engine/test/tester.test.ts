@@ -98,6 +98,9 @@ describe("the tester tries the change once, and the final code once more", () =>
       const findings = task.findings.filter((finding) => finding.text.startsWith("Failed acceptance check"));
       expect(findings).toHaveLength(1);
       expect(findings[0]!.status).toBe("open");
+      const testerSteps = task.journey!.filter((step) => step.roleId === "tester");
+      expect(testerSteps).toHaveLength(4);
+      expect(testerSteps.every((step) => step.acceptanceChecks?.some((check) => check.result === "fail" && check.text === task.brief!.acceptance[0]!.text))).toBe(true);
       expect(journeyProblems(task)).toEqual([]);
       engine.setPoolPaused(true);
       await engine.shutdown();

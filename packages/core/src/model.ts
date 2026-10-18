@@ -225,6 +225,10 @@ export interface JourneyStep {
   sub: number;
   /** The builder fixing review findings or changes asked for at the delivery check. */
   fixing?: boolean;
+  /** Findings assigned to this builder fix round. */
+  findingIds?: readonly Id[];
+  /** Whether the builder continued its saved conversation or began a fresh one for this step. */
+  builderConversation?: "resumed" | "new";
   /** The builder bringing the work up to date with main. */
   update?: boolean;
   /** A review round that looks only at the builder's port of an already reviewed change onto a main that moved. */
@@ -248,12 +252,20 @@ export interface JourneyStep {
   end?: "done" | "failed" | "cancelled";
   /** What happened, in a few words: "Wrote the brief", "3 objections, 2 blocking", "Approved". */
   outcome?: string;
+  /** Acceptance criteria and their result from this Tester run. */
+  acceptanceChecks?: readonly JourneyAcceptanceCheck[];
   /** Why the work moved on from here: the words on the arrow out. */
   reason?: string;
   tone?: JourneyTone;
   asks?: readonly JourneyAsk[];
   /** Made up from the plan for a task that ran before journeys were recorded: no times or rounds. */
   legacy?: boolean;
+}
+
+export interface JourneyAcceptanceCheck {
+  text: string;
+  result: "pass" | "fail" | "blocked";
+  reason?: string;
 }
 
 export interface QueuedMessage {
