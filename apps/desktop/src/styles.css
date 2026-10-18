@@ -264,6 +264,11 @@ ol, ul { padding: 0; }
 }
 .topbar > * { -webkit-app-region: no-drag; flex: none; }
 .topbar .spacer { flex: 1; min-width: 8px; -webkit-app-region: drag; align-self: stretch; }
+/* Let controls take another row when the window or enlarged text leaves too little room. */
+@media (max-width: 30rem) {
+  .topbar { flex-wrap: wrap; }
+  .topbar .switcher { width: 100%; }
+}
 
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--fs-reading); line-height: var(--lh-reading); letter-spacing: -0.01em; margin-right: 8px; }
 .brand svg { width: 24px; height: 24px; }
@@ -1398,6 +1403,7 @@ kbd {
   animation: pop 0.18s ease both;
 }
 .dialog-scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 40; animation: fade 0.18s ease both; }
+.dialog > select.select { max-width: 100%; min-width: 0; }
 :is(.dialog, .first-run) .title-input { width: 100%; border: 0; outline: 0; font-size: var(--fs-panel); line-height: var(--lh-panel); font-weight: 600; background: transparent; color: var(--text); padding: 8px 0; letter-spacing: -0.01em; }
 /* The browser's own placeholder grey is too faint on dark surfaces. */
 :is(.dialog, .first-run) .title-input::placeholder { color: var(--text-3); opacity: 1; }
