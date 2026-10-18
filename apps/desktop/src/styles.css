@@ -1132,7 +1132,8 @@ kbd {
 .stage .head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-weight: 600; padding-top: 4px; }
 .stage .kind { color: var(--text-3); font-weight: 400; font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .stage .who { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
-.stage .who.converge-people { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.stage .who.stage-people { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.stage-people > .btn { justify-self: start; }
 .stage-person { display: grid; gap: 6px; min-width: 0; }
 .stage-role { display: flex; align-items: center; gap: 8px; }
 .stage-person .select { width: 100%; min-width: 0; box-sizing: border-box; }

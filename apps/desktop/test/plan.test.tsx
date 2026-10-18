@@ -29,7 +29,7 @@ describe('the Plan tab', () => {
 
     const review = [...host.querySelectorAll('.stage')].find((stage) => stage.textContent?.includes('At the same time'))!;
     const stage = task.plan!.stages.find((stage) => stage.kind === 'review-chain')!;
-    const rows = [...review.querySelectorAll('.who > .row')];
+    const rows = [...review.querySelectorAll('.who > .stage-person')];
     expect(rows).toHaveLength(stage.profileIds.length);
     expect(review.querySelectorAll('.avatar')).toHaveLength(stage.profileIds.length);
     for (const [index, row] of rows.entries()) {
@@ -55,7 +55,7 @@ describe('the Plan tab', () => {
       await act(async () => root.render(<PlanView task={task} state={state} find={lookup(state)} />));
 
       const review = host.querySelector('.stage')!;
-      const rows = [...review.querySelectorAll('.who > .row')];
+      const rows = [...review.querySelectorAll('.who > .stage-person')];
       expect(rows).toHaveLength(2);
       expect(review.querySelectorAll('.avatar')).toHaveLength(2);
       expect(review.textContent?.split('Code reviewer')).toHaveLength(3);

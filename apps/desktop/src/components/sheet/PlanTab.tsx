@@ -83,7 +83,7 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
                     {now && <span className="label running">Now</span>}
                     {past && <span className="sr-only">Done</span>}
                   </div>
-                  <div className={`who${stage.kind === "converge" ? " converge-people" : ""}`}>
+                  <div className={`who${stage.kind === "converge" || stage.kind === "review-chain" ? " stage-people" : ""}`}>
                     {stage.kind === "gate" ? (
                       <>
                         <ShieldCheck size={16} aria-hidden="true" />
@@ -111,9 +111,8 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
                         {stage.profileIds.map((profileId, at) => {
                           const reviewer = stage.kind === "review-chain" ? find.role(reviewerAt(stage, at)) : undefined;
                           return (
-                            <span key={`${profileId}-${at}`} className="row" style={{ gap: 8 }}>
-                              {at > 0 && <span aria-label="and">·</span>}
-                              {stage.kind === "review-chain" && <><RoleAvatar role={reviewer} size={20} />{reviewer?.name}</>}
+                            <span key={`${profileId}-${at}`} className={stage.kind === "review-chain" ? "stage-person" : "row"}>
+                              {stage.kind === "review-chain" && <span className="stage-role"><RoleAvatar role={reviewer} size={20} />{reviewer?.name}</span>}
                               {select(stage, "profileIds", at, profileId, editable)}
                             </span>
                           );
