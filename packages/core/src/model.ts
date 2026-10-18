@@ -624,6 +624,8 @@ export interface Cleanup {
   pullRequest?: "unconfirmed" | "none";
   /** When the folder and the repository's record of it were both gone. */
   removedAt?: number;
+  /** Parallel reviewers' folders and Git records were checked too, including crash leftovers. */
+  reviewCopiesRemovedAt?: number;
   /** Why the last try failed, in plain words. Petrina tries again. */
   error?: string;
 }

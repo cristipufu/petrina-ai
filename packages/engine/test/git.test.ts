@@ -2,9 +2,9 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
-import { removeDir, testGitEnv } from "./support.js";
+import { dirname, join, sep } from "node:path";
+import { addCopy, commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
+import { firstLine, removeDir, testGitEnv } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();
@@ -14,6 +14,61 @@ const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g,
 
 describe("Petrina's own git steps", () => {
   afterAll(() => removeDir(temp));
+
+  it("unlinks a replaced reviewer folder without following it into an unfinished task", async () => {
+    const repo = join(temp, "peer-link-repo");
+    mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "kept\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "init");
+    const activeFolder = join(temp, "active.copies");
+    const active = join(activeFolder, "review-0");
+    const oldFolder = join(temp, "finished.copies");
+    const old = join(oldFolder, "review-0");
+    const sha = git(repo, "rev-parse", "HEAD");
+    await addCopy(repo, active, sha);
+    await addCopy(repo, old, sha);
+    git(repo, "worktree", "lock", old);
+    writeFileSync(join(active, "unsaved.txt"), "Keep my work");
+    rmSync(oldFolder, { recursive: true, force: true });
+    symlinkSync(activeFolder, oldFolder, process.platform === "win32" ? "junction" : "dir");
+    expect(await removeFinishedCopies(repo, oldFolder)).toBe(true);
+    expect(existsSync(oldFolder)).toBe(false);
+    expect(readFileSync(join(active, "unsaved.txt"), "utf8")).toBe("Keep my work");
+    const registered = git(repo, "worktree", "list", "--porcelain", "-z");
+    expect(registered).toContain(realpathSync.native(active));
+    expect(registered).not.toContain(old);
+  });
+
+  for (const ownHome of [false, true]) it(`removes its private Git helpers on exit${ownHome ? " inside the engine home" : " in the system temp folder"}`, async () => {
+    const parent = join(temp, ownHome ? "helper-home" : "helper-temp");
+    const release = join(temp, ownHome ? "release-home" : "release-temp");
+    mkdirSync(parent);
+    const env: NodeJS.ProcessEnv = { ...testGitEnv(), TMPDIR: parent, TMP: parent, TEMP: parent };
+    delete env.PETRINA_HOME;
+    if (ownHome) env.PETRINA_HOME = parent;
+    const script = `import { existsSync } from "node:fs";
+import { run } from ${JSON.stringify(join(import.meta.dir, "../src/git.ts"))};
+const result = await run(["git", "config", "--get", "core.hooksPath"], ${JSON.stringify(temp)});
+if (result.code) throw new Error(result.stderr);
+console.log(result.stdout.trim());
+while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
+    const child = Bun.spawn([process.execPath, "-e", script], { cwd: temp, env, stdout: "pipe", stderr: "pipe" });
+    try {
+      const helper = dirname(await firstLine(child.stdout));
+      expect(helper.startsWith(parent + sep)).toBe(true);
+      expect(existsSync(join(helper, "hooks"))).toBe(true);
+      writeFileSync(release, "go");
+      expect(await child.exited).toBe(0);
+      expect(existsSync(helper)).toBe(false);
+    } finally {
+      child.kill();
+      await child.exited;
+    }
+  });
 
   it("unlinks a finished copy's replacement link without deleting another copy, its unsaved files, or the main clone", async () => {
     const repo = join(temp, "link-repo");

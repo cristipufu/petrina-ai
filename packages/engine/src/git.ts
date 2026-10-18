@@ -55,7 +55,17 @@ export const isSha = (value: string): boolean => FULL_SHA.test(value);
 let empty: string | undefined;
 /** Empty folders for "no hooks" and "no gh login", made once per engine. */
 function emptyDir(name: "hooks" | "gh"): string {
-  empty ??= mkdtempSync(join(tmpdir(), "petrina-none-"));
+  if (!empty) {
+    // Test engines already have their own disposable home. Keep their helpers there too, so
+    // the parent fixture removes them after a forced stop instead of filling the shared temp folder.
+    const parent = process.env.PETRINA_HOME ? join(process.env.PETRINA_HOME, "runtime-tmp") : tmpdir();
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
+    const owned = mkdtempSync(join(parent, "petrina-none-"));
+    empty = owned;
+    process.once("exit", () => {
+      try { rmSync(owned, { recursive: true, force: true }); } catch { /* The system can reclaim an inaccessible empty folder. */ }
+    });
+  }
   const dir = join(empty, name);
   if (!existsSync(dir)) mkdirSync(dir, { mode: 0o700 });
   return dir;
@@ -847,6 +857,22 @@ export async function removeWorktree(root: string, path: string): Promise<boolea
 export async function addCopy(root: string, path: string, sha: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await oneAtATime(root, () => must(["git", "worktree", "add", "--detach", "--quiet", path, sha], root));
+}
+
+/** A finished task has no reviewer left to resume. Recover both folders and records left by a crash. */
+export async function removeFinishedCopies(root: string, folder: string): Promise<boolean> {
+  const entry = await lstat(folder).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  // Unlink a replacement before inspecting children; never follow it into somebody else's copy.
+  if (entry && !entry.isDirectory()) await rm(folder, { force: true });
+  const names = entry?.isDirectory() ? await readdir(folder) : [];
+  const location = worktreeLocation(folder);
+  const recorded = (await linkedWorktrees(root)).filter((copy) => worktreeLocation(dirname(copy)) === location);
+  for (const copy of new Set([...names.map((name) => join(folder, name)), ...recorded])) await removeWorktree(root, copy);
+  await rm(folder, { recursive: true, force: true });
+  return entry !== undefined || recorded.length > 0;
 }
 
 /** Remove copies and git's records, keeping only conversations that are waiting for the screen. */

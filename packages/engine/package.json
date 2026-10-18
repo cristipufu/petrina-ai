@@ -13,7 +13,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test --parallel",
+    "test": "bun test/run.ts",
     "serve": "bun run src/cli.ts serve"
   },
   "dependencies": {

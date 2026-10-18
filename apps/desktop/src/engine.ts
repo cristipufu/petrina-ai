@@ -144,7 +144,7 @@ export function newClientId(): string {
 }
 
 /** The connection to the real engine, and the outbox for what the coordinator says until the engine saves it. */
-class EngineClient {
+export class EngineClient {
   private state: State = EMPTY;
   private status: EngineStatus;
   private outbox: readonly Unsent[] = NOTHING_UNSENT;
@@ -163,6 +163,11 @@ class EngineClient {
   private connecting = false;
   private next = 0;
   private readonly calls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private disposed = false;
+  private readonly clock: ReturnType<typeof setInterval>;
+  private readonly onVisibility = () => {
+    if (document.visibilityState === "visible" && this.status.link !== "live" && this.status.link !== "failed" && !this.status.restarted && !this.socket) void this.attempt(this.failures > 0);
+  };
 
   constructor(private readonly source: { desktop: true } | { desktop: false; address: Address }) {
     this.status = { link: "starting", desktop: source.desktop, synced: false };
@@ -171,18 +176,39 @@ class EngineClient {
     this.restoreUnsent();
     void this.attempt(false);
     // Hidden windows get slow timers: the moment the window shows again, retry instead of waiting.
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && this.status.link !== "live" && this.status.link !== "failed" && !this.status.restarted && !this.socket) void this.attempt(this.failures > 0);
-    });
+    document.addEventListener("visibilitychange", this.onVisibility);
     // The engine only sends state when something changes; keep "3m ago" honest in between.
-    setInterval(() => {
+    this.clock = setInterval(() => {
       this.state = { ...this.state, now: Date.now() };
       this.emit();
     }, 15_000);
   }
 
+  /** A refreshed module gives its connection to the next one; the old copy must release every handle. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    clearInterval(this.clock);
+    clearTimeout(this.hintTimer);
+    clearTimeout(this.retryTimer);
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    const socket = this.socket;
+    this.socket = undefined;
+    if (socket) {
+      socket.onopen = socket.onmessage = socket.onclose = null;
+      socket.close();
+    }
+    for (const call of this.calls.values()) call.reject(new Lost("Petrina's connection was refreshed"));
+    this.calls.clear();
+    this.listeners.clear();
+    this.state = EMPTY;
+    this.outbox = NOTHING_UNSENT;
+    this.sends.clear();
+  }
+
   /** Get the engine's address (from the shell, in the desktop app) and connect. */
   private async attempt(restart: boolean): Promise<void> {
+    if (this.disposed) return;
     clearTimeout(this.retryTimer);
     if (this.connecting) return;
     this.connecting = true;
@@ -197,6 +223,7 @@ class EngineClient {
     if (this.source.desktop) {
       try {
         const hello = JSON.parse(await invoke<string>("engine_details", { restart })) as { type?: string; owned?: unknown; message?: unknown };
+        if (this.disposed) return;
         if (hello.type === "error") return this.failed(typeof hello.message === "string" ? hello.message : "Petrina's engine could not start.");
         this.address = validAddress(hello);
         this.owned = hello.owned === true;
@@ -209,10 +236,12 @@ class EngineClient {
   }
 
   private open(address: Address): void {
+    if (this.disposed) return;
     const socket = new WebSocket(address.url, ["petrina.v1", `petrina.token.${address.token}`]);
     this.socket = socket;
     let opened = false;
     socket.onopen = () => {
+      if (this.disposed || this.socket !== socket) return;
       clearTimeout(this.hintTimer);
       this.disconnectedAt = undefined;
       opened = true;
@@ -222,6 +251,7 @@ class EngineClient {
       for (const entry of this.outbox) if (!entry.refused) this.deliver(entry);
     };
     socket.onmessage = (event) => {
+      if (this.disposed || this.socket !== socket) return;
       const message = JSON.parse(String(event.data)) as { type: string; state?: State; id?: number; ok?: boolean; result?: unknown; error?: string };
       if (message.type === "state" && message.state) {
         this.state = message.state;
@@ -252,6 +282,7 @@ class EngineClient {
   }
 
   private failed(problem: string): void {
+    if (this.disposed) return;
     // A refused saved key never starts working. Another try would keep this tab on "Starting Petrina…".
     if (!this.source.desktop && this.status.restarted) return;
     this.failures += 1;
@@ -280,7 +311,7 @@ class EngineClient {
 
   private async checkBrowserEngine(): Promise<void> {
     const address = this.address;
-    if (!address || this.source.desktop) return;
+    if (this.disposed || !address || this.source.desktop) return;
     const disconnectedAt = this.disconnectedAt;
     let restarted = false;
     try {
@@ -292,7 +323,7 @@ class EngineClient {
     } catch {
       // Nothing answers, or the window cannot tell: the general hint covers both.
     }
-    if (this.status.link === "live" || this.disconnectedAt !== disconnectedAt) return;
+    if (this.disposed || this.status.link === "live" || this.disconnectedAt !== disconnectedAt) return;
     if (restarted || this.status.restarted) {
       clearTimeout(this.retryTimer);
       // Starting the engine cannot fix this tab's old key. Stop trying, and say how to open a fresh window.
@@ -334,6 +365,7 @@ class EngineClient {
   }
 
   private setStatus(status: EngineStatus): void {
+    if (this.disposed) return;
     this.status = status;
     this.emit();
   }
@@ -562,6 +594,9 @@ function demo() {
 export const desktop = isTauri();
 const wantsDemo = new URLSearchParams(window.location.search).has("demo");
 const address = desktop || wantsDemo ? undefined : browserAddress();
+// Vite may refresh a parent component without calling a dependency's disposal hook. Its next
+// instance still shares this data, so release the previous connection before creating another.
+import.meta.hot?.data?.release?.();
 const client = wantsDemo ? undefined : desktop ? new EngineClient({ desktop: true }) : address ? new EngineClient({ desktop: false, address }) : undefined;
 export const mode: Mode = client ? "engine" : "demo";
 let simulator: Simulator | undefined;
@@ -574,6 +609,18 @@ if (!client) {
 export const sim: Store = client ? engineStore(client) : demoStore(simulator!);
 
 let timer: ReturnType<typeof setInterval> | undefined;
+
+function release(): void {
+  client?.keepUnsent();
+  client?.dispose();
+  if (timer) clearInterval(timer);
+  timer = undefined;
+}
+
+if (import.meta.hot?.data) {
+  import.meta.hot.data.release = release;
+  import.meta.hot.dispose(release);
+}
 
 export function startClock(): () => void {
   if (simulator && !timer) timer = setInterval(() => simulator!.tick(Date.now()), TICK_MS);

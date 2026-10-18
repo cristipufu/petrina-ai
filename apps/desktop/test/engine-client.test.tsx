@@ -13,7 +13,7 @@ class Socket {
   onclose?: () => void;
   onmessage?: (event: { data: string }) => void;
   constructor(readonly url: string, readonly protocols: string[]) { Socket.instances.push(this); }
-  send() {}
+  send(_message: string) {}
   close() { this.readyState = 3; this.onclose?.(); }
   connect() { this.readyState = Socket.OPEN; this.onopen?.(); }
 }
@@ -66,6 +66,58 @@ async function advance(ms: number) { await act(async () => { await vi.advanceTim
 const current = () => Socket.instances.at(-1)!;
 
 describe('the real browser connection', () => {
+  it('releases a refreshed client, rejects pending calls and never reconnects or emits again', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }));
+    await mount();
+    const { EngineClient } = await import('../src/engine');
+    const timers = vi.getTimerCount();
+    const client = new EngineClient({ desktop: false, address });
+    const socket = current();
+    const heard = vi.fn();
+    client.subscribe(heard);
+    socket.connect();
+    socket.onmessage?.({ data: JSON.stringify({ type: 'state', state: createDemoState(1000) }) });
+    const pending = client.send('setPoolPaused', [true]);
+    expect(client.getState().tasks.length).toBeGreaterThan(0);
+    client.dispose();
+    await expect(pending).rejects.toThrow('connection was refreshed');
+    expect(socket.readyState).toBe(3);
+    expect(client.getState().tasks).toEqual([]);
+    expect(vi.getTimerCount()).toBe(timers);
+    heard.mockClear();
+    const sockets = Socket.instances.length;
+    await advance(60_000);
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    expect(Socket.instances).toHaveLength(sockets);
+    expect(heard).not.toHaveBeenCalled();
+    client.dispose();
+  });
+
+  it('hands unconfirmed messages to the replacement client with their original retry identity', async () => {
+    await mount();
+    const { EngineClient } = await import('../src/engine');
+    const client = new EngineClient({ desktop: false, address });
+    const first = current();
+    first.connect();
+    const sent = vi.spyOn(first, 'send');
+    client.sendMessage('task-1', 'Check the guest view');
+    const instruction = JSON.parse(sent.mock.calls[0]![0] as string);
+    const clientId = client.unsent()[0]!.clientId;
+    client.keepUnsent();
+    client.dispose();
+    const replacement = new EngineClient({ desktop: false, address });
+    const second = current();
+    const resent = vi.spyOn(second, 'send');
+    expect(replacement.unsent()[0]!.clientId).toBe(clientId);
+    second.connect();
+    const retry = JSON.parse(resent.mock.calls[0]![0] as string);
+    expect(retry.action).toEqual(instruction.action);
+    second.onmessage?.({ data: JSON.stringify({ type: 'result', id: retry.id, ok: true }) });
+    await Promise.resolve();
+    expect(replacement.unsent()).toEqual([]);
+    replacement.dispose();
+  });
+
   it('recognises a refused saved key, gives the fresh-window fix, and stops retries even on returning to the tab', async () => {
     const health = vi.fn().mockResolvedValue({ status: 401 });
     vi.stubGlobal('fetch', health);

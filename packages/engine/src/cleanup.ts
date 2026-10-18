@@ -38,7 +38,8 @@ export class Cleanup {
     const path = task && this.copyOf(task);
     if (!task || !path || !this.finishedWith(task) || this.removing.has(taskId) || this.k.stopped) return;
     const again = task.cleanup?.removedAt !== undefined;
-    if (again && !existsSync(path)) return;
+    const copies = join(this.k.dataDir, "worktrees", task.productId, `${task.id}.copies`);
+    if (again && task.cleanup?.reviewCopiesRemovedAt !== undefined && !existsSync(path) && !existsSync(copies)) return;
     this.removing.add(taskId);
     let outcome: { removed: boolean } | { error: string };
     try {
@@ -50,7 +51,8 @@ export class Cleanup {
       }
       const root = this.k.productOf(task)?.path ?? (await git.mainClone(path));
       if (!root) throw new Error("the product's repository could not be found");
-      outcome = { removed: await git.removeWorktree(root, path) };
+      const peersRemoved = await git.removeFinishedCopies(root, copies);
+      outcome = { removed: await git.removeWorktree(root, path) || peersRemoved };
     } catch (error) {
       outcome = { error: error instanceof Error ? error.message : String(error) };
     } finally {
@@ -63,10 +65,11 @@ export class Cleanup {
       if (current.cleanup?.error === undefined) this.k.log(current, "warn", CLEANUP_WORDS.failed(outcome.error));
       current.cleanup = { ...current.cleanup, error: outcome.error };
       delete current.cleanup.removedAt;
+      delete current.cleanup.reviewCopiesRemovedAt;
     } else {
       // Quiet when there was nothing (new) to remove, unless an earlier try said it failed.
       if ((outcome.removed && !again) || current.cleanup?.error !== undefined) this.k.log(current, "done", CLEANUP_WORDS.removed);
-      current.cleanup = { ...current.cleanup, removedAt: Date.now() };
+      current.cleanup = { ...current.cleanup, removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
       delete current.cleanup.error;
     }
     this.k.commit();

@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, w
 import { basename, dirname, join } from "node:path";
 import { CLEANUP_WORDS, type Task } from "@petrina/core";
 import type { Engine } from "../src/engine.js";
-import { branchName, ensureWorktree, removeWorktree } from "../src/git.js";
+import { addCopy, branchName, ensureWorktree, removeWorktree } from "../src/git.js";
 import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, waitFor, waitForFile, type World } from "./support.js";
 
 const worlds: World[] = [];
@@ -26,7 +26,11 @@ const cleaned = async (engine: Engine, id: string) => taskOf(await until(engine,
 const listed = (w: World, path: string) => {
   // Git lists native names; the fixture may use a Windows short name or another parent alias.
   // The copy itself may already be gone, so resolve the parent without following a replacement link.
-  const location = (path: string) => join(realpathSync.native(dirname(path)), basename(path));
+  const nativeParent = (path: string): string => {
+    try { return realpathSync.native(path); }
+    catch { return join(nativeParent(dirname(path)), basename(path)); }
+  };
+  const location = (path: string) => join(nativeParent(dirname(path)), basename(path));
   return git(w.clone, "worktree", "list", "--porcelain", "-z").split("\0").filter((field) => field.startsWith("worktree ")).some((field) => location(field.slice("worktree ".length)) === location(path));
 };
 function gone(w: World, task: Task): void {
@@ -37,6 +41,41 @@ function gone(w: World, task: Task): void {
 }
 
 describe.concurrent("Finished tasks free their working copies", () => {
+  it("recovers orphaned reviewer copies after the main copy was already removed, leaving unfinished tasks alone", async () => {
+    const w = world("reviewer-crash");
+    let engine = w.start();
+    try {
+      const productId = await engine.addProduct(w.clone);
+      const id = engine.addTask({ productId, title: "Finished before cleanup", description: "[quick]", delivery: "local", approveDelivery: false });
+      await finish(engine, id);
+      const task = structuredClone(await cleaned(engine, id));
+      await engine.shutdown();
+      const folder = join(w.data, "worktrees", productId, `${id}.copies`);
+      const copy = join(folder, "review-0");
+      const missing = join(folder, "review-1");
+      await addCopy(w.clone, copy, git(w.clone, "rev-parse", task.branch!));
+      await addCopy(w.clone, missing, git(w.clone, "rev-parse", task.branch!));
+      git(w.clone, "worktree", "lock", copy);
+      git(w.clone, "worktree", "lock", missing);
+      rmSync(missing, { recursive: true, force: true });
+      const active = join(w.data, "worktrees", productId, "unfinished.copies", "review-0");
+      await addCopy(w.clone, active, git(w.clone, "rev-parse", task.branch!));
+      writeFileSync(join(active, "unsaved.txt"), "Keep this unfinished review");
+      w.editSaved((state) => {
+        const tasks = state.tasks as unknown as Task[];
+        tasks.push({ ...task, id: "unfinished", state: "paused", worktree: join(w.data, "worktrees", productId, "unfinished"), cleanup: undefined });
+        const previous = state.tasks.find((entry) => entry.id === id)!;
+        delete (previous.cleanup as { reviewCopiesRemovedAt?: number }).reviewCopiesRemovedAt;
+      });
+      engine = w.start({ checkEveryMs: 100 });
+      await waitFor(() => !existsSync(folder) && !listed(w, copy) && !listed(w, missing), "orphaned reviewer folders and locked Git records to be removed", 5_000);
+      gone(w, taskOf(engine.getState(), id));
+      expect(existsSync(active)).toBe(true);
+      expect(listed(w, active)).toBe(true);
+      expect(readFileSync(join(active, "unsaved.txt"), "utf8")).toBe("Keep this unfinished review");
+    } finally { await engine.shutdown(); }
+  });
+
   for (const slots of [1, 2]) it(`does not allocate any of ${slots} free slots to a resumed task still stopping`, async () => {
     const w = world(`stopping-slots-${slots}`);
     const engine = w.start();
