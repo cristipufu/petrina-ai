@@ -2,9 +2,9 @@
 // checkpoints, and putting interrupted work back in line after a restart.
 
 import { join } from "node:path";
-import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, slotWait, slotUses, syncWait, withdrawAsks, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
+import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
-import { Kernel, Aborted, type MTask, PLANNER_PROFILE } from "./kernel.js";
+import { Kernel, Aborted, type MTask, PLANNER_PROFILE, ScreenWait } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Sources } from "./sources.js";
 import type { Planning } from "./planning.js";
@@ -41,6 +41,7 @@ export class Driver {
     if (this.k.stopped || this.k.draining) return;
     // Limits that ended no longer hold anyone back.
     this.k.expireLimits();
+    this.k.syncScreen();
     const now = Date.now();
     const continuing: Candidate[] = [];
     // A task waiting for others to land stays out of the running and says what it waits for.
@@ -52,10 +53,23 @@ export class Driver {
       if (task.statusLine !== line) task.statusLine = line;
       return true;
     };
-    for (const task of this.k.s.tasks.filter((entry) => entry.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
-      if (this.k.drivers.has(task.id) || this.k.settling.has(task.id)) continue;
+    // A granted screen member who is not in the group right now still needs a seat, even while a peer
+    // works (the task stays "running") or a peer's question is open (the task stays "needs-you").
+    const grantedResume = (entry: MTask): boolean => {
+      const member = entry.screen?.granted ? entry.screen.member : undefined;
+      if (!member) return false;
+      const group = this.k.screenGroups.get(entry.id);
+      return !!group && !group.running(member);
+    };
+    for (const task of this.k.s.tasks.filter((entry) => entry.state === "waiting" || (entry.state === "needs-you" && entry.screen && !entry.screen.granted) || grantedResume(entry)).sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
+      // `settling` holds the driver's promise for the whole run, not only its cleanup. A live screen
+      // group is that same driver: skipping it leaves an allowed reviewer beside a peer forever.
+      const liveScreen = !!(task.screen?.member && this.k.screenGroups.has(task.id));
+      if ((this.k.settling.has(task.id) || this.k.drivers.has(task.id)) && !liveScreen) continue;
       if (blocked(task)) continue;
-      if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) task.statusLine = "Waiting for a free slot";
+      // A screen request also has to be allowed and first in line.
+      if (!screenReady(task as Task, this.k.getState(), now)) continue;
+      if (!grantedResume(task) && (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT))) task.statusLine = "Waiting for a free slot";
       const seat = this.seatFor(task);
       // Everyone who could work this step is out of usage: it waits for a limit to end, and takes no slot.
       if (seat.waiting) {
@@ -68,7 +82,8 @@ export class Driver {
         continue;
       }
       const candidate = { taskId: task.id, toolId: seat.toolId };
-      task.statusLine = slotWait(this.k.getState(), candidate) ?? "Waiting for a free slot";
+      // A peer's question, or the reviewer already on the screen, keeps the line the group set.
+      if (!grantedResume(task)) task.statusLine = slotWait(this.k.getState(), candidate) ?? "Waiting for a free slot";
       continuing.push(candidate);
     }
     // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
@@ -90,13 +105,26 @@ export class Driver {
 
     for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.getState()), pool: this.k.s.pool, now })) {
       const task = this.k.task(taskId);
-      if (!task || this.k.drivers.has(taskId) || this.k.settling.has(taskId)) continue;
+      const group = task?.screen?.member ? this.k.screenGroups.get(taskId) : undefined;
+      // Same as above: the live group is the driver that is still settling, and it has to resume.
+      if (!task || ((this.k.settling.has(taskId) || this.k.drivers.has(taskId)) && !group)) continue;
       if (task.state === "queued") {
         task.startedAt = Date.now();
         task.stageIndex = -1;
         this.k.log(task, "milestone", "Started from the queue");
       }
-      if (this.reserveAgent(task)) this.startDriver(taskId);
+      // The group already has its peer's seat. Resuming the granted member must not take the task's
+      // card off a question or off the reviewer who is still working.
+      if (group && task.screen?.granted) {
+        group.continue();
+        continue;
+      }
+      if (this.reserveAgent(task)) {
+        // The screen is this agent's from now until its step ends.
+        if (task.screen && !task.screen.granted) task.screen.granted = true;
+        if (group) group.continue();
+        else this.startDriver(taskId);
+      }
     }
     this.k.armLimitTimer();
     this.k.commit();
@@ -132,6 +160,10 @@ export class Driver {
       task.statusLine = waiting;
       return false;
     }
+    if (task.screen && next && task.screen.profileId !== next.profileId) {
+      task.screen.profileId = next.profileId;
+      task.screen.heard = false;
+    }
     task.state = "running";
     task.holdsSlot = !!next;
     if (next) task.agent = { ...next, since: Date.now(), step: 0 };
@@ -142,6 +174,10 @@ export class Driver {
   }
 
   private nextAgent(task: MTask): { roleId: Id; profileId: Id; reviewerKey?: string } | undefined {
+    if (task.screen) {
+      const reviewerKey = task.screen.member?.startsWith("review-") ? task.screen.member.slice(7) : task.plan?.stages[task.stageIndex]?.profileIds.length === 1 ? "0" : undefined;
+      return { roleId: task.screen.roleId, profileId: task.screen.profileId, reviewerKey };
+    }
     if (task.stageIndex < 0) return { roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) };
     const stage = task.plan?.stages[task.stageIndex];
     if (!stage) return undefined;
@@ -350,7 +386,7 @@ export class Driver {
         if (next === "stop") return;
       }
     } catch (error) {
-      if (signal.aborted || error instanceof Aborted) return;
+      if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) return;
       // The task already says it waits for usage and has let go of its slot.
       if (error instanceof WaitingForUsage) return;
       this.k.fail(taskId, error);
@@ -380,6 +416,8 @@ export class Driver {
   }
 
   private async prepare(task: MTask, signal: AbortSignal): Promise<void> {
+    await this.k.copyCleanups.get(task.id);
+    if (signal.aborted) throw new Aborted();
     const product = this.k.repositoryOf(task);
     if (!product?.path) throw new Error(`${product?.name ?? "This product"} has no local copy`);
     const branch = task.branch ?? git.branchName(task.title, task.id);

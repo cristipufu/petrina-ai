@@ -1,6 +1,23 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS } from "@petrina/core";
-import { BACKGROUND, buildPrompt, formatFindings, LOGINS } from "../src/prompts.js";
+import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, formatFindings, LOGINS, mayAskScreen, parseResult, screenRules } from "../src/prompts.js";
+import { NotesResult } from "../src/roles.js";
+
+const task = createDemoState(1_000_000_000).tasks[0]!;
+const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => ({
+  task,
+  product: DEMO_PRODUCTS[0]!,
+  role,
+  roles: BUILT_IN_ROLES,
+  profiles: DEFAULT_PROFILES,
+  worktree: "/tmp/worktree",
+  branch: "petrina/task",
+  base: "main",
+  defaultBranch: "main",
+  sections: [],
+  ...(screen ? { screen } : {}),
+});
+const promptFor = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => buildPrompt(context(role, screen));
 
 describe("prompts", () => {
   it("hands a reviewer's reproduction to builders and voters, while keeping settled history concise", () => {
@@ -10,20 +27,8 @@ describe("prompts", () => {
     expect(formatFindings([{ ...finding, evidence: "x".repeat(10_000) }]).length).toBeLessThan(1600);
   });
   it("tells every role to put its recommended answer first when it asks the coordinator", () => {
-    const task = createDemoState(1_000_000_000).tasks[0]!;
     for (const role of BUILT_IN_ROLES) {
-      const prompt = buildPrompt({
-        task,
-        product: DEMO_PRODUCTS[0]!,
-        role,
-        roles: BUILT_IN_ROLES,
-        profiles: DEFAULT_PROFILES,
-        worktree: "/tmp/worktree",
-        branch: "petrina/task",
-        base: "main",
-        defaultBranch: "main",
-        sections: [],
-      });
+      const prompt = promptFor(role);
       expect(prompt).toContain("put the answer you recommend first");
       expect(prompt).toContain('"options": ["The answer you recommend", "Another option"]');
       // Every agent reads with the coordinator's logins and publishes nothing, in the background.
@@ -32,13 +37,43 @@ describe("prompts", () => {
     }
   });
   it("keeps code review bounded for open-ended behavior without weakening regression checks", () => {
-    const task = createDemoState(1_000_000_000).tasks[0]!;
     const role = BUILT_IN_ROLES.find((entry) => entry.id === "code-reviewer")!;
-    const prompt = buildPrompt({ task, product: DEMO_PRODUCTS[0]!, role, roles: BUILT_IN_ROLES, profiles: DEFAULT_PROFILES, worktree: "/tmp/worktree", branch: "petrina/task", base: "main", defaultBranch: "main", sections: [] });
+    const prompt = promptFor(role);
     expect(prompt).toContain("one finding per root cause");
     expect(prompt).toContain("do not enumerate paraphrases, synonyms, or permutations");
     expect(prompt).toContain("representative syntax classes");
     expect(prompt).toContain("look for bugs, missing tests, weakened tests");
+  });
+
+  it("tells every role except the Release Manager how to ask, without granting the screen", () => {
+    for (const role of BUILT_IN_ROLES) {
+      expect(mayAskScreen(role)).toBe(role.id !== "release-manager");
+      const prompt = promptFor(role);
+      expect(prompt).toContain(BACKGROUND);
+      if (role.id === "release-manager") {
+        expect(prompt).toContain("list it in your result as a check that needs the screen");
+        expect(prompt).not.toContain("needsScreen");
+      } else {
+        expect(prompt).toContain(ASK_FOR_SCREEN);
+        expect(prompt).toContain('{"needsScreen": {"reason": "What you need to check on screen, in plain language"}}');
+        expect(prompt).not.toContain("You may now use the screen");
+        expect(promptFor(role, { reason: "Check the menu bar" })).toContain(screenRules("Check the menu bar"));
+      }
+    }
+  });
+
+  it("tells an agent back in its own conversation that it does not have the screen now", () => {
+    const builder = BUILT_IN_ROLES.find((role) => role.id === "builder")!;
+    const back = continuePrompt(context(builder, "ask"));
+    expect(back).toContain("You do not have the screen now, even if you had it earlier in this conversation.");
+    expect(back).toContain('{"needsScreen"');
+    expect(back).not.toContain("You may now use the screen");
+    expect(continuePrompt(context(builder))).toContain("You do not have the screen now");
+  });
+
+  it("reads a screen request as its own kind of result, with the reason", () => {
+    expect(parseResult('Done in the background.\n\n```petrina\n{"needsScreen": {"reason": "Click through the menu bar"}}\n```', NotesResult)).toEqual({ ok: "screen", reason: "Click through the menu bar" });
+    expect(parseResult('```petrina\n{"needsScreen": {"reason": ""}}\n```', NotesResult).ok).toBe(false);
   });
 });
 
@@ -50,9 +85,9 @@ import before from "./today-prompts.json";
 
 describe("saved role wording", () => {
   const contexts = promptContexts();
-  it("keeps main's default instructions, except for the planner's confirmed-source workflow, and the Release Manager exactly as they were", () => {
+  it("keeps main's default instructions apart from confirmed-source planning and screen instructions, and the Release Manager unchanged", () => {
     for (const [name, context] of Object.entries(contexts)) {
-      const now = buildPrompt(context).replace(roleCard(context), "");
+      const now = buildPrompt(context).replace(roleCard(context), "").replace(ASK_FOR_SCREEN, "If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.");
       const was = (before as Record<string, string>)[name]!;
       if (context.role.id === "planner") {
         const job = (text: string) => text.slice(text.indexOf("# Your job"), text.indexOf("## Design brief") > 0 ? text.indexOf("## Design brief") : text.length);

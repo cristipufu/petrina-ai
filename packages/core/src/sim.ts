@@ -40,6 +40,7 @@ import type {
   Product,
   Role,
   RoleChanges,
+  ScreenMode,
   Stage,
   State,
   Task,
@@ -51,6 +52,7 @@ import { findingCount } from "./findings.js";
 import type { NewTaskInput } from "./commands.js";
 import * as library from "./roles.js";
 import type { RoleDraft } from "./roles.js";
+import { onScreen, SCREEN_HOUR_MS, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenReady, screenReason, screenWait } from "./screen.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js";
 import { askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type TurnReport, type WorkMoment, type WorkStageKind } from "./worklog.js";
@@ -59,9 +61,9 @@ import { SETUP_STEPS, type SetupStep } from "./setup.js";
 type Draft = DeepMutable<State>;
 type DraftTask = DeepMutable<Task>;
 
-/** A scripted moment where an agent stops and asks the coordinator something. */
+/** A scripted moment where an agent stops and asks the coordinator something. `screen`: it needs the screen, for `title`. */
 export interface Trigger {
-  kind: "question" | "permission";
+  kind: "question" | "permission" | "screen";
   title: string;
   body?: string;
   options?: readonly string[];
@@ -677,6 +679,12 @@ export class Simulator {
           this.log(d, task, "you", `You added ${lessons.length === 1 ? "a lesson" : `${lessons.length} lessons`} to LEARNINGS.md`);
           break;
         }
+        case "screen":
+          if (task.screen && !task.screen.granted) {
+            task.screen.allowed = true;
+            this.log(d, task, "you", SCREEN_WORDS.allowedNow);
+          }
+          break;
         default:
           break;
       }
@@ -821,6 +829,35 @@ export class Simulator {
     });
   }
 
+  /** "Agents may use the screen". Off never stops the agent on the screen; nobody new gets it. */
+  setScreenUse(mode: ScreenMode): void {
+    this.update((d) => {
+      d.pool.screen = mode === "hour" ? { mode, until: d.now + SCREEN_HOUR_MS } : { mode };
+      this.schedule(d);
+    });
+  }
+
+  /** Allow now: this request may use the screen, one agent at a time. */
+  allowScreen(taskId: Id): void {
+    this.updateTask(taskId, (d, task) => {
+      if (!task.screen || task.screen.granted || task.screen.allowed) return;
+      task.screen.allowed = true;
+      this.log(d, task, "you", SCREEN_WORDS.allowedNow);
+      this.schedule(d);
+    });
+  }
+
+  /** "Allow the screen for this task", even while the switch is off. */
+  setTaskScreen(taskId: Id, allowed: boolean): void {
+    this.updateTask(taskId, (d, task) => {
+      if (task.state === "done" || task.state === "cancelled" || (task.screenAllowed === true) === allowed) return;
+      if (allowed) task.screenAllowed = true;
+      else delete task.screenAllowed;
+      this.log(d, task, "you", allowed ? SCREEN_WORDS.taskOn : SCREEN_WORDS.taskOff);
+      this.schedule(d);
+    });
+  }
+
   /** Put a queued task at `index` in the queue (0 is the top). */
   moveInQueue(taskId: Id, index: number): void {
     this.update((d) => {
@@ -899,6 +936,7 @@ export class Simulator {
       task.holdsSlot = false;
       task.statusLine = "Paused by you";
       withdrawAsks(task, d.inbox.filter((item) => item.taskId === taskId && item.blocking).map((item) => item.id), d.now);
+      this.releaseScreen(d, task);
       d.inbox = d.inbox.filter((item) => item.taskId !== taskId || !item.blocking);
       this.log(d, task, "you", "You paused it");
       this.schedule(d);
@@ -925,6 +963,7 @@ export class Simulator {
       task.column = "done";
       task.holdsSlot = false;
       delete task.agent;
+      this.releaseScreen(d, task);
       task.finishedAt = d.now;
       task.statusLine = "Cancelled";
       d.inbox = d.inbox.filter((item) => item.taskId !== task.id);
@@ -1198,10 +1237,12 @@ export class Simulator {
       this.runChecks(d, task);
       task.hunt = { stageId: current.id, round, reported: {}, findings: task.findings.length };
     }
+    // Back from waiting for the screen: the same agent picks up where it left off, on the screen.
+    const screen = task.screen?.granted && !task.screen.heard && task.screen.roleId === next.roleId ? task.screen : undefined;
     // A review round's reviewers share its step on the journey; each joins it as it starts.
     beginAgentStep(task, current?.kind === "review-chain" ? current.roleId : next.roleId, next.profileId, d.now, current?.kind === "review-chain" ? current.profileIds : undefined);
     // Claude Code and Codex have known sandbox states; other tools keep their own setup.
-    const agent: ActiveAgent = { ...next, since: d.now, step: 0, ...(["claude-code", "codex"].includes(toolId) ? { sandbox: { on: true as const } } : {}) };
+    const agent: ActiveAgent = { ...next, since: d.now, step: screen?.step ?? 0, ...(["claude-code", "codex"].includes(toolId) ? { sandbox: { on: true as const } } : {}) };
     task.agent = agent;
     // Reviewers look at the change together, as the engine's do: the ones still to report work beside this
     // one, each in a slot of its own while the pool and its tool allow.
@@ -1215,6 +1256,14 @@ export class Simulator {
     task.holdsSlot = true;
     task.column = this.columnFor(d, task);
     const role = d.roles.find((entry) => entry.id === next.roleId)?.name ?? next.roleId;
+    if (screen) {
+      screen.heard = true;
+      task.statusLine = SCREEN_WORDS.using(screen.reason);
+      this.say(d, task, "system", `${role} picked up where it left off`, next.roleId, next.profileId);
+      this.log(d, task, "milestone", SCREEN_WORDS.pickedUp, next.roleId, next.profileId);
+      this.openTurn(d, task, "continue");
+      return;
+    }
     task.statusLine = `${role} is starting`;
     this.say(d, task, "system", `${role} joined`, next.roleId, next.profileId);
     this.log(d, task, "milestone", `${role} started`, next.roleId, next.profileId);
@@ -1247,7 +1296,61 @@ export class Simulator {
     this.log(d, task, "status", line, agent.roleId, agent.profileId);
     const trigger = this.triggers[`${task.id}|${agent.roleId}|${round}|${agent.step}`];
     agent.step += 1;
-    if (trigger) this.ask(d, task, trigger);
+    if (trigger?.kind === "screen") this.askScreen(d, task, trigger.title);
+    else if (trigger) this.ask(d, task, trigger);
+  }
+
+  /**
+   * The agent did what it could in the background and needs the screen. Allowed and free: it has it now and
+   * keeps its slot. Otherwise its task waits without a slot, for the coordinator's OK or its turn.
+   */
+  private askScreen(d: Draft, task: DraftTask, text: string): void {
+    const agent = task.agent;
+    if (!agent) return;
+    const reason = screenReason(text);
+    this.endTurn(d, task, "finished");
+    task.screen = { reason, at: d.now, roleId: agent.roleId, profileId: agent.profileId, step: agent.step };
+    this.log(d, task, "status", SCREEN_WORDS.asked(reason), agent.roleId, agent.profileId);
+    const free = !onScreen(d.tasks as Task[]) && !screenQueue(d.tasks as Task[]).some((other) => screenAllowed(other, d.pool, d.now));
+    if (screenAllowed(task as Task, d.pool, d.now) && free) {
+      task.screen.granted = true;
+      task.screen.heard = true;
+      task.statusLine = SCREEN_WORDS.using(reason);
+      this.log(d, task, "milestone", SCREEN_WORDS.using(reason), agent.roleId, agent.profileId);
+      this.openTurn(d, task, "continue");
+      return;
+    }
+    task.state = "waiting";
+    task.holdsSlot = false;
+    delete task.agent;
+    delete task.helpers;
+    this.syncScreen(d);
+  }
+
+  /** Each waiting request's status line and quiet inbox item follow who may use the screen now. */
+  private syncScreen(d: Draft): void {
+    // For an hour ran out: Off from now on.
+    if (d.pool.screen && d.pool.screen.mode !== screenMode(d.pool, d.now)) d.pool.screen = { mode: "off" };
+    for (const task of d.tasks) {
+      const wait = screenWait(task as Task, d as State, d.now);
+      const item = d.inbox.find((entry) => entry.taskId === task.id && entry.kind === "screen");
+      if (wait === "ask" && !item) {
+        const request = task.screen!;
+        d.inbox.push({ id: this.id(d, "inbox"), taskId: task.id, kind: "screen", title: SCREEN_WORDS.needs(request.reason), body: SCREEN_WORDS.body, at: request.at, blocking: false, roleId: request.roleId, profileId: request.profileId });
+      } else if (wait !== "ask" && item) {
+        d.inbox = d.inbox.filter((entry) => entry !== item);
+      }
+      if (wait === "ask") task.statusLine = SCREEN_WORDS.needs(task.screen!.reason);
+      else if (wait === "turn") task.statusLine = SCREEN_WORDS.turn;
+      // Its turn on the screen: it waits for a slot like any other task (the scheduler says which).
+      else if (task.state === "waiting" && task.screen && !task.screen.granted) task.statusLine = "Waiting for a free slot";
+    }
+  }
+
+  /** The step ended (or was paused or cancelled): the screen is free for the next request. */
+  private releaseScreen(d: Draft, task: DraftTask): void {
+    delete task.screen;
+    d.inbox = d.inbox.filter((item) => !(item.taskId === task.id && item.kind === "screen"));
   }
 
   private deliver(d: Draft, task: DraftTask, text: string, interrupt = false): void {
@@ -1269,6 +1372,7 @@ export class Simulator {
   }
 
   private ask(d: Draft, task: DraftTask, trigger: Trigger): void {
+    if (trigger.kind === "screen") return;
     const agent = task.agent;
     // A question ends the agent's turn; a permission is answered inside it, and the wait is not work.
     if (trigger.kind === "question") this.endTurn(d, task, "finished");
@@ -1321,6 +1425,7 @@ export class Simulator {
     const agent = task.agent;
     if (!agent) return;
     this.endTurn(d, task, "finished");
+    this.releaseScreen(d, task);
 
     if (task.stageIndex < 0) {
       task.plan = composePlan(task, library.activeRoles(d.roles)) as DeepMutable<NonNullable<Task["plan"]>>;
@@ -1831,6 +1936,7 @@ export class Simulator {
 
   /** Fill free slots: tasks already in progress first (the tool with more of its limit left first), then the queue, in priority order. */
   private schedule(d: Draft): void {
+    this.syncScreen(d);
     const toolOf = new Map(d.profiles.map((profile) => [profile.id, profile.toolId]));
     const find = (id: Id) => d.tasks.find((entry) => entry.id === id);
     // A task waiting for others to land stays out of the running and says what it waits for.
@@ -1848,6 +1954,8 @@ export class Simulator {
     const continuing: Candidate[] = [];
     for (const task of inProgress) {
       if (blocked(task)) continue;
+      // Waiting for the screen: for the coordinator's OK, or its turn. Its status line says which.
+      if (!screenReady(task as Task, d as State, d.now)) continue;
       const next = this.nextAgent(task);
       if (next) {
         const candidate = { taskId: task.id, toolId: toolOf.get(next.profileId) ?? "unknown" };
@@ -1872,7 +1980,11 @@ export class Simulator {
         task.stageIndex = -1;
         this.log(d, task, "milestone", "Started from the queue");
       }
+      // The screen is this agent's from now until its step ends.
+      const asked = task.screen && !task.screen.granted ? task.screen : undefined;
+      if (asked) asked.granted = true;
       this.startAgent(d, task);
+      if (asked && task.state !== "running") delete asked.granted;
     }
   }
 }

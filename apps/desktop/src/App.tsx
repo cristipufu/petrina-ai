@@ -157,6 +157,24 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const [paletteTaskId, setPaletteTaskId] = useState<string>();
   const openPalette = () => { setPaletteTaskId(focusedTask?.id); setPalette(true); };
   const focusSnapshot = useRef<{ area: typeof area; id: string | undefined }>({ area, id: undefined });
+  // While a pointer is pressed, a highlight it moves does not scroll: the button would move away before the click lands.
+  const pressing = useRef(false);
+  useEffect(() => {
+    const down = () => { pressing.current = true; };
+    const up = () => { pressing.current = false; };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    window.addEventListener("keydown", up, true);
+    window.addEventListener("blur", up);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+      window.removeEventListener("keydown", up, true);
+      window.removeEventListener("blur", up);
+    };
+  }, []);
 
   const open = useCallback((taskId: string, tab: SheetTab = "overview", list?: TaskList, itemId?: string) => {
     sheetOrder.current = list === "board" ? boardIds : list === "inbox" ? inboxIds : [];
@@ -250,7 +268,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     if (area !== "board" && area !== "inbox") return;
     const attr = area === "board" ? "data-task-id" : "data-inbox-id";
     const el = id ? Array.from(document.querySelectorAll<HTMLElement>(`[${attr}]`)).find((node) => node.getAttribute(attr) === id) : area === "inbox" ? inboxPanel.current : document.querySelector<HTMLElement>(".board");
-    if (id) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (id && !pressing.current) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
     // Give Tab a starting point at the highlighted item, without taking focus from a field.
     if (el && !palette && !creating && !addingProduct && !rolePanel && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
       el.focus({ preventScroll: true });

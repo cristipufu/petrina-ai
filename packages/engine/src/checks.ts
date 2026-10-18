@@ -104,6 +104,7 @@ export async function runChecks(
   timeoutMs = CHECK_TIMEOUT_MS,
   signal?: AbortSignal,
   logDirectory?: string,
+  // A stand-in process list, so a test can fail one read. Absent, the live list is read.
   processList?: (timeout: number) => Promise<string | undefined>,
 ): Promise<CheckRun[]> {
   if (signal?.aborted) return [];

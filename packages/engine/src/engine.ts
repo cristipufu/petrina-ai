@@ -12,40 +12,43 @@
 import { realpathSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import {
-  fixFor,
-  isGuide,
-  SETUP_STEPS,
-  type Clone,
-  type CheckId,
-  type SetupStep,
   AFTER_WORDS,
   CALL_WORDS,
   endOpenStep,
   endYouStep,
+  fixFor,
+  isGuide,
   JOURNEY_WORDS as W,
   legacyJourney,
   openStep,
   productHistory,
   productName,
-  queueOf,
   queueNeighbour,
+  queueOf,
   queuePlacement,
+  SCREEN_HOUR_MS,
+  SCREEN_WORDS,
   settleAsk,
+  SETUP_STEPS,
   suggestProductName,
   syncWait,
   validateProductSettings,
+  afterChangesAsked,
+  type AskAnswer,
+  type CheckId,
+  type Clone,
+  type Commands,
   type DeliveryMode,
   type HandBackPreview,
   type Id,
   type InboxItem,
   type Launched,
-  type ProductSettings,
-  type Task,
-  afterChangesAsked,
-  type Commands,
   type NewTaskInput,
+  type ProductSettings,
   type SaidContext,
-  type AskAnswer,
+  type ScreenMode,
+  type SetupStep,
+  type Task,
   type UsageRequest,
   type UsageViewFor,
   type RoleChanges,
@@ -131,6 +134,7 @@ export class Engine extends Kernel implements Commands {
       const own = planned ? this.builderConversation(task, planned) : undefined;
       if (own) void this.tools.check(own.toolId as CheckId).then(() => { if (!this.stopped) this.schedule(); });
     }
+    this.armScreenTimer();
     this.timers.push(
       setInterval(() => {
         void this.shipping.pollPullRequests();
@@ -177,6 +181,7 @@ export class Engine extends Kernel implements Commands {
     clearTimeout(this.limitTimer);
     this.codexUsage?.stop();
     this.grokUsage?.stop();
+    clearTimeout(this.screenTimer);
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
     this.shutdownDone = Promise.allSettled([this.tools.shutdown(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
@@ -545,6 +550,36 @@ export class Engine extends Kernel implements Commands {
     this.commit();
   }
 
+  /**
+   * "Agents may use the screen": Off, For an hour, or On. Turning it off never stops the agent on the
+   * screen; it keeps it until its step ends, and nobody new gets it.
+   */
+  setScreenUse(mode: ScreenMode): void {
+    this.s.pool.screen = mode === "hour" ? { mode, until: Date.now() + (this.options.screenHourMs ?? SCREEN_HOUR_MS) } : { mode };
+    this.armScreenTimer();
+    // Scheduling commits, once each waiting request's line says what it waits for now.
+    this.schedule();
+  }
+
+  /** Allow now: this request may use the screen, still one agent at a time. */
+  allowScreen(taskId: Id): void {
+    const task = this.task(taskId);
+    if (!task?.screen || task.screen.granted || task.screen.allowed) return;
+    task.screen.allowed = true;
+    this.log(task, "you", SCREEN_WORDS.allowedNow);
+    this.schedule();
+  }
+
+  /** "Allow the screen for this task": its requests go ahead even while the switch is off, one agent at a time. */
+  setTaskScreen(taskId: Id, allowed: boolean): void {
+    const task = this.task(taskId);
+    if (!task || task.state === "done" || task.state === "cancelled" || (task.screenAllowed === true) === allowed) return;
+    if (allowed) task.screenAllowed = true;
+    else delete task.screenAllowed;
+    this.log(task, "you", allowed ? SCREEN_WORDS.taskOn : SCREEN_WORDS.taskOff);
+    this.schedule();
+  }
+
   pause(taskId: Id): void {
     const task = this.task(taskId);
     this.takeover.notDriving(task);
@@ -556,6 +591,8 @@ export class Engine extends Kernel implements Commands {
     delete task.helpers;
     // Resuming starts the step fresh, with everything said in it so far.
     delete task.conversation;
+    this.discardScreenTurns(task);
+    this.releaseScreen(task);
     task.statusLine = "Paused by you";
     this.dropBlockingItems(taskId);
     this.log(task, "you", "You paused it");
@@ -586,6 +623,8 @@ export class Engine extends Kernel implements Commands {
     delete task.agent;
     delete task.helpers;
     delete task.conversation;
+    this.discardScreenTurns(task);
+    this.releaseScreen(task);
     task.finishedAt = Date.now();
     // A delivery from before the update keeps its note: what went out is for the coordinator to check.
     task.statusLine = task.shipping?.carriedOver ? `Cancelled. ${CARRIED_OVER}: check GitHub for what went out` : "Cancelled";
@@ -779,6 +818,10 @@ export class Engine extends Kernel implements Commands {
     }
     if (kind === "learnings") {
       this.learnings.accept(itemId);
+      return;
+    }
+    if (kind === "screen") {
+      this.allowScreen(this.s.inbox.find((entry) => entry.id === itemId)!.taskId);
       return;
     }
     if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);

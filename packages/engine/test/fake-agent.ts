@@ -22,11 +22,12 @@ import * as acp from "@agentclientprotocol/sdk";
 export interface Scenario {
   /** Shutdown tests: never answer the initial handshake. */
   silent?: boolean;
-  /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. "pair": build, then two reviewers at once, one on each tool. */
+  /** "short": build and one reviewer. "parallel": two reviewers at once. "pair": build, then two reviewers at once, one on each tool. "tester-after": build, one reviewer, then a tester. */
   worksOn?: WorkChoice[];
-  planner?: "short" | "tester-after" | "tester-first" | "tester-with-design" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
   /** An added Security specialist passes instead of blocking once. The roles scenario still blocks. */
   addedReviewer?: "pass";
+  /** Retain scenarios used by source-start and screen coverage. */
+  planner?: "short" | "parallel" | "tester-after" | "tester-first" | "tester-with-design" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
   notes?: "work";
   /** The architect leaves product changes for the engine to save, in rounds and after a call. */
   architect?: "writes";
@@ -46,7 +47,7 @@ export interface Scenario {
    * "important": in the first round the reviewer on Opus raises one Important finding, the others a nit.
    * "important-twice": every reviewer raises it, each in its own words. Later rounds pass.
    */
-  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed";
+  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed" | "question";
   /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. "broken": it never hands back a usable result. */
   guide?: "change of mind" | "broken";
   /** How the planner rates the task's risk (unrated by default). */
@@ -63,6 +64,18 @@ export interface Scenario {
   tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once" | "blocked";
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
   releaseManager?: "hang";
+  /**
+   * The builder drafts in the background, then asks for the screen. Once it may use it, "ask" finishes
+   * right away and "hold" stays on the screen until the test drops screen-release-<conversation> in dir.
+   * Either way it drops on-screen-<conversation> when it gets the screen.
+   */
+  screen?: "ask" | "hold";
+  /** The screen builder waits for screen-ask-<conversation> in dir before it asks, so a test can send a message first. */
+  screenLate?: boolean;
+  /** Other roles ask for the screen, keeping their usual result after it is granted. */
+  screenRoles?: string[];
+  screenModels?: string[];
+  screenRoleHold?: boolean;
   /**
    * How it reopens a conversation: "resume" (it offers load too), "load" (it replays the conversation
    * first), or "stall" (it offers resume and never answers). Unset: it cannot reopen conversations.
@@ -90,7 +103,7 @@ export interface Scenario {
    * Claude model reports a rejected rate limit of kind `type` (default "five_hour") first; "gpt-6.1-sol" fails the
    * way Codex does, with a message. Only agents with this `role` when it is set.
    */
-  limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean; afterRelease?: boolean }[];
+  limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean; afterRelease?: boolean; onScreen?: boolean }[];
   /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
   usage?: { model: string; status: "allowed" | "allowed_warning" | "rejected"; utilization?: number; type?: string; resetsAt?: number; overage?: boolean }[];
 }
@@ -274,6 +287,9 @@ function section(text: string, title: string): string | undefined {
   return (end < 0 ? body : body.slice(0, end)).trim();
 }
 
+/** What the screen builder needs the screen for (tests repeat it: importing this file would start a fake agent). */
+const SCREEN_REASON = "Check that the quick note window opens from the menu bar";
+
 /** The finding ids listed in a section of the prompt. */
 function findingIds(text: string, title: string): string[] {
   return [...(section(text, title) ?? "").matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
@@ -324,6 +340,8 @@ export interface AgentScript {
   releaseManagerCommits?: boolean;
   /** What the Release Manager was given, every time it ran. */
   releaseManagerPrompts?: string[];
+  /** The Release Manager first asks for the screen, which it may not. */
+  releaseManagerScreen?: boolean;
   /** What the Check finder hands back, instead of its scenario's checks. */
   checks?: { name: string; argv: string[]; why: string }[];
   /** Every builder installs packages and builds: folders the repository ignores, with a link to this shared cache. */
@@ -379,6 +397,7 @@ function releaseManager(cwd: string, text: string): string {
     run(cwd, "commit", "--quiet", "-m", "A draft of the notes");
   }
   saveScript(script);
+  if (script.releaseManagerScreen && roleOf(text)) return block({ needsScreen: { reason: "Look at the released app on screen" } });
   const titles = [...text.matchAll(/^### (.+)$/gm)].map((match) => match[1]!);
   return block({ summary: `Wrote the notes on ${titles.length} change${titles.length === 1 ? "" : "s"}.`, notes: `## What's new\n${titles.map((title) => `- ${title}`).join("\n")}` });
 }
@@ -434,7 +453,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const done = (value: unknown, prose?: string): Reply => ({ text: block(learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value, prose) });
   const plan = scenario();
   for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage));
-  const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role));
+  const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);
   if (limit && until && !limit.afterRelease) await runOut(limit, until, session, sessionId, client);
   if (plan.controlled && session.turns === 1 && dir) {
@@ -442,6 +461,22 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     while (!existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
   }
   if (limit?.afterRelease && until) await runOut(limit, until, session, sessionId, client);
+  if (plan.screenRoles?.includes(session.role) && (!plan.screenModels || plan.screenModels.includes(session.model ?? ""))) {
+    if (text.includes("You may now use the screen for")) {
+      mark(`on-screen-${sessionId}`);
+      if (plan.screenRoleHold && dir) while (!existsSync(join(dir, `screen-release-${sessionId}`))) await Bun.sleep(20);
+      // Like a real reopened conversation, the fake still knows the original job and finding ids.
+      const first = session.history.find((update) => update.sessionUpdate === "user_message_chunk");
+      if (first?.sessionUpdate === "user_message_chunk" && first.content.type === "text") text = `${first.content.text}\n${text}`;
+    } else if (roleOf(text)) {
+      await say("Finished the background checks");
+      return done({ needsScreen: { reason: SCREEN_REASON } });
+    }
+    if (text.includes("handed it back")) {
+      const first = session.history.find((update) => update.sessionUpdate === "user_message_chunk");
+      if (first?.sessionUpdate === "user_message_chunk" && first.content.type === "text") text = `${first.content.text}\n${text}`;
+    }
+  }
   const earlierAttempt = text.includes("in an earlier attempt at this step");
   // The coordinator drove this step in their terminal and handed it back: on this conversation, or in a fresh one.
   const handedBack = text.includes("handed it back");
@@ -591,13 +626,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
           ],
         });
-      if (plan.planner === "short")
+      if (plan.planner === "short" || plan.planner === "parallel")
         return done({
           rationale: "A small change: build it, one reviewer.",
           ...riskOf(plan),
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"], maxRounds: 1 },
           ],
         });
       return done({
@@ -678,6 +713,21 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         }
         if (session.failing) return { text: "Something went wrong, so there is no result this time." };
       }
+      if (plan.screen) {
+        if (text.includes("You may now use the screen for")) {
+          mark(`on-screen-${sessionId}`);
+          if (plan.screen === "hold" && dir) while (!existsSync(join(dir, `screen-release-${sessionId}`))) await Bun.sleep(20);
+          writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
+          return done({ summary: "Added a quick note window and checked it on screen.", changes: ["A quick note window"], tests: "Clicked through it on screen" });
+        }
+        if (roleOf(text)) {
+          writeFileSync(join(session.cwd, "notes.txt"), "A first draft\n");
+          await say("Checking the window offscreen");
+          if (plan.screenLate && dir) while (!existsSync(join(dir, `screen-ask-${sessionId}`))) await Bun.sleep(20);
+          return done({ needsScreen: { reason: SCREEN_REASON } }, "Everything else is done in the background.");
+        }
+        return done({ summary: "Took your message into account.", changes: [], tests: "1 passed" });
+      }
       if (handedBack) {
         writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
         return done({ summary: "Finished the greeting after the hand back.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) }, terminal);
@@ -755,6 +805,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     case "code reviewer":
       if (plan.reviewer === "confirm") return done({ verdict: text.includes("This is review round") ? "pass" : "fail", findings: [], confirms: text.includes("This is review round") ? [] : findingIds(text, "Findings so far (confirm or dispute by id)"), disputes: [] });
       if (handedBack) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] }, terminal);
+      if (plan.reviewer === "question" && session.model === "opus" && (session.turns === 1 || (text.includes("You may now use the screen for") && !text.includes("The coordinator answered")))) return done({ needsInput: { question: "Should the window keep its size?", options: ["Yes", "No"] } });
       // Only the reviewer on Opus: with reviewers starting at once, which one works on stays certain.
       if (plan.reviewer === "work" && session.model === "opus" && !marked("reviewer-worked")) {
         mark("reviewer-worked");

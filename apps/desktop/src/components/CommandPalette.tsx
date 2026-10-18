@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { matchesWords, queueOf, reconcileHighlight, searchTasks, type State, type Task } from "@petrina/core";
-import { STATE_LABEL } from "../lib";
+import { stateLabel } from "../lib";
 import { productStats } from "./Products";
 import { mod, SHORTCUTS } from "../keyboard";
 import { useFocusTrap } from "./bits";
@@ -17,7 +17,7 @@ export interface PaletteAction {
 export function taskState(task: Task, state: State): string {
   if (task.state === "queued") return `${task.held ? "Held · " : ""}Queued #${queueOf(state.tasks).findIndex((entry) => entry.id === task.id) + 1}`;
   if (task.state === "done") return task.pr ? "Merged" : "Finished";
-  return STATE_LABEL[task.state];
+  return stateLabel(task, state);
 }
 
 export function CommandPalette({ state, actions, taskActions, onClose, onTask, onProduct, onNew, onFilter, onLimit }: {

@@ -666,6 +666,8 @@ kbd {
 .card-actions button:hover { background: var(--hover); color: var(--text); }
 .card-actions button:disabled { opacity: 0.5; cursor: default; }
 .card-actions button:disabled:hover { background: transparent; color: var(--text-2); }
+/* Allow now for the screen: always in view on the card, above the card's own open target. */
+.card-ask { position: relative; z-index: 1; display: flex; }
 
 /* Above the card's click area, so each step can be hovered and focused for its tooltip. */
 /* Always one line: long plans tighten and fold (see stripOf), and a very long step name shortens rather than wrapping. */
@@ -1049,6 +1051,7 @@ kbd {
 .now .tool { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
 .now .what { color: var(--text-2); margin-top: 4px; display: flex; align-items: flex-start; gap: 8px; overflow-wrap: anywhere; }
 .now .what .dot { margin-top: 6px; }
+.now .now-action { margin-top: 12px; }
 
 .timeline { list-style: none; display: flex; flex-direction: column; }
 .tl {
@@ -1261,6 +1264,15 @@ kbd {
 .usage-row .label.bad { color: var(--red-text); font-weight: 600; }
 .usage-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
 .more-section + .more-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+/* "Agents may use the screen", at the end of the pool menu. */
+.screen-use { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.screen-use h4 { margin: 0; }
+.popover .screen-use p.screen-note { margin: 0; }
+.screen-use .screen-who { color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
+/* The top bar's sign that screen use is on, or that an agent is on the screen: on the pool button, or on More. */
+.screen-mark { flex: none; color: var(--accent-text); }
+.screen-mark.in-use { color: var(--blue-text); }
+.btn.icon.with-mark { gap: 4px; padding-left: 8px; padding-right: 8px; }
 
 /* ── Pages: Products, Agents, Library ──────────────────────────────── */
 
@@ -1414,6 +1426,7 @@ kbd {
 .menu button.danger { color: var(--red-text); }
 .menu button:disabled { opacity: 0.55; cursor: default; }
 .menu button:disabled:hover { background: transparent; }
+.menu .menu-check { margin-left: auto; color: var(--accent-text); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

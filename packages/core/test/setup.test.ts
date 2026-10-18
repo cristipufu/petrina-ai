@@ -204,4 +204,10 @@ describe("the line under Needs you", () => {
     expect(inboxSummary([item("plan")])).toBe("Nobody is stuck. These wait at checkpoints.");
     expect(inboxSummary([item("question", true), item("plan")])).toBe("1 agent is waiting on you. The rest wait at checkpoints.");
   });
+
+  it("does not call a screen request a checkpoint", () => {
+    expect(inboxSummary([item("screen")])).toBe("You're not blocking anyone.");
+    expect(inboxSummary([item("plan"), item("screen")])).toBe("Nobody is stuck. These wait at checkpoints.");
+    expect(inboxSummary([item("question", true), item("screen")])).toBe("1 agent is waiting on you.");
+  });
 });

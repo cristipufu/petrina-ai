@@ -12,7 +12,7 @@ import type { CheckRun } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
-import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask } from "./kernel.js";
+import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask, ScreenWait } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
@@ -73,17 +73,20 @@ export class ProductChecks {
   async ensureChecks(task: MTask, signal: AbortSignal): Promise<readonly ProductCheck[]> {
     const product = this.k.productOf(task);
     if (!product || !task.worktree) return [];
-    if (product.checksBy === "coordinator") return product.checks ?? [];
+    // Another task may have found (or the coordinator set) the checks while this agent waited.
+    // Its saved conversation still finishes its own request before the cached checks can be reused.
+    const continuing = task.conversation?.roleId === "check-finder";
+    if (product.checksBy === "coordinator" && !continuing) return product.checks ?? [];
     const fingerprint = checksFingerprint(task.worktree);
     const unstartable = task.checks?.results.some((run) => run.output.startsWith("Could not start")) ?? false;
-    if (product.checks && product.checksFingerprint === fingerprint && !unstartable) return product.checks;
+    if (!continuing && product.checks && product.checksFingerprint === fingerprint && !unstartable) return product.checks;
     // Tasks on different bases have different CI and build files: each reuses what was found for its own.
     const seen = product.checksSeen?.find((entry) => entry.fingerprint === fingerprint);
-    if (seen && !unstartable) return seen.checks;
+    if (!continuing && seen && !unstartable) return seen.checks;
     const declared = detectChecks(task.worktree);
     // A side errand inside the step: it leaves the step's own restart bookkeeping as it found it.
     const attempts = task.stepAttempts;
-    const conversation = task.conversation;
+    const conversation = task.conversation?.roleId === "check-finder" ? undefined : task.conversation;
     const restore = () => {
       if (attempts === undefined) delete task.stepAttempts;
       else task.stepAttempts = attempts;
@@ -108,18 +111,22 @@ export class ProductChecks {
         signal,
         { status: "Working out how to check this product", used: (id) => (ran = id) },
       );
+      this.k.releaseScreen(task);
       restore();
+      if (product.checksBy === "coordinator") return product.checks ?? [];
       product.checks = result.checks.map((check) => ({ name: check.name, argv: check.argv, why: check.why }));
       endAgentStep(task, { outcome: W.foundChecks(product.checks.length), reason: W.checksFound }, Date.now());
       this.k.log(task, "done", `Found how to check ${product.name} (${why}): ${product.checks.map((check) => check.name).join(", ")}`, "check-finder", ran);
     } catch (error) {
-      if (signal.aborted || error instanceof Aborted) throw error;
+      if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) throw error;
+      this.k.releaseScreen(task);
       restore();
       // Everyone who could work it is out of usage: the task waits, and the finder runs when one is back.
       if (error instanceof WaitingForUsage) throw error;
       // Petrina carries on without it, but it is still a failure in Analytics.
       this.k.tracking.failed(task, error, { roleId: "check-finder", profileId: ran });
       endAgentStep(task, { outcome: W.couldNotFinish, reason: W.checksAsBefore }, Date.now());
+      if (product.checksBy === "coordinator") return product.checks ?? [];
       const fallback: ProductCheck[] = product.checks ? [...product.checks] : declared;
       product.checks = fallback.map((check) => ({ name: check.name, argv: [...check.argv], ...(check.why ? { why: check.why } : {}) }));
       this.k.log(task, "warn", `The Check finder could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`);
@@ -166,7 +173,7 @@ export class ProductChecks {
     try {
       const ran = kept ?? await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id));
       if (signal.aborted) {
-        if (ran.some((run) => run.cleanupIncomplete)) this.k.log(task, "warn", CLEANUP_INCOMPLETE);
+        this.noteStopped(task, ran);
         throw new Aborted();
       }
       if ((await git.head(task.worktree).catch(() => "")) !== before) {
@@ -176,7 +183,12 @@ export class ProductChecks {
         await git.restoreTracked(task.worktree);
         this.k.log(task, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
       }
-      results = [...ran, ...(await this.runHooks(task, hooks, env, signal))];
+      const hooksRan = await this.runHooks(task, hooks, env, signal);
+      if (signal.aborted) {
+        this.noteStopped(task, [...ran, ...hooksRan]);
+        throw new Aborted();
+      }
+      results = [...ran, ...hooksRan];
     } finally {
       // The hooks too: whatever they committed or changed in files git tracks is put back.
       if (!task.hooking) {
@@ -203,6 +215,17 @@ export class ProductChecks {
     }
     this.k.commit();
     return failed.length;
+  }
+
+  /**
+   * A pause or cancel stopped the run before every program it started could be listed. Keep the warning
+   * and the runs, without a commit or tree, so this does not count as a finished check of the work.
+   */
+  private noteStopped(task: MTask, runs: readonly CheckRun[]): void {
+    if (!runs.some((run) => run.cleanupIncomplete)) return;
+    this.k.log(task, "warn", CLEANUP_INCOMPLETE);
+    task.checks = { at: Date.now(), results: runs.map((run) => ({ ...run })) };
+    this.k.commitNow();
   }
 
   /** A builder's answer cannot settle a failed check; only a fresh passing run can. */
@@ -371,7 +394,7 @@ export class ProductChecks {
         await rm(folder, { recursive: true, force: true });
       }
     }
-    if (signal.aborted) throw new Aborted();
+    // The caller keeps a stopped run that could not list its programs. Throwing here would drop it.
     return runs;
   }
 

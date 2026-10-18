@@ -52,7 +52,7 @@ What success feels like: many pull requests a day, little time spent being the t
 └──────────┴──────────────────────────────────────────────────────────┴────────────────┘
 ```
 
-- **Top bar** (56px): product switcher, search (⌘K), the pool indicator, the inbox button with its count, and **New task**, the only solid violet button in the workspace. It stays quiet, with neutral buttons and a thin bottom divider.
+- **Top bar** (56px): product switcher, search (⌘K), the pool indicator, the inbox button with its count, and **New task**, the only solid violet button in the workspace. It stays quiet, with neutral buttons and a thin bottom divider. While screen use is on, or an agent is on the screen, a small screen icon shows on the pool button (see [The screen](#the-screen)).
 - **Left rail** (64px): Board, Products, Agents, Analytics, Library, and Settings at the bottom. Icons with labels, a right-hand divider and a separate Settings footer.
 - **Main area:** the board by default, with no extra page-title row. Other pages keep their descriptions and controls without repeating their name above them.
 - **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
@@ -74,7 +74,7 @@ Starting a second engine prints one line: "Petrina's engine is already running. 
 
 - The desktop window opens with 1680×1000 for the app itself, the title bar on top of that, centred and never larger than the screen's usable area: the whole window, title bar included, stays below the menu bar and clear of the Dock or taskbar, on whichever screen it opens. It can shrink to 1100×680, again not counting the title bar. On a screen smaller than that it opens at the minimum in the top-left corner of the usable area, so the title bar is always reachable.
 - Narrower windows show fewer cards per row; the board itself never scrolls sideways. Wide tables, like the Products page, scroll sideways instead of squeezing.
-- As the window narrows, the top bar gives things up in order: the wordmark and repeated wording first, then the search field becomes a button that opens it, then the pool shows only its count, then the pool and the theme move into a More menu. The product switcher, Inbox and New task always stay.
+- As the window narrows, the top bar gives things up in order: the wordmark and repeated wording first, then the search field becomes a button that opens it, then the pool shows only its count, then the pool and the theme move into a More menu. The screen icon moves with the pool onto the closed More button, with the same label. The product switcher, Inbox and New task always stay.
 - Below 1200px of usable width the inbox opens over the board instead of beside it. Esc or the close button hides it and puts focus back on the Inbox button.
 - Browser zoom and enlarged text count as a narrower window, so the same steps apply at 200%.
 
@@ -86,7 +86,7 @@ One grid of task cards, ordered by what each task needs rather than by stage. Ev
 |---|---|
 | **Needs you** | A question, a permission, a checkpoint, or a task that failed. Agents kept waiting come first, in the same order as the inbox |
 | **Working** | An agent is on it right now |
-| **Waiting** | Waiting for a free slot, paused, or delivered and waiting for you to merge |
+| **Waiting** | Waiting for a free slot or for the screen, paused, or delivered and waiting for you to merge |
 | **Queue** | Not started yet, in priority order |
 | **Done** | Merged, released, delivered locally or cancelled. Folded away at the end |
 
@@ -96,7 +96,8 @@ The run state is written on the card, never shown by dimming it:
 
 - **Working:** a soft pulsing dot and the live status line.
 - **Needs you:** these cards sit under the Needs you heading with an amber edge, and their status line says what they wait for ("Waiting for your permission"). They carry no extra badge.
-- **On hold, Paused, Waiting for a slot, Failed, Awaiting merge, Completed, Cancelled:** said in words at the top of the card. Held cards sit on a quieter surface; failed ones get a red edge.
+- **On hold, Paused, Waiting for a slot, Waiting for the screen, Failed, Awaiting merge, Completed, Cancelled:** said in words at the top of the card. Held cards sit on a quieter surface; failed ones get a red edge.
+- **Waiting for the screen:** the status line says "Needs the screen for: …" in the agent's words, and an always-visible **Allow now** sits on the card. Once allowed, while another agent is on the screen, it says "Waiting its turn on the screen", with no button.
 
 ### The queue
 
@@ -151,7 +152,8 @@ How many agents may run at once.
   - a stepper for the limit (1 to 12),
   - caps per tool (for example Claude Code 3, Codex 2), so one subscription is not exhausted,
   - **Pause pool**: running agents finish, no new agent starts,
-  - the list of who is in each slot.
+  - the list of who is in each slot,
+  - **Agents may use the screen**: Off, For an hour or On (see [The screen](#the-screen)).
 - Rules:
   - Taking a slot immediately records its agent and tool, so each tool's cap counts it before setup finishes.
   - Before every following agent, even on the same tool, the task checks the limits again. If other tasks fill its tool or the pool, or the pool is paused, it waits at its current step with a line such as "Waiting for a free Codex slot". It keeps its working copy and progress and continues ahead of queued tasks. Work already holding a slot keeps it when there is room.
@@ -160,6 +162,18 @@ How many agents may run at once.
   - Lowering the limit never stops a running agent. Each finishes, then its next agent waits until there is room, so the pool shrinks as agents finish.
 - The **Agents** page is the same information large: one tile per slot with the live status line and a Join button.
 - In the popover, under the slots, **Today**: the tokens and agent time used since local midnight across all products, the same split by tool with each tool's nearest limit when known (how much is used, when it resets and when that was reported; a limit drops out the moment its reset time passes, so an old percentage never shows as current), one line saying agent time adds up agents running at once, and a link to Analytics. With nothing yet today it says so in words.
+
+## The screen
+
+Agents work in the background while you use the computer. Some checks need the running app on screen: clicking through it, menus, the Dock, real window behaviour. The screen is something an agent asks for, and you decide.
+
+- **Agents may use the screen** sits in the pool menu (in the More menu in narrow windows) with three choices: **Off** (the default), **For an hour** and **On**. A quiet line under it says what the choice means; For an hour says when it turns off ("On until 15:40"), and after that it is Off without anyone touching it. When an agent is on the screen it names the task and the role, and it says how many tasks are waiting for the screen. The choice is saved like the pool limit.
+- **The screen icon.** While screen use is on, or an agent is on the screen, a small screen icon shows on the pool button, or on the closed More button in narrow windows. Its label says which of the two ("Agents may use the screen", "An agent is using the screen"), so screen use is never on without you seeing it. With the switch Off and nobody on the screen, nothing extra shows.
+- **Asking.** Every agent except the Release Manager can ask, including Petrina's internal roles and reviewers working side by side. An agent does everything it can in the background first, then asks, with its reason. Allowed and free: it gets the screen at once and keeps its slot. Otherwise its task gives up its slot, moves to Waiting, and says "Waiting for the screen", with the reason and **Allow now** on the card, in the task sheet, at the end of the Session tab and as a quiet inbox item.
+- **Allowing.** Allow now (for this request), switching to For an hour or On, or **Allow the screen for this task** in the task sheet's More menu (for any unfinished task, queued ones included) lets it continue. It picks up where it left off, and the timeline says it is using the screen. If the pool is full, it waits for a free slot as usual.
+- **One at a time.** Only one agent uses the screen, first asked, first served, until its step ends. Others needing it wait their turn without a slot and without a button.
+- **Turning it off** never stops the agent on the screen: it finishes its step, and the icon stays until then. Nobody new gets the screen; tasks only the switch allowed go back to waiting for your OK. A request you allowed with Allow now keeps its OK.
+- Pausing or cancelling a task waiting for the screen removes its inbox item. Messages sent while it waits reach the agent when it continues.
 
 ## Inbox: "Needs you"
 
@@ -174,6 +188,7 @@ Everything waiting on you: items that keep an agent waiting first, then by task 
 | **Disagreement** | The architects did not agree after the round limit | **Read both sides** leads; "Side with the architect" and "Write my call" are equally quiet. Your call is final: the architect updates the brief to follow it with no further review round, and you check the brief before building (at the plan's own design check, after steps such as Screens; one is added only if the plan has none before the build) |
 | **Ready to ship** | Acceptance checklist and review summary | **Open a pull request** (or publish, or commit), See the reviews, Send back with a note |
 | **Stuck** | A stage failed, or a tool needs you to log in | **Try again**, See what happened, Cancel task |
+| **Screen** | "Needs the screen for: Click the menu bar icon and check the quick note window opens in front" | Allow now. Quiet: listed after every other item, no notification or toast, never counted in "You're blocking" |
 
 Every agent is told: when you ask the coordinator a question with choices, put the answer you recommend first. The demo squad does the same, and keeps every answer in its order.
 
@@ -190,7 +205,7 @@ Agents start with full permissions inside their own working copy, so they rarely
 
 When something new lands in the inbox and you are not looking at Petrina, you get a notification: system notifications in the desktop app, the browser's own in a browser tab once you allow them. They only arrive while Petrina (or its tab) is open; minimized is fine.
 
-- **What notifies:** a question, a permission request, a stuck task, a task waiting at a checkpoint (plan, design, disagreement, ready to ship), and a delivery Petrina could not confirm.
+- **What notifies:** a question, a permission request, a stuck task, a task waiting at a checkpoint (plan, design, disagreement, ready to ship), and a delivery Petrina could not confirm. A screen request never notifies: it waits quietly in the inbox.
 - **Only what is new.** Items already waiting when the app opens only show in the counts. After the connection to the engine drops and comes back, only what arrived during the gap notifies. No item notifies twice.
 - **In front or away.** While Petrina is in front (its window focused, or its tab visible and focused), the small in-app message appears instead; its View button does exactly what a click on the notification does. A Petrina window visible on a second screen without focus counts as away.
 - **Calm pacing.** At most one notification every ten seconds. The first goes out at once. What arrives during the pause goes out when it ends: one item on its own, two or more as one summary ("3 more things need you", naming up to two of their tasks). Held items that were handled meanwhile, or that you saw because Petrina came to the front, are dropped; if none are left, nothing goes out.
@@ -208,7 +223,7 @@ When something new lands in the inbox and you are not looking at Petrina, you ge
 
 ## Task sheet
 
-**Header:** a compact persistent title with the product and state, Back, the pull request link when there is one, Message, Pause or Resume, a More menu (Move to top, Hold, Cancel) and Close. Below it, Tasks, Task flow and the details tabs share one 56px header row with aligned borders. The three columns scroll independently. The task list separates rows with quiet rules and shows an icon and words for Working, Waiting, Queued and other states; Working has a spinner unless reduced motion is on.
+**Header:** a compact persistent title with the product and state, Back, the pull request link when there is one, Message, Pause or Resume, a More menu (Allow the screen for this task, Move to top, Hold, Cancel) and Close. A task waiting for the screen reads "Waiting for the screen", and "Right now" shows the agent's reason with Allow now. While the task's own screen allowance is on, the header says "Screen allowed for this task" in quiet text. Below it, Tasks, Task flow and the details tabs share one 56px header row with aligned borders. The three columns scroll independently. The task list separates rows with quiet rules and shows an icon and words for Working, Waiting, Queued and other states; Working has a spinner unless reduced motion is on.
 
 **Tabs:**
 

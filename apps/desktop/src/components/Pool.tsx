@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from "react";
-import { ChartColumn, ChevronDown, Minus, Pause, Play, Plus } from "lucide-react";
-import { queueOf, slotUses, type State, type Task } from "@petrina/core";
+import { ChartColumn, ChevronDown, Minus, Monitor, MonitorDot, Pause, Play, Plus } from "lucide-react";
+import { onScreen, queueOf, screenMode, screenQueue, slotUses, type ScreenMode, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
-import { type Lookup } from "../lib";
+import { clockTime, screenMark, type Lookup } from "../lib";
 import { useUsage } from "../usage";
 import { RoleAvatar, useDismiss } from "./bits";
 import { UsageList, usageNote } from "./Usage";
@@ -29,6 +29,55 @@ function holdersOf(state: State, find: Lookup): { task: Task; roleId?: string; k
     const task = find.task(use.taskId);
     return task ? [{ task, ...(use.roleId ? { roleId: use.roleId } : {}), key: `${use.taskId}:${use.profileId ?? index}` }] : [];
   });
+}
+
+const SCREEN_CHOICES: readonly { mode: ScreenMode; label: string }[] = [
+  { mode: "off", label: "Off" },
+  { mode: "hour", label: "For an hour" },
+  { mode: "on", label: "On" },
+];
+
+/** "Agents may use the screen": Off, For an hour or On, what that means, and who is on the screen now. */
+function ScreenUse({ state, find }: { state: State; find: Lookup }) {
+  const mode = screenMode(state.pool, state.now);
+  const holder = onScreen(state.tasks);
+  const waiting = screenQueue(state.tasks).length;
+  const role = find.role(holder?.screen?.roleId);
+  const note =
+    mode === "off"
+      ? "Agents work in the background. One that needs the screen asks first, and its task waits until you allow it."
+      : `${mode === "hour" ? `On until ${clockTime(state.pool.screen?.until ?? state.now)}. ` : ""}Agents may run apps on your screen when they need to, one at a time, and close what they open.`;
+  return (
+    <div className="screen-use">
+      <h4 id="screen-use-title">Agents may use the screen</h4>
+      <div className="segmented" role="radiogroup" aria-labelledby="screen-use-title">
+        {SCREEN_CHOICES.map((choice) => (
+          <button key={choice.mode} role="radio" aria-checked={mode === choice.mode} className={mode === choice.mode ? "on" : ""} onClick={() => sim.setScreenUse(choice.mode)}>
+            {choice.label}
+          </button>
+        ))}
+      </div>
+      <p className="screen-note">{note}</p>
+      {holder && (
+        <p className="screen-note">
+          On the screen now: <span className="screen-who">{holder.title}</span> · {role?.name ?? "Agent"}
+        </p>
+      )}
+      {waiting > 0 && (
+        <p className="screen-note num">
+          {waiting} task{waiting === 1 ? "" : "s"} waiting for the screen
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The top bar's sign that screen use is on, or that an agent is on the screen. Its words go in the button's label. */
+export function ScreenMarkIcon({ state }: { state: State }) {
+  const mark = screenMark(state);
+  if (!mark) return null;
+  const Icon = mark.inUse ? MonitorDot : Monitor;
+  return <Icon size={16} className={`screen-mark ${mark.inUse ? "in-use" : ""}`} aria-hidden="true" />;
 }
 
 /** The pool's controls, who is in each slot, and today's numbers: in the pool popover, or in the top bar's More menu. */
@@ -84,6 +133,8 @@ export function PoolPanel({ state, find, onOpen, onDone, onAnalytics }: { state:
         })}
       </div>
       <div className="divider" />
+      <ScreenUse state={state} find={find} />
+      <div className="divider" />
       <Today
         state={state}
         onAnalytics={() => {
@@ -104,6 +155,7 @@ export function PoolButton({ state, find, onOpen, onAnalytics, compact }: { stat
   const holders = holdersOf(state, find);
   const slots = Array.from({ length: Math.max(state.pool.limit, holders.length) }, (_, index) => holders[index]);
   const usage = usageNote(state);
+  const mark = screenMark(state);
 
   return (
     <div style={{ position: "relative" }} ref={box}>
@@ -111,9 +163,10 @@ export function PoolButton({ state, find, onOpen, onAnalytics, compact }: { stat
         className="btn quiet"
         onClick={() => setOpen((on) => !on)}
         aria-expanded={open}
-        aria-label={`Agents at work: ${holders.length} of ${state.pool.limit}${state.pool.paused ? ", pool paused" : ""}${usage ? `. ${usage}` : ""}`}
-        title={usage ?? "Agents running at once"}
+        aria-label={`Agents at work: ${holders.length} of ${state.pool.limit}${state.pool.paused ? ", pool paused" : ""}${usage ? `. ${usage}` : ""}${mark ? `. ${mark.label}` : ""}`}
+        title={[usage ?? "Agents running at once", mark?.label].filter(Boolean).join(". ")}
       >
+        <ScreenMarkIcon state={state} />
         {state.pool.paused ? <Pause size={14} aria-hidden="true" /> : null}
         {!compact && (
           <span className="slots" aria-hidden="true">

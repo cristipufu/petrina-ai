@@ -1287,7 +1287,7 @@ describe("Simulator", () => {
     const columns = new Set(state.tasks.map((entry) => entry.column));
     for (const column of ["queue", "planning", "designing", "building", "reviewing", "ready", "done"]) expect(columns.has(column as Task["column"])).toBe(true);
     expect(new Set(state.inbox.map((item) => item.id)).size).toBe(state.inbox.length);
-    expect(state.inbox.map((item) => item.kind).sort()).toEqual(["delivery", "disagreement", "guide", "learnings", "permission", "plan", "question"]);
+    expect(state.inbox.map((item) => item.kind).sort()).toEqual(["delivery", "disagreement", "guide", "learnings", "permission", "plan", "question", "screen"]);
     // The reviewers of "Fix login loop on Safari" look at the change together: two slots for that task.
     expect(slotUses(state)).toHaveLength(4);
     expect(startsNextCount(state)).toBe(1);

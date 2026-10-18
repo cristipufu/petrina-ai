@@ -69,6 +69,29 @@ describe('the app keyboard', () => {
     expect(selected()).toBe(id);
     expect(host.querySelector('.inbox-item.selected')).toBeNull();
   });
+  it.each(['board', 'inbox'])('scrolls keyboard moves in the %s after a pointer press with no release', async (area) => {
+    if (area === 'inbox') await key('i');
+    else await key('j');
+    const selector = area === 'board' ? '.card.selected' : '.inbox-item.selected';
+    const before = el(selector);
+    await act(async () => before.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 2 })));
+    const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+    scroll.mockClear();
+    await key('j');
+    expect(el(selector)).not.toBe(before);
+    expect(scroll).toHaveBeenCalled();
+    expect(scroll.mock.instances.at(-1)).toBe(el(selector));
+  });
+  it('clears an unfinished pointer press when the window loses focus', async () => {
+    await key('j');
+    const next = el('.card.selected').nextElementSibling as HTMLElement;
+    const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+    await act(async () => window.dispatchEvent(new Event('blur')));
+    scroll.mockClear();
+    await act(async () => next.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    expect(scroll).toHaveBeenCalled();
+  });
   it('opens the same palette while typing, restores the field, and closes only the top layer', async () => {
     await key('j'); await key('m');
     await type('.composer textarea', 'Keep this message');

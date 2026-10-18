@@ -7,11 +7,11 @@ import { Bell, Ellipsis, Hand, Plus, Search, X } from "lucide-react";
 import type { State } from "@petrina/core";
 import type { EngineStatus } from "../engine";
 import { mod } from "../keyboard";
-import type { Lookup } from "../lib";
+import { screenMark, type Lookup } from "../lib";
 import type { Theme } from "../theme";
 import { Logo, useDismiss } from "./bits";
 import { EnginePill } from "./EngineState";
-import { PoolButton, PoolPanel } from "./Pool";
+import { PoolButton, PoolPanel, ScreenMarkIcon } from "./Pool";
 import { ProductSwitcher } from "./Products";
 import type { SheetTab } from "./TaskCard";
 import { ThemeChoices, ThemeMenu } from "./ThemeMenu";
@@ -115,16 +115,21 @@ interface MoreProps {
   onTheme: (theme: Theme) => void;
 }
 
-/** In the narrowest windows the pool, the theme and the connection status move here. */
+/**
+ * In the narrowest windows the pool, the theme and the connection status move here. The screen mark
+ * moves with the pool, onto the More button, so screen use is never on unseen.
+ */
 function MoreMenu({ state, find, onOpen, onAnalytics, status, theme, onTheme }: MoreProps) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(box, open, close);
+  const mark = screenMark(state);
   return (
     <div style={{ position: "relative" }} ref={box}>
-      <button className="btn ghost icon" aria-label="More" aria-expanded={open} onClick={() => setOpen((on) => !on)}>
-        <Ellipsis size={18} />
+      <button className={`btn ghost icon ${mark ? "with-mark" : ""}`} aria-label={mark ? `More. ${mark.label}` : "More"} title={mark?.label} aria-expanded={open} onClick={() => setOpen((on) => !on)}>
+        <ScreenMarkIcon state={state} />
+        <Ellipsis size={18} aria-hidden="true" />
       </button>
       {open && (
         <div className="popover">

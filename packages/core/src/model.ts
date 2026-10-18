@@ -353,6 +353,29 @@ export interface ConversationNote {
 }
 
 /**
+ * An agent asked for the coordinator's screen, for a check that needs the running app on it. Kept
+ * until its step ends. The engine gives the screen to one agent at a time, first asked, first served.
+ */
+export interface ScreenRequest {
+  /** Why, in the agent's words, kept short. Untrusted: shown as plain text only. */
+  reason: string;
+  /** When it asked. */
+  at: number;
+  roleId: Id;
+  profileId: Id;
+  /** The reviewer or voter within a parallel review round, when one asked. */
+  member?: string;
+  /** The coordinator's Allow now, for this request. */
+  allowed?: boolean;
+  /** The agent has the screen, from the moment it is given until its step ends. */
+  granted?: boolean;
+  /** The agent has been told it may use the screen. */
+  heard?: boolean;
+  /** Simulator only: how far through its step the agent was when it asked. */
+  step?: number;
+}
+
+/**
  * The coordinator took over a step in their own terminal: the agent's own tool, on the same
  * conversation, in the task's working copy. The step is paused and keeps its seat in the pool.
  */
@@ -507,6 +530,8 @@ export interface Hunt {
   reported: Readonly<Record<Id, true>>;
   /** The profile reserved or actually used at each position, kept after reporting and across restarts. */
   profiles?: Readonly<Record<Id, Id>>;
+  /** Parallel agents that asked for the screen: their copies and conversations survive the wait. */
+  screenTurns?: Readonly<Record<string, { reason: string; at: number; copy: string; conversation: ConversationNote; allowed?: boolean }>>;
   /** Per actual voter profile, whether it finished the round's findings. Older records used planned profiles. */
   voted?: Readonly<Record<Id, true>>;
   /** How many findings the task had when the round began: what the round's reviewers raise comes after. */
@@ -734,6 +759,10 @@ export interface Task {
   handChanges?: boolean;
   /** The review chain that runs again from its first reviewer once the step the coordinator drove finishes. */
   rereview?: Id;
+  /** The current step's agent asked for the screen. */
+  screen?: ScreenRequest;
+  /** "Allow the screen for this task": its screen requests go ahead even while the switch is off. */
+  screenAllowed?: boolean;
   /** Ids the window gave what it sent lately, so a resend after a lost confirmation counts once. */
   received?: readonly Id[];
   /** The window's id for the request that added it: sending it again after a lost reply finds this task instead of adding another. */
@@ -745,8 +774,9 @@ export interface Task {
 /**
  * `shipping`: a delivery was interrupted, and Petrina could not tell whether it went out, or found something
  * else there. `driving`: the coordinator took over a step in their terminal.
+ * `screen`: an agent waits for the coordinator's OK to use the screen. Quiet: listed last, never a notification.
  */
-export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide" | "learnings";
+export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide" | "learnings" | "screen";
 
 export interface InboxItem {
   id: Id;
@@ -886,6 +916,17 @@ export interface Pool {
   usage?: readonly UsageReport[];
   /** Who is out of usage right now. Entries are dropped when their time has passed. */
   limited?: readonly UsageLimit[];
+  /** "Agents may use the screen". Unset is Off. */
+  screen?: ScreenUse;
+}
+
+/** Off (the default), For an hour, or On. */
+export type ScreenMode = "off" | "hour" | "on";
+
+export interface ScreenUse {
+  mode: ScreenMode;
+  /** When For an hour turns off. */
+  until?: number;
 }
 
 /** A terminal Petrina can open a take-over in. */
