@@ -6,7 +6,7 @@ import type { Objection, Task } from "@petrina/core";
 import { profileText, type Lookup } from "../../lib";
 import { openFirst } from "./order";
 
-function ObjectionItem({ objection, find }: { objection: Objection; find: Lookup }) {
+export function ObjectionItem({ objection, find }: { objection: Objection; find: Lookup }) {
   const status = objection.status === "open" ? "Open" : objection.status === "accepted" ? "Accepted" : objection.status === "noted" ? "Follow-up" : "Rejected";
   return (
     <li className="issue">

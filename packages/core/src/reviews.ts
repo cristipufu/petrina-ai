@@ -18,9 +18,68 @@ export interface ReviewStats {
   /** Deliveries the coordinator sent back after every reviewer had passed them. */
   sentBack: number;
   /** What became of the reviewers' findings (Petrina's own checks aside). */
-  findings: { total: number; fixed: number; notABug: number; unverified: number; downgraded: number; kept: number; open: number };
+  findings: FindingStats;
+  /** Findings attributed to their recorded review role; older records mean Code reviewer. */
+  roles: { roleId: Id; important: number; findings: FindingStats }[];
   /** Per reviewer profile, most findings first. */
   profiles: ProfileStats[];
+  verifiers: VerifierStats;
+}
+
+export interface FindingStats { total: number; fixed: number; notABug: number; unverified: number; downgraded: number; kept: number; open: number }
+
+export interface VerificationOutcomes { completed: number; real: number; notABug: number; nit: number; preExisting: number; unfinished: number }
+export interface VerifierProfileStats {
+  profileId: Id;
+  toolId: Id;
+  votes: number;
+  real: number;
+  notABug: number;
+  nit: number;
+  preExisting: number;
+  matched: number;
+  decided: number;
+}
+export interface VerifierStats extends VerificationOutcomes {
+  /** Earlier nominal votes without a proven tool cannot enter an independent-tool comparison. */
+  unattributedVotes: number;
+  roles: (VerificationOutcomes & { roleId: Id })[];
+  profiles: VerifierProfileStats[];
+}
+
+const verdictKey = { real: "real", "not-a-bug": "notABug", nit: "nit", "pre-existing": "preExisting" } as const;
+const noVerifications = (): VerificationOutcomes => ({ completed: 0, real: 0, notABug: 0, nit: 0, preExisting: 0, unfinished: 0 });
+
+/** A fresh check on changed code is another decision. Corrections within it count only once per tool. */
+function verifierStats(findings: readonly Finding[]): VerifierStats {
+  const total = noVerifications();
+  const roles = new Map<Id, VerificationOutcomes & { roleId: Id }>();
+  const profiles = new Map<string, VerifierProfileStats>();
+  let unattributedVotes = 0;
+  for (const finding of findings) for (const round of [...(finding.earlierReviews ?? []), finding]) {
+    if (!round.verification && !round.votes?.length) continue;
+    const roleId = finding.roleId ?? "code-reviewer";
+    const role = roles.get(roleId) ?? { roleId, ...noVerifications() };
+    roles.set(roleId, role);
+    for (const entry of [total, role]) {
+      if (round.verification) { entry.completed += 1; entry[verdictKey[round.verification.verdict]] += 1; }
+      else entry.unfinished += 1;
+    }
+    unattributedVotes += round.votes?.filter((vote) => !vote.toolId).length ?? 0;
+    for (const vote of independentVotes(round.votes)) {
+      const toolId = vote.toolId!;
+      const key = JSON.stringify([vote.by, toolId]);
+      const entry = profiles.get(key) ?? { profileId: vote.by, toolId, votes: 0, real: 0, notABug: 0, nit: 0, preExisting: 0, matched: 0, decided: 0 };
+      entry.votes += 1;
+      entry[verdictKey[vote.verdict]] += 1;
+      if (round.verification) {
+        entry.decided += 1;
+        if (vote.verdict === round.verification.verdict) entry.matched += 1;
+      }
+      profiles.set(key, entry);
+    }
+  }
+  return { ...total, unattributedVotes, roles: [...roles.values()].sort((a, b) => b.completed - a.completed || a.roleId.localeCompare(b.roleId)), profiles: [...profiles.values()].sort((a, b) => b.votes - a.votes || a.profileId.localeCompare(b.profileId) || a.toolId.localeCompare(b.toolId)) };
 }
 
 export interface ProfileStats {
@@ -49,13 +108,31 @@ const raisedImportant = (finding: Finding) => finding.severity === "blocking" ||
 
 const heldUp = (finding: Finding) => finding.status === "fixed" || finding.confirmedBy.length > 0 || finding.verification?.verdict === "real";
 
+function findingStats(findings: readonly Finding[]): FindingStats {
+  const downgraded = (finding: Finding) => finding.verification?.verdict === "nit" || finding.verification?.verdict === "pre-existing";
+  return {
+    total: findings.length,
+    fixed: findings.filter((finding) => finding.status === "fixed").length,
+    notABug: findings.filter((finding) => finding.status === "dismissed").length,
+    unverified: findings.filter((finding) => finding.status === "unverified").length,
+    downgraded: findings.filter((finding) => finding.status === "open" && downgraded(finding)).length,
+    kept: findings.filter((finding) => finding.status === "open" && !downgraded(finding) && finding.answer?.fixed === false).length,
+    open: findings.filter((finding) => finding.status === "open" && !downgraded(finding) && finding.answer?.fixed !== false).length,
+  };
+}
+
 export function reviewStats(tasks: readonly Task[]): ReviewStats {
   const outcomes = tasks.map(reviewOutcome).filter((outcome) => outcome !== undefined);
   const passed = outcomes.filter((outcome) => outcome.passed);
   const inRound = (round: number) => passed.filter((outcome) => outcome.rounds === round).length;
   const findings = tasks.filter((task) => task.state !== "cancelled").flatMap((task) => task.findings.filter((finding) => finding.raisedBy !== "petrina"));
   const byProfile = new Map<Id, ProfileStats>();
+  const byRole = new Map<Id, Finding[]>();
   for (const finding of findings) {
+    const roleId = finding.roleId ?? "code-reviewer";
+    const group = byRole.get(roleId) ?? [];
+    group.push(finding);
+    byRole.set(roleId, group);
     const entry = byProfile.get(finding.raisedBy) ?? { profileId: finding.raisedBy, raised: 0, important: 0, heldUp: 0, notABug: 0 };
     entry.raised += 1;
     if (raisedImportant(finding)) {
@@ -65,21 +142,14 @@ export function reviewStats(tasks: readonly Task[]): ReviewStats {
     if (finding.status === "dismissed") entry.notABug += 1;
     byProfile.set(finding.raisedBy, entry);
   }
-  const downgraded = (finding: Finding) => finding.verification?.verdict === "nit" || finding.verification?.verdict === "pre-existing";
   return {
     reviewed: outcomes.length,
     passed: { total: passed.length, first: inRound(1), second: inRound(2), third: inRound(3), later: passed.filter((outcome) => outcome.rounds > 3).length },
     ...(passed.length ? { meanRounds: passed.reduce((sum, outcome) => sum + outcome.rounds, 0) / passed.length } : {}),
     sentBack: tasks.reduce((sum, task) => sum + (task.sentBack ?? 0), 0),
-    findings: {
-      total: findings.length,
-      fixed: findings.filter((finding) => finding.status === "fixed").length,
-      notABug: findings.filter((finding) => finding.status === "dismissed").length,
-      unverified: findings.filter((finding) => finding.status === "unverified").length,
-      downgraded: findings.filter((finding) => finding.status === "open" && downgraded(finding)).length,
-      kept: findings.filter((finding) => finding.status === "open" && !downgraded(finding) && finding.answer?.fixed === false).length,
-      open: findings.filter((finding) => finding.status === "open" && !downgraded(finding) && finding.answer?.fixed !== false).length,
-    },
+    findings: findingStats(findings),
+    roles: [...byRole].map(([roleId, group]) => ({ roleId, important: group.filter(raisedImportant).length, findings: findingStats(group) })).sort((a, b) => b.findings.total - a.findings.total || a.roleId.localeCompare(b.roleId)),
     profiles: [...byProfile.values()].sort((a, b) => b.raised - a.raised || a.profileId.localeCompare(b.profileId)),
+    verifiers: verifierStats(findings),
   };
 }

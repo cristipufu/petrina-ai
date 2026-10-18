@@ -47,6 +47,8 @@ export function useGlobalKeys(keys: GlobalKeys): void {
       if (keys.palette || keys.modal) return;
       // Popovers handle their own keys. A task sheet is the one dialog with navigation keys.
       if (target.closest("[role=dialog]:not(.sheet), [role=menu], .popover, .menu") || document.querySelector(".popover, .menu")) return;
+      // Inline product editors discard their draft (or close removal confirmation) themselves.
+      if (event.key === "Escape" && target.closest(".product-editor")) return;
       if (event.key === "Escape") {
         event.preventDefault(); event.stopImmediatePropagation();
         if (isTyping(target)) target.blur();

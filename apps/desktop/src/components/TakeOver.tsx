@@ -5,7 +5,7 @@ import { mode, sim } from "../engine";
 import { duration, type Lookup } from "../lib";
 import { useFocusTrap } from "./bits";
 
-// Take over in your terminal, and hand back. Any surface can open the dialogs (the Session tab, a
+// Take over in your terminal, and hand back. Any surface can open the dialogs (the agent footer, a
 // card, the Agents page, Needs you); App shows them once, above everything.
 
 type Open = { kind: "take-over" | "hand-back"; taskId: Id } | undefined;
@@ -71,7 +71,7 @@ export function ReopenButton({ taskId, className, onResult }: { taskId: Id; clas
   );
 }
 
-/** The Session tab's take-over control: the button, or what you can do while you drive. */
+/** The agent footer's take-over control: the button, or what you can do while you drive. */
 export function TakeOverControls({ task, state, onToast }: { task: Task; state: State; onToast: (title: string, detail?: string) => void }) {
   if (task.driving) {
     return (

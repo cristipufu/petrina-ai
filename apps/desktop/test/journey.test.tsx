@@ -86,6 +86,84 @@ describe('the journey in the task sheet', () => {
     await act(async () => host.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${id}"]`)!.click());
   }
 
+  it.each(['builder', 'architect', 'code-reviewer', 'tester', 'verifier'])('keeps message and terminal controls in the active %s node across its tabs', async (roleId) => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'guest-checkout');
+    const role = state.roles.find((entry) => entry.id === roleId)!;
+    task.state = 'running';
+    task.agent = { roleId, profileId: 'codex-high', since: NOW - 1000, step: 0 };
+    task.holdsSlot = true;
+    delete task.helpers;
+    delete task.conversation;
+    state.inbox = state.inbox.filter((item) => item.taskId !== task.id);
+    const prior = { ...task.journey![0]!, id: 'earlier', roleId: 'researcher', endedAt: NOW - 1000 };
+    task.journey = [prior, { ...prior, id: 'active', roleId, profileId: 'codex-high', startedAt: NOW - 1000, endedAt: undefined, outcome: undefined, reason: undefined }];
+    await mount(state);
+    await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>('.journey-list [aria-current="step"]')!.click());
+    const footer = host.querySelector('.task-agent-footer')!;
+    expect(footer.textContent).toContain(`Message the ${role.name.toLowerCase()}`);
+    expect(footer.textContent).toContain('Take over in terminal');
+    for (const tab of ['timeline', 'conversation', 'overview']) {
+      await act(async () => host.querySelector<HTMLButtonElement>(`[data-journey-tab="${tab}"]`)!.click());
+      expect(host.querySelector('.task-agent-footer')).toBe(footer);
+    }
+    const field = footer.querySelector<HTMLTextAreaElement>('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, 'Keep this guidance');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => footer.querySelector<HTMLButtonElement>('.composer-toggle')!.click());
+    expect(footer.querySelector('textarea')).toBeNull();
+    expect(footer.textContent).toContain('Draft');
+    expect(footer.textContent).toContain('Take over in terminal');
+    await act(async () => footer.querySelector<HTMLButtonElement>('.composer-toggle')!.click());
+    expect(footer.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('Keep this guidance');
+    await act(async () => host.querySelector<HTMLElement>('.journey-list li')!.click());
+    expect(host.querySelector('.task-agent-footer')).toBeNull();
+  });
+
+  it('shows review findings, design objections and the architect’s answers in their own nodes', async () => {
+    const state = createDemoState(NOW);
+    await mount(state);
+    await openTask('guest-checkout');
+    const select = async (role: string, round: number) => {
+      const task = taskOf(simulator.getState(), 'guest-checkout');
+      const index = task.journey!.findIndex((step) => step.roleId === role && step.round === round);
+      await act(async () => [...host.querySelectorAll<HTMLElement>('.journey-list li')][index]!.click());
+    };
+    await select('design-reviewer', 1);
+    expect(host.querySelector('.journey-details .issues')?.textContent).toContain('The brief does not say');
+    expect(host.querySelector('.journey-details .issues')?.textContent).toContain('Blocking');
+    await select('architect', 2);
+    expect(host.querySelector('.journey-details .issues')?.textContent).toContain('Changed the design to cover it.');
+    await act(async () => host.querySelector<HTMLButtonElement>('.step-panel-bar button')!.click());
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>('.task-list-item')].find((item) => item.textContent?.includes('Refresh the pricing page'))!.click());
+    const task = taskOf(simulator.getState(), 'pricing-refresh');
+    const index = task.journey!.findIndex((step) => step.roleId === 'code-reviewer' && step.round === 1);
+    await act(async () => [...host.querySelectorAll<HTMLElement>('.journey-list li')][index]!.click());
+    expect(host.querySelector('.journey-details .issues')?.textContent).toContain('plus sign');
+    expect(host.querySelector('.journey-details .issues')?.textContent).toContain('Important');
+  });
+
+  it('collapses Session actions by default while leaving public messages visible', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'guest-checkout');
+    task.session = [
+      { id: 'message', from: 'agent', text: 'I found the case that needs a fix.', roleId: 'builder', at: NOW - 10 },
+      ...['Reading the code', 'Checking the result'].map((text, index) => ({ id: `action-${index}`, from: 'activity' as const, text, roleId: 'builder', at: NOW - 9 + index })),
+    ];
+    await mount(state);
+    await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>('#tab-session')!.click());
+    const actions = host.querySelector<HTMLDetailsElement>('.session-activity')!;
+    expect(actions.open).toBe(false);
+    expect(actions.querySelector('summary')!.textContent).toBe('2 agent actions');
+    expect(host.querySelector('.chat .bubble')?.textContent).toBe('I found the case that needs a fix.');
+    expect(host.querySelector('.session-head')?.textContent).not.toContain('Take over');
+    expect(host.querySelector('.task-agent-footer')?.textContent).toContain('Take over in terminal');
+  });
+
   it('opens first in the Overview, and keeps the timeline and conversation in their own tabs', async () => {
     await mount(createDemoState(NOW));
     await openTask('pricing-refresh');
@@ -103,7 +181,7 @@ describe('the journey in the task sheet', () => {
 
     // The selected run's conversation is read inline, without changing the task tab.
     await act(async () => details.querySelector<HTMLButtonElement>('[data-journey-tab="conversation"]')!.click());
-    expect(details.querySelector('.step-conversation')?.textContent).toContain('Conversation');
+    expect(details.querySelector('.step-conversation')?.getAttribute('aria-label')).toBe("This step's conversation");
     expect(host.querySelector('.step-panel-bar')?.textContent).toContain('Step details');
     expect([...details.querySelectorAll('button')].some((button) => button.textContent?.includes('Read this step'))).toBe(false);
   });

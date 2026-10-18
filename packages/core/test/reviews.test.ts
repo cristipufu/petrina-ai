@@ -42,4 +42,40 @@ describe("how reviews are going", () => {
     expect(stats.meanRounds).toBeUndefined();
     expect(stats.profiles).toEqual([]);
   });
+  it("keeps security findings separate from code findings on the same profile, including older and custom roles", () => {
+    const stats = reviewStats([
+      reviewed("a", 1, [
+        finding("code", "sol-xhigh", { status: "fixed" }),
+        finding("security", "sol-xhigh", { roleId: "security-reviewer", status: "unverified" }),
+        finding("custom", "sol-xhigh", { roleId: "access-reviewer", status: "dismissed" }),
+        finding("checks", "petrina"),
+      ]),
+      reviewed("cancelled", 1, [finding("ignored", "sol-xhigh", { roleId: "security-reviewer" })], { state: "cancelled" }),
+    ]);
+    expect(stats.roles.map((entry) => [entry.roleId, entry.findings.total, entry.important])).toEqual([["access-reviewer", 1, 1], ["code-reviewer", 1, 1], ["security-reviewer", 1, 1]]);
+    expect(stats.roles.find((entry) => entry.roleId === "security-reviewer")!.findings.unverified).toBe(1);
+    expect(stats.roles.reduce((sum, entry) => sum + entry.findings.total, 0)).toBe(stats.findings.total);
+    expect(stats.profiles).toHaveLength(1);
+    expect(stats.profiles[0]!.raised).toBe(3);
+  });
+  it("measures verifier decisions across reopened findings, counting only the last vote per actual tool in each check", () => {
+    const final = (verdict: "real" | "not-a-bug" | "nit" | "pre-existing") => ({ by: "codex", verdict, reason: "Checked", at: 1 });
+    const stats = reviewStats([
+      reviewed("checks", 2, [
+        finding("reopened", "reviewer", {
+          severity: "suggestion", verification: final("nit"),
+          earlierReviews: [{ at: 1, confirmedBy: [], verification: final("real"), votes: [{ by: "codex", toolId: "codex", verdict: "real", reason: "Before fix" }, { by: "grok", toolId: "grok", verdict: "not-a-bug", reason: "Disagreed" }, { by: "old-unknown", verdict: "real", reason: "No recorded tool" }] }],
+          votes: [{ by: "codex", toolId: "codex", verdict: "real", reason: "First answer" }, { by: "codex", toolId: "codex", verdict: "nit", reason: "Corrected" }, { by: "grok", toolId: "grok", verdict: "real", reason: "Disagreed again" }],
+        }),
+        finding("older", "reviewer", { roleId: "security-reviewer", severity: "pre-existing", verification: final("pre-existing"), votes: [{ by: "codex-other", toolId: "codex", verdict: "pre-existing", reason: "Older" }] }),
+        finding("unfinished", "reviewer", { votes: [{ by: "grok", toolId: "grok", verdict: "not-a-bug", reason: "Peer still working" }] }),
+      ]),
+      reviewed("cancelled", 1, [finding("ignored", "reviewer", { verification: final("real") })], { state: "cancelled" }),
+    ]).verifiers;
+    expect(stats).toMatchObject({ completed: 3, real: 1, notABug: 0, nit: 1, preExisting: 1, unfinished: 1, unattributedVotes: 1 });
+    expect(stats.profiles.find((entry) => entry.profileId === "codex")).toEqual({ profileId: "codex", toolId: "codex", votes: 2, real: 1, nit: 1, notABug: 0, preExisting: 0, matched: 2, decided: 2 });
+    expect(stats.profiles.find((entry) => entry.profileId === "grok")).toMatchObject({ votes: 3, matched: 0, decided: 2, notABug: 2, real: 1 });
+    expect(stats.profiles.some((entry) => entry.profileId === "old-unknown")).toBe(false);
+    expect(stats.roles.find((entry) => entry.roleId === "security-reviewer")).toMatchObject({ completed: 1, preExisting: 1 });
+  });
 });

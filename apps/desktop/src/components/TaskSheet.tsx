@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, ArrowUpToLine, Ban, Check, CheckCircle2, ChevronRight, Clock3, Ellipsis, ExternalLink, GitPullRequest, Hand, ListOrdered, LoaderCircle, MessageSquare, Monitor, Pause, Play, TriangleAlert, X } from "lucide-react";
-import { mainLine, sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
+import { mainLine, openStep, sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { duration, safeUrl, STATE_LABEL, stateLabel, type Lookup } from "../lib";
 import { ProductName, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
 import { Journey } from "./Journey";
 import { Ask } from "./Inbox";
 import { Session } from "./Session";
+import { TakeOverControls } from "./TakeOver";
 import type { SheetTab } from "./TaskCard";
 import { Overview } from "./sheet/Overview";
 import { PlanView } from "./sheet/PlanTab";
@@ -21,6 +22,8 @@ interface SheetProps {
   find: Lookup;
   tab: SheetTab;
   onTab: (tab: SheetTab) => void;
+  selectedStep?: string;
+  onStep: (id: string | undefined) => void;
   onClose: () => void;
   onToast: (title: string, detail?: string) => void;
   /** A notification's item that opens once the sheet closes, because something typed in it is not sent yet. */
@@ -54,12 +57,10 @@ function TaskActivity({ task }: { task: Task }) {
   return <span className={`task-list-activity ${task.state}`}><Icon size={13} aria-hidden="true" /><span>{label}</span></span>;
 }
 
-export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, waiting }: SheetProps) {
-  const [pane, setPane] = useState(tab === "overview" ? "flow" : "details");
+export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, onStep, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, waiting }: SheetProps) {
+  const [pane, setPane] = useState(selectedStep || tab !== "overview" ? "details" : "flow");
   const [menu, setMenu] = useState(false);
   const [detailsTarget, setDetailsTarget] = useState<HTMLDivElement | null>(null);
-  const [selectedStep, setSelectedStep] = useState<string>();
-  const [selectionReset, setSelectionReset] = useState(0);
   // "Read this step in the Session": the Session opens at the step's first line, with its lines marked.
   const [sessionStep, setSessionStep] = useState<{ id: string; name: string }>();
   const sheet = useRef<HTMLElement>(null);
@@ -83,21 +84,22 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
   const driving = task.driving !== undefined;
   const label = driving ? "You're driving" : stateLabel(task, state);
 
-  useEffect(() => { globalScroll.current = 0; scroller.current?.scrollTo({ top: 0 }); setSessionStep(undefined); setSelectedStep(undefined); }, [task.id]);
+  useEffect(() => { globalScroll.current = 0; scroller.current?.scrollTo({ top: 0 }); setSessionStep(undefined); }, [task.id]);
   useLayoutEffect(() => { scroller.current?.scrollTo({ top: selectedStep ? 0 : globalScroll.current }); }, [selectedStep]);
   useEffect(() => {
-    setSelectedStep(undefined);
-    setSelectionReset((value) => value + 1);
     if (tab !== "session") { scroller.current?.scrollTo({ top: 0 }); setSessionStep(undefined); }
     if (tab !== "overview") setPane("details");
   }, [tab]);
+  useEffect(() => { if (selectedStep) setPane("details"); }, [selectedStep, task.id]);
   useEffect(() => {
     sheet.current?.querySelector<HTMLElement>('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
   }, [task.id]);
-  const taskDetails = () => { setSelectedStep(undefined); setSelectionReset((value) => value + 1); };
-  const readSession = (id: string, name: string) => { taskDetails(); setSessionStep({ id, name }); onTab("session"); setPane("details"); };
+  const taskDetails = () => onStep(undefined);
+  const readSession = (id: string, name: string) => { setSessionStep({ id, name }); onTab("session"); setPane("details"); };
   const listed = tasks.some((entry) => entry.id === task.id) ? tasks : [task, ...tasks];
   const asks = state.inbox.filter((item) => item.taskId === task.id);
+  const activeStep = openStep(task);
+  const showAgentControls = selectedStep ? activeStep?.id === selectedStep && activeStep.kind === "agent" : tab === "session";
 
   const counts: Partial<Record<SheetTab, number>> = {
     review: task.findings.filter((finding) => finding.status === "open").length,
@@ -137,7 +139,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
                 <ExternalLink size={14} aria-hidden="true" />
               </a>
             )}
-            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={() => { taskDetails(); onMessage(); }}>
+            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={onMessage}>
               <MessageSquare size={16} aria-hidden="true" />
               {!compact && "Message"}
             </button>
@@ -213,9 +215,9 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
               ))}
             </div>
           </aside>
-          <Journey key={task.id} task={task} state={state} find={find} onReadSession={readSession} onPlan={() => { taskDetails(); onTab("plan"); }} workspace detailsTarget={detailsTarget} selectionReset={selectionReset} onSelectionChange={(id) => {
+          <Journey key={task.id} task={task} state={state} find={find} onReadSession={readSession} onPlan={() => { onTab("plan"); }} workspace detailsTarget={detailsTarget} selectedStep={selectedStep} onSelectionChange={(id) => {
             if (id && !selectedStep) globalScroll.current = scroller.current?.scrollTop ?? 0;
-            setSelectedStep(id);
+            onStep(id);
             if (id) setPane("details");
             scroller.current?.scrollTo({ top: id ? 0 : globalScroll.current });
           }} />
@@ -257,11 +259,14 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
             {tab === "review" && <ReviewView task={task} find={find} />}
-            {tab === "session" && <Session.Log key={sessionStep?.id ?? "latest"} active={!selectedStep} task={task} state={state} find={find} scroller={scroller} onToast={onToast} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
+            {tab === "session" && <Session.Log key={sessionStep?.id ?? "latest"} active={!selectedStep} task={task} state={state} find={find} scroller={scroller} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
           </div>
           </div></div>
 
-        <div hidden={!!selectedStep}>{tab === "session" && <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} onFocused={onMessageFocused} />}</div>
+          {showAgentControls && <footer className="task-agent-footer" aria-label="Agent controls">
+            <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} onFocused={onMessageFocused} />
+            <div className="task-terminal-actions"><TakeOverControls task={task} state={state} onToast={onToast} /></div>
+          </footer>}
           </aside>
         </div>
       </section>

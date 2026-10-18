@@ -1,12 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { ArrowRight, Send, ShieldCheck, ShieldOff, User } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { ArrowRight, ChevronDown, Send, ShieldCheck, ShieldOff, User } from "lucide-react";
 import type { ActiveAgent, Id, MessageMode, SessionLine, State, Task } from "@petrina/core";
 import { sim, useEngineStatus, useUnsent } from "../engine";
 import { ago, profileText, type Lookup } from "../lib";
 import { RoleAvatar } from "./bits";
 import { UnsentMessage } from "./EngineState";
 import { Ask } from "./Inbox";
-import { TakeOverControls } from "./TakeOver";
 import type { SheetTab } from "./TaskCard";
 
 interface LogProps {
@@ -15,7 +14,6 @@ interface LogProps {
   find: Lookup;
   /** The sheet's scrolling area, which the conversation scrolls in. */
   scroller: RefObject<HTMLDivElement | null>;
-  onToast: (title: string, detail?: string) => void;
   onTab: (tab: SheetTab) => void;
   active?: boolean;
   /** A journey step to read: the conversation opens at its first line, with its lines marked. */
@@ -40,9 +38,22 @@ function when(at: number, now: number): string {
 }
 
 /** Only this run's saved conversation, read in place without changing the task's Session tab. */
-export function StepConversation({ lines, find, now }: { lines: readonly SessionLine[]; find: Lookup; now: number }) {
-  return <section className="step-conversation" aria-label="This step's conversation">
-    <h4>Conversation</h4>
+export function StepConversation({ lines, find, now, live = false }: { lines: readonly SessionLine[]; find: Lookup; now: number; live?: boolean }) {
+  const section = useRef<HTMLElement>(null);
+  const pinned = useRef(true);
+  const textSize = lines.reduce((size, line) => size + line.text.length, 0);
+  useLayoutEffect(() => {
+    const scroller = section.current?.closest<HTMLElement>(".sheet-scroll");
+    if (!scroller) return;
+    const onScroll = () => { pinned.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 64; };
+    scroller.addEventListener("scroll", onScroll);
+    return () => scroller.removeEventListener("scroll", onScroll);
+  }, []);
+  useLayoutEffect(() => {
+    const scroller = section.current?.closest<HTMLElement>(".sheet-scroll");
+    if (live && pinned.current && scroller) scroller.scrollTop = scroller.scrollHeight;
+  }, [live, lines.length, textSize]);
+  return <section ref={section} className="step-conversation" aria-label="This step's conversation">
     <div className="chat">
       {groupLines(lines).map((group) => Array.isArray(group) ? (
         <details key={group[0]!.id} className="step-activity"><summary>{group.length} agent action{group.length === 1 ? "" : "s"}</summary><ul className="activity">{group.map((line) => <li key={line.id}><ArrowRight size={12} aria-hidden="true" />{line.text}</li>)}</ul></details>
@@ -77,17 +88,19 @@ function Sandbox({ sandbox, toolId }: { sandbox: NonNullable<ActiveAgent["sandbo
 }
 
 /** Join the agent working on a task: its live conversation, with anything it waits on below. */
-function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, active = true }: LogProps) {
+function Log({ task, state, find, scroller, onTab, step, onStepDone, active = true }: LogProps) {
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
   const live = task.state === "running";
-  // "You're driving" has its own controls in the header.
+  // "You're driving" has its own controls in the footer.
   const asks = state.inbox.filter((item) => item.taskId === task.id && item.kind !== "driving");
   // Answers to something still waiting show with it below; the rest show here, in the conversation.
   const unsent = useUnsent().filter((entry) => entry.taskId === task.id && !(entry.itemId && asks.some((item) => item.id === entry.itemId)));
   const connected = useEngineStatus().link === "live";
   // A refusal adds its reason and actions under the message.
   const refused = unsent.filter((entry) => entry.refused).length;
+  // Streaming can grow an earlier bubble while another agent's activity is the last line.
+  const textSize = task.session.reduce((size, line) => size + line.text.length, 0);
   const pinned = useRef(true);
   const marked = step && task.session.some((line) => line.step === step.id) ? step : undefined;
   const firstMarked = marked ? task.session.find((line) => line.step === marked.id)?.id : undefined;
@@ -126,7 +139,7 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
       task.queued.length > sent.current.queued || unsent.length > sent.current.unsent || (task.session.length > sent.current.lines && task.session.at(-1)?.from === "you");
     sent.current = { queued: task.queued.length, lines: task.session.length, unsent: unsent.length };
     if (active && el && (pinned.current || yours)) el.scrollTop = el.scrollHeight;
-  }, [scroller, active, task.session.length, task.queued.length, unsent.length, refused, asks.length]);
+  }, [scroller, active, task.session.length, textSize, task.queued.length, unsent.length, refused, asks.length]);
 
   const inStep = (line: SessionLine) => (marked && line.step === marked.id ? "in-step" : "");
   const stepStart = (line: SessionLine) => (line.id === firstMarked && marked ? <span className="sr-only">From {marked.name}: </span> : null);
@@ -171,7 +184,6 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
         ) : (
           <span>No agent is working on this right now. Messages wait until one starts.</span>
         )}
-        <TakeOverControls task={task} state={state} onToast={onToast} />
       </div>
 
       {marked && (
@@ -189,7 +201,9 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
         {groupLines(task.session).map((group) => {
           if (Array.isArray(group))
             return (
-              <ul key={group[0]!.id} className={`activity ${group.some((line) => inStep(line)) ? "in-step" : ""}`} aria-label="What the agent did">
+              <details key={group[0]!.id} className={`step-activity session-activity ${group.some((line) => inStep(line)) ? "in-step" : ""}`}>
+                <summary>{group.length} agent action{group.length === 1 ? "" : "s"}</summary>
+              <ul className="activity" aria-label="What the agent did">
                 {group.map((line) => (
                   <li key={line.id} data-line={line.id} className={inStep(line)}>
                     <ArrowRight size={12} aria-hidden="true" />
@@ -198,6 +212,7 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
                   </li>
                 ))}
               </ul>
+              </details>
             );
           if (group.from === "system")
             return (
@@ -253,13 +268,19 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
 
 /** Messages queue until the agent finishes its step, or interrupt it. */
 function Composer({ task, find, text, onText, focusRequest, onFocused }: { task: Task; find: Lookup; text: string; onText: (text: string) => void; focusRequest: boolean; onFocused: () => void }) {
+  const id = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const [expanded, setExpanded] = useState(true);
   useEffect(() => {
-    if (focusRequest) { textarea.current?.focus(); onFocused(); }
-  }, [focusRequest, onFocused]);
+    if (focusRequest) setExpanded(true);
+  }, [focusRequest]);
+  useEffect(() => {
+    if (focusRequest && expanded) { textarea.current?.focus(); onFocused(); }
+  }, [focusRequest, expanded, onFocused]);
   const [mode, setMode] = useState<MessageMode>("queue");
-  const role = find.role(task.agent?.roleId);
+  const role = find.role(task.agent?.roleId ?? task.driving?.roleId ?? task.conversation?.roleId);
   const live = task.state === "running";
+  const recipient = (task.helpers?.length ?? 0) > 1 ? "all agents in this step" : `the ${role?.name.toLowerCase() ?? "agent"}`;
 
   const send = () => {
     if (!text.trim()) return;
@@ -269,37 +290,45 @@ function Composer({ task, find, text, onText, focusRequest, onFocused }: { task:
 
   return (
     <div className="composer">
-      <div className="composer-row">
+      <button type="button" className="composer-toggle" id={`${id}-title`} aria-expanded={expanded} aria-controls={`${id}-body`} onClick={() => setExpanded((value) => !value)}>
+        <span>{live || task.driving || task.conversation ? `Message ${recipient}` : "Message the next agent"}</span>
+        {!expanded && text.trim() && <span className="composer-draft">Draft</span>}
+        <ChevronDown size={16} aria-hidden="true" />
+      </button>
+      {expanded && <form className="composer-body" id={`${id}-body`} onSubmit={(event) => { event.preventDefault(); send(); }}>
         <textarea
+          id={id}
           ref={textarea}
-          rows={1}
-          aria-label="Message"
-          placeholder={live || task.driving ? `Message the ${role?.name.toLowerCase() ?? "agent"}…` : "Message the next agent on this task…"}
+          rows={2}
+          aria-labelledby={`${id}-title`}
+          aria-describedby={`${id}-hint`}
+          placeholder="Add guidance or ask a question…"
           value={text}
           onChange={(event) => onText(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               send();
             }
           }}
         />
+      <div className="composer-actions">
         {live && (
           <div className="segmented" role="radiogroup" aria-label="When to deliver">
-            <button role="radio" aria-checked={mode === "queue"} className={mode === "queue" ? "on" : ""} onClick={() => setMode("queue")} title="Deliver after the current step">
+            <button type="button" role="radio" aria-checked={mode === "queue"} className={mode === "queue" ? "on" : ""} onClick={() => setMode("queue")} title="Deliver after the current step">
               Queue
             </button>
-            <button role="radio" aria-checked={mode === "interrupt"} className={mode === "interrupt" ? "on" : ""} onClick={() => setMode("interrupt")} title="Stop the current step and deliver now">
+            <button type="button" role="radio" aria-checked={mode === "interrupt"} className={mode === "interrupt" ? "on" : ""} onClick={() => setMode("interrupt")} title="Stop the current step and deliver now">
               Interrupt
             </button>
           </div>
         )}
-        <button className="btn lead" onClick={send} disabled={!text.trim()}>
+        <button type="submit" className="btn lead" disabled={!text.trim()}>
           <Send size={16} aria-hidden="true" />
           Send
         </button>
       </div>
-      <div className="hint">
+      <p className="hint" id={`${id}-hint`}>
         {live
           ? mode === "queue"
             ? "Delivered when the agent finishes its current step. Enter sends, Shift+Enter starts a new line."
@@ -307,7 +336,8 @@ function Composer({ task, find, text, onText, focusRequest, onFocused }: { task:
           : task.driving
             ? "You're driving in your terminal. Delivered when you hand back."
             : "Delivered as soon as an agent starts on this task."}
-      </div>
+      </p>
+      </form>}
     </div>
   );
 }

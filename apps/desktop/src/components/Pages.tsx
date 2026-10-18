@@ -4,8 +4,6 @@ import { mode, sim } from "../engine";
 import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
 import { ProductName, RoleAvatar } from "./bits";
 import { LimitStepper } from "./Pool";
-import { UsageList } from "./Usage";
-import { ReviewsPanel } from "./Reviews";
 import { drivingText, openHandBack } from "./TakeOver";
 import { CheckAgain, shownChecks, ToolList, useCheckOnReturn } from "./Tools";
 import { RolesSection, type RolePanelTarget } from "./Roles";
@@ -85,12 +83,7 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
           </div>
         ))}
       </div>
-
-      <h2 className="section-title">Usage</h2>
-      <UsageList state={state} />
-
-      <h2 className="section-title">How reviews are going</h2>
-      <ReviewsPanel state={state} find={find} />
+      <AgentTools state={state} />
     </div>
   );
 }
@@ -126,8 +119,6 @@ const TOOL_STATUS = { ready: "Ready", "logged-out": "Needs you to log in", "not-
 
 /** The squad's roles, the tools found on this machine, and the profiles built from them. */
 export function LibraryPage({ state, find, onRole }: { state: State; find: Lookup; onRole: (target: RolePanelTarget) => void }) {
-  // Back from running a fix in Terminal: the tools are checked again by themselves.
-  useCheckOnReturn(mode === "engine");
   const usage = (profileId: string) =>
     state.tasks.reduce(
       (count, task) =>
@@ -146,6 +137,25 @@ export function LibraryPage({ state, find, onRole }: { state: State; find: Looku
 
       <RolesSection state={state} onOpen={onRole} />
 
+      <h2 className="section-title">Profiles</h2>
+      <div className="grid">
+        {state.profiles.map((profile) => (
+          <div key={profile.id} className="tile" style={{ minHeight: 0 }}>
+            <strong style={{ fontWeight: 600 }}>{profileText(profile, find)}</strong>
+            <div style={{ color: "var(--text-2)" }}>
+              {find.tool(profile.toolId)?.name} running {profile.model} at {profile.effort === "xhigh" ? "extra high" : profile.effort} effort. Used in <span className="num">{usage(profile.id)}</span> stages right now.
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Installed tools and the terminal used to join them belong with the live agents. */
+function AgentTools({ state }: { state: State }) {
+  useCheckOnReturn(mode === "engine");
+  return <>
       <h2 className="section-title">Tools on this machine</h2>
       {state.setup ? (
         <div className="library-tools">
@@ -173,17 +183,5 @@ export function LibraryPage({ state, find, onRole }: { state: State; find: Looku
 
       {state.terminals && <TerminalPicker state={state} />}
 
-      <h2 className="section-title">Profiles</h2>
-      <div className="grid">
-        {state.profiles.map((profile) => (
-          <div key={profile.id} className="tile" style={{ minHeight: 0 }}>
-            <strong style={{ fontWeight: 600 }}>{profileText(profile, find)}</strong>
-            <div style={{ color: "var(--text-2)" }}>
-              {find.tool(profile.toolId)?.name} running {profile.model} at {profile.effort === "xhigh" ? "extra high" : profile.effort} effort. Used in <span className="num">{usage(profile.id)}</span> stages right now.
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  </>;
 }

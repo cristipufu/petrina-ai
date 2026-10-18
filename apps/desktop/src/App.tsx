@@ -76,7 +76,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const { view, product, sheet, productSettings } = route;
   const setSheet = useCallback((next: typeof sheet) => navigate((previous) => ({ ...previous, sheet: next })), [navigate]);
   const [rolePanel, setRolePanel] = useState<RolePanelTarget>();
-  const setProductSettings = (next: string | undefined) => navigate((previous) => ({ ...previous, productSettings: next }));
+  const setProductSettings = (next: string | undefined) => navigate((previous) => ({ ...previous, view: "products", productSettings: next }));
   /** "About these numbers" opens with Analytics when a task sheet's link leads there. */
   const [aboutNumbers, setAboutNumbers] = useState(false);
   const [query, setQuery] = useState("");
@@ -209,9 +209,9 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     navigate((previous) => ({ ...previous, view: page, sheet: undefined, productSettings: undefined }));
     setMessageFocus(undefined); setOwner("board"); focusArea.current = page === "board" ? "board" : undefined;
   };
-  /** Settings, with one product's settings open when it comes from the Products page. */
+  /** App settings, or a product's editor on Products. */
   const openSettings = (productId?: string) => {
-    navigate((previous) => ({ ...previous, view: "settings", sheet: undefined, productSettings: productId }));
+    navigate((previous) => ({ ...previous, view: productId ? "products" : "settings", sheet: undefined, productSettings: productId }));
     setMessageFocus(undefined); setOwner("board");
   };
   const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, "board"); if (tab === "session") setMessageFocus(id); };
@@ -236,7 +236,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     setMessageFocus(undefined); setOwner("board");
   };
   const message = (task: Task) => {
-    if (sheet) setSheet({ ...sheet, tab: "session" });
+    if (sheet) setSheet({ ...sheet, tab: "session", stepId: undefined });
     else if (area === "inbox" && highlightedItem) openItem(highlightedItem.id, "session");
     else if (area === "board") openBoard(task.id, "session");
     else open(task.id, "session");
@@ -367,7 +367,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         {!missing && view === "products" && (
           <ProductsPage
             state={state}
-            onSettings={openSettings}
+            settings={productSettings}
+            onSettings={setProductSettings}
             {...(canAddProduct ? { onAdd: () => setAddingProduct(true) } : {})}
             onPick={pickProduct}
           />
@@ -375,7 +376,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         {!missing && view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {!missing && view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
         {!missing && view === "library" && <LibraryPage state={state} find={find} onRole={setRolePanel} />}
-        {!missing && view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} onShortcuts={() => setShortcuts(true)} theme={theme} onTheme={setTheme} />}
+        {!missing && view === "settings" && <SettingsPage onShortcuts={() => setShortcuts(true)} theme={theme} onTheme={setTheme} />}
       </main>
 
       {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay && !sheet} landing={landing} onOpen={open} onClose={() => closeInbox(false)} selectedId={area === "inbox" ? currentInboxId : undefined} onFocus={(id) => {
@@ -386,7 +387,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       }} onOpenItem={openItem} /> : <div />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} tasks={boardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
+        <TaskSheet task={sheetTask} tasks={boardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
       )}
 
       {!missing && rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}

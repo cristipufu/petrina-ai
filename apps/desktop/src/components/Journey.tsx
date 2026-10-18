@@ -9,6 +9,8 @@ import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../j
 import { RoleAvatar } from "./bits";
 import { TimelineList } from "./Timeline";
 import { StepConversation } from "./Session";
+import { FindingItem } from "./sheet/ReviewTab";
+import { ObjectionItem } from "./sheet/DesignTab";
 
 // ── Words ───────────────────────────────────────────────────────────────────────────────
 
@@ -509,6 +511,16 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
   const journeySteps = task.journey ?? [];
   const journeyIndex = journeySteps.findIndex((step) => step.id === node.id);
   const previousJourneyStep = journeyIndex > 0 ? journeySteps[journeyIndex - 1] : undefined;
+  const ownStep = journeySteps[journeyIndex];
+  const nextAgent = journeyIndex >= 0 ? journeySteps.slice(journeyIndex + 1).find((step) => step.kind === "agent") : undefined;
+  const checkingThisRound = nextAgent && ownStep && nextAgent.stageId === ownStep.stageId && nextAgent.round === ownStep.round && find.role(nextAgent.roleId)?.result === "votes";
+  const handedOn = nextAgent?.agentInputs?.flatMap((input) => input.sections.map((section) => section.body)).join("\n") ?? "";
+  const findings = node.result?.findings ?? (role?.result === "findings" && nextAgent
+    ? task.findings.filter((finding) => nextAgent.fixing && nextAgent.findingIds?.includes(finding.id) || checkingThisRound && handedOn.includes(`[${finding.id}]`)) : undefined);
+  const given = node.agentInputs?.flatMap((input) => input.sections.map((section) => section.body)).join("\n") ?? "";
+  const objections = node.result?.objections ?? (role?.result === "objections" && ownStep
+    ? task.objections.filter((objection) => objection.round === ownStep.round && (node.team ?? [node.profileId]).includes(objection.raisedBy))
+    : role?.result === "brief" ? task.objections.filter((objection) => objection.answer && given.includes(`[${objection.id}]`)) : undefined);
   const latestChecksStep = [...journeySteps].reverse().find((step) => step.kind === "petrina" && step.work === "checks");
   const checksBelongHere = latestChecksStep?.id === node.id || (node.kind === "you" && node.waitsFor === "delivery" && previousJourneyStep?.id === latestChecksStep?.id);
   const currentCheckRuns = checksBelongHere && task.checks?.at !== undefined && latestChecksStep?.startedAt !== undefined && task.checks.at >= latestChecksStep.startedAt ? task.checks.results : undefined;
@@ -697,6 +709,16 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
         </div>
       )}
 
+      {findings !== undefined && <div className="journey-context">
+        <h4>Findings from this step</h4>
+        {findings.length ? <><p className="note">{node.result?.findings ? "As recorded when this step handed back its result." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
+      </div>}
+
+      {objections !== undefined && <div className="journey-context">
+        <h4>{role?.result === "brief" ? "Answers to objections" : "Objections from this step"}</h4>
+        {objections.length ? <><p className="note">{node.result?.objections ? "As recorded when this step handed back its result." : "Latest recorded answers and status."}</p><ol className="issues">{objections.map((objection) => <ObjectionItem key={objection.id} objection={objection} find={find} />)}</ol></> : <p className="note">{node.result?.objections ? role?.result === "brief" ? "No objections needed an answer in this step." : "No objections were raised." : "This step's objection details were not recorded separately."}</p>}
+      </div>}
+
       {acceptanceChecks.length ? (
         <div className="journey-context">
           <h4>Acceptance checks</h4>
@@ -776,7 +798,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
       </div>}
 
       {activeTab === "conversation" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-conversation`} aria-labelledby={`journey-tab-${node.id}-conversation`}>
-        {lines.length > 0 ? <StepConversation lines={lines} find={find} now={now} /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
+        {lines.length > 0 ? <StepConversation lines={lines} find={find} now={now} live={node.state === "now" || node.state === "you"} /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
       </div>}
     </section>
   );
@@ -794,7 +816,7 @@ interface JourneyProps {
   workspace?: boolean;
   detailsTarget?: HTMLElement | null;
   onSelectionChange?: (id?: string) => void;
-  selectionReset?: number;
+  selectedStep?: string;
 }
 
 /** The task's journey as a live diagram, the same steps as a list, and the chosen step's details. */
@@ -806,7 +828,7 @@ export function Journey(props: JourneyProps) {
   );
 }
 
-function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarget, onSelectionChange, selectionReset }: JourneyProps) {
+function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarget, onSelectionChange, selectedStep }: JourneyProps) {
   const viewKey = journeyViewKey(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) });
   const view = useMemo(
     () => journeyView(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) }),
@@ -814,8 +836,8 @@ function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarg
     // rebuild the diagram when one of the small set of fields that affects it actually changes.
     [viewKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
-  const [selected, setSelected] = useState<string>();
-  useEffect(() => setSelected(undefined), [selectionReset]);
+  const [localSelection, setSelected] = useState<string>();
+  const selected = workspace ? selectedStep : localSelection;
   const [focused, setFocused] = useState<string>();
   const reduced = useReducedMotion();
   const [following, setFollowing] = useState(true);
@@ -879,6 +901,7 @@ function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarg
     return layoutJourney(view, space.width || 760, space.rem, start, measure);
   }, [shape, space.width, space.rem, fontEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   const target = targetOf(view);
+  useEffect(() => { if (selected && selected !== target) setFollowing(false); }, [selected, target]);
   // The live step handing off while someone reads it (its details open, or the keyboard on it): the diagram stays with it.
   const [lastTarget, setLastTarget] = useState(target);
   if (target !== lastTarget) {
@@ -935,7 +958,7 @@ function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarg
   // so a handoff never moves the diagram away. Back to now resumes.
   const select = (id?: string) => {
     const next = workspace && id === selected ? undefined : id;
-    setSelected(next);
+    if (!workspace) setSelected(next);
     onSelectionChange?.(next);
     if (next && next !== target) setFollowing(false);
   };
@@ -961,12 +984,12 @@ function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarg
       <div className="journey-canvas" ref={canvas}>
         <span className="journey-rem" ref={remProbe} aria-hidden="true" />
         <span className="journey-label-measure" ref={labelProbe} aria-hidden="true" />
-        <Diagram nodes={nodes} edges={edges} items={layout.items} contentHeight={layout.height} height={height} target={target} {...(focused ? { focused } : {})} glide={glide} minZoom={minZoom} following={following} setFollowing={setFollowing} onSelect={select} scrollable={workspace} />
+        <Diagram nodes={nodes} edges={edges} items={layout.items} contentHeight={layout.height} height={height} target={target} {...(focused || selected ? { focused: focused ?? selected } : {})} glide={glide} minZoom={minZoom} following={following} setFollowing={setFollowing} onSelect={select} scrollable={workspace} />
       </div>
       <p className="sr-only" aria-live="polite">
         {chosen ? `${chosen.name}: its details are ${workspace ? "in the right panel" : "below the diagram"}.` : ""}
       </p>
-      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} /> : null, detailsTarget) : chosen ? (
+      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null, detailsTarget) : chosen ? (
         <StepDetails node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} />
       ) : (
         <p className="note journey-hint">Click a step to see its details here.</p>

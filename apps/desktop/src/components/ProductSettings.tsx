@@ -2,85 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { DELIVERY_LABEL, productHistory, type DeliveryMode, type Product, type State } from "@petrina/core";
 import { sim, useEngineStatus } from "../engine";
 
-/**
- * The Products section of Settings: each product's name and delivery defaults, and its removal.
- * One product is open at a time; the Products page opens one here with its Settings button.
- */
-export function ProductSettings({ state, open, onOpen }: { state: State; open: string | undefined; onOpen: (productId: string | undefined) => void }) {
-  const list = useRef<HTMLDivElement>(null);
-  const heading = useRef<HTMLHeadingElement>(null);
-  const products = [...state.products].sort((a, b) => a.name.localeCompare(b.name));
-  const editButton = (productId: string) => list.current?.querySelector<HTMLElement>(`[data-product-edit="${CSS.escape(productId)}"]`);
-
-  // Opened from the Products page: that product comes into view.
-  useEffect(() => {
-    if (open) list.current?.querySelector(`[data-product-id="${CSS.escape(open)}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [open]);
-
-  const close = (productId: string) => {
-    onOpen(undefined);
-    editButton(productId)?.focus();
-  };
-
-  return (
-    <section className="settings-section" aria-labelledby="settings-products">
-      <h2 className="section-title" id="settings-products" ref={heading} tabIndex={-1}>
-        Products
-      </h2>
-      <p className="setting-hint section-hint">Each product's name and what happens when its work is ready. These are the defaults for new tasks; tasks already on the board keep their choices.</p>
-      {products.length === 0 ? (
-        <div className="empty-state">No products yet. Add one from the Products page.</div>
-      ) : (
-        <div className="setting-list" ref={list}>
-          {products.map((product) => {
-            const editing = open === product.id;
-            return (
-              <div key={product.id} className={`product-setting ${editing ? "open" : ""}`} data-product-id={product.id}>
-                <div className="product-setting-row">
-                  <span className={`product-cell tone-${product.tone}`}>
-                    <i aria-hidden="true" />
-                    <span style={{ minWidth: 0 }}>
-                      <span className="name">{product.name}</span>
-                      <span className="repo">{product.repo}</span>
-                    </span>
-                  </span>
-                  <span className="delivery-summary">
-                    {DELIVERY_LABEL[product.delivery ?? "pull-request"]} · {(product.approveDelivery ?? true) ? (product.shipLowRisk ? "asks first, except low risk" : "asks first") : "ships automatically"}
-                  </span>
-                  <button
-                    className="btn small"
-                    data-product-edit={product.id}
-                    aria-expanded={editing}
-                    aria-controls={`product-editor-${product.id}`}
-                    aria-label={`Edit ${product.name}`}
-                    onClick={() => onOpen(editing ? undefined : product.id)}
-                  >
-                    Edit
-                  </button>
-                </div>
-                {editing && (
-                  <ProductEditor
-                    key={product.id}
-                    product={product}
-                    state={state}
-                    onClose={() => close(product.id)}
-                    onRemoved={() => {
-                      onOpen(undefined);
-                      heading.current?.focus();
-                    }}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
 /** Only display names and defaults change here; the repository's identity never does. */
-function ProductEditor({ product, state, onClose, onRemoved }: { product: Product; state: State; onClose: () => void; onRemoved: () => void }) {
+export function ProductEditor({ product, state, onClose, onRemoved }: { product: Product; state: State; onClose: () => void; onRemoved: () => void }) {
   const [name, setName] = useState(product.name);
   const [delivery, setDelivery] = useState<DeliveryMode>(product.delivery ?? "pull-request");
   const [approveDelivery, setApproveDelivery] = useState(product.approveDelivery ?? true);
@@ -102,9 +25,14 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
     if (confirming) back.current?.focus();
   }, [confirming]);
 
+  useEffect(() => {
+    document.getElementById(`product-editor-${product.id}`)?.scrollIntoView({ block: "nearest" });
+  }, [product.id]);
+
   // Escape discards the edits, or steps back from removing.
   const onKey = (event: KeyboardEvent) => {
     if (event.key !== "Escape") return;
+    event.preventDefault();
     event.stopPropagation();
     if (confirming) cancelRemoval();
     else close();
@@ -153,7 +81,8 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
         </>
       ) : (
         <>
-          <label className="product-field">
+          <header className="product-editor-heading"><h3>{product.name} settings</h3><p className="setting-hint">Defaults for new tasks. Tasks already on the board keep their choices.</p></header>
+          <section className="product-editor-section" aria-label="Product name"><label className="product-field">
             Name
             <input
               autoFocus
@@ -164,8 +93,10 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
                 if (event.key === "Enter") void save();
               }}
             />
-          </label>
-          <div className="options">
+          </label></section>
+          <section className="product-editor-section" aria-labelledby={`product-delivery-title-${product.id}`}>
+          <h4 id={`product-delivery-title-${product.id}`}>Delivery defaults</h4>
+          <div className="product-delivery-options">
             <div className="opt">
               <span id={`product-delivery-${product.id}`}>When work is ready</span>
               <div className="segmented" role="radiogroup" aria-labelledby={`product-delivery-${product.id}`}>
@@ -187,8 +118,11 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
               </label>
             </div>
           </div>
+          </section>
           <ProductChecks product={product} live={live} />
-          <div className="product-removal">
+          <section className="product-editor-section product-removal" aria-labelledby={`product-removal-${product.id}`}>
+            <h4 id={`product-removal-${product.id}`}>Remove product</h4>
+            <p className="setting-hint">Remove this product and its task history from Petrina. Your repository and GitHub stay as they are.</p>
             <button
               className="btn danger"
               disabled={unfinished > 0 || !live || busy}
@@ -200,7 +134,7 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
               Remove product
             </button>
             {unfinished > 0 && <p className="setting-hint">{unfinished} task{unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.</p>}
-          </div>
+          </section>
         </>
       )}
       {!live && (
@@ -213,7 +147,7 @@ function ProductEditor({ product, state, onClose, onRemoved }: { product: Produc
           {error}
         </p>
       )}
-      <div className="foot">
+      <div className="foot product-editor-actions">
         <button ref={back} className="btn quiet" disabled={busy} onClick={confirming ? cancelRemoval : close}>
           Cancel
         </button>
@@ -269,9 +203,9 @@ function ProductChecks({ product, live }: { product: Product; live: boolean }) {
   };
   const source = product.checksBy === "coordinator" ? "Set by you." : product.checksBy === "finder" ? "Found by the Check finder from the repository, its CI first. It looks again when the CI or build files change." : "Not found yet: the Check finder works them out at this product's first review.";
   return (
-    <div className="product-checks">
-      <div className="product-checks-title">Checks Petrina runs</div>
-      <p className="setting-hint">Petrina runs these itself before every review and right before your delivery check, so a passing check is evidence, never an agent's word. {source}</p>
+    <section className="product-checks product-editor-section" aria-labelledby={`product-checks-${product.id}`}>
+      <h4 id={`product-checks-${product.id}`}>Automated checks</h4>
+      <p className="setting-hint">Run before review and the delivery check. {source}</p>
       {editing ? (
         <>
           <textarea className="field mono" rows={Math.max(3, text.split("\n").length + 1)} value={text} onChange={(event) => setText(event.target.value)} aria-label="Checks, one per line as Name: command" placeholder={"Tests: dotnet test\nBuild: dotnet build --nologo"} />
@@ -288,11 +222,12 @@ function ProductChecks({ product, live }: { product: Product; live: boolean }) {
       ) : (
         <>
           {checks.length > 0 && (
-            <ul className="check-list">
+            <ul className="product-check-list">
               {checks.map((check) => (
                 <li key={check.name}>
-                  <b>{check.name}</b> <span className="mono quiet-text">{check.argv.join(" ")}</span>
-                  {check.why && <span className="quiet-text"> · {check.why}</span>}
+                  <strong>{check.name}</strong>
+                  <span className="product-check-command mono">{check.argv.join(" ")}</span>
+                  {check.why && <span className="setting-hint">{check.why}</span>}
                 </li>
               ))}
             </ul>
@@ -314,6 +249,6 @@ function ProductChecks({ product, live }: { product: Product; live: boolean }) {
           {error}
         </p>
       )}
-    </div>
+    </section>
   );
 }

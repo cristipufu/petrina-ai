@@ -5,6 +5,7 @@ import { TOOL_COLORS, type Lookup } from "../lib";
 import { useUsage } from "../usage";
 import { BarsOverTime, LinesOverTime, ViewToggle, dayWords, whenWords, type BarPoint, type ChartSeries } from "./Charts";
 import { AboutNote, UsageList, ColumnChart, FigureText, SplitList, Stat, limitColor, modelColors, providerColor, toolColor } from "./Usage";
+import { ReviewsPanel } from "./Reviews";
 
 const PERIODS: readonly { id: UsagePeriod; label: string; words: string }[] = [
   { id: "today", label: "Today", words: "today" },
@@ -66,10 +67,14 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
         </div>
       </div>
 
-      <div className="section-title">Usage limits</div>
-      <p className="muted small">These account limits are shared across products and sessions, including work outside Petrina.</p>
+      <section className="analytics-section" aria-labelledby="analytics-limits">
+      <header className="analytics-section-heading">
+        <h2 id="analytics-limits">Usage limits</h2>
+        <p className="muted small">These account limits are shared across products and sessions, including work outside Petrina.</p>
+      </header>
       <UsageList state={state} expanded />
       {view && <LimitsOverTime view={view} words={words} table={choices.limitsTable} onTable={(limitsTable) => setChoices((all) => ({ ...all, limitsTable }))} />}
+      </section>
 
       {!view ? (
         <div className="empty-state">Adding up the work log…</div>
@@ -79,6 +84,13 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
           <Squad view={view} details={choices.squadDetails} onDetails={(squadDetails) => setChoices((all) => ({ ...all, squadDetails }))} />
         </>
       )}
+      <section className="analytics-section analytics-reviews" aria-labelledby="analytics-reviews">
+        <header className="analytics-section-heading">
+          <h2 id="analytics-reviews">How reviews are going</h2>
+          <p className="muted small">{scope} · all recorded reviews, across all dates.</p>
+        </header>
+        <ReviewsPanel tasks={productId ? state.tasks.filter((task) => task.productId === productId) : state.tasks} roles={state.roles} find={find} />
+      </section>
     </div>
   );
 }
@@ -190,14 +202,14 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
   const lineTool = (line: WorkUsageLine) => toolColor(line.toolId);
 
   return (
-    <>
-      <div className="section-title row between">
-        <span>Tokens and agent time</span>
+    <section className="analytics-section" aria-labelledby="analytics-tokens">
+      <header className="analytics-section-heading with-tools">
+        <h2 id="analytics-tokens">Tokens and agent time</h2>
         <button className="linkish about-link" onClick={onAbout} aria-expanded={showAbout}>
           <Info size={12} />
           About these numbers
         </button>
-      </div>
+      </header>
       {showAbout && (
         <div ref={noteRef}>
           <AboutNote about={view.about} period={period} />
@@ -275,11 +287,11 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
         />
       )}
       <div className={`splits ${details ? "stacked" : ""}`}>
+        <SplitList title="By role" lines={view.byRole} color={roleColor} details={details} />
         <SplitList title="By tool" lines={view.byTool} color={lineTool} details={details} />
         <SplitList title="By model" lines={view.byModel} color={lineTool} details={details} />
-        <SplitList title="By role" lines={view.byRole} color={roleColor} details={details} />
       </div>
-    </>
+    </section>
   );
 }
 
@@ -300,8 +312,8 @@ function Squad({ view, details, onDetails }: { view: AnalyticsUsage; details: bo
   }));
   const longest = Math.max(1, ...squad.stageKinds.map((kind) => kind.typicalMs));
   return (
-    <>
-      <div className="section-title">How the squad works</div>
+    <section className="analytics-section" aria-labelledby="analytics-squad">
+      <header className="analytics-section-heading"><h2 id="analytics-squad">How the squad works</h2></header>
       <div className="stats">
         <Stat label="Stages run" value={<span className="num">{squad.stagesRun}</span>} />
         <Stat label="Turns run" value={<span className="num">{squad.turnsRun}</span>} />
@@ -384,7 +396,7 @@ function Squad({ view, details, onDetails }: { view: AnalyticsUsage; details: bo
           </section>
         </div>
       )}
-    </>
+    </section>
   );
 }
 

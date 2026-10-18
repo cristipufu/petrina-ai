@@ -4,7 +4,7 @@ import type { SheetTab } from "./components/TaskCard";
 
 export const PAGE_NAMES: Record<Page, string> = { board: "Board", products: "Products", agents: "Agents", analytics: "Analytics", library: "Library", settings: "Settings" };
 const TABS: readonly SheetTab[] = ["overview", "plan", "design", "review", "session"];
-const OWN_PARAMS = ["product", "from"];
+const OWN_PARAMS = ["product", "from", "node"];
 
 /** Keep the browser's open-in-new-tab and copy-link behaviour. */
 export function followLink(event: MouseEvent<HTMLAnchorElement>, navigate: () => void): void {
@@ -13,7 +13,7 @@ export function followLink(event: MouseEvent<HTMLAnchorElement>, navigate: () =>
   navigate();
 }
 
-export type TaskRoute = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string };
+export type TaskRoute = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string; stepId?: string };
 export interface AppRoute {
   view: Page;
   product: string;
@@ -33,12 +33,15 @@ export function readRoute(address: URL): AppRoute {
   if (page === "tasks" && id && !extra && (!detail || TABS.includes(detail as SheetTab))) {
     const from = address.searchParams.get("from");
     const view = from && Object.hasOwn(PAGE_NAMES, from) ? from as Page : "board";
-    return { ...base, view, sheet: { taskId: id, tab: detail as SheetTab || "overview", list: view === "board" ? "board" : undefined } };
+    const stepId = address.searchParams.get("node");
+    return { ...base, view, sheet: { taskId: id, tab: detail as SheetTab || "overview", list: view === "board" ? "board" : undefined, ...(stepId ? { stepId } : {}) } };
   }
   if (page && Object.hasOwn(PAGE_NAMES, page)) {
     const route = { ...base, view: page as Page };
     if (parts.length === 1) return route;
-    if (page === "settings" && id === "products" && detail && !extra) return { ...route, productSettings: detail };
+    if (page === "products" && id && detail === "settings" && !extra) return { ...route, productSettings: id };
+    // Bookmarks from before product settings moved out of app settings still open their editor.
+    if (page === "settings" && id === "products" && detail && !extra) return { ...route, view: "products", productSettings: detail };
   }
   return { ...base, missing: address.pathname };
 }
@@ -52,7 +55,8 @@ export function routeHref(route: AppRoute, search = window.location.search): str
   if (route.sheet) {
     path = `/tasks/${encodeURIComponent(route.sheet.taskId)}${route.sheet.tab === "overview" ? "" : `/${route.sheet.tab}`}`;
     if (route.view !== "board") query.set("from", route.view);
-  } else if (route.view === "settings" && route.productSettings) path += `/products/${encodeURIComponent(route.productSettings)}`;
+    if (route.sheet.stepId) query.set("node", route.sheet.stepId);
+  } else if (route.view === "products" && route.productSettings) path += `/${encodeURIComponent(route.productSettings)}/settings`;
   const suffix = query.toString();
   return path + (suffix ? `?${suffix}` : "");
 }

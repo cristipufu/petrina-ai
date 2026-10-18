@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { DELIVERY_LABEL, type Column, type Product, type ProductsUsage, type State } from "@petrina/core";
 import { mod } from "../keyboard";
 import { useUsage } from "../usage";
 import { useDismiss, useFocusTrap } from "./bits";
 import { FigureText } from "./Usage";
+import { ProductEditor } from "./ProductSettings";
 
 /** Per-product numbers the switcher and the Products page both show. */
 export interface ProductStats {
@@ -173,10 +174,15 @@ const PIPE: readonly { column: Column; label: string }[] = [
 ];
 
 /** The portfolio: every product on one screen, what is in flight and what waits on you. */
-export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: State; onPick: (productId: string) => void; onAdd?: () => void; onSettings: (productId: string) => void }) {
+export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: { state: State; onPick: (productId: string) => void; onAdd?: () => void; settings: string | undefined; onSettings: (productId: string | undefined) => void }) {
   const stats = productStats(state).sort(
     (a, b) => b.needsYou - a.needsYou || Number(b.active) - Number(a.active) || b.working - a.working || a.product.name.localeCompare(b.product.name),
   );
+  const table = useRef<HTMLTableElement>(null);
+  const closeSettings = (productId: string) => {
+    onSettings(undefined);
+    table.current?.querySelector<HTMLButtonElement>(`[data-product-settings="${CSS.escape(productId)}"]`)?.focus();
+  };
   const active = stats.filter((entry) => entry.active).length;
   const waiting = stats.reduce((sum, entry) => sum + entry.needsYou, 0);
   const count = (value: number) => (value > 0 ? value : <span className="zero" aria-label="none">–</span>);
@@ -206,8 +212,8 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
           No products yet. Add a local clone of a GitHub repository to give the squad something to work on.
         </div>
       )}
-      <div className="portfolio-wrap">
-        <table className="portfolio">
+      <div className="portfolio-wrap products-table">
+        <table ref={table} tabIndex={-1} className="portfolio" aria-label="Products">
           <thead>
             <tr>
               <th scope="col">Product</th>
@@ -229,8 +235,7 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
           </thead>
           <tbody>
             {stats.map((entry) => (
-              <tr
-                key={entry.product.id}
+              <Fragment key={entry.product.id}><tr
                 className={entry.active ? "" : "quiet"}
                 onClick={(event) => {
                   if (!(event.target as HTMLElement).closest("button")) onPick(entry.product.id);
@@ -260,13 +265,14 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
                 <td>
                   <span className="delivery-summary">{DELIVERY_LABEL[entry.product.delivery ?? "pull-request"]} · {(entry.product.approveDelivery ?? true) ? "asks first" : "ships automatically"}</span>
                 </td>
-                <td><button className="btn small" aria-label={`Settings for ${entry.product.name}`} title="Opens in Settings" onClick={() => onSettings(entry.product.id)}>Settings</button></td>
+                <td><button className="btn small" data-product-settings={entry.product.id} aria-label={`Settings for ${entry.product.name}`} aria-expanded={settings === entry.product.id} aria-controls={`product-editor-${entry.product.id}`} onClick={() => onSettings(settings === entry.product.id ? undefined : entry.product.id)}>Settings</button></td>
               </tr>
+              {settings === entry.product.id && <tr className="product-settings-row"><td className="product-editor-cell" colSpan={PIPE.length + 6}><ProductEditor product={entry.product} state={state} onClose={() => closeSettings(entry.product.id)} onRemoved={() => { onSettings(undefined); table.current?.focus(); }} /></td></tr>}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
-
     </div>
   );
 }

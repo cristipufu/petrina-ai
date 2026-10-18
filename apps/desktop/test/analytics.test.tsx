@@ -158,6 +158,30 @@ describe('the Analytics charts', () => {
 
 // The review of "Show what each task costs" raised these on the Analytics page; they stay fixed.
 describe('the Analytics page after review', () => {
+  it('separates security findings into outcome columns and follows product scope', async () => {
+    await show();
+    const state = structuredClone(simulator.getState());
+    for (const task of state.tasks) task.findings = [];
+    const task = state.tasks.find((task) => task.productId === 'shop' && task.state !== 'cancelled')!;
+    task.findings = [
+      { id: 'code', text: 'Code issue', severity: 'blocking', raisedBy: state.profiles[0]!.id, confirmedBy: [], status: 'fixed' },
+      { id: 'security', text: 'Security issue', severity: 'blocking', roleId: 'security-reviewer', raisedBy: state.profiles[0]!.id, confirmedBy: [], status: 'dismissed', verification: { by: state.profiles[0]!.id, verdict: 'not-a-bug', reason: 'Verified', at: state.now }, votes: state.profiles.filter((profile) => profile.toolId === 'codex' || profile.toolId === 'claude-code').slice(0, 2).map((profile) => ({ by: profile.id, toolId: profile.toolId, verdict: 'not-a-bug', reason: 'Verified' })) },
+    ];
+    const render = async (product: string) => act(async () => root.render(<AnalyticsPage state={state} find={lookup(state)} product={product} about={false} onAboutSeen={() => {}} onOpen={() => {}} />));
+    await render('all');
+    const table = el('table[aria-label="Findings by review role"]');
+    expect([...table.querySelectorAll('thead th')].map((cell) => cell.textContent)).toEqual(['Review role', 'Findings', 'Important', 'Fixed', 'Not a bug', 'Could not verify', 'Downgraded', 'Kept', 'Still open']);
+    const security = [...table.querySelectorAll('tbody tr')].find((row) => row.textContent?.startsWith('Security reviewer'))!;
+    expect([...security.children].map((cell) => cell.textContent)).toEqual(['Security reviewer', '1', '1', '0', '1', '0', '0', '0', '0']);
+    expect([...table.querySelectorAll('tfoot tr > *')].map((cell) => cell.textContent)).toEqual(['All reviewers', '2', '2', '1', '1', '0', '0', '0', '0']);
+    expect(all('.splits > .split > h3').map((heading) => heading.textContent)).toEqual(['By role', 'By tool', 'By model']);
+    expect(el('[aria-labelledby="verifier-impact"] .review-impact').textContent).toContain('1 of 1 completed checks (100%)');
+    expect([...el('table[aria-label="Verifier outcomes"]').querySelectorAll('tfoot tr > *')].map((cell) => cell.textContent)).toEqual(['All checks', '1', '0', '1', '0', '0', '0']);
+    expect(el('table[aria-label="Votes by verifier"]').textContent).toContain('100%');
+    await render('notes');
+    expect([...el('table[aria-label="Findings by review role"]').querySelectorAll('tbody td')].every((cell) => cell.textContent === '0')).toBe(true);
+    expect(el('[aria-labelledby="analytics-reviews"]').textContent).toContain('Notes · all recorded reviews, across all dates');
+  });
   async function rerender(product: string) {
     const state = simulator.getState();
     await act(async () => root.render(<AnalyticsPage state={state} find={lookup(state)} product={product} about={false} onAboutSeen={() => {}} onOpen={() => {}} />));
@@ -183,12 +207,12 @@ describe('the Analytics page after review', () => {
 
   it('never shows a missing model figure as a dash: it reads "not reported", with details on too', async () => {
     await show();
-    expect(host.textContent).not.toMatch(/[—–]/);
+    expect(all('.stat, .split-row').map((entry) => entry.textContent).join('')).not.toMatch(/[—–]/);
     await click('label.toggle input');
     expect(el<HTMLInputElement>('label.toggle input').checked).toBe(true);
     const cells = all('.split-row:not(.head) [role="cell"]').map((cell) => cell.textContent ?? '');
     expect(cells.some((text) => text === 'not reported')).toBe(true);
-    expect(host.textContent).not.toMatch(/[—–]/);
+    expect(all('.stat, .split-row').map((entry) => entry.textContent).join('')).not.toMatch(/[—–]/);
   });
 
   it('never turns unknown profile time into "under a minute", and says "at least" when a lost turn is mixed in', async () => {

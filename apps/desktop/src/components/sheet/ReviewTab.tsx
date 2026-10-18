@@ -10,7 +10,7 @@ const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "Important"
 
 const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> = { real: "Checked: real", "not-a-bug": "Checked: not a bug", nit: "Checked: only a nit", "pre-existing": "Checked: older than this change" };
 
-function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
+export function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
   const votes = independentVotes(finding.votes);
   const beforeFix = !!finding.verification && !!finding.answer?.fixed && finding.verification.at < finding.answer.at;
   const followUp = finding.status === "open" && finding.severity === "pre-existing";
