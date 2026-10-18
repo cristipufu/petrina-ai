@@ -85,6 +85,7 @@ describe("the engine records each task's journey", () => {
     expect(view.nodes.every((node) => node.state === "done")).toBe(true);
     expect(view.nodes.map((node) => node.reason ?? "")).toEqual(["plan ready", "brief ready", "no blocking objections", "you approved", "ready for review", "checks found", "checks passed", "review passed", "you approved", ""]);
     expect(view.nodes.map((node) => node.outcome)).toEqual(["Plan with 4 stages", "Wrote the brief", "No objections", "Approved", "Change ready", "Found 1 check", "The check passes", "1 nit", "Approved", "Moved main forward"]);
+    expect(view.nodes[6]!.productChecks).toEqual([{ name: "Version", result: "pass" }]);
     expect(view.nodes.map((node) => node.team ? [...node.team].sort().join(" ") : node.profileId ?? "")).toEqual(["opus-high", "opus-xhigh", "sol-xhigh", "", "sol-xhigh", "opus-high", "", "opus-high sol-high", "", ""]);
     expect(new Set(view.nodes[7]!.team)).toEqual(new Set(["opus-high", "sol-high"]));
     expect(view.end).toEqual({ text: "Delivered locally to main", state: "done" });
@@ -102,8 +103,11 @@ describe("the engine records each task's journey", () => {
       const role = engine.getState().roles.find((role) => role.id === step.roleId)!.name;
       expect(task.timeline.some((entry) => entry.step === step.id && entry.text.startsWith(role) && entry.text.includes("started"))).toBe(true);
       expect(task.session.filter((line) => line.step === step.id).length).toBeGreaterThan(0);
+      expect(step.agentInputs?.length).toBeGreaterThan(0);
+      expect(step.agentInputs?.every((input) => input.sections.every((section) => section.title && section.body))).toBe(true);
     }
     const builder = task.journey!.find((step) => step.roleId === "builder")!;
+    expect(builder.agentInputs?.[0]).toMatchObject({ taskTitle: "Add a greeting", taskDescription: "A friendly greeting file.", stageTitle: "Build", roleId: "builder" });
     expect(task.timeline.find((entry) => entry.text.startsWith("You allowed"))?.step).toBe(builder.id);
     expect(journeyProblems(task)).toEqual([]);
     engine.shutdown();

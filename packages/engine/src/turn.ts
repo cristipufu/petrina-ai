@@ -106,6 +106,25 @@ export class Turns {
     );
   }
 
+  /** Save the role-specific context at the moment it is handed to an agent, not reconstructed later. */
+  private recordJourneyInput(task: MTask, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued"): void {
+    const step = openStep(task);
+    if (step?.kind !== "agent") return;
+    const input = {
+      roleId,
+      profileId,
+      taskTitle: task.title,
+      // Fresh prompts include the task request for every role. Continued prompts
+      // receive only their updated sections in the existing conversation.
+      ...(mode === "fresh" ? { taskDescription: task.description } : {}),
+      ...(task.plan?.stages[task.stageIndex]?.title ? { stageTitle: task.plan.stages[task.stageIndex]!.title } : {}),
+      sections: sections.map(({ title, body }) => ({ title, body })),
+      mode,
+    } as const;
+    step.agentInputs = [...(step.agentInputs ?? []).filter((entry) => entry.roleId !== roleId || entry.profileId !== profileId), input];
+    this.k.commitNow();
+  }
+
   /** One attempt at the step by one agent on one profile. */
   private async attempt<T>(task: MTask, roleId: Id, plannedId: Id, profile: AgentProfile, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T>): Promise<T> {
     let role = this.k.role(roleId);
@@ -264,7 +283,9 @@ export class Turns {
       let opening: string;
       if (wentBack) {
         // Its job as it stands now and the context, from the same sections a fresh conversation gets.
-        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", access, sections: await given() });
+        const sections = await given();
+        this.recordJourneyInput(task, roleId, profileId, sections, "continued");
+        opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", access, sections });
       } else if (picked) {
         // One line about the restart (or the hand back), then only what the conversation has not heard: the answer to its open question, and messages still in line.
         const answer = asked?.answer !== undefined ? { question: asked.question, text: asked.answer } : undefined;
@@ -290,6 +311,7 @@ export class Turns {
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt)) });
         else if (where) sections.push({ title: WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "") });
+        this.recordJourneyInput(task, roleId, profileId, sections, "fresh");
         opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: task.worktree!, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", access, sections });
       }
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
@@ -462,6 +484,7 @@ export class Turns {
       const sections = [...await given(), { title: OWN_COPY, body: ownCopy(await git.head(copy).catch(() => "")) }];
       if (signal.aborted) throw new Aborted();
       if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words) });
+      this.recordJourneyInput(task, roleId, profileId, sections, "fresh");
       const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: task.branch!, base: task.baseSha ?? task.base!, defaultBranch: product.defaultBranch ?? "main", sections });
       return await this.converse(task, run, agent, opening, "first", role, profileId, schema, signal, { ...options, main: false });
     } catch (error) {

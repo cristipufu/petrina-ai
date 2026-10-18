@@ -17,6 +17,15 @@ import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 
+/** Keep the failed test name and short cause with the journey step without saving the whole log twice. */
+function checkDiagnostic(output: string): string | undefined {
+  const lines = output.split(/\r?\n/).map((line) => line.replace(/^@[^|]+\|\s*/, "").trim());
+  const failures = lines.filter((line) => /^\(fail\)\s/i.test(line));
+  const causes = lines.filter((line) => /^(?:error|assertionerror):/i.test(line) || /^timed out waiting for\b/i.test(line));
+  const detail = [...failures, ...causes].filter((line, index, all) => all.indexOf(line) === index).slice(0, 6).join("\n").slice(0, 1000);
+  return detail || undefined;
+}
+
 export class ProductChecks {
   /**
    * Task check runs take turns: each can start a full parallel test suite and build, so overlapping them
@@ -177,6 +186,14 @@ export class ProductChecks {
     }
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
     task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), definition, results };
+    const checksStep = openStep(task);
+    if (checksStep?.kind === "petrina" && checksStep.work === "checks") {
+      checksStep.productChecks = results.map((run) => ({
+        name: run.name,
+        result: run.ok ? "pass" : run.timedOut ? "did-not-finish" : "fail",
+        ...(!run.ok ? { detail: checkDiagnostic(run.output) } : {}),
+      }));
+    }
     const failed = this.settleFindings(task, results);
     this.k.log(task, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
     if (failed.length && openStep(task)?.roleId === "release-manager") {

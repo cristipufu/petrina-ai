@@ -29,7 +29,18 @@ if (process.platform === "darwin" && tmpdir().startsWith("/var/folders/")) proce
  * only catch hangs, so they stretch there; what a test asserts about time (the engine stopping within 10
  * seconds, say) stays as it is.
  */
-export const SLOW = Math.max(process.platform === "win32" ? 3 : 1, busy());
+export let SLOW = Math.max(process.platform === "win32" ? 3 : 1, busy());
+let lastLoadSample = Date.now();
+
+/** Keep waits in a test worker proportional as its own parallel work makes the machine busier. */
+export function currentSlow(): number {
+  const now = Date.now();
+  if (now - lastLoadSample >= 1_000) {
+    SLOW = Math.max(SLOW, process.platform === "win32" ? 3 : 1, busy());
+    lastLoadSample = now;
+  }
+  return SLOW;
+}
 
 /**
  * How much busier than its cores this machine is right now, as a factor for deadlines (1 to 8). Petrina builds
@@ -94,7 +105,7 @@ export function makeProduct(root: string): string {
  * otherwise wait out its timeout.
  */
 export function newProgramsStart(): Promise<void> {
-  return (checked ??= startsNewProgram(10_000 * SLOW));
+  return (checked ??= startsNewProgram(10_000));
 }
 
 let checked: Promise<void> | undefined;
@@ -105,7 +116,11 @@ async function startsNewProgram(ms: number): Promise<void> {
   const file = join(dir, "new-program");
   writeFileSync(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const proc = Bun.spawn([file], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  const started = await Promise.race([proc.exited.then(() => true), Bun.sleep(ms).then(() => false)]);
+  const startedAt = Date.now();
+  let started = false;
+  while (!started && Date.now() - startedAt <= ms * currentSlow()) {
+    started = await Promise.race([proc.exited.then(() => true), Bun.sleep(50).then(() => false)]);
+  }
   if (!started) proc.kill("SIGKILL");
   removeDir(dir);
   if (!started) {
@@ -122,7 +137,7 @@ export async function waitFor<T>(check: () => T | undefined | false | Promise<T 
   for (;;) {
     const value = await check();
     if (value) return value;
-    if (Date.now() - started > ms * SLOW) throw new Error(`Timed out waiting for ${what}`);
+    if (Date.now() - started > ms * currentSlow()) throw new Error(`Timed out waiting for ${what}`);
     await Bun.sleep(50);
   }
 }
@@ -399,7 +414,7 @@ export async function until(engine: Engine, done: (state: State) => boolean, res
   for (;;) {
     const state = engine.getState();
     if (done(state)) return state;
-    if (Date.now() - started > ms * SLOW) throw new Error(`Timed out. Tasks: ${JSON.stringify(state.tasks.map((task) => [task.state, task.statusLine, task.error]))} Inbox: ${JSON.stringify(state.inbox.map((item) => [item.kind, item.title]))}`);
+    if (Date.now() - started > ms * currentSlow()) throw new Error(`Timed out. Tasks: ${JSON.stringify(state.tasks.map((task) => [task.state, task.statusLine, task.error]))} Inbox: ${JSON.stringify(state.inbox.map((item) => [item.kind, item.title]))}`);
     respond(engine, state);
     await Bun.sleep(40);
   }
@@ -427,7 +442,7 @@ export function finish(engine: Engine, taskId: string, respond = coordinator()):
 export async function waitForFile(path: string, ms = 60_000): Promise<void> {
   const started = Date.now();
   while (!existsSync(path)) {
-    if (Date.now() - started > ms * SLOW) throw new Error(`Timed out waiting for ${path}`);
+    if (Date.now() - started > ms * currentSlow()) throw new Error(`Timed out waiting for ${path}`);
     await Bun.sleep(30);
   }
 }
