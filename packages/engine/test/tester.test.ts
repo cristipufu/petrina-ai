@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { draftOf, journeyProblems, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -19,7 +19,10 @@ describe("the tester tries the change once, and the final code once more", () =>
     try {
       const tester = engine.getState().roles.find((role) => role.id === "tester")!;
       engine.saveRole(tester.id, { ...draftOf(tester), canEdit: true });
-      const productId = await engine.addProduct(makeProduct(root));
+      const repo = makeProduct(root);
+      // Exercise Git's Windows checkout conversion on every platform.
+      git(repo, "config", "core.autocrlf", "true");
+      const productId = await engine.addProduct(repo);
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
       const task = await waitFor(() => {
@@ -37,7 +40,7 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(openings).toHaveLength(2);
       expect(openings[0]).toContain(MAY_CHANGE.canEdit);
       expect(openings[1]).toContain(MAY_CHANGE.afterReview);
-      expect(readFileSync(join(task.worktree!, "tester-edit.txt"), "utf8")).toBe("Before the review\n");
+      expect(readFileSync(join(task.worktree!, "tester-edit.txt"), "utf8")).toBe("Before the review\r\n");
       expect(task.timeline.some((entry) => entry.text === "Saved the changes from the Tester on the task's branch")).toBe(true);
       expect(task.timeline.some((entry) => entry.text === "Undid commits from Tester, which is read-only")).toBe(true);
       expect(engine.getState().roles.find((role) => role.id === tester.id)!.canEdit).toBe(true);
