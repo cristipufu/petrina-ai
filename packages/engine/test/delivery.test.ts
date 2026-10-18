@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { slotUses, type DeliveryMode, type Task } from "@petrina/core";
+import { CLEANUP_WORDS, slotUses, type DeliveryMode, type Task } from "@petrina/core";
 import { coordinator, finish, git, itemOf, makeWorld, removeDir, REPO, remoteRef, taskOf, until, type World } from "./support.js";
 
 const worlds: World[] = [];
@@ -215,7 +215,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(task.shipping).toBeUndefined();
 
       // The exact checked commit went out on the task's branch, as the task's one commit; main on GitHub did not move.
-      const tested = git(task.worktree!, "rev-parse", "HEAD");
+      const tested = git(w.clone, "rev-parse", task.branch!);
       expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(tested);
       expect(git(task.worktree!, "rev-parse", `${tested}^`)).toBe(w.initial);
       expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
@@ -268,7 +268,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(w.github().prs[0]!.body.startsWith("Added a greeting.\n\n## What changed for users\n- People see a greeting\n\n## Checked by Petrina")).toBe(true);
       // Listed as the design has it: ticked only where a tester checked it.
       expect(w.github().prs[0]!.body).toContain("### Acceptance\n- A greeting file exists");
-      expect(task.timeline.map((entry) => entry.text)).toContain(`Ready to publish: ${git(task.worktree!, "rev-parse", "HEAD").slice(0, 7)}, with a description from the builder's report`);
+      expect(task.timeline.map((entry) => entry.text)).toContain(`Ready to publish: ${git(w.clone, "rev-parse", task.branch!).slice(0, 7)}, with a description from the builder's report`);
     } finally {
       engine.shutdown();
     }
@@ -308,10 +308,10 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(release.body).toBe("## What's new\n- Faster search\n- Fix the login loop\n- Add a greeting");
 
       // What went out is Petrina's version commit on top of the task's one commit; main and the tag both point at it.
-      const tested = git(task.worktree!, "rev-parse", "HEAD");
-      expect(JSON.parse(git(task.worktree!, "show", `${tested}:package.json`)).version).toBe("1.5.0");
-      expect(git(task.worktree!, "diff", "--name-only", `${tested}^`, tested)).toBe("package.json");
-      expect(git(task.worktree!, "log", "-1", "--format=%s", tested)).toBe("Release v1.5.0");
+      const tested = git(w.clone, "rev-parse", task.branch!);
+      expect(JSON.parse(git(w.clone, "show", `${tested}:package.json`)).version).toBe("1.5.0");
+      expect(git(w.clone, "diff", "--name-only", `${tested}^`, tested)).toBe("package.json");
+      expect(git(w.clone, "log", "-1", "--format=%s", tested)).toBe("Release v1.5.0");
       expect(remoteRef(w.remote, "refs/heads/main")).toBe(tested);
       expect(remoteRef(w.remote, "refs/tags/v1.5.0")).toBe(tested);
       expect(w.github().calls.some((call) => call[0] === "release" && call[1] === "create" && call.includes("--verify-tag"))).toBe(true);
@@ -357,7 +357,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.error).toBeUndefined();
       expect(task.state).toBe("done");
-      const tested = git(task.worktree!, "rev-parse", "HEAD");
+      const tested = git(w.clone, "rev-parse", task.branch!);
       // Exactly the checked commit, no merge commit of Petrina's, and the files are there.
       expect(git(w.clone, "rev-parse", "main")).toBe(tested);
       expect(task.landed).toEqual({ branch: "main", sha: tested.slice(0, 7) });
@@ -377,7 +377,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
 
   it("refuses to push over a teammate's commit on GitHub's main, lands locally, and pushes once the coordinator pulled and retried", async () => {
     const w = world("local-push");
-    const engine = w.start();
+    let engine = w.start();
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", true);
@@ -406,6 +406,13 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       // Landed locally, and GitHub's main was never forced.
       expect(git(w.clone, "rev-parse", "main")).toBe(tested);
       expect(remoteRef(w.remote, "refs/heads/main")).toBe(teammate);
+      // Until the push is verified, this is failed work, not a finished copy eligible for cleanup.
+      expect(task.cleanup).toBeUndefined();
+      await engine.shutdown();
+      engine = w.start();
+      expect(taskOf(engine.getState(), taskId).state).toBe("failed");
+      expect(existsSync(task.worktree!)).toBe(true);
+      expect(taskOf(engine.getState(), taskId).cleanup).toBeUndefined();
       // The coordinator pulls the teammate's commit into the main copy and retries: Petrina pushes.
       git(w.clone, "-c", "user.email=me@example.com", "-c", "user.name=Me", "pull", "-q", "--no-rebase", "--no-edit", w.remote, "main");
       engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
@@ -413,12 +420,17 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       task = taskOf(state, taskId);
       expect(task.error).toBeUndefined();
       expect(task.state).toBe("done");
+      task = taskOf(await until(engine, (snapshot) => taskOf(snapshot, taskId).cleanup?.removedAt !== undefined), taskId);
+      expect(existsSync(task.worktree!)).toBe(false);
+      expect(git(w.clone, "rev-parse", task.branch!)).toBe(tested);
       const now = git(w.clone, "rev-parse", "main");
       expect(remoteRef(w.remote, "refs/heads/main")).toBe(now);
       expect(git(w.clone, "merge-base", "--is-ancestor", tested, now)).toBe("");
       expect(task.timeline.map((entry) => entry.text)).toContain(`Petrina pushed main to GitHub (${now.slice(0, 7)})`);
+      const history = task.timeline.map((entry) => entry.text);
+      expect(history.indexOf(`Petrina pushed main to GitHub (${now.slice(0, 7)})`)).toBeLessThan(history.indexOf(CLEANUP_WORDS.removed));
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -434,7 +446,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.error).toBeUndefined();
       expect(task.state).toBe("done");
-      expect(git(w.clone, "rev-parse", "main")).toBe(git(task.worktree!, "rev-parse", "HEAD"));
+      expect(git(w.clone, "rev-parse", "main")).toBe(git(w.clone, "rev-parse", task.branch!));
       expect(git(w.clone, "rev-parse", "--abbrev-ref", "HEAD")).toBe("notes");
       expect(existsSync(join(w.clone, "greeting.txt"))).toBe(false);
       expect(checkedOut(join(w.clone, "notes.txt"))).toBe("mine\n");
@@ -472,7 +484,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
       task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("done");
-      expect(git(w.clone, "rev-parse", "main")).toBe(git(task.worktree!, "rev-parse", "HEAD"));
+      expect(git(w.clone, "rev-parse", "main")).toBe(git(w.clone, "rev-parse", task.branch!));
     } finally {
       engine.shutdown();
     }

@@ -55,6 +55,8 @@ export async function checkAgentTool(options: {
   which: Which;
   timeoutMs?: number;
   onGone?: (gone: Promise<void>) => void;
+  /** Quitting Petrina also stops probes that have not finished checking yet. */
+  signal?: AbortSignal;
 }): Promise<CheckResult> {
   const { adapter } = options;
   if (!options.command) {
@@ -67,6 +69,9 @@ export async function checkAgentTool(options: {
   }
   const limit = options.timeoutMs ?? CHECK_TIMEOUT_MS;
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) abort();
   const timer = setTimeout(() => controller.abort(), limit);
   let said = "";
   let login: string | undefined;
@@ -75,6 +80,7 @@ export async function checkAgentTool(options: {
   const late = new Promise<void>((done) => controller.signal.addEventListener("abort", () => done(), { once: true }));
   try {
     const agent = await AgentRun.start({
+      probe: true,
       profile: options.profile,
       cwd: options.cwd,
       env: options.env,
@@ -105,6 +111,7 @@ export async function checkAgentTool(options: {
     return { status: "unknown", detail: tail(`${message}\n${said}`) };
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abort);
   }
 }
 

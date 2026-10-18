@@ -2,7 +2,7 @@
 // worktree (or reopen an earlier one), pin model, effort and mode, then send turns and report
 // what happens. It also reads back what the tool says the session runs on, and what each turn used.
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
@@ -141,16 +141,6 @@ const START_TIMEOUT_MS = 2 * 60_000;
 /** How long a tool that gave up starting gets to stop by itself before it is forced to. */
 const FORCE_AFTER_MS = 2_000;
 
-/** Stop an agent's process: asked first, then forced, so one that ignores being asked never stays behind. */
-function end(child: ChildProcess): void {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill();
-  const force = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-  }, FORCE_AFTER_MS);
-  child.once("exit", () => clearTimeout(force));
-}
-
 /** The tool could not reopen the conversation. The message says why, in plain words. */
 export class ReopenFailed extends Error {}
 
@@ -236,6 +226,76 @@ interface RunState {
   turn?: { changed: { model?: string; effort?: string }; rerouted: boolean; helpers: Set<string>; modelSeen?: string; next?: SessionSettings };
 }
 
+const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function send(pids: readonly number[], signal: NodeJS.Signals): void {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/** Every process started (directly or not) by these ones, read from the process table. */
+function descendants(roots: readonly number[], timeout = 4_000): Promise<number[]> {
+  return new Promise((resolve) => {
+    execFile("ps", ["-A", "-o", "pid=,ppid="], { timeout }, (error, stdout) => {
+      if (error) return resolve([]);
+      const children = new Map<number, number[]>();
+      for (const line of stdout.split("\n")) {
+        const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+        if (pid && ppid) children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+      }
+      const found = new Set<number>();
+      const queue = [...roots];
+      while (queue.length) for (const pid of children.get(queue.shift()!) ?? []) if (!found.has(pid)) found.add(pid), queue.push(pid);
+      resolve([...found].filter((pid) => !roots.includes(pid)));
+    });
+  });
+}
+
+async function exited(pids: readonly number[], ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(50)) if (!pids.some(alive)) return true;
+  return !pids.some(alive);
+}
+
+/**
+ * Stop the tool and every program it started (a build, a test run, a server), which could otherwise keep
+ * writing in the working copy after the tool is gone. They are found while the tool still runs, since they
+ * lose their link to it once it exits. Resolves when they have all exited; forced after a few seconds.
+ */
+async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: boolean): Promise<void> {
+  if (child.pid === undefined) return;
+  if (process.platform === "win32") {
+    if (!running(child)) return;
+    await new Promise<void>((resolve) => execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, () => resolve()));
+    return;
+  }
+  // Login probes never receive work. Stop their group at once, so a process lookup cannot hold
+  // their forced stop past the tool check's deadline for starting the next probe.
+  let pids = [child.pid, ...(collectPrograms && running(child) ? await descendants([child.pid]) : [])];
+  send([-child.pid], "SIGTERM");
+  send(pids, "SIGTERM");
+  if (await exited([-child.pid, ...pids], graceMs)) return;
+  // Whatever ignored the request to stop is killed, with anything it started meanwhile.
+  // Leave most of the lookup budget to the first snapshot on a busy machine; still fit the app's quit deadline.
+  pids = [...pids, ...(collectPrograms ? await descendants(pids, 500) : [])].filter(alive);
+  send([-child.pid], "SIGKILL");
+  send(pids, "SIGKILL");
+  await exited([-child.pid, ...pids], 1_000);
+}
+
 export class AgentRun {
   private notes: TurnNotes | undefined;
 
@@ -246,6 +306,7 @@ export class AgentRun {
     readonly sessionId: string,
     private readonly state: RunState,
     private readonly profile: AgentProfile,
+    private readonly stopper: (graceMs?: number) => Promise<void>,
     /** How an earlier conversation was reopened; unset for a new one. */
     readonly reopened?: "resume" | "load",
   ) {}
@@ -265,7 +326,8 @@ export class AgentRun {
    * load when that is all it offers. Anything that keeps it from reopening within the time limit
    * (no support, an error, no answer) throws ReopenFailed, and the agent process is gone. A tool that
    * does not start within `startTimeoutMs` is stopped and throws, so a step never waits forever.
-   * Aborted while starting, it throws at once. `onGone` hears when the agent's process has exited.
+   * A login probe gets a failed start at once while its tool stops; a task waits for the tool and
+   * its programs to stop before it can release the working copy. `onGone` observes either stop.
    */
   static async start(options: {
     profile: AgentProfile;
@@ -278,6 +340,8 @@ export class AgentRun {
     reopenTimeoutMs?: number;
     startTimeoutMs?: number;
     onGone?: (gone: Promise<void>) => void;
+    /** A login check only opens a conversation, never sends work or runs in a product's copy. */
+    probe?: boolean;
   }): Promise<AgentRun> {
     const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
@@ -287,18 +351,20 @@ export class AgentRun {
 
     const [program, ...args] = options.command ?? adapter.command ?? ["node", adapterEntry(adapter)];
     // windowsHide: no console window flashes up on Windows when an agent starts.
-    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env, windowsHide: true });
+    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env, detached: process.platform !== "win32", windowsHide: true });
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
-    options.onGone?.(new Promise<void>((done) => {
-      child.once("exit", () => done());
-      child.once("error", () => done());
-    }));
     const killed = new Promise<never>((_, reject) => {
       child.once("exit", (code) => reject(new Error(`${adapter.name} stopped (exit ${code ?? "signal"})`)));
       child.once("error", (error) => reject(error));
     });
     killed.catch(() => undefined);
-    const abort = () => child.kill();
+    let stopping: Promise<void> | undefined;
+    const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= stopAll(child, graceMs, !options.probe));
+    options.onGone?.(new Promise<void>((done) => {
+      child.once("exit", () => done());
+      child.once("error", () => done());
+    }).then(async () => { await stopping; }));
+    const abort = () => void stop();
     signal.addEventListener("abort", abort, { once: true });
     // Stopped while starting: give up at once, without waiting for a tool that ignores being stopped.
     const stopped = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("Stopped before the agent started")), { once: true }));
@@ -484,12 +550,15 @@ export class AgentRun {
     try {
       const session = await Promise.race([ready, killed, deadline, stopped]);
       clearTimeout(whole);
-      return new AgentRun(child, connection, session.sessionId, state, profile, session.how);
+      return new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how);
     } catch (error) {
       clearTimeout(whole);
       // No agent left running behind a conversation that did not open, even one that ignores being stopped.
       signal.removeEventListener("abort", abort);
-      end(child);
+      const gone = stop();
+      // A tool check must report its deadline promptly. It tracks onGone before checking again;
+      // a task instead waits for all file handling before cleanup can remove its working copy.
+      if (!options.probe) await gone;
       if (options.reopen !== undefined && !(error instanceof ReopenFailed) && !signal.aborted) throw new ReopenFailed(`${adapter.name} could not reopen the conversation`);
       throw error;
     }
@@ -538,19 +607,13 @@ export class AgentRun {
     await this.connection.cancel({ sessionId: this.sessionId }).catch(() => undefined);
   }
 
+  /** Start stopping the agent and the programs it started, without waiting. */
   close(): void {
-    if (this.child.exitCode === null) this.child.kill();
+    void this.stopper();
   }
 
-  /** Stop the agent's process and wait until it has exited; forced after a few seconds. */
-  async stop(graceMs = 5000): Promise<void> {
-    const gone = (ms: number) =>
-      this.child.exitCode !== null || this.child.signalCode !== null
-        ? Promise.resolve(true)
-        : Promise.race([new Promise<boolean>((resolve) => this.child.once("exit", () => resolve(true))), Bun.sleep(ms).then(() => false)]);
-    this.close();
-    if (await gone(graceMs)) return;
-    this.child.kill("SIGKILL");
-    await gone(3000);
+  /** Stop the agent and every program it started, and wait until they have exited; forced after a few seconds. */
+  stop(graceMs = FORCE_AFTER_MS): Promise<void> {
+    return this.stopper(graceMs);
   }
 }

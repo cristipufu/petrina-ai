@@ -9,12 +9,14 @@
 import {
   beginPetrinaStep,
   beginYouStep,
+  CLEANUP_WORDS,
   endAgentStep,
   endOpenStep,
   endPetrinaStep,
   endYouStep,
   JOURNEY_WORDS as W,
   lastIndexWhere,
+  needsPullRequestCheck,
   reviewerAt,
   openStep,
   petrinaMoment,
@@ -22,6 +24,7 @@ import {
   type Id,
   type Product,
   type ShippingStep,
+  type Task,
 } from "@petrina/core";
 import { realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -80,6 +83,7 @@ function says(entries: readonly { file: string; version?: string }[]): string {
 export class Shipping {
   /** Cancelled tasks whose last publishing step is being looked up. */
   private readonly looking = new Set<Id>();
+  private readonly following = new Set<Id>();
 
   constructor(
     private readonly k: Kernel,
@@ -525,7 +529,7 @@ export class Shipping {
   }
 
   /** GitHub's listing for the task's branch: the pull request for this work, none, or a stop for anything else there. */
-  private async findPullRequest(task: MTask): Promise<git.PullRequestInfo | undefined> {
+  private async findPullRequest(task: MTask, cancelled = false): Promise<git.PullRequestInfo | undefined> {
     const product = this.k.productOf(task)!;
     const tested = task.shipping!.prepared!.tested;
     const defaultBranch = product.defaultBranch ?? "main";
@@ -534,6 +538,9 @@ export class Shipping {
     if (!listed.ok) throw new Unreachable(`Petrina could not check GitHub for this task's pull request (${listed.error}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
     const ours = listed.value.filter((pr) => pr.head === task.branch && !pr.fork);
     const match = ours.find((pr) => pr.base === defaultBranch && pr.commit === tested);
+    // Cancellation publishes nothing more. Any open pull request from this branch needs its copy,
+    // even when someone changed its base or added commits while the last publishing step was stopping.
+    if (cancelled) return ours.find((pr) => pr.state === "open") ?? match;
     const other = ours.find((pr) => pr !== match);
     if (other) {
       throw new Error(
@@ -770,7 +777,7 @@ export class Shipping {
     const branch = product.defaultBranch ?? "main";
     try {
       if (task.delivery === "pull-request") {
-        const pr = await this.findPullRequest(task);
+        const pr = await this.findPullRequest(task, task.state === "cancelled");
         if (pr) return { found: true, text: `pull request #${pr.number}`, record: () => this.recordPr(task, pr) };
         return { found: false, text: "No pull request is open for this work yet." };
       }
@@ -797,6 +804,8 @@ export class Shipping {
 
   private recordPr(task: MTask, pr: { number: number; url: string; state: "open" | "merged" | "closed" }, how?: "opened"): "done" {
     task.pr = { number: pr.number, url: pr.url, state: pr.state, openedAt: task.pr?.openedAt ?? Date.now() };
+    // GitHub answered: an open pull request now explains why the copy stays. Its earlier warning stays in history.
+    if (pr.state === "open" && task.cleanup?.error === CLEANUP_WORDS.unconfirmed) delete task.cleanup;
     delete task.shipping;
     if (task.state === "cancelled") {
       this.k.log(task, "status", `Pull request #${pr.number} went out while you cancelled it: ${pr.url}`);
@@ -814,7 +823,7 @@ export class Shipping {
         this.finished(task, pr.state === "merged" ? `Merged #${pr.number} on GitHub` : `Closed #${pr.number} without merging`);
       }
     }
-    this.k.commitNow();
+    this.saveOutcome();
     return "done";
   }
 
@@ -828,7 +837,7 @@ export class Shipping {
       endPetrinaStep(task, { outcome: how ? W.released(release.tag) : W.alreadyOut(`release ${release.tag}`) }, Date.now());
       this.finished(task, `Released ${release.tag}`);
     }
-    this.k.commitNow();
+    this.saveOutcome();
     return "done";
   }
 
@@ -842,8 +851,17 @@ export class Shipping {
       endPetrinaStep(task, { outcome: how === "moved" ? W.movedMain(branch) : W.alreadyOut(`${branch} has it`) }, Date.now());
       this.finished(task, `Committed to ${branch}`);
     }
-    this.k.commitNow();
+    this.saveOutcome();
     return "done";
+  }
+
+  /** The verified delivery stays completed even when saving fails: removing its copy may free the disk. */
+  private saveOutcome(): void {
+    try {
+      this.k.commitNow();
+    } catch {
+      this.k.commit();
+    }
   }
 
   private finished(task: MTask, statusLine: string): void {
@@ -870,7 +888,7 @@ export class Shipping {
     this.looking.add(taskId);
     try {
       const delivery = await this.lookForDelivery(task);
-      if (delivery.found === "unknown") return;
+      if (delivery.found === "unknown") return this.keepCancelledCopy(task);
       if (delivery.found === true) await delivery.record(new AbortController().signal);
       else if (delivery.found === "other") this.k.log(task, "warn", `After you cancelled it, Petrina could not tell what went out: ${delivery.text}`);
       else if (task.delivery === "release") await this.pushedWhileCancelled(task);
@@ -878,13 +896,22 @@ export class Shipping {
       delete task.shipping;
       this.k.commitNow();
     } catch (error) {
-      if (error instanceof Unreachable) return;
+      if (error instanceof Unreachable) return this.keepCancelledCopy(task);
       this.k.log(task, "warn", `After you cancelled it, Petrina could not tell what went out: ${error instanceof Error ? error.message : String(error)}`);
       delete task.shipping;
       this.k.commitNow();
     } finally {
       this.looking.delete(taskId);
+      this.k.tidy(taskId);
     }
+  }
+
+  /** Explain the retained copy once, including across retries and restarts, without an inbox item. */
+  private keepCancelledCopy(task: MTask): void {
+    if (task.cleanup?.error !== undefined) return;
+    task.cleanup = { error: CLEANUP_WORDS.unconfirmed };
+    this.k.log(task, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.unconfirmed));
+    this.k.commit();
   }
 
   settleCancelledTasks(): void {
@@ -996,6 +1023,7 @@ export class Shipping {
   markDone(itemId: Id): void {
     const task = this.takeShippingItem(itemId);
     if (!task) return;
+    if (!task.pr && (task.delivery === "pull-request" || task.shipping?.carriedOver)) task.cleanup = { ...task.cleanup, pullRequest: "unconfirmed" };
     delete task.shipping;
     this.k.finishStep(task);
     this.k.tracking.delivered(task);
@@ -1007,24 +1035,80 @@ export class Shipping {
     endYouStep(task, { outcome: W.markedDone, reason: W.youMarkedDone }, Date.now());
     this.k.commitNow();
     this.k.schedule();
+    void this.checkUnrecordedPullRequest(task);
+    this.k.tidy(task.id);
   }
 
+  /** An uncertain finished delivery: only GitHub can establish whether its copy is free, including after cancellation. */
+  private async checkUnrecordedPullRequest(task: MTask): Promise<void> {
+    const finished = () => task.state === "done" || task.state === "cancelled";
+    if (this.k.stopped || !needsPullRequestCheck(task as Task) || !finished() || this.following.has(task.id)) return;
+    this.following.add(task.id);
+    try {
+      const product = this.k.productOf(task);
+      // Older local deliveries may have published something themselves, but a computer-only product has no GitHub to ask.
+      if (task.delivery === "local" && product?.repo.startsWith("local/")) {
+        task.cleanup = { ...task.cleanup, pullRequest: "none" };
+        if (task.cleanup.error === CLEANUP_WORDS.unconfirmedPr) delete task.cleanup.error;
+        this.k.commit();
+        return;
+      }
+      const repo = product?.repo;
+      const result = repo && task.branch ? await git.pullRequests(repo, task.branch, this.k.options.gh) : undefined;
+      if (this.k.stopped || !finished()) return;
+      if (!result?.ok) {
+        if (!task.cleanup?.error) this.k.log(task, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.unconfirmedPr));
+        task.cleanup = { ...task.cleanup, error: CLEANUP_WORDS.unconfirmedPr };
+      } else {
+        const ours = result.value.filter((pr) => pr.head === task.branch && !pr.fork);
+        const pr = ours.find((pr) => pr.state === "open") ?? ours.sort((a, b) => b.number - a.number)[0];
+        task.cleanup = { ...task.cleanup, pullRequest: "none" };
+        if (task.cleanup.error === CLEANUP_WORDS.unconfirmedPr) delete task.cleanup.error;
+        if (pr) {
+          task.pr = { number: pr.number, url: pr.url, state: pr.state, openedAt: Date.now() };
+          this.k.log(task, "done", pr.state === "open" ? `Pull request #${pr.number} is still open on GitHub, so its working copy is kept` : pr.state === "merged" ? `Merged #${pr.number} on GitHub` : `Closed #${pr.number} without merging`);
+        }
+      }
+      this.k.commit();
+    } finally {
+      this.following.delete(task.id);
+      this.k.tidy(task.id);
+    }
+  }
+
+  /**
+   * Petrina never merges or closes a pull request; it only reads what happened on GitHub. A cancelled task is
+   * followed too while it keeps its working copy for an open pull request; it stays cancelled when that ends.
+   * Unless GitHub confirms the pull request ended, it is still open, and the copy stays.
+   */
   async pollPullRequests(): Promise<void> {
-    for (const task of this.k.s.tasks.filter((entry) => entry.state === "pr-open" && entry.pr && entry.worktree)) {
-      const repo = this.k.productOf(task)?.repo;
-      const state = repo ? await git.prState(repo, task.pr!.number, this.k.options.gh).catch(() => undefined) : undefined;
-      if (state === "merged" || state === "closed") {
+    const following = (task: MTask) => task.pr?.state === "open" && !!task.worktree && (task.state === "pr-open" || ((task.state === "done" || task.state === "cancelled") && task.cleanup?.removedAt === undefined));
+    await Promise.all([...this.k.s.tasks.filter((task) => needsPullRequestCheck(task as Task)).map((task) => this.checkUnrecordedPullRequest(task)), ...this.k.s.tasks.filter(following).map(async (task) => {
+      if (this.k.stopped || this.following.has(task.id)) return;
+      this.following.add(task.id);
+      try {
+        const repo = this.k.productOf(task)?.repo;
+        const state = repo ? await git.prState(repo, task.pr!.number, this.k.options.gh).catch(() => undefined) : undefined;
+        if (this.k.stopped || (state !== "merged" && state !== "closed") || !following(task)) return;
         task.pr!.state = state;
-        task.state = "done";
-        task.column = "done";
-        task.finishedAt = Date.now();
-        task.statusLine = state === "merged" ? `Merged #${task.pr!.number} on GitHub` : `Closed #${task.pr!.number} without merging`;
-        this.k.log(task, "done", task.statusLine);
+        const words = state === "merged" ? `Merged #${task.pr!.number} on GitHub` : `Closed #${task.pr!.number} without merging`;
+        if (task.state === "pr-open") {
+          task.state = "done";
+          task.column = "done";
+          task.finishedAt = Date.now();
+          task.statusLine = words;
+          this.k.log(task, "done", words);
+        } else {
+          this.k.log(task, "done", words);
+        }
         this.k.tracking.prSettled(task, state);
         this.k.commit();
         // Tasks waiting for this one to land can start now.
         this.k.schedule();
+        this.k.tidy(task.id);
+      } finally {
+        this.following.delete(task.id);
       }
-    }
+    })]);
   }
 }

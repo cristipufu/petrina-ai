@@ -2,7 +2,6 @@
 // way Claude Code and Codex do, and the product list that never hands an id out again.
 import { afterAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +18,11 @@ const fake = join(import.meta.dir, "fake-agent.ts");
 const fakeCodex = join(import.meta.dir, "fake-codex.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-worklog-"));
 const data = join(temp, "data");
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
+const git = (cwd: string, ...args: string[]) => {
+  const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString() || result.stdout.toString()}`);
+  return result.stdout.toString().trim();
+};
 // Each profile's agent behaves like its own tool: Claude Code or Codex.
 const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], codexCommand: [process.execPath, fakeCodex] };
 
@@ -101,7 +104,8 @@ describe("The work log of a real engine", () => {
     // The work is on main, with the permission granted.
     expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
-    expect(existsSync(task.worktree!)).toBe(true);
+    await until(engine, (state) => !!state.tasks.find((entry) => entry.id === taskId)?.cleanup?.removedAt, () => undefined);
+    expect(existsSync(task.worktree!)).toBe(false);
   });
 
   it("writes one work-log entry per agent turn, with what was asked and what ran", () => {

@@ -21,8 +21,16 @@ export class ToolChecks {
   private readonly checking = new Map<CheckId, Promise<void>>();
   /** An agent tool a check gave up on, until its process is gone: the next check waits for it, so copies never pile up. */
   private readonly lingering = new Map<CheckId, Promise<void>>();
+  private readonly stopping = new AbortController();
 
   constructor(private readonly k: Kernel) {}
+
+  /** Quitting stops tool-check agents too, and waits for their remaining programs before exiting. */
+  async shutdown(): Promise<void> {
+    this.stopping.abort();
+    await Promise.allSettled([...this.checking].filter(([id]) => ADAPTERS[id] !== undefined).map(([, job]) => job));
+    await Promise.allSettled([...this.lingering.values()]);
+  }
 
   /** Check every tool again, each on its own, so a slow one never holds up the others. */
   async checkAll(): Promise<void> {
@@ -30,6 +38,7 @@ export class ToolChecks {
   }
 
   check(id: CheckId): Promise<void> {
+    if (this.stopping.signal.aborted || this.k.stopped) return Promise.resolve();
     const running = this.checking.get(id);
     if (running) return running;
     // A program that isn't on this machine is Not installed at once, never "Checking" first: a row for a
@@ -138,7 +147,7 @@ export class ToolChecks {
         });
       };
       // The environment agents run in, so the answer is about the setup they really get.
-      return checkAgentTool({ adapter: ADAPTERS[id]!, profile, ...(command ? { command } : {}), env: agentEnv(process.env), cwd, which, onGone, ...(timeoutMs ? { timeoutMs } : {}) });
+      return checkAgentTool({ adapter: ADAPTERS[id]!, profile, ...(command ? { command } : {}), env: agentEnv(process.env), cwd, which, onGone, signal: this.stopping.signal, ...(timeoutMs ? { timeoutMs } : {}) });
     })();
   }
 

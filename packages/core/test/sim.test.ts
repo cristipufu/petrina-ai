@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { gateStatus, gateTitle, MAX_REVIEW_ROUNDS, reviewRoundEnd } from "../src/flow.js";
 import { answerByCall, CALL_WORDS, dueAnswers, unanswered } from "../src/call.js";
+import { CLEANUP_WORDS } from "../src/cleanup.js";
 import { createDemoState, createPortfolioDemo, DEMO_TRIGGERS } from "../src/demo.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
 import type { DesignCall, Objection, Stage, State, Task } from "../src/model.js";
 import { slotUses, startsNextCount } from "../src/scheduler.js";
 import { Simulator } from "../src/sim.js";
+import { MemoryWorkLog } from "../src/worklog.js";
 
 function emptyState(limit = 2): State {
   return {
@@ -359,6 +361,82 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(settled.brief?.summary).toContain("following your call");
     expect(settled.objections.some((objection) => objection.call === CALL)).toBe(true);
     expect(settled.objections.some((objection) => objection.status === "open")).toBe(false);
+  });
+});
+
+describe("Removing the working copies of finished tasks", () => {
+  const texts = (entry: Task) => entry.timeline.map((line) => line.text);
+
+  it("removes a delivered task's copy right after the delivery, and keeps one with an open pull request until it is merged", () => {
+    const log = new MemoryWorkLog(0);
+    const sim = new Simulator(emptyState(), { prMergeAfter: 3, log });
+    const local = sim.addTask({ productId: "p", title: "Tidy the footer", kind: "chore", delivery: "local" });
+    const pr = sim.addTask({ productId: "p", title: "Fix the broken link", kind: "bug", delivery: "pull-request" });
+
+    runUntil(sim, () => task(sim, local).state === "done" && task(sim, pr).state === "pr-open");
+    expect(task(sim, local).cleanup?.removedAt).toBeDefined();
+    expect(texts(task(sim, local)).indexOf(CLEANUP_WORDS.removed)).toBeGreaterThan(texts(task(sim, local)).findIndex((text) => text.startsWith("Petrina moved")));
+    expect(task(sim, pr).cleanup).toBeUndefined();
+    expect(texts(task(sim, pr))).not.toContain(CLEANUP_WORDS.removed);
+
+    runUntil(sim, () => task(sim, pr).state === "done");
+    expect(task(sim, pr).cleanup?.removedAt).toBeDefined();
+    expect(texts(task(sim, pr)).indexOf(CLEANUP_WORDS.removed)).toBeGreaterThan(texts(task(sim, pr)).findIndex((text) => text.startsWith("Merged on GitHub")));
+    expect(log.moments({ taskId: pr, kinds: ["task-end"] }).map((entry) => entry.outcome)).toEqual(["delivered", "merged"]);
+  });
+
+  it("keeps a cancelled task's copy while its pull request is open, and says nothing for a task that never started", () => {
+    const sim = new Simulator({ ...emptyState(1), pool: { limit: 1, paused: false, toolCaps: {} } }, { prMergeAfter: 1_000 });
+    const pr = sim.addTask({ productId: "p", title: "Fix the broken link", kind: "bug" });
+    const queued = sim.addTask({ productId: "p", title: "Not started", kind: "chore" });
+    sim.cancel(queued);
+    expect(task(sim, queued).cleanup).toBeUndefined();
+    expect(texts(task(sim, queued)).some((text) => text.includes("working copy"))).toBe(false);
+
+    runUntil(sim, () => task(sim, pr).state === "pr-open");
+    sim.cancel(pr);
+    sim.tick();
+    expect(task(sim, pr).state).toBe("cancelled");
+    expect(task(sim, pr).cleanup).toBeUndefined();
+    for (let tick = 0; tick < 1_000; tick += 1) sim.tick();
+    expect(task(sim, pr).state).toBe("cancelled");
+    expect(task(sim, pr).pr?.state).toBe("merged");
+    expect(task(sim, pr).cleanup?.removedAt).toBeDefined();
+  });
+
+  it("removes a running task's copy when it is cancelled", () => {
+    const sim = new Simulator(emptyState());
+    const id = sim.addTask({ productId: "p", title: "Search", kind: "chore" });
+    sim.tick();
+    sim.cancel(id);
+    expect(task(sim, id).cleanup?.removedAt).toBeDefined();
+    expect(texts(task(sim, id)).slice(-2)).toEqual(["You cancelled it", CLEANUP_WORDS.removed]);
+  });
+
+  it("says once that a locked copy could not be removed, and removes it at the next try", () => {
+    const seed = new Simulator(emptyState());
+    const id = seed.addTask({ productId: "p", title: "Tidy the footer", kind: "chore", delivery: "local" });
+    const sim = new Simulator(seed.getState(), { lockedCopies: [id] });
+    runUntil(sim, () => task(sim, id).state === "done");
+    expect(task(sim, id).cleanup).toEqual({ error: CLEANUP_WORDS.locked });
+    expect(texts(task(sim, id)).at(-1)).toBe(CLEANUP_WORDS.failed(CLEANUP_WORDS.locked));
+
+    sim.tick();
+    expect(task(sim, id).cleanup?.removedAt).toBeDefined();
+    expect(texts(task(sim, id)).slice(-2)).toEqual([CLEANUP_WORDS.failed(CLEANUP_WORDS.locked), CLEANUP_WORDS.removed]);
+    sim.tick();
+    expect(texts(task(sim, id)).filter((text) => text === CLEANUP_WORDS.removed)).toHaveLength(1);
+  });
+
+  it("shows the demo's finished tasks without their copies, one after a retry, and keeps open pull requests' copies", () => {
+    const state = createDemoState(1_000_000_000);
+    const byTitle = (title: string) => state.tasks.find((entry) => entry.title === title)!;
+    expect(texts(byTitle("Report errors to Sentry")).slice(-2)).toEqual([CLEANUP_WORDS.failed(CLEANUP_WORDS.locked), CLEANUP_WORDS.removed]);
+    expect(texts(byTitle("Fix the footer links")).at(-1)).toBe(CLEANUP_WORDS.removed);
+    for (const entry of state.tasks.filter((item) => item.state !== "done" && item.state !== "cancelled")) expect(entry.cleanup).toBeUndefined();
+
+    const { state: portfolio } = createPortfolioDemo(1_000_000_000);
+    for (const entry of portfolio.tasks) expect(entry.cleanup?.removedAt !== undefined).toBe(entry.state === "done" || entry.state === "cancelled");
   });
 });
 

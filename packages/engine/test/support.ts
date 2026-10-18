@@ -2,17 +2,16 @@
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
 // stand-ins only through the Engine's constructor.
 import { setDefaultTimeout } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InboxKind, State, Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine, type EngineOptions } from "../src/engine.js";
 import { readConnection } from "../src/instance.js";
 import type { ShellMessage } from "../src/launch.js";
 import { Store } from "../src/store.js";
 import type { AgentScript, Scenario } from "./fake-agent.js";
-import { readGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
+import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
 
 // The tests stand in for the coordinator's own setup: git settings an environment adds (when Petrina runs
 // the tests as a product's check, say) would stop the tests' own pushes, so they do not apply.
@@ -59,7 +58,13 @@ export function removeDir(path: string): void {
   }
 }
 
-export const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+/** Use Bun's native result and a deadline: the Node synchronous wrapper can stall after Git has exited. */
+export const git = (cwd: string, ...args: string[]): string => {
+  const result = Bun.spawnSync(["git", ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true, timeout: 30_000 * SLOW, killSignal: "SIGKILL" });
+  const output = result.stdout.toString();
+  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed (${result.signalCode ?? result.exitCode}):\n${[output, result.stderr.toString()].filter(Boolean).join("\n")}`);
+  return output.trim();
+};
 
 /** A product with a GitHub-like origin: a bare repository and a clone of it, on main. */
 export function makeProduct(root: string): string {
@@ -237,9 +242,7 @@ export class Fakes {
 
   github(change: (state: FakeGitHub) => void): void {
     const path = join(this.dir, "github.json");
-    const state = readGitHub(path);
-    change(state);
-    writeGitHub(path, state);
+    updateGitHub(path, change);
   }
 
   marked(name: string): boolean {
@@ -298,7 +301,7 @@ export const ADDRESS = "https://github.com/acme/demo.git";
 /** A ref on the stand-in GitHub, or undefined. */
 export const remoteRef = (remote: string, ref: string): string | undefined => {
   try {
-    return execFileSync("git", ["--git-dir", remote, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).toString().trim() || undefined;
+    return git(process.cwd(), "--git-dir", remote, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`) || undefined;
   } catch {
     return undefined;
   }
@@ -313,7 +316,8 @@ export interface World {
   data: string;
   /** main on the stand-in GitHub when the world was made. */
   initial: string;
-  start(): Engine;
+  /** `extra`: more options for this engine (a shorter once-a-minute check, say). */
+  start(extra?: EngineOptions): Engine;
   github(): FakeGitHub;
   setGitHub(change: (state: FakeGitHub) => void): void;
   script(): AgentScript;
@@ -326,7 +330,7 @@ export interface World {
 export function makeWorld(name: string, options: { version?: string; address?: string } = {}): World {
   const dir = mkdtempSync(join(tmpdir(), `petrina-${name}-`));
   const remote = join(dir, "github.git");
-  execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+  git(dir, "init", "-q", "--bare", "-b", "main", remote);
   const clone = join(dir, "clone");
   mkdirSync(clone);
   git(clone, "init", "-q", "-b", "main");
@@ -349,13 +353,9 @@ export function makeWorld(name: string, options: { version?: string; address?: s
     remote,
     data,
     initial: git(clone, "rev-parse", "HEAD"),
-    start: () => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote }),
+    start: (extra = {}) => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, ...extra }),
     github: () => readGitHub(ghState),
-    setGitHub: (change) => {
-      const state = readGitHub(ghState);
-      change(state);
-      writeGitHub(ghState, state);
-    },
+    setGitHub: (change) => updateGitHub(ghState, change),
     script: () => JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript,
     setScript: (change) => {
       const script = JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript;

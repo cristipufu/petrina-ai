@@ -72,6 +72,7 @@ import { Planning } from "./planning.js";
 import { Work } from "./work.js";
 import { TakeOver } from "./take-over.js";
 import { Driver } from "./driver.js";
+import { Cleanup } from "./cleanup.js";
 
 export type { EngineOptions } from "./kernel.js";
 export type { NewTaskInput, SaidContext } from "@petrina/core";
@@ -94,6 +95,7 @@ export class Engine extends Kernel implements Commands {
   private readonly work: Work;
   private readonly takeover: TakeOver;
   private readonly driver: Driver;
+  private readonly cleanup: Cleanup;
 
   constructor(dataDir: string, options: EngineOptions = {}) {
     super(dataDir, options);
@@ -112,6 +114,7 @@ export class Engine extends Kernel implements Commands {
     this.work = new Work(this, this.turns, this.context, this.guide, this.updates, this.learnings);
     this.takeover = new TakeOver(this);
     this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections);
+    this.cleanup = new Cleanup(this);
     // Tasks from before journeys were recorded: one step per finished stage, and the step under way, so new steps follow on from there.
     for (const task of this.s.tasks) if (!task.journey && task.startedAt !== undefined) task.journey = legacyJourney(task as unknown as Task, this.s.inbox as InboxItem[]) as MTask["journey"];
     // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
@@ -128,15 +131,20 @@ export class Engine extends Kernel implements Commands {
       setInterval(() => {
         void this.shipping.pollPullRequests();
         this.shipping.settleCancelledTasks();
-      }, 60_000),
+        // Apart from GitHub: a slow lookup never holds up removing copies.
+        void this.cleanup.sweep();
+      }, options.checkEveryMs ?? 60_000),
       // Codex's usage, every ten minutes while any agent runs (Claude Code reports its own on every turn).
       setInterval(() => {
         if (this.runs.size || [...this.helperRuns.values()].some((runs) => runs.size)) this.readUsage();
       }, CODEX_USAGE_EVERY_MS),
     );
     this.shipping.settleCancelledTasks();
+    void this.shipping.pollPullRequests();
     this.schedule();
     this.readUsage();
+    // Catch up at start: working copies of tasks that finished before, in every product.
+    void this.cleanup.sweep();
   }
 
   schedule(): void {
@@ -147,9 +155,16 @@ export class Engine extends Kernel implements Commands {
     this.driver.startDriver(taskId, resume);
   }
 
-  /** Stop every agent the way pausing does, save, and close. Their tasks continue on the next start. */
-  shutdown(): void {
-    if (this.stopped) return;
+  tidy(taskId: Id): void {
+    void this.cleanup.removeCopy(taskId);
+  }
+
+  private shutdownDone?: Promise<void>;
+
+  /** Save and close immediately; resolves once agents and their remaining file handling have stopped. */
+  shutdown(): Promise<void> {
+    if (this.shutdownDone) return this.shutdownDone;
+    if (this.stopped) return Promise.resolve();
     // Stopped first: stopping agents still changes state, and nothing may save after the store closes.
     this.stopped = true;
     clearTimeout(this.saveTimer);
@@ -158,12 +173,19 @@ export class Engine extends Kernel implements Commands {
     clearTimeout(this.limitTimer);
     this.codexUsage?.stop();
     this.grokUsage?.stop();
+    const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
-    for (const run of this.runs.values()) run.close();
-    this.store.save(this.getState());
-    // Turns still running stay unfinished in the log: the next start marks them lost.
-    this.tracking.close();
-    this.store.close();
+    this.shutdownDone = Promise.allSettled([this.tools.shutdown(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
+    try {
+      this.store.save(this.getState());
+    } catch (error) {
+      console.error("Could not save while stopping:", error);
+    } finally {
+      // Turns still running stay unfinished in the log: the next start marks them lost.
+      this.tracking.close();
+      this.store.close();
+    }
+    return this.shutdownDone;
   }
 
   /** The numbers one view needs, worked out from the work log. The log itself never leaves the engine. */
@@ -558,8 +580,9 @@ export class Engine extends Kernel implements Commands {
     endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, Date.now());
     this.log(task, "you", "You cancelled it");
     this.commit();
-    // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now.
-    void this.shipping.settleCancelled(taskId);
+    // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now, then the copy goes.
+    // With an agent still stopping, its driver removes the copy once it has let go of it.
+    void this.shipping.settleCancelled(taskId).then(() => this.tidy(taskId));
     this.schedule();
   }
 

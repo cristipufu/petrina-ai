@@ -51,6 +51,7 @@ export class Driver {
       return true;
     };
     for (const task of this.k.s.tasks.filter((entry) => entry.state === "waiting").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
+      if (this.k.drivers.has(task.id) || this.k.settling.has(task.id)) continue;
       if (blocked(task)) continue;
       if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) task.statusLine = "Waiting for a free slot";
       const seat = this.seatFor(task);
@@ -71,6 +72,7 @@ export class Driver {
     // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
     const candidates = balanced(continuing, this.k.s.pool, now);
     for (const task of queueOf(this.k.s.tasks as Task[])) {
+      if (this.k.drivers.has(task.id) || this.k.settling.has(task.id)) continue;
       // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
       if (blocked(task as MTask)) continue;
       // What it waited for landed or was cancelled: back to plain queue words.
@@ -86,7 +88,7 @@ export class Driver {
 
     for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.getState()), pool: this.k.s.pool, now })) {
       const task = this.k.task(taskId);
-      if (!task || this.k.drivers.has(taskId)) continue;
+      if (!task || this.k.drivers.has(taskId) || this.k.settling.has(taskId)) continue;
       if (task.state === "queued") {
         task.startedAt = Date.now();
         task.stageIndex = -1;
@@ -163,6 +165,10 @@ export class Driver {
     this.k.settling.set(taskId, done);
     void done.finally(() => {
       if (this.k.settling.get(taskId) === done) this.k.settling.delete(taskId);
+      // Delivered or cancelled: now that nothing uses the working copy, it can go.
+      this.k.tidy(taskId);
+      // A resumed task waits for its previous driver's file handling before starting another one.
+      this.schedule();
     });
   }
 
@@ -307,7 +313,6 @@ export class Driver {
       if (this.k.drivers.get(taskId) === controller) this.k.drivers.delete(taskId);
       // Cancelled during a publishing step: what went out is looked up and kept.
       if (signal.aborted && !this.k.stopped) await this.shipping.settleCancelled(taskId, true);
-      if (!this.k.stopped) this.schedule();
     }
   }
 
@@ -325,10 +330,14 @@ export class Driver {
       if (!fetched.ok && !fetched.missing) this.k.log(task, "warn", `${fetched.timedOut ? "GitHub did not answer in time" : `Did not update from GitHub: ${this.connections.why(task, fetched)}`}, so this task starts from the local copy`);
       if (await git.revParse(product.path, `refs/remotes/origin/${defaultBranch}`)) base = `origin/${defaultBranch}`;
     }
+    // Stopped before its first copy was made: none is made. Only cancellation removes a newly made copy;
+    // a pause, shutdown or resumed task keeps it, even though the old driver's signal is aborted.
+    if (signal.aborted && !task.worktree) throw new Aborted();
     await git.ensureWorktree(product.path, worktree, branch, base);
-    if (!task.branch) this.k.log(task, "milestone", "Set up a fresh working copy");
+    if (!task.branch && !signal.aborted) this.k.log(task, "milestone", "Set up a fresh working copy");
     task.branch = branch;
     task.worktree = worktree;
+    if (signal.aborted) throw new Aborted();
     // Petrina stopped while a pre-commit hook ran: the working copy goes back on its branch first.
     if (task.hooking) {
       await git.reattach(worktree, branch);

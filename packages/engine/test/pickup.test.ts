@@ -338,7 +338,7 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
     engine = await EngineProcess.harness(home, w.dir, w.remote);
     const done = find(await engine.until((state) => find(state).state === "done", "the release", 60_000));
     expect(done.release?.tag).toBe("v0.1.0");
-    expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(git(done.worktree!, "rev-parse", "HEAD"));
+    expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(git(w.clone, "rev-parse", done.branch!));
     expect(fakes.openings("release manager")).toHaveLength(2);
     expect(fakes.opens().some((open) => open.how !== "new")).toBe(false);
     await engine.quit();

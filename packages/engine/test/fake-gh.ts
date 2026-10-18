@@ -4,7 +4,7 @@
 // it is logged in, unless the state says otherwise.
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 export interface FakePr {
   number: number;
@@ -69,11 +69,42 @@ export function readGitHub(path: string): FakeGitHub {
 }
 
 export function writeGitHub(path: string, state: FakeGitHub): void {
-  writeFileSync(path, JSON.stringify(state, null, 2));
+  const next = `${path}.${process.pid}.next`;
+  writeFileSync(next, JSON.stringify(state, null, 2));
+  renameSync(next, path);
+}
+
+/** Fake gh processes and the test change the same file. A read followed by a write must be one operation. */
+function lockGitHub(path: string): () => void {
+  const lock = `${path}.lock`;
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      return () => rmSync(lock, { recursive: true, force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || Date.now() >= deadline) throw error;
+      Bun.sleepSync(10);
+    }
+  }
+}
+
+export function updateGitHub(path: string, change: (state: FakeGitHub) => void): void {
+  const unlock = lockGitHub(path);
+  try {
+    const state = readGitHub(path);
+    change(state);
+    writeGitHub(path, state);
+  } finally {
+    unlock();
+  }
 }
 
 function main(): void {
   const [statePath, remote, ...args] = process.argv.slice(2);
+  let unlock = lockGitHub(statePath!);
+  // Unexpected exits also release this process's lock. Waiting calls release it first below.
+  process.on("exit", () => unlock());
   const state = readGitHub(statePath!);
   if (args[0] === "auth" && args[1] === "status") {
     state.logins = (state.logins ?? 0) + 1;
@@ -125,9 +156,12 @@ function main(): void {
   const held = (): void => {
     const hold = [state.hold, ...(state.holds ?? [])].find((entry) => entry?.command === command && (!entry.match || args.includes(entry.match)) && existsSync(entry.file));
     if (!hold) return;
+    unlock();
+    unlock = () => {};
     writeFileSync(`${hold.file}.reached`, "");
     while (existsSync(hold.file)) Bun.sleepSync(20);
     // The test may have changed GitHub meanwhile: answer from what it is now.
+    unlock = lockGitHub(statePath!);
     Object.assign(state, readGitHub(statePath!));
   };
   /** The work is done and saved; now answer, maybe after waiting, maybe losing the answer. */

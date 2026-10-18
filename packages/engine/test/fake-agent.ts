@@ -10,13 +10,15 @@
 // With --tool=claude-code or --tool=codex (the work-log tests), it also reports usage, settings and
 // limits the way that tool's adapter does. With FAKE_BARE_ACK set, it acknowledges a settings change
 // without saying what the session ended up on.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
+  /** Shutdown tests: never answer the initial handshake. */
+  silent?: boolean;
   /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
   planner?: "short" | "tester-after" | "tester-first" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review";
   notes?: "work";
@@ -131,7 +133,8 @@ const marked = (name: string) => !!dir && existsSync(join(dir, name));
  * for the command for each one), so a slow machine killing it before the handshake even arrives cannot pass
  * the silence on to the fresh agent that starts next.
  */
-const silent = process.argv.includes("--silent");
+const silent = process.argv.includes("--silent") || scenario().silent === true;
+if (dir) appendFileSync(join(dir, "processes"), `${process.pid}\n`);
 /** The agent's own git: none of the programs a security test plants. */
 const run = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
@@ -269,6 +272,35 @@ export interface AgentScript {
   releaseManagerPrompts?: string[];
   /** What the Check finder hands back, instead of its scenario's checks. */
   checks?: { name: string; argv: string[]; why: string }[];
+  /** Every builder installs packages and builds: folders the repository ignores, with a link to this shared cache. */
+  installs?: { cache: string };
+  /** For the task with this title, the build output keeps a read-only folder, until the test unlocks it. */
+  locked?: string;
+  /**
+   * For the task with this title, the builder starts a build in a process group of its own, which keeps writing
+   * build output for seconds and takes a moment to stop. Its process id goes to `pids`.
+   */
+  background?: { title: string; pids: string };
+}
+
+/** Installed packages and build output, the way package managers and compilers leave them. */
+function installs(cwd: string, cache: string): void {
+  mkdirSync(join(cwd, "node_modules", "left-pad"), { recursive: true });
+  writeFileSync(join(cwd, "node_modules", "left-pad", "index.js"), "module.exports = (text) => text;\n");
+  mkdirSync(join(cwd, "target", "debug"), { recursive: true });
+  writeFileSync(join(cwd, "target", "debug", "greeting.bin"), "build output\n");
+  if (!existsSync(join(cwd, "node_modules", ".cache"))) symlinkSync(cache, join(cwd, "node_modules", ".cache"), process.platform === "win32" ? "junction" : "dir");
+}
+
+/** A build that writes its output every 100 ms for seconds, outlives the agent unless stopped, and writes once more as it stops. */
+function backgroundBuild(cwd: string, pids: string): void {
+  const script = `const { mkdirSync, writeFileSync } = require("node:fs"); const dir = process.env.OUT; const end = Date.now() + 8000;
+    const write = () => { mkdirSync(dir, { recursive: true }); writeFileSync(dir + "/out.bin", "x"); };
+    process.on("SIGTERM", () => setTimeout(() => { write(); process.exit(0); }, 300));
+    const tick = () => { write(); if (Date.now() < end) setTimeout(tick, 100); }; tick();`;
+  const child = spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore", env: { ...process.env, OUT: join(cwd, "target", "background") } });
+  child.unref();
+  if (child.pid) appendFileSync(pids, `${child.pid}\n`);
 }
 
 const readScript = (): AgentScript => (scriptPath && existsSync(scriptPath) ? (JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript) : {});
@@ -577,6 +609,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       await say("Writing the greeting");
       // Codex starting a helper agent shows up as a spawnAgent tool call.
       if (tool) await send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: `spawn-${session.turns}`, title: "spawnAgent", kind: "other", status: "completed", rawInput: { receiverThreadIds: ["child-thread"], senderThreadId: sessionId } });
+      const setup = readScript();
+      const named = /^# The task: (.+)$/m.exec(text)?.[1];
+      if (setup.installs) installs(session.cwd, setup.installs.cache);
+      if (setup.locked && named === setup.locked) {
+        mkdirSync(join(session.cwd, "target", "locked"), { recursive: true });
+        writeFileSync(join(session.cwd, "target", "locked", "output.bin"), "in use\n");
+        chmodSync(join(session.cwd, "target", "locked"), 0o555);
+      }
+      if (setup.background && named === setup.background.title) backgroundBuild(session.cwd, setup.background.pids);
       let allowed = true;
       if (!plan.builder) {
         const permission = (await client.request(acp.methods.client.session.requestPermission, {

@@ -124,7 +124,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.error).toBeUndefined();
         expect(task.state).toBe(mode === "pull-request" ? "pr-open" : "done");
-        const tested = git(task.worktree!, "rev-parse", "HEAD");
+        const tested = git(w.clone, "rev-parse", task.branch!);
         expect(remoteRef(w.remote, mode === "pull-request" ? `refs/heads/${task.branch}` : "refs/heads/main")).toBe(tested);
         expect(git(w.dir, "--git-dir", evil, "for-each-ref")).toBe("");
         expect(remoteRef(w.remote, "refs/tags/planted")).toBeUndefined();
@@ -174,7 +174,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.error).toBeUndefined();
         expect(task.state).toBe(mode === "pull-request" ? "pr-open" : "done");
-        const tested = git(task.worktree!, "rev-parse", "HEAD");
+        const tested = git(w.clone, "rev-parse", task.branch!);
         expect(remoteRef(w.remote, mode === "pull-request" ? `refs/heads/${task.branch}` : "refs/tags/v0.1.0")).toBe(tested);
         expect(git(w.dir, "--git-dir", evil, "for-each-ref")).toBe("");
         // Every fetch and push went to the saved address, and both happened.
@@ -288,7 +288,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
       const local = engine.addTask({ productId, title: "Add a local greeting", description: "A greeting file. [quick]", delivery: "local", approveDelivery: false });
       task = taskOf(await finish(engine, local), local);
       expect(task.state).toBe("done");
-      expect(git(w.clone, "rev-parse", "main")).toBe(git(task.worktree!, "rev-parse", "HEAD"));
+      expect(git(w.clone, "rev-parse", "main")).toBe(git(w.clone, "rev-parse", task.branch!));
     } finally {
       engine.shutdown();
     }

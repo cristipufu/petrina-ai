@@ -43,6 +43,13 @@ async function reviewing() {
 describe("stopping gently", () => {
   it("starts nothing new while draining, waits for the reviewers in flight to hand back, then reports nothing left", async () => {
     const { engine, taskId, productId, reviewers, release, settle } = await reviewing();
+    let releaseStops!: () => void;
+    const stopping = new Promise<void>((resolve) => { releaseStops = resolve; });
+    const finishing = new Set();
+    for (const run of engine.helperRuns.get(taskId) ?? []) {
+      const stop = run.stop.bind(run);
+      run.stop = async () => { finishing.add(run); await stopping; await stop(); };
+    }
     try {
       expect(engine.inFlight()).toBe(2);
       const seen: number[] = [];
@@ -53,6 +60,11 @@ describe("stopping gently", () => {
       expect(engine.getState().tasks.find((task) => task.id === other)!.state).toBe("queued");
       // The reviewers hand back: the drain ends with nothing left, and both reports were saved.
       for (const session of reviewers) release(session);
+      await waitFor(() => finishing.size === 2, "both reviewers to finish their turns");
+      // Their process cleanup is still using the copies, so neither report has been handed back yet.
+      expect(engine.inFlight()).toBe(2);
+      expect(Object.keys(engine.getState().tasks.find((entry) => entry.id === taskId)!.hunt!.reported)).toHaveLength(0);
+      releaseStops();
       expect(await drained).toBe(0);
       expect(seen[0]).toBe(2);
       expect(seen.at(-1)).toBe(0);
@@ -64,7 +76,8 @@ describe("stopping gently", () => {
         return engine.getState().tasks.find((entry) => entry.id === taskId)!.statusLine === "Waiting: Petrina is restarting";
       }, "the task to wait for the restart", 30_000);
     } finally {
-      engine.shutdown();
+      releaseStops();
+      await engine.shutdown();
     }
   });
 
@@ -76,7 +89,7 @@ describe("stopping gently", () => {
       expect(Date.now() - started).toBeGreaterThanOrEqual(1500);
       for (const session of reviewers) release(session);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

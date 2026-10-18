@@ -72,14 +72,14 @@ export async function launch(options: LaunchOptions): Promise<void> {
   let engine: Engine | undefined;
   let server: ReturnType<typeof serve> | undefined;
   let stopping = false;
-  const stop = (code = 0) => {
+  const stop = async (code = 0) => {
     if (stopping) return;
     stopping = true;
     // Never hang on the way out: the shell stops waiting after a few seconds anyway.
-    setTimeout(() => process.exit(code), 5000).unref();
+    setTimeout(() => process.exit(code), 7000).unref();
     try {
-      engine?.shutdown();
       server?.stop(true);
+      await engine?.shutdown();
     } catch (error) {
       console.error("While stopping:", error);
     }

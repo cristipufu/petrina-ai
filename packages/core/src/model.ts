@@ -517,6 +517,16 @@ export interface PullRequest {
   openedAt: number;
 }
 
+/** Removing a finished task's working copy. The branch, the history and the delivery details stay. */
+export interface Cleanup {
+  /** An uncertain delivery marked done still needs its branch checked for an open pull request. */
+  pullRequest?: "unconfirmed" | "none";
+  /** When the folder and the repository's record of it were both gone. */
+  removedAt?: number;
+  /** Why the last try failed, in plain words. Petrina tries again. */
+  error?: string;
+}
+
 export interface Task {
   id: Id;
   productId: Id;
@@ -631,6 +641,8 @@ export interface Task {
   base?: string;
   /** Notes handed back by earlier steps, for every later agent on the task. */
   handedBack?: readonly HandedBack[];
+  /** Set once the task is finished and Petrina has removed (or is trying to remove) its working copy. */
+  cleanup?: Cleanup;
   /**
    * What the builder reported, in plain language: its one-line commit title, and a pull request's description,
    * which Petrina publishes as the builder wrote it.

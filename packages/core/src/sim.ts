@@ -21,6 +21,7 @@ import {
   syncWait,
   withdrawAsks,
 } from "./journey.js";
+import { CLEANUP_WORDS, copyNoLongerNeeded } from "./cleanup.js";
 import { composePlan } from "./library.js";
 import { queueNeighbour, queuePlacement } from "./navigation.js";
 import type {
@@ -108,6 +109,8 @@ export interface SimOptions {
   tickMs?: number;
   /** Tasks whose design reviewer keeps objecting every round, so the architects end up disagreeing. */
   disagree?: readonly Id[];
+  /** Tasks whose working copy cannot be removed at the first try, so Petrina tries again a tick later. */
+  lockedCopies?: readonly Id[];
 }
 
 /** A new task for the demo: the window's, plus the area its scripted agents talk about. */
@@ -225,11 +228,13 @@ export class Simulator {
   private readonly stageRuns = new Map<Id, number>();
   private serial = 0;
   private readonly disagree: ReadonlySet<Id>;
+  private readonly lockedCopies: ReadonlySet<Id>;
 
   constructor(state: State, options: SimOptions = {}) {
     this.state = state;
     this.triggers = options.triggers ?? {};
     this.disagree = new Set(options.disagree ?? []);
+    this.lockedCopies = new Set(options.lockedCopies ?? []);
     this.prMergeAfter = options.prMergeAfter ?? 12;
     this.tickMs = options.tickMs ?? 40_000;
     this.work = options.log ?? new MemoryWorkLog(state.work?.since ?? state.now);
@@ -269,13 +274,14 @@ export class Simulator {
     };
   };
 
-  /** Advance every running agent by one step, merge old pull requests, and start what fits in the pool. */
+  /** Advance every running agent by one step, merge old pull requests, retry removing working copies, and start what fits in the pool. */
   tick(now?: number): void {
     this.update((d) => {
       d.now = now ?? d.now + this.tickMs;
       for (const task of d.tasks) {
         if (task.state === "running") this.step(d, task);
-        else if (task.state === "pr-open") this.agePullRequest(d, task);
+        else if (task.state === "pr-open" || (task.state === "cancelled" && task.pr?.state === "open")) this.agePullRequest(d, task);
+        else if (task.cleanup?.error) this.removeCopy(d, task);
       }
       this.schedule(d);
     });
@@ -620,6 +626,8 @@ export class Simulator {
       d.inbox = d.inbox.filter((item) => item.taskId !== task.id);
       endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, d.now);
       this.log(d, task, "you", "You cancelled it");
+      // Only started tasks have a working copy to remove.
+      if (task.startedAt !== undefined) this.removeCopy(d, task);
       this.schedule(d);
     });
   }
@@ -1307,18 +1315,34 @@ export class Simulator {
       this.log(d, task, "done", `Petrina moved ${task.landed.branch} forward to it (${sha}), and checked the main copy`);
       endPetrinaStep(task, { outcome: W.movedMain(task.landed.branch) }, d.now);
     }
+    this.removeCopy(d, task);
   }
 
   private agePullRequest(d: Draft, task: DraftTask): void {
     task.prAge += 1;
     if (!task.pr || task.prAge < this.prMergeAfter) return;
     task.pr.state = "merged";
-    task.state = "done";
-    task.column = "done";
-    task.finishedAt = d.now;
-    task.statusLine = `Merged #${task.pr.number} on GitHub`;
+    if (task.state !== "cancelled") {
+      task.state = "done";
+      task.column = "done";
+      task.finishedAt = d.now;
+      task.statusLine = `Merged #${task.pr.number} on GitHub`;
+    }
     this.log(d, task, "done", `Merged on GitHub (#${task.pr.number})`);
     this.moment(d, task, { kind: "task-end", outcome: "merged" });
+    this.removeCopy(d, task);
+  }
+
+  /** A finished task's working copy goes, to free disk space. One with an open pull request stays. */
+  private removeCopy(d: Draft, task: DraftTask): void {
+    if (!copyNoLongerNeeded(task as unknown as Task) || task.cleanup?.removedAt !== undefined) return;
+    if (this.lockedCopies.has(task.id) && !task.cleanup?.error) {
+      task.cleanup = { error: CLEANUP_WORDS.locked };
+      this.log(d, task, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.locked));
+      return;
+    }
+    task.cleanup = { removedAt: d.now };
+    this.log(d, task, "done", CLEANUP_WORDS.removed);
   }
 
   // ── The work log ─────────────────────────────────────────────────────────

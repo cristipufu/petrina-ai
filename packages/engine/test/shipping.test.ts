@@ -86,7 +86,8 @@ describe.concurrent("shipping is never repeated blindly", () => {
 
   it("local: finds a move of main that went through but was not saved, after a forced kill", async () => {
     const run = await shipping("local");
-    const done = run.find(await run.engine.until((state) => delivered(run.find(state)), "the local delivery"));
+    // Simulate a lost delivery save after cleanup completes, rather than interrupting the removal itself.
+    const done = run.find(await run.engine.until((state) => delivered(run.find(state)) && run.find(state).cleanup?.removedAt !== undefined, "the local delivery and cleanup"));
     const tested = git(run.w.clone, "rev-parse", "main");
     await run.engine.kill();
     // As if Petrina was killed right after git moved main, before it saved that.

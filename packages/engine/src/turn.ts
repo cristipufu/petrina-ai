@@ -295,7 +295,8 @@ export class Turns {
       throw error;
     } finally {
       this.k.runs.delete(taskId);
-      run.close();
+      // Nothing the agent started may still write in the working copy once the step is over.
+      await run.stop();
       // A read-only role runs in its tool's automatic mode, so it could change things: leave the
       // working copy exactly as the step first found it, commits and uncommitted changes alike.
       if (headBefore && task.worktree && (await git.head(task.worktree).catch(() => headBefore)) !== headBefore) {
@@ -445,8 +446,12 @@ export class Turns {
       if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);
       throw error;
     } finally {
-      runs.delete(run);
-      run.close();
+      try {
+        await run.stop();
+      } finally {
+        // Draining still counts this reviewer until its process is gone and its report can be recorded.
+        runs.delete(run);
+      }
     }
   }
 

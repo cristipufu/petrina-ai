@@ -85,7 +85,9 @@ describe("Engine with a fake ACP agent", () => {
     // The work is on main, with the permission granted.
     expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
-    expect(existsSync(task.worktree!)).toBe(true);
+    await until(engine, (s) => s.tasks.find((entry) => entry.id === taskId)?.cleanup?.removedAt !== undefined, () => {});
+    expect(existsSync(task.worktree!)).toBe(false);
+    expect(git(repo, "rev-parse", task.branch!)).toBe(git(repo, "rev-parse", "main"));
   });
 });
 

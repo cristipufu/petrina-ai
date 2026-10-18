@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
@@ -13,17 +14,37 @@ describe("tasks' checks take turns on one machine", () => {
     roots.push(root);
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ checks: "slow" });
-    const engine = new Engine(join(root, "data"), { checkRuns: 1, agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+    const hold = join(root, "hold-check");
+    const runs = join(root, "check-runs");
+    const check = join(root, "check.ts");
+    const script = join(fakes.dir, "agents.json");
+    writeFileSync(hold, "");
+    // Hold the first check until another task really waits, however far apart their agents finish.
+    // The shared lock also makes an overlapping run fail instead of silently passing the fixture.
+    writeFileSync(check, `import { appendFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+const lock = ${JSON.stringify(join(root, "checking"))};
+mkdirSync(lock);
+try {
+  appendFileSync(${JSON.stringify(runs)}, process.cwd() + "\\n");
+  while (existsSync(${JSON.stringify(hold)})) await Bun.sleep(20);
+} finally { rmSync(lock, { recursive: true }); }
+`);
+    writeFileSync(script, JSON.stringify({ checks: [{ name: "Held check", argv: [process.execPath, check], why: "Waits until the other task is in line" }] }));
+    const engine = new Engine(join(root, "data"), { checkRuns: 1, agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`] });
     let waited = false;
     let waitingStep: { taskId: string; stepId: string; startedAt: number } | undefined;
     const unsubscribe = engine.subscribe(() => {
       const task = engine.getState().tasks.find((task) => task.statusLine === "Waiting to run the checks: another task's run comes first");
       if (task) {
         waited = true;
-        const step = task.journey!.at(-1)!;
-        expect(step).toMatchObject({ kind: "petrina", work: "checks" });
-        expect(step.endedAt).toBeUndefined();
-        waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt };
+        if (!waitingStep) {
+          const step = task.journey!.at(-1)!;
+          expect(step).toMatchObject({ kind: "petrina", work: "checks" });
+          expect(step.endedAt).toBeUndefined();
+          waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt };
+          // The first check is held until the other task is really waiting, then both run.
+          rmSync(hold, { force: true });
+        }
       }
     });
     try {
@@ -44,9 +65,13 @@ describe("tasks' checks take turns on one machine", () => {
       const task = engine.getState().tasks.find((task) => task.id === waitingStep!.taskId)!;
       expect(task.journey!.find((step) => step.id === waitingStep!.stepId)).toMatchObject({ startedAt: waitingStep!.startedAt, end: "done", outcome: "The check passes" });
       for (const task of engine.getState().tasks) expect(journeyProblems(task)).toEqual([]);
+      const checked = new Set(readFileSync(runs, "utf8").trim().split("\n").map((path) => realpathSync.native(path)));
+      const copies = new Set(ids.map((id) => realpathSync.native(engine.getState().tasks.find((task) => task.id === id)!.worktree!)));
+      expect(checked).toEqual(copies);
     } finally {
       unsubscribe();
-      engine.shutdown();
+      rmSync(hold, { force: true });
+      await engine.shutdown();
     }
   });
 });

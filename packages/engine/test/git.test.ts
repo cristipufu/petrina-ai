@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, repoInfo, riskySettings, sameRepo } from "../src/git.js";
+import { commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { removeDir } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
@@ -14,6 +14,72 @@ const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g,
 
 describe("Petrina's own git steps", () => {
   afterAll(() => removeDir(temp));
+
+  it("unlinks a finished copy's replacement link without deleting another copy, its unsaved files, or the main clone", async () => {
+    const repo = join(temp, "link-repo");
+    const finished = join(temp, "link-finished");
+    const active = join(temp, "link-active");
+    mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "kept\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "init");
+    await ensureWorktree(repo, active, "petrina/active", "main");
+    writeFileSync(join(active, "unsaved.txt"), "keep my work\n");
+    const refs = git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
+    for (const target of [active, repo]) {
+      await ensureWorktree(repo, finished, "petrina/finished", "main");
+      rmSync(finished, { recursive: true, force: true });
+      symlinkSync(target, finished, process.platform === "win32" ? "junction" : "dir");
+      expect(await removeWorktree(repo, finished)).toBe(true);
+      expect(existsSync(finished)).toBe(false);
+      const registered = git(repo, "worktree", "list", "--porcelain", "-z").split("\0").filter((field) => field.startsWith("worktree ")).map((field) => realpathSync.native(field.slice("worktree ".length)));
+      expect(new Set(registered)).toEqual(new Set([realpathSync.native(repo), realpathSync.native(active)]));
+      expect(readFileSync(join(active, "unsaved.txt"), "utf8")).toBe("keep my work\n");
+      expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("kept\n");
+      expect(git(repo, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(`${refs}\nrefs/heads/petrina/finished ${git(repo, "rev-parse", "main")}`);
+    }
+  });
+
+  for (const missing of ["neither", "copy", "parent"] as const) it(`matches a registered copy through parent aliases with ${missing === "neither" ? "its folders present" : `its ${missing} already missing`}`, async () => {
+    const parent = join(temp, `native identity ${missing}`);
+    const alias = join(temp, `parent-alias-${missing}`);
+    const repo = join(parent, "product");
+    const copies = join(parent, "copies");
+    const copy = join(copies, "finished");
+    const cache = join(parent, "shared-cache");
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(cache);
+    writeFileSync(join(cache, "keep"), "shared\n");
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "product\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "init");
+    // Git records the native folder name; callers can arrive through a parent alias or a Windows
+    // short temporary-folder name. Match the record even after the copy's parent is already gone.
+    symlinkSync(parent, alias, process.platform === "win32" ? "junction" : "dir");
+    await ensureWorktree(repo, copy, `petrina/identity-${missing}`, "main");
+    symlinkSync(cache, join(copy, "cache"), process.platform === "win32" ? "junction" : "dir");
+    const refs = git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
+    const registered = () => git(repo, "worktree", "list", "--porcelain", "-z").split("\0").filter((field) => field.startsWith("worktree "));
+    expect(registered()).toHaveLength(2);
+    if (missing !== "neither") rmSync(missing === "copy" ? copy : copies, { recursive: true, force: true });
+    const rootAlias = join(alias, "product");
+    const copyAlias = join(alias, "copies", "finished");
+    expect(await removeWorktree(rootAlias, copyAlias)).toBe(true);
+    expect(existsSync(copy)).toBe(false);
+    expect(registered()).toHaveLength(1);
+    expect(existsSync(alias)).toBe(true);
+    expect(readFileSync(join(cache, "keep"), "utf8")).toBe("shared\n");
+    expect(git(repo, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(refs);
+    await expect(removeWorktree(rootAlias, repo)).rejects.toThrow("that folder holds the product itself");
+    expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("product\n");
+    expect(await removeWorktree(rootAlias, copyAlias)).toBe(false);
+  });
 
   it("never run hooks or the file monitor an agent planted", async () => {
     const repo = join(temp, "repo");
@@ -45,6 +111,32 @@ describe("Petrina's own git steps", () => {
       git(repo, "remote", "set-url", "origin", folder);
       expect(await repoInfo(repo)).toMatchObject({ owner: "local", name: "named" });
     }
+  });
+
+  it("removes a locked working copy's folder and git record, keeps its branch, and refuses the product's own folder", async () => {
+    const repo = join(temp, "cleanup-repo");
+    const copy = join(temp, "cleanup-copy");
+    mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "kept\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "init");
+    const before = git(repo, "rev-parse", "HEAD");
+    await ensureWorktree(repo, copy, "petrina/cleanup", "main");
+    git(repo, "worktree", "lock", copy);
+    mkdirSync(join(copy, "target", "release"), { recursive: true });
+    writeFileSync(join(copy, "target", "release", "app"), "output");
+    expect(await removeWorktree(repo, copy)).toBe(true);
+    expect(existsSync(copy)).toBe(false);
+    expect(git(repo, "worktree", "list", "--porcelain")).not.toContain("cleanup-copy");
+    expect(git(repo, "rev-parse", "petrina/cleanup")).toBe(before);
+    expect(await removeWorktree(repo, copy)).toBe(false);
+    await expect(removeWorktree(repo, repo)).rejects.toThrow("that folder holds the product itself");
+    await expect(removeWorktree(repo, temp)).rejects.toThrow("that folder holds the product itself");
+    expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("kept\n");
+    expect(git(repo, "rev-parse", "main")).toBe(before);
   });
 
   it("will not fetch with the coordinator's login when the repository's settings could misuse it", async () => {

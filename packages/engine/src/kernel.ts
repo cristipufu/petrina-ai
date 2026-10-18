@@ -98,6 +98,8 @@ export interface EngineOptions {
   developerTools?: () => Promise<string | undefined>;
   /** Tests: the home folder: where the clone finder looks, and what ~ means in a pasted path. */
   home?: string;
+  /** Tests: how often the once-a-minute checks run (pull requests, removing working copies). */
+  checkEveryMs?: number;
 }
 
 export class Aborted extends Error {}
@@ -154,6 +156,8 @@ export abstract class Kernel {
   /** Set by the Engine: what starts drivers and fills free slots. */
   abstract schedule(): void;
   abstract startDriver(taskId: Id, resume?: boolean): void;
+  /** Set by the Engine: a task may be finished with its working copy; it goes once nothing uses it. */
+  abstract tidy(taskId: Id): void;
 
   constructor(
     readonly dataDir: string,
@@ -738,7 +742,11 @@ export abstract class Kernel {
     if (!this.saveTimer) {
       this.saveTimer = setTimeout(() => {
         this.saveTimer = undefined;
-        if (!this.stopped) this.store.save(this.getState());
+        try {
+          if (!this.stopped) this.store.save(this.getState());
+        } catch {
+          // A full disk, for example: the next change saves again.
+        }
       }, 400);
     }
   }

@@ -70,6 +70,9 @@ export const DEMO_TRIGGERS: Triggers = {
 /** Demo tasks whose architects end up disagreeing, so the coordinator can make the call. */
 const DEMO_DISAGREE: readonly string[] = ["gift-cards"];
 
+/** Demo tasks whose working copy could not be removed at the first try, so the board shows Petrina trying again. */
+const DEMO_LOCKED: readonly string[] = ["sentry"];
+
 interface Spec {
   id: string;
   productId: string;
@@ -179,7 +182,7 @@ function fastForward(
 ): Placed {
   const start = 0;
   const log = new MemoryWorkLog(start);
-  const sim = new Simulator({ ...baseState(start, [queuedTask(spec, 0, start, products)]), products }, { triggers, prMergeAfter: 3, tickMs, log, quirks, disagree: DEMO_DISAGREE });
+  const sim = new Simulator({ ...baseState(start, [queuedTask(spec, 0, start, products)]), products }, { triggers, prMergeAfter: 3, tickMs, log, quirks, disagree: DEMO_DISAGREE, lockedCopies: DEMO_LOCKED });
   const seen = new Map<string, number>();
   for (let tick = 0; tick < 600; tick += 1) {
     sim.tick();
@@ -227,6 +230,7 @@ function shift(placed: Placed, now: number, ago: number, priority: number): Plac
       ...(task.finishedAt !== undefined ? { finishedAt: at(task.finishedAt) } : {}),
       ...(task.agent ? { agent: { ...task.agent, since: at(task.agent.since) } } : {}),
       ...(task.pr ? { pr: { ...task.pr, openedAt: at(task.pr.openedAt) } } : {}),
+      ...(task.cleanup?.removedAt !== undefined ? { cleanup: { ...task.cleanup, removedAt: at(task.cleanup.removedAt) } } : {}),
       ...(task.checks ? { checks: { ...task.checks, at: at(task.checks.at) } } : {}),
       timeline: task.timeline.map((entry) => ({ ...entry, at: at(entry.at) })),
       session: task.session.map((line) => ({ ...line, at: at(line.at) })),
@@ -434,7 +438,7 @@ function buildDemo(now: number): Demo {
   place("gift-cards", 6 * MINUTE, (_task, items) => items.some((item) => item.kind === "disagreement"), 107);
   place("weekly-digest", 9 * MINUTE, (_task, items) => items.some((item) => item.kind === "plan"), 103);
   place("pricing-refresh", 26 * MINUTE, (_task, items) => items.some((item) => item.kind === "delivery"), 104);
-  place("sentry", 3 * 60 * MINUTE, (task) => task.state === "done", 105);
+  place("sentry", 3 * 60 * MINUTE, (task) => task.cleanup?.removedAt !== undefined, 105);
   place("footer-typo", 26 * 60 * MINUTE, (task) => task.state === "done", 106);
 
   // The coordinator sent back what every reviewer passed: the Guide keeper offers a point for the review guide.

@@ -11,10 +11,11 @@
 // agent that rewrites a remote cannot change what Petrina reads.
 
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstat, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { CLEANUP_WORDS } from "@petrina/core";
 import { withGitConfig, withoutCredentials } from "./env.js";
 
 export interface RunResult {
@@ -736,8 +737,80 @@ export async function tamperCheck(path: string, base: string): Promise<string[]>
   return [...new Set(problems)];
 }
 
-export async function removeWorktree(root: string, path: string): Promise<void> {
-  await oneAtATime(root, () => run(["git", "worktree", "remove", "--force", path], root));
+/** A reason a working copy could not be removed, in plain words for the timeline. */
+class Reason extends Error {}
+
+/** How long Petrina waits for git while removing a working copy. */
+const CLEANUP_GIT_TIMEOUT_MS = 60_000;
+
+/** A path with its links resolved, also when its last parts no longer exist. */
+function canonical(path: string): string {
+  const absolute = resolve(path);
+  try {
+    // Native resolution also expands Windows short names, which Git reports in their full form.
+    return realpathSync.native(absolute);
+  } catch {
+    const parent = dirname(absolute);
+    return parent === absolute ? absolute : join(canonical(parent), basename(absolute));
+  }
+}
+
+/** Resolve aliases in a folder's parent, but never follow the working-copy folder itself if it became a link. */
+function worktreeLocation(path: string): string {
+  const absolute = resolve(path);
+  return join(canonical(dirname(absolute)), basename(absolute));
+}
+
+/** The working copies the repository keeps a record of, other than its main clone, as git lists them. */
+async function linkedWorktrees(root: string): Promise<string[]> {
+  const listed = await run(["git", "worktree", "list", "--porcelain", "-z"], root, undefined, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS });
+  if (listed.code !== 0) throw new Reason("the product's repository could not be read");
+  const paths = listed.stdout.split("\0").filter((field) => field.startsWith("worktree ")).map((field) => field.slice("worktree ".length));
+  return paths.slice(1);
+}
+
+/** The main clone a working copy belongs to, read from the copy itself (for a product no longer in Petrina). */
+export async function mainClone(path: string): Promise<string | undefined> {
+  if (!existsSync(path)) return undefined;
+  const common = await run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], path);
+  return common.code === 0 && common.stdout ? dirname(common.stdout) : undefined;
+}
+
+/**
+ * Remove a task's working copy: the folder with everything in it (ignored packages and build output
+ * too), then the repository's record of it. Branches stay. Petrina deletes the folder itself, which
+ * never follows a link out of it, so shared caches and the files they link to stay. Safe to run again
+ * after a failure or an interruption. Throws a plain-language reason; returns false when nothing was left.
+ */
+export async function removeWorktree(root: string, path: string): Promise<boolean> {
+  try {
+    if (!existsSync(root)) throw new Reason("the product's folder could not be found");
+    const target = worktreeLocation(path);
+    const main = canonical(root);
+    if (resolve(path) === resolve(root) || target === main || main.startsWith(target + sep)) throw new Reason("that folder holds the product itself");
+    const recorded = async () => (await linkedWorktrees(root)).find((entry) => worktreeLocation(entry) === target);
+    const record = await recorded();
+    const there = () =>
+      lstat(path).then(
+        () => true,
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return false;
+          throw error;
+        },
+      );
+    const folder = await there();
+    if (folder) await rm(path, { recursive: true, force: true });
+    if (await there()) throw new Reason("its folder could not be deleted");
+    // With the folder gone, git only drops its record. Forced twice: also when the copy was locked.
+    if (record) await oneAtATime(root, () => run(["git", "worktree", "remove", "--force", "--force", record], root, undefined, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS }));
+    if (await recorded()) throw new Reason("the repository still lists it as a working copy");
+    if (await there()) throw new Reason("its folder could not be deleted");
+    return folder || record !== undefined;
+  } catch (error) {
+    if (error instanceof Reason) throw error;
+    const code = (error as NodeJS.ErrnoException).code ?? "";
+    throw new Reason(["EBUSY", "EPERM", "EACCES", "ENOTEMPTY"].includes(code) ? CLEANUP_WORDS.locked : "its folder could not be deleted");
+  }
 }
 
 /**

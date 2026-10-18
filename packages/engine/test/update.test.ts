@@ -276,7 +276,8 @@ if [ -n "$hits" ]; then echo "pre-commit: staged changes contain internal names;
     // What landed is clean, as one commit, and the clone is back on its branch.
     expect(git(repo, "show", "main:greeting.txt")).not.toContain("internal-db");
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
-    expect(git(task.worktree!, "symbolic-ref", "--short", "HEAD")).toBe(task.branch!);
+    expect(git(repo, "symbolic-ref", "--short", "HEAD")).toBe("main");
+    expect(git(repo, "rev-parse", task.branch!)).toBe(git(repo, "rev-parse", "main"));
     expect(task.hooking).toBeUndefined();
   });
 
