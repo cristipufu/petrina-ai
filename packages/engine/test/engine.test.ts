@@ -372,7 +372,7 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(halfway.statusLine).toBe(CALL_WORDS.following);
     const architects = architectRuns(halfway);
     engine.setPoolPaused(true);
-    engine.shutdown();
+    await engine.shutdown();
     rmSync(hold);
     engine = start();
     expect(taskOf(engine.getState(), taskId).call?.text).toBe(CALL);

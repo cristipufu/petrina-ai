@@ -45,8 +45,8 @@ async function fixture(scenario: Scenario = {}) {
     return done();
   }, "the Builder and its reviews", 60_000);
   const delivery = () => engine.getState().inbox.some((item) => item.kind === "delivery");
-  const restart = (flag?: string) => {
-    engine.shutdown();
+  const restart = async (flag?: string) => {
+    await engine.shutdown();
     nextGrokCheck = flag;
     options.toolCheckTimeoutMs = (flag === "--hang" ? 200 : 8000) * SLOW;
     engine = new Engine(join(root, "data"), options);
@@ -134,7 +134,7 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
       f.engine.s.setup!.checks = [{ id: "codex", status: "ready" }, { id: "grok", status: "unchecked" }, { id: "claude-code", status: "ready" }];
       const before = f.fakes.received("builder").length;
       if (check === "ready") writeFileSync(hold, "");
-      f.restart(check === "ready" ? `--hold-open=${hold}` : check === "logged-out" ? "--logged-out" : "--hang");
+      await f.restart(check === "ready" ? `--hold-open=${hold}` : check === "logged-out" ? "--logged-out" : "--hang");
       expect(f.task().state).toBe("waiting");
       expect(f.task().holdsSlot).toBe(false);
       expect(f.task().statusLine).toBe("Checking Grok before the Builder returns");

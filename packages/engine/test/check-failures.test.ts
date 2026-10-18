@@ -44,8 +44,8 @@ process.exit(ok ? 0 : 1);
     get engine() { return engine; },
     runs: () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [],
     delivery: () => until(engine, (state) => !!itemOf(state, taskId, "delivery"), coordinator(["plan"])).then((state) => taskOf(state, taskId)),
-    restart(edit?: (state: DeepMutable<State>) => void) {
-      engine.shutdown();
+    async restart(edit?: (state: DeepMutable<State>) => void) {
+      await engine.shutdown();
       if (edit) {
         const store = new Store(join(root, "data", "petrina.db"));
         const state = store.load()!;
@@ -145,7 +145,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(failure.evidence).toContain("captured failure");
       expect(f.fakes.prompts("builder").filter((text) => text.includes("captured failure"))).toHaveLength(2);
 
-      f.restart();
+      await f.restart();
       expect(taskOf(f.engine.getState(), f.taskId).checks).toEqual(captured);
       f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix the welcome page");
       task = await f.delivery();
@@ -197,7 +197,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
 
       // Resume at review as a restart between saving the failure and handling its return would do.
       // Older saved results have the commands and tree, but no definition fingerprint.
-      f.restart((state) => {
+      await f.restart((state) => {
         const saved = state.tasks.find((task) => task.id === f.taskId)!;
         delete saved.checks!.definition;
         saved.stageIndex = saved.plan!.stages.findIndex((stage) => stage.id === review.id);
@@ -278,7 +278,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       await until(f.engine, () => f.runs().includes("started"), coordinator(["plan"]));
       f.engine.pause(f.taskId);
       expect(taskOf(f.engine.getState(), f.taskId).checks).toEqual(captured);
-      f.restart();
+      await f.restart();
       expect(taskOf(f.engine.getState(), f.taskId).state).toBe("paused");
       f.setCheck("--pass");
       f.engine.resume(f.taskId);
@@ -375,7 +375,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
 
         // The implementation is opaque: unchanged failed evidence blocks until the coordinator retries.
         hook.set(true);
-        f.restart();
+        await f.restart();
         f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Check the saved failure");
         expect((await f.delivery()).checks).toEqual(failed);
         expect(hook.runs()).toBe(initialRuns + 1);
@@ -472,7 +472,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
           const original = (await f.delivery()).checks!;
           expect(original.results.at(-1)!.ok).toBe(originallyPassed);
           writeFileSync(hook, `#!/bin/sh\necho "Changed hook"\nexit ${originallyPassed ? 1 : 0}\n`);
-          f.restart((state) => { delete state.tasks.find((task) => task.id === f.taskId)!.checks!.definition; });
+          await f.restart((state) => { delete state.tasks.find((task) => task.id === f.taskId)!.checks!.definition; });
           const item = itemOf(f.engine.getState(), f.taskId, "delivery")!;
           if (originallyPassed) f.engine.approve(item.id);
           else f.engine.requestChanges(item.id, "The hook has been corrected");
@@ -484,7 +484,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
           expect(f.runs()).toEqual(["passed"]);
 
           // A failure remains evidence; a pass must revalidate the hook's opaque implementation.
-          f.restart();
+          await f.restart();
           f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Check the saved result");
           const again = (await f.delivery()).checks!;
           if (originallyPassed) expect(again).toEqual(refreshed);
@@ -513,7 +513,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         await f.delivery();
         expect(f.runs()).toEqual(["failed"]);
         writeFileSync(hook, '#!/bin/sh\necho "Corrected hook passed"\n');
-        f.restart((state) => { delete state.tasks.find((task) => task.id === f.taskId)!.checks!.definition; });
+        await f.restart((state) => { delete state.tasks.find((task) => task.id === f.taskId)!.checks!.definition; });
         f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "The hook has been corrected");
         const failed = await f.delivery();
         expect(f.runs()).toEqual(["failed"]);
@@ -541,7 +541,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         f.setCheck("--pass");
         await f.delivery();
         expect(f.fakes.openings("code reviewer")).toHaveLength(2);
-        if (exhausted) f.restart((state) => { state.tasks.find((task) => task.id === f.taskId)!.checkReturns = 2; });
+        if (exhausted) await f.restart((state) => { state.tasks.find((task) => task.id === f.taskId)!.checkReturns = 2; });
         // Main overlaps the already reviewed work. The builder must port greeting.txt by hand.
         writeFileSync(join(f.repo, "greeting.txt"), "A greeting on main\n");
         git(f.repo, "add", "greeting.txt");

@@ -44,7 +44,7 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
     return done();
   }, "the independent reviews", 60_000);
   const delivery = () => engine.getState().inbox.some((item) => item.kind === "delivery");
-  const restart = () => { engine.shutdown(); engine = new Engine(join(root, "data"), options); };
+  const restart = async () => { await engine.shutdown(); engine = new Engine(join(root, "data"), options); };
   engine.setPoolPaused(false);
   return { get engine() { return engine; }, fakes, task, model, models, release, advance, delivery, restart, repo };
 }
@@ -104,7 +104,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       f.engine.s.pool.limited = [{ toolId: "claude-code", until: Date.now() + 3_600_000, reason: "Claude Code's usage limit" }];
       await f.advance(() => Object.keys(f.task().hunt?.reported ?? {}).length === 1, (role, session) => role !== "code reviewer" || f.model(session) === "gpt-6.1-sol");
       expect(f.task().hunt?.profiles?.["0"]).toBe("sol-high");
-      f.restart();
+      await f.restart();
       await f.advance(f.delivery);
       const reviewers = f.fakes.received("code reviewer");
       expect(reviewers.filter((entry) => f.model(entry.session) === "gpt-6.1-sol")).toHaveLength(1);
@@ -127,7 +127,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       f.engine.s.pool.limited = [];
       f.engine.s.pool.usage = [];
       f.fakes.scenario({ controlled: true, builder: "plain" });
-      f.restart();
+      await f.restart();
       f.engine.setPoolPaused(false);
       await f.advance(f.delivery);
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
@@ -161,7 +161,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       expect(f.model(port.session)).toBe("grok-4.7");
       const step = f.task().journey!.find((entry) => entry.roleId === "code-reviewer" && entry.port)!;
       expect(step.team).toEqual(["grok-high"]);
-      f.restart();
+      await f.restart();
       await f.advance(f.delivery);
       expect(f.fakes.received("code reviewer").filter((entry) => entry.text.includes("Review only the port")).every((entry) => f.model(entry.session) === "grok-4.7")).toBe(true);
       const completed = f.task().journey!.filter((entry) => entry.roleId === "code-reviewer" && entry.port);
@@ -198,7 +198,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       const key = Object.keys(saved.hunt!.profiles!)[0]!;
       saved.hunt!.reported[key] = true;
       const before = f.fakes.received("code reviewer").length;
-      f.restart();
+      await f.restart();
       f.engine.setPoolPaused(false);
       await f.advance(f.delivery);
       const reviews = f.fakes.received("code reviewer").slice(before);
@@ -231,7 +231,7 @@ describe.concurrent("reviews after a usage handoff", () => {
         expect(saved.conversation?.sessionId).toBe(port.session);
         if (legacy) delete saved.reviewedTree;
         f.engine.sendMessage(f.task().id, "Check the welcome page too.");
-        f.restart();
+        await f.restart();
         f.engine.setPoolPaused(false);
         if (legacy) {
           await f.advance(() => f.fakes.received("code reviewer").length > 2 && !!f.task().conversation?.briefed, (role) => role !== "code reviewer");
