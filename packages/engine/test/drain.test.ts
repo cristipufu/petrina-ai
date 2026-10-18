@@ -48,7 +48,7 @@ describe("stopping gently", () => {
     const finishing = new Set();
     for (const run of engine.helperRuns.get(taskId) ?? []) {
       const stop = run.stop.bind(run);
-      run.stop = async () => { finishing.add(run); await stopping; await stop(); };
+      run.stop = async () => { finishing.add(run); await stopping; return stop(); };
     }
     try {
       expect(engine.inFlight()).toBe(2);

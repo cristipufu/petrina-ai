@@ -29,3 +29,26 @@ describe("actual voting tools", () => {
     expect(html).toContain("The page already shows the greeting.");
   });
 });
+
+describe("check cleanup", () => {
+  it("shows when Petrina could not confirm that child processes stopped", () => {
+    const state = createDemoState(1_000_000_000);
+    const task = {
+      ...state.tasks[0]!,
+      findings: [],
+      checks: {
+        at: state.now,
+        results: [{
+          name: "Tests",
+          command: "bun test",
+          ms: 1_000,
+          ok: false,
+          cleanupIncomplete: true,
+          output: "Petrina could not confirm every child process stopped. Some may still be running.",
+        }],
+      },
+    };
+    const html = renderToStaticMarkup(<ReviewView task={task} find={lookup(state)} />);
+    expect(html).toContain("Petrina could not confirm every child process stopped. Some may still be running.");
+  });
+});

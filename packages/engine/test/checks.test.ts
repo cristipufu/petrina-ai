@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { checksFingerprint, detectChecks, parseCommand, runChecks } from "../src/checks.js";
+import { CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
 import { Engine } from "../src/engine.js";
 import { Store } from "../src/store.js";
 import { Fakes, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
@@ -184,6 +185,69 @@ setInterval(() => {}, 1000);`);
       stop.abort();
       await running;
       for (const pid of workers()) { try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ } }
+      sentinel.kill("SIGKILL");
+    }
+  });
+
+  for (const outcome of ["recovers", "cannot read"] as const) it.skipIf(process.platform === "win32")(`reports an unavailable process tree accurately when cleanup ${outcome}`, async () => {
+    const dir = root("petrina-checks-process-list-");
+    const worker = join(dir, "worker.ts");
+    const parent = join(dir, "parent.ts");
+    const childPid = join(dir, "child.pid");
+    const grandPid = join(dir, "grandchild.pid");
+    const parentPid = join(dir, "parent.pid");
+    const ready = join(dir, "ready");
+    writeFileSync(worker, `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
+writeFileSync(process.argv[2], String(process.pid));
+if (process.argv[3]) spawn(process.execPath, [${JSON.stringify(worker)}, process.argv[3]], { detached: true, stdio: "ignore" }).unref();
+setInterval(() => {}, 1000);`);
+    writeFileSync(parent, `import { spawn } from "node:child_process"; import { existsSync, writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(parentPid)}, String(process.pid));
+spawn(process.execPath, [${JSON.stringify(worker)}, ${JSON.stringify(childPid)}, ${JSON.stringify(grandPid)}], { detached: true, stdio: "ignore" }).unref();
+while (!existsSync(${JSON.stringify(grandPid)})) await Bun.sleep(20);
+writeFileSync(${JSON.stringify(ready)}, "ready"); console.log("The check started both detached workers");
+setInterval(() => {}, 1000);`);
+    const sentinel = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const stop = new AbortController();
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const workers = () => [childPid, grandPid].filter(existsSync).map((file) => Number(readFileSync(file, "utf8")));
+    const timeouts: number[] = [];
+    const processList = async (timeout: number) => {
+      timeouts.push(timeout);
+      const pids = workers();
+      expect(alive(Number(readFileSync(parentPid, "utf8")))).toBe(true);
+      expect(pids).toHaveLength(2);
+      expect(pids.every(alive)).toBe(true);
+      expect(pids).not.toContain(sentinel.pid);
+      if (outcome === "cannot read" || timeouts.length === 1) return undefined;
+      return readProcessList(timeout);
+    };
+    let running: Promise<unknown> | undefined;
+    try {
+      running = runChecks(dir, [{ name: "Detached workers", argv: [process.execPath, parent] }], process.env, 20_000, stop.signal, join(dir, "logs"), processList);
+      await waitFor(() => existsSync(ready), "both detached check workers to start");
+      const parentId = Number(readFileSync(parentPid, "utf8"));
+      const found = parseDescendants(await readProcessList(4_000) ?? "", [parentId]);
+      for (const pid of workers()) expect(found).toContain(pid);
+      expect(found).not.toContain(sentinel.pid);
+      stop.abort();
+      const [run] = await running as Awaited<ReturnType<typeof runChecks>>;
+      expect(run!.ok).toBe(false);
+      expect(timeouts).toEqual([1_000, 2_000]);
+      expect(alive(sentinel.pid!)).toBe(true);
+      if (outcome === "recovers") {
+        expect(run!.cleanupIncomplete).toBeUndefined();
+        await waitFor(() => workers().every((pid) => !alive(pid)), "the detached workers to exit", 3_000);
+      } else {
+        expect(run!.cleanupIncomplete).toBe(true);
+        expect(run!.output).toContain(CLEANUP_INCOMPLETE);
+        expect(workers().every(alive)).toBe(true);
+      }
+    } finally {
+      stop.abort();
+      await running;
+      for (const pid of workers()) { try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ } }
+      try { process.kill(Number(readFileSync(parentPid, "utf8")), "SIGKILL"); } catch { /* Already gone. */ }
       sentinel.kill("SIGKILL");
     }
   });

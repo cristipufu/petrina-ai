@@ -8,7 +8,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { grokTurnReport } from "./grok-usage.js";
-import { descendants } from "./process-tree.js";
+import { descendantsKnown } from "./process-tree.js";
 import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 
 export interface PermissionInfo {
@@ -27,6 +27,8 @@ export interface RunCallbacks {
   onPlanStep(text: string): void;
   onPermission(info: PermissionInfo): Promise<"allow" | "deny">;
   onLog?(text: string): void;
+  /** A bounded stop could not confirm that all programs started by this tool have exited. */
+  onCleanupIncomplete?(): void;
   /** The tool said how much of a usage limit is used (every report, whether or not it is close). */
   onUsage?(info: UsageInfo): void;
   /** What the tool says it is logged in with, when it says: "none" means not logged in. */
@@ -258,25 +260,35 @@ async function exited(pids: readonly number[], ms: number): Promise<boolean> {
  * writing in the working copy after the tool is gone. They are found while the tool still runs, since they
  * lose their link to it once it exits. Resolves when they have all exited; forced after a few seconds.
  */
-async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: boolean): Promise<void> {
-  if (child.pid === undefined) return;
+async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: boolean): Promise<boolean> {
+  if (child.pid === undefined) return true;
   if (process.platform === "win32") {
-    if (!running(child)) return;
-    await new Promise<void>((resolve) => execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, () => resolve()));
-    return;
+    if (!running(child)) return true;
+    return new Promise<boolean>((resolve) => execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, (error) => resolve(!error)));
   }
   // Login probes never receive work. Stop their group at once, so a process lookup cannot hold
   // their forced stop past the tool check's deadline for starting the next probe.
-  let pids = [child.pid, ...(collectPrograms && running(child) ? await descendants([child.pid]) : [])];
+  let complete = true;
+  let pids = [child.pid];
+  if (collectPrograms && running(child)) {
+    const workers = await descendantsKnown([child.pid]);
+    if (workers === undefined) complete = false;
+    else pids.push(...workers);
+  }
   send([-child.pid], "SIGTERM");
   send(pids, "SIGTERM");
-  if (await exited([-child.pid, ...pids], graceMs)) return;
+  if (await exited([-child.pid, ...pids], graceMs)) return complete;
   // Whatever ignored the request to stop is killed, with anything it started meanwhile.
   // Leave most of the lookup budget to the first snapshot on a busy machine; still fit the app's quit deadline.
-  pids = [...pids, ...(collectPrograms ? await descendants(pids, 500) : [])].filter(alive);
+  if (collectPrograms) {
+    const workers = await descendantsKnown(pids.filter(alive), 1_200);
+    if (workers === undefined) complete = false;
+    else pids.push(...workers);
+  }
+  pids = [...new Set(pids)].filter(alive);
   send([-child.pid], "SIGKILL");
   send(pids, "SIGKILL");
-  await exited([-child.pid, ...pids], 1_000);
+  return (await exited([-child.pid, ...pids], 1_000)) && complete;
 }
 
 export class AgentRun {
@@ -289,7 +301,7 @@ export class AgentRun {
     readonly sessionId: string,
     private readonly state: RunState,
     private readonly profile: AgentProfile,
-    private readonly stopper: (graceMs?: number) => Promise<void>,
+    private readonly stopper: (graceMs?: number) => Promise<boolean>,
     /** How an earlier conversation was reopened; unset for a new one. */
     readonly reopened?: "resume" | "load",
   ) {}
@@ -341,8 +353,15 @@ export class AgentRun {
       child.once("error", (error) => reject(error));
     });
     killed.catch(() => undefined);
-    let stopping: Promise<void> | undefined;
-    const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= stopAll(child, graceMs, !options.probe));
+    let stopping: Promise<boolean> | undefined;
+    let cleanupNoticeSent = false;
+    const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= stopAll(child, graceMs, !options.probe).then((complete) => {
+      if (!complete && !cleanupNoticeSent) {
+        cleanupNoticeSent = true;
+        callbacks.onCleanupIncomplete?.();
+      }
+      return complete;
+    }));
     options.onGone?.(new Promise<void>((done) => {
       child.once("exit", () => done());
       child.once("error", () => done());
@@ -596,7 +615,7 @@ export class AgentRun {
   }
 
   /** Stop the agent and every program it started, and wait until they have exited; forced after a few seconds. */
-  stop(graceMs = FORCE_AFTER_MS): Promise<void> {
+  stop(graceMs = FORCE_AFTER_MS): Promise<boolean> {
     return this.stopper(graceMs);
   }
 }

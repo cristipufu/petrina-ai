@@ -4,6 +4,7 @@
 import { dueAnswers, followingCall, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { checksFor, commandText } from "./checks.js";
+import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel, MTask } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
@@ -117,7 +118,7 @@ export class Context {
 
   private checkResults(task: MTask, current: boolean): Section[] {
     if (!task.checks?.results.length) return [];
-    const lines = task.checks.results.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})`);
+    const lines = task.checks.results.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})${run.cleanupIncomplete ? ` — ${CLEANUP_INCOMPLETE}` : ""}`);
     const guidance = current
       ? task.checks.results.every((run) => run.ok)
         ? "These complete passing results still match the code, commands and hooks. Use them for automated acceptance; do not rerun the full checks just to confirm them. Exercise every user acceptance item, with focused tests or a build needed to try the product."

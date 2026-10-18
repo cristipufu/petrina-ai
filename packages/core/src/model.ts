@@ -783,6 +783,8 @@ export interface CheckRun {
   /** The log could not be saved completely; this never changes the command's own result. */
   logError?: string;
   timedOut?: boolean;
+  /** Petrina could not obtain a process-tree snapshot while stopping this command. */
+  cleanupIncomplete?: boolean;
 }
 
 /** What a tool last said about its usage limit: "allowed_warning" means it is close, "rejected" means it is out. */

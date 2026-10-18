@@ -9,6 +9,7 @@ import { agentEnv } from "./env.js";
 import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
 import { ADAPTERS } from "./tools.js";
+import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { Kernel, Aborted, notReady, stepKey, ToolProblem, type MTask } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "./worklog.js";
@@ -195,6 +196,7 @@ export class Turns {
           },
           onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits),
           onLog: (text) => void this.k.agentLog(taskId, text),
+          onCleanupIncomplete: () => { const current = live(); if (current) this.k.log(current, "warn", CLEANUP_INCOMPLETE); },
           onUsage: (info) => this.k.recordUsage(info),
         },
       }).catch(async (error: unknown) => {
@@ -426,6 +428,7 @@ export class Turns {
         },
         onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits),
         onLog: (text) => void this.k.agentLog(taskId, text),
+        onCleanupIncomplete: () => { const current = this.k.task(taskId); if (current) this.k.log(current, "warn", CLEANUP_INCOMPLETE); },
         onUsage: (info) => this.k.recordUsage(info),
       },
     }).catch(async (error: unknown) => {

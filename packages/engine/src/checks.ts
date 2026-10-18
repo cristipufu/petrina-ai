@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
-import { descendants } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE, descendantsKnown } from "./process-tree.js";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
 export const CHECK_TIMEOUT_MS = 20 * 60_000;
@@ -97,18 +97,34 @@ export function parseCommand(text: string): string[] {
  * Run the checks side by side, so the wait is the slowest check rather than the sum of them, and
  * report what really happened, in the order given. Stopping the task stops every check.
  */
-export async function runChecks(cwd: string, checks: readonly ProductCheck[], env: NodeJS.ProcessEnv, timeoutMs = CHECK_TIMEOUT_MS, signal?: AbortSignal, logDirectory?: string): Promise<CheckRun[]> {
+export async function runChecks(
+  cwd: string,
+  checks: readonly ProductCheck[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs = CHECK_TIMEOUT_MS,
+  signal?: AbortSignal,
+  logDirectory?: string,
+  processList?: (timeout: number) => Promise<string | undefined>,
+): Promise<CheckRun[]> {
   if (signal?.aborted) return [];
   const runs = checks
     .filter((check) => check.argv.length)
     .map(async (check): Promise<CheckRun> => {
       const started = Date.now();
       const log = logDirectory ? await checkLog(logDirectory) : undefined;
-      const run = await runOne(check.argv, cwd, env, timeoutMs, signal, log);
+      const run = await runOne(check.argv, cwd, env, timeoutMs, signal, log, processList);
       const result = { name: check.name, command: commandText(check.argv), ms: Date.now() - started, ...await log?.close() };
-      if (run.error) return { ...result, ok: false, output: `Could not start: ${run.error}` };
-      if (run.timedOut) return { ...result, ok: false, timedOut: true, output: tidyOutput(`${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.`) };
-      return { ...result, ok: run.code === 0, output: tidyOutput(run.output) };
+      const output = [
+        run.error ? `Could not start: ${run.error}` : run.timedOut ? `${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.` : run.output,
+        ...(run.cleanupIncomplete ? [CLEANUP_INCOMPLETE] : []),
+      ].filter(Boolean).join("\n");
+      return {
+        ...result,
+        ok: !run.error && !run.timedOut && run.code === 0,
+        ...(run.timedOut ? { timedOut: true } : {}),
+        ...(run.cleanupIncomplete ? { cleanupIncomplete: true } : {}),
+        output: tidyOutput(output),
+      };
     });
   return Promise.all(runs);
 }
@@ -150,7 +166,7 @@ async function checkLog(directory: string): Promise<CheckLog> {
  * One command, with only the end of its output kept while it runs, so a noisy check never fills
  * memory. It gets a process group of its own: a timeout or a stopped task ends everything it started.
  */
-function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog): Promise<{ code: number | null; output: string; timedOut: boolean; error?: string }> {
+function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>): Promise<{ code: number | null; output: string; timedOut: boolean; cleanupIncomplete?: boolean; error?: string }> {
   return new Promise((resolve) => {
     const windows = process.platform === "win32";
     let kept = "";
@@ -159,7 +175,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     let done = false;
     let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
-    let stopping: Promise<void> | undefined;
+    let stopping: Promise<boolean> | undefined;
     const readers: { cancel(): Promise<void> }[] = [];
     const finish = (code: number | null, error?: string) => {
       if (done) return;
@@ -170,10 +186,10 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
       for (const reader of readers) void reader.cancel().catch(() => undefined);
       const result = { code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, ...(error ? { error } : {}) };
       // The parent can exit before detached workers. Do not release the working copy until their stop settles.
-      void (stopping ?? Promise.resolve()).then(() => resolve(result));
+      void (stopping ?? Promise.resolve(true)).then((clean) => resolve({ ...result, ...(!clean ? { cleanupIncomplete: true } : {}) }));
     };
     const stop = () => {
-      stopping ??= stopAll(child?.pid, windows);
+      stopping ??= stopAll(child?.pid, windows, processList);
       grace ??= setTimeout(() => finish(null), 5000);
     };
     const timer = setTimeout(() => {
@@ -230,17 +246,18 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
 }
 
 /** End a check and everything it started. */
-async function stopAll(pid: number | undefined, windows: boolean): Promise<void> {
-  if (!pid) return;
+async function stopAll(pid: number | undefined, windows: boolean, processList?: (timeout: number) => Promise<string | undefined>): Promise<boolean> {
+  if (!pid) return true;
   if (windows) {
-    await new Promise<void>((resolve) => execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, () => resolve()));
-    return;
+    return new Promise<boolean>((resolve) => execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, (error) => resolve(!error)));
   }
-  // A worker can detach into a new process group. Capture its ancestry while the command is still alive.
-  const workers = await descendants([pid], 1000);
-  for (const target of [-pid, ...workers.reverse(), pid]) {
+  // Detached workers outlive both the check and its process group, so take a bounded snapshot
+  // while the parent is still alive. Failure must remain distinguishable from an empty process tree.
+  const workers = await descendantsKnown([pid], 3_200, processList);
+  for (const target of [-pid, ...(workers ?? []).reverse(), pid]) {
     try { process.kill(target, "SIGKILL"); } catch { /* Already gone. */ }
   }
+  return workers !== undefined;
 }
 
 /** Whether two sets of checks run the same commands (names and reasons aside). */

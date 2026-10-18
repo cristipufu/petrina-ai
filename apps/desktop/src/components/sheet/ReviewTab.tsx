@@ -128,6 +128,7 @@ function CheckItem({ run }: { run: CheckRun }) {
         <span className="num">{Math.max(1, Math.round(run.ms / 1000))}s</span>
       </div>
       <p className="issue-who mono">{run.command}</p>
+      {run.cleanupIncomplete && <p className="issue-text">Petrina could not confirm every child process stopped. Some may still be running.</p>}
       {run.output && (
         <>
           <button className="linkish" onClick={() => setOpen((on) => !on)}>

@@ -10,6 +10,7 @@ import { cpus, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText } from "./checks.js";
+import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
@@ -155,7 +156,10 @@ export class ProductChecks {
     let results: CheckRun[];
     try {
       const ran = kept ?? await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id));
-      if (signal.aborted) throw new Aborted();
+      if (signal.aborted) {
+        if (ran.some((run) => run.cleanupIncomplete)) this.k.log(task, "warn", CLEANUP_INCOMPLETE);
+        throw new Aborted();
+      }
       if ((await git.head(task.worktree).catch(() => "")) !== before) {
         await git.resetTo(task.worktree, before);
         this.k.log(task, "warn", "A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
