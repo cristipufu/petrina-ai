@@ -111,9 +111,10 @@ describe('the journey in the task sheet', () => {
     const task = taskOf(state, 'pricing-refresh');
     const builder = task.journey!.find((step) => step.roleId === 'builder')!;
     builder.fixing = true;
-    builder.findingIds = ['finding-fix-1'];
+    builder.startedAt = NOW - 100;
+    builder.endedAt = NOW;
     builder.builderConversation = 'resumed';
-    task.findings = [...task.findings, { id: 'finding-fix-1', text: 'The checkout total drops the selected shipping fee.', severity: 'blocking', raisedBy: 'code-reviewer', confirmedBy: [], status: 'open', evidence: 'The displayed total excludes shipping after changing the delivery method.' }];
+    task.findings = [...task.findings, { id: 'finding-fix-1', text: 'The checkout total drops the selected shipping fee.', severity: 'blocking', raisedBy: 'code-reviewer', confirmedBy: [], status: 'open', answer: { fixed: false, text: 'The work still needs a correction.', at: NOW }, evidence: 'The displayed total excludes shipping after changing the delivery method.' }];
     task.brief = { summary: 'Keep the checkout total accurate.', forUsers: [], areas: [], risks: [], acceptance: [
       { text: 'The total includes the selected shipping fee.', verification: 'passed', met: true },
       { text: 'Type checks and all tests pass.', verification: 'failed', met: false },

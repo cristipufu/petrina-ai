@@ -580,7 +580,12 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
             </>
           ) : null}
           {node.fixing && (() => {
-            const ids = node.findingIds ?? (node.state === "now" && task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id) : []);
+            const legacyIds = node.state === "now" && task.fixing
+              ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id)
+              : node.startedAt !== undefined && node.endedAt !== undefined
+                ? task.findings.filter((finding) => finding.answer && finding.answer.at >= node.startedAt! && finding.answer.at <= node.endedAt!).map((finding) => finding.id)
+                : [];
+            const ids = node.findingIds ?? legacyIds;
             const findings = ids.map((id) => task.findings.find((finding) => finding.id === id)).filter((finding): finding is Task["findings"][number] => !!finding);
             const journey = task.journey ?? [];
             const stepIndex = journey.findIndex((step) => step.id === node.id);
