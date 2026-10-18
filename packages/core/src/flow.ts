@@ -108,9 +108,9 @@ export type ReviewRoundEnd = { kind: "send back"; builder: number; open: number 
 export const MAX_REVIEW_ROUNDS = 5;
 
 /**
- * Past its planned rounds, a review keeps sending the work back while it converges (each round leaves fewer
- * Important findings than the one before), up to MAX_REVIEW_ROUNDS. Only a round that stops making progress
- * hands the decision to the coordinator.
+ * Past its planned rounds, a review keeps sending the work back while it converges (each round resolves at least
+ * one previously open Important finding), up to MAX_REVIEW_ROUNDS. Only a round that stops making progress hands
+ * the decision to the coordinator. Older saved tasks without finding snapshots use the count as a fallback.
  */
 export function reviewRoundEnd(task: Task, stage: Stage, round: number): ReviewRoundEnd {
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").length;
@@ -118,12 +118,18 @@ export function reviewRoundEnd(task: Task, stage: Stage, round: number): ReviewR
   const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
   if (builder < 0) return { kind: "used up", open };
   if (round < (stage.maxRounds ?? 2)) return { kind: "send back", builder, open };
+  const previous = task.blockingFindingsAfter?.[stage.id]?.at(-1);
+  const currentIds = new Set(task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id));
+  const resolvedPrior = previous?.some((id) => !currentIds.has(id)) ?? false;
   const before = task.blockingAfter?.[stage.id]?.at(-1);
-  if (round < MAX_REVIEW_ROUNDS && before !== undefined && open < before) return { kind: "send back", builder, open };
+  const madeProgress = previous ? resolvedPrior : before !== undefined && open < before;
+  if (round < MAX_REVIEW_ROUNDS && madeProgress) return { kind: "send back", builder, open };
   return { kind: "used up", open };
 }
 
 /** How many Important findings a review round ended with, for the next round's convergence check. */
 export function noteRoundEnd(task: DeepMutable<Task>, stageId: string, open: number): void {
   task.blockingAfter = { ...(task.blockingAfter ?? {}), [stageId]: [...(task.blockingAfter?.[stageId] ?? []), open] };
+  const ids = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id);
+  task.blockingFindingsAfter = { ...(task.blockingFindingsAfter ?? {}), [stageId]: [...(task.blockingFindingsAfter?.[stageId] ?? []), ids] };
 }

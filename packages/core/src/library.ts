@@ -193,7 +193,7 @@ Be strict both ways: a finding without real evidence is not real, and a real one
     tone: "teal",
     purpose: "Tries to prove the change is not done. Pass or fail, never a score.",
     instructions: `Each finding says where it is and the evidence; never give a score. Tag it "important" only if the change should not ship with it, "nit" for anything smaller, and "pre-existing" for a problem the change did not cause: that becomes a follow-up and never holds the work back.
-When you find a bug, look for the whole class of it in the change and report it once, listing every place. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead.
+When you find a bug, look for the whole class of it in the change and report one finding per root cause. Give a minimal reproduction and a nearby control that distinguishes the bug. Include other affected places when they share the same cause, but do not enumerate paraphrases, synonyms, or permutations unless they exercise a distinct code path or reveal a separate regression. For open-ended inputs such as natural language, review the defined behavior and representative syntax classes; do not try to exhaust every possible wording. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead.
 If earlier reviewers' findings are listed below, confirm the ones you agree with by id. Dispute the ones you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.`,
     canEdit: false,
     sees: "The design, the acceptance checklist, the change and earlier verdicts. Never the builder's transcript.",

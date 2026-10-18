@@ -10,6 +10,7 @@ import {
   JOURNEY_WORDS as W,
   journeyProblems,
   journeyView,
+  journeyViewKey,
   landingOf,
   legacyJourney,
   petrinaMoment,
@@ -60,6 +61,34 @@ function runUntil(sim: Simulator, done: () => boolean, respond: (kind: string, i
 }
 
 describe("a task's journey", () => {
+  it("keeps the view key stable for conversation updates and unrelated task activity", () => {
+    const sim = new Simulator(emptyState());
+    const id = sim.addTask({ productId: "p", title: "Greeting", kind: "feature" });
+    sim.tick();
+    const state = sim.getState();
+    const task = taskOf(sim, id);
+    const context = contextOf(state);
+    const key = journeyViewKey(task, context);
+    const withNewConversation = { ...task, session: [...task.session, { id: "new", at: 1, from: "activity" as const, text: "Reading" }] };
+    const otherTask = { ...task, id: "other", state: "running" as const, session: [...task.session, { id: "other-line", at: 2, from: "activity" as const, text: "Working" }] };
+    expect(journeyViewKey(withNewConversation, context)).toBe(key);
+    expect(journeyViewKey(task, { ...context, tasks: [...context.tasks, otherTask] })).toBe(key);
+    const legacyTask = { ...task, journey: undefined };
+    const timelineUpdate = { ...legacyTask, timeline: [...legacyTask.timeline, { ...legacyTask.timeline.at(-1)!, id: "extra", text: "Unrelated note" }] };
+    expect(journeyViewKey(timelineUpdate, context)).toBe(journeyViewKey(legacyTask, context));
+  });
+
+  it("changes the view key when visible journey details change", () => {
+    const sim = new Simulator(emptyState());
+    const id = sim.addTask({ productId: "p", title: "Greeting", kind: "feature" });
+    sim.tick();
+    const state = sim.getState();
+    const task = taskOf(sim, id);
+    const key = journeyViewKey(task, contextOf(state));
+    expect(journeyViewKey({ ...task, statusLine: "Reading the project" }, contextOf(state))).not.toBe(key);
+    expect(journeyViewKey({ ...task, state: "paused" }, contextOf(state))).not.toBe(key);
+  });
+
   it("starts in the queue with the planner next, and the planner choosing the rest", () => {
     const sim = new Simulator({ ...emptyState(), pool: { limit: 2, paused: true, toolCaps: {} } });
     const first = sim.addTask({ productId: "p", title: "Saved carts" });

@@ -30,7 +30,7 @@ try {
 } finally { rmSync(lock, { recursive: true }); }
 `);
     writeFileSync(script, JSON.stringify({ checks: [{ name: "Held check", argv: [process.execPath, check], why: "Waits until the other task is in line" }] }));
-    const engine = new Engine(join(root, "data"), { checkRuns: 1, agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`] });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`] });
     let waited = false;
     let waitingStep: { taskId: string; stepId: string; startedAt: number } | undefined;
     const unsubscribe = engine.subscribe(() => {

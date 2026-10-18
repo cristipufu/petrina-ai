@@ -305,9 +305,7 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
 Check every acceptance item, look for bugs, missing tests, weakened tests and things that break existing behaviour.
 ${GUIDE_RULE(base)}
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again. Run a single test only when you need it to prove a finding.
-Each finding says where it is and the evidence; never give a score. Tag it "important" only if the change should not ship with it, "nit" for anything smaller, and "pre-existing" for a problem the change did not cause: that becomes a follow-up and never holds the work back.
-When you find a bug, look for the whole class of it in the change and report it once, listing every place. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead.
-If earlier reviewers' findings are listed below, confirm the ones you agree with by id. Dispute the ones you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.
+${BUILT_IN_ROLES.find((entry) => entry.id === "code-reviewer")!.instructions}
 ${LEARN}
 Do not change any files.`;
     },

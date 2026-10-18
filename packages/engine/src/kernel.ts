@@ -87,7 +87,7 @@ export interface EngineOptions {
   /** Tests: the terminals on this machine. */
   terminals?: () => FoundTerminal[];
   /** Tests: how long one of a product's checks may run. */
-  /** How many tasks' checks run at the same time on this machine (default: one per six cores, at least one). */
+  /** How many tasks' check runs may overlap (default: one full check set at a time). */
   checkRuns?: number;
   checkTimeoutMs?: number;
   /** Tests: where programs are found, instead of the PATH. */

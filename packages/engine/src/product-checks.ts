@@ -6,7 +6,7 @@ import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { cpus, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText } from "./checks.js";
@@ -19,8 +19,8 @@ import type { Context } from "./context.js";
 
 export class ProductChecks {
   /**
-   * Tasks' checks take turns: a product's full test suite and build, several at once on one machine (with a
-   * security scanner looking at every process they start), is slower for each and times out for nothing.
+   * Task check runs take turns: each can start a full parallel test suite and build, so overlapping them
+   * multiplies CPU and memory pressure and can make both slower or cause timeouts.
    */
   private running = 0;
   private readonly line: (() => void)[] = [];
@@ -28,7 +28,7 @@ export class ProductChecks {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
 
   private async turnToRun(task: MTask, signal: AbortSignal): Promise<() => void> {
-    const most = this.k.options.checkRuns ?? Math.max(1, Math.floor(cpus().length / 6));
+    const most = this.k.options.checkRuns ?? 1;
     if (this.running >= most) {
       task.statusLine = "Waiting to run the checks: another task's run comes first";
       this.k.commit();

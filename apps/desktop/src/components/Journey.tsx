@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import { Ban, Check, Flag, Hourglass, LocateFixed, Maximize, User, X, ZoomIn, ZoomOut } from "lucide-react";
-import { journeyView, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
+import { journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
 import { ago, duration, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
 import { RoleAvatar } from "./bits";
@@ -627,9 +627,12 @@ export function Journey(props: JourneyProps) {
 }
 
 function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarget, onSelectionChange, selectionReset }: JourneyProps) {
+  const viewKey = journeyViewKey(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) });
   const view = useMemo(
     () => journeyView(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) }),
-    [task, state.roles, state.profiles, state.tasks, state.inbox, state.planner],
+    // A WebSocket update replaces every task object, including the long conversation history. Only
+    // rebuild the diagram when one of the small set of fields that affects it actually changes.
+    [viewKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const [selected, setSelected] = useState<string>();
   useEffect(() => setSelected(undefined), [selectionReset]);

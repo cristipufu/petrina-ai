@@ -681,6 +681,54 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
 }
 
 /**
+ * A small key for the parts of a task that affect its journey. Conversation lines, findings and check
+ * output can change often or be large, but they do not change this view. The desktop uses this to
+ * keep the diagram's nodes stable while unrelated session activity arrives.
+ */
+export function journeyViewKey(task: Task, ctx: JourneyContext): string {
+  const taskView = {
+    id: task.id,
+    state: task.state,
+    held: task.held,
+    priority: task.priority,
+    createdAt: task.createdAt,
+    startedAt: task.startedAt,
+    stageIndex: task.stageIndex,
+    plan: task.plan,
+    rounds: task.rounds,
+    sub: task.sub,
+    fixing: task.fixing,
+    call: task.call,
+    updating: task.updating ? [true, task.updating.head] : undefined,
+    builderTool: task.builderSession?.toolId,
+    portReview: task.portReview,
+    reviewedTree: task.reviewedTree,
+    testedPatch: task.testedPatch,
+    retest: task.retest,
+    delivery: task.delivery,
+    shippingPrepared: task.shipping?.prepared,
+    agent: task.agent && [task.agent.roleId, task.agent.profileId, task.agent.since],
+    journey: task.journey,
+    statusLine: task.statusLine,
+    pr: task.pr,
+    release: task.release,
+    landed: task.landed,
+  };
+  const queued = ctx.tasks.filter((entry) => entry.state === "queued").map(({ id, priority }) => [id, priority]);
+  const legacyInbox = task.journey ? undefined : ctx.inbox
+    .filter((entry) => entry.taskId === task.id)
+    .map(({ id, kind, blocking, roleId, profileId, at, title }) => [id, kind, blocking, roleId, profileId, at, title]);
+  return JSON.stringify([
+    taskView,
+    ctx.roles.map(({ id, name }) => [id, name]),
+    ctx.profiles.map(({ id, toolId }) => [id, toolId]),
+    queued,
+    legacyInbox,
+    ctx.planner,
+  ]);
+}
+
+/**
  * What is wrong with a recorded journey, if anything. The engine's and the simulator's tests run the
  * same checks, so the two cannot record journeys differently without a test saying so.
  */

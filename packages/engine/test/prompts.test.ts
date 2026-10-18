@@ -31,6 +31,15 @@ describe("prompts", () => {
       expect(prompt).toContain(BACKGROUND);
     }
   });
+  it("keeps code review bounded for open-ended behavior without weakening regression checks", () => {
+    const task = createDemoState(1_000_000_000).tasks[0]!;
+    const role = BUILT_IN_ROLES.find((entry) => entry.id === "code-reviewer")!;
+    const prompt = buildPrompt({ task, product: DEMO_PRODUCTS[0]!, role, roles: BUILT_IN_ROLES, profiles: DEFAULT_PROFILES, worktree: "/tmp/worktree", branch: "petrina/task", base: "main", defaultBranch: "main", sections: [] });
+    expect(prompt).toContain("one finding per root cause");
+    expect(prompt).toContain("do not enumerate paraphrases, synonyms, or permutations");
+    expect(prompt).toContain("representative syntax classes");
+    expect(prompt).toContain("look for bugs, missing tests, weakened tests");
+  });
 });
 
 import { addRole, draftOf, editRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS } from "@petrina/core";
