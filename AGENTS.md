@@ -61,6 +61,8 @@ What agents learned about working in this repository, added with the coordinator
 - After a local delivery finishes, Petrina removes the working copy. Read that commit from the product clone with the task's branch name. A missing folder shows up as ENOENT posix_spawn 'git'.
 - Engine test helpers can be imported into an inline Bun program to reproduce a case without adding a test file.
 - The portfolio demo uses different task identifiers from the main demo; locate its cards by visible text or state.
+- For a stable demo screen, stop its clock; pausing the pool still lets active agents finish.
+- Once any agent tool’s login check is Ready, a tool whose check is still running is left out, so a step can move to the tool that answered first. A test that names the tool has to wait until that check has finished.
 
 ## Review guide
 
