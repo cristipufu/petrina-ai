@@ -6,7 +6,7 @@
 
 import type { DeepMutable, GuideLine, Id } from "@petrina/core";
 import * as git from "./git.js";
-import { addToSection, AGENTS_FILE, cleanPoint, hasPoint, localPoints, samePointRoughly } from "./points.js";
+import { addToSection, AGENTS_FILE, cleanPoint, hasPoint, localPoints } from "./points.js";
 import type { Kernel, MTask } from "./kernel.js";
 
 const SECTION = "## Learnings";
@@ -25,8 +25,8 @@ export class Learnings {
     for (const raw of lessons) {
       // The coordinator approves this instruction as written; cutting it can lose a path or a qualification.
       const text = cleanPoint(raw);
-      // Agents often say the same thing in other words: the first saying of a point is the one offered.
-      if (text.length < 8 || hasPoint(known, text) || known.split("\n").some((line) => samePointRoughly(line, text)) || (task.lessons ?? []).some((lesson) => hasPoint(lesson.text, text) || samePointRoughly(lesson.text, text))) continue;
+      // Changed wording may correct an old instruction. Only repeated text is already covered.
+      if (text.length < 8 || hasPoint(known, text) || (task.lessons ?? []).some((lesson) => hasPoint(lesson.text, text))) continue;
       if ((task.lessons?.length ?? 0) >= MAX_LESSONS) break;
       task.lessons = [...(task.lessons ?? []), { text, roleId, profileId, at: Date.now() }];
     }
@@ -45,7 +45,7 @@ export class Learnings {
 
   /** Lessons that AGENTS.md, or the coordinator's answers, have covered since they were noted. */
   private covered(known: string, text: string): boolean {
-    return hasPoint(known, text) || known.split("\n").some((line) => samePointRoughly(line, text));
+    return hasPoint(known, text);
   }
 
   /**

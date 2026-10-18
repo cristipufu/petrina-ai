@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { addLearnings, Learnings } from "../src/learnings.js";
-import { samePointRoughly } from "../src/points.js";
+import { hasPoint } from "../src/points.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
@@ -162,24 +162,51 @@ describe("a lesson AGENTS.md gained in the meantime", () => {
   });
 });
 
-describe("lessons said twice in other words", () => {
-  // Offered side by side on real tasks: each group is one lesson.
-  const core = [
-    "A pure function in packages/core can be tried out without installing anything: write a small script outside the repo that imports the source file by its full path and run it with bun.",
-    "To try one function from packages/core on its own, put a small script outside the working copy that imports the source file by its full path and run it with bun. No install is needed, because core's sources import nothing from outside the repository.",
-    "Code in packages/core can be run straight from source with bun (a small script that imports packages/core/src/*.ts), with nothing installed.",
-  ];
-  const viewport = [
-    "The app's tests run in a 1024px-wide window, so the inbox opens over the board there. To test the docked inbox, call window.happyDOM.setViewport({ width: 1400 }) inside act() and set the width back afterwards.",
-    "Desktop tests run in happy-dom at 1024px wide, so the inbox opens over the board (narrow layout) unless a test widens the window to 1200px or more with happyDOM.setViewport.",
-  ];
-  const timeout = "The coordinator's Mac has no 'timeout' command. To cap how long a command runs, use the tool's own time limit.";
+describe("repeated lessons", () => {
+  it("ignores whitespace and bullet formatting without losing paths, flags, case or negation", () => {
+    const original = "Use scripts/test-one.sh to run focused checks.";
+    expect(hasPoint(`- ${original}`, `  ${original.replaceAll(" ", "  ")}  `)).toBe(true);
+    expect(hasPoint(original, original.replace(/\.$/, "!"))).toBe(true);
+    expect(hasPoint(original, "Use scripts/test/one.sh to run focused checks.")).toBe(false);
+    expect(hasPoint(original, "Use scripts/Test-one.sh to run focused checks.")).toBe(false);
+    expect(hasPoint("Run bun test --parallel.", "Run bun test parallel.")).toBe(false);
+    expect(hasPoint("A check with no evidence is not verified.", "A check with no evidence is verified.")).toBe(false);
+  });
 
-  it("are one lesson, and different lessons stay apart", () => {
-    expect(samePointRoughly(core[0]!, core[1]!)).toBe(true);
-    expect(samePointRoughly(core[1]!, core[2]!)).toBe(true);
-    expect(samePointRoughly(viewport[0]!, viewport[1]!)).toBe(true);
-    for (const line of [...core, ...viewport]) expect(samePointRoughly(line, timeout)).toBe(false);
-    expect(samePointRoughly(core[0]!, viewport[0]!)).toBe(false);
+  it("offers changed instructions even when an existing, accepted or declined lesson shares most of their words", async () => {
+    const root = tempDir("petrina-lessons-distinct-");
+    roots.push(root);
+    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    try {
+      engine.setPoolPaused(true);
+      const repo = makeProduct(root);
+      const productId = await engine.addProduct(repo);
+      writeFileSync(join(repo, "AGENTS.md"), "- Run engine tests with bun test --parallel.\n");
+      git(repo, "add", "AGENTS.md");
+      git(repo, "commit", "-q", "-m", "Existing guidance");
+      const task = engine.task(engine.addTask({ productId, title: "Keep distinct instructions" }))!;
+      task.worktree = repo;
+      const product = engine.productOf(task)!;
+      product.learnings = [{ text: "Use scripts/check-one.sh for focused checks.", fromTask: task.id, at: 0 }];
+      product.learningsDeclined = ["Run integration tests without installing dependencies."];
+      const instructions = [
+        "Do not run engine tests with bun test --parallel; use the package test command so its cleanup runs.",
+        "Use scripts/check/one.sh for focused checks.",
+        "Run integration tests after installing dependencies.",
+        "A check with no evidence is not verified.",
+        "A check with no evidence is verified.",
+      ];
+      const learnings = new Learnings(engine);
+      await learnings.note(task, instructions, "builder", "sol-xhigh");
+      await learnings.note(task, instructions.map((line) => `  ${line}  `), "code-reviewer", "grok-xhigh");
+      await learnings.offer(task);
+      const offer = engine.getState().inbox.find((item) => item.kind === "learnings")!;
+      expect(offer.body).toBe(instructions.map((line) => `- ${line}`).join("\n"));
+      engine.addLessons(offer.id, [0, 1, 2, 3]);
+      await learnings.write(task);
+      expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[0]!);
+      expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[1]!);
+      expect(git(repo, "show", "HEAD:AGENTS.md")).not.toContain(`- ${instructions[4]}`);
+    } finally { await engine.shutdown(); }
   });
 });
