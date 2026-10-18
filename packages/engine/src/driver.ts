@@ -291,6 +291,22 @@ export class Driver {
         this.k.commit();
         // The stage (or planning) is under way from here: a slot is held for it, or it needs none.
         this.k.tracking.beginStage(current);
+        // Give acceptance testing verified automated evidence first, so it can focus on the user cases.
+        // Read-only review reuses this same run; changing code still requires fresh evidence.
+        if (stage?.kind === "do" && stage.roleId === "tester" && !current.retest) {
+          if (await this.checks.failing(current, signal, await this.checks.ensureChecks(current, signal))) {
+            delete current.portReview;
+            delete current.reviewedTree;
+            if (this.checks.backToBuilder(current, "before acceptance testing")) continue;
+            const delivery = current.plan!.stages.findIndex((entry, index) => index > current.stageIndex && entry.gate === "delivery");
+            if (delivery < 0) throw new Error("The product's checks fail before acceptance testing");
+            current.stageIndex = delivery;
+            current.sub = 0;
+            this.k.log(current, "warn", "Checks still fail: acceptance testing waits, and the decision goes to you");
+            this.k.commit();
+            continue;
+          }
+        }
         if (current.stageIndex < 0) {
           await this.planning.runPlanner(current, signal);
           if (current.approvePlan) {

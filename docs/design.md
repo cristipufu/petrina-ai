@@ -52,7 +52,7 @@ Mechanics borrowed and credited:
 | `do` | One role on one profile produces its result |
 | `converge` | Author and reviewer (different profiles) alternate until the reviewer has no open blocking objection, or the round limit is reached and the coordinator decides |
 | `review-chain` | Petrina's tamper check and the product's checks first, then every reviewer at once, each on its own, then fresh agents voting on Important findings. Important findings that stand send the change back to the builder as one list, then the review runs again on what changed: within the planned rounds, and past them while each round leaves fewer Important findings than the one before, up to five. A round that stops making progress goes to the coordinator, whose delivery check then says "your call" with the count still open |
-| `do` with the Tester | Tries the acceptance list like a user, once on the change before its first review. Fix rounds skip it (the code reviewers check the fixes), and right before the delivery check the tester tries the final code once more if it changed since; a failure there goes back to the builder like a failing check |
+| `do` with the Tester | The product checks run first, so the Tester can reuse verified automated evidence and focus on trying the acceptance list like a user, once on the change before its first review. Fix rounds skip it (the code reviewers check the fixes), and right before the delivery check the tester tries the final code once more if it changed since; a failure there goes back to the builder like a failing check |
 | `gate` | Waits for the coordinator (design approval, delivery approval) |
 
 ### Task lifecycle

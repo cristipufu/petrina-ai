@@ -109,6 +109,8 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       const task = await f.delivery();
       expect(f.runs()).toEqual(["passed"]);
       expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(f.fakes.openings("tester")[0]).toContain("Current product checks, run by Petrina itself");
+      expect(f.fakes.openings("tester")[0]).toContain("do not rerun the full checks");
       expect(f.fakes.openings("code reviewer").length).toBeGreaterThan(0);
       expect(f.fakes.openings("code reviewer").every((prompt) => prompt.includes("Current product checks, run by Petrina itself"))).toBe(true);
       expect(checkSteps(task)).toHaveLength(1);
@@ -117,6 +119,20 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(f.runs()).toEqual(["passed"]);
       expect(f.fakes.openings("tester")).toHaveLength(1);
     } finally { f.engine.shutdown(); }
+  });
+
+  it("spends no acceptance turn on unchanged failing code before asking the coordinator", async () => {
+    const f = await fixture(true, { planner: "tester-first", builder: "plain" });
+    try {
+      const task = await f.delivery();
+      expect(f.runs()).toEqual(["failed"]);
+      expect(f.fakes.openings("tester")).toHaveLength(0);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(0);
+      expect(task.journey?.some((step) => step.roleId === "tester")).toBe(false);
+      expect(journeyProblems(task as Task)).toEqual([]);
+      expect(task.checkReturns).toBe(2);
+      expect(task.findings.some((finding) => finding.text.startsWith("Check failed") && finding.status === "open")).toBe(true);
+    } finally { await f.engine.shutdown(); }
   });
 
   it("tells acceptance testing whether saved checks really cover the code and required commands", async () => {
