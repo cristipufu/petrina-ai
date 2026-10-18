@@ -50,7 +50,16 @@ describe("saved role wording", () => {
         // Only the richer role list and the placement rules change for the planner.
         expect(now.replace(job(now), "")).toBe(was.replace(job(was), ""));
         expect(now).toContain(plannerRoles(context.roles));
-      } else expect(now).toBe(was);
+      } else if (context.role.id !== "builder") expect(now).toBe(was);
+    }
+  });
+  it("leaves the product's full check run to Petrina after the Builder finishes", () => {
+    for (const name of ["builder", "builder fixing review findings"]) {
+      const job = contractFor(contexts[name]!.role).instructions(contexts[name]!);
+      expect(job).toContain("Run focused tests that cover the behavior you changed while you work.");
+      expect(job).toContain("Petrina runs them on the finished work before review");
+      expect(job).toContain("Run a broader check only when needed to diagnose a failure.");
+      expect(job).not.toContain("run the product's full checks");
     }
   });
   it("uses saved wording and keeps fixed planner rules after it", () => {
