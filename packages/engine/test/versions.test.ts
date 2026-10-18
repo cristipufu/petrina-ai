@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { declaredVersion, nextVersion, parseVersion, onlyVersionChanged, isVersionFile } from "../src/version.js";
-import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, type World } from "./support.js";
+import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
 
 const worlds: World[] = [];
 const world = (...args: Parameters<typeof makeWorld>) => {
@@ -18,7 +18,7 @@ afterAll(() => {
 });
 
 const release = (w: World, tag: string, at: string) => {
-  execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/tags/${tag}`, at]);
+  execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/tags/${tag}`, at], { env: testGitEnv() });
   w.setGitHub((github) => github.releases.push({ tagName: tag, url: `https://github.com/acme/demo/releases/tag/${tag}`, publishedAt: new Date().toISOString(), isDraft: false, name: tag, body: "" }));
 };
 
@@ -237,7 +237,7 @@ describe.concurrent("Release versions on real deliveries", () => {
   it("stops rather than skip a version when the new tag is already on GitHub", async () => {
     const w = world("occupied");
     release(w, "v1.0.0", w.initial);
-    execFileSync("git", ["--git-dir", w.remote, "update-ref", "refs/tags/v1.0.1", w.initial]);
+    execFileSync("git", ["--git-dir", w.remote, "update-ref", "refs/tags/v1.0.1", w.initial], { env: testGitEnv() });
     const [task] = await deliver(w, "release");
     expect(task!.state).toBe("failed");
     expect(task!.error).toContain("The tag v1.0.1 already exists on GitHub");

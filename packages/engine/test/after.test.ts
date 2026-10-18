@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { journeyProblems } from "@petrina/core";
 import { Engine } from "../src/engine.js";
-import { removeDir, waitFor } from "./support.js";
+import { removeDir, testGitEnv, waitFor } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-after-"));
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
+const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();
 
 describe("Tasks that start after others land", () => {
   const repo = join(temp, "repo");

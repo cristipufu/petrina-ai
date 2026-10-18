@@ -5,6 +5,7 @@
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { testGitEnv } from "./test-git-env.js";
 
 export interface FakePr {
   number: number;
@@ -138,7 +139,7 @@ function main(): void {
   const fail = (message: string): never => exit(1, "", message);
   const ref = (name: string): string | undefined => {
     try {
-      return execFileSync("git", ["--git-dir", remote!, "rev-parse", "--verify", "--quiet", `${name}^{commit}`]).toString().trim() || undefined;
+      return execFileSync("git", ["--git-dir", remote!, "rev-parse", "--verify", "--quiet", `${name}^{commit}`], { env: testGitEnv() }).toString().trim() || undefined;
     } catch {
       return undefined;
     }
@@ -175,11 +176,11 @@ function main(): void {
   const meanwhile = state.meanwhile;
   if (meanwhile?.times && meanwhile.command === command && (!meanwhile.withTag || (args[2] && !args[2].startsWith("-")))) {
     meanwhile.times -= 1;
-    const env = { ...process.env, GIT_AUTHOR_NAME: "Teammate", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "Teammate", GIT_COMMITTER_EMAIL: "t@example.com" };
+    const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Teammate", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "Teammate", GIT_COMMITTER_EMAIL: "t@example.com" });
     const moved = execFileSync("git", ["--git-dir", remote!, "commit-tree", "main^{tree}", "-p", "main", "-m", "A teammate's change"], { env }).toString().trim();
-    execFileSync("git", ["--git-dir", remote!, "update-ref", "refs/heads/main", moved]);
+    execFileSync("git", ["--git-dir", remote!, "update-ref", "refs/heads/main", moved], { env: testGitEnv() });
     if (meanwhile.release) {
-      execFileSync("git", ["--git-dir", remote!, "update-ref", `refs/tags/${meanwhile.release}`, moved]);
+      execFileSync("git", ["--git-dir", remote!, "update-ref", `refs/tags/${meanwhile.release}`, moved], { env: testGitEnv() });
       state.releases.push({ tagName: meanwhile.release, url: `https://github.com/${state.repo}/releases/tag/${meanwhile.release}`, publishedAt: new Date().toISOString(), isDraft: false, name: meanwhile.release, body: "A teammate's release." });
       delete meanwhile.release;
     }

@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileS
 import { join } from "node:path";
 import type { State } from "@petrina/core";
 import { Engine } from "../src/engine.js";
-import { ADDRESS, coordinator, FAKE_AGENT, FAKE_GH, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, type World } from "./support.js";
+import { ADDRESS, coordinator, FAKE_AGENT, FAKE_GH, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
 
 const worlds: World[] = [];
 const world = (...args: Parameters<typeof makeWorld>) => {
@@ -88,7 +88,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
       w.setScript((script) => (script.gitlink = { path: "lib", sha: unpushed }));
       const libHas = () => {
         try {
-          execFileSync("git", ["--git-dir", libOrigin, "cat-file", "-e", `${unpushed}^{commit}`], { stdio: "ignore" });
+          execFileSync("git", ["--git-dir", libOrigin, "cat-file", "-e", `${unpushed}^{commit}`], { env: testGitEnv(), stdio: "ignore" });
           return true;
         } catch {
           return false;
@@ -135,7 +135,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
         // The saved address stays what it was when the product was added.
         expect(engine.getState().products[0]!.remote).toBe(ADDRESS);
         // With the same settings, a plain push would have taken the submodule's commit along.
-        const plain = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_CONFIG_")));
+        const plain = testGitEnv(process.env);
         execFileSync("git", ["-c", "core.hooksPath=/dev/null", "push", "-q", "--no-verify", w.remote, `${tested}:refs/heads/plain`], { cwd: w.clone, env: { ...plain, GIT_CONFIG_GLOBAL: globalConfig }, stdio: "pipe" });
         expect(libHas()).toBe(true);
       } finally {

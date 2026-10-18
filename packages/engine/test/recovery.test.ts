@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { ShippingRecord, State } from "@petrina/core";
 import type { Engine } from "../src/engine.js";
 import { branchName } from "../src/git.js";
-import { finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, type World, SLOW } from "./support.js";
+import { finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World, SLOW } from "./support.js";
 
 const worlds: World[] = [];
 const world = (...args: Parameters<typeof makeWorld>) => {
@@ -136,13 +136,13 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         expect(shipping.pushed).toBe(true);
         const tested = shipping.prepared!.tested;
         if (how === "gone") {
-          execFileSync("git", ["--git-dir", w.remote, "update-ref", "-d", "refs/tags/v0.1.0"]);
+          execFileSync("git", ["--git-dir", w.remote, "update-ref", "-d", "refs/tags/v0.1.0"], { env: testGitEnv() });
           return;
         }
         // Someone points the tag at untested work on top of the tested commit.
-        const env = { ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" };
+        const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
         const other = execFileSync("git", ["--git-dir", w.remote, "commit-tree", `${tested}^{tree}`, "-p", tested, "-m", "Untested change"], { env }).toString().trim();
-        execFileSync("git", ["--git-dir", w.remote, "update-ref", "refs/tags/v0.1.0", other]);
+        execFileSync("git", ["--git-dir", w.remote, "update-ref", "refs/tags/v0.1.0", other], { env: testGitEnv() });
       });
       try {
         const task = taskOf(await finish(engine, taskId), taskId);
@@ -163,7 +163,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     it(`never takes a release published just before shipping for this delivery, interrupted while ${where}`, async () => {
       const w = world(`release-before-${where}`);
       // v1.0.0 came out just before this delivery started.
-      execFileSync("git", ["--git-dir", w.remote, "update-ref", "refs/tags/v1.0.0", w.initial]);
+      execFileSync("git", ["--git-dir", w.remote, "update-ref", "refs/tags/v1.0.0", w.initial], { env: testGitEnv() });
       w.setGitHub((github) => github.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: new Date().toISOString(), isDraft: false, name: "v1.0.0", body: "" }));
       let engine: Engine;
       let taskId: string;
@@ -444,7 +444,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     rmSync(first.hold);
     await until(first.engine, () => w.github().prs.length === 1);
     // The branch is deleted on GitHub after the pull request closes; GitHub keeps its last commit.
-    execFileSync("git", ["--git-dir", w.remote, "update-ref", "-d", `refs/heads/${branch}`]);
+    execFileSync("git", ["--git-dir", w.remote, "update-ref", "-d", `refs/heads/${branch}`], { env: testGitEnv() });
     for (const state of ["MERGED", "CLOSED"] as const) {
       w.setGitHub((github) => {
         github.prs[0]!.state = state;
@@ -496,9 +496,9 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       // Someone pushes onto the branch while the pull request is being opened.
       const branch = taskOf(engine.getState(), taskId).branch!;
       const at = remoteRef(w.remote, `refs/heads/${branch}`)!;
-      const env = { ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" };
+      const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
       const other = execFileSync("git", ["--git-dir", w.remote, "commit-tree", `${at}^{tree}`, "-p", at, "-m", "Someone else's change"], { env }).toString().trim();
-      execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/heads/${branch}`, other]);
+      execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/heads/${branch}`, other], { env: testGitEnv() });
       rmSync(hold);
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
@@ -517,9 +517,9 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       engine.setProductDelivery(productId, "pull-request", false);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       // Someone else's work is already on GitHub under this task's branch name.
-      const env = { ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" };
+      const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
       const other = execFileSync("git", ["--git-dir", w.remote, "commit-tree", `${w.initial}^{tree}`, "-p", w.initial, "-m", "Someone else's work"], { env }).toString().trim();
-      execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/heads/${branchName("Add a greeting", taskId)}`, other]);
+      execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/heads/${branchName("Add a greeting", taskId)}`, other], { env: testGitEnv() });
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
       expect(task.error).toContain(`GitHub has this task's branch at ${other.slice(0, 7)}, which is not this work, so Petrina pushed nothing`);

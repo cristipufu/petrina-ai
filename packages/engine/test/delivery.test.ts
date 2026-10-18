@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLEANUP_WORDS, slotUses, type DeliveryMode, type Task } from "@petrina/core";
-import { coordinator, finish, git, itemOf, makeWorld, removeDir, REPO, remoteRef, taskOf, until, type World } from "./support.js";
+import { coordinator, finish, git, itemOf, makeWorld, removeDir, REPO, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
 
 const worlds: World[] = [];
 const world = (...args: Parameters<typeof makeWorld>) => {
@@ -34,7 +34,7 @@ const noReleaseManager = (task: Task) => expect(task.timeline.some((entry) => en
 
 /** A release on GitHub at `at`, as a teammate published it. */
 function released(w: World, tag: string, at: string): void {
-  execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/tags/${tag}`, at]);
+  execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/tags/${tag}`, at], { env: testGitEnv() });
   w.setGitHub((github) => github.releases.push({ tagName: tag, url: `https://github.com/${REPO}/releases/tag/${tag}`, publishedAt: "2026-01-01T00:00:00Z", isDraft: false, name: tag, body: "" }));
 }
 
@@ -246,7 +246,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       // Git's credential helpers as the coordinator set them up, none reset.
       let helper = "(none)";
       try {
-        helper = execFileSync("git", ["config", "--get-all", "credential.helper"], { cwd: task.worktree! }).toString();
+        helper = execFileSync("git", ["config", "--get-all", "credential.helper"], { cwd: task.worktree!, env: testGitEnv() }).toString();
       } catch {}
       expect(env.helper).toBe(helper);
     } finally {

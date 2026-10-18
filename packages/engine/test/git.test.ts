@@ -4,10 +4,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
-import { removeDir } from "./support.js";
+import { removeDir, testGitEnv } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
+const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();
 
 /** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
@@ -215,7 +215,7 @@ describe("Petrina's own git steps", () => {
   describe("pushes and local updates", () => {
     const setup = (name: string) => {
       const remote = join(temp, `${name}.git`);
-      execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+      execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote], { env: testGitEnv() });
       const repo = join(temp, name);
       mkdirSync(repo, { recursive: true });
       git(repo, "init", "-q", "-b", "main");
@@ -226,12 +226,12 @@ describe("Petrina's own git steps", () => {
       git(repo, "push", "-q", remote, "main");
       git(repo, "commit", "-q", "--allow-empty", "-m", "two");
       const two = git(repo, "rev-parse", "HEAD");
-      return { remote, repo, one, two, at: (ref: string) => execFileSync("git", ["--git-dir", remote, "for-each-ref", "--format=%(objectname)", ref]).toString().trim() };
+      return { remote, repo, one, two, at: (ref: string) => execFileSync("git", ["--git-dir", remote, "for-each-ref", "--format=%(objectname)", ref], { env: testGitEnv() }).toString().trim() };
     };
 
     it("pushes main and a tag all or nothing, and refuses an existing tag", async () => {
       const { remote, repo, one, two, at } = setup("atomic");
-      execFileSync("git", ["--git-dir", remote, "update-ref", "refs/tags/v1.0.0", one]);
+      execFileSync("git", ["--git-dir", remote, "update-ref", "refs/tags/v1.0.0", one], { env: testGitEnv() });
       const pushed = await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }, { sha: two, ref: "refs/tags/v1.0.0" }], true);
       expect(pushed.ok).toBe(false);
       expect(at("refs/heads/main")).toBe(one);
@@ -346,7 +346,7 @@ describe("the change's fingerprint", () => {
   /** A repository with a task branch that changes one line in the middle of a file. */
   function repo(): { path: string; run: (...args: string[]) => string } {
     const path = mkdtempSync(join(folder, "repo-"));
-    const run = (...args: string[]) => execFileSync("git", args, { cwd: path, encoding: "utf8" }).trim();
+    const run = (...args: string[]) => execFileSync("git", args, { cwd: path, encoding: "utf8", env: testGitEnv() }).trim();
     run("init", "-q", "-b", "main");
     run("config", "user.email", "t@example.com");
     run("config", "user.name", "T");

@@ -12,14 +12,14 @@ import { dispatch } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { WaitClock, WorkLog } from "../src/worklog.js";
-import { removeDir, SLOW } from "./support.js";
+import { removeDir, SLOW, testGitEnv } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const fakeCodex = join(import.meta.dir, "fake-codex.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-worklog-"));
 const data = join(temp, "data");
 const git = (cwd: string, ...args: string[]) => {
-  const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const result = Bun.spawnSync(["git", ...args], { cwd, env: testGitEnv(), stdout: "pipe", stderr: "pipe", windowsHide: true });
   if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString() || result.stdout.toString()}`);
   return result.stdout.toString().trim();
 };

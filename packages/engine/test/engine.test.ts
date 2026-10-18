@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
-import { removeDir, SLOW } from "./support.js";
+import { removeDir, SLOW, testGitEnv } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
+const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();
 
 function makeRepo(name = "repo"): string {
   const repo = join(temp, name);

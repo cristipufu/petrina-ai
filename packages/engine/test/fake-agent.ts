@@ -14,6 +14,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, symlink
 import { execFileSync, spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
+import { testGitEnv } from "./test-git-env.js";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
@@ -142,7 +143,7 @@ const marked = (name: string) => !!dir && existsSync(join(dir, name));
 const silent = process.argv.includes("--silent") || scenario().silent === true;
 if (dir) appendFileSync(join(dir, "processes"), `${process.pid}\n`);
 /** The agent's own git: none of the programs a security test plants. */
-const run = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+const run = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, env: testGitEnv(), stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
 interface Reply {
   text: string;
@@ -641,9 +642,9 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "welcome.txt"), `Hello ${Date.now()}\n`);
       if (plan.leak && !text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "greeting.txt"), "Hello from internal-db-07\n");
       if (plan.mergesMain && !text.includes("You are fixing the review findings")) {
-        execFileSync("git", ["add", "-A"], { cwd: session.cwd });
-        execFileSync("git", ["-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "-q", "-m", "Builder's own commit"], { cwd: session.cwd });
-        execFileSync("git", ["-c", "user.email=fake@example.com", "-c", "user.name=Fake", "merge", "-q", "--no-edit", "main"], { cwd: session.cwd });
+        execFileSync("git", ["add", "-A"], { cwd: session.cwd, env: testGitEnv() });
+        execFileSync("git", ["-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "-q", "-m", "Builder's own commit"], { cwd: session.cwd, env: testGitEnv() });
+        execFileSync("git", ["-c", "user.email=fake@example.com", "-c", "user.name=Fake", "merge", "-q", "--no-edit", "main"], { cwd: session.cwd, env: testGitEnv() });
       }
       const script = readScript();
       const taskTitle = /^# The task: (.+)$/m.exec(text)?.[1];
@@ -652,7 +653,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (script.envOut) {
         let helper = "(none)";
         try {
-          helper = execFileSync("git", ["config", "--get-all", "credential.helper"], { cwd: session.cwd }).toString();
+          helper = execFileSync("git", ["config", "--get-all", "credential.helper"], { cwd: session.cwd, env: testGitEnv() }).toString();
         } catch {}
         const names = ["GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "AWS_PROFILE", "GH_CONFIG_DIR", "GIT_SSH_COMMAND", "GIT_TERMINAL_PROMPT", "GH_PROMPT_DISABLED", "BROWSER", "PETRINA_AGENT"];
         writeFileSync(script.envOut, JSON.stringify({ ...Object.fromEntries(names.map((name) => [name, process.env[name]])), helper }));

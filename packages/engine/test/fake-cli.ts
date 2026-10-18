@@ -7,6 +7,7 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { testGitEnv } from "./test-git-env.js";
 
 export interface CliScript {
   /** Stay open while this file exists. */
@@ -49,7 +50,7 @@ while (script.hold && existsSync(script.hold)) {
   }
   await Bun.sleep(50);
 }
-const git = (...rest: string[]) => execFileSync("git", rest, { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+const git = (...rest: string[]) => execFileSync("git", rest, { cwd: process.cwd(), env: testGitEnv(), stdio: ["ignore", "pipe", "pipe"] });
 for (const [name, text] of Object.entries(script.commit ?? {})) {
   writeFileSync(join(process.cwd(), name), text);
   git("add", name);

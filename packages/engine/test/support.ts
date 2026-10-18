@@ -12,6 +12,8 @@ import type { ShellMessage } from "../src/launch.js";
 import { Store } from "../src/store.js";
 import type { AgentScript, Scenario } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
+import { testGitEnv } from "./test-git-env.js";
+export { testGitEnv } from "./test-git-env.js";
 
 // Git's config environment is inherited by child processes even when Bun's mutable process.env is
 // cleaned up. Every test Git process gets its own explicitly sanitized environment instead.
@@ -46,13 +48,6 @@ export const HARNESS = join(import.meta.dir, "harness.ts");
 
 export function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
-}
-
-/** Git config injected by Petrina protects its own processes, but must not protect test fixtures. */
-export function testGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const clean = { ...env };
-  for (const name of Object.keys(clean)) if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(name) || name === "GIT_SSH_COMMAND") delete clean[name];
-  return clean;
 }
 
 /** Windows keeps files open a moment after a process ends: cleaning up is best effort. */
