@@ -1,9 +1,11 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { checksFingerprint, detectChecks, parseCommand, runChecks } from "../src/checks.js";
 import { Engine } from "../src/engine.js";
+import { Store } from "../src/store.js";
 import { Fakes, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
@@ -89,9 +91,55 @@ describe("a product's checks", () => {
   });
 
   it("reports a check that exceeds its deadline as timed out", async () => {
-    const [run] = await runChecks(root("petrina-checks-timeout-"), [{ name: "Too slow", argv: ["sleep", "120"] }], process.env, 200 * SLOW);
+    const dir = root("petrina-checks-timeout-");
+    const [run] = await runChecks(dir, [{ name: "Too slow", argv: ["sleep", "120"] }], process.env, 200 * SLOW, undefined, join(dir, "logs"));
     expect(run!.ok).toBe(false);
     expect(run!.timedOut).toBe(true);
+    expect(existsSync(run!.logPath!)).toBe(true);
+    expect(run!.logError).toBeUndefined();
+  });
+
+  it("keeps the original failure before later output, with separate durable logs for concurrent and repeated checks", async () => {
+    const dir = root("petrina-checks-logs-");
+    const logs = join(dir, "logs");
+    const trace = "Original assertion: expected three agents, received four";
+    const text = `before\n${trace}\n${"later passing test\n".repeat(20_000)}last line\n`;
+    const script = join(dir, "fails.ts");
+    writeFileSync(script, `await Bun.write(Bun.stdout, ${JSON.stringify(text)}); await Bun.write(Bun.stderr, 'stderr trace\\n'); process.exitCode = 1;`);
+    const check = { name: "Same name", argv: [process.execPath, script] };
+    const results = await runChecks(dir, [check, check], process.env, 30_000 * SLOW, undefined, logs);
+    const [again] = await runChecks(dir, [check], process.env, 30_000 * SLOW, undefined, logs);
+    expect(new Set([...results, again!].map((run) => run.logPath)).size).toBe(3);
+    for (const run of [...results, again!]) {
+      expect(run.ok).toBe(false);
+      expect(run.logError).toBeUndefined();
+      expect(run.output.length).toBeLessThan(7000);
+      expect(run.output).not.toContain(trace);
+      const saved = readFileSync(run.logPath!, "utf8");
+      expect(saved).toContain(trace);
+      expect(saved).toContain("stderr trace\n");
+      // The two pipes can interleave; every stdout byte must still be there in order.
+      const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+      expect(digest(saved.replace("stderr trace\n", ""))).toBe(digest(text));
+      if (process.platform !== "win32") expect(statSync(run.logPath!).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("reports a log write failure without changing whether a command passed or failed", async () => {
+    const dir = root("petrina-checks-log-error-");
+    const blocked = join(dir, "not-a-directory");
+    writeFileSync(blocked, "Keep this file.");
+    const results = await runChecks(dir, [
+      { name: "Pass", argv: [process.execPath, "-e", "console.log('passed')"] },
+      { name: "Fail", argv: [process.execPath, "-e", "console.error('real error'); process.exitCode = 7"] },
+    ], process.env, 30_000 * SLOW, undefined, blocked);
+    expect(results.map((run) => run.ok)).toEqual([true, false]);
+    expect(results[1]!.output).toContain("real error");
+    for (const run of results) {
+      expect(run.logError).toBeTruthy();
+      expect(run.logPath).toBeUndefined();
+    }
+    expect(readFileSync(blocked, "utf8")).toBe("Keep this file.");
   });
 });
 
@@ -127,9 +175,14 @@ describe("a check that misbehaves", () => {
     const stop = new AbortController();
     setTimeout(() => stop.abort(), 300);
     const started = Date.now();
-    const results = await runChecks(root("petrina-checks-abort-"), [{ name: "Slow", argv: ["sleep", "30"] }, { name: "Slower", argv: ["sleep", "40"] }], process.env, 60_000, stop.signal);
+    const dir = root("petrina-checks-abort-");
+    const results = await runChecks(dir, [{ name: "Slow", argv: ["sleep", "30"] }, { name: "Slower", argv: ["sleep", "40"] }], process.env, 60_000, stop.signal, join(dir, "logs"));
     expect(Date.now() - started).toBeLessThan(4000);
     expect(results.map((run) => [run.name, run.ok])).toEqual([["Slow", false], ["Slower", false]]);
+    for (const run of results) {
+      expect(existsSync(run.logPath!)).toBe(true);
+      expect(run.logError).toBeUndefined();
+    }
   });
 
   it("runs the checks side by side: the wait is the slowest one, not the sum", async () => {
@@ -170,6 +223,7 @@ describe("Petrina runs the checks itself during a task", () => {
         expect(finder.checksBy).toBe("finder");
         expect(finder.checks?.length).toBe(1);
         expect(task.checks?.results).toHaveLength(1);
+        expect(existsSync(task.checks!.results[0]!.logPath!)).toBe(true);
         const reviewerRuns = task.timeline.filter((entry) => entry.text === "Code reviewer started").length;
         if (outcome === "pass") {
           expect(task.checks!.results[0]!.ok).toBe(true);
@@ -180,11 +234,22 @@ describe("Petrina runs the checks itself during a task", () => {
           // Reviewers never spent a turn on work whose checks fail.
           expect(reviewerRuns).toBe(0);
           expect(task.findings.some((finding) => finding.raisedBy === "petrina" && finding.text.startsWith("Check failed: Tests") && finding.evidence)).toBe(true);
+          const fixing = fakes.received("builder").find((entry) => entry.text.includes("Saved failed-check output"));
+          expect(fixing?.text).toContain(join(dir, "data", "checks", taskId));
+          expect(fixing?.text).toContain("do not rerun just to recover the error");
           expect(task.timeline.some((entry) => entry.text.startsWith("Sent back to the builder"))).toBe(true);
           expect(engine.getState().inbox.find((item) => item.taskId === taskId)!.body).toContain("Petrina's checks: 1 of 1 failed (Tests)");
         }
         // The finder ran once for the product, not once per review round.
         expect(task.timeline.filter((entry) => entry.text.startsWith("Found how to check")).length).toBe(1);
+        const savedLog = task.checks!.results[0]!.logPath!;
+        const contents = readFileSync(savedLog, "utf8");
+        engine.shutdown();
+        const store = new Store(join(dir, "data", "petrina.db"));
+        try {
+          expect(store.load()!.tasks.find((entry) => entry.id === taskId)!.checks!.results[0]!.logPath).toBe(savedLog);
+          expect(readFileSync(savedLog, "utf8")).toBe(contents);
+        } finally { store.close(); }
       } finally {
         engine.shutdown();
       }

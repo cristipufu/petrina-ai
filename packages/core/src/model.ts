@@ -754,6 +754,10 @@ export interface CheckRun {
   ms: number;
   /** The end of the command's output, as plain text. */
   output: string;
+  /** Private complete output on this machine, independent of the working copy and prompt excerpt. */
+  logPath?: string;
+  /** The log could not be saved completely; this never changes the command's own result. */
+  logError?: string;
   timedOut?: boolean;
 }
 

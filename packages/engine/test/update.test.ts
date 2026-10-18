@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, journeyProblems, stepName, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
@@ -209,6 +209,8 @@ if [ -n "$hits" ]; then echo "pre-commit: staged changes contain internal names;
     // The builder heard about the hook up front, and the fix round showed it what the hook said.
     expect(fakes.openings("builder")[0]).toContain("- Pre-commit hook: the repository's own");
     expect(fakes.prompts("builder").some((prompt) => prompt.includes("internal-db-07"))).toBe(true);
+    const saved = fakes.prompts("builder").find((prompt) => prompt.includes("Saved failed-check output"))!.match(/- Pre-commit hook: ("[^"\n]+")/)!;
+    expect(readFileSync(JSON.parse(saved[1]!), "utf8")).toContain("internal-db-07");
     // What landed is clean, as one commit, and the clone is back on its branch.
     expect(git(repo, "show", "main:greeting.txt")).not.toContain("internal-db");
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
@@ -217,10 +219,13 @@ if [ -n "$hits" ]; then echo "pre-commit: staged changes contain internal names;
   });
 
   it("runs a commit-msg hook on the task's one commit message, with the builder's title, and undoes what it changes", async () => {
-    const check = `echo "changed by a hook" >> README.md
+    const check = `echo "Checking the commit title"
+echo "changed by a hook" >> README.md
 head -1 "$1" | grep -qE '^(feat|fix|chore): ' || { echo "commit-msg: use a conventional title" >&2; exit 1; }`;
     const { task, repo, before } = await ship({ title: "feat: add a greeting" }, { setup: (repo) => hook(repo, "commit-msg", check) });
     expect(task.checks?.results.find((run) => run.name === "Commit message hook")).toMatchObject({ ok: true, command: "git hook run commit-msg" });
+    const run = task.checks!.results.find((run) => run.name === "Commit message hook")!;
+    expect(readFileSync(run.logPath!, "utf8")).toContain("Checking the commit title");
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("feat: add a greeting");
     expect(git(repo, "show", "main:README.md")).toBe("# Demo");
   });

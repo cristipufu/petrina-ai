@@ -94,7 +94,15 @@ export class Context {
   private findingsToAnswer(task: MTask): Section[] {
     if (!task.fixing) return [];
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing");
-    return open.length ? [{ title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) }] : [];
+    const logs = task.checks?.results.filter((run) => !run.ok).flatMap((run) => {
+      const saved = run.logPath ? `- ${run.name}: ${JSON.stringify(run.logPath)}${run.logError ? " (incomplete)" : ""}` : "";
+      const error = run.logError ? `- ${run.name}: Could not save the complete output: ${run.logError}` : "";
+      return [saved, error, !run.logPath && !run.logError ? `- ${run.name}: This older run has only the saved output excerpt; no complete log was saved.` : ""].filter(Boolean);
+    }) ?? [];
+    return open.length ? [
+      { title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) },
+      ...(logs.length ? [{ title: "Saved failed-check output (search these exact files for the failure; do not rerun just to recover the error)", body: logs.join("\n") }] : []),
+    ] : [];
   }
 
   private report(task: MTask, roleId: Id): Section[] {

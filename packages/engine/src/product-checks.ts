@@ -152,7 +152,7 @@ export class ProductChecks {
     const env = { ...withoutCredentials(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
     let results: CheckRun[];
     try {
-      const ran = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal);
+      const ran = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id));
       if (signal.aborted) throw new Aborted();
       if ((await git.head(task.worktree).catch(() => "")) !== before) {
         await git.resetTo(task.worktree, before);
@@ -261,7 +261,7 @@ export class ProductChecks {
       this.k.commitNow();
       await git.detachAt(worktree, base);
       try {
-        runs.push(...(await runChecks(worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }], env, this.k.options.checkTimeoutMs, signal)));
+        runs.push(...(await runChecks(worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id))));
       } finally {
         await git.reattach(worktree, branch);
         delete task.hooking;
@@ -274,7 +274,7 @@ export class ProductChecks {
       try {
         const file = join(folder, "COMMIT_EDITMSG");
         await writeFile(file, `${await git.message(worktree)}\n`);
-        const [run] = await runChecks(worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }], env, this.k.options.checkTimeoutMs, signal);
+        const [run] = await runChecks(worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id));
         if (run) runs.push({ ...run, command: "git hook run commit-msg" });
       } finally {
         await rm(folder, { recursive: true, force: true });

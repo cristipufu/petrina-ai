@@ -2,9 +2,10 @@
 // runs them itself, so "the tests pass" is evidence, never an agent's word. Commands are argument
 // arrays, never a shell, and they run in the task's working copy without credentials.
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { mkdir, open } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
@@ -94,14 +95,15 @@ export function parseCommand(text: string): string[] {
  * Run the checks side by side, so the wait is the slowest check rather than the sum of them, and
  * report what really happened, in the order given. Stopping the task stops every check.
  */
-export async function runChecks(cwd: string, checks: readonly ProductCheck[], env: NodeJS.ProcessEnv, timeoutMs = CHECK_TIMEOUT_MS, signal?: AbortSignal): Promise<CheckRun[]> {
+export async function runChecks(cwd: string, checks: readonly ProductCheck[], env: NodeJS.ProcessEnv, timeoutMs = CHECK_TIMEOUT_MS, signal?: AbortSignal, logDirectory?: string): Promise<CheckRun[]> {
   if (signal?.aborted) return [];
   const runs = checks
     .filter((check) => check.argv.length)
     .map(async (check): Promise<CheckRun> => {
       const started = Date.now();
-      const run = await runOne(check.argv, cwd, env, timeoutMs, signal);
-      const result = { name: check.name, command: commandText(check.argv), ms: Date.now() - started };
+      const log = logDirectory ? await checkLog(logDirectory) : undefined;
+      const run = await runOne(check.argv, cwd, env, timeoutMs, signal, log);
+      const result = { name: check.name, command: commandText(check.argv), ms: Date.now() - started, ...await log?.close() };
       if (run.error) return { ...result, ok: false, output: `Could not start: ${run.error}` };
       if (run.timedOut) return { ...result, ok: false, timedOut: true, output: tidyOutput(`${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.`) };
       return { ...result, ok: run.code === 0, output: tidyOutput(run.output) };
@@ -109,11 +111,44 @@ export async function runChecks(cwd: string, checks: readonly ProductCheck[], en
   return Promise.all(runs);
 }
 
+interface CheckLog {
+  write(bytes: Uint8Array): Promise<void>;
+  close(): Promise<Pick<CheckRun, "logPath" | "logError">>;
+}
+
+/** Stream all output to disk; at most one chunk from each pipe waits in memory. */
+async function checkLog(directory: string): Promise<CheckLog> {
+  let file;
+  const path = join(resolve(directory), `${Date.now()}-${randomUUID()}.log`);
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    file = await open(path, "wx", 0o600);
+  } catch (error) {
+    return { write: async () => {}, close: async () => ({ logError: String(error) }) };
+  }
+  const handle = file;
+  let pending = Promise.resolve();
+  let logError: string | undefined;
+  return {
+    write(bytes) {
+      // stdout and stderr share one file position. Serialize writes and apply backpressure
+      // to their readers, rather than collecting an unbounded queue of output in memory.
+      pending = pending.then(async () => { if (!logError) await handle.writeFile(bytes); }).catch((error) => { logError ??= String(error); });
+      return pending;
+    },
+    async close() {
+      await pending;
+      try { await handle.close(); } catch (error) { logError ??= String(error); }
+      return { logPath: path, ...(logError ? { logError } : {}) };
+    },
+  };
+}
+
 /**
  * One command, with only the end of its output kept while it runs, so a noisy check never fills
  * memory. It gets a process group of its own: a timeout or a stopped task ends everything it started.
  */
-function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal): Promise<{ code: number | null; output: string; timedOut: boolean; error?: string }> {
+function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog): Promise<{ code: number | null; output: string; timedOut: boolean; error?: string }> {
   return new Promise((resolve) => {
     const windows = process.platform === "win32";
     let kept = "";
@@ -161,8 +196,9 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
       try {
         while (!done) {
           const next = await reader.read();
-          if (next.done) break;
+          if (next.done || done) break;
           keep(decoder.decode(next.value, { stream: true }));
+          await log?.write(next.value);
         }
         if (!done) keep(decoder.decode());
       } catch {
