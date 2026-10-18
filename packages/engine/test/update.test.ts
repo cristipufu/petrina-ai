@@ -135,7 +135,7 @@ describe.concurrent("work brought up to date with main", () => {
     // The journey shows the move, the update and the full first review.
     const steps = task.journey ?? [];
     const names = steps.map((step, index) => stepName(step, steps.slice(0, index), BUILT_IN_ROLES));
-    const moved = names.indexOf("Main moved on");
+    const moved = names.indexOf("Update branch");
     expect(moved).toBeGreaterThan(-1);
     expect(names[moved + 1]).toBe("Builder (update)");
     expect(names.slice(moved + 2).filter((name) => name.startsWith("Code reviewer"))[0]).toBe("Code reviewers");

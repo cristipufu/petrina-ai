@@ -17,6 +17,7 @@ interface LogProps {
   scroller: RefObject<HTMLDivElement | null>;
   onToast: (title: string, detail?: string) => void;
   onTab: (tab: SheetTab) => void;
+  active?: boolean;
   /** A journey step to read: the conversation opens at its first line, with its lines marked. */
   step?: { id: string; name: string };
   onStepDone?: () => void;
@@ -38,8 +39,27 @@ function when(at: number, now: number): string {
   return value === "now" ? "just now" : `${value} ago`;
 }
 
+/** Only this run's saved conversation, read in place without changing the task's Session tab. */
+export function StepConversation({ lines, find, now }: { lines: readonly SessionLine[]; find: Lookup; now: number }) {
+  return <section className="step-conversation" aria-label="This step's conversation">
+    <h4>Conversation</h4>
+    <div className="chat">
+      {groupLines(lines).map((group) => Array.isArray(group) ? (
+        <details key={group[0]!.id} className="step-activity"><summary>{group.length} agent action{group.length === 1 ? "" : "s"}</summary><ul className="activity">{group.map((line) => <li key={line.id}><ArrowRight size={12} aria-hidden="true" />{line.text}</li>)}</ul></details>
+      ) : group.from === "system" ? (
+        <p key={group.id} className="system">{group.text} · {when(group.at, now)}</p>
+      ) : (
+        <div key={group.id} className={`msg ${group.from === "you" ? "you" : "agent"}`}>
+          {group.from === "you" ? <span className="avatar tone-slate" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span> : <RoleAvatar role={find.role(group.roleId)} size={28} />}
+          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}<time>{when(group.at, now)}</time></div><div className="bubble">{group.text}</div></div>
+        </div>
+      ))}
+    </div>
+  </section>;
+}
+
 /** Join the agent working on a task: its live conversation, with anything it waits on below. */
-function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone }: LogProps) {
+function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, active = true }: LogProps) {
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
   const live = task.state === "running";
@@ -57,13 +77,13 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone }: 
   // Follow new lines only while the reader is at the bottom; reading earlier messages stays put.
   useEffect(() => {
     const el = scroller.current;
-    if (!el) return;
+    if (!el || !active) return;
     const onScroll = () => {
       pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
     };
     el.addEventListener("scroll", onScroll);
     return () => el.removeEventListener("scroll", onScroll);
-  }, [scroller]);
+  }, [scroller, active]);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -87,8 +107,8 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone }: 
     const yours =
       task.queued.length > sent.current.queued || unsent.length > sent.current.unsent || (task.session.length > sent.current.lines && task.session.at(-1)?.from === "you");
     sent.current = { queued: task.queued.length, lines: task.session.length, unsent: unsent.length };
-    if (el && (pinned.current || yours)) el.scrollTop = el.scrollHeight;
-  }, [scroller, task.session.length, task.queued.length, unsent.length, refused, asks.length]);
+    if (active && el && (pinned.current || yours)) el.scrollTop = el.scrollHeight;
+  }, [scroller, active, task.session.length, task.queued.length, unsent.length, refused, asks.length]);
 
   const inStep = (line: SessionLine) => (marked && line.step === marked.id ? "in-step" : "");
   const stepStart = (line: SessionLine) => (line.id === firstMarked && marked ? <span className="sr-only">From {marked.name}: </span> : null);

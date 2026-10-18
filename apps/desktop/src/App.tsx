@@ -28,14 +28,13 @@ import { useGlobalKeys } from "./globalKeys";
 import { appActions, taskActions } from "./paletteActions";
 import { taskCommands } from "./taskCommands";
 import { Toasts, useToasts } from "./toasts";
+import { PAGE_NAMES, routeHref, useAppRoute } from "./routes";
 
 // The app's frame: which page shows, the board and inbox highlights and focus, the task sheet and the
 // dialogs. The top bar, the rail, the keyboard, the palette's actions, notification landings and toasts
 // each live in a module of their own.
 
 import { RolePanel, type RolePanelTarget } from "./components/Roles";
-
-type Sheet = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string };
 
 /** Below this width the inbox opens over the board instead of beside it. */
 const DOCKED_INBOX = 1200;
@@ -73,10 +72,13 @@ export function App() {
 function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const find = useMemo(() => lookup(state), [state]);
   const viewport = useViewport();
-  const [view, setView] = useState<Page>("board");
+  const [route, navigate] = useAppRoute();
+  const { view, product, sheet, productSettings } = route;
+  const setSheet = useCallback((next: typeof sheet) => navigate((previous) => ({ ...previous, sheet: next })), [navigate]);
+  const [rolePanel, setRolePanel] = useState<RolePanelTarget>();
+  const setProductSettings = (next: string | undefined) => navigate((previous) => ({ ...previous, productSettings: next }));
   /** "About these numbers" opens with Analytics when a task sheet's link leads there. */
   const [aboutNumbers, setAboutNumbers] = useState(false);
-  const [product, setProduct] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [palette, setPalette] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
@@ -90,14 +92,10 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const messageFocused = useCallback(() => setMessageFocus(undefined), []);
   const [newTitle, setNewTitle] = useState("");
   const [inboxOpen, setInboxOpen] = useState(() => viewportSize().width >= DOCKED_INBOX);
-  const [sheet, setSheet] = useState<Sheet>();
-  const [rolePanel, setRolePanel] = useState<RolePanelTarget>();
   const [creating, setCreating] = useState(false);
   const [addingProduct, setAddingProduct] = useState(false);
   // The engine adds any clone. Of the demos, only first run's has clones to add, Skip setup included.
   const canAddProduct = mode === "engine" || state.setup !== undefined;
-  // The product open in Settings' Products section.
-  const [productSettings, setProductSettings] = useState<string>();
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const inboxButton = useRef<HTMLButtonElement>(null);
   const inboxPanel = useRef<HTMLElement>(null);
@@ -126,8 +124,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   useEffect(() => applyTheme(theme), [theme]);
 
   useEffect(() => {
-    if (product !== "all" && !state.products.some((entry) => entry.id === product)) setProduct("all");
-  }, [state.products, product]);
+    if (!route.missing && product !== "all" && !state.products.some((entry) => entry.id === product)) navigate((previous) => ({ ...previous, product: "all" }), true);
+  }, [state.products, product, route.missing, navigate]);
 
 
   const visible = useCallback(
@@ -151,6 +149,9 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   useEffect(() => { setInboxId(currentInboxId); previousInbox.current = inboxIds; }, [currentInboxId, inboxIds]);
   const area = keyArea(view, inboxOpen, owner, Boolean(sheet));
   const sheetTask = sheet ? find.task(sheet.taskId) : undefined;
+  const missing = route.missing ? "Page not found"
+    : sheet && !sheetTask ? "Task not found"
+    : productSettings && !find.product(productSettings) ? "Product not found" : undefined;
   const highlightedItem = items.find((item) => item.id === currentInboxId);
   const focusedTask = sheetTask ?? (area === "inbox" ? find.task(highlightedItem?.taskId) : area === "board" ? find.task(currentBoardId) : undefined);
   const [paletteTaskId, setPaletteTaskId] = useState<string>();
@@ -165,11 +166,11 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const close = useCallback(() => { setSheet(undefined); setMessageFocus(undefined); }, []);
   /** Go to Analytics, optionally with "About these numbers" open. */
   const analytics = useCallback((about = false) => {
-    close();
-    setView("analytics");
+    navigate((previous) => ({ ...previous, view: "analytics", sheet: undefined }));
+    setMessageFocus(undefined);
     setOwner("board");
     setAboutNumbers(about);
-  }, [close]);
+  }, [navigate]);
   const aboutSeen = useCallback(() => setAboutNumbers(false), []);
 
   const openInboxAt = useCallback((who: KeyArea, itemId: string | undefined) => {
@@ -186,10 +187,15 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const toastNotice = useCallback((notice: Notice) => showToast(notice.title, notice.lines, notice.target), [showToast]);
   useNotices({ onJump: requestJump, onToast: toastNotice });
 
-  const show = (page: Page) => { setView(page); setOwner("board"); focusArea.current = page === "board" ? "board" : undefined; if (page === "settings") setProductSettings(undefined); };
-  const go = (page: Page) => { close(); show(page); };
+  const go = (page: Page) => {
+    navigate((previous) => ({ ...previous, view: page, sheet: undefined, productSettings: undefined }));
+    setMessageFocus(undefined); setOwner("board"); focusArea.current = page === "board" ? "board" : undefined;
+  };
   /** Settings, with one product's settings open when it comes from the Products page. */
-  const openSettings = (productId?: string) => { go("settings"); setProductSettings(productId); };
+  const openSettings = (productId?: string) => {
+    navigate((previous) => ({ ...previous, view: "settings", sheet: undefined, productSettings: productId }));
+    setMessageFocus(undefined); setOwner("board");
+  };
   const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, "board"); if (tab === "session") setMessageFocus(id); };
   const openItem = (id: string, tab?: SheetTab) => {
     const item = items.find((entry) => entry.id === id);
@@ -207,7 +213,10 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   };
   const inboxKey = () => { close(); if (inboxOpen && owner === "inbox") closeInbox(false); else openInbox(); };
   const newTask = (title = "") => { setNewTitle(title); setCreating(true); };
-  const pickProduct = (id: string) => { close(); setProduct(id); if (view !== "analytics") setView("board"); setOwner("board"); };
+  const pickProduct = (id: string) => {
+    navigate((previous) => ({ ...previous, product: id, view: previous.view === "analytics" ? "analytics" : "board", sheet: undefined, productSettings: undefined }));
+    setMessageFocus(undefined); setOwner("board");
+  };
   const message = (task: Task) => {
     if (sheet) setSheet({ ...sheet, tab: "session" });
     else if (area === "inbox" && highlightedItem) openItem(highlightedItem.id, "session");
@@ -317,9 +326,10 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       />
       {recovery && <EngineRecovery status={status} />}
 
-      <Rail view={view} blocking={blocking} onGo={go} />
-      <main className="main">
-        {view === "board" && (
+      <Rail view={view} blocking={blocking} onGo={go} hrefFor={(page) => routeHref({ ...route, view: page, sheet: undefined, productSettings: undefined })} />
+      <main className="main" aria-label={missing ?? PAGE_NAMES[view]}>
+        {missing && <div className="page route-missing"><p>This link is unavailable. It may have been removed or the address may be incomplete.</p><button className="btn outline" onClick={() => go("board")}>Go to Board</button></div>}
+        {!missing && view === "board" && (
           <Board
             state={state}
             find={find}
@@ -336,7 +346,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
             {...(canAddProduct ? { onAddProduct: () => setAddingProduct(true) } : {})}
           />
         )}
-        {view === "products" && (
+        {!missing && view === "products" && (
           <ProductsPage
             state={state}
             onSettings={openSettings}
@@ -344,10 +354,10 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
             onPick={pickProduct}
           />
         )}
-        {view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
-        {view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
-        {view === "library" && <LibraryPage state={state} find={find} onRole={setRolePanel} />}
-        {view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} onShortcuts={() => setShortcuts(true)} />}
+        {!missing && view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
+        {!missing && view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
+        {!missing && view === "library" && <LibraryPage state={state} find={find} onRole={setRolePanel} />}
+        {!missing && view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} onShortcuts={() => setShortcuts(true)} />}
       </main>
 
       {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay && !sheet} landing={landing} onOpen={open} onClose={() => closeInbox(false)} selectedId={area === "inbox" ? currentInboxId : undefined} onFocus={(id) => {
@@ -358,10 +368,10 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       }} onOpenItem={openItem} /> : <div />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
+        <TaskSheet task={sheetTask} tasks={boardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
       )}
 
-      {rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}
+      {!missing && rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}
 
       <TakeOverDialogs state={state} find={find} onToast={(title, detail) => toast(title, detail)} />
 
@@ -371,8 +381,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
           onClose={() => setAddingProduct(false)}
           onAdded={(productId) => {
             setAddingProduct(false);
-            setProduct(productId);
-            setView("board");
+            pickProduct(productId);
           }}
         />
       )}
@@ -387,7 +396,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
           onCreated={() => {
             setCreating(false);
             // An open task keeps its page and list return point while the new task joins the queue.
-            if (!sheet) show("board");
+            if (!sheet) go("board");
           }}
         />
       )}

@@ -82,7 +82,7 @@ describe('the app keyboard', () => {
     await key('Escape'); expect(host.querySelector('.sheet')).toBeNull();
   });
   it('keeps Analytics and its choices open while changing product scope', async () => {
-    await click('.rail button[title="Analytics"]');
+    await click('.rail a[title="Analytics"]');
     await click('[aria-label="Period"] button:first-child');
     await click('label.toggle input');
     await click('.switcher');
@@ -102,7 +102,7 @@ describe('the app keyboard', () => {
     await act(async () => root.unmount()); host.remove();
     const demo = createDemo(1_000_000_000);
     await mount(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
-    await click('.rail button[title="Analytics"]');
+    await click('.rail a[title="Analytics"]');
     // Thirty days, so the removed product's tasks are in the split too.
     await click('[aria-label="Period"] button:last-child');
     const byTask = [...host.querySelectorAll<HTMLButtonElement>('.splits-head button')].find((button) => button.textContent === 'By task')!;
@@ -126,7 +126,7 @@ describe('the app keyboard', () => {
   it('rests board keys on Products, Agents and Library and remembers its card', async () => {
     await key('j'); await key('j'); const id = selected();
     for (const title of ['Products', 'Agents (A)', 'Library (L)']) {
-      await click(`.rail button[title="${title}"]`);
+      await click(`.rail a[title="${title}"]`);
       const before = simulator.getState();
       await key('j'); await key('k'); await key('p'); await key('m'); await key('ArrowUp', {altKey:true});
       expect(selected()).toBeUndefined(); expect(host.querySelector('.sheet')).toBeNull();
@@ -137,7 +137,7 @@ describe('the app keyboard', () => {
   it('leaves nothing taking keys after Esc in the docked inbox on Products, Agents and Library, even after the palette', async () => {
     await widen(1400);
     for (const title of ['Products', 'Agents (A)', 'Library (L)']) {
-      await click(`.rail button[title="${title}"]`);
+      await click(`.rail a[title="${title}"]`);
       await key('i'); expect(host.querySelector('.inbox-item.selected')).not.toBeNull();
       await key('Escape');
       const before = simulator.getState();
@@ -322,7 +322,7 @@ describe('the app keyboard', () => {
     [1024, 'Agents (A)'], [1400, 'Agents (A)'],
   ])('keeps the inbox return point after creating a task at %spx on %s', async (width, page) => {
     await widen(Number(width));
-    await click(`.rail button[title="${page}"]`);
+    await click(`.rail a[title="${page}"]`);
     await key('i'); await key('j');
     const item = el('.inbox-item.selected').getAttribute('data-inbox-id')!;
     const ids = inboxOrder(simulator.getState()).map((entry) => entry.id);
@@ -333,7 +333,7 @@ describe('the app keyboard', () => {
     await enter('[aria-label="What do you want done?"]');
     expect(simulator.getState().tasks.some((task) => task.title === 'Another task from the inbox')).toBe(true);
     expect(sheetId()).toBe(title);
-    expect(el(`.rail button[title="${page}"]`).getAttribute('aria-current')).toBe('page');
+    expect(el(`.rail a[title="${page}"]`).getAttribute('aria-current')).toBe('page');
     await key('Escape');
     expect(host.querySelector('.sheet')).toBeNull();
     expect(el('.inbox-item.selected').getAttribute('data-inbox-id')).toBe(item);
@@ -554,7 +554,7 @@ describe('the app keyboard', () => {
     expect(el('.sheet.panel').contains(document.activeElement)).toBe(true);
     for (const name of ['b', 'j', 'i', '?']) await key(name);
     await key('n', { metaKey: true });
-    expect(el('.rail button[title="Library (L)"]').getAttribute('aria-current')).toBe('page');
+    expect(el('.rail a[title="Library (L)"]').getAttribute('aria-current')).toBe('page');
     expect(host.querySelector('.dialog')).toBeNull();
     expect(el<HTMLTextAreaElement>('.role-form textarea').value).toBe('Finds out what people expect.');
     await key('Escape');

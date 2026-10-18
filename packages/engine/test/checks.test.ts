@@ -272,7 +272,7 @@ describe("Petrina runs the checks itself during a task", () => {
         if (outcome === "pass") {
           expect(task.checks!.results[0]!.ok).toBe(true);
           expect(reviewerRuns).toBeGreaterThan(0);
-          expect(engine.getState().inbox.find((item) => item.taskId === taskId)!.body).toContain("Petrina's checks: all 1 passed");
+          expect(engine.getState().inbox.find((item) => item.taskId === taskId)!.body).toContain("Automated checks: all 1 passed");
         } else {
           expect(task.checks!.results[0]!.ok).toBe(false);
           // Reviewers never spent a turn on work whose checks fail.
@@ -282,7 +282,7 @@ describe("Petrina runs the checks itself during a task", () => {
           expect(fixing?.text).toContain(join(dir, "data", "checks", taskId));
           expect(fixing?.text).toContain("do not rerun just to recover the error");
           expect(task.timeline.some((entry) => entry.text.startsWith("Sent back to the builder"))).toBe(true);
-          expect(engine.getState().inbox.find((item) => item.taskId === taskId)!.body).toContain("Petrina's checks: 1 of 1 failed (Tests)");
+          expect(engine.getState().inbox.find((item) => item.taskId === taskId)!.body).toContain("Automated checks: 1 of 1 failed (Tests)");
         }
         // The finder ran once for the product, not once per review round.
         expect(task.timeline.filter((entry) => entry.text.startsWith("Found how to check")).length).toBe(1);

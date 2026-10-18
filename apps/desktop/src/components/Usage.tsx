@@ -69,9 +69,9 @@ export function limitColor(label: string): string {
 }
 
 export function FigureText({ figure, kind, missing, bare }: { figure: Figure; kind: "tokens" | "time"; missing?: string; bare?: boolean }) {
-  const text = figureText(figure, kind, { ...(missing ? { missing } : {}), ...(bare ? { bare } : {}) });
-  // "at least" and the number are separate, so a narrow column can put "at least" on a line of its own.
-  const lead = text.startsWith("at least ") ? "at least " : "";
+  const text = figureText(figure, kind, { ...(missing ? { missing } : {}), ...(bare ? { bare } : {}) }).replace(/^at least /, "> ");
+  // Keep the lower-bound marker next to its number.
+  const lead = text.startsWith("> ") ? "> " : "";
   return (
     <span className={`num ${figure.value === undefined ? "muted" : ""}`}>
       {lead && <span>{lead}</span>}

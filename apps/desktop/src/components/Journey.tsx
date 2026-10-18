@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import { Ban, Check, Flag, Hourglass, LocateFixed, Maximize, User, X, ZoomIn, ZoomOut } from "lucide-react";
@@ -7,6 +8,7 @@ import { ago, duration, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
 import { RoleAvatar } from "./bits";
 import { TimelineList } from "./Timeline";
+import { StepConversation } from "./Session";
 
 // ── Words ───────────────────────────────────────────────────────────────────────────────
 
@@ -292,10 +294,11 @@ interface DiagramProps {
   minZoom: number;
   following: boolean;
   setFollowing: (following: boolean) => void;
-  onSelect: (id: string) => void;
+  onSelect: (id?: string) => void;
+  scrollable?: boolean;
 }
 
-function Diagram({ nodes, edges, items, contentHeight, height, target, focused, glide, minZoom, following, setFollowing, onSelect }: DiagramProps) {
+function Diagram({ nodes, edges, items, contentHeight, height, target, focused, glide, minZoom, following, setFollowing, onSelect, scrollable = false }: DiagramProps) {
   const flow = useReactFlow();
   const opened = useRef(false);
   const box = useRef<HTMLDivElement>(null);
@@ -342,11 +345,6 @@ function Diagram({ nodes, edges, items, contentHeight, height, target, focused, 
     return () => el.removeEventListener("wheel", onWheel);
   }, [flow, minZoom, setFollowing]);
 
-  // The credit link stays visible and clickable, but the diagram is hidden from the keyboard: the list has the steps.
-  useEffect(() => {
-    box.current?.querySelector<HTMLAnchorElement>(".react-flow__attribution a")?.setAttribute("tabindex", "-1");
-  }, []);
-
   const moved = () => setFollowing(false);
   return (
     <div className="journey-diagram" ref={box} style={{ height }}>
@@ -356,6 +354,7 @@ function Diagram({ nodes, edges, items, contentHeight, height, target, focused, 
           edges={edges}
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
+          proOptions={{ hideAttribution: true }}
           defaultViewport={{ x: 0, y: 0, zoom: 1 }}
           minZoom={minZoom}
           maxZoom={MAX_ZOOM}
@@ -365,8 +364,8 @@ function Diagram({ nodes, edges, items, contentHeight, height, target, focused, 
           edgesFocusable={false}
           elementsSelectable={false}
           zoomOnScroll={false}
-          panOnScroll={false}
-          preventScrolling={false}
+          panOnScroll={scrollable}
+          preventScrolling={scrollable}
           zoomOnPinch
           zoomOnDoubleClick={false}
           panOnDrag
@@ -377,7 +376,8 @@ function Diagram({ nodes, edges, items, contentHeight, height, target, focused, 
           deleteKeyCode={null}
           disableKeyboardA11y
           ariaLabelConfig={QUIET_LABELS}
-          onNodeClick={(_event, node) => node.data.node && onSelect(node.id)}
+          onNodeClick={(_event, node) => onSelect(node.data.node ? node.id : undefined)}
+          onPaneClick={() => onSelect(undefined)}
           onMove={(event) => event && moved()}
         />
       </div>
@@ -391,9 +391,9 @@ function Controls({ glide, bounds, following, setFollowing }: { glide: number; b
   return (
     <div className="journey-controls" role="group" aria-label="Diagram view">
       {!following && (
-        <button className="btn small journey-now" onClick={() => setFollowing(true)}>
+        <button className="btn small journey-now" aria-label="Back to now" title="Back to now" onClick={() => setFollowing(true)}>
           <LocateFixed size={14} aria-hidden="true" />
-          Back to now
+          <span>Back to now</span>
         </button>
       )}
       <button className="btn quiet small icon" aria-label="Zoom in" title="Zoom in" onClick={() => { setFollowing(false); void flow.zoomIn({ duration: glide }); }}>
@@ -464,7 +464,7 @@ export function JourneyList({ view, find, now, onFocusStep, onSelect }: { view: 
 
 // ── A step's details, under the diagram ────────────────────────────────────────────────
 
-function StepDetails({ node, task, find, now, onReadSession, onPlan, onClose }: { node: JourneyNode; task: Task; find: Lookup; now: number; onReadSession: (id: string, name: string) => void; onPlan: () => void; onClose: () => void }) {
+function StepDetails({ node, task, find, now, onPlan, onClose }: { node: JourneyNode; task: Task; find: Lookup; now: number; onPlan: () => void; onClose?: () => void }) {
   const role = find.role(node.roleId);
   const profiles = profilesOf(node, find);
   const planned = node.state === "next" || node.state === "ahead";
@@ -494,9 +494,9 @@ function StepDetails({ node, task, find, now, onReadSession, onPlan, onClose }: 
           {node.name}
           <span className={`label ${node.state === "you" ? "needs-you" : node.state === "failed" ? "bad" : node.state === "now" ? "running" : node.state === "done" ? "ok" : ""}`}>{stateWords(node)}</span>
         </h3>
-        <button className="btn quiet small icon" aria-label="Close the step's details" title="Close" onClick={onClose}>
+        {onClose && <button className="btn quiet small icon" aria-label="Close the step's details" title="Close" onClick={onClose}>
           <X size={16} aria-hidden="true" />
-        </button>
+        </button>}
       </div>
 
       {planned ? (
@@ -592,9 +592,7 @@ function StepDetails({ node, task, find, now, onReadSession, onPlan, onClose }: 
           )}
           {!entries.length && !timelineTrimmed && <p className="note">Nothing on the timeline yet.</p>}
           {lines.length > 0 ? (
-            <button className="btn small" onClick={() => onReadSession(node.id, node.name)}>
-              Read this step in the Session
-            </button>
+            <StepConversation lines={lines} find={find} now={now} />
           ) : sessionTrimmed ? (
             <p className="note">Its part of the conversation is no longer kept: long tasks keep only their latest lines.</p>
           ) : null}
@@ -612,6 +610,11 @@ interface JourneyProps {
   find: Lookup;
   onReadSession: (stepId: string, name: string) => void;
   onPlan: () => void;
+  /** A dedicated canvas column, with the selected step rendered in its neighbour. */
+  workspace?: boolean;
+  detailsTarget?: HTMLElement | null;
+  onSelectionChange?: (id?: string) => void;
+  selectionReset?: number;
 }
 
 /** The task's journey as a live diagram, the same steps as a list, and the chosen step's details. */
@@ -623,12 +626,13 @@ export function Journey(props: JourneyProps) {
   );
 }
 
-function JourneyBody({ task, state, find, onReadSession, onPlan }: JourneyProps) {
+function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarget, onSelectionChange, selectionReset }: JourneyProps) {
   const view = useMemo(
     () => journeyView(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) }),
     [task, state.roles, state.profiles, state.tasks, state.inbox, state.planner],
   );
   const [selected, setSelected] = useState<string>();
+  useEffect(() => setSelected(undefined), [selectionReset]);
   const [focused, setFocused] = useState<string>();
   const reduced = useReducedMotion();
   const [following, setFollowing] = useState(true);
@@ -646,7 +650,7 @@ function JourneyBody({ task, state, find, onReadSession, onPlan }: JourneyProps)
     const measure = () =>
       setSpace((old) => {
         const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-        const next = { width: el.clientWidth, rem, cap: Math.round(Math.max(18 * rem, Math.min(28 * rem, window.innerHeight * 0.55))) };
+        const next = { width: el.clientWidth, rem, cap: workspace ? el.clientHeight : Math.round(Math.max(18 * rem, Math.min(28 * rem, window.innerHeight * 0.55))) };
         return old.width === next.width && old.rem === next.rem && old.cap === next.cap ? old : next;
       });
     measure();
@@ -658,7 +662,7 @@ function JourneyBody({ task, state, find, onReadSession, onPlan }: JourneyProps)
       observer?.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, []);
+  }, [workspace]);
 
   // A loaded font can change line wrapping without changing the panel or root text size.
   useEffect(() => {
@@ -701,6 +705,7 @@ function JourneyBody({ task, state, find, onReadSession, onPlan }: JourneyProps)
 
   const cache = useRef(new Map<string, { key: string; node: Node<BoxData> }>());
   const byId = useMemo(() => new Map(view.nodes.map((node) => [node.id, node])), [view]);
+  const selectedId = selected;
   const nodes = useMemo(
     () =>
       layout.items.map((item) => {
@@ -717,7 +722,7 @@ function JourneyBody({ task, state, find, onReadSession, onPlan }: JourneyProps)
           height: item.height,
           bodyHeight: item.bodyHeight,
           spine: item.spine,
-          selected: item.id === selected,
+          selected: item.id === selectedId,
           focused: item.id === focused,
         };
         const key = JSON.stringify([item.x, item.y, data]);
@@ -727,7 +732,7 @@ function JourneyBody({ task, state, find, onReadSession, onPlan }: JourneyProps)
         cache.current.set(item.id, { key, node: made });
         return made;
       }),
-    [layout, byId, find, start, view.end, view.rest, state.now, selected, focused],
+    [layout, byId, find, start, view.end, view.rest, state.now, selectedId, focused],
   );
   const edges = useMemo(
     () =>
@@ -745,23 +750,25 @@ function JourneyBody({ task, state, find, onReadSession, onPlan }: JourneyProps)
 
   // Reading another step stops following the live one, and reading the live one stops it once it hands off,
   // so a handoff never moves the diagram away. Back to now resumes.
-  const select = (id: string) => {
-    setSelected(id);
-    if (id !== target) setFollowing(false);
+  const select = (id?: string) => {
+    const next = workspace && id === selected ? undefined : id;
+    setSelected(next);
+    onSelectionChange?.(next);
+    if (next && next !== target) setFollowing(false);
   };
   const focusStep = (id: string | undefined) => {
     setFocused(id);
     if (id && id !== target) setFollowing(false);
   };
-  const chosen = selected ? byId.get(selected) : undefined;
-  const height = Math.min(layout.height, space.cap);
+  const chosen = selectedId ? byId.get(selectedId) : undefined;
+  const height = workspace ? Math.max(1, space.cap) : Math.min(layout.height, space.cap);
   const glide = reduced ? 0 : 280;
   const minZoom = Math.min(0.25, height / Math.max(1, layout.height));
 
   return (
-    <section className="sheet-section journey" aria-labelledby="journey-title">
+    <section className={`sheet-section journey ${workspace ? "workspace-journey" : ""}`} aria-labelledby="journey-title">
       <div className="journey-head">
-        <h2 id="journey-title">Journey</h2>
+        <h2 id="journey-title">Task flow <span className="quiet-text num">{view.nodes.length} steps</span></h2>
         <Controls glide={glide} bounds={layout} following={following} setFollowing={setFollowing} />
       </div>
       <p className="sr-only">{start}.</p>
@@ -771,14 +778,13 @@ function JourneyBody({ task, state, find, onReadSession, onPlan }: JourneyProps)
       <div className="journey-canvas" ref={canvas}>
         <span className="journey-rem" ref={remProbe} aria-hidden="true" />
         <span className="journey-label-measure" ref={labelProbe} aria-hidden="true" />
-        <Diagram nodes={nodes} edges={edges} items={layout.items} contentHeight={layout.height} height={height} target={target} {...(focused ? { focused } : {})} glide={glide} minZoom={minZoom} following={following} setFollowing={setFollowing} onSelect={select} />
+        <Diagram nodes={nodes} edges={edges} items={layout.items} contentHeight={layout.height} height={height} target={target} {...(focused ? { focused } : {})} glide={glide} minZoom={minZoom} following={following} setFollowing={setFollowing} onSelect={select} scrollable={workspace} />
       </div>
-      {view.note && <p className="note">{view.note}</p>}
       <p className="sr-only" aria-live="polite">
-        {chosen ? `${chosen.name}: its details are below the diagram.` : ""}
+        {chosen ? `${chosen.name}: its details are ${workspace ? "in the right panel" : "below the diagram"}.` : ""}
       </p>
-      {chosen ? (
-        <StepDetails node={chosen} task={task} find={find} now={state.now} onReadSession={onReadSession} onPlan={onPlan} onClose={() => setSelected(undefined)} />
+      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} /> : null, detailsTarget) : chosen ? (
+        <StepDetails node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} />
       ) : (
         <p className="note journey-hint">Click a step to see its details here.</p>
       )}

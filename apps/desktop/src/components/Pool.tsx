@@ -155,7 +155,7 @@ function Today({ state, onAnalytics }: { state: State; onAnalytics: () => void }
       {!today ? null : (
         <>
           {today.turns === 0 ? (
-            <p>{today.atLeast || "Nothing used yet today."}</p>
+            <p>{today.atLeast ? "Not reported today." : "Nothing used yet today."}</p>
           ) : (
             <div className="usage-total">
               <Amount tokens={today.tokens} time={today.time} />
@@ -174,7 +174,6 @@ function Today({ state, onAnalytics }: { state: State; onAnalytics: () => void }
                 </div>
               );
             })}
-          {today.turns > 0 && today.atLeast && <p className="small">{today.atLeast}</p>}
         </>
       )}
       <p className="small">Agent time adds up agents running at once.</p>

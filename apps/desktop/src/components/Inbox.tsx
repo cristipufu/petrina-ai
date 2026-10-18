@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useId, useState, type ReactNode } from "react";
 import {
   BellRing,
   BookOpen,
@@ -184,7 +184,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const Icon = kind.icon;
   const role = find.role(item.roleId);
   const profile = find.profile(item.profileId);
-  const titleId = `ask-${item.id}`;
+  const titleId = useId();
   const unsent = useUnsent().filter((entry) => entry.itemId === item.id);
   // While an answer is on its way the choices wait; one the engine refused gives them back.
   const sending = unsent.some((entry) => !entry.refused);

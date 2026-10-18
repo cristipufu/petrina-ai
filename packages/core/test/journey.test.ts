@@ -94,13 +94,13 @@ describe("a task's journey", () => {
       "Design reviewer (round 2)",
       "Your design check",
       "Builder",
-      "Petrina's checks",
+      "Automated checks",
       "Code reviewers",
       "Builder (fixes)",
-      "Petrina's checks (round 2)",
+      "Automated checks (round 2)",
       "Code reviewers (round 2)",
       "Your delivery check",
-      "Delivery",
+      "Publish delivery",
     ]);
     expect(view.nodes.every((node) => node.state === "done")).toBe(true);
     expect(view.nodes.map((node) => node.reason ?? "")).toEqual([
@@ -159,7 +159,7 @@ describe("a task's journey", () => {
     let view = viewOf(sim, id);
     const ahead = view.nodes.filter((node) => node.state === "next" || node.state === "ahead");
     expect(view.nodes.find((node) => node.state === "you")?.name).toBe("Your design check");
-    expect(ahead.map((node) => `${node.name} ${(node.team ?? [node.profileId ?? ""]).join(" ")}`.trim())).toEqual(["Builder codex-high", "Code reviewers opus-high codex-xhigh", "Your delivery check", "Delivery"]);
+    expect(ahead.map((node) => `${node.name} ${(node.team ?? [node.profileId ?? ""]).join(" ")}`.trim())).toEqual(["Builder codex-high", "Code reviewers opus-high codex-xhigh", "Your delivery check", "Publish delivery"]);
     expect(ahead.at(-1)).toMatchObject({ kind: "petrina", work: "delivery" });
     expect(ahead[0]!.state).toBe("next");
     expect(ahead.every((node) => node.outcome === undefined && node.reason === undefined && node.startedAt === undefined)).toBe(true);
@@ -212,7 +212,7 @@ describe("a task's journey", () => {
     expect(view.nodes.find((node) => node.name === "Your delivery check")).toMatchObject({ reason: "changes asked", tone: "back", outcome: W.changes });
     expect(view.nodes.find((node) => node.state === "next" || node.state === "now")).toMatchObject({ name: "Builder (fixes 2)" });
     runUntil(sim, () => !!inboxItem(sim, id, "delivery"), (kind) => kind === "delivery");
-    expect(viewOf(sim, id).nodes.map((node) => node.name).slice(-6)).toEqual(["Your delivery check", "Builder (fixes 2)", "Petrina's checks (round 2, again)", "Code reviewer (round 2, again)", "Your delivery check", "Delivery"]);
+    expect(viewOf(sim, id).nodes.map((node) => node.name).slice(-6)).toEqual(["Your delivery check", "Builder (fixes 2)", "Automated checks (round 2, again)", "Code reviewer (round 2, again)", "Your delivery check", "Publish delivery"]);
   });
 });
 
@@ -364,7 +364,7 @@ describe("recorded the way the engine records", () => {
     const retesting = { ...task, plan: { ...task.plan!, stages }, stageIndex: index, retest: true, testedPatch: "earlier-code" };
     beginAgentStep(retesting, "tester", "opus-high", at + 2);
     const view = journeyView(retesting, contextOf(emptyState()));
-    expect(view.nodes.filter((node) => ["now", "next", "ahead"].includes(node.state)).map((node) => `${node.name}: ${node.state}`)).toEqual(["Tester: now", "Your delivery check: next", "Delivery: ahead"]);
+    expect(view.nodes.filter((node) => ["now", "next", "ahead"].includes(node.state)).map((node) => `${node.name}: ${node.state}`)).toEqual(["Tester: now", "Your delivery check: next", "Publish delivery: ahead"]);
   });
 
   it("a stuck step shows its failed box, a Stuck step and a new box for the next attempt", () => {
@@ -374,7 +374,7 @@ describe("recorded the way the engine records", () => {
     beginYouStep(task, "stuck", t + 100);
     const state = emptyState();
     let view = journeyView({ ...task, state: "failed", statusLine: "Stuck. Needs you" }, contextOf(state));
-    expect(boxes(view)).toEqual(["Planner: done", "Builder: failed", "Stuck: you", "Builder (again): next", "Code reviewers: ahead", "Your delivery check: ahead", "Delivery: ahead"]);
+    expect(boxes(view)).toEqual(["Planner: done", "Builder: failed", "Stuck: you", "Builder (again): next", "Code reviewers: ahead", "Your delivery check: ahead", "Publish delivery: ahead"]);
     expect(view.nodes[1]).toMatchObject({ reason: "stuck", tone: "stuck" });
 
     endYouStep(task, { outcome: W.triedAgain, reason: W.tryAgain }, t + 200);
@@ -393,7 +393,7 @@ describe("recorded the way the engine records", () => {
     task.journey!.pop(); // The delivery check was not reached: its checks failed to run.
     beginYouStep(task, "stuck", task.journey!.at(-1)!.endedAt!);
     const view = journeyView({ ...task, state: "failed" }, contextOf(sim.getState()));
-    expect(boxes(view).slice(-3)).toEqual(["Stuck: you", "Your delivery check: next", "Delivery: ahead"]);
+    expect(boxes(view).slice(-3)).toEqual(["Stuck: you", "Your delivery check: next", "Publish delivery: ahead"]);
   });
 
   it.each([
@@ -434,7 +434,7 @@ describe("recorded the way the engine records", () => {
     expect(unreviewed.nodes.find((node) => node.roleId === "code-reviewer")!.team).toHaveLength(stages[review]!.profileIds.length);
     task.reviewedTree = "the code that passed ordinary review";
     let view = journeyView({ ...task, state: "running" }, contextOf(state));
-    expect(boxes(view).slice(2, 5)).toEqual(["Main moved on: done", "Builder (update): next", "Code reviewer (port): ahead"]);
+    expect(boxes(view).slice(2, 5)).toEqual(["Update branch: done", "Builder (update): next", "Code reviewer (port): ahead"]);
     // The faint port review names the one reviewer the engine picks: on a tool other than the builder's.
     const builderTool = state.profiles.find((profile) => profile.id === stages[build]!.profileIds[0])?.toolId;
     const port = view.nodes.find((node) => node.name === "Code reviewer (port)")!;
@@ -453,7 +453,7 @@ describe("recorded the way the engine records", () => {
     endPetrinaStep(task, { outcome: W.checks(0, 2), reason: W.checksPassed }, t + 210);
     beginAgentStep(task, "code-reviewer", port.profileId!, t + 210, [port.profileId!]);
     view = journeyView({ ...task, state: "running" }, contextOf(state));
-    expect(boxes(view).slice(2, 7)).toEqual(["Main moved on: done", "Builder (update): done", "Petrina's checks (port): done", "Code reviewer (port): now", "Your delivery check: next"]);
+    expect(boxes(view).slice(2, 7)).toEqual(["Update branch: done", "Builder (update): done", "Automated checks (port): done", "Code reviewer (port): now", "Your delivery check: next"]);
     expect(journeyProblems({ ...task, state: "running" })).toEqual([]);
   });
 
@@ -529,7 +529,7 @@ describe("tasks that ran before journeys were recorded", () => {
     const { journey: _gone, ...old } = taskOf(sim, id);
     const view = journeyView(old as Task, contextOf(sim.getState()));
     // The reviewers look at once: one live box for all of them, then the delivery check.
-    expect(boxes(view)).toEqual(["Planner: done", "Architect: done", "Your design check: done", "Builder: done", "Code reviewers: now", "Your delivery check: next", "Delivery: ahead"]);
+    expect(boxes(view)).toEqual(["Planner: done", "Architect: done", "Your design check: done", "Builder: done", "Code reviewers: now", "Your delivery check: next", "Publish delivery: ahead"]);
     expect(view.nodes[4]!.team).toEqual(old.plan!.stages.find((stage) => stage.kind === "review-chain")!.profileIds);
     expect(view.nodes.slice(0, 4).every((node) => node.legacy && node.startedAt === undefined)).toBe(true);
     expect(view.note).toMatch(/Earlier rounds were not recorded/);
@@ -579,12 +579,12 @@ describe("step names", () => {
     expect(name({ kind: "wait" })).toBe("Waiting for others");
     expect(name({ roleId: "code-reviewer", round: 2, team: ["a", "b"] })).toBe("Code reviewers (round 2)");
     expect(name({ roleId: "builder", stageId: "b", update: true })).toBe("Builder (update)");
-    expect(name({ kind: "petrina", work: "checks", stageId: "r", round: 2 })).toBe("Petrina's checks (round 2)");
-    expect(name({ kind: "petrina", work: "delivery", stageId: "s" }, [{ kind: "petrina", work: "delivery", stageId: "s", endedAt: 5 }])).toBe("Delivery (again)");
-    expect(name({ kind: "petrina", work: "update" })).toBe("Main moved on");
-    expect(name({ kind: "petrina", work: "update", stageId: "r", round: 2 })).toBe("Main moved on");
+    expect(name({ kind: "petrina", work: "checks", stageId: "r", round: 2 })).toBe("Automated checks (round 2)");
+    expect(name({ kind: "petrina", work: "delivery", stageId: "s" }, [{ kind: "petrina", work: "delivery", stageId: "s", endedAt: 5 }])).toBe("Publish delivery (again)");
+    expect(name({ kind: "petrina", work: "update" })).toBe("Update branch");
+    expect(name({ kind: "petrina", work: "update", stageId: "r", round: 2 })).toBe("Update branch");
     expect(name({ roleId: "code-reviewer", stageId: "r", round: 2, port: true }, [{ roleId: "code-reviewer", stageId: "r", round: 2, endedAt: 5 }])).toBe("Code reviewer (port)");
-    expect(name({ kind: "petrina", work: "checks", stageId: "r", round: 2, port: true })).toBe("Petrina's checks (port)");
+    expect(name({ kind: "petrina", work: "checks", stageId: "r", round: 2, port: true })).toBe("Automated checks (port)");
   });
 
   it("put the words on the arrows", () => {
@@ -680,16 +680,16 @@ describe("the demos", () => {
     const view = (id: string) => journeyView(state.tasks.find((task) => task.id === id)!, contextOf(state));
     expect(view("gift-cards").nodes.find((node) => node.state === "you")?.name).toBe("Your call");
     expect(boxes(view("pricing-refresh")).slice(2, 9)).toEqual([
-      "Petrina's checks: done",
+      "Automated checks: done",
       "Code reviewer: done",
       "Builder (fixes): done",
-      "Petrina's checks (round 2): done",
+      "Automated checks (round 2): done",
       "Code reviewer (round 2): done",
       "Your delivery check: you",
-      "Delivery: next",
+      "Publish delivery: next",
     ]);
     // Notes ships releases: the Release Manager writes the notes, then Petrina publishes.
-    expect(boxes(view("dark-mode")).slice(-2)).toEqual(["Release Manager: ahead", "Delivery: ahead"]);
+    expect(boxes(view("dark-mode")).slice(-2)).toEqual(["Release Manager: ahead", "Publish delivery: ahead"]);
     expect(view("dark-mode").nodes.find((node) => node.state === "you")?.asks[0]).toMatchObject({ kind: "question" });
     expect(view("guest-checkout").nodes.find((node) => node.state === "you")?.asks[0]).toMatchObject({ kind: "permission" });
     expect(view("tag-search").nodes[0]).toMatchObject({ kind: "wait", live: "Waiting for “Dark mode” to land" });

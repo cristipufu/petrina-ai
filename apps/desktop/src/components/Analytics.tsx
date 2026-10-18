@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CircleAlert, Info } from "lucide-react";
+import { Info } from "lucide-react";
 import { OVER_TIME_SPLITS, count, durationText, runningTotal, tokenNumber, type AnalyticsUsage, type OverTimeMeasure, type OverTimeSeries, type OverTimeSplit, type SquadRow, type State, type WorkUsageLine, type UsagePeriod } from "@petrina/core";
 import { TOOL_COLORS, type Lookup } from "../lib";
 import { useUsage } from "../usage";
@@ -210,12 +210,7 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
         <Stat label="Tasks worked on" value={<span className="num">{headline.tasks}</span>} />
       </div>
       <p className="muted small">Tokens and time are counted when an agent's turn ends.</p>
-      {view.atLeast && (
-        <div className="at-least">
-          <CircleAlert size={13} />
-          {view.atLeast}
-        </div>
-      )}
+
 
       <div className="chart-head tokens row between wrap">
         <span className="muted small">

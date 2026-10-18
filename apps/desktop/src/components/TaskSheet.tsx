@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUpToLine, Ban, Ellipsis, ExternalLink, Hand, MessageSquare, Pause, Play, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { ArrowLeft, ArrowUpToLine, Ban, CheckCircle2, ChevronRight, Clock3, Ellipsis, ExternalLink, GitPullRequest, Hand, ListOrdered, LoaderCircle, MessageSquare, Pause, Play, TriangleAlert, X } from "lucide-react";
 import { TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { duration, safeUrl, STATE_LABEL, type Lookup } from "../lib";
-import { ProductName, Stepper, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
+import { ProductName, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
+import { Journey } from "./Journey";
+import { Ask } from "./Inbox";
 import { Session } from "./Session";
 import type { SheetTab } from "./TaskCard";
 import { Overview } from "./sheet/Overview";
@@ -13,6 +15,8 @@ import { ReviewView } from "./sheet/ReviewTab";
 
 interface SheetProps {
   task: Task;
+  tasks: readonly Task[];
+  onTask: (id: string) => void;
   state: State;
   find: Lookup;
   tab: SheetTab;
@@ -38,16 +42,29 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
   { id: "session", label: "Session" },
 ];
 
-export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, waiting }: SheetProps) {
+function TaskActivity({ task }: { task: Task }) {
+  const [Icon, label] = task.state === "running" ? [LoaderCircle, "Working"] as const
+    : task.state === "needs-you" ? [Hand, "Needs you"] as const
+    : task.state === "waiting" ? [Clock3, "Waiting"] as const
+    : task.state === "queued" ? task.held ? [Hand, "On hold"] as const : [ListOrdered, "Queued"] as const
+    : task.state === "paused" ? [Pause, "Paused"] as const
+    : task.state === "done" ? [CheckCircle2, "Done"] as const
+    : task.state === "cancelled" ? [Ban, "Cancelled"] as const
+    : task.state === "pr-open" ? [GitPullRequest, "Awaiting merge"] as const : [TriangleAlert, "Stuck"] as const;
+  return <span className={`task-list-activity ${task.state}`}><Icon size={13} aria-hidden="true" /><span>{label}</span></span>;
+}
+
+export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, waiting }: SheetProps) {
+  const [pane, setPane] = useState(tab === "overview" ? "flow" : "details");
   const [menu, setMenu] = useState(false);
-  const [titleGone, setTitleGone] = useState(false);
+  const [detailsTarget, setDetailsTarget] = useState<HTMLDivElement | null>(null);
+  const [selectedStep, setSelectedStep] = useState<string>();
+  const [selectionReset, setSelectionReset] = useState(0);
   // "Read this step in the Session": the Session opens at the step's first line, with its lines marked.
   const [sessionStep, setSessionStep] = useState<{ id: string; name: string }>();
-  const [scrolled, setScrolled] = useState(false);
   const sheet = useRef<HTMLElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const hero = useRef<HTMLElement>(null);
-  const heroTitle = useRef<HTMLHeadingElement>(null);
+  const globalScroll = useRef(0);
   const menuBox = useRef<HTMLSpanElement>(null);
   const closeMenu = useCallback(() => setMenu(false), []);
   useDismiss(menuBox, menu, closeMenu);
@@ -66,28 +83,21 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
   const driving = task.driving !== undefined;
   const stateLabel = driving ? "You're driving" : STATE_LABEL[task.state];
 
+  useEffect(() => { globalScroll.current = 0; scroller.current?.scrollTo({ top: 0 }); setSessionStep(undefined); setSelectedStep(undefined); }, [task.id]);
+  useLayoutEffect(() => { scroller.current?.scrollTo({ top: selectedStep ? 0 : globalScroll.current }); }, [selectedStep]);
   useEffect(() => {
-    const title = heroTitle.current;
-    const root = scroller.current;
-    if (!title || !root) return;
-    // The one-line title takes over as soon as the full title is no longer wholly in view.
-    const observer = new IntersectionObserver(([entry]) => setTitleGone((entry?.intersectionRatio ?? 1) < 0.99), { root, threshold: [0, 0.99, 1] });
-    observer.observe(title);
-    return () => observer.disconnect();
-  }, [task.id]);
-
-  // Each task opens at its top (the session opens at its latest message instead). Switching
-  // tabs keeps the tabs in view and starts the new tab from its beginning.
-  useEffect(() => {
-    if (tab !== "session") scroller.current?.scrollTo({ top: 0 });
-  }, [task.id]);
-  useEffect(() => {
-    const el = scroller.current;
-    const top = hero.current?.offsetHeight ?? 0;
-    if (el && tab !== "session" && el.scrollTop > top) el.scrollTop = top;
-    if (tab !== "session") setSessionStep(undefined);
+    setSelectedStep(undefined);
+    setSelectionReset((value) => value + 1);
+    if (tab !== "session") { scroller.current?.scrollTo({ top: 0 }); setSessionStep(undefined); }
+    if (tab !== "overview") setPane("details");
   }, [tab]);
-  useEffect(() => setSessionStep(undefined), [task.id]);
+  useEffect(() => {
+    sheet.current?.querySelector<HTMLElement>('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [task.id]);
+  const taskDetails = () => { setSelectedStep(undefined); setSelectionReset((value) => value + 1); };
+  const readSession = (id: string, name: string) => { taskDetails(); setSessionStep({ id, name }); onTab("session"); setPane("details"); };
+  const listed = tasks.some((entry) => entry.id === task.id) ? tasks : [task, ...tasks];
+  const asks = state.inbox.filter((item) => item.taskId === task.id);
 
   const counts: Partial<Record<SheetTab, number>> = {
     review: task.findings.filter((finding) => finding.status === "open").length,
@@ -112,21 +122,14 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
   return (
     <>
       <div className="scrim" onClick={onClose} />
-      <section ref={sheet} className={`sheet ${compact ? "compact" : ""} ${short ? "short" : ""}`} role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabIndex={-1}>
+      <section ref={sheet} className={`sheet task-workspace ${short ? "short" : ""}`} role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabIndex={-1}>
         <WaitingLine text={waiting} />
-        <div className={`sheet-bar ${scrolled ? "scrolled" : ""}`}>
-          {compact || titleGone ? (
-            <div className="compact-title" title={task.title}>
-              {task.title}
-            </div>
-          ) : (
-            <div className="crumb">
-              <ProductName product={product} />
-              <span aria-hidden="true">·</span>
-              <span className={`label ${task.state === "needs-you" ? "needs-you" : task.state === "failed" ? "bad" : ""}`}>{task.held && task.state === "queued" ? "On hold" : stateLabel}</span>
-              {task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}
-            </div>
-          )}
+        <div className="task-workspace-bar">
+          <button className="btn quiet small" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" /> Back</button>
+          <div className="task-workspace-title">
+            <h1 className="sheet-title" id="sheet-title" title={task.title}>{task.title}</h1>
+            <div className="sheet-meta"><ProductName product={product} /><span aria-hidden="true">·</span><span>{stateLabel}</span>{task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}</div>
+          </div>
           <div className="sheet-actions">
             {prUrl && (
               <a className="btn quiet small" href={prUrl} target="_blank" rel="noopener noreferrer" title="Open the pull request on GitHub">
@@ -134,7 +137,7 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
                 <ExternalLink size={14} aria-hidden="true" />
               </a>
             )}
-            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={onMessage}>
+            <button className={`btn quiet small ${compact ? "icon" : ""}`} aria-label="Message" onClick={() => { taskDetails(); onMessage(); }}>
               <MessageSquare size={16} aria-hidden="true" />
               {!compact && "Message"}
             </button>
@@ -189,22 +192,29 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
           </div>
         </div>
 
-        <div className="sheet-scroll" ref={scroller} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}>
-          <header className="sheet-hero" ref={hero}>
-            {compact && (
-              <div className="sheet-meta">
-                <ProductName product={product} />
-                <span aria-hidden="true">·</span>
-                <span>{stateLabel}</span>
-              </div>
-            )}
-            <h1 className="sheet-title" id="sheet-title" ref={heroTitle}>
-              {task.title}
-            </h1>
-            <Stepper task={task} />
-          </header>
-
-          <nav className="tabs" role="tablist" aria-label="Task details" onKeyDown={onTabKey}>
+        <nav className="task-workspace-switcher" aria-label="Task workspace">{["tasks", "flow", "details"].map((name) => <button key={name} className={`btn small ${pane === name ? "on" : "quiet"}`} aria-pressed={pane === name} onClick={() => setPane(name)}>{name === "tasks" ? "Tasks" : name === "flow" ? "Flow" : "Details"}</button>)}</nav>
+        <div className="task-workspace-columns" data-pane={pane}>
+          <aside className="task-list" aria-label="Tasks">
+            <div className="task-list-heading"><h2>Tasks</h2><span className="quiet-text num">{listed.length}</span></div>
+            <div className="task-list-scroll">
+              {listed.map((entry) => (
+                <button key={entry.id} className={`task-list-item ${entry.id === task.id ? "selected" : ""}`} aria-current={entry.id === task.id ? "true" : undefined} onClick={() => { onTask(entry.id); setPane("flow"); }}>
+                  <span className="task-list-meta"><span className="task-list-product"><ProductName product={find.product(entry.productId)} /></span><TaskActivity task={entry} /></span>
+                  <span className="task-list-title">{entry.title}</span>
+                  <span className="task-list-status">{entry.held && entry.state === "queued" ? "On hold" : entry.statusLine || STATE_LABEL[entry.state]}</span>
+                  {entry.id === task.id && <ChevronRight className="task-list-arrow" size={16} aria-hidden="true" />}
+                </button>
+              ))}
+            </div>
+          </aside>
+          <Journey key={task.id} task={task} state={state} find={find} onReadSession={readSession} onPlan={() => { taskDetails(); onTab("plan"); }} workspace detailsTarget={detailsTarget} selectionReset={selectionReset} onSelectionChange={(id) => {
+            if (id && !selectedStep) globalScroll.current = scroller.current?.scrollTop ?? 0;
+            setSelectedStep(id);
+            if (id) setPane("details");
+            scroller.current?.scrollTo({ top: id ? 0 : globalScroll.current });
+          }} />
+          <aside className="task-detail-panel" aria-label="Task and step details">
+          {selectedStep ? <div className="step-panel-bar"><button className="btn quiet small" onClick={taskDetails}><ArrowLeft size={16} aria-hidden="true" /> Back to task</button><span className="quiet-text">Step details</span></div> : <nav className="tabs" role="tablist" aria-label="Task details" onKeyDown={onTabKey}>
             {TABS.map((entry) => (
               <button
                 key={entry.id}
@@ -214,37 +224,40 @@ export function TaskSheet({ task, state, find, tab, onTab, onClose, onToast, dra
                 aria-controls="sheet-panel"
                 tabIndex={tab === entry.id ? 0 : -1}
                 className={tab === entry.id ? "on" : ""}
-                onClick={() => onTab(entry.id)}
+                onClick={() => { onTab(entry.id); setPane("details"); }}
               >
                 {entry.label}
                 {entry.id === "session" && draft && <span className="draft-mark" aria-label="Unsent message" title="Unsent message" />}
                 {counts[entry.id] ? <span className="count">{counts[entry.id]}</span> : null}
               </button>
             ))}
-          </nav>
+          </nav>}
 
-          <div className="sheet-body" id="sheet-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
+          <div className="sheet-scroll" ref={scroller}><div className="sheet-body" id="sheet-panel" role={selectedStep ? undefined : "tabpanel"} aria-labelledby={selectedStep ? "journey-details-title" : `tab-${tab}`}>
+            <div className="selected-step" hidden={!selectedStep} ref={setDetailsTarget} />
+            <div className="task-global-details" hidden={!!selectedStep}>
+            {tab === "overview" && asks.length > 0 && <section className="sheet-section task-decisions" aria-label="Waiting for you">{asks.map((item) => <Ask key={item.id} item={item} state={state} find={find} onOpen={(_id, next) => onTab(next ?? "session")} />)}</section>}
             {tab === "overview" && (
               <Overview
+                separateFlow
                 task={task}
                 state={state}
                 find={find}
                 onAboutNumbers={onAboutNumbers}
-                onReadSession={(id, name) => {
-                  setSessionStep({ id, name });
-                  onTab("session");
-                }}
+                onReadSession={readSession}
                 onPlan={() => onTab("plan")}
               />
             )}
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
             {tab === "review" && <ReviewView task={task} find={find} />}
-            {tab === "session" && <Session.Log key={sessionStep?.id ?? "latest"} task={task} state={state} find={find} scroller={scroller} onToast={onToast} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
+            {tab === "session" && <Session.Log key={sessionStep?.id ?? "latest"} active={!selectedStep} task={task} state={state} find={find} scroller={scroller} onToast={onToast} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
           </div>
-        </div>
+          </div></div>
 
-        {tab === "session" && <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} onFocused={onMessageFocused} />}
+        <div hidden={!!selectedStep}>{tab === "session" && <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} onFocused={onMessageFocused} />}</div>
+          </aside>
+        </div>
       </section>
     </>
   );

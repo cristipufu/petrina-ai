@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, CircleAlert, Search } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
 import { DELIVERY_LABEL, type Column, type Product, type ProductsUsage, type State } from "@petrina/core";
 import { mod } from "../keyboard";
 import { useUsage } from "../usage";
@@ -183,7 +183,6 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
   // Each product's tokens and agent time across all its tasks, finished and cancelled included.
   const usage = useUsage({ view: "products" }, state);
   const work = new Map(usage?.products.map((entry) => [entry.productId, entry]));
-  const atLeast = usage?.atLeast;
 
   return (
     <div className="page">
@@ -267,12 +266,7 @@ export function ProductsPage({ state, onPick, onAdd, onSettings }: { state: Stat
           </tbody>
         </table>
       </div>
-      {atLeast && (
-        <div className="at-least">
-          <CircleAlert size={13} />
-          {atLeast}
-        </div>
-      )}
+
     </div>
   );
 }

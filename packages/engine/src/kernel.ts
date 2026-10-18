@@ -148,8 +148,8 @@ export function checksLine(task: Task): string | undefined {
   if (!runs?.length) return undefined;
   const failed = runs.filter((run) => !run.ok);
   return failed.length
-    ? `Petrina's checks: ${failed.length} of ${runs.length} failed (${failed.map((run) => run.name).join(", ")}).`
-    : `Petrina's checks: all ${runs.length} passed (${runs.map((run) => run.name).join(", ")}).`;
+    ? `Automated checks: ${failed.length} of ${runs.length} failed (${failed.map((run) => run.name).join(", ")}).`
+    : `Automated checks: all ${runs.length} passed (${runs.map((run) => run.name).join(", ")}).`;
 }
 
 export abstract class Kernel {

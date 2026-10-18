@@ -81,7 +81,7 @@ describe("the engine records each task's journey", () => {
     const task = taskOf(engine, id);
     expect(task.error).toBeUndefined();
     const view = viewOf(engine, id);
-    expect(view.nodes.map((node) => node.name)).toEqual(["Planner", "Architect", "Design reviewer", "Your design check", "Builder", "Check finder", "Petrina's checks", "Code reviewers", "Your delivery check", "Delivery"]);
+    expect(view.nodes.map((node) => node.name)).toEqual(["Planner", "Architect", "Design reviewer", "Your design check", "Builder", "Check finder", "Automated checks", "Code reviewers", "Your delivery check", "Publish delivery"]);
     expect(view.nodes.every((node) => node.state === "done")).toBe(true);
     expect(view.nodes.map((node) => node.reason ?? "")).toEqual(["plan ready", "brief ready", "no blocking objections", "you approved", "ready for review", "checks found", "checks passed", "review passed", "you approved", ""]);
     expect(view.nodes.map((node) => node.outcome)).toEqual(["Plan with 4 stages", "Wrote the brief", "No objections", "Approved", "Change ready", "Found 1 check", "The check passes", "1 nit", "Approved", "Moved main forward"]);
@@ -125,7 +125,7 @@ describe("the engine records each task's journey", () => {
       expect(votes).toHaveLength(1);
       expect(votes[0]).toMatchObject({ outcome: "1 checked: 1 real", reason: "sent back: 1 important", tone: "back", state: "done" });
       expect(view.nodes.find((node) => node.name === "Builder (fixes)")).toMatchObject({ outcome: "Fixed 2 findings", reason: "fixes ready" });
-      expect(view.nodes.at(-1)).toMatchObject({ kind: "petrina", name: "Delivery", state: "done" });
+      expect(view.nodes.at(-1)).toMatchObject({ kind: "petrina", name: "Publish delivery", state: "done" });
       expect(journeyProblems(task)).toEqual([]);
     } finally {
       engine.shutdown();
@@ -177,7 +177,7 @@ describe("the engine records each task's journey", () => {
 
     await until(engine, (state) => state.tasks.find((task) => task.id === id)!.state === "done");
     view = viewOf(engine, id);
-    expect(view.nodes.map((node) => `${node.name}: ${node.state}`)).toEqual(["Planner: done", "Builder: failed", "Stuck: done", "Builder (again): done", "Check finder: done", "Petrina's checks: done", "Code reviewer: done", "Delivery: done"]);
+    expect(view.nodes.map((node) => `${node.name}: ${node.state}`)).toEqual(["Planner: done", "Builder: failed", "Stuck: done", "Builder (again): done", "Check finder: done", "Automated checks: done", "Code reviewer: done", "Publish delivery: done"]);
     expect(view.nodes[2]).toMatchObject({ outcome: "Tried again", reason: "you asked to try again" });
     expect(journeyProblems(taskOf(engine, id))).toEqual([]);
     engine.shutdown();

@@ -1,0 +1,79 @@
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import type { Page, TaskList } from "@petrina/core";
+import type { SheetTab } from "./components/TaskCard";
+
+export const PAGE_NAMES: Record<Page, string> = { board: "Board", products: "Products", agents: "Agents", analytics: "Analytics", library: "Library", settings: "Settings" };
+const TABS: readonly SheetTab[] = ["overview", "plan", "design", "review", "session"];
+const OWN_PARAMS = ["product", "from"];
+
+/** Keep the browser's open-in-new-tab and copy-link behaviour. */
+export function followLink(event: MouseEvent<HTMLAnchorElement>, navigate: () => void): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  navigate();
+}
+
+export type TaskRoute = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string };
+export interface AppRoute {
+  view: Page;
+  product: string;
+  sheet?: TaskRoute;
+  productSettings?: string;
+  missing?: string;
+}
+
+/** The address is the source of navigation state; dialogs and unsent text stay local. */
+export function readRoute(address: URL): AppRoute {
+  const base: AppRoute = { view: "board", product: address.searchParams.get("product") || "all" };
+  let parts: string[];
+  try { parts = address.pathname.split("/").filter(Boolean).map(decodeURIComponent); }
+  catch { return { ...base, missing: address.pathname }; }
+  if (!parts.length) return base;
+  const [page, id, detail, extra] = parts;
+  if (page === "tasks" && id && !extra && (!detail || TABS.includes(detail as SheetTab))) {
+    const from = address.searchParams.get("from");
+    const view = from && Object.hasOwn(PAGE_NAMES, from) ? from as Page : "board";
+    return { ...base, view, sheet: { taskId: id, tab: detail as SheetTab || "overview", list: view === "board" ? "board" : undefined } };
+  }
+  if (page && Object.hasOwn(PAGE_NAMES, page)) {
+    const route = { ...base, view: page as Page };
+    if (parts.length === 1) return route;
+    if (page === "settings" && id === "products" && detail && !extra) return { ...route, productSettings: detail };
+  }
+  return { ...base, missing: address.pathname };
+}
+
+/** Retain mode parameters such as ?demo=portfolio and never put the engine key in a link. */
+export function routeHref(route: AppRoute, search = window.location.search): string {
+  let path = route.view === "board" ? "/" : `/${route.view}`;
+  const query = new URLSearchParams(search);
+  for (const key of OWN_PARAMS) query.delete(key);
+  if (route.product !== "all") query.set("product", route.product);
+  if (route.sheet) {
+    path = `/tasks/${encodeURIComponent(route.sheet.taskId)}${route.sheet.tab === "overview" ? "" : `/${route.sheet.tab}`}`;
+    if (route.view !== "board") query.set("from", route.view);
+  } else if (route.view === "settings" && route.productSettings) path += `/products/${encodeURIComponent(route.productSettings)}`;
+  const suffix = query.toString();
+  return path + (suffix ? `?${suffix}` : "");
+}
+
+export function useAppRoute() {
+  const [route, setRoute] = useState(() => readRoute(new URL(window.location.href)));
+  const current = useRef(route);
+  const navigate = useCallback((change: (previous: AppRoute) => AppRoute, replace = false) => {
+    const next = { ...change(current.current) };
+    delete next.missing;
+    const href = routeHref(next);
+    if (href !== window.location.pathname + window.location.search) {
+      window.history[replace ? "replaceState" : "pushState"]({}, "", href);
+    }
+    current.current = next;
+    setRoute(next);
+  }, []);
+  useEffect(() => {
+    const follow = () => { const next = readRoute(new URL(window.location.href)); current.current = next; setRoute(next); };
+    window.addEventListener("popstate", follow);
+    return () => window.removeEventListener("popstate", follow);
+  }, []);
+  return [route, navigate] as const;
+}

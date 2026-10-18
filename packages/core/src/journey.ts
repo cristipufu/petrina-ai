@@ -137,9 +137,9 @@ export const YOU_STEP_NAMES: Readonly<Record<JourneyWait, string>> = {
 
 /** Petrina's own steps, by what it did. */
 export const PETRINA_STEP_NAMES: Readonly<Record<JourneyWork, string>> = {
-  checks: "Petrina's checks",
-  update: "Main moved on",
-  delivery: "Delivery",
+  checks: "Automated checks",
+  update: "Update branch",
+  delivery: "Publish delivery",
 };
 
 // ── Recording: the engine and the simulator call these as the task moves ───────────────────

@@ -3,19 +3,20 @@
 import { Bot, Boxes, ChartColumn, LayoutGrid, Library, Settings } from "lucide-react";
 import type { Page } from "@petrina/core";
 import { mod } from "../keyboard";
+import { followLink } from "../routes";
 
-export function Rail({ view, blocking, onGo }: { view: Page; blocking: number; onGo: (page: Page) => void }) {
+export function Rail({ view, blocking, onGo, hrefFor }: { view: Page; blocking: number; onGo: (page: Page) => void; hrefFor: (page: Page) => string }) {
   return (
     <nav className="rail" aria-label="Sections">
-      <button className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={() => onGo("board")} title="Board (B)">
+      <a href={hrefFor("board")} className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("board"))} title="Board (B)">
         <LayoutGrid size={20} aria-hidden="true" />
         Board
-      </button>
-      <button className={view === "products" ? "on" : ""} aria-current={view === "products" ? "page" : undefined} onClick={() => onGo("products")} title="Products">
+      </a>
+      <a href={hrefFor("products")} className={view === "products" ? "on" : ""} aria-current={view === "products" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("products"))} title="Products">
         <Boxes size={20} aria-hidden="true" />
         Products
-      </button>
-      <button className={view === "agents" ? "on" : ""} aria-current={view === "agents" ? "page" : undefined} onClick={() => onGo("agents")} title="Agents (A)">
+      </a>
+      <a href={hrefFor("agents")} className={view === "agents" ? "on" : ""} aria-current={view === "agents" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("agents"))} title="Agents (A)">
         <Bot size={20} aria-hidden="true" />
         Agents
         {blocking > 0 && (
@@ -23,19 +24,20 @@ export function Rail({ view, blocking, onGo }: { view: Page; blocking: number; o
             {blocking}
           </span>
         )}
-      </button>
-      <button className={view === "analytics" ? "on" : ""} aria-current={view === "analytics" ? "page" : undefined} onClick={() => onGo("analytics")} title="Analytics">
+      </a>
+      <a href={hrefFor("analytics")} className={view === "analytics" ? "on" : ""} aria-current={view === "analytics" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("analytics"))} title="Analytics">
         <ChartColumn size={20} aria-hidden="true" />
         Analytics
-      </button>
-      <button className={view === "library" ? "on" : ""} aria-current={view === "library" ? "page" : undefined} onClick={() => onGo("library")} title="Library (L)">
+      </a>
+      <a href={hrefFor("library")} className={view === "library" ? "on" : ""} aria-current={view === "library" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("library"))} title="Library (L)">
         <Library size={20} aria-hidden="true" />
         Library
-      </button>
-      <button className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={() => onGo("settings")} title={`Settings (${mod},)`}>
+      </a>
+      <div className="rail-end" aria-hidden="true" />
+      <a href={hrefFor("settings")} className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("settings"))} title={`Settings (${mod},)`}>
         <Settings size={20} aria-hidden="true" />
         Settings
-      </button>
+      </a>
     </nav>
   );
 }

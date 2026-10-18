@@ -32,7 +32,7 @@ function nowSentence(task: Task, role: Role | undefined): string {
   }
 }
 
-export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void }) {
+export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, separateFlow = false }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void; separateFlow?: boolean }) {
   const [all, setAll] = useState(false);
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
@@ -40,7 +40,7 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
 
   return (
     <>
-      <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} />
+      {!separateFlow && <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} />}
 
       {task.description && (
         <section className="sheet-section reading">

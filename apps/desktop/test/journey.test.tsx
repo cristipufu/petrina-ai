@@ -46,7 +46,7 @@ describe('the journey as a list, for screen readers and the keyboard', () => {
     const items = [...list.querySelectorAll('li')].map((item) => item.textContent);
     expect(items[3]).toBe('4. Code reviewer. Done. Codex · sol · high effort. 3m elapsed. 1 important. Moved on: sent back: 1 important.');
     expect(items[7]).toMatch(/^8\. Your delivery check\. Waiting for you\. Waiting \d+m so far\. Reviews done/);
-    expect(items[8]).toBe('9. Delivery. Next.');
+    expect(items[8]).toBe('9. Publish delivery. Next.');
   });
 
   it('is one tab stop on the live step; the arrow keys move through it and Enter opens a step', async () => {
@@ -89,8 +89,9 @@ describe('the journey in the task sheet', () => {
   it('opens first in the Overview, and Enter on a step shows its details and its part of the timeline', async () => {
     await mount(createDemoState(NOW));
     await openTask('pricing-refresh');
-    const sections = [...host.querySelectorAll('.sheet-body > section h2, .sheet-body > section .journey-head h2')].map((heading) => heading.textContent);
-    expect(sections[0]).toBe('Journey');
+    expect(host.querySelector('.workspace-journey h2')?.textContent).toContain('Task flow');
+    expect(host.querySelector('.task-list')).not.toBeNull();
+    expect(host.querySelector('.task-detail-panel #journey-details-title')).toBeNull();
     const reviewer = [...host.querySelectorAll<HTMLElement>('.journey-list li')].find((item) => item.textContent?.startsWith('4. Code reviewer'))!;
     await act(async () => reviewer.focus());
     await key('Enter');
@@ -99,11 +100,10 @@ describe('the journey in the task sheet', () => {
     expect(details.textContent).toContain('sent back: 1 important');
     expect([...details.querySelectorAll('.tl .text')].map((entry) => entry.textContent)).toContain('Sent back to the builder: 1 important');
 
-    // Read this step in the Session: the conversation opens with the step's lines marked.
-    await act(async () => [...details.querySelectorAll('button')].find((button) => button.textContent === 'Read this step in the Session')!.click());
-    expect(host.querySelector('#tab-session')?.getAttribute('aria-selected')).toBe('true');
-    expect(host.querySelector('.step-marked')?.textContent).toContain('Code reviewer');
-    expect(host.querySelectorAll('.chat .in-step').length).toBeGreaterThan(0);
+    // The selected run's conversation is read inline, without changing the task tab.
+    expect(details.querySelector('.step-conversation')?.textContent).toContain('Conversation');
+    expect(host.querySelector('.step-panel-bar')?.textContent).toContain('Step details');
+    expect([...details.querySelectorAll('button')].some((button) => button.textContent?.includes('Read this step'))).toBe(false);
   });
 
   it('stops following the live step while you read another one, until Back to now', async () => {
@@ -129,6 +129,34 @@ describe('the journey in the task sheet', () => {
     expect(backToNow()).toBeDefined();
   });
 
+  it('keeps the flow visible across detail tabs and switches tasks from the adjacent list', async () => {
+    await mount(createDemoState(NOW));
+    await openTask('pricing-refresh');
+    const workspace = host.querySelector('.task-workspace');
+    const canvas = host.querySelector('.journey-canvas');
+    await act(async () => host.querySelector<HTMLElement>('#tab-plan')!.click());
+    expect(host.querySelector('.journey-canvas')).toBe(canvas);
+    expect(host.querySelector('.task-detail-panel')?.textContent).toContain('Why this plan');
+    await act(async () => [...host.querySelectorAll<HTMLElement>('.journey-list li')][1]!.click());
+    expect(host.querySelector('.task-global-details')?.hasAttribute('hidden')).toBe(true);
+    expect(host.querySelector('.task-detail-panel #journey-details-title')?.textContent).toContain('Builder');
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>('.step-panel-bar button')][0]!.click());
+    expect(host.querySelector('#tab-plan')?.getAttribute('aria-selected')).toBe('true');
+    const other = [...host.querySelectorAll<HTMLButtonElement>('.task-list-item')].find((button) => button.textContent?.includes('Guest checkout'))!;
+    await act(async () => other.click());
+    expect(host.querySelector('.task-workspace')).toBe(workspace);
+    expect(host.querySelector('.sheet-title')?.textContent).toBe('Guest checkout');
+    expect(host.querySelector('.task-detail-panel #journey-details-title')).toBeNull();
+    expect(host.querySelector('.task-list-item[aria-current="true"]')?.textContent).toContain('Guest checkout');
+    // The current permission can be answered without closing the task or finding it in the inbox.
+    const allow = [...host.querySelectorAll<HTMLButtonElement>('.task-decisions button')].find((button) => button.textContent === 'Allow')!;
+    await act(async () => allow.click());
+    expect(simulator.getState().inbox.some((item) => item.taskId === 'guest-checkout' && item.kind === 'permission')).toBe(false);
+    expect(host.querySelector('.task-workspace')).toBe(workspace);
+    const ids = [...host.querySelectorAll<HTMLElement>('[id]')].map((el) => el.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it('stops following when the live step you are reading hands off', async () => {
     await mount(createDemoState(NOW));
     await openTask('pricing-refresh');
@@ -143,6 +171,19 @@ describe('the journey in the task sheet', () => {
     expect(backToNow()).toBeDefined();
     await act(async () => backToNow()!.click());
     expect(backToNow()).toBeUndefined();
+  });
+
+  it('keeps reading a step in place when the hidden Session receives a message', async () => {
+    await mount(createDemoState(NOW));
+    await openTask('pricing-refresh');
+    await act(async () => host.querySelector<HTMLElement>('#tab-session')!.click());
+    const scroller = host.querySelector<HTMLElement>('.task-detail-panel .sheet-scroll')!;
+    Object.defineProperty(scroller, 'scrollHeight', { value: 900, configurable: true });
+    await act(async () => [...host.querySelectorAll<HTMLElement>('.journey-list li')][1]!.click());
+    scroller.scrollTop = 45;
+    await act(async () => simulator.sendMessage('pricing-refresh', 'A new note while I read this step'));
+    expect(scroller.scrollTop).toBe(45);
+    expect(host.querySelector('#journey-details-title')?.textContent).toContain('Builder');
   });
 
   it('offers zoom, the whole journey, and labels every control', async () => {

@@ -1,6 +1,6 @@
 // The Overview tab's "What it used": the task's tokens and agent time, then each stage that ran with its agents.
 
-import { CircleAlert, Info } from "lucide-react";
+import { Info } from "lucide-react";
 import { count, tokenNumber, type State, type Task } from "@petrina/core";
 import { TOOL_COLORS, type Lookup } from "../../lib";
 import { useUsage } from "../../usage";
@@ -30,12 +30,7 @@ export function WhatItUsed({ task, state, find, onAbout }: { task: Task; state: 
             <span className="muted"> agent time</span>
           </div>
           <div className="muted small">{view.cacheRead === undefined ? "Input reused from the cache: not reported." : `${tokenNumber(view.cacheRead)} of that was input the tools reused from their cache, as the tools report it.`}</div>
-          {view.atLeast && (
-            <div className="at-least">
-              <CircleAlert size={13} />
-              {view.atLeast}
-            </div>
-          )}
+
           <div className="usage-stages">
             {view.stages.map((stage) => (
               <div key={stage.stageId} className="usage-stage">

@@ -156,8 +156,8 @@ export function BarsOverTime({ points, series, format, formatDetail = format, mi
   const missing = points.map((point) => series.some((entry) => point.missing?.[entry.key]));
   let incomplete = false;
   const runningMissing = missing.map((value) => (incomplete ||= value));
-  const detail = (value: number, absent = false) => absent ? value > 0 ? `at least ${formatDetail(value)}` : missingWord : formatDetail(value);
-  const compact = (value: number, absent = false) => `${absent ? "≥ " : ""}${format(value)}`;
+  const detail = (value: number, absent = false) => absent ? value > 0 ? `> ${formatDetail(value)}` : missingWord : formatDetail(value);
+  const compact = (value: number, absent = false) => `${absent ? "> " : ""}${format(value)}`;
   const missingNote = incomplete && <p className="muted small">Some work was not reported. Bars and the running total show known amounts.</p>;
 
   if (table) {
