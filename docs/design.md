@@ -58,12 +58,18 @@ Mechanics borrowed and credited:
 ### Task lifecycle
 
 ```
-queued → planning → designing → building → reviewing → ready → done
+backlog → queued → planning → designing → building → reviewing → ready → done
             │            │            │           │        │
             └──── any stage can be: running · needs-you · paused · failed
 ```
 
-The stage column (planning, designing, building…) is derived from the role of the current stage; the Products page counts tasks by it. The board itself is one grid of cards grouped by what each task needs (needs you, working, waiting, queue, done), and every card shows its own pipeline from its plan: done steps checked, the current one named, stages the plan does not have left out (`packages/core/src/board.ts`).
+The stage column (planning, designing, building…) is derived from the role of the current stage; the Products page counts tasks by it. The board itself is one grid of cards grouped by what each task needs (needs you, working, waiting, queue, backlog), and every card shows its own pipeline from its plan: done steps checked, the current one named, stages the plan does not have left out (`packages/core/src/board.ts`).
+
+### Backlog and finished work
+
+A backlog task is saved work awaiting the coordinator’s review. It cannot take a pool slot or start a planner. Its request, source and delivery choices remain editable; the explicit `queueTask` command puts it into the queue. A queued task may return through `moveToBacklog` only before it has ever started. The engine enforces both transitions, and the simulator follows the same rules. New task defaults to Backlog in the window; API callers that omit the option retain the existing queued behavior.
+
+Completed and cancelled tasks appear in History rather than Board. The window receives active task bodies and compact historical totals, review aggregates and recent step timing records. `historyPage` reads at most one page of lightweight summaries, ordered by finish time and task id, with a stable cursor and optional product and title-word filters. SQLite indexes the history and its search. `taskDetails` reads the full record only when someone opens it. The selected archived task is added only to its workspace’s display state, so opening it cannot double-count Analytics or product totals. The simulator offers the same commands against its small fixture.
 
 ## Roles
 
@@ -341,7 +347,8 @@ Built-in role contracts live in the engine's `roles.ts`, with their defaults in 
 - **Rust is a thin host.** It starts the engine, passes the engine's address and key to the window, and stops the engine it started when the app quits. It also shows the window's notifications, sets the count on the Dock or taskbar icon, and keeps Petrina to one running copy, with Tauri's own notification and single-instance plugins. The window gets none of those plugins' commands: only the shell's own three (the engine's details, show a notification, set the count), each refused to any window but the main one. No web client, no other plugins.
 - **TypeScript holds everything domain-specific:** roles, plans, the scheduler, the engine, ACP handling, worktrees, SQLite, and the UI.
 - `@petrina/core` never imports Tauri. It talks to a host interface, so the whole engine runs under Node in tests with fake agents.
-- **State** is one snapshot in SQLite, saved shortly after every change and at once for anything the coordinator says. The UI and the engine read the same state, so tasks pick up where they left off after a restart.
+- **State** is saved in SQLite shortly after every change and at once for anything the coordinator says. Finished task summaries are indexed separately for History; the live window receives active work and compact historical metadata rather than every old conversation. Tasks pick up where they left off after a restart.
+- **Live check evidence** records each product check and repository hook as pending, running and completed, with its own start and finish times. Pending checks are saved before the shared check queue admits the task; queued and interrupted checks cannot be mistaken for passes. The same record powers the live node details and finished evidence.
 - **Each task keeps its journey:** one entry per step, recorded the moment it starts (stage, round, reviewer position, role, profile, start and end, outcome, why the work moved on, and the questions and permission requests asked during it). Reviewers working together share a step per round, naming the profiles that actually start, including replacements; fresh voters and Petrina’s own checks and publishing have their own steps. A new round, send-back or retry is a new step; picking up after a restart or a pause continues the same one. A replacement agent gets a new step, keeping the first agent's tool, elapsed time and lines on its own step. Timeline and session lines carry the step they belong to. The journey is never trimmed the way the timeline and the conversation are. The engine and the simulator record it through the same helpers and words in `@petrina/core` (`journey.ts`), which also work out the steps still ahead from the plan; the screen only draws it.
 
 ## The engine process

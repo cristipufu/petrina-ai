@@ -21,20 +21,22 @@ export interface ProductStats {
 export function productStats(state: State): ProductStats[] {
   return state.products.map((product) => {
     const tasks = state.tasks.filter((task) => task.productId === product.id);
-    const byColumn = { queue: 0, planning: 0, designing: 0, building: 0, reviewing: 0, ready: 0, done: 0 } as Record<Column, number>;
+    const byColumn = { backlog: 0, queue: 0, planning: 0, designing: 0, building: 0, reviewing: 0, ready: 0, done: 0 } as Record<Column, number>;
+    const history = state.history?.products.find((entry) => entry.productId === product.id);
+    byColumn.done = (history?.done ?? 0) + (history?.cancelled ?? 0);
     for (const task of tasks) byColumn[task.column] += 1;
     const ids = new Set(tasks.map((task) => task.id));
     const working = tasks.filter((task) => task.state === "running").length;
     const queued = tasks.filter((task) => task.state === "queued").length;
     const needsYou = state.inbox.filter((item) => ids.has(item.taskId)).length;
-    const inFlight = tasks.filter((task) => !["queued", "done", "cancelled"].includes(task.state)).length;
+    const inFlight = tasks.filter((task) => !["backlog", "queued", "done", "cancelled"].includes(task.state)).length;
     return {
       product,
       needsYou,
       working,
       queued,
       byColumn,
-      shipped: tasks.filter((task) => task.state === "done").length,
+      shipped: tasks.filter((task) => task.state === "done").length + (history?.done ?? 0),
       active: inFlight > 0 || needsYou > 0,
     };
   });
@@ -165,6 +167,7 @@ function SwitcherPopover({ onEscape, children }: { onEscape: () => void; childre
 }
 
 const PIPE: readonly { column: Column; label: string }[] = [
+  { column: "backlog", label: "Backlog" },
   { column: "queue", label: "Queue" },
   { column: "planning", label: "Plan" },
   { column: "designing", label: "Design" },

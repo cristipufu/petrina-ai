@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
-import { matchesWords, queueOf, reconcileHighlight, searchTasks, type State, type Task } from "@petrina/core";
+import { landingOf, matchesWords, queueOf, reconcileHighlight, searchTasks, type HistoryPage, type State, type Task } from "@petrina/core";
+import { failureText, sim } from "../engine";
 import { stateLabel } from "../lib";
 import { productStats } from "./Products";
 import { mod, SHORTCUTS } from "../keyboard";
@@ -20,13 +21,14 @@ export function taskState(task: Task, state: State): string {
   return stateLabel(task, state);
 }
 
-export function CommandPalette({ state, actions, taskActions, onClose, onTask, onProduct, onNew, onFilter, onLimit }: {
+export function CommandPalette({ state, actions, taskActions, onClose, onTask, onProduct, onHistoryProduct, onNew, onFilter, onLimit }: {
   state: State;
   actions: PaletteAction[];
   taskActions: PaletteAction[];
   onClose: () => void;
   onTask: (id: string) => void;
   onProduct: (id: string) => void;
+  onHistoryProduct: (id: string) => void;
   onNew: (title: string) => void;
   onFilter: (query: string) => void;
   onLimit: (limit: number) => void;
@@ -37,6 +39,26 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
   const previousRows = useRef<string[]>([]);
   const box = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const [history, setHistory] = useState<{ query: string; page?: HistoryPage; error?: string }>();
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const trimmed = query.trim();
+  const searchHistory = !limit && Boolean(trimmed && state.history?.total);
+  const historyRevision = state.history?.revision;
+  useEffect(() => {
+    if (!searchHistory) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    const timer = setTimeout(() => {
+      Promise.resolve().then(() => sim.historyPage({ query: trimmed, limit: 40 })).then(
+        (page) => { if (!cancelled) { setHistory({ query: trimmed, page }); setHistoryLoading(false); } },
+        (error) => { if (!cancelled) { setHistory({ query: trimmed, error: failureText(error) }); setHistoryLoading(false); } },
+      );
+    }, 150);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [trimmed, searchHistory, historyRevision]);
+  const past = searchHistory && history?.query === trimmed ? history.page : undefined;
+  const historyError = searchHistory && history?.query === trimmed ? history.error : undefined;
+  const historyPending = searchHistory && (historyLoading || (!past && !historyError));
   useFocusTrap(box, onClose);
   const stats = useMemo(() => productStats(state), [state]);
   const search = useMemo(() => {
@@ -50,17 +72,26 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
   const actionRow = (action: PaletteAction): PaletteAction => action.id === "limit" ? {
     ...action, run: () => { setLimit(true); setQuery(""); setSelected(`limit-${state.pool.limit}`); input.current?.focus(); },
   } : { ...action, run: finish(action.run) };
-  const taskRows: PaletteAction[] = search.tasks.slice(0, 40).map((task) => ({
+  const liveTaskIds = new Set(search.tasks.map((task) => task.id));
+  const pastTasks = past?.items.filter((task) => !liveTaskIds.has(task.id)) ?? [];
+  const taskRows: PaletteAction[] = [...search.tasks.slice(0, 40).map((task) => ({
     id: `task-${task.id}`, label: task.title,
     detail: `${state.products.find((product) => product.id === task.productId)?.name ?? "Product"} · ${taskState(task, state)}`,
     shortcut: "↵", run: finish(() => onTask(task.id)),
-  }));
-  const productRows: PaletteAction[] = search.products.slice(0, 20).map((entry) => ({
+  })), ...pastTasks.map((task) => ({
+    id: `task-${task.id}`, label: task.title,
+    detail: `${state.products.find((product) => product.id === task.productId)?.name ?? "Product"} · ${task.state === "cancelled" ? "Cancelled" : landingOf(task) === "marked-done" ? "Marked as done" : landingOf(task) === "closed" ? "Closed without merging" : "Finished"}`,
+    shortcut: "↵", run: finish(() => onTask(task.id)),
+  }))].slice(0, 40);
+  const productRows: PaletteAction[] = search.products.slice(0, 20).flatMap((entry) => [{
     id: `product-${entry.product.id}`, label: entry.product.name,
     detail: `Product · ${entry.needsYou} needs you · ${entry.working} working · ${entry.queued} queued`,
     shortcut: "↵", run: finish(() => onProduct(entry.product.id)),
-  }));
-  const nothing = search.matched.length + search.tasks.length + search.products.length === 0;
+  }, {
+    id: `history-product-${entry.product.id}`, label: `Finished tasks in ${entry.product.name}`,
+    detail: "Open this product’s task history", shortcut: "↵", run: finish(() => onHistoryProduct(entry.product.id)),
+  }]);
+  const nothing = search.matched.length + taskRows.length + search.products.length === 0;
   const rows: PaletteAction[] = limit ? Array.from({ length: 12 }, (_, index) => ({
     id: `limit-${index + 1}`, label: `${index + 1} agent${index ? "s" : ""}${state.pool.limit === index + 1 ? " · Current limit" : ""}`,
     shortcut: "↵", run: finish(() => onLimit(index + 1)),
@@ -78,7 +109,11 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
   const active = rows.find((row) => row.id === activeId);
   const signature = rowIds.join("|");
   useEffect(() => { document.getElementById(`palette-${active?.id}`)?.scrollIntoView({ block: "nearest" }); }, [active?.id]);
-  useEffect(() => { setSelected(activeId); previousRows.current = rowIds; }, [activeId, signature]);
+  useEffect(() => {
+    // Late search results may choose the initial row, but never replace a row the person chose.
+    if (selected !== undefined && selected !== activeId) setSelected(activeId);
+    previousRows.current = rowIds;
+  }, [activeId, signature, selected]);
 
   return <>
     <div className="palette-scrim" onClick={onClose} />
@@ -90,18 +125,20 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
           onChange={(event) => { const value = event.target.value; setQuery(value); if (!limit) setSelected(undefined); else if (/^(?:[1-9]|1[0-2])$/.test(value)) setSelected(`limit-${Number(value)}`); }}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const index = rowIds.indexOf(activeId!); setSelected(rowIds[Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))]); }
-            if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); active?.run(); }
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); if (!(historyPending && nothing && active?.id === "new-query")) active?.run(); }
           }} />
         <button className="btn quiet small" onClick={onClose}>Esc</button>
       </div>
       {limit && <p className="palette-note">Lowering the limit never stops anyone. Running stages finish first.</p>}
-      {!limit && nothing && query.trim() && <p className="palette-note" role="status">Nothing matched. Enter opens New task for you to review.</p>}
+      {!limit && historyPending && <p className="palette-note" role="status">Searching finished tasks…</p>}
+      {!limit && historyError && <p className="palette-note" role="status">Finished tasks could not be searched. {historyError}</p>}
+      {!limit && nothing && query.trim() && !historyPending && !historyError && <p className="palette-note" role="status">Nothing matched. Enter opens New task for you to review.</p>}
       <div className="palette-list" id="palette-list" role="listbox" aria-label={limit ? "Pool limits" : "Tasks, products and actions"}>
         {rows.map((row) => <div key={row.id} id={`palette-${row.id}`} role="option" aria-selected={row.id === active?.id} className={`palette-row ${row.id === active?.id ? "on" : ""}`} onMouseMove={() => setSelected(row.id)} onClick={row.run}>
           <span><strong>{row.label}</strong>{row.detail && <small>{row.detail}</small>}</span><kbd>{row.shortcut}</kbd>
         </div>)}
       </div>
-      {!limit && (search.tasks.length > 40 || search.products.length > 20) && <p className="palette-note">{Math.max(0, search.tasks.length - 40) + Math.max(0, search.products.length - 20)} more matches. Keep typing to narrow the list.</p>}
+      {!limit && (search.tasks.length + pastTasks.length > 40 || past?.nextCursor || search.products.length > 20) && <p className="palette-note">More matches. Keep typing to narrow the list.</p>}
       <div className="palette-footer"><span>↑ ↓ choose · Enter open</span><span>{mod}K to close</span></div>
     </div>
   </>;

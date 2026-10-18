@@ -99,12 +99,12 @@ export function whoAsks(item: InboxItem, state: State): string {
 }
 
 function taskName(item: InboxItem, state: State): string {
-  const task = state.tasks.find((entry) => entry.id === item.taskId);
+  const task = state.tasks.find((entry) => entry.id === item.taskId) ?? state.history?.dependencies?.find((entry) => entry.id === item.taskId);
   return (task && plainWords(task.title, NAME_MAX)) || "A task";
 }
 
 function productName(item: InboxItem, state: State): string | undefined {
-  const task = state.tasks.find((entry) => entry.id === item.taskId);
+  const task = state.tasks.find((entry) => entry.id === item.taskId) ?? state.history?.dependencies?.find((entry) => entry.id === item.taskId);
   const product = task && state.products.find((entry) => entry.id === task.productId);
   return (product && plainWords(product.name, NAME_MAX)) || undefined;
 }

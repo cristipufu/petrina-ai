@@ -14,7 +14,7 @@ export function appActions({ state, singleKeys, newTask, openInbox, go, showShor
     { id: "pool", label: state.pool.paused ? "Resume pool" : "Pause pool", shortcut: "↵", run: () => { void sendAction(() => sim.setPoolPaused(!state.pool.paused), state.pool.paused ? "Pool resumed" : "Pool paused", state.pool.paused ? "New stages can start." : "Running stages finish. Nothing new starts."); } },
     { id: "limit", label: "Change the pool limit", detail: `Currently ${state.pool.limit} · Lowering never stops anyone`, shortcut: "↵", run: () => {} },
     { id: "inbox", label: "Open the inbox", shortcut: "I", run: openInbox },
-    ...(["board", "products", "agents", "analytics", "library", "settings"] as Page[]).map((page) => ({ id: page, label: `Go to ${page[0]!.toUpperCase()}${page.slice(1)}`, shortcut: ({ board: "B", products: "↵", agents: "A", analytics: "↵", library: "L", settings: `${mod},` })[page], run: () => go(page) })),
+    ...(["board", "history", "products", "agents", "analytics", "library", "settings"] as Page[]).map((page) => ({ id: page, label: `Go to ${page[0]!.toUpperCase()}${page.slice(1)}`, shortcut: ({ board: "B", history: "↵", products: "↵", agents: "A", analytics: "↵", library: "L", settings: `${mod},` })[page], run: () => go(page) })),
     { id: "shortcuts", label: "Keyboard shortcuts", shortcut: "?", run: showShortcuts },
     { id: "toggle-keys", label: `Turn single-key shortcuts ${singleKeys ? "off" : "on"}`, shortcut: "↵", run: () => setSingleKeys(!singleKeys) },
     ...themes.map((entry) => ({

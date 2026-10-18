@@ -6,6 +6,7 @@ import { ago, profileText, type Lookup } from "../lib";
 import { RoleAvatar } from "./bits";
 import { UnsentMessage } from "./EngineState";
 import { Ask } from "./Inbox";
+import { MessageBody } from "./MessageBody";
 import type { SheetTab } from "./TaskCard";
 
 interface LogProps {
@@ -38,7 +39,7 @@ function when(at: number, now: number): string {
 }
 
 /** Only this run's saved conversation, read in place without changing the task's Session tab. */
-export function StepConversation({ lines, find, now, live = false }: { lines: readonly SessionLine[]; find: Lookup; now: number; live?: boolean }) {
+export function StepConversation({ lines, find, now, live = false, taskId, finished = false }: { lines: readonly SessionLine[]; find: Lookup; now: number; live?: boolean; taskId: string; finished?: boolean }) {
   const section = useRef<HTMLElement>(null);
   const pinned = useRef(true);
   const textSize = lines.reduce((size, line) => size + line.text.length, 0);
@@ -62,7 +63,7 @@ export function StepConversation({ lines, find, now, live = false }: { lines: re
       ) : (
         <div key={group.id} className={`msg ${group.from === "you" ? "you" : "agent"}`}>
           {group.from === "you" ? <span className="avatar tone-slate" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span> : <RoleAvatar role={find.role(group.roleId)} size={28} />}
-          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}<time>{when(group.at, now)}</time></div><div className="bubble">{group.text}</div></div>
+          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}<time>{when(group.at, now)}</time></div><div className="bubble"><MessageBody text={group.text} taskId={taskId} finished={finished} /></div></div>
         </div>
       ))}
     </div>
@@ -162,7 +163,7 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
             {you ? "You" : (lineRole?.name ?? "Agent")}
             <time className="num">{when(line.at, state.now)}</time>
           </div>
-          <div className="bubble">{line.text}</div>
+          <div className="bubble"><MessageBody text={line.text} taskId={task.id} finished={task.state === "done" || task.state === "cancelled"} /></div>
         </div>
       </div>
     );
@@ -270,7 +271,7 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
 function Composer({ task, find, text, onText, focusRequest, onFocused }: { task: Task; find: Lookup; text: string; onText: (text: string) => void; focusRequest: boolean; onFocused: () => void }) {
   const id = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     if (focusRequest) setExpanded(true);
   }, [focusRequest]);
@@ -295,7 +296,7 @@ function Composer({ task, find, text, onText, focusRequest, onFocused }: { task:
         {!expanded && text.trim() && <span className="composer-draft">Draft</span>}
         <ChevronDown size={16} aria-hidden="true" />
       </button>
-      {expanded && <form className="composer-body" id={`${id}-body`} onSubmit={(event) => { event.preventDefault(); send(); }}>
+      <form hidden={!expanded} className="composer-body" id={`${id}-body`} onSubmit={(event) => { event.preventDefault(); send(); }}>
         <textarea
           id={id}
           ref={textarea}
@@ -337,7 +338,7 @@ function Composer({ task, find, text, onText, focusRequest, onFocused }: { task:
             ? "You're driving in your terminal. Delivered when you hand back."
             : "Delivered as soon as an agent starts on this task."}
       </p>
-      </form>}
+      </form>
     </div>
   );
 }

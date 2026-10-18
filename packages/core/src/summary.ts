@@ -117,11 +117,10 @@ export function leftWords(ms: number): string {
  * same kind (role and pass) anywhere in Petrina, minus the time worked so far. Only while the agent
  * works, and only with at least three such steps; otherwise nothing, never a guess.
  */
-export function timeLeft(state: Pick<State, "tasks" | "now">, task: Task): string | undefined {
+export function timeLeft(state: Pick<State, "tasks" | "now" | "history">, task: Task): string | undefined {
   const clock = task.stepClock;
   if (task.state !== "running" || !clock || clock.since === undefined) return undefined;
-  const same = state.tasks
-    .flatMap((entry) => entry.steps ?? [])
+  const same = [...state.tasks.flatMap((entry) => entry.steps ?? []), ...(state.history?.steps ?? [])]
     .filter((record) => record.roleId === clock.roleId && record.repeat === clock.repeat)
     .sort((a, b) => a.at - b.at)
     .slice(-HISTORY);

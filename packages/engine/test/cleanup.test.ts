@@ -41,6 +41,32 @@ function gone(w: World, task: Task): void {
 }
 
 describe.concurrent("Finished tasks free their working copies", () => {
+  it("keeps existing pull-request updates out of the new-pull-request attribution check", async () => {
+    const w = world("existing-pr-attribution");
+    const engine = w.start();
+    try {
+      engine.setPoolPaused(true);
+      const productId = await engine.addProduct(w.clone);
+      const id = engine.addTask({ productId, title: "Update existing pull request", delivery: "pull-request" });
+      const task = engine.task(id)!;
+      const product = engine.activeState().products.find((entry) => entry.id === productId)!;
+      task.source = {
+        product: { id: product.id, name: product.name, repo: product.repo, path: product.path },
+        start: { kind: "pull-request", number: 77, url: "https://github.com/acme/demo/pull/77", headRepo: product.repo, branch: "existing-feature" },
+        destination: { mode: "pull-request", kind: "update-pr", repo: product.repo, branch: "existing-feature" }, confirmed: true,
+      };
+      task.shipping = { moves: 0, failures: 0, prepared: { tested: w.initial, summary: "Update existing work" } };
+      task.cleanup = { checkedDelivery: { tested: w.initial, base: "stale-base" } };
+      const item = engine.raise(task, "shipping", "Interrupted update", false);
+      engine.markDone(item);
+      expect(task.state).toBe("done");
+      expect(task.cleanup.checkedDelivery).toBeUndefined();
+      expect(task.cleanup.foreignPullRequest).toBeUndefined();
+      expect(task.cleanup.pullRequest).toBe("unconfirmed");
+      expect(task.shipping).toBeUndefined();
+    } finally { await engine.shutdown(); }
+  });
+
   it("recovers orphaned reviewer copies after the main copy was already removed, leaving unfinished tasks alone", async () => {
     const w = world("reviewer-crash");
     let engine = w.start();

@@ -56,6 +56,10 @@ export class Tracking {
       if (!this.k.s.products.some((product) => product.id === task.productId) && !this.log.knowsProduct(task.productId)) this.log.recordProduct({ id: task.productId, removedAt: now });
       if (fresh && task.startedAt !== undefined) this.log.markUntracked(task.id, task.productId, now);
     }
+    if (fresh) for (const task of this.k.store.history.earlierWork()) {
+      if (!this.k.s.products.some((product) => product.id === task.productId) && !this.log.knowsProduct(task.productId)) this.log.recordProduct({ id: task.productId, removedAt: now });
+      this.log.markUntracked(task.id, task.productId, now);
+    }
     this.log.markLost();
     // If the saved state was lost, ids in the log are still never handed out again.
     this.k.s.seq = Math.max(this.k.s.seq, this.log.highestTaskNumber());
@@ -73,7 +77,7 @@ export class Tracking {
       void this.refreshCodexLimits(CODEX_ON_PAGE_MS);
       this.k.readUsage("grok", CODEX_ON_PAGE_MS);
     }
-    return usageView(this.log, request, { now: Date.now(), state: this.k.getState() });
+    return usageView(this.log, request, { now: Date.now(), state: this.k.activeState(), task: (id) => this.k.task(id), taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id) });
   }
 
   // ── Products and ids ───────────────────────────────────────────────────

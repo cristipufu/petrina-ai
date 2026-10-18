@@ -16,7 +16,7 @@ export const CLEANUP_WORDS = {
 /** Marking work done is not evidence that its pull request ended, including work saved by older versions. */
 export function needsPullRequestCheck(task: Task): boolean {
   if (task.cleanup?.removedAt !== undefined) return false;
-  return task.cleanup?.pullRequest === "unconfirmed" || (task.state === "done" && task.delivery === "pull-request" && !task.pr && task.cleanup?.pullRequest !== "none");
+  return task.cleanup?.foreignPullRequest !== undefined || task.cleanup?.pullRequest === "unconfirmed" || (task.state === "done" && task.delivery === "pull-request" && !task.pr && task.cleanup?.pullRequest !== "none");
 }
 
 /**
@@ -24,5 +24,5 @@ export function needsPullRequestCheck(task: Task): boolean {
  * open, review fixes may still need the copy, so it stays, even when cancelled.
  */
 export function copyNoLongerNeeded(task: Task): boolean {
-  return (task.state === "done" || task.state === "cancelled") && task.pr?.state !== "open" && !needsPullRequestCheck(task);
+  return (task.state === "done" || task.state === "cancelled") && task.pr?.state !== "open" && !task.cleanup?.foreignPullRequest && !needsPullRequestCheck(task);
 }

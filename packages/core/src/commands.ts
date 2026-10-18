@@ -11,9 +11,13 @@ import type { Clone, SetupStep } from "./setup.js";
 import type { HandBackPreview, Launched } from "./takeover.js";
 import type { UsageRequest, UsageViewFor } from "./analytics.js";
 import type { StartFrom, WorkChoice } from "./source.js";
+import type { HistoryPage, HistoryQuery } from "./history.js";
+import type { Task } from "./model.js";
 
 /** A new task as the window sends it. */
 export interface NewTaskInput {
+  /** Wait for the coordinator to review the request before it joins the work queue. */
+  backlog?: boolean;
   startFrom?: StartFrom;
   productId: Id;
   title: string;
@@ -39,6 +43,9 @@ export interface SaidContext {
 }
 
 export interface Commands {
+  historyPage(query: HistoryQuery): HistoryPage;
+  taskDetails(taskId: Id): Task | undefined;
+  previewImage(taskId: Id, path: string): Promise<{ mime: string; data: string }>;
   saveRole(roleId: Id, draft: RoleDraft): void;
   addRole(draft: RoleDraft): Id;
   resetRole(roleId: Id): void;
@@ -66,6 +73,9 @@ export interface Commands {
   openGuide(url: string): void;
   // The queue and the pool
   addTask(input: NewTaskInput): Id;
+  queueTask(taskId: Id): void;
+  moveToBacklog(taskId: Id): void;
+  updateBacklog(taskId: Id, changes: { title: string; description: string }): void;
   setTaskStart(taskId: Id, choice: WorkChoice): Promise<void>;
   moveInQueue(taskId: Id, index: number): void;
   moveToTop(taskId: Id): void;
@@ -120,6 +130,7 @@ export type CommandName = keyof Commands;
 
 /** Every command by name, for the code that handles them all the same way. */
 export const COMMAND_NAMES = [
+  "historyPage", "taskDetails", "previewImage",
   "saveRole", "addRole", "resetRole", "removeRole",
   "addProduct",
   "removeProduct",
@@ -134,6 +145,7 @@ export const COMMAND_NAMES = [
   "dismissTip",
   "openGuide",
   "addTask",
+  "queueTask", "moveToBacklog", "updateBacklog",
   "setTaskStart",
   "moveInQueue",
   "moveToTop",

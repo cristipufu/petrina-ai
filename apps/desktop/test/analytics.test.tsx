@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Simulator, createDemo, type UsageRequest } from '@petrina/core';
+import { Simulator, createDemo, reviewStats, type AnalyticsUsage, type UsageRequest } from '@petrina/core';
 import { AnalyticsPage } from '../src/components/Analytics';
 import { BarsOverTime, LinesOverTime, type BarPoint } from '../src/components/Charts';
 import { FigureText } from '../src/components/Usage';
@@ -24,18 +24,41 @@ async function pick(control: string, words: string) {
 }
 
 // Desktop tests run in happy-dom at 1024px wide; the charts measure no box there and draw at their fallback width.
-async function show() {
+async function show(options: { projected?: boolean; onOpen?: (id: string) => void } = {}) {
   const demo = createDemo(1_000_000_000);
   simulator = new Simulator({ ...demo.state, pool: { ...demo.state.pool, paused: true } }, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
-  const state = simulator.getState();
+  const full = simulator.getState();
+  const state = options.projected ? { ...full, tasks: full.tasks.filter((task) => task.state !== 'done' && task.state !== 'cancelled'), history: { revision: 1, total: full.tasks.filter((task) => task.state === 'done' || task.state === 'cancelled').length, products: [], reviews: reviewStats([]), reviewsByProduct: {}, steps: [] } } : full;
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
-  await act(async () => root.render(<AnalyticsPage state={state} find={lookup(state)} product="all" about={false} onAboutSeen={() => {}} onOpen={() => {}} />));
+  await act(async () => root.render(<AnalyticsPage state={state} find={lookup(state)} product="all" about={false} onAboutSeen={() => {}} onOpen={options.onOpen ?? (() => {})} />));
   // The numbers arrive after the first render.
   await act(async () => { await Promise.resolve(); });
 }
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 describe('the Analytics charts', () => {
+  it('opens archived task usage from a projected state while keeping removed product rows unavailable', async () => {
+    const onOpen = vi.fn();
+    await show({ projected: true, onOpen });
+    await pick('Period', '30 days');
+    const toggle = all('.splits-head button').find((button) => button.textContent === 'By task')!;
+    await act(async () => (toggle as HTMLButtonElement).click());
+    const split = all('.split').find((section) => section.querySelector('h3')?.textContent === 'By task')!;
+    const more = split.querySelector<HTMLButtonElement>('.show-earlier');
+    if (more) await act(async () => more.click());
+    const full = simulator.getState();
+    const archived = full.tasks.filter((task) => task.state === 'done' || task.state === 'cancelled');
+    const usage = simulator.usage({ view: 'analytics', period: '30d' }) as AnalyticsUsage;
+    const index = usage.byTask.findIndex((line) => line.note !== 'removed' && archived.some((task) => task.id === line.taskId));
+    expect(index).toBeGreaterThanOrEqual(0);
+    const button = split.querySelectorAll('.split-row:not(.head)')[index]!.querySelector<HTMLButtonElement>('button.split-open');
+    expect(button).not.toBeNull();
+    await act(async () => button!.click());
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(usage.byTask[index]!.taskId);
+    const removed = [...split.querySelectorAll('.split-row')].filter((row) => row.querySelector('.usage-note')?.textContent === 'removed');
+    expect(removed.length).toBeGreaterThan(0);
+    for (const row of removed) expect(row.querySelector('button.split-open')).toBeNull();
+  });
   it('shows exact known amounts, missing reports and incomplete running totals consistently in tooltips and tables', async () => {
     await show();
     const props = {

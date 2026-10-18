@@ -83,7 +83,7 @@ export class Turns {
     for (;;) {
       // A screen request keeps the profile whose conversation asked, even if its planned tool is free again.
       const wanted = task.screen?.roleId === roleId ? task.screen.profileId : plannedId;
-      const room = options.room ?? ((toolId: Id) => !slotWait(this.k.getState(), { taskId: task.id, toolId }));
+      const room = options.room ?? ((toolId: Id) => !slotWait(this.k.activeState(), { taskId: task.id, toolId }));
       const choice = this.k.choose(wanted, task, roleId, room, options.reviewerKey)!;
       if (choice.kind === "none") {
         // Stopped by a limit and waiting for the reset: the step's next attempt is a retry.
@@ -98,7 +98,7 @@ export class Turns {
       // to another model on the same tool. The task's old seat is the one being replaced.
       const wait = options.room
         ? room(profile.toolId) ? undefined : `Waiting for a free ${this.k.s.tools.find((tool) => tool.id === profile.toolId)?.name ?? profile.toolId} slot`
-        : slotWait(this.k.getState(), { taskId: task.id, toolId: profile.toolId });
+        : slotWait(this.k.activeState(), { taskId: task.id, toolId: profile.toolId });
       if (wait) {
         if (stopped) this.k.tracking.owesRetry(task, roleId, plannedId);
         this.k.waitForUsage(task, wait);
@@ -220,7 +220,7 @@ export class Turns {
     const handback = same?.handback;
     // An agent that ran out of usage in this step is who this one takes over from.
     const before = same && !reopen && !back ? this.k.profile(same.profileId) : undefined;
-    const tookOver = before && limitOf(this.k.getState().pool as Pool, before, Date.now()) ? before : undefined;
+    const tookOver = before && limitOf(this.k.activeState().pool as Pool, before, Date.now()) ? before : undefined;
     // The agent has the screen for this step. Coming back from waiting for it, it has not heard yet that it may use it.
     const screen = task.screen?.granted && task.screen.roleId === roleId && task.screen.profileId === profileId && (!options.member || task.screen.member === options.member) ? task.screen : undefined;
     const forScreen = screen && !screen.heard ? screen : undefined;

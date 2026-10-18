@@ -179,7 +179,8 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const lessons = item.kind === "learnings" ? (item.body ?? "").split("\n").map((line) => line.replace(/^- /, "")).filter(Boolean) : [];
   const kept = lessons.map((_, index) => index).filter((index) => !dropped.includes(index));
   const task = find.task(item.taskId);
-  const product = find.product(task?.productId);
+  const contextTask = task ?? find.finishedTask(item.taskId);
+  const product = find.product(contextTask?.productId);
   // A delivery whose review rounds ran out with Important findings open is a decision, not "ready to ship".
   const unsettled = item.kind === "delivery" && (task?.acceptanceUnverified === true || (task?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
   const kind = unsettled ? { ...KIND.delivery, label: "Your call", tone: "amber" as const } : KIND[item.kind];
@@ -266,7 +267,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         <ProductName product={product} />
         <span aria-hidden="true">·</span>
         <button className="task-link" onClick={() => onOpen(item.taskId)}>
-          {task?.title}
+          {contextTask?.title ?? "Open task"}
         </button>
         {role && (
           <>

@@ -58,6 +58,24 @@ async function widen(width: number) { await act(async () => (window as unknown a
 async function taken(key: string, options: KeyboardEventInit = {}) { let carried = true; await act(async () => { carried = (document.activeElement ?? window).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options })); }); return !carried; }
 
 describe('the app keyboard', () => {
+  it('does not leave a pointer-opened task selected after closing, and keeps its place for J and K', async () => {
+    const ids = boardOrder(simulator.getState().tasks, () => true, false);
+    await key('j');
+    expect(selected()).toBe(ids[0]);
+    const index = 2;
+    const card = el(`.card[data-task-id="${ids[index]}"]`);
+    await act(async () => card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })));
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 })));
+    await click(`.card[data-task-id="${ids[index]}"] .card-open`);
+    expect(host.querySelector('.sheet')).not.toBeNull();
+    await click('.sheet [aria-label="Close"]');
+    expect(host.querySelector('.sheet')).toBeNull();
+    expect(selected()).toBeUndefined();
+    await key('j');
+    expect(selected()).toBe(ids[index + 1]);
+    await key('k');
+    expect(selected()).toBe(ids[index]);
+  });
   it('restores the palette opener and keeps the board in control after a quick inbox round trip', async () => {
     await key('j'); const id = selected();
     const opener = el('[aria-label="Find tasks, products or actions"]');
@@ -303,12 +321,12 @@ describe('the app keyboard', () => {
       await act(async () => el('.switcher').focus());
       await click('.switcher');
     } else {
-      await click('.fold');
-      const row = el('.done-row');
+      await click('.rail a[title="History"]');
+      const row = el('.history-card');
       const task = simulator.getState().tasks.find((task) => task.id === row.getAttribute('data-task-id'))!;
       productName = simulator.getState().products.find((product) => product.id === task.productId)!.name;
       await act(async () => row.focus());
-      await click('.done-row');
+      await click('.history-card');
       expect(host.querySelector('.sheet')).not.toBeNull();
       await key('p', { ctrlKey: true });
     }
@@ -317,7 +335,7 @@ describe('the app keyboard', () => {
     expect(host.querySelector('.switcher-pop')).toBeNull();
     expect(host.querySelector('.sheet')).toBeNull();
     expect(el('.switcher').textContent).toContain(productName);
-    expect(document.activeElement).toBe(el(opener === 'switcher' ? '.switcher' : '.done-row.selected'));
+    expect(document.activeElement).toBe(el(opener === 'switcher' ? '.switcher' : '.history-card.selected'));
   });
   it('keeps the open task open, untouched, when a new task is created with Enter', async () => {
     await key('j'); await key('m'); const title = sheetId();
@@ -372,8 +390,8 @@ describe('the app keyboard', () => {
     await key('Escape'); await key('Escape');
     const id = simulator.getState().tasks.find((task) => task.title === 'Guest checkout')!.id;
     await act(async () => simulator.cancel(id));
-    await click('.fold');
-    expect(host.querySelector(`.done-row[data-task-id="${id}"] .draft-mark`)).not.toBeNull();
+    await click('.rail a[title="History"]');
+    expect(host.querySelector(`.history-card[data-task-id="${id}"] .draft-mark`)).not.toBeNull();
   });
   it('walks the board in display order, keeps identity through live updates and uses the old place on removal', async () => {
     const ids = boardOrder(simulator.getState().tasks, () => true, false);

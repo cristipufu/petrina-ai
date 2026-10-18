@@ -253,12 +253,32 @@ describe.concurrent("shipping is never repeated blindly", () => {
     const engine = await run.restart();
     const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");
     expect(shippingItem(state, run.taskId)!.body).toContain("but it is not this work");
+    const checked = run.find(state).shipping!.prepared!.tested;
     await engine.act("markDone", shippingItem(state, run.taskId)!.id);
-    const done = run.find(await engine.until((current) => run.find(current).state === "done", "the task to be done"));
+    const done = run.find(await engine.until((current) => run.find(current).cleanup?.foreignPullRequest?.number === 1, "the unrelated open pull request to be checked"));
+    expect(done.state).toBe("done");
     expect(done.statusLine).toBe("Marked as done by you");
     expect(done.pr).toBeUndefined();
+    expect(done.cleanup?.checkedDelivery?.tested).toBe(checked);
+    expect(done.cleanup?.removedAt).toBeUndefined();
+    expect(existsSync(done.worktree!)).toBe(true);
     expect(creates(run.w)).toHaveLength(1);
     await engine.quit();
+    const reopened = await run.restart();
+    const kept = await reopened.task(run.taskId);
+    expect(kept.pr).toBeUndefined();
+    expect(kept.cleanup?.foreignPullRequest?.number).toBe(1);
+    expect(existsSync(kept.worktree!)).toBe(true);
+    run.w.setGitHub((github) => { github.prs[0]!.state = "CLOSED"; });
+    await reopened.quit();
+    const closed = await run.restart();
+    const cleaned = run.find(await closed.until((current) => run.find(current).cleanup?.removedAt !== undefined, "the unrelated closed pull request to release its copy"));
+    expect(cleaned.pr).toBeUndefined();
+    expect(cleaned.cleanup?.foreignPullRequest).toBeUndefined();
+    expect(cleaned.statusLine).toBe("Marked as done by you");
+    expect(existsSync(cleaned.worktree!)).toBe(false);
+    expect(creates(run.w)).toHaveLength(1);
+    await closed.quit();
   });
 
   it("pausing while Petrina works out the version keeps the Release Manager from starting, and resuming ships once", async () => {

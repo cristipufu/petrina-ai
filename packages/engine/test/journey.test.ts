@@ -85,7 +85,7 @@ describe("the engine records each task's journey", () => {
     expect(view.nodes.every((node) => node.state === "done")).toBe(true);
     expect(view.nodes.map((node) => node.reason ?? "")).toEqual(["plan ready", "brief ready", "no blocking objections", "you approved", "ready for review", "checks found", "checks passed", "review passed", "you approved", ""]);
     expect(view.nodes.map((node) => node.outcome)).toEqual(["Plan with 4 stages", "Wrote the brief", "No objections", "Approved", "Change ready", "Found 1 check", "The check passes", "1 nit", "Approved", "Moved main forward"]);
-    expect(view.nodes[6]!.productChecks).toEqual([{ name: "Version", result: "pass" }]);
+    expect(view.nodes[6]!.productChecks).toEqual([expect.objectContaining({ name: "Version", result: "pass", startedAt: expect.any(Number), endedAt: expect.any(Number) })]);
     expect(view.nodes.map((node) => node.team ? [...node.team].sort().join(" ") : node.profileId ?? "")).toEqual(["opus-high", "opus-xhigh", "sol-xhigh", "", "sol-xhigh", "opus-high", "", "opus-high sol-high", "", ""]);
     expect(new Set(view.nodes[7]!.team)).toEqual(new Set(["opus-high", "sol-high"]));
     expect(view.end).toEqual({ text: "Delivered locally to main", state: "done" });

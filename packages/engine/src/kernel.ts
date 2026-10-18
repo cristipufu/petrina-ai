@@ -11,7 +11,8 @@ import { GrokUsage } from "./grok-usage.js";
 import { agentEnv } from "./env.js";
 import * as git from "./git.js";
 import type { Which } from "./setup.js";
-import { Store } from "./store.js";
+import { Store, settledHistoryTask } from "./store.js";
+import { finishedTask, stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import type { UsageInfo, UsageLimited } from "./usage.js";
@@ -175,12 +176,12 @@ export abstract class Kernel {
     readonly options: EngineOptions = {},
   ) {
     this.store = new Store(join(dataDir, "petrina.db"));
-    const loaded = this.store.load();
+    const loaded = this.store.loadActive((state) => renameRoles(state as MState));
     this.s = (loaded ?? this.empty()) as MState;
     if (loaded) {
       renameRoles(this.s);
       // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
-      for (const task of this.s.tasks) this.pauseStep(task, this.s.now);
+      for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); }
     }
     this.s.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as MState["roleChanges"];
     this.s.roles = libraryRoles(this.s.roleChanges) as MState["roles"];
@@ -188,6 +189,7 @@ export abstract class Kernel {
     // Tests stand in the tools' own apps: those count as installed.
     this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
     this.s.setup = setupOf(loaded) as MState["setup"];
+    if (this.s.setup && !loaded?.setup && this.store.history.info().total > 0) this.s.setup.done = true;
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     this.found = options.terminals?.() ?? detectTerminals(this.machine);
     this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
@@ -306,7 +308,56 @@ export abstract class Kernel {
   /** The terminals on this machine, the usual one first. */
   readonly found: FoundTerminal[];
 
-  getState = (): State => this.s as unknown as State;
+  /** Current engine work only. Completed bodies are loaded separately when somebody opens one. */
+  activeState = (): State => this.s as unknown as State;
+
+  /** Explicit compatibility/debug snapshot. Production never loads all archived conversations. */
+  getState = (): State => {
+    const current = new Map<string, Task>([...this.archiveCache.values(), ...this.s.tasks].map((task) => [task.id, task as Task]));
+    // Shutdown closes SQLite before detached cleanup finishes. Reads used while waiting for that
+    // cleanup keep the last in-memory work; stopping never loads an unbounded history snapshot.
+    const tasks = this.stopped ? [] : this.store.history.all().map((task) => current.get(task.id) ?? task);
+    const ids = new Set(tasks.map((task) => task.id));
+    tasks.push(...[...current.values()].filter((task) => !ids.has(task.id)));
+    const { history: _history, ...state } = this.activeState();
+    return { ...state, tasks };
+  };
+
+  /** A bounded live update: all completed tasks are represented by archive totals, never bodies. */
+  windowState = (): State => {
+    // A terminal result must be in the archive before the window stops seeing its live body.
+    if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
+    const tasks = this.s.tasks.filter((task) => !finishedTask(task)) as Task[];
+    const dependencies = this.stopped ? [] : [...new Set([...this.s.inbox.map((item) => item.taskId), ...tasks.flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])].flatMap((id) => {
+      const item = this.store.history.item(id);
+      return item ? [item] : [];
+    });
+    return { ...this.activeState(), tasks, history: { ...this.store.history.info(), ...(dependencies.length ? { dependencies } : {}) } };
+  };
+
+  historyPage = (request: HistoryQuery): HistoryPage => {
+    if (this.stopped) throw new Error("The engine has stopped. Reconnect to open task history.");
+    if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
+    return this.store.history.page(request);
+  };
+
+  taskDetails = (id: Id): Task | undefined => this.task(id) as Task | undefined;
+
+  private readonly archiveCache = new Map<Id, MTask>();
+
+  /** A cleanup result for an already archived task must survive immediately, even after cache eviction. */
+  saveArchivedTask(task: MTask): void {
+    if (this.stopped || this.s.tasks.includes(task)) return;
+    this.store.save(this.activeState(), this.retiredTasks(), [task as Task]);
+  }
+
+  forgetProductHistory(productId: Id): void {
+    for (const [id, task] of this.archiveCache) if (task.productId === productId) this.archiveCache.delete(id);
+  }
+
+  private retiredTasks(): Id[] {
+    return this.s.tasks.filter((task) => settledHistoryTask(task as Task) && !this.drivers.has(task.id) && !this.settling.has(task.id) && !this.switching.has(task.id) && !this.copyCleanups.has(task.id)).map((task) => task.id);
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -524,7 +575,7 @@ export abstract class Kernel {
     if (this.s.pool.screen && this.s.pool.screen.mode !== screenMode(this.s.pool as State["pool"], now)) this.s.pool.screen = { mode: "off" };
     for (const task of this.s.tasks) {
       this.selectScreen(task);
-      const wait = screenWait(task as Task, this.getState(), now);
+      const wait = screenWait(task as Task, this.activeState(), now);
       const item = this.s.inbox.find((entry) => entry.taskId === task.id && entry.kind === "screen");
       if (wait === "ask" && !item) {
         const request = task.screen!;
@@ -710,7 +761,25 @@ export abstract class Kernel {
   }
 
   task(id: Id): MTask | undefined {
-    return this.s.tasks.find((task) => task.id === id);
+    const live = this.s.tasks.find((task) => task.id === id);
+    if (live) return live;
+    const cached = this.archiveCache.get(id);
+    if (cached) {
+      this.archiveCache.delete(id);
+      this.archiveCache.set(id, cached);
+      return cached;
+    }
+    if (this.stopped) return undefined;
+    const saved = this.store.history.get(id) as MTask | undefined;
+    if (!saved) return undefined;
+    renameRoles({ ...this.s, tasks: [saved], inbox: [] });
+    // On-demand reads stay bounded even when walking through years of finished work.
+    if (this.archiveCache.size >= 16) {
+      this.store.save(this.activeState(), this.retiredTasks(), [...this.archiveCache.values()] as Task[]);
+      this.archiveCache.delete(this.archiveCache.keys().next().value!);
+    }
+    this.archiveCache.set(id, saved);
+    return saved;
   }
 
   repositoryOf(task: MTask) {
@@ -796,7 +865,7 @@ export abstract class Kernel {
       });
       peers.push(...legacy);
     }
-    const state = this.getState();
+    const state = this.activeState();
     const checked = state.setup?.checks.some((check) => check.id === "claude-code" || check.id === "codex" || check.id === "grok");
     const usable = this.usableTools() as Id[];
     // Usage stand-ins follow the same login checks as the plan: Ready tools first, otherwise the
@@ -1037,6 +1106,11 @@ export abstract class Kernel {
   save(): void {
     this.todoPending = false;
     this.s.now = Date.now();
-    this.store.save(this.getState());
+    const revision = this.store.history.info().revision;
+    const retired = this.retiredTasks();
+    this.store.save(this.activeState(), retired, [...this.archiveCache.values()] as Task[]);
+    const ids = new Set(retired);
+    this.s.tasks = this.s.tasks.filter((task) => !ids.has(task.id));
+    if (!this.stopped && this.store.history.info().revision !== revision) for (const listener of this.listeners) listener();
   }
 }

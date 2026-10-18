@@ -44,6 +44,13 @@ describe("addresses", () => {
     expect(at(href)).toEqual(route);
     expect(routeHref({ view: "products", product: "all" }, "?demo&node=old")).toBe("/products?demo=");
   });
+  it("keeps History's current page and search in task and node links without an expanding cursor trail", () => {
+    const route: AppRoute = { view: "history", product: "shop", history: { cursor: "older page", query: "account export", previous: ["", "previous page"] }, sheet: { taskId: "finished", tab: "overview", list: "history", stepId: "build-2" } };
+    const href = routeHref(route, "?demo=portfolio");
+    expect(at(href)).toEqual({ ...route, history: { cursor: "older page", query: "account export" } });
+    expect(href).not.toContain("previous");
+    expect(routeHref({ view: "board", product: "all" }, href.slice(href.indexOf("?")))).toBe("/?demo=portfolio");
+  });
   it("gives unknown or malformed addresses a recoverable missing page", () => {
     for (const path of ["/other", "/tasks", "/tasks/1/wrong", "/tasks/1/plan/extra", "/settings/products/shop/extra", "/tasks/%E0%A4%A"]) expect(at(path).missing).toBe(path);
   });

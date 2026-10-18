@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
-import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText } from "./checks.js";
+import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask, ScreenWait } from "./kernel.js";
@@ -169,11 +169,28 @@ export class ProductChecks {
     const resumingNotes = open?.kind === "agent" && open.roleId === "release-manager" && open.stageId === task.plan?.stages[task.stageIndex]?.id;
     // A checks step's elapsed time includes waiting for another task's run.
     if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now());
-    const finished = await this.turnToRun(task, signal);
+    const step = openStep(task);
+    if (step) step.productChecks = [
+      ...checks.filter((check) => check.argv.length).map((check, index) => ({ id: `check-${index}`, name: check.name, result: "pending" as const })),
+      ...hooks.map((hook) => ({ id: `hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" as const })),
+    ];
+    this.k.commit();
+    let finished: (() => void) | undefined;
+    let complete = false;
     try {
-      return await this.runAll(task, checks, hooks, definition, signal, kept);
+      finished = await this.turnToRun(task, signal);
+      const failures = await this.runAll(task, checks, hooks, definition, signal, kept);
+      complete = true;
+      return failures;
     } finally {
-      finished();
+      if (step && !complete) {
+        for (const check of step.productChecks ?? []) if (check.result === "pending" || check.result === "running") {
+          check.result = "stopped";
+          check.endedAt = Date.now();
+        }
+        this.k.commit();
+      }
+      finished?.();
     }
   }
 
@@ -185,9 +202,25 @@ export class ProductChecks {
     // Checks and hooks are the repository's own code: whatever they commit or change, the work stays as it was.
     const before = await git.head(task.worktree);
     const env = { ...withoutCredentials(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
+    const step = openStep(task);
+    const progress = (id: string, event: CheckProgress) => {
+      if (this.k.stopped || signal.aborted || step?.endedAt !== undefined || openStep(task)?.id !== step?.id) return;
+      const check = step?.productChecks?.find((entry) => entry.id === id);
+      if (!check) return;
+      if (event.kind === "started") { check.result = "running"; check.startedAt = event.at; }
+      else {
+        check.result = event.run.ok ? "pass" : event.run.timedOut ? "did-not-finish" : signal.aborted ? "stopped" : "fail";
+        check.endedAt = event.at;
+        if (!event.run.ok) check.detail = checkDiagnostic(event.run.output);
+      }
+      const running = step!.productChecks!.filter((entry) => entry.result === "running").map((entry) => entry.name);
+      task.statusLine = running.length ? `Running checks: ${running.join(", ")}` : "Finishing the check run";
+      this.k.commit();
+    };
     let results: CheckRun[];
     try {
-      const ran = kept ?? await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id));
+      const ran = kept ?? await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress(`check-${event.index}`, event));
+      if (kept) kept.forEach((run, index) => progress(`check-${index}`, { kind: "finished", index, at: Date.now(), run }));
       if (signal.aborted) {
         this.noteStopped(task, ran);
         throw new Aborted();
@@ -199,7 +232,7 @@ export class ProductChecks {
         await git.restoreTracked(task.worktree);
         this.k.log(task, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
       }
-      const hooksRan = await this.runHooks(task, hooks, env, signal);
+      const hooksRan = await this.runHooks(task, hooks, env, signal, progress);
       if (signal.aborted) {
         this.noteStopped(task, [...ran, ...hooksRan]);
         throw new Aborted();
@@ -215,13 +248,7 @@ export class ProductChecks {
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
     task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), definition, results };
     const checksStep = openStep(task);
-    if (checksStep?.kind === "petrina" && checksStep.work === "checks") {
-      checksStep.productChecks = results.map((run) => ({
-        name: run.name,
-        result: run.ok ? "pass" : run.timedOut ? "did-not-finish" : "fail",
-        ...(!run.ok ? { detail: checkDiagnostic(run.output) } : {}),
-      }));
-    }
+    for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     const failed = this.settleFindings(task, results);
     this.k.log(task, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
     if (failed.length && openStep(task)?.roleId === "release-manager") {
@@ -379,7 +406,7 @@ export class ProductChecks {
    * change: pre-commit with the change staged on top of where the task started, and commit-msg on the task's
    * commit message. Petrina's own git steps never run hooks; these run like the product's checks, with no logins.
    */
-  private async runHooks(task: MTask, hooks: readonly string[], env: NodeJS.ProcessEnv, signal: AbortSignal): Promise<CheckRun[]> {
+  private async runHooks(task: MTask, hooks: readonly string[], env: NodeJS.ProcessEnv, signal: AbortSignal, progress: (id: string, event: CheckProgress) => void): Promise<CheckRun[]> {
     const worktree = task.worktree!;
     const base = task.baseSha;
     const branch = task.branch;
@@ -391,7 +418,7 @@ export class ProductChecks {
       this.k.commitNow();
       await git.detachAt(worktree, base);
       try {
-        runs.push(...(await runChecks(worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id))));
+        runs.push(...(await runChecks(worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress("hook-pre-commit", event))));
       } finally {
         await git.reattach(worktree, branch);
         delete task.hooking;
@@ -404,7 +431,7 @@ export class ProductChecks {
       try {
         const file = join(folder, "COMMIT_EDITMSG");
         await writeFile(file, `${await git.message(worktree)}\n`);
-        const [run] = await runChecks(worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id));
+        const [run] = await runChecks(worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress("hook-commit-msg", event));
         if (run) runs.push({ ...run, command: "git hook run commit-msg" });
       } finally {
         await rm(folder, { recursive: true, force: true });

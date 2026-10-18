@@ -6,18 +6,21 @@ export function lookup(state: State) {
   const tools = new Map(state.tools.map((tool) => [tool.id, tool]));
   const products = new Map(state.products.map((product) => [product.id, product]));
   const tasks = new Map(state.tasks.map((task) => [task.id, task]));
+  const finished = new Map(state.history?.dependencies?.map((task) => [task.id, task]) ?? []);
   return {
     role: (id?: Id): Role | undefined => (id ? roles.get(id) : undefined),
     profile: (id?: Id): AgentProfile | undefined => (id ? profiles.get(id) : undefined),
     tool: (id?: Id): Tool | undefined => (id ? tools.get(id) : undefined),
     product: (id?: Id) => (id ? products.get(id) : undefined),
     task: (id?: Id): Task | undefined => (id ? tasks.get(id) : undefined),
+    finishedTask: (id?: Id) => id ? finished.get(id) : undefined,
   };
 }
 
 export type Lookup = ReturnType<typeof lookup>;
 
 export const STATE_LABEL: Record<RunState, string> = {
+  backlog: "Backlog",
   queued: "Queued",
   waiting: "Waiting for a slot",
   running: "Working",
@@ -129,6 +132,7 @@ export const RESULT_WORDS: Record<RoleResult, { label: string; detail: string }>
 
 /** The stage a task is in while a role works on it, as the Products page counts them. */
 export const COLUMN_LABEL: Record<Column, string> = {
+  backlog: "Backlog",
   queue: "Queue",
   planning: "Planning",
   designing: "Designing",

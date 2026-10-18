@@ -799,7 +799,7 @@ function worktreeLocation(path: string): string {
 }
 
 /** The working copies the repository keeps a record of, other than its main clone, as git lists them. */
-async function linkedWorktrees(root: string): Promise<string[]> {
+export async function linkedWorktrees(root: string): Promise<string[]> {
   const listed = await run(["git", "worktree", "list", "--porcelain", "-z"], root, undefined, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS });
   if (listed.code !== 0) throw new Reason("the product's repository could not be read");
   const paths = listed.stdout.split("\0").filter((field) => field.startsWith("worktree ")).map((field) => field.slice("worktree ".length));

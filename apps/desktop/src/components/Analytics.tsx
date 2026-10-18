@@ -89,7 +89,7 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
           <h2 id="analytics-reviews">How reviews are going</h2>
           <p className="muted small">{scope} · all recorded reviews, across all dates.</p>
         </header>
-        <ReviewsPanel tasks={productId ? state.tasks.filter((task) => task.productId === productId) : state.tasks} roles={state.roles} find={find} />
+        <ReviewsPanel tasks={productId ? state.tasks.filter((task) => task.productId === productId) : state.tasks} roles={state.roles} find={find} history={productId ? state.history?.reviewsByProduct[productId] : state.history?.reviews} />
       </section>
     </div>
   );
@@ -281,8 +281,8 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
           color={productColor}
           details={details}
           limit={10}
-          // Only a task still on the board has a sheet to open.
-          canPick={(line) => line.taskId !== undefined && state.tasks.some((task) => task.id === line.taskId)}
+          // Archived task bodies are read only when opened. Removed products have no details left.
+          canPick={(line) => line.taskId !== undefined && line.note !== "removed" && (state.tasks.some((task) => task.id === line.taskId) || Boolean(state.history && line.productId && state.products.some((product) => product.id === line.productId)))}
           onPick={(line) => line.taskId && onOpen(line.taskId)}
         />
       )}

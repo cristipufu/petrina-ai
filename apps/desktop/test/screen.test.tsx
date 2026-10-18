@@ -59,7 +59,7 @@ describe('agents may use the screen', () => {
       button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
       button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
-    expect(card().classList.contains('selected')).toBe(true);
+    expect(card().classList.contains('selected')).toBe(false);
     expect(scroll).not.toHaveBeenCalled();
     await act(async () => {
       button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));

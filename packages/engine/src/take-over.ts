@@ -24,7 +24,7 @@ export class TakeOver {
     const task = this.k.task(taskId);
     if (!task) throw new Error("Unknown task");
     this.notSwitching(taskId);
-    const blocked = takeOverBlock(task as unknown as Task, this.k.getState());
+    const blocked = takeOverBlock(task as unknown as Task, this.k.activeState());
     if (blocked) throw new Error(blocked);
     const agent = { ...task.agent! };
     const conversation = task.conversation!;

@@ -6,7 +6,8 @@
 // after a restart, when Petrina also catches up on tasks that finished before.
 
 import { existsSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { readdir } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
 import { CLEANUP_WORDS, copyNoLongerNeeded, type Id, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import type { Kernel, MTask } from "./kernel.js";
@@ -22,7 +23,27 @@ export class Cleanup {
     if (this.sweeping || this.k.stopped) return;
     this.sweeping = true;
     try {
-      for (const task of [...this.k.s.tasks]) await this.removeCopy(task.id);
+      const ids = new Set(this.k.s.tasks.map((task) => task.id));
+      // A late detached child can recreate a finished folder. Inspect folders and Git's actual
+      // worktree records, then load only the tasks they name; never scan years of archived bodies.
+      if (this.k.store.history.info().total > 0) {
+        const root = resolve(this.k.dataDir, "worktrees");
+        const remember = (path: string) => {
+          const parts = relative(root, resolve(path)).split(sep);
+          if (parts.length < 2 || parts[0] === ".." || !parts[1]) return;
+          const id = parts[1].endsWith(".copies") ? parts[1].slice(0, -7) : parts[1];
+          const task = this.k.task(id);
+          if (task?.productId === parts[0]) ids.add(id);
+        };
+        for (const product of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+          if (!product.isDirectory()) continue;
+          for (const task of await readdir(join(root, product.name), { withFileTypes: true }).catch(() => [])) remember(join(root, product.name, task.name));
+        }
+        for (const product of this.k.s.products) if (product.path) {
+          for (const path of await git.linkedWorktrees(product.path).catch(() => [])) remember(path);
+        }
+      }
+      for (const id of ids) await this.removeCopy(id);
     } finally {
       this.sweeping = false;
     }
@@ -72,6 +93,7 @@ export class Cleanup {
       current.cleanup = { ...current.cleanup, removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
       delete current.cleanup.error;
     }
+    this.k.saveArchivedTask(current);
     this.k.commit();
   }
 

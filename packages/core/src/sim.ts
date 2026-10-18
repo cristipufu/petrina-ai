@@ -59,6 +59,7 @@ import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js"
 import { askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type TurnReport, type WorkMoment, type WorkStageKind } from "./worklog.js";
 import { SETUP_STEPS, type SetupStep } from "./setup.js";
 import { MAX_STEP_RECORDS, pauseClock, plainTodo, resumeClock, startClock, stepRecord } from "./summary.js";
+import { demoHistoryPage, type HistoryQuery } from "./history.js";
 
 type Draft = DeepMutable<State>;
 type DraftTask = DeepMutable<Task>;
@@ -595,6 +596,12 @@ export class Simulator {
     return usageView(this.work, request, { now: this.state.now, state: this.state });
   }
 
+  historyPage(query: HistoryQuery) { return demoHistoryPage(this.state, query); }
+  taskDetails(taskId: Id): Task | undefined { return this.state.tasks.find((task) => task.id === taskId); }
+  async previewImage(_taskId: Id, _path: string): Promise<{ mime: string; data: string }> {
+    throw new Error("This image is unavailable in the demo.");
+  }
+
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => {
@@ -1128,8 +1135,8 @@ export class Simulator {
         kind: input.kind ?? "feature",
         priority: top ? -1 : queue.length,
         held: false,
-        state: "queued",
-        column: "queue",
+        state: input.backlog ? "backlog" : "queued",
+        column: input.backlog ? "backlog" : "queue",
         holdsSlot: false,
         approvePlan: input.approvePlan ?? false,
         delivery: input.delivery ?? product?.delivery ?? "pull-request",
@@ -1138,9 +1145,9 @@ export class Simulator {
         rounds: {},
         sub: 0,
         fixing: false,
-        statusLine: "In the queue",
+        statusLine: input.backlog ? "Review the request before queueing" : "In the queue",
         createdAt: d.now,
-        timeline: [{ id: this.id(d, id), at: d.now, text: "You added it to the queue", tone: "you" }],
+        timeline: [{ id: this.id(d, id), at: d.now, text: input.backlog ? "You added it to the backlog" : "You added it to the queue", tone: "you" }],
         session: [],
         queued: [],
         objections: [],
@@ -1156,6 +1163,37 @@ export class Simulator {
       this.schedule(d);
     });
     return created;
+  }
+
+  queueTask(taskId: Id): void {
+    this.update((d) => {
+      const task = d.tasks.find((entry) => entry.id === taskId);
+      if (!task || task.state !== "backlog") return;
+      task.priority = queueOf(d.tasks).length;
+      task.state = "queued"; task.column = "queue"; task.held = false; task.statusLine = "In the queue";
+      this.log(d, task, "you", "You reviewed the request and queued it for work");
+      this.schedule(d);
+    });
+  }
+
+  moveToBacklog(taskId: Id): void {
+    this.update((d) => {
+      const task = d.tasks.find((entry) => entry.id === taskId);
+      if (!task || task.state !== "queued" || task.startedAt !== undefined) return;
+      task.state = "backlog"; task.column = "backlog"; task.held = false; task.statusLine = "Review the request before queueing";
+      this.log(d, task, "you", "You moved it to the backlog for review");
+    });
+  }
+
+  updateBacklog(taskId: Id, changes: { title: string; description: string }): void {
+    this.update((d) => {
+      const task = d.tasks.find((entry) => entry.id === taskId);
+      if (!task || task.state !== "backlog") throw new Error("Only backlog requests can be edited before work starts.");
+      const title = changes.title.trim();
+      if (!title || title.length > 200 || changes.description.length > 8000) throw new Error("Give the task a title and a shorter request.");
+      task.title = title; task.description = changes.description.trim(); task.area = areaFromTitle(title);
+      this.log(d, task, "you", "You updated the backlog request");
+    });
   }
 
   // ── Engine internals ───────────────────────────────────────────────────────

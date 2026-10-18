@@ -68,7 +68,7 @@ export class Driver {
       if ((this.k.settling.has(task.id) || this.k.drivers.has(task.id)) && !liveScreen) continue;
       if (blocked(task)) continue;
       // A screen request also has to be allowed and first in line.
-      if (!screenReady(task as Task, this.k.getState(), now)) continue;
+      if (!screenReady(task as Task, this.k.activeState(), now)) continue;
       if (!grantedResume(task) && (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT))) task.statusLine = "Waiting for a free slot";
       const seat = this.seatFor(task);
       // Everyone who could work this step is out of usage: it waits for a limit to end, and takes no slot.
@@ -83,7 +83,7 @@ export class Driver {
       }
       const candidate = { taskId: task.id, toolId: seat.toolId };
       // A peer's question, or the reviewer already on the screen, keeps the line the group set.
-      if (!grantedResume(task)) task.statusLine = slotWait(this.k.getState(), candidate) ?? "Waiting for a free slot";
+      if (!grantedResume(task)) task.statusLine = slotWait(this.k.activeState(), candidate) ?? "Waiting for a free slot";
       continuing.push(candidate);
     }
     // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
@@ -103,7 +103,7 @@ export class Driver {
       candidates.push({ taskId: task.id, toolId: seat.toolId });
     }
 
-    for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.getState()), pool: this.k.s.pool, now })) {
+    for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.activeState()), pool: this.k.s.pool, now })) {
       const task = this.k.task(taskId);
       const group = task?.screen?.member ? this.k.screenGroups.get(taskId) : undefined;
       // Same as above: the live group is the driver that is still settling, and it has to resume.
@@ -141,7 +141,7 @@ export class Driver {
   private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
     if (!next) return { toolId: "none" };
     // This task's own slot does not count: it is the seat being filled. A stand-in whose tool is full yields.
-    const room = task ? (toolId: Id) => !slotWait(this.k.getState(), { taskId: task.id, toolId }) : undefined;
+    const room = task ? (toolId: Id) => !slotWait(this.k.activeState(), { taskId: task.id, toolId }) : undefined;
     const choice = this.k.choose(next.profileId, task, next.roleId, room, next.reviewerKey);
     if (!choice) return { agent: next, toolId: this.k.profile(next.profileId)?.toolId ?? "unknown" };
     if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting };
@@ -151,7 +151,7 @@ export class Driver {
   /** Take the slot and name its agent together, or start work needing no agent, before any I/O. */
   private reserveAgent(task: MTask): boolean {
     const { agent: next, toolId, waiting: noOne } = this.seatFor(task);
-    const waiting = noOne ?? (this.k.s.pool.paused ? "Waiting for the pool to resume" : next ? slotWait(this.k.getState(), { taskId: task.id, toolId }) : undefined);
+    const waiting = noOne ?? (this.k.s.pool.paused ? "Waiting for the pool to resume" : next ? slotWait(this.k.activeState(), { taskId: task.id, toolId }) : undefined);
     if (waiting) {
       task.state = "waiting";
       task.holdsSlot = false;

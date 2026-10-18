@@ -17,6 +17,7 @@ import {
   recordStepResult,
   stepName,
   syncWait,
+  stopCheckProgress,
   type JourneyTask,
   type JourneyView,
 } from "../src/journey.js";
@@ -24,6 +25,18 @@ import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js
 import { addRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS } from "../src/roles.js";
 import type { JourneyStep, State, Task } from "../src/model.js";
 import { Simulator, type Triggers } from "../src/sim.js";
+
+it("stops unfinished check displays without changing completed results or closing a resumable step", () => {
+  const task = { journey: [{ id: "checks", kind: "petrina" as const, work: "checks" as const, round: 1, sub: 0, startedAt: 10, productChecks: [
+    { id: "passed", name: "Types", result: "pass" as const, startedAt: 10, endedAt: 12 },
+    { id: "running", name: "Tests", result: "running" as const, startedAt: 11 },
+    { id: "pending", name: "Commit hook", result: "pending" as const },
+  ] }] };
+  stopCheckProgress(task, 15);
+  expect(task.journey[0]!.productChecks.map((check) => check.result)).toEqual(["pass", "stopped", "stopped"]);
+  expect(task.journey[0]!.productChecks[0]!.endedAt).toBe(12);
+  expect(task.journey[0]).not.toHaveProperty("endedAt");
+});
 
 it("keeps a review's actual findings and objection answers when later rounds change the task", () => {
   const state = createDemoState(1_000_000_000_000);

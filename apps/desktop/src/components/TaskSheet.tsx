@@ -14,9 +14,11 @@ import { PlanView } from "./sheet/PlanTab";
 import { DesignView } from "./sheet/DesignTab";
 import { ReviewView } from "./sheet/ReviewTab";
 
+export type TaskListEntry = Pick<Task, "id" | "productId" | "title" | "state" | "statusLine"> & Partial<Pick<Task, "held" | "source" | "todo">>;
+
 interface SheetProps {
   task: Task;
-  tasks: readonly Task[];
+  tasks: readonly TaskListEntry[];
   onTask: (id: string) => void;
   state: State;
   find: Lookup;
@@ -45,11 +47,12 @@ const TABS: readonly { id: SheetTab; label: string }[] = [
   { id: "session", label: "Session" },
 ];
 
-function TaskActivity({ task }: { task: Task }) {
+function TaskActivity({ task }: { task: TaskListEntry }) {
   const [Icon, label] = task.state === "running" ? [LoaderCircle, "Working"] as const
     : task.state === "needs-you" ? [Hand, "Needs you"] as const
     : task.state === "waiting" ? [Clock3, "Waiting"] as const
     : task.state === "queued" ? task.held ? [Hand, "On hold"] as const : [ListOrdered, "Queued"] as const
+    : task.state === "backlog" ? [ListOrdered, "Backlog"] as const
     : task.state === "paused" ? [Pause, "Paused"] as const
     : task.state === "done" ? [CheckCircle2, "Done"] as const
     : task.state === "cancelled" ? [Ban, "Cancelled"] as const
@@ -71,7 +74,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
   useDismiss(menuBox, menu, closeMenu);
   // Focus moves into the sheet, and back to whatever opened it when it closes: the task's card if
   // that moved meanwhile (pausing moves it between sections).
-  useFocusTrap(sheet, onClose, () => document.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${task.id}"]`));
+  useFocusTrap(sheet, onClose, () => document.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${task.id}"], .history-card[data-task-id="${task.id}"]`));
   const viewport = useViewport();
   // Narrow or short sheets keep the one-line title in the bar from the start.
   const compact = viewport.width < 900 || viewport.height < 640;
@@ -184,6 +187,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
                           <Hand size={16} />
                           {task.held ? "Release the hold" : "Hold (don't start yet)"}
                         </button>
+                        {task.startedAt === undefined && <button role="menuitem" onClick={act(() => sim.moveToBacklog(task.id))}>Move to backlog</button>}
                       </>
                     )}
                     <button role="menuitem" className="danger" disabled={driving} title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined} onClick={act(() => sim.cancel(task.id))}>

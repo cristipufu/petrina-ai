@@ -48,7 +48,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
   const queued = task.state === "queued";
   // A queued task that starts after others says what it waits for until they land.
   const waitsOnOthers = queued && (task.after ?? []).some((id) => {
-    const other = find.task(id);
+    const other = find.task(id) ?? find.finishedTask(id);
     return other !== undefined && other.state !== "done" && other.state !== "cancelled";
   });
   const finished = task.state === "done" || task.state === "cancelled";
@@ -111,7 +111,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
         </p>
       )}
 
-      {!queued && !finished && <Pipeline task={task} onActivate={() => onOpen(task.id)} />}
+      {!queued && !finished && task.state !== "backlog" && <Pipeline task={task} onActivate={() => onOpen(task.id)} />}
 
       {screenAsk && (
         <div className="card-ask">
@@ -148,6 +148,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
         </div>
 
         <div className="card-actions">
+          {task.state === "backlog" && <button aria-label="Review request" title="Review request" onClick={() => onOpen(task.id)}><PanelRightOpen size={16} /></button>}
           {queued && queuePosition !== undefined && queuePosition > 0 && (
             <button aria-label="Move to top" title="Move to top" onClick={() => sim.moveToTop(task.id)}>
               <ArrowUpToLine size={16} />

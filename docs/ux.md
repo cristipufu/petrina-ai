@@ -45,15 +45,15 @@ What success feels like: many pull requests a day, little time spent being the t
 │ ◆ Petrina  All products ▾  ⌕ Search ⌘K   Blocking 2  ■■■□ 3/4  Inbox 4  + New task   │
 ├──────────┬──────────────────────────────────────────────────────────┬────────────────┤
 │ Board    │ Needs you 4                                              │ Needs you 4    │
-│ Products │ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │ ┌────────────┐ │
+│ History  │ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │ ┌────────────┐ │
 │ Agents   │ │ Shop     │ │ Notes    │ │ …        │ │ …        │      │ │ Question   │ │
 │ Library  │ └──────────┘ └──────────┘ └──────────┘ └──────────┘      │ └────────────┘ │
-│          │ Working 1 · Waiting · Queue 4 · Done 2 (folded)          │                │
+│          │ Working 1 · Waiting · Queue 4 · Backlog 2                 │                │
 └──────────┴──────────────────────────────────────────────────────────┴────────────────┘
 ```
 
 - **Top bar** (56px): product switcher, search (⌘K), the pool indicator, the inbox button with its count, and **New task**, the only solid violet button in the workspace. It stays quiet, with neutral buttons and a thin bottom divider. While screen use is on, or an agent is on the screen, a small screen icon shows on the pool button (see [The screen](#the-screen)).
-- **Left rail** (64px): Board, Products, Agents, Analytics, Library, and Settings at the bottom. Icons with labels, a right-hand divider and a separate Settings footer.
+- **Left rail** (64px): Board, History, Products, Agents, Analytics, Library, and Settings at the bottom. Icons with labels, a right-hand divider and a separate Settings footer.
 - **Main area:** the board by default, with no extra page-title row. Other pages keep their descriptions and controls without repeating their name above them.
 - **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
 - **A task** opens a three-column workspace: a compact scrolling task list, a wider flow canvas, and a separately scrolling details panel. Selecting another task keeps this workspace open. Selecting a flow step opens its details on the right; the task information is shown initially. Overview, Plan, Design, Review and Session keep the full task information accessible. The canvas scrolls, pans and zooms, with controls to fit the whole flow or return to now. Narrow windows and 200% zoom offer Tasks, Flow and Details views of the same workspace.
@@ -88,9 +88,11 @@ One grid of task cards, ordered by what each task needs rather than by stage. Ev
 | **Working** | An agent is on it right now |
 | **Waiting** | Waiting for a free slot or for the screen, paused, or delivered and waiting for you to merge |
 | **Queue** | Not started yet, in priority order |
-| **Done** | Merged, released, delivered locally or cancelled. Folded away at the end |
+| **Backlog** | Awaiting the coordinator’s review before it can join the queue. It never starts automatically |
 
-Empty groups are not shown. The product switcher and search filter the whole board.
+Empty active groups are not shown. Queue and Backlog remain visible, in that order, with their counts even at zero. An empty Backlog explains that requests await review and offers Add a request. The product switcher and search filter the whole board. Finished and cancelled tasks leave the board and appear in History.
+
+Backlog tasks can be edited in their Overview, including their title, request, starting point and delivery choices. **Queue for work** is a separate, explicit action after review. A queued task that has never started can return to Backlog. Holding a queued task remains separate from reviewing a backlog task.
 
 The run state is written on the card, never shown by dimming it:
 
@@ -124,6 +126,14 @@ The run state is written on the card, never shown by dimming it:
 - The pipeline comes from the task's plan, for example Plan, Design, Your check, Build, Review, Ship. Stages the plan does not have are absent. Hovering or focusing any step names it in a small tooltip ("Plan, done", "Build, now", "Review, next"), so the whole pipeline is readable without opening the task. The strip is one tab stop; the arrow keys move between its steps. It always fits on one line: on long plans (seven steps or more) the gaps tighten and the finished steps fold into one check with a count ("✓ 4", named in its tooltip: "Plan, Research, Design and Screens, done"); a very long plan also folds its furthest steps into "+N". The task sheet lists every step by name too.
 - Delivery shows in the footer in words: "Pull request #237 · awaiting merge", "Released v1.4.0", "Delivered locally to main".
 - Shortcuts (Message, Pause or Resume, Move to top, and More: Open, Join the session, Hold, Cancel) appear on hover and on keyboard focus, in space the footer always keeps for them, so nothing moves or gets covered.
+
+## History
+
+History sits directly below Board in the rail. It shows a grid of completed and cancelled tasks, newest first, with product, title, finish date and delivery outcome. There is no Done section on Board. The product switcher scopes History without leaving the page; its search matches the beginnings of words in task titles. Search and product changes return to the newest matching page.
+
+The command palette also searches finished task titles, returning at most 40 task matches across live and finished work. Matching products offer **Finished tasks in [product]** to open scoped History without loading the product’s entire archive.
+
+Only 24 task summaries are loaded per page. Previous and Next move through indexed pages without downloading older conversations or plans. Opening a task fetches its full details once and shows the same task workspace, with the current History page in its left task list. Closing returns to the same product, search and page. Task and selected-node links keep that return point across refreshes and browser navigation. A directly bookmarked older page can return to the newest page even when there is no previous-page trail.
 
 ## Many products
 
@@ -246,14 +256,16 @@ Only Right now shows a rough time left, and only while an agent works. It needs 
 
 The middle column always shows the task's complete chronological journey: the steps it actually went through, in order, then the steps its plan still has ahead. There is one canvas view, with no grouped overview. A quiet dotted background supports navigation without changing the task and node colours. The wider right panel initially shows the task's Overview; Plan, Design, Review and Session remain accessible there.
 
+Automated checks show every check in that run, with pending, running and completed results, and elapsed time for checks that have started. Several product checks can run at the same time; repository hooks wait their turn. The task’s status names the checks currently running.
+
 Pausing or restarting unfinished release notes keeps the same Release Manager box. Preparation checks still run again before the agent continues, with their results in that step's timeline. The box gets its completion check only after the notes are ready; failed checks interrupt it and say why.
 
 - Each agent step is a box with its role (icon and colour), tool and model, elapsed time and outcome, and a check once finished. Times are elapsed from the step's start to its end, pauses and waiting included, and say so. Every round, send-back and retry is a new box. Its footer uses small round squares and symbols for a fix, retry, update, call or port review; titles keep the plain role or work name. Reviewers working together share a box for that round, naming all their tools and models in its details; fresh voters have their own box. Automated checks, Update branch and Publish delivery describe Petrina's own steps by what they do. Only a release has a Release Manager, who writes its notes before Petrina publishes. A stuck step is red; a step stopped by cancelling says so.
 - Anything that waits for you is a capsule with your icon: your plan, design and delivery checks, your call on a disagreement, a stuck task and interrupted shipping. It is amber while it waits and afterwards shows how long it waited and what you decided. Questions and permission requests hang under the box that asked, with your answer once given. Checking again for an interrupted delivery is Petrina's own look on GitHub, not an agent's work, so it adds no agent box; if it still cannot confirm the delivery, a new capsule asks you again. Waiting for other tasks to land is a step of its own, naming them, and it ends when they do, even while the task is on hold. It ends saying what happened to them: "“Guest checkout” landed", or honestly when one did not ("did not land: cancelled", "did not land: closed without merging", "marked as done, delivery not confirmed").
-- Arrows say in a few words why the work moved on ("2 blocking objections", "sent back: 3 important", "you approved", "your call"). Send-backs and changes are amber, stuck is red. The live box is highlighted with its status line and running time, and the arrow into it moves; a paused task or one waiting for a slot says so on its box, without the moving arrow.
+- Arrows say in a few words why the work moved on ("2 blocking objections", "sent back: 3 important", "you approved", "your call"). Send-backs and changes are amber, stuck is red. The live box is highlighted with its status line and running time, its border pulses subtly while work runs, and the arrow into it moves; a paused task or one waiting for a slot says so on its box, without the moving arrow.
 - Steps still ahead are faint dashed boxes naming the planned role, tool and model; the first says Next. While the planner works, the faint part says the planner will choose the rest. A start point ("Started 2h ago", "#3 in the queue", "On hold") and an end point ("Pull request #237 · awaiting merge", "Released v1.4.0", "Cancelled") mark the ends. Unusual endings say what they are: "Pull request #237 closed without merging" and "Marked as done · delivery not confirmed" never read as delivered or awaiting merge, here or on the card.
 - Boxes run left to right across the canvas and wrap onto new rows like text; the arrow from the end of a row runs back under it. The view fits the panel on open (a long journey opens at readable size on its live step, or its end) and follows the live step. Choosing a step to read, by click or keyboard, the live one included, stops following, so a handoff never moves the diagram away while you read; Back to now resumes it. The scroll wheel pans the canvas independently of the task list and details; dragging the background pans; pinch, or ⌘/Ctrl with the wheel, zooms. Zoom in, zoom out and Show the whole journey are small buttons; Back to now appears once you move away.
-- Clicking a box switches the right panel to that step: tool, model and effort, start, elapsed time, outcome, why it moved on, what it asked you, its part of the timeline and its conversation inline. Overview also shows that step’s findings, design objections or answers to objections, recorded at handoff so later rounds cannot rewrite them. Older details use available linked records and label their latest status. Every active agent node has a fixed footer on all three tabs: a collapsible message section with the field above Queue/Interrupt and Send, then a separate terminal takeover row. Collapsing keeps a draft; the Message shortcut opens and focuses it. Finished nodes have no live controls. Agent actions expand in place, collapsed by default. Clicking the same step again, the blank canvas, or Back to task returns to the previous task tab and reading position. Typed answers, messages and notes stay intact. Faint steps say what is planned and link to the Plan tab.
+- Clicking a box switches the right panel to that step: tool, model and effort, start, elapsed time, outcome, why it moved on, what it asked you, its part of the timeline and its conversation inline. Overview also shows that step’s findings, design objections or answers to objections, recorded at handoff so later rounds cannot rewrite them. Older details use available linked records and label their latest status. Finding details keep the finding and its recorded review evidence together; the builder’s full messages belong in Conversation instead of a repeated metadata block. Every active agent node has a fixed footer on all three tabs: a message section collapsed by default, with the field above Queue/Interrupt and Send when opened, then a separate terminal takeover row. Collapsing keeps a draft; the Message shortcut opens and focuses it. Finished nodes have no live controls. Agent actions expand in place, collapsed by default. Clicking the same step again, the blank canvas, or Back to task returns to the previous task tab and reading position. Typed answers, messages and notes stay intact. Faint steps say what is planned and link to the Plan tab.
 - Screen readers and keyboard users get the same steps as an ordered list, one tab stop, moved through with the arrow keys; the matching box shows the focus ring and Enter opens its details. With reduced motion nothing moves.
 - Tasks that ran before journeys were recorded show one box per finished plan stage, then the step under way with any question it waits on. The details state when exact timing or conversation was not saved, and an older profile is labelled as planned: who actually ran it is not confirmed. No banner interrupts the canvas.
 
@@ -262,6 +274,7 @@ Pausing or restarting unfinished release notes keeps the same Release Manager bo
 This is the "open in terminal" experience, made friendly.
 
 - A chat transcript of the task. Every message names its speaker, including You, keeps its paragraphs, and sits on a quiet background on both sides. Public progress messages arrive live in separate bubbles using the harness’s message ids; private reasoning is not shown. Token chunks update one bubble in batches, rather than adding a row per token. Tool activity is grouped into lists collapsed by default, with their action count between messages ("Ran the tests: 42 passed", "Edited 3 files in Checkout").
+- Screenshot links in agent messages show an inline preview and open a larger image in place. Thumbnails load only as they enter view, and image memory is released when they leave it. The image is read from the task’s working copy only when needed; Petrina does not copy or retain it after the task finishes and that working copy is removed. Older messages then say the preview is no longer available.
 - New messages only scroll the conversation when you are already at the bottom, so reading earlier messages is never interrupted.
 - For Claude Code and Codex, the header shows **Sandboxed** or **Not sandboxed** next to the agent's status. Hovering (or focusing) it says what the tool's own sandbox covers, or why it is off. It is hidden while you drive in your terminal, which runs with your own setup. When Claude Code's sandbox can't start, the session also says so once: "Running without Claude Code's sandbox", with the reason.
 - The composer has two modes:
@@ -287,7 +300,7 @@ This is the "open in terminal" experience, made friendly.
 - **Product.** Pick one registered product, or let the planner propose one. A changed proposal requires confirmation in the existing plan check.
 - **Start from:** Default branch, Branch (an exact name), or Pull request (number or GitHub link). A link must match the product's repository. The plan's editable Works on line shows the resolved source and exact destination, including a fork's working repository and branch. Invalid choices stay visible for correction. Releases use the default branch.
 - Branch work keeps the selected delivery mode: open a PR into that branch, or commit onto it and push it. PR work updates the original PR. Cards and the task sheet retain “from PR #123” or “from release-2.x”; delivery records name where the work went. A local update whose push is unfinished says so.
-- **Where in the queue:** Bottom (default) or Top.
+- **When to start:** Add to backlog (default) for review first, or Queue for work. Queue placement is Bottom (default) or Top when queuing directly.
 - **Plan:** Auto (the planner decides) or a template.
 - **Ask me before starting:** off by default.
 - Attachments: screenshots and links.

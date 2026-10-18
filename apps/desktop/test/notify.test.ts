@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createDemoState, type InboxItem, type InboxKind, type State } from "@petrina/core";
+import { createDemoState, historyItem, reviewStats, type InboxItem, type InboxKind, type State } from "@petrina/core";
 import { ALREADY_HANDLED, canLand, landingFor, planJump } from "../src/notify/jump";
 import { InboxWatch, Notifier, PAUSE_MS, type NotifierHost } from "../src/notify/notifier";
 import { getSettings, sendTest, setNotificationsOn } from "../src/notify/settings";
@@ -302,6 +302,13 @@ describe("the test notification", () => {
 });
 
 describe("wording", () => {
+  it("keeps a finished learning's task and product names from the historical inbox summary", () => {
+    const archived = { ...guestCheckout, state: "done" as const };
+    const learning = item("learnings");
+    const state: State = { ...demo, tasks: demo.tasks.filter((task) => task.id !== archived.id), inbox: [learning], history: { revision: 1, total: 1, products: [], reviews: reviewStats([]), reviewsByProduct: {}, steps: [], dependencies: [historyItem(archived)] } };
+    expect(noticeFor(learning, state).lines).toEqual(["Guest checkout, Shop"]);
+    expect(waitingLine(learning, state)).toContain("Guest checkout");
+  });
   it("says what is needed, for which task and product, and which role asks", () => {
     const permission = item("permission", { title: "Add a new package: Stripe.js", detail: "npm install @stripe/stripe-js", roleId: "builder", body: "Claude Code's own safety check wants your OK before this." });
     const notice = noticeFor(permission, withInbox([permission]));

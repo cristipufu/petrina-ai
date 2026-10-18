@@ -18,6 +18,7 @@ export function columnOf(task: Task, roles: readonly Role[]): Column {
   if (task.state === "cancelled" || task.state === "done") return "done";
   if (task.state === "pr-open") return "ready";
   if (task.state === "queued") return "queue";
+  if (task.state === "backlog") return "backlog";
   if (task.stageIndex < 0) return "planning";
   const stage = task.plan?.stages[task.stageIndex];
   if (!stage) return "ready";

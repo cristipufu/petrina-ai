@@ -97,6 +97,8 @@ export function parseCommand(text: string): string[] {
  * Run the checks side by side, so the wait is the slowest check rather than the sum of them, and
  * report what really happened, in the order given. Stopping the task stops every check.
  */
+export type CheckProgress = { index: number; at: number } & ({ kind: "started" } | { kind: "finished"; run: CheckRun });
+
 export async function runChecks(
   cwd: string,
   checks: readonly ProductCheck[],
@@ -106,26 +108,30 @@ export async function runChecks(
   logDirectory?: string,
   // A stand-in process list, so a test can fail one read. Absent, the live list is read.
   processList?: (timeout: number) => Promise<string | undefined>,
+  onProgress?: (event: CheckProgress) => void,
 ): Promise<CheckRun[]> {
   if (signal?.aborted) return [];
   const runs = checks
     .filter((check) => check.argv.length)
-    .map(async (check): Promise<CheckRun> => {
-      const started = Date.now();
+    .map(async (check, index): Promise<CheckRun> => {
       const log = logDirectory ? await checkLog(logDirectory) : undefined;
+      const started = Date.now();
+      onProgress?.({ kind: "started", index, at: started });
       const run = await runOne(check.argv, cwd, env, timeoutMs, signal, log, processList);
       const result = { name: check.name, command: commandText(check.argv), ms: Date.now() - started, ...await log?.close() };
       const output = [
         run.error ? `Could not start: ${run.error}` : run.timedOut ? `${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.` : run.output,
         ...(run.cleanupIncomplete ? [CLEANUP_INCOMPLETE] : []),
       ].filter(Boolean).join("\n");
-      return {
+      const finished: CheckRun = {
         ...result,
         ok: !run.error && !run.timedOut && run.code === 0,
         ...(run.timedOut ? { timedOut: true } : {}),
         ...(run.cleanupIncomplete ? { cleanupIncomplete: true } : {}),
         output: tidyOutput(output),
       };
+      onProgress?.({ kind: "finished", index, at: Date.now(), run: finished });
+      return finished;
     });
   return Promise.all(runs);
 }

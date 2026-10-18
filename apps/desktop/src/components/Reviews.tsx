@@ -1,4 +1,4 @@
-import { reviewStats, type FindingStats, type State, type VerificationOutcomes, type VerifierStats } from "@petrina/core";
+import { combineReviewStats, reviewStats, type ReviewStats, type FindingStats, type State, type VerificationOutcomes, type VerifierStats } from "@petrina/core";
 import { profileText, type Lookup } from "../lib";
 
 const share = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : "–");
@@ -16,8 +16,8 @@ const outcomeCells = (findings: FindingStats) => OUTCOMES.map(([key]) => <td key
 const verificationCells = (entry: VerificationOutcomes) => ["completed", "real", "notABug", "nit", "preExisting", "unfinished"].map((key) => <td key={key} className="c">{entry[key as keyof VerificationOutcomes]}</td>);
 
 /** How reviews are going: rounds to pass, what became of findings, and how each reviewer's findings held up. */
-export function ReviewsPanel({ tasks, roles, find }: { tasks: State["tasks"]; roles: State["roles"]; find: Lookup }) {
-  const stats = reviewStats(tasks);
+export function ReviewsPanel({ tasks, roles, find, history }: { tasks: State["tasks"]; roles: State["roles"]; find: Lookup; history?: ReviewStats }) {
+  const stats = combineReviewStats(reviewStats(tasks), ...(history ? [history] : []));
   const { findings } = stats;
   const roleRows = [...stats.roles, ...roles.filter((role) => role.result === "findings" && !stats.roles.some((entry) => entry.roleId === role.id)).map((role) => ({ roleId: role.id, important: 0, findings: { total: 0, fixed: 0, notABug: 0, unverified: 0, downgraded: 0, kept: 0, open: 0 } }))];
   if (stats.reviewed === 0 && findings.total === 0) return <div className="empty-state">No review has finished yet. Numbers show here once one has.</div>;

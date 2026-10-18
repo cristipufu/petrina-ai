@@ -19,6 +19,20 @@ const root = (prefix: string) => {
 };
 
 describe("a product's checks", () => {
+  it("reports each check's start and result while another check is still running", async () => {
+    const dir = root("petrina-check-progress-");
+    const release = join(dir, "release");
+    const updates: { index: number; kind: string; at: number }[] = [];
+    const held = `import { existsSync } from "node:fs"; while (!existsSync(process.argv[1])) await Bun.sleep(20);`;
+    const running = runChecks(dir, [{ name: "Quick", argv: ["git", "--version"] }, { name: "Held", argv: [process.execPath, "-e", held, release] }], process.env, 30_000 * SLOW, undefined, undefined, undefined, (event) => updates.push(event));
+    try {
+      await waitFor(() => updates.some((event) => event.index === 0 && event.kind === "finished") && updates.some((event) => event.index === 1 && event.kind === "started"), "one completed check and another still running");
+      expect(updates.some((event) => event.index === 1 && event.kind === "finished")).toBe(false);
+    } finally { writeFileSync(release, "go"); }
+    const results = await running;
+    expect(results.every((run) => run.ok)).toBe(true);
+    expect(updates.map((event) => `${event.index}:${event.kind}`)).toEqual(["0:started", "1:started", "0:finished", "1:finished"]);
+  });
   it("suggests the checks a repository declares, whatever its stack", () => {
     const js = root("petrina-checks-js-");
     writeFileSync(join(js, "package.json"), JSON.stringify({ scripts: { typecheck: "tsc --noEmit", test: "vitest run", build: "vite build", dev: "vite" } }));

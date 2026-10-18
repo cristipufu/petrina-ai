@@ -1,6 +1,6 @@
 // The sections down the left edge of the window.
 
-import { Bot, Boxes, ChartColumn, LayoutGrid, Library, Settings } from "lucide-react";
+import { Bot, Boxes, ChartColumn, History, LayoutGrid, Library, Settings } from "lucide-react";
 import type { Page } from "@petrina/core";
 import { mod } from "../keyboard";
 import { followLink } from "../routes";
@@ -11,6 +11,10 @@ export function Rail({ view, blocking, onGo, hrefFor }: { view: Page; blocking: 
       <a href={hrefFor("board")} className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("board"))} title="Board (B)">
         <LayoutGrid size={20} aria-hidden="true" />
         Board
+      </a>
+      <a href={hrefFor("history")} className={view === "history" ? "on" : ""} aria-current={view === "history" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("history"))} title="History">
+        <History size={20} aria-hidden="true" />
+        History
       </a>
       <a href={hrefFor("products")} className={view === "products" ? "on" : ""} aria-current={view === "products" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("products"))} title="Products">
         <Boxes size={20} aria-hidden="true" />

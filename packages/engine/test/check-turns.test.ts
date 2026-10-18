@@ -117,6 +117,10 @@ try {
           const step = task.journey!.at(-1)!;
           expect(step).toMatchObject({ kind: "petrina", work: "checks" });
           expect(step.endedAt).toBeUndefined();
+          expect(step.productChecks).toEqual([expect.objectContaining({ name: "Held check", result: "pending" })]);
+          const running = engine.getState().tasks.flatMap((entry) => entry.journey?.at(-1)?.productChecks ?? []).find((check) => check.result === "running");
+          expect(running?.name).toBe("Held check");
+          expect(running?.startedAt).toBeNumber();
           waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt };
           // The first check is held until the other task is really waiting, then both run.
           rmSync(hold, { force: true });

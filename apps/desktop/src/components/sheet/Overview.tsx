@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Monitor, User } from "lucide-react";
 import { SCREEN_WORDS, mainLine, nextLine, screenWait, timeLeft, workedSoFar, type Role, type State, type Task } from "@petrina/core";
 import { deliveryText, duration, profileText, type Lookup } from "../../lib";
-import { sim } from "../../engine";
+import { failureText, sim } from "../../engine";
 import { RoleAvatar } from "../bits";
 import { WhatItUsed } from "./WhatItUsed";
 import { Journey } from "../Journey";
@@ -18,6 +18,8 @@ function nowSentence(task: Task, role: Role | undefined, state: State): string {
   if (task.state === "running" && role) return `${role.name} is working`;
   if (task.state === "paused") return role ? `Paused while the ${role.name.toLowerCase()} was working` : "Paused";
   switch (task.state) {
+    case "backlog":
+      return "Review before queuing";
     case "queued":
       return task.held ? "On hold in the queue" : "Waiting in the queue";
     case "waiting":
@@ -71,7 +73,8 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
     <>
       {!separateFlow && <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} />}
 
-      {task.description && (
+      {task.state === "backlog" && <BacklogRequest key={task.id} task={task} />}
+      {task.description && task.state !== "backlog" && (
         <section className="sheet-section reading">
           <h2>What you asked for</h2>
           <p className="prose">{task.description}</p>
@@ -125,4 +128,31 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
       </section>
     </>
   );
+}
+
+function BacklogRequest({ task }: { task: Task }) {
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const changed = title.trim() !== task.title || description.trim() !== task.description;
+  const save = async (queue: boolean) => {
+    setSaving(true); setError("");
+    try {
+      if (changed) await sim.updateBacklog(task.id, { title, description });
+      if (queue) await sim.queueTask(task.id);
+    } catch (problem) { setError(failureText(problem)); }
+    finally { setSaving(false); }
+  };
+  return <section className="sheet-section backlog-request">
+    <h2>Review the request</h2>
+    <p className="quiet-text">Nothing starts from the backlog. Check the request, then queue it when it is ready.</p>
+    <label>Task title<input className="input" value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} disabled={saving} /></label>
+    <label>Details<textarea className="details" value={description} maxLength={8000} onChange={(event) => setDescription(event.target.value)} disabled={saving} /></label>
+    {error && <p className="note bad" role="alert">{error}</p>}
+    <div className="row" style={{ gap: 8 }}>
+      <button className="btn outline" disabled={!changed || !title.trim() || saving} onClick={() => void save(false)}>Save changes</button>
+      <button className="btn lead" disabled={!title.trim() || saving} onClick={() => void save(true)}>{saving ? "Saving…" : "Queue for work"}</button>
+    </div>
+  </section>;
 }

@@ -1,7 +1,7 @@
 import { StartFromFields } from "./TaskStart";
 import { useRef, useState } from "react";
 import { DELIVERY_LABEL, type DeliveryMode, type State, type TaskKind, type StartFrom } from "@petrina/core";
-import { sim } from "../engine";
+import { mode, sim } from "../engine";
 import { useFocusTrap, WaitingLine } from "./bits";
 
 const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
@@ -73,6 +73,8 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<TaskKind>("feature");
   const [position, setPosition] = useState<Position>("bottom");
+  const [backlog, setBacklog] = useState(true);
+  const supportsBacklog = mode === "demo" || state.history !== undefined;
   const [approvePlan, setApprovePlan] = useState(false);
   const productOf = (id: string) => state.products.find((product) => product.id === id);
   const [delivery, setDelivery] = useState<DeliveryMode>(productOf(productId)?.delivery ?? "pull-request");
@@ -90,9 +92,9 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
 
   const invalidSource = (startFrom.kind === "branch" && !startFrom.name.trim()) || (startFrom.kind === "pull-request" && !startFrom.value.trim()) || (delivery === "release" && startFrom.kind !== "default");
   const add = (another: boolean) => {
-    if (!title.trim() || invalidSource) return;
+    if (!title.trim() || invalidSource || (backlog && !supportsBacklog)) return;
     const titles = [title.trim(), ...batch.slice(1)];
-    for (const entry of titles) void Promise.resolve(sim.addTask({ productId, title: entry, description, kind, position, approvePlan, delivery, approveDelivery, startFrom })).catch(() => undefined);
+    for (const entry of titles) void Promise.resolve(sim.addTask({ productId, title: entry, description, kind, position, approvePlan, delivery, approveDelivery, startFrom, backlog })).catch(() => undefined);
     if (another) {
       setTitle("");
       setDescription("");
@@ -160,6 +162,14 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
           </div>
         )}
         <textarea className="details" aria-label="Details" placeholder="Add details, links or how you'll judge it's done (optional)" value={description} onChange={(event) => setDescription(event.target.value)} />
+        <div className="new-task-destination">
+          <div className="segmented" role="radiogroup" aria-label="When work starts">
+            <button role="radio" aria-checked={backlog} className={backlog ? "on" : ""} onClick={() => setBacklog(true)}>Review in backlog</button>
+            <button role="radio" aria-checked={!backlog} className={!backlog ? "on" : ""} onClick={() => setBacklog(false)}>Ready for the queue</button>
+          </div>
+          <p className="quiet-text">{backlog ? "Saved for review. No agent starts until you queue it." : "Starts when the pool is running and a place is free."}</p>
+          {backlog && !supportsBacklog && <p className="note">Backlog will be available after the engine is updated.</p>}
+        </div>
         <StartFromFields value={startFrom} onChange={setStartFrom} />
         {delivery === "release" && startFrom.kind !== "default" && <p className="note bad" role="alert">Releases use the default branch. Change the starting point or delivery mode.</p>}
         {startFrom.kind === "pull-request" && delivery !== "release" && <p className="note">The checked work will update this pull request’s working branch. Fork destinations are shown in the plan.</p>}
@@ -183,11 +193,11 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
               Ask me before shipping
             </label>
           </span>
-          <button className="btn quiet" onClick={() => add(true)} disabled={!title.trim() || invalidSource}>
+          <button className="btn quiet" onClick={() => add(true)} disabled={!title.trim() || invalidSource || (backlog && !supportsBacklog)}>
             Add another <kbd>⇧↵</kbd>
           </button>
-          <button className="btn lead" onClick={() => add(false)} disabled={!title.trim() || invalidSource}>
-            Add to queue <kbd>↵</kbd>
+          <button className="btn lead" onClick={() => add(false)} disabled={!title.trim() || invalidSource || (backlog && !supportsBacklog)}>
+            {backlog ? "Add to backlog" : "Add to queue"} <kbd>↵</kbd>
           </button>
         </div>
       </div>

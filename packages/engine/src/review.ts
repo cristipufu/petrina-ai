@@ -460,7 +460,7 @@ export class Reviews {
     };
     // A handoff replaces this member's seat; its working peers still count against every cap.
     const roomFor = (key: string) => (toolId: Id) => {
-      const state = this.k.getState();
+      const state = this.k.activeState();
       let uses = slotUses(state);
       const agent = running.get(key)?.agent;
       if (agent) {

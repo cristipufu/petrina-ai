@@ -2,7 +2,7 @@
 // gets the log: it asks for one of these views and gets just its numbers.
 
 import { limitsOverTime, tokensOverTime, type LimitsOverTime, type OverTimeView } from "./charts.js";
-import type { AgentProfile, Id, State } from "./model.js";
+import type { AgentProfile, Id, State, Task } from "./model.js";
 import { atLeastLine, count, durationText, type Figure, listWords } from "./numbers.js";
 import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, emptyTally, addTurn, lineModelLabel, modelLabel, sameModel, sessionModelLabel, turnModelLabel, type Tally, type TokenLine, type WorkLogReader, type WorkMoment, type WorkTurn } from "./worklog.js";
 
@@ -20,6 +20,10 @@ export interface UsageContext {
   now: number;
   /** For names and the current plans. */
   state: State;
+  /** Finished tasks are read individually when a usage view needs their name or plan. */
+  task?: (taskId: Id) => Task | undefined;
+  /** Analytics lists read only the name, rather than loading every past conversation. */
+  taskName?: (taskId: Id) => string | undefined;
 }
 
 /** New input, reused, written and output. Missing: not reported. */
@@ -266,7 +270,7 @@ function group<T>(items: readonly T[], key: (item: T) => string): Map<string, T[
 
 const byTokens = (a: WorkUsageLine, b: WorkUsageLine) => (b.tokens.value ?? -1) - (a.tokens.value ?? -1) || (b.time.value ?? -1) - (a.time.value ?? -1) || a.label.localeCompare(b.label);
 
-function names(state: State, log: WorkLogReader) {
+function names(state: State, log: WorkLogReader, task?: UsageContext["task"], taskName?: UsageContext["taskName"]) {
   const products = new Map(state.products.map((product) => [product.id, product]));
   const ever = new Map(log.products().map((record) => [record.id, record]));
   const tasks = new Map(state.tasks.map((task) => [task.id, task]));
@@ -282,7 +286,7 @@ function names(state: State, log: WorkLogReader) {
       if (current) return { label: current.name, removed: false };
       return { label: ever.get(id)?.name ?? "A removed product", removed: true };
     },
-    task: (id: Id) => tasks.get(id),
+    taskName: (id: Id) => tasks.get(id)?.title ?? (taskName ? taskName(id) : task?.(id)?.title),
     record: (id: Id) => ever.get(id),
     profile: (id: Id): AgentProfile | undefined => profiles.get(id),
   };
@@ -329,7 +333,7 @@ function taskView(log: WorkLogReader, taskId: Id, ctx: UsageContext): TaskUsage 
   const { tokens, time } = figures(tally, untracked);
   if (turns.length === 0) return { view: "task", empty: untracked ? "untracked" : "nothing", tokens, time, atLeast: "", stages: [] };
 
-  const task = ctx.state.tasks.find((entry) => entry.id === taskId);
+  const task = ctx.state.tasks.find((entry) => entry.id === taskId) ?? ctx.task?.(taskId);
   const order = new Map<Id, number>([[`${taskId}:plan`, -1]]);
   task?.plan?.stages.forEach((stage, index) => order.set(stage.id, index));
   const currentTitle = new Map(task?.plan?.stages.map((stage) => [stage.id, stage.title]) ?? []);
@@ -401,7 +405,7 @@ function productsView(log: WorkLogReader, ctx: UsageContext): ProductsUsage {
 function todayView(log: WorkLogReader, ctx: UsageContext): TodayUsage {
   const { from, to } = periodRange("today", ctx.now);
   const turns = ended(log.turns({ from, to }));
-  const n = names(ctx.state, log);
+  const n = names(ctx.state, log, ctx.task, ctx.taskName);
   const before = from < log.since();
   const tally = turns.reduce(addTurn, emptyTally());
   const toolIds = [...new Set([...ctx.state.tools.filter((tool) => tool.status === "ready" || turns.some((turn) => turn.toolId === tool.id)).map((tool) => tool.id), ...turns.map((turn) => turn.toolId)])];
@@ -694,7 +698,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
   const turns = ended(log.turns(filter));
   const lines = log.lines(filter);
   const moments = log.moments(filter);
-  const n = names(ctx.state, log);
+  const n = names(ctx.state, log, ctx.task, ctx.taskName);
   // When the period starts before Petrina kept track, any tool, role or model may miss earlier work,
   // and so may every product that was already there. A product added later cannot.
   const since = log.since();
@@ -731,7 +735,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     .map(([taskId, list]) => {
       const product = n.product(list[0]!.productId);
       // Earlier work is missing from a task's line only in a period that starts before tracking began, as on every other line.
-      return lineOf(`task:${taskId}`, n.task(taskId)?.title ?? "A task no longer on the board", list, { taskId, productId: list[0]!.productId, context: product.label, ...(product.removed ? { note: "removed" } : {}) }, before && untracked.has(taskId));
+      return lineOf(`task:${taskId}`, n.taskName(taskId) ?? "A task no longer on the board", list, { taskId, productId: list[0]!.productId, context: product.label, ...(product.removed ? { note: "removed" } : {}) }, before && untracked.has(taskId));
     })
     .sort(byTokens);
 

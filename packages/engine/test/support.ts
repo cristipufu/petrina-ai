@@ -230,13 +230,29 @@ export class EngineProcess {
     });
   }
 
-  async state(): Promise<State> {
+  /** The exact bounded snapshot sent to the desktop window. */
+  async windowState(): Promise<State> {
     const { api, token } = readConnection(this.home)!;
     return (await (await fetch(`${api}/api/state`, { headers: { authorization: `Bearer ${token}` } })).json()) as State;
   }
 
+  /** Logical engine state for fixture assertions, like Engine.getState(). Window tests use windowState(). */
+  async state(): Promise<State> {
+    const current = await this.windowState();
+    if (!current.history?.total) return current;
+    const { history: _history, ...rest } = current;
+    const archived: Task[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.act("historyPage", { limit: 100, ...(cursor ? { cursor } : {}) }) as import("@petrina/core").HistoryPage;
+      archived.push(...await Promise.all(page.items.map((item) => this.act("taskDetails", item.id) as Promise<Task>)));
+      cursor = page.nextCursor;
+    } while (cursor);
+    return { ...rest, tasks: [...current.tasks, ...archived] };
+  }
+
   async task(id: string): Promise<Task> {
-    return (await this.state()).tasks.find((task) => task.id === id)!;
+    return await this.act("taskDetails", id) as Task;
   }
 
   until(check: (state: State) => boolean, what: string, ms = 30_000): Promise<State> {

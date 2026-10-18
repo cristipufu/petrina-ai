@@ -1,14 +1,14 @@
 import { boardSections } from "./board.js";
 import type { InboxItem, State, Task } from "./model.js";
 
-export type Page = "board" | "products" | "agents" | "analytics" | "library" | "settings";
+export type Page = "board" | "history" | "products" | "agents" | "analytics" | "library" | "settings";
 export type KeyArea = "board" | "inbox";
-export type TaskList = KeyArea | undefined;
+export type TaskList = KeyArea | "history" | undefined;
 
 export function keyArea(page: Page, inboxOpen: boolean, owner: KeyArea, taskOpen: boolean): "task" | KeyArea | undefined {
   if (taskOpen) return "task";
   if (inboxOpen && owner === "inbox") return "inbox";
-  return page === "board" ? "board" : undefined;
+  return page === "board" || page === "history" ? "board" : undefined;
 }
 
 /** Every word may match either the title or the product, regardless of board filters. */
@@ -26,7 +26,7 @@ export function searchTasks(state: State, query: string): Task[] {
 
 export function boardOrder(tasks: readonly Task[], visible: (task: Task) => boolean, showDone: boolean): string[] {
   const sections = boardSections(tasks, visible);
-  return [...sections["needs-you"], ...sections.working, ...sections.waiting, ...sections.queue, ...(showDone ? sections.done : [])].map((task) => task.id);
+  return [...sections["needs-you"], ...sections.working, ...sections.waiting, ...sections.queue, ...sections.backlog, ...(showDone ? sections.done : [])].map((task) => task.id);
 }
 
 /** Agents kept waiting first, then by task priority and age. Quiet screen requests come after everything else. */

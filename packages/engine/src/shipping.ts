@@ -565,11 +565,7 @@ export class Shipping {
     if (cancelled) return ours.find((pr) => pr.state === "open") ?? ours.find((pr) => pr.base === defaultBranch && pr.commit === tested);
     let match: git.PullRequestInfo | undefined;
     for (const pr of ours) {
-      if (pr.base !== defaultBranch) continue;
-      if (pr.commit === tested) { match = pr; break; }
-      const remote = this.connections.savedRemote(task);
-      const tip = await this.remoteTip(task, remote, task.branch!);
-      if (tip === pr.commit && await this.remoteContains(task, remote, task.branch!, tip, tested)) { match = pr; break; }
+      if (await this.matchesPullRequest(task, pr, tested, defaultBranch)) { match = pr; break; }
     }
     const other = ours.find((pr) => pr !== match);
     if (other) {
@@ -578,6 +574,15 @@ export class Shipping {
       );
     }
     return match;
+  }
+
+  /** A reused branch name is not evidence of this delivery: its checked work and base must match. */
+  private async matchesPullRequest(task: MTask, pr: git.PullRequestInfo, tested: string, base: string): Promise<boolean> {
+    if (pr.base !== base) return false;
+    if (pr.commit === tested) return true;
+    const remote = this.connections.savedRemote(task);
+    const tip = await this.remoteTip(task, remote, task.branch!);
+    return tip === pr.commit && await this.remoteContains(task, remote, task.branch!, tip, tested);
   }
 
   private async publishRelease(task: MTask, signal: AbortSignal): Promise<"done" | "again"> {
@@ -1222,7 +1227,14 @@ export class Shipping {
   markDone(itemId: Id): void {
     const task = this.takeShippingItem(itemId);
     if (!task) return;
-    if (!task.pr && (task.delivery === "pull-request" || task.shipping?.carriedOver)) task.cleanup = { ...task.cleanup, pullRequest: "unconfirmed" };
+    if (!task.pr && (task.delivery === "pull-request" || task.shipping?.carriedOver)) {
+      // An update's destination is the PR's working branch, not its base. Its existing approved-PR
+      // path keeps the earlier cleanup rules; this extra attribution proof is for newly opened PRs.
+      const tested = task.source?.start.kind === "pull-request" ? undefined : task.shipping?.prepared?.tested;
+      const base = task.source?.destination.branch ?? this.k.repositoryOf(task)?.defaultBranch ?? "main";
+      task.cleanup = { ...task.cleanup, pullRequest: "unconfirmed", ...(tested ? { checkedDelivery: { tested, base } } : {}) };
+      if (!tested) delete task.cleanup.checkedDelivery;
+    }
     delete task.shipping;
     this.k.clearStep(task);
     this.k.tracking.delivered(task);
@@ -1244,7 +1256,7 @@ export class Shipping {
     if (this.k.stopped || !needsPullRequestCheck(task as Task) || !finished() || this.following.has(task.id)) return;
     this.following.add(task.id);
     try {
-      const product = this.k.productOf(task);
+      const product = this.k.repositoryOf(task);
       // Older local deliveries may have published something themselves, but a computer-only product has no GitHub to ask.
       if (task.delivery === "local" && product?.repo.startsWith("local/")) {
         task.cleanup = { ...task.cleanup, pullRequest: "none" };
@@ -1260,14 +1272,37 @@ export class Shipping {
         task.cleanup = { ...task.cleanup, error: CLEANUP_WORDS.unconfirmedPr };
       } else {
         const ours = result.value.filter((pr) => pr.head === task.branch && !pr.fork);
-        const pr = ours.find((pr) => pr.state === "open") ?? ours.sort((a, b) => b.number - a.number)[0];
+        const checked = task.cleanup?.checkedDelivery;
+        let pr: git.PullRequestInfo | undefined;
+        if (checked) {
+          for (const candidate of ours) if (await this.matchesPullRequest(task, candidate, checked.tested, checked.base)) { pr = candidate; break; }
+        } else {
+          // Older deliveries did not record a checked commit. Keep their existing conservative
+          // branch tracking so an open pull request can never lose its working copy.
+          pr = ours.find((entry) => entry.state === "open") ?? ours.sort((a, b) => b.number - a.number)[0];
+        }
+        if (this.k.stopped || !finished()) return;
+        const foreign = checked ? ours.find((entry) => entry.state === "open" && entry.number !== pr?.number) : undefined;
+        const previousForeign = task.cleanup?.foreignPullRequest;
         task.cleanup = { ...task.cleanup, pullRequest: "none" };
         if (task.cleanup.error === CLEANUP_WORDS.unconfirmedPr) delete task.cleanup.error;
+        if (foreign) {
+          task.cleanup.foreignPullRequest = { number: foreign.number, url: foreign.url };
+          if (previousForeign?.number !== foreign.number) this.k.log(task, "warn", `Pull request #${foreign.number} uses this branch but is not the checked work. Its working copy is kept until that pull request closes`);
+        } else {
+          delete task.cleanup.foreignPullRequest;
+          if (previousForeign) this.k.log(task, "status", `The other pull request #${previousForeign.number} is no longer open on GitHub`);
+        }
         if (pr) {
           task.pr = { number: pr.number, url: pr.url, state: pr.state, openedAt: Date.now() };
           this.k.log(task, "done", pr.state === "open" ? `Pull request #${pr.number} is still open on GitHub, so its working copy is kept` : pr.state === "merged" ? `Merged #${pr.number} on GitHub` : `Closed #${pr.number} without merging`);
         }
       }
+      this.k.commit();
+    } catch {
+      if (this.k.stopped || !finished()) return;
+      if (!task.cleanup?.error) this.k.log(task, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.unconfirmedPr));
+      task.cleanup = { ...task.cleanup, pullRequest: "unconfirmed", error: CLEANUP_WORDS.unconfirmedPr };
       this.k.commit();
     } finally {
       this.following.delete(task.id);

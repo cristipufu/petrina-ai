@@ -36,7 +36,7 @@ function stepLabel(stage: Stage): string {
  * plan does not have are simply absent. Queued tasks have no pipeline yet.
  */
 export function pipelineOf(task: Task): PipelineStep[] {
-  if (task.state === "queued") return [];
+  if (task.state === "queued" || task.state === "backlog") return [];
   const finished = task.state === "pr-open" || task.state === "done";
   const steps: { label: string; from: number; to: number }[] = [{ label: "Plan", from: -1, to: -1 }];
   const stages = task.plan?.stages ?? [];
@@ -111,13 +111,14 @@ export function currentStep(steps: readonly PipelineStep[]): { label: string; in
   return index < 0 ? undefined : { label: steps[index]!.label, index };
 }
 
-export type BoardSection = "needs-you" | "working" | "waiting" | "queue" | "done";
+export type BoardSection = "needs-you" | "working" | "waiting" | "queue" | "backlog" | "done";
 
 export const BOARD_SECTIONS: readonly { id: BoardSection; title: string }[] = [
   { id: "needs-you", title: "Needs you" },
   { id: "working", title: "Working" },
   { id: "waiting", title: "Waiting" },
   { id: "queue", title: "Queue" },
+  { id: "backlog", title: "Backlog" },
   { id: "done", title: "Done" },
 ];
 
@@ -134,6 +135,8 @@ export function sectionOf(task: Task): BoardSection {
       return "waiting";
     case "queued":
       return "queue";
+    case "backlog":
+      return "backlog";
     case "done":
     case "cancelled":
       return "done";
@@ -155,6 +158,7 @@ export function boardSections(tasks: readonly Task[], visible: (task: Task) => b
     working: pick("working").sort((a, b) => started(a) - started(b)),
     waiting: pick("waiting").sort((a, b) => (WAITING_ORDER[a.state] ?? 9) - (WAITING_ORDER[b.state] ?? 9) || started(a) - started(b)),
     queue: queueOf(tasks).filter(visible),
+    backlog: pick("backlog").sort((a, b) => a.createdAt - b.createdAt),
     done: pick("done").sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)),
   };
 }

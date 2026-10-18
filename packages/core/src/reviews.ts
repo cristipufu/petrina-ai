@@ -153,3 +153,43 @@ export function reviewStats(tasks: readonly Task[]): ReviewStats {
     verifiers: verifierStats(findings),
   };
 }
+
+/** Add the compact records of finished work without reading its task bodies again. */
+export function combineReviewStats(...records: readonly ReviewStats[]): ReviewStats {
+  return records.reduce((total, record) => reviewArithmetic(total, record, 1), reviewStats([]));
+}
+
+/** Updating a finished task replaces its earlier contribution instead of counting it twice. */
+export function subtractReviewStats(total: ReviewStats, old: ReviewStats): ReviewStats {
+  return reviewArithmetic(total, old, -1);
+}
+
+function reviewArithmetic(a: ReviewStats, b: ReviewStats, sign: 1 | -1): ReviewStats {
+  const tally = <T extends object>(left: T, right: T): T => Object.fromEntries(Object.entries(left).map(([key, value]) => [key, typeof value === "number" ? value + sign * Number(right[key as keyof T] ?? 0) : value])) as T;
+  const rows = <T extends object>(left: readonly T[], right: readonly T[], key: (row: T) => string, merge: (left: T, right: T) => T, weight: (row: T) => number): T[] => {
+    const map = new Map(left.map((row) => [key(row), { ...row }]));
+    for (const row of right) {
+      const id = key(row);
+      const old = map.get(id);
+      if (old) map.set(id, merge(old, row));
+      else if (sign > 0) map.set(id, { ...row });
+      else throw new Error("Review totals cannot remove a record that is missing.");
+    }
+    return [...map.values()].filter((row) => weight(row) !== 0);
+  };
+  const passed = tally(a.passed, b.passed);
+  const rounds = Math.round((a.meanRounds ?? 0) * a.passed.total) + sign * Math.round((b.meanRounds ?? 0) * b.passed.total);
+  const verifiers = tally(a.verifiers, b.verifiers);
+  verifiers.roles = rows(a.verifiers.roles, b.verifiers.roles, (row) => row.roleId, tally, (row) => row.completed + row.unfinished).sort((x, y) => y.completed - x.completed || x.roleId.localeCompare(y.roleId));
+  verifiers.profiles = rows(a.verifiers.profiles, b.verifiers.profiles, (row) => JSON.stringify([row.profileId, row.toolId]), tally, (row) => row.votes).sort((x, y) => y.votes - x.votes || x.profileId.localeCompare(y.profileId) || x.toolId.localeCompare(y.toolId));
+  return {
+    reviewed: a.reviewed + sign * b.reviewed,
+    passed,
+    ...(passed.total ? { meanRounds: rounds / passed.total } : {}),
+    sentBack: a.sentBack + sign * b.sentBack,
+    findings: tally(a.findings, b.findings),
+    roles: rows(a.roles, b.roles, (row) => row.roleId, (x, y) => ({ roleId: x.roleId, important: x.important + sign * y.important, findings: tally(x.findings, y.findings) }), (row) => row.findings.total).sort((x, y) => y.findings.total - x.findings.total || x.roleId.localeCompare(y.roleId)),
+    profiles: rows(a.profiles, b.profiles, (row) => row.profileId, tally, (row) => row.raised).sort((x, y) => y.raised - x.raised || x.profileId.localeCompare(y.profileId)),
+    verifiers,
+  };
+}

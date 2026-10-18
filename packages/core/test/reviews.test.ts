@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDemoState } from "../src/demo.js";
 import type { Finding, Task } from "../src/model.js";
-import { reviewStats } from "../src/reviews.js";
+import { combineReviewStats, reviewStats, subtractReviewStats } from "../src/reviews.js";
 
 const demo = createDemoState(1_000_000_000);
 const base = demo.tasks.find((task) => task.state === "done")!;
@@ -15,6 +15,14 @@ function reviewed(id: string, rounds: number, findings: Finding[], extra: Partia
 const finding = (id: string, raisedBy: string, extra: Partial<Finding> = {}): Finding => ({ id, text: `Finding ${id}`, severity: "blocking", raisedBy, confirmedBy: [], status: "open", ...extra });
 
 describe("how reviews are going", () => {
+  it("combines archived and live reviews without changing outcomes, means or independent verifier counts", () => {
+    const a = reviewed("a", 1, [finding("a", "codex", { status: "fixed", roleId: "security-reviewer", votes: [{ by: "grok", toolId: "grok", verdict: "real", reason: "Confirmed" }], verification: { by: "grok", verdict: "real", reason: "Confirmed", at: 1 } })]);
+    const b = reviewed("b", 4, [finding("b", "codex", { status: "dismissed" }), finding("c", "claude", { severity: "suggestion" })], { sentBack: 2 });
+    const total = combineReviewStats(reviewStats([a]), reviewStats([b]));
+    expect(total).toEqual(reviewStats([a, b]));
+    expect(subtractReviewStats(total, reviewStats([a]))).toEqual(reviewStats([b]));
+    expect(subtractReviewStats(total, total)).toEqual(reviewStats([]));
+  });
   it("counts rounds to pass, what became of each finding, and how each reviewer's findings held up", () => {
     const stats = reviewStats([
       reviewed("a", 1, [finding("a1", "opus-high", { severity: "suggestion" })]),

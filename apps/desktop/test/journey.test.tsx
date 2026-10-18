@@ -104,17 +104,19 @@ describe('the journey in the task sheet', () => {
     const footer = host.querySelector('.task-agent-footer')!;
     expect(footer.textContent).toContain(`Message the ${role.name.toLowerCase()}`);
     expect(footer.textContent).toContain('Take over in terminal');
+    expect(footer.querySelector<HTMLFormElement>('form')!.hidden).toBe(true);
     for (const tab of ['timeline', 'conversation', 'overview']) {
       await act(async () => host.querySelector<HTMLButtonElement>(`[data-journey-tab="${tab}"]`)!.click());
       expect(host.querySelector('.task-agent-footer')).toBe(footer);
     }
+    await act(async () => footer.querySelector<HTMLButtonElement>('.composer-toggle')!.click());
     const field = footer.querySelector<HTMLTextAreaElement>('textarea')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, 'Keep this guidance');
       field.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await act(async () => footer.querySelector<HTMLButtonElement>('.composer-toggle')!.click());
-    expect(footer.querySelector('textarea')).toBeNull();
+    expect(footer.querySelector<HTMLFormElement>('form')!.hidden).toBe(true);
     expect(footer.textContent).toContain('Draft');
     expect(footer.textContent).toContain('Take over in terminal');
     await act(async () => footer.querySelector<HTMLButtonElement>('.composer-toggle')!.click());
@@ -215,7 +217,7 @@ describe('the journey in the task sheet', () => {
     expect(details.textContent).not.toContain(task.description);
     expect(details.textContent).toContain('Input given to Builder');
     expect(details.textContent).toContain('Type checks and all tests pass.');
-    expect(details.textContent).toContain('resumed the builder’s saved conversation');
+    expect(details.textContent).not.toContain('Builder conversation');
     expect(details.textContent).toContain('Findings assigned to this fix');
     expect(details.textContent).toContain('The checkout total drops the selected shipping fee.');
 
@@ -243,6 +245,19 @@ describe('the journey in the task sheet', () => {
     expect(details.textContent).toContain('Passed');
     expect(details.textContent).toContain('Tests');
     expect(details.textContent).toContain('Failed');
+  });
+  it('shows running and pending checks beside completed results', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const step = task.journey!.findLast((step) => step.kind === 'petrina' && step.work === 'checks')!;
+    step.productChecks = [{ name: 'Type check', result: 'pass', startedAt: NOW - 60_000, endedAt: NOW - 50_000 }, { name: 'Tests', result: 'running', startedAt: NOW - 120_000 }, { name: 'Commit message hook', result: 'pending' }];
+    await mount(state);
+    await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${step.id}"]`)!.click());
+    const items = [...host.querySelectorAll('.journey-details .journey-check-list li')].map((item) => item.textContent);
+    expect(items[0]).toContain('PassedType check');
+    expect(items[1]).toContain('RunningTests2m so far');
+    expect(items[2]).toContain('PendingCommit message hook');
   });
 
   it('shows the failed test behind a delivery checkpoint, not just “checks still fail”', async () => {
@@ -409,8 +424,8 @@ describe('the journey in the task sheet', () => {
   it('offers zoom, the whole journey, and labels every control', async () => {
     await mount(createPortfolioDemo(NOW).state);
     const usage = simulator.getState().tasks.find((task) => task.title === 'Usage dashboard' && task.state === 'done')!;
-    await act(async () => host.querySelector<HTMLElement>('button.fold')!.click());
-    await act(async () => host.querySelector<HTMLElement>(`.done-row[data-task-id="${usage.id}"]`)!.click());
+    await act(async () => host.querySelector<HTMLElement>('.rail a[title="History"]')!.click());
+    await act(async () => host.querySelector<HTMLElement>(`.history-card[data-task-id="${usage.id}"]`)!.click());
     const controls = [...host.querySelectorAll('.journey-controls button')].map((button) => button.getAttribute('aria-label') ?? button.textContent);
     expect(controls).toEqual(['Zoom in', 'Zoom out', 'Show the whole journey']);
     expect(host.querySelector('.journey-list')?.getAttribute('aria-label')).toBe('Journey, 20 steps');

@@ -108,9 +108,9 @@ export interface RoleChanges {
   added: readonly Role[];
 }
 
-export type Column = "queue" | "planning" | "designing" | "building" | "reviewing" | "ready" | "done";
+export type Column = "backlog" | "queue" | "planning" | "designing" | "building" | "reviewing" | "ready" | "done";
 
-export const COLUMNS: readonly Column[] = ["queue", "planning", "designing", "building", "reviewing", "ready", "done"];
+export const COLUMNS: readonly Column[] = ["backlog", "queue", "planning", "designing", "building", "reviewing", "ready", "done"];
 
 export type StageKind = "do" | "converge" | "review-chain" | "gate";
 
@@ -149,7 +149,7 @@ export type TaskKind = "new" | "feature" | "bug" | "chore";
  * - `needs-you`: blocked on the coordinator (question, permission, gate).
  * - `pr-open`: delivered; the pull request is open for the coordinator to merge on GitHub.
  */
-export type RunState = "queued" | "waiting" | "running" | "needs-you" | "paused" | "failed" | "pr-open" | "done" | "cancelled";
+export type RunState = "backlog" | "queued" | "waiting" | "running" | "needs-you" | "paused" | "failed" | "pr-open" | "done" | "cancelled";
 
 export interface ActiveAgent {
   roleId: Id;
@@ -278,8 +278,11 @@ export interface JourneyAcceptanceCheck {
 }
 
 export interface JourneyProductCheck {
+  id?: string;
   name: string;
-  result: "pass" | "fail" | "did-not-finish";
+  result: "pending" | "running" | "pass" | "fail" | "did-not-finish" | "stopped" | "skipped";
+  startedAt?: number;
+  endedAt?: number;
   /** A short diagnostic from the failed run, saved with the step for later review. */
   detail?: string;
 }
@@ -625,6 +628,10 @@ export interface PullRequest {
 export interface Cleanup {
   /** An uncertain delivery marked done still needs its branch checked for an open pull request. */
   pullRequest?: "unconfirmed" | "none";
+  /** The exact work and destination checked before an interrupted delivery was marked done. */
+  checkedDelivery?: { tested: string; base: string };
+  /** An unrelated open pull request still using the branch needs its copy, without claiming delivery. */
+  foreignPullRequest?: { number: number; url: string };
   /** When the folder and the repository's record of it were both gone. */
   removedAt?: number;
   /** Parallel reviewers' folders and Git records were checked too, including crash leftovers. */
@@ -981,6 +988,8 @@ export interface Terminal {
 }
 
 export interface State {
+  /** Compact totals and recent durations for finished work, fetched separately from the board. */
+  history?: import("./history.js").HistoryMetadata;
   now: number;
   seq: number;
   products: readonly Product[];

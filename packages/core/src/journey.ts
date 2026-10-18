@@ -228,11 +228,24 @@ function push(task: JourneyTask, step: Omit<JourneyStep, "id">): JourneyStep {
 function close(step: JourneyStep, at: number, how: StepEnd = {}): void {
   step.endedAt = Math.max(at, step.startedAt);
   step.end = how.end ?? "done";
+  stopStepChecks(step, step.endedAt);
   if (how.outcome) step.outcome = how.outcome;
   if (how.reason) step.reason = how.reason;
   if (how.tone && how.tone !== "on") step.tone = how.tone;
   // Nothing asked in a step outlives it.
   if (step.asks?.some((ask) => ask.endedAt === undefined)) step.asks = step.asks.map((ask) => (ask.endedAt === undefined ? { ...ask, endedAt: step.endedAt!, how: "withdrawn" } : ask));
+}
+
+function stopStepChecks(step: JourneyStep, at: number): void {
+  for (const check of step.productChecks ?? []) if (check.result === "running" || check.result === "pending") {
+    check.result = "stopped";
+    check.endedAt = Math.max(at, check.startedAt ?? step.startedAt);
+  }
+}
+
+/** A stopped process leaves completed results intact; unfinished programs no longer claim to run. */
+export function stopCheckProgress(task: Pick<JourneyTask, "journey">, at: number): void {
+  for (const step of task.journey ?? []) stopStepChecks(step, at);
 }
 
 /**
@@ -518,7 +531,7 @@ export interface JourneyNode {
 }
 
 export interface JourneyView {
-  start: { kind: "started"; at: number } | { kind: "queued"; position: number } | { kind: "held" };
+  start: { kind: "started"; at: number } | { kind: "queued"; position: number } | { kind: "held" } | { kind: "backlog" };
   nodes: JourneyNode[];
   /** Where it ended: delivered, awaiting merge, cancelled, or finished without a confirmed delivery. */
   end?: { text: string; state: "done" | "pending" | "cancelled" | "unconfirmed" };
@@ -698,7 +711,7 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
   });
 
   if (!finished) {
-    const ahead = plannedSteps(task, open, ctx);
+    const ahead = task.state === "backlog" ? [] : plannedSteps(task, open, ctx);
     const named: Named[] = [...recorded];
     ahead.forEach((step, index) => {
       // While nothing is under way, the next step says what it waits for ("Waiting for a free slot", "Paused by you").
@@ -726,8 +739,8 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
 
   const queue = queueOf(ctx.tasks);
   const start: JourneyView["start"] =
-    task.state === "queued" ? (task.held ? { kind: "held" } : { kind: "queued", position: Math.max(0, queue.findIndex((entry) => entry.id === task.id)) + 1 }) : { kind: "started", at: task.startedAt ?? task.createdAt };
-  const writing = !finished && task.stageIndex < 0 && !(open?.kind === "you" && open.waitsFor === "plan");
+    task.state === "backlog" ? { kind: "backlog" } : task.state === "queued" ? (task.held ? { kind: "held" } : { kind: "queued", position: Math.max(0, queue.findIndex((entry) => entry.id === task.id)) + 1 }) : { kind: "started", at: task.startedAt ?? task.createdAt };
+  const writing = !finished && task.state !== "backlog" && task.stageIndex < 0 && !(open?.kind === "you" && open.waitsFor === "plan");
   const end = endOf(task);
   return {
     start,

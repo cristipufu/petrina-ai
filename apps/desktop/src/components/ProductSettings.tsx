@@ -13,7 +13,9 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
   const [error, setError] = useState<string>();
   const back = useRef<HTMLButtonElement>(null);
   const live = useEngineStatus().link === "live";
-  const { unfinished, finished } = productHistory(state.tasks, product.id);
+  const { unfinished, finished: loadedFinished } = productHistory(state.tasks, product.id);
+  const archived = state.history?.products.find((entry) => entry.productId === product.id);
+  const finished = loadedFinished + (archived?.done ?? 0) + (archived?.cancelled ?? 0);
   const close = () => {
     if (!busy) onClose();
   };

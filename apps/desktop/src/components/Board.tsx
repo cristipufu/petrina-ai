@@ -1,10 +1,9 @@
 import { useState, type DragEvent } from "react";
-import { ArrowRight, ChevronDown, ChevronRight, Hand, Lightbulb, X } from "lucide-react";
+import { ArrowRight, Hand, Lightbulb, X } from "lucide-react";
 import { boardSections, firstTaskTip, queueOf, startsNextCount, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { alt, mod } from "../keyboard";
-import { ago, deliveryText, STATE_LABEL, type Lookup } from "../lib";
-import { ProductName } from "./bits";
+import { type Lookup } from "../lib";
 import { TaskCard, type SheetTab } from "./TaskCard";
 
 interface BoardProps {
@@ -14,20 +13,12 @@ interface BoardProps {
   selectedId: string | undefined;
   onOpen: (taskId: string, tab?: SheetTab) => void;
   onFocus: (taskId?: string) => void;
-  showDone: boolean;
-  onShowDone: (show: boolean) => void;
   drafts: Readonly<Record<string, string>>;
   onPlace: (taskId: string, anchorId: string, side: "before" | "after") => void;
   onNewTask: () => void;
   onShowInbox: () => void;
   /** Only where products can be added (not in the demo). */
   onAddProduct?: () => void;
-}
-
-function finishedAgo(task: Task, now: number): string {
-  if (task.finishedAt === undefined) return "";
-  const when = ago(task.finishedAt, now);
-  return when === "now" ? "just now" : `${when} ago`;
 }
 
 const SECTIONS = [
@@ -39,9 +30,9 @@ const SECTIONS = [
 /**
  * The board: one grid of task cards, ordered by what they need. Cards that need the coordinator
  * come first, then working ones, then waiting ones, then the queue in priority order (drag to
- * reorder), with finished work folded away at the end.
+ * reorder), and work awaiting review in the backlog. Finished tasks live in History.
  */
-export function Board({ state, find, visible, selectedId, onOpen, onFocus, showDone, onShowDone, drafts, onPlace, onNewTask, onShowInbox, onAddProduct }: BoardProps) {
+export function Board({ state, find, visible, selectedId, onOpen, onFocus, drafts, onPlace, onNewTask, onShowInbox, onAddProduct }: BoardProps) {
   const [dragId, setDragId] = useState<string>();
   const [dropIndex, setDropIndex] = useState<number>();
   const sections = boardSections(state.tasks, visible);
@@ -95,15 +86,16 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, showD
 
   const visibleQueue = sections.queue;
   const lastVisible = visibleQueue.at(-1);
-  const nothing = Object.values(sections).every((list) => list.length === 0);
+  const nothing = Object.entries(sections).filter(([key]) => key !== "done").every(([, list]) => list.length === 0);
+  const noHistory = !state.tasks.length && !state.history?.total;
 
   return (
     <div className="board" tabIndex={-1} onMouseDown={(event) => { if (!(event.target as HTMLElement).closest("[data-task-id]")) onFocus(); }} onFocus={(event) => { if (!(event.target as HTMLElement).closest("[data-task-id]")) onFocus(); }}>
       <FirstTaskTip state={state} onShowInbox={onShowInbox} />
       {nothing &&
-        (state.tasks.length === 0 ? (
+        (noHistory ? (
           <div className="board-empty start">
-            <p>{state.products.length ? "No tasks yet. Write the first one and the squad starts on it." : "No tasks yet. Add a product, then write a task for the squad."}</p>
+            <p>{state.products.length ? "No tasks yet. Write the first one for the squad." : "No tasks yet. Add a product, then write a task for the squad."}</p>
             <div className="row" style={{ gap: 8 }}>
               {onAddProduct && (
                 <button className={`btn ${state.products.length ? "" : "lead"}`} onClick={onAddProduct}>
@@ -116,7 +108,7 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, showD
             </div>
           </div>
         ) : (
-          <div className="board-empty">No tasks match this product or search.</div>
+          <p className="board-empty-note">{state.tasks.some((task) => task.state !== "done" && task.state !== "cancelled") ? "No tasks match this product or search." : "No active tasks. Finished work is in History."}</p>
         ))}
 
       {SECTIONS.map((section) =>
@@ -136,15 +128,14 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, showD
         ),
       )}
 
-      {(visibleQueue.length > 0 || (queue.length === 0 && !nothing)) && (
         <section className="board-section" aria-labelledby="section-queue">
           <h2 className="section-head" id="section-queue">
             Queue
             <span className="n">{visibleQueue.length}</span>
             {visibleQueue.length > 1 && <span className="hint">Drag to reorder, or {alt}↑ and {alt}↓. The top starts first.</span>}
           </h2>
-          {queue.length === 0 ? (
-            <div className="board-empty">Nothing waiting. New task ({mod}N) adds one.</div>
+          {visibleQueue.length === 0 ? (
+            <div className="board-section-empty">{queue.length ? "No queued tasks match this view." : "Nothing queued. Review a backlog request when it is ready for work."}</div>
           ) : (
             <div
               className="card-grid"
@@ -178,36 +169,13 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, showD
             </div>
           )}
         </section>
-      )}
 
-      {sections.done.length > 0 && (
-        <section className="board-section" aria-label="Done">
-          <button className="fold" onClick={() => onShowDone(!showDone)} aria-expanded={showDone}>
-            {showDone ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            Done
-            <span className="n num">{sections.done.length}</span>
-          </button>
-          {showDone && (
-            <div className="done-list">
-              {sections.done.map((task) => {
-                const delivery = deliveryText(task);
-                return (
-                  <button key={task.id} className={`done-row ${task.state} ${task.id === selectedId ? "selected" : ""}`} data-task-id={task.id} onFocus={() => onFocus(task.id)} onClick={() => onOpen(task.id)}>
-                    <span className="title">{task.title}</span>
-                    <span className="when num">{finishedAgo(task, state.now)}</span>
-                    <span className="sub">
-                      <ProductName product={find.product(task.productId)} />
-                      <span>{delivery?.text ?? STATE_LABEL[task.state]}</span>
-                      {/* Worded, and away from the product's dot, so the two never read alike. */}
-                      {drafts[task.id] && <span className="draft-note"><span className="draft-mark" aria-hidden="true" />Unsent message</span>}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      )}
+      <section className="board-section" aria-labelledby="section-backlog">
+        <h2 className="section-head" id="section-backlog">Backlog<span className="n">{sections.backlog.length}</span><span className="hint">Review these before queuing them.</span></h2>
+        {sections.backlog.length ? <div className="card-grid">{sections.backlog.map((task) => <TaskCard key={task.id} task={task} state={state} find={find} selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)} onOpen={onOpen} />)}</div> : <div className="board-section-empty"><span>{state.tasks.some((task) => task.state === "backlog") ? "No backlog requests match this view." : "No requests awaiting review."}</span><button className="btn small outline" onClick={onNewTask} disabled={!state.products.length} title={state.products.length ? undefined : "Add a product first"}>Add a request</button></div>}
+      </section>
+
+
     </div>
   );
 }

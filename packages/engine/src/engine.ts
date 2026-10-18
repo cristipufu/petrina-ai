@@ -33,6 +33,7 @@ import {
   SETUP_STEPS,
   suggestProductName,
   syncWait,
+  stopCheckProgress,
   validateProductSettings,
   afterChangesAsked,
   type AskAnswer,
@@ -80,6 +81,7 @@ import { Sources } from "./sources.js";
 import { Driver } from "./driver.js";
 import { Cleanup } from "./cleanup.js";
 import { AcceptedPoints } from "./accepted-points.js";
+import { readTaskImage } from "./image-preview.js";
 
 export type { EngineOptions } from "./kernel.js";
 export type { NewTaskInput, SaidContext } from "@petrina/core";
@@ -199,9 +201,9 @@ export class Engine extends Kernel implements Commands {
     this.shutdownDone = Promise.allSettled([this.tools.shutdown(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
     // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
     this.s.now = Date.now();
-    for (const task of this.s.tasks) this.pauseStep(task, this.s.now);
+    for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); }
     try {
-      this.store.save(this.getState());
+      this.save();
     } catch (error) {
       console.error("Could not save while stopping:", error);
     } finally {
@@ -215,6 +217,12 @@ export class Engine extends Kernel implements Commands {
   /** The numbers one view needs, worked out from the work log. The log itself never leaves the engine. */
   usage<R extends UsageRequest>(request: R): UsageViewFor<R> {
     return this.tracking.usage(request);
+  }
+
+  async previewImage(taskId: Id, path: string): Promise<{ mime: string; data: string }> {
+    const task = this.task(taskId);
+    if (!task || task.state === "done" || task.state === "cancelled") throw new Error("Images are available while the task's working copy exists.");
+    return readTaskImage(task.worktree, path);
   }
 
   saveRole(roleId: Id, draft: RoleDraft): void {
@@ -237,7 +245,7 @@ export class Engine extends Kernel implements Commands {
 
   /** Planned tasks still run a removed role, and past ones still show its name and icon. */
   removeRole(roleId: Id): void {
-    this.changeRoles((changes) => library.removeRole(changes, roleId, this.s.tasks.some((task) => library.planUses(task as unknown as Task, roleId))));
+    this.changeRoles((changes) => library.removeRole(changes, roleId, this.s.tasks.some((task) => library.planUses(task as unknown as Task, roleId)) || this.store.history.usesRole(roleId)));
   }
 
   private changeRoles(change: (changes: RoleChanges) => RoleChanges): void {
@@ -338,12 +346,22 @@ export class Engine extends Kernel implements Commands {
     if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) return;
-    // Its entry stays, marked removed, so its history keeps its name and its id is never reused.
-    this.tracking.product(product, { removedAt: Date.now() });
     const ids = new Set(this.s.tasks.filter((task) => task.productId === productId).map((task) => task.id));
-    this.s.inbox = this.s.inbox.filter((item) => !ids.has(item.taskId));
-    this.s.tasks = this.s.tasks.filter((task) => !ids.has(task.id));
-    this.s.products = this.s.products.filter((entry) => entry.id !== productId);
+    const next = {
+      ...this.activeState(),
+      inbox: this.s.inbox.filter((item) => !ids.has(item.taskId) && this.store.history.item(item.taskId)?.productId !== productId),
+      tasks: this.s.tasks.filter((task) => !ids.has(task.id)),
+      products: this.s.products.filter((entry) => entry.id !== productId),
+      ...(this.s.work ? { work: { ...this.s.work, version: this.s.work.version + 1 } } : {}),
+    };
+    // Save all three changes together before showing removal. A failed disk write leaves the live
+    // product, its history, and the permanent product record exactly as they were.
+    this.store.removeProduct(productId, next, () => this.tracking.log.recordProduct({ id: product.id, name: product.name, repo: product.repo, removedAt: Date.now() }));
+    this.s.inbox = next.inbox;
+    this.s.tasks = next.tasks;
+    this.s.products = next.products;
+    this.s.work = next.work;
+    this.forgetProductHistory(productId);
     this.commit();
   }
 
@@ -416,8 +434,8 @@ export class Engine extends Kernel implements Commands {
 
   addTask(input: NewTaskInput): Id {
     // Sent again after its reply was lost: the task is already there.
-    const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId) : undefined;
-    if (known) return known.id;
+    const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId)?.id ?? this.store.history.byClient(input.clientId) : undefined;
+    if (known) return known;
     const product = this.s.products.find((entry) => entry.id === input.productId);
     if (!product && input.productId) throw new Error("Unknown product");
     const title = input.title.trim();
@@ -437,8 +455,8 @@ export class Engine extends Kernel implements Commands {
       kind: input.kind ?? "feature",
       priority: input.position === "top" ? -1 : queue.length,
       held: false,
-      state: "queued",
-      column: "queue",
+      state: input.backlog ? "backlog" : "queued",
+      column: input.backlog ? "backlog" : "queue",
       holdsSlot: false,
       approvePlan: input.approvePlan ?? false,
       delivery: input.delivery ?? product?.delivery ?? "pull-request",
@@ -447,9 +465,9 @@ export class Engine extends Kernel implements Commands {
       rounds: {},
       sub: 0,
       fixing: false,
-      statusLine: "In the queue",
+      statusLine: input.backlog ? "Review the request before queueing" : "In the queue",
       createdAt: Date.now(),
-      timeline: [{ id: this.id(id), at: Date.now(), text: "You added it to the queue", tone: "you" }],
+      timeline: [{ id: this.id(id), at: Date.now(), text: input.backlog ? "You added it to the backlog" : "You added it to the queue", tone: "you" }],
       session: [],
       queued: [],
       objections: [],
@@ -461,6 +479,43 @@ export class Engine extends Kernel implements Commands {
     this.commit();
     this.schedule();
     return id;
+  }
+
+  queueTask(taskId: Id): void {
+    const task = this.task(taskId);
+    if (!task || task.state !== "backlog") return;
+    task.priority = queueOf(this.s.tasks).length;
+    task.state = "queued";
+    task.column = "queue";
+    task.held = false;
+    task.statusLine = "In the queue";
+    this.log(task, "you", "You reviewed the request and queued it for work");
+    this.commitNow();
+    this.schedule();
+  }
+
+  moveToBacklog(taskId: Id): void {
+    const task = this.task(taskId);
+    if (!task || task.state !== "queued" || task.startedAt !== undefined) return;
+    task.state = "backlog";
+    task.column = "backlog";
+    task.held = false;
+    task.statusLine = "Review the request before queueing";
+    this.renumberQueue();
+    this.log(task, "you", "You moved it to the backlog for review");
+    this.commitNow();
+  }
+
+  updateBacklog(taskId: Id, changes: { title: string; description: string }): void {
+    const task = this.task(taskId);
+    if (!task || task.state !== "backlog") throw new Error("Only backlog requests can be edited before work starts.");
+    const title = changes.title.trim();
+    if (!title || title.length > 200 || changes.description.length > 8000) throw new Error("Give the task a title and a shorter request.");
+    task.title = title;
+    task.description = changes.description.trim();
+    task.area = title.toLowerCase();
+    this.log(task, "you", "You updated the backlog request");
+    this.commitNow();
   }
 
   async setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
@@ -610,6 +665,7 @@ export class Engine extends Kernel implements Commands {
     this.releaseScreen(task);
     this.stopStep(task);
     task.statusLine = "Paused by you";
+    stopCheckProgress(task, Date.now());
     this.dropBlockingItems(taskId);
     this.log(task, "you", "You paused it");
     this.commit();

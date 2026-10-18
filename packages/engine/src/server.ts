@@ -18,6 +18,7 @@ const Said = z.object({ taskId: z.string().optional(), about: z.string().max(400
 const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
 const NewTask = z.object({
+  backlog: z.boolean().optional(),
   startFrom: StartFromSchema.optional(),
   productId: z.string(),
   title: z.string().min(1).max(200),
@@ -46,6 +47,9 @@ const RoleDraft = z.object({
 });
 
 const ARGS = {
+  historyPage: z.tuple([z.object({ productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
+  taskDetails: z.tuple([TaskId]),
+  previewImage: z.tuple([TaskId, z.string().min(1).max(4096)]),
   saveRole: z.tuple([z.string(), RoleDraft]),
   addRole: z.tuple([RoleDraft]),
   resetRole: z.tuple([z.string()]),
@@ -57,6 +61,9 @@ const ARGS = {
   setProductDelivery: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]),
   setTaskStart: z.tuple([z.string(), WorkChoiceSchema]),
   addTask: z.tuple([NewTask]),
+  queueTask: z.tuple([TaskId]),
+  moveToBacklog: z.tuple([TaskId]),
+  updateBacklog: z.tuple([TaskId, z.object({ title: z.string().trim().min(1).max(200), description: z.string().max(8000) })]),
   checkTools: z.tuple([]),
   findClones: z.tuple([]),
   setSetupStep: z.tuple([z.enum(["welcome", "tools", "product", "task"])]),
@@ -136,7 +143,7 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
     if (pending) return;
     pending = setTimeout(() => {
       pending = undefined;
-      const message = JSON.stringify({ type: "state", state: engine.getState() });
+      const message = JSON.stringify({ type: "state", state: engine.windowState() });
       for (const socket of sockets) socket.send(message);
     }, 120);
   };
@@ -179,7 +186,7 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
         const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
         if (!tokenOk(bearer)) return new Response("Unauthorized", { status: 401, headers: healthHeaders });
         if (url.pathname === "/api/health" && request.method === "GET") return Response.json({ ok: true, pid: process.pid }, { headers: healthHeaders });
-        if (url.pathname === "/api/state" && request.method === "GET") return Response.json(engine.getState());
+        if (url.pathname === "/api/state" && request.method === "GET") return Response.json(engine.windowState());
         if (url.pathname === "/api/action" && request.method === "POST") {
           try {
             const result = await dispatch(engine, await request.json());
@@ -198,7 +205,7 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
       maxPayloadLength: 1 << 20,
       open(socket) {
         sockets.add(socket);
-        socket.send(JSON.stringify({ type: "state", state: engine.getState() }));
+        socket.send(JSON.stringify({ type: "state", state: engine.windowState() }));
       },
       async message(socket, data) {
         let id: unknown;

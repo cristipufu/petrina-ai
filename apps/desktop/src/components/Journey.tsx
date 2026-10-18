@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type Keybo
 import { createPortal } from "react-dom";
 import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { Ban, Check, Flag, GitBranch, Hourglass, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Ban, Check, Flag, GitBranch, Hourglass, LoaderCircle, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
 import { journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
 import { ago, duration, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
@@ -138,6 +138,7 @@ export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: 
 }
 
 export function startWords(view: JourneyView, now: number): string {
+  if (view.start.kind === "backlog") return "In backlog";
   if (view.start.kind === "held") return "On hold";
   if (view.start.kind === "queued") return `#${view.start.position} in the queue`;
   const when = ago(view.start.at, now);
@@ -609,7 +610,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
               <dt>Waits for</dt>
               <dd>
                 {node.waitsOn.map((entry) => {
-                  const other = find.task(entry.id);
+                  const other = find.task(entry.id) ?? find.finishedTask(entry.id);
                   return (
                     <span key={entry.id} className="journey-waits">
                       “{other?.title ?? entry.title}” <span className="quiet-text">{other ? LANDING_WORDS[landingOf(other)] : "no longer on the board"}</span>
@@ -698,8 +699,6 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
                 <h4>Failed checks that triggered this fix</h4>
                 <ul className="journey-check-list">{failedChecks.map((check) => <li key={check.text}><strong>{check.text}</strong>{check.reason ? <span>{check.reason}</span> : null}</li>)}</ul>
               </>}
-              <h4>Builder conversation</h4>
-              <p>{node.builderConversation === "resumed" ? "Petrina resumed the builder’s saved conversation for this fix round." : node.builderConversation === "new" ? "Petrina started a new builder conversation for this fix round." : "The conversation used for this fix round was not recorded."}</p>
               <h4>Findings assigned to this fix</h4>
               {findings.length ? <ul className="journey-check-list">{findings.map((finding) => (
                 <li key={finding.id}><strong>{finding.text}</strong>{finding.answer ? <span>Builder’s last answer: {finding.answer.text}</span> : null}</li>
@@ -735,10 +734,11 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
       {node.kind === "petrina" && node.work === "checks" && (() => {
         const recorded = node.productChecks;
         if (recorded?.length) return <div className="journey-context">
-          <h4>Automated check results</h4>
-          <ul className="journey-check-list">{recorded.map((check) => <li key={check.name}>
-            <span className={`label ${check.result === "pass" ? "ok" : "bad"}`}>{check.result === "pass" ? "Passed" : check.result === "did-not-finish" ? "Timed out" : "Failed"}</span>
+          <h4>{recorded.some((check) => check.result === "pending" || check.result === "running") ? "Checks in this run" : "Automated check results"}</h4>
+          <ul className="journey-check-list">{recorded.map((check, index) => <li key={check.id ?? `${index}-${check.name}`}>
+            <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" || check.result === "did-not-finish" ? "bad" : check.result === "running" ? "running" : ""}`}>{check.result === "running" && <LoaderCircle size={12} className="check-progress-spinner" aria-hidden="true" />}{({ pass: "Passed", fail: "Failed", "did-not-finish": "Timed out", running: "Running", pending: "Pending", stopped: "Stopped", skipped: "Not needed" } as const)[check.result]}</span>
             <strong>{check.name}</strong>
+            {check.startedAt !== undefined && <span className="quiet-text num">{duration(check.startedAt, check.endedAt ?? now)}{check.endedAt === undefined ? " so far" : ""}</span>}
             {check.detail ? <span className="journey-check-detail">{check.detail}</span> : null}
           </li>)}</ul>
         </div>;
@@ -798,7 +798,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
       </div>}
 
       {activeTab === "conversation" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-conversation`} aria-labelledby={`journey-tab-${node.id}-conversation`}>
-        {lines.length > 0 ? <StepConversation lines={lines} find={find} now={now} live={node.state === "now" || node.state === "you"} /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
+        {lines.length > 0 ? <StepConversation lines={lines} find={find} now={now} live={node.state === "now" || node.state === "you"} taskId={task.id} finished={task.state === "done" || task.state === "cancelled"} /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
       </div>}
     </section>
   );
