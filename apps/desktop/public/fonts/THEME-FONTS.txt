@@ -1,0 +1,13 @@
+These typefaces ship with Petrina so a theme can use them without loading anything from the network.
+Each is licensed under the SIL Open Font License 1.1. The license text is in Inter-LICENSE.txt in this folder.
+
+Instrument Sans    InstrumentSans.woff2
+Fraunces           Fraunces.woff2
+Source Sans 3      SourceSans3.woff2
+Outfit             Outfit.woff2
+IBM Plex Sans      IBMPlexSans.woff2
+Figtree            Figtree.woff2
+Newsreader         Newsreader.woff2
+Manrope            Manrope.woff2
+
+The family names above are the names the license reserves. Petrina uses those names and does not rename the fonts.

@@ -5,7 +5,9 @@ import { setSingleKeys, useSingleKeys } from "../keyboard";
 import { BrowserNotices, platform, shell, useBrowserPermission, type BrowserPermission, type Platform } from "../notify/channels";
 import { sendTest, setNotificationsOn, useNotifySettings } from "../notify/settings";
 import { turnOnInBrowser } from "../notify/useNotices";
+import type { Theme } from "../theme";
 import { ProductSettings } from "./ProductSettings";
+import { ThemeChoices } from "./ThemeMenu";
 
 /** macOS shows no banner for the app in front, so the Mac test waits for the person to switch away. */
 const MAC_TEST_DELAY_MS = 5000;
@@ -55,7 +57,7 @@ function Switch({ on, onToggle, labelledBy, describedBy, disabled = false }: { o
  * single-key shortcuts. Products: each product's name and delivery defaults; `product` is the
  * one open there.
  */
-export function SettingsPage({ state, product, onProduct, onShortcuts }: { state: State; product: string | undefined; onProduct: (productId: string | undefined) => void; onShortcuts: () => void }) {
+export function SettingsPage({ state, product, onProduct, onShortcuts, theme, onTheme }: { state: State; product: string | undefined; onProduct: (productId: string | undefined) => void; onShortcuts: () => void; theme: Theme; onTheme: (theme: Theme) => void }) {
   return (
     <div className="page settings-page">
       <div className="page-head">
@@ -64,6 +66,11 @@ export function SettingsPage({ state, product, onProduct, onShortcuts }: { state
           <p>For the whole app. Notifications are kept {desktop ? "on this computer, for the desktop app" : "in this browser, for this site"}; products are kept by the engine.</p>
         </div>
       </div>
+      <section className="settings-section" aria-labelledby="settings-appearance">
+        <h2 className="section-title" id="settings-appearance">Appearance</h2>
+        <p className="section-hint">Light and dark looks for the whole app. The same choice is in the top bar.</p>
+        <ThemeChoices theme={theme} onTheme={onTheme} framed label="Appearance" idPrefix="theme-settings" />
+      </section>
       <NotificationSettings />
       <KeyboardSettings onShortcuts={onShortcuts} />
       <ProductSettings state={state} open={product} onOpen={onProduct} />

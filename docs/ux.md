@@ -306,13 +306,14 @@ Cards, board columns, the Agents page and the inbox show no usage numbers, so th
 
 ## Settings
 
-One page for the whole app, from the bottom of the rail or with ⌘, (Ctrl+, on Windows and Linux). It uses the same page header, type and spacing as the other pages, in light and dark. Each part of Petrina adds its own section here, so there is never a second settings surface.
+One page for the whole app, from the bottom of the rail or with ⌘, (Ctrl+, on Windows and Linux). It uses the same page header, type and spacing as the other pages, in every look. Each part of Petrina adds its own section here, so there is never a second settings surface.
 
+- **Appearance:** the looks, grouped Light and Dark, each with its name and one sentence. The same list is in the top bar and in the command palette ("Use the Ink theme", and the same for the others).
 - **Notifications:** one switch ("Notify me when the squad needs me"), a line about permission, and **Send a test notification**. The line is honest: a browser says it allows Petrina's notifications, blocks them (with how to allow them), or has not been asked yet. The desktop app cannot read the system's setting, so it says so, suggests the test, and names where to allow Petrina: System Settings › Notifications on a Mac, Settings › System › Notifications on Windows, the desktop's notification settings on Linux. It never says "allowed" without having checked. On a Mac the test goes out after five seconds, because macOS shows no banner for the app in front. With the switch off the test is unavailable.
 - **Keyboard:** the single-key shortcuts switch (the same choice as in the command palette) and a button that lists every keyboard shortcut.
 - **Products:** each product's name, what happens when its work is ready, and removal, as described under Product names and settings.
 - **Your terminal:** where Take over in terminal opens. For now it is in the Library, under Your terminal.
-- Later: pool limit and caps per tool, default checkpoints, appearance (light, dark or system), where data lives. (There is no permission list: Petrina remembers no permission answers.)
+- Later: pool limit and caps per tool, default checkpoints, where data lives. (There is no permission list: Petrina remembers no permission answers.)
 
 ## First run
 
@@ -327,8 +328,8 @@ Then the board, with the first card on its Plan step and a one-time tip that fol
 
 ## Visual language
 
-- Calm and airy, shared neutral surfaces. Light mode puts white content on cool off-white surroundings; dark mode puts visibly raised charcoal surfaces on graphite. Both are deliberate, not inverted.
-- One accent colour (indigo in light mode, violet in dark mode), used for the one solid button, New task, and for selection. Decisions lead with a charcoal button in light mode and a pale one in dark mode. Secondary actions are neutral surfaces or plain text. Semantic colours: running blue, needs-you amber, done green, failed red, queued slate.
+- Six looks, three light and three dark: Ink, Clay, Tide, Midnight, Ember and Fathom. Each sets its surfaces, accent, type, corners and spacing. Light looks stay light and dark looks stay dark. Semantic colours stay the same in every look: running blue, needs-you amber, done green, failed red, queued slate. The accent stays a different hue from those, and from the gold of something that needs you.
+- The accent is the one solid button, New task, and selection. Decisions lead with a dark button on a light look and a pale button on a dark look. Secondary actions are neutral surfaces or plain text. The choice is in the top bar (and in More when the window is narrow), at the top of Settings, and in the command palette.
 - Fewer borders, pills and chips: states, counts and tool information are quiet text.
 - Each role has an icon and a colour. Roles you add pick their own:
 
@@ -348,7 +349,7 @@ Then the board, with the first card on its Plan step and a one-time tip that fol
 
 ### Type
 
-Inter, bundled with the app (the window's security policy only loads fonts from the app itself), with its standard letterforms. Sizes and line heights:
+The sizes and line heights below are the same in every look. A look chooses the typeface, shipped with the app (the window only loads fonts from the app itself). Inter is the fallback. Large titles use the look's display face; card titles stay on the text face. Clay and Ember use a serif for those titles.
 
 | Use | Size / line height | Weight |
 |---|---|---|
@@ -365,13 +366,12 @@ Inter, bundled with the app (the window's security policy only loads fonts from 
 
 ### Spacing
 
-- A 4px grid, mostly 8, 12, 16, 24 and 32.
-- Cards and inbox items have 16px padding; 12px between cards; 16px board margins.
-- The task sheet has 32px padding and 32px between reading sections (16px in narrow windows).
+- A 4px grid, mostly 8, 12, 16, 24 and 32. A look sets its own card padding, the gap between cards, the board padding and the corner radius.
+- The task sheet has 32px padding and 32px between reading sections (16px in narrow windows). The task workspace's outer corners follow the look.
 
 ### Contrast
 
-- All enabled text is at least 4.5:1 against what it actually sits on, in both themes, including hover. Field outlines, focus rings, the amber edge and other essential boundaries are at least 3:1. Field outlines are stronger than decorative separators.
+- All enabled text is at least 4.5:1 against what it actually sits on, in every look, including hover. Field outlines, focus rings, the amber edge and other essential boundaries are at least 3:1, including a step's outline on the task flow. Field outlines are stronger than decorative separators. The flow's dots are fainter than those outlines.
 - Keyboard focus is always visible.
 
 ## Keyboard

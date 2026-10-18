@@ -2,8 +2,8 @@
 // the inbox and New task. As the window narrows it gives up the wordmark and repeated wording, then the
 // search field, the pool's squares, then pool and theme into More.
 
-import { useCallback, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Bell, Ellipsis, Hand, Moon, Plus, Search, Sun, X } from "lucide-react";
+import { useCallback, useRef, useState, type RefObject } from "react";
+import { Bell, Ellipsis, Hand, Plus, Search, X } from "lucide-react";
 import type { State } from "@petrina/core";
 import type { EngineStatus } from "../engine";
 import { mod } from "../keyboard";
@@ -14,6 +14,7 @@ import { EnginePill } from "./EngineState";
 import { PoolButton, PoolPanel } from "./Pool";
 import { ProductSwitcher } from "./Products";
 import type { SheetTab } from "./TaskCard";
+import { ThemeChoices, ThemeMenu } from "./ThemeMenu";
 
 /** What the top bar keeps at the window's width. */
 export interface BarRoom {
@@ -49,11 +50,6 @@ interface TopBarProps {
 
 export function TopBar({ state, find, status, room, product, onProduct, query, onClearQuery, onPalette, blocking, inboxOpen, inboxButton, onOpenInbox, onToggleInbox, onNewTask, theme, onTheme, onOpen, onAnalytics }: TopBarProps) {
   const { roomy, searchField, poolSquares, barExtras, inboxLabel } = room;
-  const themeButton = (
-    <button className="btn ghost icon" aria-label={theme === "dark" ? "Use the light theme" : "Use the dark theme"} title="Switch theme" onClick={() => onTheme(theme === "dark" ? "light" : "dark")}>
-      {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-    </button>
-  );
   return (
     <header className="topbar">
       <div className="brand" aria-label="Petrina">
@@ -104,7 +100,7 @@ export function TopBar({ state, find, status, room, product, onProduct, query, o
         <Plus size={16} aria-hidden="true" />
         New task
       </button>
-      {barExtras ? themeButton : <MoreMenu state={state} find={find} onOpen={onOpen} onAnalytics={onAnalytics} status={status} themeButton={themeButton} />}
+      {barExtras ? <ThemeMenu theme={theme} onTheme={onTheme} /> : <MoreMenu state={state} find={find} onOpen={onOpen} onAnalytics={onAnalytics} status={status} theme={theme} onTheme={onTheme} />}
     </header>
   );
 }
@@ -115,11 +111,12 @@ interface MoreProps {
   onOpen: (taskId: string, tab?: SheetTab) => void;
   onAnalytics: () => void;
   status: EngineStatus;
-  themeButton: ReactNode;
+  theme: Theme;
+  onTheme: (theme: Theme) => void;
 }
 
 /** In the narrowest windows the pool, the theme and the connection status move here. */
-function MoreMenu({ state, find, onOpen, onAnalytics, status, themeButton }: MoreProps) {
+function MoreMenu({ state, find, onOpen, onAnalytics, status, theme, onTheme }: MoreProps) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -134,12 +131,12 @@ function MoreMenu({ state, find, onOpen, onAnalytics, status, themeButton }: Mor
           <div className="more-section">
             <PoolPanel state={state} find={find} onOpen={onOpen} onDone={close} onAnalytics={onAnalytics} />
           </div>
-          <div className="more-section row between">
+          <div className="more-section">
+            <h4>Theme</h4>
+            <ThemeChoices theme={theme} onTheme={onTheme} onPicked={close} idPrefix="theme-more" />
+          </div>
+          <div className="more-section">
             <EnginePill status={status} />
-            <span className="row" style={{ gap: 8 }}>
-              Theme
-              {themeButton}
-            </span>
           </div>
         </div>
       )}

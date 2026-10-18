@@ -5,8 +5,10 @@ import { queueOf, type Page, type State, type Task } from "@petrina/core";
 import type { PaletteAction } from "./components/CommandPalette";
 import { sim } from "./engine";
 import { mod, setSingleKeys } from "./keyboard";
+import type { Theme } from "./theme";
+import { themes } from "./themes";
 
-export function appActions({ state, singleKeys, newTask, openInbox, go, showShortcuts, sendAction }: { state: State; singleKeys: boolean; newTask: () => void; openInbox: () => void; go: (page: Page) => void; showShortcuts: () => void; sendAction: (action: () => unknown, title: string, detail?: string) => Promise<boolean> }): PaletteAction[] {
+export function appActions({ state, singleKeys, newTask, openInbox, go, showShortcuts, sendAction, theme, onTheme }: { state: State; singleKeys: boolean; newTask: () => void; openInbox: () => void; go: (page: Page) => void; showShortcuts: () => void; sendAction: (action: () => unknown, title: string, detail?: string) => Promise<boolean>; theme: Theme; onTheme: (theme: Theme) => void }): PaletteAction[] {
   return [
     { id: "new", label: "New task", shortcut: `${mod}N`, run: () => newTask() },
     { id: "pool", label: state.pool.paused ? "Resume pool" : "Pause pool", shortcut: "↵", run: () => { void sendAction(() => sim.setPoolPaused(!state.pool.paused), state.pool.paused ? "Pool resumed" : "Pool paused", state.pool.paused ? "New stages can start." : "Running stages finish. Nothing new starts."); } },
@@ -15,6 +17,13 @@ export function appActions({ state, singleKeys, newTask, openInbox, go, showShor
     ...(["board", "products", "agents", "analytics", "library", "settings"] as Page[]).map((page) => ({ id: page, label: `Go to ${page[0]!.toUpperCase()}${page.slice(1)}`, shortcut: ({ board: "B", products: "↵", agents: "A", analytics: "↵", library: "L", settings: `${mod},` })[page], run: () => go(page) })),
     { id: "shortcuts", label: "Keyboard shortcuts", shortcut: "?", run: showShortcuts },
     { id: "toggle-keys", label: `Turn single-key shortcuts ${singleKeys ? "off" : "on"}`, shortcut: "↵", run: () => setSingleKeys(!singleKeys) },
+    ...themes.map((entry) => ({
+      id: `theme-${entry.id}`,
+      label: `Use the ${entry.name} theme`,
+      detail: entry.id === theme.id ? `Current theme. ${entry.blurb}` : entry.blurb,
+      shortcut: "↵",
+      run: () => onTheme(entry),
+    })),
   ];
 }
 

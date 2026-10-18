@@ -295,7 +295,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
 
   // The palette's task rows stay with the task in focus when it opened, and go if that task does.
   const paletteTask = palette ? find.task(paletteTaskId) : undefined;
-  const actions = appActions({ state, singleKeys, newTask: () => newTask(), openInbox, go, showShortcuts: () => setShortcuts(true), sendAction });
+  const actions = appActions({ state, singleKeys, newTask: () => newTask(), openInbox, go, showShortcuts: () => setShortcuts(true), sendAction, theme, onTheme: setTheme });
   const forTask = taskActions({ task: paletteTask, state, sheetOpen: sheet?.taskId === paletteTask?.id, open, message, focusMessage: setMessageFocus, pause, visible, sendAction });
   const blocking = blockingCount(state);
   const docked = inboxOpen && !overlay;
@@ -357,7 +357,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         {!missing && view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {!missing && view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
         {!missing && view === "library" && <LibraryPage state={state} find={find} onRole={setRolePanel} />}
-        {!missing && view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} onShortcuts={() => setShortcuts(true)} />}
+        {!missing && view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} onShortcuts={() => setShortcuts(true)} theme={theme} onTheme={setTheme} />}
       </main>
 
       {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay && !sheet} landing={landing} onOpen={open} onClose={() => closeInbox(false)} selectedId={area === "inbox" ? currentInboxId : undefined} onFocus={(id) => {

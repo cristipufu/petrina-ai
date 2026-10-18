@@ -1,7 +1,7 @@
 /* Petrina: calm by default, loud when it needs you. */
 
-/* Inter ships with the app (see public/fonts/Inter-LICENSE.txt): the window's security policy
-   only loads fonts from the app itself. Standard letterforms, no alternates. */
+/* Typefaces ship with the app (see public/fonts): the window's security policy only loads
+   fonts from the app itself. Inter is the fallback. A theme picks among the faces below. */
 @font-face {
   font-family: "Inter";
   font-style: normal;
@@ -9,6 +9,14 @@
   font-display: swap;
   src: url("/fonts/InterVariable.woff2") format("woff2");
 }
+@font-face { font-family: "Instrument Sans"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/InstrumentSans.woff2") format("woff2"); }
+@font-face { font-family: "Fraunces"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Fraunces.woff2") format("woff2"); }
+@font-face { font-family: "Source Sans 3"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/SourceSans3.woff2") format("woff2"); }
+@font-face { font-family: "Outfit"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Outfit.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/IBMPlexSans.woff2") format("woff2"); }
+@font-face { font-family: "Figtree"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Figtree.woff2") format("woff2"); }
+@font-face { font-family: "Newsreader"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Newsreader.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Manrope.woff2") format("woff2"); }
 
 :root {
   --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -84,6 +92,25 @@
   --shadow-pop: 0 16px 44px rgba(23, 32, 46, 0.16), 0 2px 8px rgba(23, 32, 46, 0.07);
   --radius: 12px;
   --radius-sm: 8px;
+  /* A chosen theme (src/themes) writes over these on the page. These are the fallback before it loads. */
+  --font-display: var(--font);
+  --display-weight: 600;
+  --display-track: -0.02em;
+  --body-track: 0em;
+  --sheet-radius: 16px;
+  --card-pad: 16px;
+  --card-gap: 12px;
+  --board-pad: 20px 20px 32px;
+  --section-gap: 32px;
+  --canvas: var(--bg);
+  --canvas-dot: var(--line-strong);
+  --canvas-dot-size: 20px;
+  --you-fill: var(--amber-soft);
+  --node-radius: var(--radius);
+  --node-shadow: var(--shadow-card);
+  --scrim: rgba(23, 32, 46, 0.2);
+  --logo-from: #8f7dff;
+  --logo-to: #5338e6;
 
   --rail: max(64px, 4rem);
   --inbox: max(360px, 22.5rem);
@@ -166,6 +193,8 @@
   --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.35);
   --shadow-lift: 0 6px 20px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-pop: 0 20px 56px rgba(0, 0, 0, 0.55), 0 3px 10px rgba(0, 0, 0, 0.4);
+  --you-fill: #2a2416;
+  --scrim: rgba(0, 0, 0, 0.5);
 
   --tool-claude-code: #d4704f;
   --tool-codex: #10a37f;
@@ -185,6 +214,7 @@ body {
   font-size: var(--fs-body);
   line-height: var(--lh-body);
   font-weight: 400;
+  letter-spacing: var(--body-track);
   /* Equal-width digits everywhere, so no count, duration, time or pool figure shifts as it changes. */
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -450,10 +480,10 @@ kbd {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 20px 32px;
+  padding: var(--board-pad);
   scrollbar-gutter: stable;
 }
-.board-section + .board-section { margin-top: 32px; }
+.board-section + .board-section { margin-top: var(--section-gap); }
 .section-head {
   display: flex;
   align-items: baseline;
@@ -467,7 +497,7 @@ kbd {
 .section-head .n { color: var(--text-3); font-weight: 500; font-variant-numeric: tabular-nums; }
 .section-head .hint { margin-left: auto; color: var(--text-3); font-weight: 400; font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .section-head.attention svg { color: var(--amber); align-self: center; }
-.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr)); gap: 12px; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr)); gap: var(--card-gap); }
 .card-grid > div { display: flex; }
 .card-grid > div > .card { flex: 1; }
 .board-empty {
@@ -522,7 +552,7 @@ kbd {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  padding: 16px;
+  padding: var(--card-pad);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -848,11 +878,10 @@ kbd {
 .scrim {
   position: fixed;
   inset: 0;
-  background: rgba(23, 32, 46, 0.2);
+  background: var(--scrim);
   animation: fade 0.18s ease both;
   z-index: 20;
 }
-[data-theme="dark"] .scrim { background: rgba(0, 0, 0, 0.5); }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
 .sheet {
@@ -864,7 +893,7 @@ kbd {
   width: min(52.5rem, calc(100vw - 32px));
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--sheet-radius);
   box-shadow: var(--shadow-pop);
   z-index: 21;
   display: flex;
@@ -875,14 +904,14 @@ kbd {
 .sheet.compact { --pad: 16px; top: 8px; right: 8px; bottom: 8px; width: min(52.5rem, calc(100vw - 16px)); }
 
 /* A task opens a workspace: the queue, its full flow, and the selected step's reading panel. */
-.sheet.task-workspace { --pad: 20px; --task-header-height: 56px; inset: 12px; width: auto; border-radius: 12px; }
-[data-theme="light"] .task-workspace .jn.s-you, [data-theme="light"] .task-workspace .jn.s-failed { background: var(--surface); }
+.sheet.task-workspace { --pad: 20px; --task-header-height: 56px; inset: 12px; width: auto; border-radius: var(--sheet-radius); }
+[data-theme="light"] .task-workspace .jn.s-failed { background: var(--surface); }
 .task-workspace .jn .avatar { background: var(--sunken); color: var(--text-2); }
 .task-workspace-bar { display: flex; align-items: center; gap: 20px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .task-workspace-title { min-width: 0; flex: 1; display: grid; gap: 4px; }
 .task-workspace-title .sheet-title { font-size: var(--fs-reading); line-height: var(--lh-reading); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-workspace-columns { flex: 1; min-height: 0; display: grid; grid-template-columns: clamp(180px, 15vw, 240px) minmax(0, 1fr) clamp(360px, 32vw, 560px); }
-.task-list { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); background: var(--surface); }
+.task-list { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 88%, var(--bg)); }
 .task-list-heading { display: flex; align-items: center; justify-content: space-between; height: var(--task-header-height); min-height: var(--task-header-height); flex: none; padding: 0 20px; border-bottom: 1px solid var(--line); font-size: var(--fs-control); }
 .task-list-heading h2 { font-size: inherit; font-weight: 600; }
 .task-list-scroll { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
@@ -930,7 +959,7 @@ kbd {
 .workspace-journey .journey-head h2 { white-space: nowrap; }
 .workspace-journey .journey-head h2 { font-size: var(--fs-control); }
 .workspace-journey .journey-head h2 span { margin-left: 8px; font-size: var(--fs-meta); font-weight: 400; }
-.workspace-journey .journey-canvas { flex: 1; min-height: 0; margin: 0; border: 0; background-color: var(--bg); background-image: radial-gradient(var(--line-strong) 0.8px, transparent 0.8px); background-size: 20px 20px; }
+.workspace-journey .journey-canvas { flex: 1; min-height: 0; margin: 0; border: 0; }
 .workspace-journey > .note { padding: 8px 16px; border-top: 1px solid var(--line); }
 @container (max-width: 400px) {
   .workspace-journey .journey-head h2 span, .workspace-journey .journey-now span { display: none; }
@@ -1165,6 +1194,20 @@ kbd {
 }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
 .popover h4 { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; margin-bottom: 4px; }
+.theme-menu { position: relative; }
+.theme-popover { width: min(22rem, calc(100vw - 32px)); padding: 8px; }
+.theme-group + .theme-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.theme-group-label { margin: 6px 8px 2px; color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; }
+.popover .theme-group-label { margin: 6px 8px 2px; }
+.theme-choice { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: transparent; min-height: 44px; padding: 6px 8px; border-radius: var(--radius-sm); color: var(--text); text-align: left; }
+.theme-choice:hover { background: var(--hover); }
+.theme-choice.on { background: var(--selected); }
+.theme-swatch { width: 14px; height: 14px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.theme-copy { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.theme-name { font-weight: 600; font-size: var(--fs-body); line-height: var(--lh-body); }
+.theme-blurb { color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.theme-choice svg { flex: none; color: var(--accent-text); }
+.theme-choices.framed { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-card); padding: 8px; }
 .popover p { margin: 0 0 12px; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
 .stepper-input { display: inline-flex; align-items: center; border: 1px solid var(--field); border-radius: var(--radius-sm); overflow: hidden; }
 .stepper-input button { border: 0; background: transparent; width: 36px; height: 34px; display: grid; place-items: center; color: var(--text-2); }
@@ -1279,8 +1322,7 @@ kbd {
   padding: 24px;
   animation: pop 0.18s ease both;
 }
-.dialog-scrim { position: fixed; inset: 0; background: rgba(23, 32, 46, 0.26); z-index: 40; animation: fade 0.18s ease both; }
-[data-theme="dark"] .dialog-scrim { background: rgba(0, 0, 0, 0.5); }
+.dialog-scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 40; animation: fade 0.18s ease both; }
 :is(.dialog, .first-run) .title-input { width: 100%; border: 0; outline: 0; font-size: var(--fs-panel); line-height: var(--lh-panel); font-weight: 600; background: transparent; color: var(--text); padding: 8px 0; letter-spacing: -0.01em; }
 /* The browser's own placeholder grey is too faint on dark surfaces. */
 :is(.dialog, .first-run) .title-input::placeholder { color: var(--text-3); opacity: 1; }
@@ -1413,6 +1455,15 @@ kbd {
 .setup-main { flex: 1; display: grid; place-items: start center; padding: 48px 16px 64px; }
 .setup-card { width: min(40rem, 100%); display: grid; gap: 16px; padding: 32px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-card); }
 .setup-card h1 { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 600; letter-spacing: -0.02em; }
+.sheet-title,
+.section-head,
+.inbox-head h2,
+.page-head h1,
+.setup-card h1 {
+  font-family: var(--font-display);
+  letter-spacing: var(--display-track);
+  font-weight: var(--display-weight);
+}
 .setup-card h1:focus { outline: none; }
 .setup-card .setup-lead { color: var(--text-2); font-size: var(--fs-reading); line-height: var(--lh-reading); }
 .setup-card .quiet { color: var(--text-3); }
@@ -1726,8 +1777,8 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 /* The steps as a list, for screen readers and the keyboard: the box it is on shows the focus ring. */
 .journey-list { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; list-style: none; }
 
-/* Edge to edge across the sheet, on the quieter surface, so the boxes stand out on it. */
-.journey-canvas { position: relative; margin: 0 calc(-1 * var(--pad)); background: var(--sunken); border-block: 1px solid var(--line); }
+/* Edge to edge across the sheet. The ground is quieter than the steps, and its dots are fainter than their outlines. */
+.journey-canvas { position: relative; margin: 0 calc(-1 * var(--pad)); border-block: 1px solid var(--line); background-color: var(--canvas); background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px); background-size: var(--canvas-dot-size) var(--canvas-dot-size); }
 .journey-diagram { position: relative; width: 100%; }
 /* Watched for text size changes: it is always 1rem square. */
 .journey-rem { position: absolute; top: 0; left: 0; width: 1rem; height: 1rem; visibility: hidden; pointer-events: none; }
@@ -1752,36 +1803,36 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .jn-mark.failed { background: var(--red-soft); color: var(--red-text); }
 .jn-mark.cancelled { background: var(--hover); color: var(--text-2); }
 
-/* An agent's step: role, tool and model, time and outcome. Outlines on the journey use --field, a boundary that must be seen (3:1 on the canvas in both themes). */
-.jn.k-box { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--field); box-shadow: var(--shadow-card); overflow: hidden; }
+/* An agent's step: role, tool and model, time and outcome. Outlines on the journey use --field, a boundary that must be seen (3:1 on the canvas in every theme). */
+.jn.k-box { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: var(--node-radius); background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); overflow: hidden; }
 .jn-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
 .jn-head .jn-name { flex: 1; }
 .jn.k-box.s-now { border: 2px solid var(--blue); box-shadow: 0 0 0 4px var(--blue-soft), var(--shadow-lift); }
 .jn.k-box.s-now.r-paused, .jn.k-box.s-now.r-waiting { border: 2px solid var(--field); box-shadow: var(--shadow-card); }
 .jn.k-box.s-now .jn-foot { color: var(--text); }
-.jn.k-box.s-you { background: var(--amber-soft); border: 2px solid var(--amber); }
+.jn.k-box.s-you { background: var(--you-fill); border: 2px solid var(--amber); }
 .jn.k-box.s-you .jn-foot { color: var(--amber-text); font-weight: 600; }
 .jn.k-box.s-failed { background: var(--red-soft); border: 2px solid var(--red); }
 .jn.k-box.s-failed .jn-foot { color: var(--red-text); font-weight: 600; }
 .jn.k-box.s-cancelled { background: var(--surface); }
 
 /* What waits for you: a capsule with your icon. */
-.jn.k-you { display: flex; align-items: center; gap: 8px; padding: 8px 20px 8px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--shadow-card); }
-.jn.k-you.s-you { background: var(--amber-soft); border: 2px solid var(--amber); }
+.jn.k-you { display: flex; align-items: center; gap: 8px; padding: 8px 20px 8px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); }
+.jn.k-you.s-you { background: var(--you-fill); border: 2px solid var(--amber); }
 .jn.k-you.s-you .jn-foot { color: var(--amber-text); font-weight: 600; }
 .jn.k-you .jn-foot { -webkit-line-clamp: 1; display: -webkit-box; }
 .jn-you-icon { width: 24px; height: 24px; flex: none; }
 .jn-you-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 /* Where it started and where it ended. */
-.jn.k-start, .jn.k-end, .jn.k-rest { display: flex; align-items: center; gap: 8px; padding: 4px 16px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); color: var(--text-2); font-weight: 500; }
+.jn.k-start, .jn.k-end, .jn.k-rest { display: flex; align-items: center; gap: 8px; padding: 4px 16px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); color: var(--text-2); font-weight: 500; }
 .jn-start-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--text-3); }
 .jn-point-text { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .jn.k-end { color: var(--text); font-weight: 600; }
 .jn.k-end.e-done { border: 2px solid var(--green); color: var(--green-text); }
 .jn.k-end.e-pending { border: 2px solid var(--field); }
 .jn.k-end.e-cancelled, .jn.k-end.e-unconfirmed { color: var(--text-2); }
-.jn.k-rest { background: transparent; border: 1.5px dashed var(--field); }
+.jn.k-rest { background: transparent; border: 1.5px dashed var(--field); box-shadow: none; }
 .jn.k-start .jn-point-text { white-space: nowrap; }
 
 /* Steps still ahead: dashed outlines and no fill, with text as readable as the rest. */
@@ -1794,8 +1845,8 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 /* Questions and permission requests hang under the step that asked. */
 .jn-asks { position: relative; list-style: none; margin: 0.75rem 0 0; padding: 0; width: 11rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .jn-asks::before { content: ""; position: absolute; left: 50%; top: -0.75rem; height: 0.75rem; border-left: 1.5px solid var(--field); }
-.jn-ask { height: 4rem; display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); }
-.jn-ask.open { background: var(--amber-soft); border: 2px solid var(--amber); }
+.jn-ask { height: 4rem; display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); }
+.jn-ask.open { background: var(--you-fill); border: 2px solid var(--amber); }
 .jn-ask .jn-you-icon { width: 20px; height: 20px; }
 .jn-ask-text { min-width: 0; display: flex; flex-direction: column; }
 .jn-ask-label { color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -1821,7 +1872,8 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 @keyframes je-flow { to { stroke-dashoffset: -11; } }
 .je-line.paused { stroke-width: 2; }
 .je-line.ahead { stroke-dasharray: 4 4; }
-.je-label, .journey-label-measure { position: absolute; pointer-events: none; text-align: center; padding: 0 2px 2px; font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 500; color: var(--text-2); overflow-wrap: anywhere; }
+.je-label, .journey-label-measure { position: absolute; pointer-events: none; text-align: center; padding: 0 4px; border-radius: 4px; font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 500; color: var(--text-2); overflow-wrap: anywhere; }
+.je-label { background: color-mix(in srgb, var(--canvas) 86%, transparent); }
 /* Same text layout as the labels, outside React Flow's zoom, so long messages get enough space. */
 .journey-label-measure { visibility: hidden; width: max-content; top: 0; left: 0; }
 .je-label.back, .je-label.you { color: var(--amber-text); }

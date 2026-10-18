@@ -45,15 +45,16 @@ export const ROLE_ICONS: Record<RoleIcon, LucideIcon> = {
 };
 
 export function Logo({ size = 24 }: { size?: number }) {
+  const id = `petrina-logo-${useId().replace(/:/g, "")}`;
   return (
     <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true">
       <defs>
-        <linearGradient id="petrina-g" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#8f7dff" />
-          <stop offset="1" stopColor="#5338e6" />
+        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" style={{ stopColor: "var(--logo-from)" }} />
+          <stop offset="1" style={{ stopColor: "var(--logo-to)" }} />
         </linearGradient>
       </defs>
-      <rect width="64" height="64" rx="16" fill="url(#petrina-g)" />
+      <rect width="64" height="64" rx="16" fill={`url(#${id})`} />
       <circle cx="33" cy="26" r="10.5" fill="none" stroke="#fff" strokeWidth="5" />
       <path d="M22.5 26v23" stroke="#fff" strokeWidth="5" strokeLinecap="round" />
       <circle cx="42.5" cy="45.5" r="3.4" fill="#fff" />
