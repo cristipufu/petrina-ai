@@ -11,6 +11,8 @@ import { join } from "node:path";
 export interface CliScript {
   /** Stay open while this file exists. */
   hold?: string;
+  /** The test worker that owns this fake terminal session. The fake exits if the suite is interrupted. */
+  ownerPid?: number;
   /** Files to commit, one commit each, as the coordinator would by hand. */
   commit?: Record<string, string>;
   /** Files to leave changed but not committed. */
@@ -37,7 +39,16 @@ if (session && existsSync(file)) {
   writeFileSync(file, JSON.stringify(conversation));
 }
 
-while (script.hold && existsSync(script.hold)) await Bun.sleep(50);
+while (script.hold && existsSync(script.hold)) {
+  if (script.ownerPid !== undefined) {
+    try {
+      process.kill(script.ownerPid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
+    }
+  }
+  await Bun.sleep(50);
+}
 const git = (...rest: string[]) => execFileSync("git", rest, { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
 for (const [name, text] of Object.entries(script.commit ?? {})) {
   writeFileSync(join(process.cwd(), name), text);

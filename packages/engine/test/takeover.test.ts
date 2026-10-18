@@ -42,7 +42,7 @@ async function start(scenario: Scenario, description = "", open: (launcher: stri
   engine.setProductDelivery(productId, "local", false);
   const taskId = engine.addTask({ productId, title: "Add a greeting", description });
   const task = () => engine.getState().tasks.find((entry) => entry.id === taskId)!;
-  const cli = (script: CliScript) => writeFileSync(join(fakes.dir, "cli.json"), JSON.stringify(script));
+  const cli = (script: CliScript) => writeFileSync(join(fakes.dir, "cli.json"), JSON.stringify({ ...script, ownerPid: script.ownerPid ?? process.pid }));
   const finished = () => waitFor(() => (task().state === "done" ? task() : task().state === "failed" ? Promise.reject(new Error(task().error)) : undefined), "the task to finish", 90_000);
   /** Wait until the agent of a role is at work in a conversation that has its instructions. */
   const working = (roleId: string) => waitFor(() => task().agent?.roleId === roleId && task().conversation?.briefed && task().conversation?.roleId === roleId && task(), `the ${roleId} to be at work`);
@@ -59,10 +59,39 @@ function cliRuns(fakes: Fakes): { args: string[]; cwd: string; env: string[] }[]
   return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
 }
 
+function unusedPid(): number {
+  let pid = process.pid + 1;
+  for (;;) {
+    try { process.kill(pid, 0); pid += 1; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return pid;
+      throw error;
+    }
+  }
+}
+
 const takeoverDir = (data: string, taskId: string) => join(data, "takeover", taskId);
 const LAUNCHER = process.platform === "darwin" ? "open.command" : "open.sh";
 
 describe.skipIf(!posix)("take over a builder in the terminal, then hand back", () => {
+  it("lets the fake terminal app exit when its test worker is gone", async () => {
+    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+    try {
+      await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
+      await run.working("builder");
+      const hold = join(run.root, "hold");
+      writeFileSync(hold, "");
+      run.cli({ hold, ownerPid: unusedPid() });
+
+      const opened = await run.engine().takeOver(run.taskId);
+      expect(opened.problem).toBeUndefined();
+      await waitFor(async () => (await sessionState(takeoverDir(run.data, run.taskId))) === "ended", "the orphaned fake app to close");
+      expect(run.fakes.marked("cli-done")).toBe(true);
+    } finally {
+      run.engine().shutdown();
+    }
+  });
+
   it("saves its unfinished work, keeps its seat, refuses while the app is open, and the same agent finishes on the same conversation", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
     await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
