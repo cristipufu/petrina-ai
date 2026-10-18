@@ -46,6 +46,23 @@ describe("prompts", () => {
     expect(prompt).toContain("look for bugs, missing tests, weakened tests");
   });
 
+  it("checks nearby cases for regressions on every product without needing a local review guide", () => {
+    const roles = libraryRoles({ edits: { "code-reviewer": { purpose: "Review the changed checkout." } }, added: [] });
+    const role = roles.find((entry) => entry.id === "code-reviewer")!;
+    const rule = "A confirmed regression caused by the change is Important, even when the intended case now works.";
+    expect(role.instructions).toContain(rule);
+    for (const product of [DEMO_PRODUCTS[0]!, { ...DEMO_PRODUCTS[0]!, id: "another-product", name: "Another product" }]) {
+      const text = buildPrompt({ ...context(role), product, roles, sections: [] });
+      expect(text).toContain("check nearby cases affected by the same code or rule");
+      expect(text).toContain("Compare with the starting version.");
+      expect(text.split(rule)).toHaveLength(2);
+      expect(text).toContain("do not run the full test suite or build again");
+    }
+    // A deliberate instructions override stays the coordinator's own wording.
+    const custom = libraryRoles({ edits: { "code-reviewer": { instructions: "Review checkout compatibility." } }, added: [] }).find((entry) => entry.id === "code-reviewer")!;
+    expect(custom.instructions).toBe("Review checkout compatibility.");
+  });
+
   it("tells every role except the Release Manager how to ask, without granting the screen", () => {
     for (const role of BUILT_IN_ROLES) {
       expect(mayAskScreen(role)).toBe(role.id !== "release-manager");
