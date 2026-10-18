@@ -49,10 +49,16 @@ export function currentSlow(): number {
  */
 function busy(): number {
   const [load] = loadavg();
-  return Math.min(8, Math.max(1, Math.ceil((load ?? 0) / Math.max(1, cpus().length))));
+  // A test worker often starts several Bun, Git and engine processes at once. On a many-core Mac,
+  // waiting until load exceeds the core count misses that I/O and process-start contention. Start
+  // stretching waits once the machine is near full, then scale faster as its run queue grows.
+  const ratio = (load ?? 0) / Math.max(1, cpus().length);
+  return Math.min(8, Math.max(1, Math.ceil(1 + Math.max(0, ratio - 0.75) * 4)));
 }
-// Every test that drives real processes imports this file: one limit for all of them, stretched like the waits.
-setDefaultTimeout(90_000 * SLOW);
+// Bun's per-test deadline is fixed when a test starts, while SLOW can grow as concurrent workers
+// make the machine busier. Give it the full documented cap so the adaptive waits below, rather
+// than a stale startup sample, decide when a slow process test has really stopped making progress.
+setDefaultTimeout(90_000 * 8);
 
 export const CLI = join(import.meta.dir, "../src/cli.ts");
 export const HARNESS = join(import.meta.dir, "harness.ts");

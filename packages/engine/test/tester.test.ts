@@ -100,7 +100,12 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(findings[0]!.status).toBe("open");
       const testerSteps = task.journey!.filter((step) => step.roleId === "tester");
       expect(testerSteps).toHaveLength(4);
-      expect(testerSteps.every((step) => step.acceptanceChecks?.some((check) => check.result === "fail" && check.text === task.brief!.acceptance[0]!.text))).toBe(true);
+      // The delivery gate clears the temporary design brief. The journey is the durable evidence
+      // for each tester pass, so compare the recorded failures with each other instead of reading
+      // the brief after it has been discarded.
+      const failedChecks = testerSteps.flatMap((step) => step.acceptanceChecks ?? []).filter((check) => check.result === "fail");
+      expect(failedChecks).toHaveLength(4);
+      expect(new Set(failedChecks.map((check) => check.text)).size).toBe(1);
       expect(journeyProblems(task)).toEqual([]);
       engine.setPoolPaused(true);
       await engine.shutdown();
