@@ -100,7 +100,7 @@ export class Engine extends Kernel implements Commands {
     this.tools = new ToolChecks(this);
     this.turns = new Turns(this, this.tools);
     this.guide = new GuideKeeper(this, this.turns);
-    this.context = new Context(this, this.guide);
+    this.context = new Context(this, this.guide, (task) => this.checks.current(task));
     this.checks = new ProductChecks(this, this.turns, this.context);
     this.connections = new Connections(this);
     this.updates = new Updates(this, this.connections);

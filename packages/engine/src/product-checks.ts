@@ -217,29 +217,41 @@ export class ProductChecks {
   /** Whether the last run used the same code and definitions. A squash keeps its evidence, pass or fail. */
   private async ranOn(task: MTask, checks: readonly ProductCheck[]): Promise<boolean> {
     if (!task.checks || !task.worktree) return false;
+    if (await git.trackedChanged(task.worktree)) return false;
+    const hooks = await this.noteHooks(task);
+    const expected = [
+      ...checks.filter((check) => check.argv.length).map((check) => commandText(check.argv)),
+      ...(hooks.includes("pre-commit") ? ["git hook run --ignore-missing pre-commit"] : []),
+      ...(hooks.includes("commit-msg") ? ["git hook run commit-msg"] : []),
+    ];
+    if (JSON.stringify(expected) !== JSON.stringify(task.checks.results.map((run) => run.command))) return false;
     const definition = await this.definition(task, checks);
     if (task.checks.definition) {
       if (task.checks.definition !== definition) return false;
     } else {
       // Older runs identify product commands, but cannot establish which hook file or contents ran.
       // Verify hooks once, then save their complete definition instead of guessing from command text.
-      const hooks = await this.noteHooks(task);
       if (hooks.length) return false;
-      const commands = checks.filter((check) => check.argv.length).map((check) => commandText(check.argv));
-      if (JSON.stringify(commands) !== JSON.stringify(task.checks.results.map((run) => run.command))) return false;
     }
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
     const matched = (!!tree && task.checks.tree === tree) || (!!sha && task.checks.sha === sha);
     if (matched) task.checks.definition = definition;
     // A hook may launch checks outside the committed tree: unchanged launcher bytes cannot prove
     // their inputs stayed unchanged. Revalidate passes; a captured failure still blocks without retrying.
-    if (matched && task.checks.results.every((run) => run.ok) && (await this.noteHooks(task)).length) return false;
+    if (matched && task.checks.results.every((run) => run.ok) && hooks.length) return false;
     return matched;
+  }
+
+  /** The same freshness rule for agent evidence as for the review and delivery gates. */
+  async current(task: MTask): Promise<boolean> {
+    const product = this.k.productOf(task);
+    return this.ranOn(task, product && task.worktree ? checksFor(product, task.worktree) : []);
   }
 
   /** Revalidating opaque or older hooks must not retry product checks with unchanged code and commands. */
   private async savedProductResults(task: MTask, checks: readonly ProductCheck[]): Promise<readonly CheckRun[] | undefined> {
     if (!task.checks || !task.worktree) return undefined;
+    if (await git.trackedChanged(task.worktree)) return undefined;
     if (task.checks.definition && (task.checks.definition !== await this.definition(task, checks) || !(await this.noteHooks(task)).length)) return undefined;
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
     if (!(tree && task.checks.tree === tree) && !(sha && task.checks.sha === sha)) return undefined;

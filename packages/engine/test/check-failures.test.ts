@@ -62,6 +62,60 @@ const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 const checkSteps = (task: Task) => task.journey!.filter((step) => step.kind === "petrina" && step.work === "checks");
 
 describe.concurrent("failed checks are evidence until something changes", () => {
+  it("reuses one passing run through read-only reviewers, acceptance and delivery without dropping an acceptance pass", async () => {
+    const f = await fixture(true, { planner: "tester-first", builder: "plain" });
+    try {
+      f.setCheck("--pass");
+      const task = await f.delivery();
+      expect(f.runs()).toEqual(["passed"]);
+      expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(f.fakes.openings("code reviewer").length).toBeGreaterThan(0);
+      expect(f.fakes.openings("code reviewer").every((prompt) => prompt.includes("Current product checks, run by Petrina itself"))).toBe(true);
+      expect(checkSteps(task)).toHaveLength(1);
+      f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
+      await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
+      expect(f.runs()).toEqual(["passed"]);
+      expect(f.fakes.openings("tester")).toHaveLength(1);
+    } finally { f.engine.shutdown(); }
+  });
+
+  it("tells acceptance testing whether saved checks really cover the code and required commands", async () => {
+    const f = await fixture();
+    try {
+      f.setCheck("--pass");
+      await f.delivery();
+      const task = f.engine.task(f.taskId)!;
+      const saved = structuredClone(task.checks!);
+      const evidence = async () => (await f.engine["context"].sectionsFor(task, "tester")).find((section) => section.title.includes("product checks"));
+      expect(await evidence()).toEqual(expect.objectContaining({ title: "Current product checks, run by Petrina itself", body: expect.stringContaining("do not rerun the full checks") }));
+
+      writeFileSync(join(task.worktree!, "greeting.txt"), "Uncommitted change\n");
+      expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
+      git(task.worktree!, "add", "greeting.txt");
+      git(task.worktree!, "commit", "-q", "-m", "A real change");
+      expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
+      git(task.worktree!, "reset", "--hard", saved.sha!);
+      expect((await evidence())?.title).toBe("Current product checks, run by Petrina itself");
+
+      f.setCheck("--pass", "--changed");
+      expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
+      f.setCheck("--pass");
+      task.checks!.results = [{ ...saved.results[0]!, ok: false, timedOut: true }];
+      expect((await evidence())?.body).toContain("not passing acceptance evidence");
+      expect((await evidence())?.body).not.toContain("Use them for automated acceptance");
+      task.checks!.results = [];
+      expect(await evidence()).toBeUndefined();
+      task.checks = structuredClone(saved);
+      f.engine.setProductChecks(f.productId, [
+        { name: "Welcome", command: f.command("--pass") },
+        { name: "Extra", command: f.command("--pass", "--extra") },
+      ]);
+      expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
+      // Building context reads evidence; it never runs checks to make the evidence current.
+      expect(f.runs()).toEqual(["passed"]);
+    } finally { f.engine.shutdown(); }
+  });
+
   it("returns unchanged work twice without using a review round, keeps the failure after restart, and checks a real fix", async () => {
     const f = await fixture();
     try {
@@ -437,7 +491,9 @@ describe.concurrent("failed checks are evidence until something changes", () => 
           else {
             expect(again.at).toBeGreaterThan(refreshed.at);
             expect(again.results[0]).toEqual(refreshed.results[0]);
-            expect(again.results.map(({ ms, ...run }) => run)).toEqual(refreshed.results.map(({ ms, ...run }) => run));
+            expect(again.results.map(({ ms, logPath, ...run }) => run)).toEqual(refreshed.results.map(({ ms, logPath, ...run }) => run));
+            expect(again.results.at(-1)!.logPath).not.toBe(refreshed.results.at(-1)!.logPath);
+            expect(readFileSync(again.results.at(-1)!.logPath!, "utf8")).toBe(readFileSync(refreshed.results.at(-1)!.logPath!, "utf8"));
             expect(again.definition).toBe(refreshed.definition);
             expect(again.tree).toBe(refreshed.tree);
           }

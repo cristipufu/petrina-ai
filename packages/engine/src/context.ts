@@ -14,7 +14,7 @@ export interface Section {
 }
 
 export class Context {
-  private readonly parts: Record<ContextPart, (task: MTask, roleId: Id, points: readonly string[]) => Section[]> = {
+  private readonly parts: Record<ContextPart, (task: MTask, roleId: Id, points: readonly string[], currentChecks: boolean) => Section[]> = {
     notes: (task) => this.notes(task),
     brief: (task) => this.brief(task),
     objections: (task, roleId) => this.objections(task, roleId),
@@ -25,22 +25,24 @@ export class Context {
       return points.length ? [{ title: `Points the coordinator accepted for the review guide, not in REVIEW.md on ${task.base ?? "the base branch"} yet (check them too)`, body: points.map((point) => `- ${point}`).join("\n") }] : [];
     },
     report: (task, roleId) => this.report(task, roleId),
-    "check-results": (task) => this.checkResults(task),
+    "check-results": (task, _roleId, _points, currentChecks) => this.checkResults(task, currentChecks),
     findings: (task) => (task.findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(task.findings as Task["findings"]) }] : []),
   };
 
   constructor(
     private readonly k: Kernel,
     private readonly guide: GuideKeeper,
+    private readonly currentChecks: (task: MTask) => Promise<boolean> = async () => false,
   ) {}
 
   async sectionsFor(task: MTask, roleId: Id): Promise<Section[]> {
     const role = this.k.role(roleId);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
     const points = reads.includes("guide-points") ? await this.guide.pendingPoints(task) : [];
+    const currentChecks = reads.includes("check-results") && !!task.checks?.results.length ? await this.currentChecks(task) : false;
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
     task.queued.splice(0);
-    const sections = CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points));
+    const sections = CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points, currentChecks));
     if (task.handedBack?.length) sections.push({ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") });
     return sections;
   }
@@ -113,9 +115,14 @@ export class Context {
     return sections;
   }
 
-  private checkResults(task: MTask): Section[] {
+  private checkResults(task: MTask, current: boolean): Section[] {
     if (!task.checks?.results.length) return [];
     const lines = task.checks.results.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})`);
-    return [{ title: "The product's checks, run by Petrina itself on this commit (evidence, not an agent's word)", body: lines.join("\n") }];
+    const guidance = current
+      ? task.checks.results.every((run) => run.ok)
+        ? "These complete passing results still match the code, commands and hooks. Use them for automated acceptance; do not rerun the full checks just to confirm them. Exercise every user acceptance item, with focused tests or a build needed to try the product."
+        : "These results match the current work, but some checks failed or did not finish. They are not passing acceptance evidence."
+      : "Historical results: these have not been established to cover the current code, required commands and hooks. Do not use an older pass as proof that this version passes.";
+    return [{ title: current ? "Current product checks, run by Petrina itself" : "Historical product checks, run by Petrina itself", body: [guidance, ...lines].join("\n") }];
   }
 }
