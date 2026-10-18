@@ -1,4 +1,4 @@
-/** Keep macOS from idling to sleep while Petrina owns work that is still in progress. */
+/** Keep macOS awake for active engine work, without holding the display on. */
 export class IdleSleepAssertion {
   private active = false;
   private attempted = false;
@@ -28,7 +28,9 @@ export class IdleSleepAssertion {
       try {
         this.child = (this.options.spawn ?? spawnCaffeinate)(
           "/usr/bin/caffeinate",
-          ["-i", "-w", String(this.options.pid ?? process.pid)],
+          // Idle prevention alone does not keep a maintenance wake running. On AC power,
+          // also hold the system assertion; macOS ignores -s while running on battery.
+          ["-i", "-s", "-w", String(this.options.pid ?? process.pid)],
         );
       } catch {
         // Sleep prevention is best effort. It must never stop the engine from running.

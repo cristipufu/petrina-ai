@@ -209,6 +209,7 @@ Public ACP message chunks also stream into the saved task conversation while the
 - A task waiting at a gate releases its slot. An agent waiting on a mid-stage question keeps it and is shown as waiting on the coordinator.
 - When a slot frees, work already in progress continues first (when the pool cannot take all of it, the tool with more of its limit left goes first), then the first queued task that is not held and whose next tool is under its cap.
 - Lowering a limit never stops a running agent. Each finishes, and its successor waits if the other tasks still fill the new limit. Pausing the pool also holds tasks between agents.
+- On macOS, active engine work holds an idle-sleep assertion and, on AC power, a system-sleep assertion so maintenance sleep does not suspend agents or checks. The display can still sleep. The assertion follows this engine process and is released when work and cleanup drain, including after a pause, or when the engine stops. Other platforms need no helper.
 
 The scheduler is a pure function in `@petrina/core` (`pickStarts`), tested without any I/O.
 

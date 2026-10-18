@@ -8,7 +8,7 @@ const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
 describe("the macOS idle sleep assertion", () => {
-  it("uses only the idle assertion, is tied to this engine, and stops after work drains", () => {
+  it("holds idle and AC system sleep without a display assertion, is tied to this engine, and stops after work drains", () => {
     const commands: { command: string; args: readonly string[]; stops: number }[] = [];
     const assertion = new IdleSleepAssertion({
       platform: "darwin",
@@ -23,7 +23,7 @@ describe("the macOS idle sleep assertion", () => {
     assertion.setActive(true);
     assertion.setActive(true);
     expect(commands).toHaveLength(1);
-    expect(commands[0]).toMatchObject({ command: "/usr/bin/caffeinate", args: ["-i", "-w", "456"] });
+    expect(commands[0]).toMatchObject({ command: "/usr/bin/caffeinate", args: ["-i", "-s", "-w", "456"] });
     assertion.setActive(false);
     assertion.setActive(false);
     expect(commands[0]!.stops).toBe(1);
