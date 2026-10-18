@@ -14,6 +14,7 @@ import {
   landingOf,
   legacyJourney,
   petrinaMoment,
+  recordStepResult,
   stepName,
   syncWait,
   type JourneyTask,
@@ -23,6 +24,22 @@ import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js
 import { addRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS } from "../src/roles.js";
 import type { JourneyStep, State, Task } from "../src/model.js";
 import { Simulator, type Triggers } from "../src/sim.js";
+
+it("keeps a review's actual findings and objection answers when later rounds change the task", () => {
+  const state = createDemoState(1_000_000_000_000);
+  const task = state.tasks.find((entry) => entry.id === "guest-checkout")!;
+  const step = task.journey!.find((entry) => entry.roleId === "architect" && entry.round === 2)!;
+  const record = { ...task, journey: [step] };
+  delete step.endedAt;
+  const objection = { ...task.objections[0]!, answer: "This round's answer." };
+  const finding = { id: "finding", text: "The adjacent flow breaks.", severity: "blocking" as const, raisedBy: "codex-high", confirmedBy: [], status: "open" as const };
+  recordStepResult(record, { objections: [objection], findings: [finding] });
+  objection.answer = "A later answer.";
+  finding.text = "A later report.";
+  expect(step.result!.objections![0]!.answer).toBe("This round's answer.");
+  expect(step.result!.findings![0]!.text).toBe("The adjacent flow breaks.");
+  expect(JSON.parse(JSON.stringify(step)).result).toEqual(step.result);
+});
 
 function emptyState(limit = 2): State {
   return {

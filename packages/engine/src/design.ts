@@ -1,7 +1,7 @@
 // Design convergence: the architect writes the brief and a design reviewer objects, round after round,
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
-import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, JOURNEY_WORDS as W, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type Stage } from "@petrina/core";
+import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, JOURNEY_WORDS as W, recordStepResult, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type Stage } from "@petrina/core";
 import { formatObjections } from "./prompts.js";
 import { BriefResult, ObjectionsResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
@@ -38,6 +38,7 @@ export class Design {
         }
       }
       this.k.log(task, "done", round === 1 ? "Design brief ready" : "Answered every objection", stage.roleId, by);
+      recordStepResult(task, { objections: task.objections.filter((objection) => due.includes(objection.id)) });
       endAgentStep(task, round === 1 ? { outcome: W.wroteBrief, reason: W.briefReady } : { outcome: W.answeredAll, reason: W.objectionsAnswered }, Date.now());
       await this.k.saveRoleEdits(task, stage.roleId, by);
       await this.k.undoReadOnly(task, stage.roleId);
@@ -51,10 +52,12 @@ export class Design {
     const reviewerProfile = stage.reviewerProfileIds?.[0] ?? "sol-xhigh";
     let reviewer = reviewerProfile;
     const result = await this.turns.turn(task, reviewerRole, reviewerProfile, () => this.context.sectionsFor(task, reviewerRole), ObjectionsResult, signal, { used: (id) => (reviewer = id) });
+    const before = task.objections.length;
     for (const objection of result.objections) {
       task.objections.push({ id: this.k.id(`${task.id}-obj`), round, text: objection.text, blocking: objection.blocking, raisedBy: reviewer, status: "open" });
     }
     const blocking = result.objections.filter((objection) => objection.blocking).length;
+    recordStepResult(task, { objections: task.objections.slice(before) });
     endAgentStep(task, blocking ? { outcome: W.objections(result.objections.length, blocking), reason: W.blocking(blocking), tone: "back" } : { outcome: W.objections(result.objections.length, 0), reason: W.noBlocking }, Date.now());
     await this.k.undoReadOnly(task, reviewerRole);
     this.k.finishStep(task);
@@ -107,6 +110,7 @@ export class Design {
     });
     task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks };
     task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as MTask["objections"];
+    recordStepResult(task, { objections: task.objections.filter((objection) => answers.has(objection.id) || call.open.includes(objection.id)) });
     this.k.log(task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, by);
     endAgentStep(task, { outcome: W.followed, reason: W.followsCall }, Date.now());
     await this.k.saveRoleEdits(task, stage.roleId, by);

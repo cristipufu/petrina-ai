@@ -695,6 +695,9 @@ describe("screen requests when a tool runs out of usage", () => {
       f.engine.setScreenUse("on");
       f.engine.setPoolPaused(false);
       await waitFor(() => f.asking(id) && f.state().pool.limited?.length && slotUses(f.state()).length === 0, "the screen agent to run out of usage and its peers to finish in the background");
+      // A yielded member frees its seat before its process has fully stopped. Wait for the driver
+      // and its peers to finish before counting prompts, rather than mistaking an in-flight prompt for a new start.
+      await f.engine.settling.get(id);
       expect(switchedOff).toBe(true);
       expect(onScreen(f.state().tasks)).toBeUndefined();
       expect(slotUses(f.state())).toEqual([]);

@@ -1,7 +1,7 @@
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { endAgentStep, findingCount, independentVotes, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { endAgentStep, findingCount, independentVotes, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -274,6 +274,8 @@ export class Reviews {
     const important = raised.some((finding) => finding.severity === "important");
     // A confirmed existing finding asks for fixes just as a newly raised one does. Count each once.
     const named = new Set(result.findings.map((finding) => sameFinding(finding.text)));
+    const seen = new Set([...(openStep(task)?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id)]);
+    recordStepResult(task, { findings: task.findings.filter((finding) => seen.has(finding.id) || named.has(sameFinding(finding.text))) });
     const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || named.has(sameFinding(finding.text))));
     this.k.tracking.verdict(task, roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
     const confirmed = result.confirms.length + backed;
@@ -358,6 +360,7 @@ export class Reviews {
             }
             // A partial report is finished work too. Keep its reasons before asking for the rest,
             // so a limit or restart only redoes the missing verdicts on this tool.
+            recordStepResult(task, { findings: task.findings.filter((finding) => ids.has(finding.id)) });
             this.k.commitNow();
             const left = missing();
             return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left)}` : undefined;
@@ -404,6 +407,7 @@ export class Reviews {
       else if (verdict === "nit") finding.severity = "suggestion";
       else finding.severity = "pre-existing";
     }
+    recordStepResult(task, { findings: task.findings.filter((finding) => ids.has(finding.id)) });
     this.k.log(task, real ? "warn" : "done", `${ids.size} checked: ${real} real${ids.size > real ? `, ${ids.size - real} not holding the work back` : ""}`);
     this.k.commit();
     return W.voted(real, ids.size);

@@ -17,6 +17,7 @@ import {
   endYouStep,
   JOURNEY_WORDS as W,
   openStep,
+  recordStepResult,
   settleAsk,
   stepTag,
   syncWait,
@@ -1523,6 +1524,7 @@ export class Simulator {
         const note = revising ? task.notes?.at(-1)?.text : undefined;
         const answers = callAnswers(task.area, dueAnswers(task.objections as Task["objections"], call), call.text, note);
         task.objections = answerByCall(task.objections as Task["objections"], call, answers) as DraftTask["objections"];
+        recordStepResult(task, { objections: task.objections.filter((objection) => answers.some((answer) => answer.id === objection.id) || call.open.includes(objection.id)) });
         task.brief = briefFor(task);
         this.log(d, task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, agent.roleId, agent.profileId);
         this.log(d, task, "done", CALL_WORDS.settled);
@@ -1532,12 +1534,14 @@ export class Simulator {
         return;
       }
       if (task.sub === 0) {
+        const due = task.objections.filter((objection) => objection.status === "open").map((objection) => objection.id);
         for (const objection of task.objections) {
           if (objection.status !== "open") continue;
           objection.status = objection.blocking ? "accepted" : "rejected";
           objection.answer = objection.blocking ? "Changed the design to cover it." : "Out of scope for this task. Added to risks.";
         }
         this.log(d, task, "done", round === 1 ? "Design brief ready" : "Answered every objection", agent.roleId, agent.profileId);
+        recordStepResult(task, { objections: task.objections.filter((objection) => due.includes(objection.id)) });
         endAgentStep(task, round === 1 ? { outcome: W.wroteBrief, reason: W.briefReady } : { outcome: W.answeredAll, reason: W.objectionsAnswered }, d.now);
         task.sub = 1;
         this.startAgent(d, task);
@@ -1553,7 +1557,9 @@ export class Simulator {
                 { blocking: false, text: `Consider remembering the last choice in ${task.area} on this device.` },
               ]
             : laterObjections(task.area, round);
+        const before = task.objections.length;
         for (const objection of raised) task.objections.push({ id: this.id(d, task.id), round, raisedBy: agent.profileId, status: "open", ...objection });
+        recordStepResult(task, { objections: task.objections.slice(before) });
         const blocking = raised.filter((objection) => objection.blocking).length;
         this.log(d, task, "warn", `Raised ${raised.length} objections, ${blocking} blocking`, agent.roleId, agent.profileId);
         this.designRound(d, task, stage, round, raised.length, blocking);
@@ -1575,6 +1581,7 @@ export class Simulator {
       }
       task.brief = briefFor(task);
       this.log(d, task, "done", "Design settled: no blocking objections", agent.roleId, agent.profileId);
+      if (!logged) recordStepResult(task, { objections: [] });
       endAgentStep(task, { outcome: W.objections(0, 0), reason: W.noBlocking }, d.now);
       if (!logged) this.designRound(d, task, stage, round, 0, 0);
       this.moment(d, task, { kind: "design-end", outcome: "settled", rounds: round, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) });
@@ -1637,6 +1644,7 @@ export class Simulator {
       noteRoundEnd(task, stage.id, open.length);
       // The round's step says what its reviewers raised, and where the work goes.
       const raised = task.findings.slice(task.hunt?.findings ?? 0);
+      recordStepResult(task, { findings: raised });
       delete task.hunt;
       endAgentStep(
         task,

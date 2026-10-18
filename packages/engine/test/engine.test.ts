@@ -187,6 +187,8 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(after.objections.find((objection) => objection.id === open[1]!.id)).toMatchObject({ status: "accepted", answer: "Added it to the brief." });
     expect(after.objections.find((objection) => objection.id === open[1]!.id)?.call).toBeUndefined();
     expect(after.objections.some((objection) => objection.status === "open")).toBe(false);
+    const answeredStep = after.journey!.filter((step) => step.roleId === "architect").at(-1)!;
+    expect(answeredStep.result?.objections?.find((objection) => objection.id === open[0]!.id)?.answer).toBe("Removed it from the brief, as the call says.");
     // Following the call was a step of its own: once done, nothing said in it goes to the next one.
     expect(after.stepNotes).toBeUndefined();
     expect(after.stepAttempts).toBeUndefined();
@@ -214,6 +216,7 @@ describe("The coordinator's call on a design disagreement", () => {
     // It got the note and every objection the call covered, and could correct its decisions, tags and notes.
     expect(revised.session.some((line) => line.from === "agent" && line.text === `Revising: ${open.map((objection) => objection.id).join(", ")}. Latest note: - Say where the greeting shows.`)).toBe(true);
     expect(revised.objections.find((objection) => objection.id === open[0]!.id)).toMatchObject({ status: "accepted", answer: "Kept it in the brief after your note." });
+    expect(revised.journey!.find((step) => step.id === answeredStep.id)!.result?.objections?.find((objection) => objection.id === open[0]!.id)?.answer).toBe("Removed it from the brief, as the call says.");
     expect(revised.objections.find((objection) => objection.id === open[0]!.id)?.call).toBeUndefined();
     expect(revised.objections.find((objection) => objection.id === open[1]!.id)).toMatchObject({ status: "accepted", call: CALL, answer: "Added it to the brief, as the call says." });
     expect(itemOf(state, taskId, "design")?.body).toContain("Your call settled 1 objection (1 accepted, 0 rejected). The architect answered 1 on its own.");

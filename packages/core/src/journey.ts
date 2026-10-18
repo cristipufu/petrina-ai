@@ -256,6 +256,12 @@ export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at:
   return push(task, { kind: "agent", ...key, ...fixingFindings, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
 }
 
+/** Keep a step's actual handoff independent of later replies and fixes. */
+export function recordStepResult(task: Pick<JourneyTask, "journey">, result: NonNullable<JourneyStep["result"]>): void {
+  const step = openStep(task);
+  if (step?.kind === "agent") step.result = JSON.parse(JSON.stringify({ ...step.result, ...result })) as NonNullable<JourneyStep["result"]>;
+}
+
 /** Petrina starts on work of its own, with no agent: running the product's checks, or publishing the delivery. */
 export function beginPetrinaStep(task: JourneyTask, work: JourneyWork, at: number): JourneyStep {
   const key: StepKey = { ...placeOf(task), work };
@@ -490,6 +496,7 @@ export interface JourneyNode {
   team?: readonly Id[];
   fixing?: boolean;
   findingIds?: readonly Id[];
+  result?: JourneyStep["result"];
   agentInputs?: JourneyStep["agentInputs"];
   productChecks?: JourneyStep["productChecks"];
   builderConversation?: JourneyStep["builderConversation"];
@@ -671,6 +678,7 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...(step.team ? { team: step.team } : {}),
       ...(step.fixing ? { fixing: true } : {}),
       ...(step.findingIds ? { findingIds: step.findingIds } : {}),
+      ...(step.result ? { result: step.result } : {}),
       ...(step.agentInputs ? { agentInputs: step.agentInputs } : {}),
       ...(step.productChecks ? { productChecks: step.productChecks } : {}),
       ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}),

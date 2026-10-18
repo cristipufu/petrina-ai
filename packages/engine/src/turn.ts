@@ -12,6 +12,7 @@ import { agentEnv } from "./env.js";
 import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox.js";
 import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere, mayAskScreen, screenPrompt, WHERE_YOU_WERE_SCREEN } from "./prompts.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
+import type { AgentMessage } from "./agent-messages.js";
 import { ADAPTERS } from "./tools.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { Kernel, Aborted, ScreenWait, notReady, stepKey, ToolProblem, type MTask } from "./kernel.js";
@@ -129,8 +130,29 @@ export class Turns {
 
   /** What an agent had said when it ran out of usage joins the session, so the one taking over can be told. */
   private keepWords(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void {
+    if (error.streamed) return;
     const prose = error.said ? proseOf(error.said) : undefined;
     if (prose) this.k.say(task, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, roleId, profileId);
+  }
+
+  /** One saved bubble per public message, including parallel agents; token chunks update that bubble. */
+  private messageStream(taskId: Id, roleId: Id, profileId: Id, signal: AbortSignal, main = false): (message: AgentMessage) => void {
+    let last: { key: number; line: Id } | undefined;
+    return (message) => {
+      const task = this.k.task(taskId);
+      if (!task || this.k.stopped || signal.aborted) return;
+      if (main) this.briefed(task);
+      const saved = last;
+      const line = saved?.key === message.id ? task.session.find((entry) => entry.id === saved.line) : undefined;
+      if (line) {
+        if (line.text === message.text) return;
+        line.text = message.text;
+      } else {
+        this.k.say(task, "agent", message.text, roleId, profileId);
+        last = { key: message.id, line: task.session.at(-1)!.id };
+      }
+      this.k.commit();
+    };
   }
 
   /** An agent's last messages in a step, most recent first, as many as fit. */
@@ -258,6 +280,7 @@ export class Turns {
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
         callbacks: {
+          onMessage: this.messageStream(taskId, roleId, profileId, signal, true),
           onActivity: (line) => {
             const current = live();
             if (current) this.briefed(current);
@@ -575,6 +598,7 @@ export class Turns {
         signal,
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
         callbacks: {
+          onMessage: this.messageStream(taskId, roleId, profileId, signal),
           onActivity: (line) => {
             const current = this.k.task(taskId);
             const work = current?.hunt?.work?.[options.key];
@@ -689,7 +713,7 @@ export class Turns {
       const current = this.k.task(task.id);
       if (!current) throw new Aborted();
       const prose = proseOf(reply.text);
-      if (prose) this.k.say(current, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, role.id, profileId);
+      if (prose && !reply.streamed) this.k.say(current, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, role.id, profileId);
       const parsed = parseResult(reply.text, schema);
       // A screen request goes before messages in line: they reach the agent with the screen, now or when it continues.
       if (parsed.ok === "screen" && mayAsk && reply.stopReason !== "cancelled") {

@@ -126,6 +126,11 @@ describe.concurrent("reviews that converge", () => {
     expect(important[0]!.verification).toMatchObject({ verdict: "real" });
     expect(important[0]!.answer).toMatchObject({ fixed: true, text: "Fixed it." });
     expect(important[0]!.status).toBe("fixed");
+    const firstReview = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 1)!;
+    const reported = firstReview.result?.findings?.find((finding) => finding.id === important[0]!.id);
+    expect(reported?.text).toBe("The greeting is missing on the welcome page.");
+    expect(reported?.status).toBe("open");
+    expect(reported?.answer).toBeUndefined();
     expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(1);
 
     expect(fakes.openings("verifier")).toHaveLength(voters);

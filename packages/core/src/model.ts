@@ -230,6 +230,8 @@ export interface JourneyStep {
   fixing?: boolean;
   /** Findings assigned to this builder fix round. */
   findingIds?: readonly Id[];
+  /** The structured review output as it was handed back, before later rounds change its status or answers. */
+  result?: { objections?: readonly Objection[]; findings?: readonly Finding[] };
   /** Whether the builder continued its saved conversation or began a fresh one for this step. */
   builderConversation?: "resumed" | "new";
   /** The builder bringing the work up to date with main. */

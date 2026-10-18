@@ -11,6 +11,7 @@ import { adapterEntry, ADAPTERS } from "./tools.js";
 import { grokTurnReport } from "./grok-usage.js";
 import { descendants, descendantsKnown } from "./process-tree.js";
 import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
+import { AgentMessages, type AgentMessage } from "./agent-messages.js";
 
 export interface PermissionInfo {
   title: string;
@@ -22,6 +23,8 @@ export interface PermissionInfo {
 }
 
 export interface RunCallbacks {
+  /** A public progress message, updated in place as its text arrives. Never private reasoning. */
+  onMessage?(message: AgentMessage): void;
   /** A plain-language line about what the agent is doing. */
   onActivity(text: string): void;
   /** The step of its own plan the agent is on. */
@@ -62,6 +65,8 @@ export interface TurnNotes {
 export interface TurnResult extends TurnNotes {
   stopReason: string;
   text: string;
+  /** Public messages have already reached the saved conversation through onMessage. */
+  streamed?: boolean;
   /** What the tool reported about tokens. Missing: nothing reported. */
   report?: TurnReport;
 }
@@ -271,6 +276,7 @@ function commandOf(rawInput: unknown): string | undefined {
 
 interface RunState {
   text: string;
+  messages: AgentMessages;
   lastActivity: string;
   quiet: boolean;
   settings: SessionSettings;
@@ -427,7 +433,7 @@ export class AgentRun {
 
     // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
     // already in the session view and timeline.
-    const state: RunState = { text: "", lastActivity: "", quiet: options.reopen !== undefined, settings: {} };
+    const state: RunState = { text: "", messages: new AgentMessages(callbacks.onMessage), lastActivity: "", quiet: options.reopen !== undefined, settings: {} };
     // The session's options as the tool last sent them, while the model, effort and mode are set.
     let sessionOptions: ConfigOption[] = [];
     const optionIds = { model: adapter.options.model, effort: adapter.options.effort };
@@ -479,9 +485,14 @@ export class AgentRun {
           const update = params.update;
           switch (update.sessionUpdate) {
             case "agent_message_chunk":
-              if (update.content.type === "text") state.text += update.content.text;
+              if (update.content.type === "text") {
+                const source = "messageId" in update && typeof update.messageId === "string" ? update.messageId : undefined;
+                if (state.messages.push(update.content.text, source) && state.text) state.text += "\n\n";
+                state.text += update.content.text;
+              }
               break;
             case "agent_thought_chunk":
+              state.messages.activity();
               if (update.content.type === "text" && /rerouted/i.test(update.content.text)) noteReroute(update.content.text);
               break;
             case "notice":
@@ -507,6 +518,7 @@ export class AgentRun {
               if (state.turn && (update.title === "spawnAgent" || Array.isArray(input?.receiverThreadIds))) state.turn.helpers.add(update.toolCallId);
               titles.set(update.toolCallId, update);
               if (isPlumbing(update)) break;
+              state.messages.activity();
               const line = describeTool(update);
               if (line !== state.lastActivity) {
                 state.lastActivity = line;
@@ -520,6 +532,7 @@ export class AgentRun {
               break;
             }
             case "plan": {
+              state.messages.activity();
               const current = update.entries.find((entry) => entry.status === "in_progress");
               if (current) callbacks.onPlanStep(current.content);
               break;
@@ -626,6 +639,7 @@ export class AgentRun {
 
   /** Send one turn and wait for it to end. Returns everything the agent said in it, and what it used. */
   async prompt(text: string): Promise<TurnResult> {
+    this.state.messages.boundary();
     this.state.quiet = false;
     this.state.text = "";
     delete this.state.latest;
@@ -639,11 +653,15 @@ export class AgentRun {
       const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch((error: unknown) => { throw this.limitOf(error) ?? error; });
       if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
         const out = this.rejected();
-        if (out) throw out;
+        if (out) {
+          if (this.state.messages.streamed) out.streamed = true;
+          throw out;
+        }
       }
       const report = reportOf(response, this.profile.toolId);
-      return { stopReason: response.stopReason, text: this.state.text, ...(report ? { report } : {}), ...notes() };
+      return { stopReason: response.stopReason, text: this.state.text, ...(this.state.messages.streamed ? { streamed: true } : {}), ...(report ? { report } : {}), ...notes() };
     } finally {
+      this.state.messages.boundary();
       this.notes = notes();
       this.state.turn = undefined;
       // Later turns run on whatever the tool switched the session to. A Codex reroute is per turn.
@@ -653,7 +671,9 @@ export class AgentRun {
 
   /** The usage limit a failed turn ran into, when that is why it failed. */
   private limitOf(error: unknown): UsageLimited | undefined {
-    return this.rejected() ?? limitFromFailure(this.profile, error, this.state.text, Date.now());
+    const limited = this.rejected() ?? limitFromFailure(this.profile, error, this.state.text, Date.now());
+    if (limited && this.state.messages.streamed) limited.streamed = true;
+    return limited;
   }
 
   /** Claude Code said, during this turn, that it is out. */

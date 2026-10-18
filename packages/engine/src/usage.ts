@@ -24,6 +24,8 @@ export class UsageLimited extends Error {
 
   /** What the agent had said in the turn before it stopped, when its tool lets that through. */
   said?: string;
+  /** The public text is already saved in the task's live conversation. */
+  streamed?: boolean;
 }
 
 /** Nobody can work the step until a limit ends: the task waits, and the driver lets go of it quietly. */

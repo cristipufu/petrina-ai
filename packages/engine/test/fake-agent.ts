@@ -102,6 +102,8 @@ export interface Scenario {
   title?: string;
   /** The builder and the code reviewers pass on what they learned about the repository (one lesson twice). */
   learnings?: boolean | "tester";
+  /** Public updates with message ids, held before the result so tests can observe them live. */
+  liveMessageRoles?: string[];
   /**
    * Agents on these models run out of usage: the first time one gets a turn it does some work, says so and fails
    * the turn, and every agent on that model fails the same way until `resetsInMs` (default an hour) later. A
@@ -460,6 +462,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     : scenario().learnings ? (session.role === "builder" ? ["Run the tests with bun test: they take a second.", "Greetings live at the repository root."] : session.role === "code reviewer" ? [scenario().reviewTodo ? "Check the greeting from the guest view." : "Greetings live at the repository root!"] : []) : [];
   const done = (value: unknown, prose?: string): Reply => ({ text: block(learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value, prose) });
   const plan = scenario();
+  if (plan.liveMessageRoles?.includes(session.role) && dir) {
+    await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "opening", content: { type: "text", text: "I'm checking " } });
+    await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "opening", content: { type: "text", text: "the nearby cases." } });
+    await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "progress", content: { type: "text", text: "I'm tracing the shared flow." } });
+    await send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: "progress-read", kind: "read", status: "completed", title: "Read" });
+    mark(`public-update-${session.role.replaceAll(" ", "-")}-${sessionId}`);
+    while (!existsSync(join(dir, "public-update-release"))) await Bun.sleep(20);
+    await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "result", content: { type: "text", text: "The change is ready.\n" } });
+  }
   for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage));
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);
