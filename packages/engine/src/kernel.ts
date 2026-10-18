@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, endOpenStep, JOURNEY_WORDS as W, nextExpiry, openStep, queueOf, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
+import { GrokUsage } from "./grok-usage.js";
 import { agentEnv } from "./env.js";
 import * as git from "./git.js";
 import type { Which } from "./setup.js";
@@ -72,6 +73,8 @@ export interface EngineOptions {
   gh?: readonly string[];
   /** Tests: a fake Codex app-server instead of `codex app-server` for reading Codex's usage. With fake agents and none given, it is not read. */
   codexCommand?: readonly string[] | null;
+  /** Tests: a fake Grok ACP server for account usage. Disabled by default with fake agents. */
+  grokCommand?: readonly string[] | null;
   /** Tests: a folder standing in for every product's copy on GitHub. Never from settings or saved data. */
   remote?: string;
   /** Tests: how long a tool gets to reopen a conversation. */
@@ -177,6 +180,13 @@ export abstract class Kernel {
           log: (text) => console.warn(`${new Date().toISOString()} ${text}`),
         })
       : undefined;
+    const grokCommand = options.grokCommand === undefined ? (options.agentCommand ? undefined : ADAPTERS.grok!.command) : options.grokCommand;
+    this.grokUsage = grokCommand ? new GrokUsage({
+      command: grokCommand,
+      env: () => agentEnv(process.env),
+      record: (reports) => { for (const info of reports) this.recordUsage(info); this.schedule(); },
+      log: (text) => console.warn(`${new Date().toISOString()} ${text}`),
+    }) : undefined;
   }
 
   readonly s: MState;
@@ -187,6 +197,7 @@ export abstract class Kernel {
   readonly tracking: Tracking;
   /** Reads Codex's usage, when Codex's usage can be read here. */
   readonly codexUsage: CodexUsage | undefined;
+  readonly grokUsage: GrokUsage | undefined;
 
   readonly listeners = new Set<() => void>();
 
@@ -574,10 +585,11 @@ export abstract class Kernel {
   }
 
   /**
-   * An agent on this tool is starting, or the engine is (no tool): Codex's usage is read again when Codex is the
-   * tool and it is here. The read runs on its own; nothing waits for it.
+   * An agent on this tool is starting, or the engine is (no tool): refresh the account
+   * usage that the installed tool can report. The read runs on its own; nothing waits for it.
    */
-  readUsage(toolId?: Id): void {
+  readUsage(toolId?: Id, gap = 5 * 60_000): void {
+    if ((toolId === undefined || toolId === "grok") && this.s.tools.some((tool) => tool.id === "grok" && tool.status === "ready")) void this.grokUsage?.refresh(gap);
     if (toolId !== undefined && toolId !== "codex") return;
     if (!this.s.tools.some((tool) => tool.id === "codex" && tool.status === "ready")) return;
     void this.codexUsage?.refresh();

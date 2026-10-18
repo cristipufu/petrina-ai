@@ -315,14 +315,14 @@ export class WorkLog implements WorkLogReader {
       );
   }
 
-  endTurn(turnId: Id, update: Required<Pick<WorkTurn, "end" | "endedAt" | "mainOnly" | "helpers">> & Pick<WorkTurn, "workMs" | "tokens" | "modelChangedTo" | "effortChangedTo">, lines: readonly Omit<TokenLine, "turnId">[]): void {
+  endTurn(turnId: Id, update: Required<Pick<WorkTurn, "end" | "endedAt" | "mainOnly" | "helpers">> & Pick<WorkTurn, "workMs" | "tokens" | "modelChangedTo" | "effortChangedTo" | "modelRan">, lines: readonly Omit<TokenLine, "turnId">[]): void {
     if (this.closed) return;
     const tokens = update.tokens ?? {};
     this.db.transaction(() => {
       this.db
         .query(
           `UPDATE work_turns SET end_kind = ?, ended_at = ?, at = ?, work_ms = ?, main_only = ?, helpers = ?, model_changed_to = ?, effort_changed_to = ?,
-            input = ?, cache_read = ?, cache_write = ?, output = ?, reasoning = ?, total = ? WHERE id = ?`,
+            input = ?, cache_read = ?, cache_write = ?, output = ?, reasoning = ?, total = ?, model_ran = COALESCE(?, model_ran) WHERE id = ?`,
         )
         .run(
           update.end,
@@ -339,6 +339,7 @@ export class WorkLog implements WorkLogReader {
           num(tokens.output),
           num(tokens.reasoning),
           num(tokens.total),
+          update.modelRan ?? null,
           turnId,
         );
       const insert = this.db.query(

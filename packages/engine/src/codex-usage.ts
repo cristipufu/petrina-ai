@@ -9,6 +9,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { codexLimits } from "@petrina/core";
 import type { UsageInfo } from "./usage.js";
+import { UsageReader } from "./usage-reader.js";
 
 /** How often Codex's usage is read while agents run. */
 export const CODEX_USAGE_EVERY_MS = 10 * 60_000;
@@ -123,41 +124,8 @@ export interface CodexUsageOptions {
 }
 
 /** Reads Codex's usage for the engine, one read at a time, and says once per reason when it cannot. */
-export class CodexUsage {
-  private reading: Promise<void> | undefined;
-  private child: ChildProcess | undefined;
-  private failure: string | undefined;
-  private stopped = false;
-
-  constructor(private readonly options: CodexUsageOptions) {}
-
-  /** Read now, unless a read is under way (its result is what arrives). Never throws. */
-  refresh(): Promise<void> {
-    if (this.stopped) return Promise.resolve();
-    this.reading ??= this.read().finally(() => {
-      this.reading = undefined;
-    });
-    return this.reading;
-  }
-
-  private async read(): Promise<void> {
-    try {
-      const reports = await readCodexUsage({ command: this.options.command, env: this.options.env(), ...(this.options.timeoutMs ? { timeoutMs: this.options.timeoutMs } : {}), onProcess: (child) => (this.child = child) });
-      this.failure = undefined;
-      if (reports.length && !this.stopped) this.options.record(reports);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      // Said once per reason; the next read tries again quietly.
-      if (reason !== this.failure && !this.stopped) this.options.log(`Could not read Codex's usage (${reason}). Petrina goes by what Codex says when a turn fails instead.`);
-      this.failure = reason;
-    } finally {
-      this.child = undefined;
-    }
-  }
-
-  /** No more reads, and the one under way is stopped. */
-  stop(): void {
-    this.stopped = true;
-    this.child?.kill();
+export class CodexUsage extends UsageReader {
+  constructor(options: CodexUsageOptions) {
+    super({ name: "Codex", record: options.record, log: options.log, read: (onProcess) => readCodexUsage({ command: options.command, env: options.env(), onProcess, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
   }
 }

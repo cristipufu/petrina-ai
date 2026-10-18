@@ -33,6 +33,7 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
   seven_day_sonnet: "weekly Sonnet",
   seven_day_overage_included: "weekly",
   overage: "extra usage",
+  monthly: "monthly",
 };
 
 /** A limit's name in plain words: "weekly Opus". */

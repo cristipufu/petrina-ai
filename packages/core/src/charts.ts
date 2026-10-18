@@ -37,7 +37,7 @@ export const OVER_TIME_SPLITS: readonly OverTimeSplit[] = ["tool", "model", "pro
 /** What a bar measures: all tokens, one part of them, or agent time. */
 export type OverTimeMeasure = "tokens" | "input" | "cacheRead" | "output" | "time";
 
-/** What one series used in one bucket. Zero when nothing was reported. */
+/** Known amounts in one bucket. Missing reports are marked separately from measured zero. */
 export interface Amounts {
   tokens: number;
   input: number;
@@ -45,6 +45,7 @@ export interface Amounts {
   output: number;
   /** Milliseconds of agent work. */
   time: number;
+  missing?: Partial<Record<OverTimeMeasure, boolean>>;
 }
 
 export interface OverTimeSeries {
@@ -140,31 +141,39 @@ export function tokensOverTime(turns: readonly WorkTurn[], lines: readonly Token
     return { key: provider.id, label: provider.label, providerId: provider.id };
   };
   const has = { input: false, cacheRead: false, output: false };
+  const withLines = new Set<string>();
 
   for (const line of lines) {
     const owner = turnById.get(line.turnId);
     if (!owner) continue;
     const index = bucketIndex(buckets, turnAt(owner));
     if (index < 0) continue;
+    withLines.add(owner.id);
     const label = lineModelLabel(line);
     for (const amounts of [place("tool", index, toolSeries(owner)), place("model", index, { key: label, label }), place("provider", index, providerSeries(owner))]) {
       amounts.tokens += line.total ?? 0;
       amounts.input += line.input ?? 0;
       amounts.cacheRead += line.cacheRead ?? 0;
       amounts.output += line.output ?? 0;
+      for (const [measure, value] of [["tokens", line.total], ["input", line.input], ["cacheRead", line.cacheRead], ["output", line.output]] as const) {
+        if (value === undefined) (amounts.missing ??= {})[measure] = true;
+      }
     }
     if (line.input !== undefined) has.input = true;
     if (line.cacheRead !== undefined) has.cacheRead = true;
     if (line.output !== undefined) has.output = true;
   }
   for (const turn of turnById.values()) {
-    if (turn.workMs === undefined) continue;
     const index = bucketIndex(buckets, turnAt(turn));
     if (index < 0) continue;
     const label = turnModelLabel(turn);
-    place("tool", index, toolSeries(turn)).time += turn.workMs;
-    place("model", index, { key: label, label }).time += turn.workMs;
-    place("provider", index, providerSeries(turn)).time += turn.workMs;
+    for (const amounts of [place("tool", index, toolSeries(turn)), place("model", index, { key: label, label }), place("provider", index, providerSeries(turn))]) {
+      if (turn.workMs === undefined) (amounts.missing ??= {}).time = true;
+      else amounts.time += turn.workMs;
+      if (!withLines.has(turn.id)) {
+        for (const measure of ["tokens", "input", "cacheRead", "output"] as const) (amounts.missing ??= {})[measure] = true;
+      }
+    }
   }
 
   const splits = {} as Record<OverTimeSplit, OverTimeSplitView>;

@@ -80,7 +80,18 @@ describe('usage by tool', () => {
     const state = createDemoState(1_000_000_000);
     await show({ ...state, tools: [...state.tools, { id: 'grok', name: 'Grok', command: ['grok'], models: [], status: 'ready' }] }, true);
     const grok = [...host.querySelectorAll('.limit-card')].find((card) => card.querySelector('strong')?.textContent === 'Grok')!;
-    expect(grok.textContent).toBe('GrokNot reported.');
+    expect(grok.textContent).toBe('GrokNot reported. Petrina asks the installed Grok when this page opens.');
+    expect(grok.textContent).not.toContain('Codex');
+  });
+
+  it('shows Grok’s reported weekly allowance and reset without financial details', async () => {
+    const state = createDemoState(1_000_000_000);
+    const grok = { id: 'grok', name: 'Grok', command: ['grok'], models: [], status: 'ready' as const };
+    await show({ ...state, tools: [...state.tools, grok], pool: { ...state.pool, usage: [{ toolId: 'grok', kind: 'seven_day', utilization: 0.11, status: 'allowed', at: state.now, resetsAt: state.now + 3600000 }] } }, true);
+    const meter = host.querySelector('[aria-label="Grok weekly"]')!;
+    expect(meter.getAttribute('aria-valuenow')).toBe('11');
+    expect(meter.closest('.limit-card')!.textContent).toContain('11% used');
+    expect(meter.closest('.limit-card')!.textContent).toContain('resets');
   });
 
   it('shows a passed reset instead of its old percentage', async () => {

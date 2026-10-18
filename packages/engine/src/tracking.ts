@@ -69,7 +69,10 @@ export class Tracking {
 
   /** The numbers one view needs, worked out from the work log. The log itself never leaves the engine. */
   usage<R extends UsageRequest>(request: R): UsageViewFor<R> {
-    if (request.view === "analytics") void this.refreshCodexLimits(CODEX_ON_PAGE_MS);
+    if (request.view === "analytics") {
+      void this.refreshCodexLimits(CODEX_ON_PAGE_MS);
+      this.k.readUsage("grok", CODEX_ON_PAGE_MS);
+    }
     return usageView(this.log, request, { now: Date.now(), state: this.k.getState() });
   }
 
@@ -331,7 +334,7 @@ export class Tracking {
       const workMs = Math.max(0, endedAt - startedAt - (waits.of(task.id, endedAt) - waitedBefore));
       // Claude Code's breakdown already counts its helper agents; only Codex leaves them out (and starts them as spawnAgent).
       const helpers = profile.toolId === "codex" ? (result?.helpers ?? 0) : 0;
-      const model = settings.modelName ?? settings.model ?? result?.modelSeen;
+      const model = result?.report?.model ?? settings.modelName ?? settings.model ?? result?.modelSeen;
       const counted = turnTokens({ toolId: profile.toolId, ...(result?.report ? { report: result.report } : {}), ...(model ? { model } : {}), rerouted: result?.rerouted ?? false, helpers });
       this.log.endTurn(
         id,
@@ -341,6 +344,7 @@ export class Tracking {
           workMs,
           mainOnly: counted.mainOnly,
           helpers,
+          ...(result?.report?.model ? { modelRan: result.report.model } : {}),
           ...(counted.tokens ? { tokens: counted.tokens } : {}),
           ...(result?.changed.model ? { modelChangedTo: result.changed.model } : {}),
           ...(result?.changed.effort ? { effortChangedTo: result.changed.effort } : {}),
@@ -359,6 +363,7 @@ export class Tracking {
       throw error;
     } finally {
       if (profile.toolId === "codex") void this.refreshCodexLimits(CODEX_AFTER_TURN_MS);
+      if (profile.toolId === "grok") this.k.readUsage("grok", CODEX_AFTER_TURN_MS);
     }
   }
 

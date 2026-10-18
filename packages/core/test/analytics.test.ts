@@ -316,6 +316,8 @@ describe("“At least”", () => {
     const lost = turn({ taskId: "z", roleId: "builder", profileId: "codex-high", end: "lost", endedAt: undefined, workMs: undefined, tokens: undefined });
     const z = usageView(logWith([{ turn: lost }]), { view: "task", taskId: "z" }, { now: NOW, state: state([task("z", "shop")]) });
     expect([figureText(z.tokens, "tokens"), figureText(z.time, "time")]).toEqual(["not known", "not known"]);
+    const lostModel = usageView(logWith([{ turn: lost }]), { view: "analytics", period: "today" }, { now: NOW, state: s }).byModel[0]!;
+    expect([figureText(lostModel.tokens, "tokens"), figureText(lostModel.time, "time")]).toEqual(["not known", "not known"]);
     // A product added after tracking began has nothing missing: zero is zero there.
     log.recordProduct({ id: "notes", name: "Notes", addedAt: NOW - HOUR });
     const notes = usageView(log, { view: "analytics", period: "30d", productId: "notes" }, { now: NOW, state: s });

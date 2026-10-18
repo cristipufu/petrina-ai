@@ -7,6 +7,7 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
 import { adapterEntry, ADAPTERS } from "./tools.js";
+import { grokTurnReport } from "./grok-usage.js";
 import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 
 export interface PermissionInfo {
@@ -98,7 +99,8 @@ function defined(counts: TokenCounts): TokenCounts {
  * per-model rows both adapters attach under `_meta.quota.model_usage`. The dollar figure
  * Claude Code sends is never read.
  */
-export function reportOf(response: unknown): TurnReport | undefined {
+export function reportOf(response: unknown, toolId?: string): TurnReport | undefined {
+  if (toolId === "grok") return grokTurnReport(response);
   if (!response || typeof response !== "object") return undefined;
   const { usage, _meta } = response as { usage?: Record<string, unknown> | null; _meta?: { quota?: { model_usage?: unknown } } | null };
   const report: { main?: TokenCounts; models?: { model: string; counts: TokenCounts }[] } = {};
@@ -510,7 +512,7 @@ export class AgentRun {
         const out = this.rejected();
         if (out) throw out;
       }
-      const report = reportOf(response);
+      const report = reportOf(response, this.profile.toolId);
       return { stopReason: response.stopReason, text: this.state.text, ...(report ? { report } : {}), ...notes() };
     } finally {
       this.notes = notes();

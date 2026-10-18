@@ -119,12 +119,17 @@ export interface BarPoint {
   title: string;
   /** Per series key. */
   values: Record<string, number>;
+  /** Known amounts above omit some work. Absence of activity still means zero. */
+  missing?: Record<string, boolean>;
 }
 
 interface BarsProps {
   points: readonly BarPoint[];
   series: readonly ChartSeries[];
   format: (value: number) => string;
+  /** Exact figures for the table and tooltip; axes can stay compact. */
+  formatDetail?: (value: number) => string;
+  missingWord?: string;
   /** What the figure shows, for assistive technology. */
   label: string;
   /** The running total, drawn in its own strip under the bars, on its own scale. */
@@ -142,12 +147,18 @@ function roundedTop(x: number, top: number, width: number, height: number): stri
   return `M${x},${top + height} V${top + r} Q${x},${top} ${x + r},${top} H${x + width - r} Q${x + width},${top} ${x + width},${top + r} V${top + height} Z`;
 }
 
-export function BarsOverTime({ points, series, format, label, running, table, periodWord, measureWord }: BarsProps) {
+export function BarsOverTime({ points, series, format, formatDetail = format, missingWord = "not reported", label, running, table, periodWord, measureWord }: BarsProps) {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box, 640);
   const [hover, setHover] = useState<number>();
   const totals = points.map((point) => series.reduce((sum, entry) => sum + (point.values[entry.key] ?? 0), 0));
   const nothing = totals.every((total) => total === 0);
+  const missing = points.map((point) => series.some((entry) => point.missing?.[entry.key]));
+  let incomplete = false;
+  const runningMissing = missing.map((value) => (incomplete ||= value));
+  const detail = (value: number, absent = false) => absent ? value > 0 ? `at least ${formatDetail(value)}` : missingWord : formatDetail(value);
+  const compact = (value: number, absent = false) => `${absent ? "≥ " : ""}${format(value)}`;
+  const missingNote = incomplete && <p className="muted small">Some work was not reported. Bars and the running total show known amounts.</p>;
 
   if (table) {
     return (
@@ -170,16 +181,17 @@ export function BarsOverTime({ points, series, format, label, running, table, pe
                   <th scope="row">{point.title}</th>
                   {series.map((entry) => (
                     <td key={entry.key} className="num">
-                      {format(point.values[entry.key] ?? 0)}
+                      {detail(point.values[entry.key] ?? 0, point.missing?.[entry.key])}
                     </td>
                   ))}
-                  <td className="num">{format(totals[index]!)}</td>
-                  {running && <td className="num">{format(running.values[index] ?? 0)}</td>}
+                  <td className="num">{detail(totals[index]!, missing[index])}</td>
+                  {running && <td className="num">{detail(running.values[index] ?? 0, runningMissing[index])}</td>}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {missingNote}
       </figure>
     );
   }
@@ -224,11 +236,12 @@ export function BarsOverTime({ points, series, format, label, running, table, pe
   });
 
   const tipRows = (index: number): TipRow[] => [
-    ...stacks[index]!.segments
+    ...series
+      .filter((entry) => (points[index]!.values[entry.key] ?? 0) > 0 || points[index]!.missing?.[entry.key])
       .slice()
       .reverse()
-      .map(({ entry, value }) => ({ key: entry.key, label: entry.label, value: format(value), color: entry.color })),
-    ...(running ? [{ key: "running", label: running.label, value: format(running.values[index] ?? 0) }] : []),
+      .map((entry) => ({ key: entry.key, label: entry.label, value: detail(points[index]!.values[entry.key] ?? 0, points[index]!.missing?.[entry.key]), color: entry.color })),
+    ...(running ? [{ key: "running", label: running.label, value: detail(running.values[index] ?? 0, runningMissing[index]) }] : []),
   ];
 
   return (
@@ -257,7 +270,7 @@ export function BarsOverTime({ points, series, format, label, running, table, pe
               })}
               {labelled.has(index) && (
                 <text className="cap" x={centre(index)} y={top - 4} textAnchor="middle">
-                  {format(totals[index]!)}
+                  {compact(totals[index]!, missing[index])}
                 </text>
               )}
               <text className="x" x={centre(index)} y={baseline + 14} textAnchor="middle">
@@ -267,7 +280,7 @@ export function BarsOverTime({ points, series, format, label, running, table, pe
           ))}
           {nothing && (
             <text className="empty" x={margin.left + plotW / 2} y={margin.top + plotH / 2} textAnchor="middle">
-              Nothing in this period
+              {incomplete ? "No reported amounts in this period" : "Nothing in this period"}
             </text>
           )}
           {running && (
@@ -282,7 +295,7 @@ export function BarsOverTime({ points, series, format, label, running, table, pe
                   <path className="series-line" d={linePath} style={{ stroke: "var(--accent)" }} />
                   <circle className="dot" cx={centre(lastIndex)} cy={ry(running.values[lastIndex] ?? 0)} r={4} style={{ fill: "var(--accent)" }} />
                   <text className="cap" x={centre(lastIndex) - 7} y={ry(running.values[lastIndex] ?? 0) - 6} textAnchor="end">
-                    {format(running.values[lastIndex] ?? 0)}
+                    {compact(running.values[lastIndex] ?? 0, runningMissing[lastIndex])}
                   </text>
                 </>
               )}
@@ -301,7 +314,7 @@ export function BarsOverTime({ points, series, format, label, running, table, pe
                 className="hit"
                 role="listitem"
                 tabIndex={0}
-                aria-label={totals[index]! > 0 ? [point.title, ...tipRows(index).map((row) => `${row.label}: ${row.value}`)].join(" · ") : `${point.title}: nothing`}
+                aria-label={totals[index]! > 0 || missing[index] || running ? [point.title, ...tipRows(index).map((row) => `${row.label}: ${row.value}`)].join(" · ") : `${point.title}: nothing`}
                 x={margin.left + index * slot}
                 y={margin.top - 8}
                 width={slot}
@@ -314,8 +327,9 @@ export function BarsOverTime({ points, series, format, label, running, table, pe
             ))}
           </g>
         </svg>
-        {hover !== undefined && (totals[hover]! > 0 || running) && <Tip x={centre(hover)} y={stacks[hover]!.top - 6} title={points[hover]!.title} rows={tipRows(hover)} />}
+        {hover !== undefined && (totals[hover]! > 0 || missing[hover] || running) && <Tip x={centre(hover)} y={stacks[hover]!.top - 6} title={points[hover]!.title} rows={tipRows(hover)} />}
       </div>
+      {missingNote}
     </figure>
   );
 }
@@ -359,8 +373,12 @@ export function LinesOverTime({ from, to, series, ticks, format, when, label, ti
   const width = useWidth(box, 420);
   const [hover, setHover] = useState<number>();
   const times = [...new Set(series.flatMap((entry) => entry.points.map((point) => point.at)))].sort((a, b) => a - b);
-  /** The reading in force at a moment: the last one at or before it. */
-  const valueAt = (entry: LineSeries, at: number) => entry.points.findLast((point) => point.at <= at)?.value;
+  const resetBetween = (entry: LineSeries, from: number, to: number) => [...entry.resets, ...(entry.nextReset === undefined ? [] : [entry.nextReset])].some((reset) => reset > from && reset <= to);
+  /** A reading stops applying when its window resets; a new reading is needed. */
+  const valueAt = (entry: LineSeries, at: number) => {
+    const point = entry.points.findLast((point) => point.at <= at);
+    return point && !resetBetween(entry, point.at, at) ? point.value : undefined;
+  };
   const legend = series.map((entry) => {
     const last = entry.points.at(-1);
     return { ...entry, ...(last ? { note: format(last.value) } : {}) };
@@ -474,7 +492,10 @@ export function LinesOverTime({ from, to, series, ticks, format, when, label, ti
               )}
               {entry.points.length > 0 && (
                 <>
-                  <path className="series-line" d={entry.points.map((point, index) => `${index ? "L" : "M"}${x(point.at).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ")} style={{ stroke: entry.color }} />
+                  <path className="series-line" d={entry.points.map((point, index) => `${index && !resetBetween(entry, entry.points[index - 1]!.at, point.at) ? "L" : "M"}${x(point.at).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ")} style={{ stroke: entry.color }} />
+                  {entry.points.slice(0, -1).filter((point, index) => index === 0 || resetBetween(entry, entry.points[index - 1]!.at, point.at)).map((point) => (
+                    <circle key={point.at} className="dot" cx={x(point.at)} cy={y(point.value)} r={2.5} style={{ fill: entry.color }} />
+                  ))}
                   <circle className="dot" cx={x(entry.points.at(-1)!.at)} cy={y(entry.points.at(-1)!.value)} r={4} style={{ fill: entry.color }} />
                 </>
               )}

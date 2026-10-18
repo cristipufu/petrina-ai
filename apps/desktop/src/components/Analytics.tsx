@@ -52,7 +52,7 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
         <div>
           <h1>Analytics</h1>
           <p>
-            {scope} · what the squad used {words}. Tokens and time, no prices.
+            {scope} · what the squad used {words}.
           </p>
         </div>
         <div className="tools">
@@ -67,6 +67,7 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
       </div>
 
       <div className="section-title">Usage limits</div>
+      <p className="muted small">These account limits are shared across products and sessions, including work outside Petrina.</p>
       <UsageList state={state} expanded />
       {view && <LimitsOverTime view={view} words={words} table={choices.limitsTable} onTable={(limitsTable) => setChoices((all) => ({ ...all, limitsTable }))} />}
 
@@ -116,7 +117,7 @@ function LimitsOverTime({ view, words, table, onTable }: { view: AnalyticsUsage;
         <ViewToggle table={table} onTable={onTable} label="Limits as a chart or a table" />
       </div>
       {limits.tools.length === 0 ? (
-        <div className="muted small">No readings {words}. Claude Code reports its limits while it works; Petrina asks the installed Codex when this page opens.</div>
+        <div className="muted small">No readings {words}. Claude Code reports its limits while it works; Petrina asks the installed Codex and Grok when this page opens.</div>
       ) : (
         <div className="limits-charts">
           {limits.tools.map((tool) => (
@@ -177,6 +178,7 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
         label: point.label,
         title: overTime.hourly ? `${point.label}:00` : dayWords(point.start),
         values: Object.fromEntries(Object.entries(point.values).map(([key, amounts]) => [key, amounts[measure]])),
+        missing: Object.fromEntries(Object.entries(point.values).map(([key, amounts]) => [key, amounts.missing?.[measure] ?? false])),
       })),
     [shown, overTime.hourly, measure],
   );
@@ -202,11 +204,12 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
         </div>
       )}
       <div className="stats">
-        <Stat label="Tokens" value={<FigureText figure={headline.tokens} kind="tokens" bare />} sub="input, reused input and output" />
+        <Stat label="Tokens" value={<FigureText figure={headline.tokens} kind="tokens" bare />} sub="new input, cache reads and writes, and output" />
         <Stat label="Agent time" value={<FigureText figure={headline.time} kind="time" />} sub="adds up agents running at once" />
-        <Stat label="Turns" value={<span className="num">{headline.turns}</span>} sub="messages to an agent and its replies" />
+        <Stat label="Agent turns" value={<span className="num">{headline.turns}</span>} sub="finished or stopped, including interrupted turns" />
         <Stat label="Tasks worked on" value={<span className="num">{headline.tasks}</span>} />
       </div>
+      <p className="muted small">Tokens and time are counted when an agent's turn ends.</p>
       {view.atLeast && (
         <div className="at-least">
           <CircleAlert size={13} />
@@ -240,6 +243,8 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
         points={points}
         series={series}
         format={format}
+        formatDetail={measure === "time" ? durationText : (value) => value.toLocaleString()}
+        missingWord={measure === "time" ? "not known" : "not reported"}
         label={`${MEASURE_WORDS[measure]} ${overTime.hourly ? "per hour" : "per day"}, ${SPLIT_WORDS[split].toLowerCase()}`}
         running={{ label: "Running total", values: running }}
         table={table}

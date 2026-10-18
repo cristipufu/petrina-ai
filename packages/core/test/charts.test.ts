@@ -118,6 +118,25 @@ describe("Tokens over time", () => {
     expect(providerOf("grok")).toEqual({ id: "xai", label: "xAI" });
     expect(providerOf("something-new")).toBe(OTHER_PROVIDER);
   });
+
+  it("keeps missing reports distinct from zero across every split, including lost work and partially reported parts", () => {
+    const turns = [turn("zero", NOW - HOUR), turn("missing", NOW - HOUR, { toolId: "grok", modelRan: "grok-4.7", modelRanName: "Grok" }), turn("lost", NOW - HOUR, { end: "lost", workMs: undefined }), turn("partial", NOW - HOUR)];
+    const view = tokensOverTime(turns, [line("zero", "claude-opus-5-5", { total: 0, input: 0, cacheRead: 0, output: 0 }), line("partial", "claude-opus-5-5", { total: 123 })], week.buckets, false, toolName);
+    for (const split of ["tool", "model", "provider"] as const) {
+      const point = view.splits[split].points.at(-1)!;
+      expect(pointTotal(point, "tokens")).toBe(123);
+      expect(Object.values(point.values).some((amounts) => amounts.missing?.tokens)).toBe(true);
+      expect(Object.values(point.values).some((amounts) => amounts.missing?.time)).toBe(true);
+      expect(pointTotal(point, "time")).toBe(27 * 60_000);
+    }
+    expect(view.splits.tool.points.at(-1)!.values.grok).toMatchObject({ tokens: 0, time: 9 * 60_000, missing: { tokens: true, input: true, cacheRead: true, output: true } });
+    expect(view.splits.tool.points.at(-1)!.values["claude-code"]!.missing).toMatchObject({ tokens: true, input: true, cacheRead: true, output: true, time: true });
+    const zero = tokensOverTime([turns[0]!], [line("zero", "claude-opus-5-5", { total: 0, input: 0, cacheRead: 0, output: 0 })], week.buckets, false, toolName);
+    expect(zero.splits.tool.points.at(-1)!.values["claude-code"]!.missing).toBeUndefined();
+    expect(zero.splits.tool.points[0]!.values).toEqual({});
+    const totalOnly = tokensOverTime([turns[3]!], [line("partial", "claude-opus-5-5", { total: 123 })], week.buckets, false, toolName);
+    expect(totalOnly.splits.tool.points.at(-1)!.values["claude-code"]!.missing).toEqual({ input: true, cacheRead: true, output: true });
+  });
 });
 
 const report = (extra: Partial<UsageReport> & Pick<UsageReport, "at">): UsageReport => ({ toolId: "claude-code", kind: "seven_day", status: "allowed", utilization: 0.5, ...extra });

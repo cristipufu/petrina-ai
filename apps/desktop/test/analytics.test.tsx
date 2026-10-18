@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Simulator, createDemo, type UsageRequest } from '@petrina/core';
 import { AnalyticsPage } from '../src/components/Analytics';
+import { BarsOverTime, LinesOverTime, type BarPoint } from '../src/components/Charts';
 import { FigureText } from '../src/components/Usage';
 import { lookup } from '../src/lib';
 
@@ -35,6 +36,53 @@ async function show() {
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 describe('the Analytics charts', () => {
+  it('shows exact known amounts, missing reports and incomplete running totals consistently in tooltips and tables', async () => {
+    await show();
+    const props = {
+      series: [{ key: 'grok', label: 'Grok', color: 'red' }],
+      points: [
+        { key: 'zero', label: '1', title: 'Zero reported', values: { grok: 0 } },
+        { key: 'missing', label: '2', title: 'Missing report', values: { grok: 0 }, missing: { grok: true } },
+        { key: 'partial', label: '3', title: 'Partial report', values: { grok: 1234567 }, missing: { grok: true } },
+        { key: 'empty', label: '4', title: 'No activity', values: {} },
+      ] as BarPoint[],
+      format: () => '1.2M', formatDetail: (value: number) => value.toLocaleString('en-US'), label: 'Reported tokens', periodWord: 'Day', measureWord: 'Tokens',
+      running: { label: 'Running total', values: [0, 0, 1234567, 1234567] },
+    };
+    await act(async () => root.render(<BarsOverTime {...props} table={false} />));
+    const hits = all('rect.hit');
+    await act(async () => { hits[1]!.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); });
+    expect(el('[role="tooltip"]').textContent).toContain('Grok not reported');
+    await act(async () => { hits[2]!.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); });
+    expect(el('[role="tooltip"]').textContent).toContain('Grok at least 1,234,567');
+    await act(async () => root.render(<BarsOverTime {...props} table />));
+    const rows = all('tbody tr').map((row) => [...row.querySelectorAll('td')].map((cell) => cell.textContent));
+    expect(rows).toEqual([
+      ['0', '0', '0'],
+      ['not reported', 'not reported', 'not reported'],
+      ['at least 1,234,567', 'at least 1,234,567', 'at least 1,234,567'],
+      ['0', '0', 'at least 1,234,567'],
+    ]);
+    await act(async () => root.render(<BarsOverTime {...props} table missingWord="not known" />));
+    expect(all('tbody tr')[1]!.textContent).toContain('not known');
+  });
+
+  it('breaks a limit line at its reset and does not carry an expired reading into the next window', async () => {
+    await show();
+    await act(async () => root.render(<LinesOverTime from={0} to={100} ticks={[]} table={false} label="Account limits" format={(value) => `${value * 100}%`} when={String} series={[
+      { key: 'short', label: '5-hour', color: 'red', points: [{ at: 10, value: 1 }, { at: 80, value: 0.2 }], resets: [50] },
+      { key: 'week', label: 'weekly', color: 'blue', points: [{ at: 60, value: 0.5 }], resets: [] },
+    ]} />));
+    expect(el('path.series-line').getAttribute('d')!.match(/M/g)).toHaveLength(2);
+    expect(el('path.series-line').getAttribute('d')).not.toContain('L');
+    const svg = el('svg[role="img"]');
+    // ArrowLeft starts from the most recent reading; the next one is after the short window reset.
+    await act(async () => { svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); });
+    await act(async () => { svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); });
+    expect(el('[role="tooltip"]').textContent).toContain('weekly 50%');
+    expect(el('[role="tooltip"]').textContent).not.toContain('5-hour');
+  });
+
   it('draws tokens over time as stacked bars with a legend, a running total and a table of the same numbers', async () => {
     await show();
     const figure = el('.analytics .chart-figure:has(.band, .hit)');

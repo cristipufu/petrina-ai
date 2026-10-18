@@ -289,9 +289,11 @@ function sumCounts(all: readonly TokenCounts[]): TokenCounts {
 
 /** What a tool sent at the end of a turn, already read into Petrina's names. */
 export interface TurnReport {
+  /** The primary model confirmed by a whole-prompt report, including a resolved alias. */
+  model?: string;
   /** The main figure (ACP's `usage`). For Claude Code it counts the main agent loop only. */
   main?: TokenCounts;
-  /** Claude Code's per-model breakdown, or Codex's single row under the model it names. */
+  /** Claude Code's or Grok's per-model breakdown, or Codex's single row under the model it names. */
   models?: readonly { model: string; counts: TokenCounts }[];
 }
 
@@ -300,7 +302,8 @@ export interface TurnReport {
  * - Claude Code: the per-model breakdown already includes helper agents, side conversations
  *   and compaction. It is counted once and never added to the main figure. Without it, the
  *   main figure goes on one line under the confirmed model and the turn counts the main agent only.
- * - Codex (and Grok, which sends one figure the same way): its single figure is one line under the
+ * - Grok: whole-prompt per-model totals include folded subagents, counted once like Claude Code.
+ * - Codex: its single figure is one line under the
  *   model it names. A reroute marks the line; a Codex helper agent started during the turn marks the
  *   turn "main agent only".
  */

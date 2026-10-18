@@ -461,8 +461,10 @@ export function modelSplit(turns: readonly WorkTurn[], lines: readonly TokenLine
     .map(([label, entry]) => {
       const tokens: Figure = { atLeast: entry.hasTokens && (entry.lost > 0 || entry.noTokens > 0 || beforeTracking) };
       if (entry.hasTokens) tokens.value = entry.tokens;
+      else if (entry.lost > 0 || beforeTracking) tokens.unknown = true;
       const time: Figure = { atLeast: entry.hasTime && (entry.lost > 0 || beforeTracking) };
       if (entry.hasTime) time.value = entry.workMs;
+      else if (entry.lost > 0 || beforeTracking) time.unknown = true;
       const detail: Detail = {};
       for (const key of ["input", "cacheRead", "cacheWrite", "output"] as const) if (entry.has[key]) detail[key] = entry.detail[key];
       const toolId = entry.tools.size === 1 && label !== CHANGED_LABEL && label !== NOT_CONFIRMED_LABEL ? [...entry.tools][0] : undefined;

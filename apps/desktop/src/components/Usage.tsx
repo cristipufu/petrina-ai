@@ -271,9 +271,10 @@ export function AboutNote({ about, period }: { about: AboutCounts; period: Usage
       <h4>About these numbers</h4>
       <ul>
         <li>Tokens are counted the same way for every tool: new input, input reused from the cache, input written to the cache, and output.</li>
-        <li>Input reused from the cache is each tool's own count, not an exact measure of what agents re-read. It is most of every total.</li>
+        <li>Input reused from the cache is each tool's own count, not an exact measure of what agents re-read.</li>
         <li>The tools count slightly differently, so totals across tools are approximate. The split by tool is the reliable comparison.</li>
         <li>Claude Code's numbers include its helper agents and compaction inside each model's line.</li>
+        <li>Grok counts all model calls in a turn, including collected helper work. Thinking is already included in its output.</li>
         <li>
           Codex reports only its main agent. {PERIOD_WORDS[period].charAt(0).toUpperCase() + PERIOD_WORDS[period].slice(1)}, {count(about.codexHelperTurns, "Codex turn")} started helper agents whose use Codex doesn't report.
         </li>
@@ -318,7 +319,7 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
                 <strong>{tool.name}</strong>
               </div>
               {own.length === 0 && out.length === 0 && (
-                <div className="muted small">Not reported.{tool.id === "claude-code" ? " Claude Code reports its limits while it works." : tool.id === "codex" ? " Petrina asks the installed Codex when this page opens." : ""}</div>
+                <div className="muted small">Not reported.{tool.id === "claude-code" ? " Claude Code reports its limits while it works." : tool.id === "codex" || tool.id === "grok" ? ` Petrina asks the installed ${tool.name} when this page opens.` : ""}</div>
               )}
               {own.map((report) => {
                 const text = limitWords(report, now);

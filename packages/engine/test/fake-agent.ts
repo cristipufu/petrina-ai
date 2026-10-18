@@ -118,7 +118,7 @@ interface ConfigOption {
 // build and one review. With "--hold=<file>", the architect stops halfway through following a call for as long
 // as that file exists.
 const dir = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
-const tool = process.argv.find((arg) => arg.startsWith("--tool="))?.slice("--tool=".length) as "claude-code" | "codex" | undefined;
+const tool = process.argv.find((arg) => arg.startsWith("--tool="))?.slice("--tool=".length) as "claude-code" | "codex" | "grok" | undefined;
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
@@ -754,6 +754,10 @@ function responseFor(reply: Reply, session: Conversation) {
   const stopReason = reply.stop ?? ("end_turn" as const);
   if (reply.silent) return { stopReason };
   const main = { input: 100, cached: 1000, write: 20, output: 50 };
+  if (tool === "grok") {
+    const counts = { inputTokens: 1100, outputTokens: 50, cachedReadTokens: 1000, cacheCreationTokens: 0, reasoningTokens: 20, totalTokens: 1150 };
+    return { stopReason, _meta: { totalTokens: 50000, inputTokens: 100, outputTokens: 5, usage: { ...counts, modelUsage: { "grok-4.7-build": counts } } } };
+  }
   if (tool === "codex") {
     const model = session.options.find((option) => option.id === "model")!.currentValue;
     const count = { ...tokenCount({ ...main, write: 0 }), reasoningOutputTokens: 20, cacheWriteInputTokens: 0 };
