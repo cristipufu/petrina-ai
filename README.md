@@ -5,82 +5,82 @@
 <h1 align="center">Petrina</h1>
 
 <p align="center">
-  A desktop app for builders who run a squad of AI coding agents.<br />
-  You set priorities and make the calls. The squad plans, designs, builds and reviews, then hands you a pull request.
+  Run Claude Code, Codex and Grok from one board through the <a href="https://agentclientprotocol.com">Agent Client Protocol</a>.<br />
+  You set priorities. They plan, design, build and review. You get a pull request.
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/board-light.png" alt="The Petrina board: task cards grouped by what they need (needs you, working, the queue), each with its own progress through its plan, and a Needs you inbox with a permission request and a question" />
+  <img src="docs/screenshots/board.png" alt="The Petrina board: tasks needing a decision, six tasks in progress, waiting tasks and a shared inbox." />
 </p>
 
 ## What it does
 
-- **A board for your products.** Every task is a card, grouped by what it needs: you first, then work in progress, then the queue. Each card shows its own progress through its plan (plan, design, your check, build, review, ship) and says, in plain language, who is working on it and what they are doing.
-- **A queue you control.** Drag tasks to set priority. The top of the queue starts first, as soon as a slot is free. Hold a task to keep it from starting.
-- **Many products.** A searchable product switcher (⌘P) and a Products page that shows every product's pipeline and what waits on you, so twenty products stay as calm as two.
-- **A pool of agents.** Choose how many agents may run at once, with caps per tool so one subscription is not exhausted. See who is in each slot.
-- **Roles, not tools.** Planner, Researcher, Architect, Design reviewer, UX designer, Builder, Tester and Code reviewer are first-class. Any role can run on any tool, model and effort: Claude Code with Opus 5.5 as the architect, Codex at xhigh effort as its reviewer.
-- **A plan per task.** The planner composes the stages for each task: a bug fix might be one builder and two reviewers, something new gets research, a design both architects agree on, screens, tests and three reviewers. You can change the plan before it runs.
-- **Architects who have to agree.** Two architects on different tools iterate until no blocking objection is left. The disagreement log shows every objection and how it was answered.
-- **Reviews in a chain.** Reviewers run one after another, each seeing earlier verdicts but never the builder's transcript. Findings are pass or fail, merged and attributed.
-- **A "Needs you" inbox.** Questions, permission requests, plan and design checks, and delivery approvals, each with one-click answers. It tells you when you are the one blocking agents.
-- **Join any agent.** Open the live session of the agent working on a task, read along, and message it. Messages queue until the agent finishes its current step, or interrupt it right away. Take over in your own terminal when you want to drive.
-- **No code in the app.** You see plans, briefs, checklists and verdicts. The code lives in the pull request. Petrina never merges.
-- **What work costs, in tokens and time.** Every agent turn is recorded with the tokens (per model, as each tool reports them) and the time it took. A task shows what each stage and agent used, the Products page what each product used, and the pool what today used. An Analytics page shows each tool's usage limits and how fast each one fills up and resets, tokens and agent time per day split by tool, model or provider with the running total, the splits by tool, model, role, product and task, and how the squad works: send-backs, design rounds, questions, failures. No prices, and the cards stay calm.
+Write a task in plain language. The agents plan it, design it, build it and review it. The board shows what needs you, what is running and what starts next. Drag cards to change the order. When the work is ready, Petrina opens a pull request, publishes a release or commits to main, according to the task's delivery choice.
+
+All your products share one board and one inbox for questions, permissions and approvals. Petrina runs on your machine with the coding tools you are already signed into. There is no Petrina account, and the app shows plans, progress and results rather than code.
+
+## Design Flow
 
 <p align="center">
-  <img src="docs/screenshots/sheet-plan.png" alt="A task's plan: design until both architects agree, your design check, the build, a chain of two reviewers and your delivery check, each stage with its tool, model and effort" width="49%" />
-  <img src="docs/screenshots/session.png" alt="Joining a code reviewer's session: each agent's activity in plain language, the planner's message, and a queued message from the coordinator" width="49%" />
+  <img src="docs/screenshots/flow-design.png" alt="An architect and a design reviewer work through blocking objections, then ask the coordinator to settle their disagreement." />
 </p>
+
+An architect proposes the design and a design reviewer challenges it, using different harnesses where available. They work through blocking objections until they agree or reach the round limit. If they still disagree, you make the call. The architect follows that decision, and you check the brief before implementation starts.
+
+## Review Flow
 
 <p align="center">
-  <img src="docs/screenshots/analytics-usage-over-time.png" alt="Analytics: tokens per day for the last 7 days as stacked columns split by model, with a legend, the running total under them, and the splits by tool, model and role" width="49%" />
-  <img src="docs/screenshots/sheet-usage.png" alt="A task's What it used section: total tokens and agent time, input reused from the cache, and each stage with its agents, including a design reviewer that was asked for sol at xhigh but ran gpt-6.1 at medium" width="49%" />
+  <img src="docs/screenshots/flow-review.png" alt="A task's flow: the build and automated checks have passed, and two code reviewers are examining the change together." />
 </p>
 
-## How it runs agents
+A review finding must hold up before it can send work back. Reviewers mark findings **Important**, **Nit** or **Pre-existing**. Only confirmed Important findings block delivery; smaller issues and problems the change did not cause stay on the record without another builder round.
 
-Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com). Claude Code and Codex have maintained ACP adapters, and Grok speaks ACP itself (`grok --permission-mode auto agent stdio`). Any other agent that speaks ACP works the same way, so adding a tool is usually configuration. Everything runs on your machine with the tools you are already logged into: no API keys, no Petrina server, no telemetry. Details are in [docs/design.md](docs/design.md); the UX it is built from is in [docs/ux.md](docs/ux.md).
+| Step | What happens |
+| --- | --- |
+| **Reviewers** | Reviewers read the change at the same time, each in a separate conversation and working copy. They see neither the builder's transcript nor each other's current verdicts. Important means the change should not ship with the issue; Nit means it is smaller; Pre-existing means this change did not cause it. |
+| **Checks** | Petrina runs the product's checks itself. A passing result is evidence from the command, not an agent's claim. |
+| **Verifiers** | Support from another tool confirms an Important finding. Otherwise, a fresh verifier on each available tool checks it in parallel, with one vote per tool. At least half must call it real for it to block. Other verdicts record it as a nit, pre-existing or not a bug. |
+| **Security** | High-risk work gets a security review, preferring a tool that did not build the change. The same finding rules apply. The planner sets the risk; unrated work counts as medium. |
+| **Delivery** | You approve shipping unless the task's settings allow automatic delivery. Petrina publishes the chosen pull request, release or commit. Merging a pull request stays with you. |
 
-## Status
+## Auto-balancing
 
-Early, and working: the engine runs real Claude Code, Codex and Grok agents over ACP in their own git worktrees, with the planner, design convergence, review chain, permissions, questions and delivery (pull request, release, or a commit to main) wired end to end. The desktop app starts its engine by itself, and a fresh install opens on a short first run: a tools check with a fix for anything missing, a product picked from the GitHub clones on your machine, and a first task. Opened in a browser any other way than `bun run open`, the screens run on a simulated squad (`?demo`, `?demo=portfolio`, or `?demo=first-run`).
+New work is balanced across harnesses using their reported usage limits, so one allowance is not exhausted while another still has room.
 
-## Develop
+- Petrina weighs the remaining allowance against the time until reset, using the tightest reported window. Capacity that refreshes soon can be used before it is lost.
+- At 80% usage, that tool starts fewer new agents. Your pool size and per-tool caps still apply.
+- When the planned model is out of allowance, Petrina looks for another available model on the same tool, then another tool. Balancing changes new starts; it does not interrupt work just because another tool has more room. A step that hits a hard limit can continue with a stand-in. The plan keeps its original assignment, which becomes available again after the reset.
+- Reviews preserve their independence. Petrina prefers different tools for the builder, reviewers and security review where available; verification uses fresh conversations and one vote per actual tool.
 
-You need [Bun](https://bun.sh) 1.4, and for the desktop shell, Rust and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS.
+## Harnesses
+
+A harness is the coding tool that runs a model and manages its conversation, tools and permissions. It is separate from a role: Architect, Builder, Tester and Reviewer can each run on any supported harness.
+
+| Harness | ACP connection | Built-in models |
+| --- | --- | --- |
+| Claude Code | `claude-agent-acp` adapter | Opus 5.5, Fable 5.1; Sonnet 5.5 as a stand-in |
+| Codex | `codex-acp` adapter | sol, astra |
+| Grok | Its own ACP server, `grok agent stdio` | Grok 4.7 |
+
+Install and sign into at least one of these tools. Petrina uses your existing installation and login; it needs no separate Petrina account or API-key setup. The Claude Code and Codex adapters are included in the engine's dependencies. Grok connects through its own ACP server.
+
+For each role, Petrina sets the model and effort, provides the task context and working copy, and brings progress, questions and permission requests into the app. You can follow the conversation, queue a message, interrupt it or take over in your terminal. After a restart, Petrina reopens the conversation when the tool supports it; otherwise it starts fresh with the saved task context.
+
+Each harness keeps its own permission checks. Petrina records token usage and agent time and reads the tools' reported allowance windows for balancing. Missing reports stay unknown rather than being guessed.
+
+## Run
+
+Install [Bun](https://bun.sh), plus Rust and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for the desktop app.
 
 ```bash
 bun install
-bun run tauri dev    # the desktop app; it starts its own engine (data in ~/.petrina)
-bun run open         # Petrina in your browser, connected to the running engine
-bun run test         # core and engine tests (fake agents and a fake GitHub, no tokens spent)
-bun run typecheck
+bun run tauri dev
 ```
 
-The desktop app starts the engine when it opens and stops it when you quit. If an engine is already running for the same Petrina folder, the app uses that one and leaves it running when you quit; the Live label says which it is. You can still start the engine by hand with `bun run engine` (on 127.0.0.1:4317) and use the screens in a browser with `bun run dev` and `bun run open`. An engine started by hand keeps its key across restarts, so open browser windows reconnect; `bun run engine --new-key` makes a new one. Only one engine runs per Petrina folder: a second one says it is already running. The engine's output goes to `~/.petrina/engine.log`, started fresh each time.
+`bun run open` opens Petrina in a browser connected to the running engine. To try the sample squad without an engine, run `bun run dev` and open [localhost:1430/?demo](http://localhost:1430/?demo).
 
-`bun run petrina state` prints the engine's state, and `bun run petrina do '<action json>'` runs an action, for scripts. They work whoever started the engine.
+Early, but working: connected agents already take tasks through to pull requests, releases or commits on main, each in a separate working copy. Run from source for now.
 
-The engine's key never goes in a web address in the app: the window asks the app's shell for it and keeps it in memory. `bun run open` puts it after the `#` in the address (browsers never send that part anywhere) and the page removes it at once.
+Details are in [docs/design.md](docs/design.md). How the screens are meant to feel is in [docs/ux.md](docs/ux.md).
 
-### Quitting, crashes and restarts
-
-- **Running agents.** Quitting the app stops the engine it started. Its agents stop the way they do when you pause a task; their tasks wait for a free slot and continue the next time Petrina opens. Each agent then picks up its own conversation, keeping what it had read and planned, and is told that Petrina restarted and that its last action may not have finished; the timeline says "Picked up where it left off". When its tool cannot reopen the conversation, the agent starts the step again in a fresh one, with a short summary of where it was (the stage, what it last did, and the files changed in its working copy), and the timeline says "Started this step again" and why. Petrina stops the agent itself, not every command it started: a build or test run may finish on its own.
-- **Questions and permissions.** A question an agent asked you stays in your inbox across a restart, without holding a slot; your answer reaches the agent once, and it does not ask again because of the restart. A permission request that was open is removed from the inbox with a note in the timeline, and the agent asks again if it still needs it.
-- **What you said.** Messages, answers, the note given with a "No", and the change request that started a step are saved the moment Petrina receives them, and kept until the step finishes. An agent that picks up its conversation gets only what it had not read yet, once and in order. An agent that starts the step again (after a pause, "Try again", or a restart when its conversation could not be reopened) gets all of it, in order, marked as earlier. Permissions you allowed once may be asked again. In the app, anything not yet confirmed shows as unsent and goes out after reconnecting. Anything the engine refuses stays on screen as "Not sent", to send again or discard.
-- **Driving.** A step you took over in your terminal stays in your hands across a restart, with its seat in the pool, and Hand back works as before.
-- **Shipping.** Petrina never ships twice on its own. Pausing a task before its delivery starts keeps it from starting. If it closed while shipping, it first checks whether the pull request, the commit on main or the release already went out, and records it with its link. If it cannot tell, the task waits in the inbox under "Shipping was interrupted" with "Check again", "Ship it again" and "Mark as done".
-- **The engine stopping unexpectedly.** The app starts a new one and reconnects. After three failed starts in a row it says so, with "Try again" and "Open the demo". If the app itself crashes or is force-quit, the engine it started notices and stops within a few seconds.
-- **Installed builds** only run an engine shipped inside the app. Packaging the engine is not done yet, so for now run Petrina from its source folder.
-
-| Path | What lives there |
-|---|---|
-| `apps/desktop` | The Tauri app: React UI in `src/`, the Rust shell that starts and stops the engine in `src-tauri/` |
-| `packages/core` | Domain model, scheduler, plans and the simulated squad |
-| `packages/engine` | The engine: ACP agents, worktrees, credentials, prompts, SQLite, the local API, one engine per folder |
-| `docs` | Design and UX |
-
-## License
-
-MIT
+[MIT](LICENSE)
