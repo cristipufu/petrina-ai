@@ -13,9 +13,8 @@ import { Store } from "../src/store.js";
 import type { AgentScript, Scenario } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
 
-// The tests stand in for the coordinator's own setup: git settings an environment adds (when Petrina runs
-// the tests as a product's check, say) would stop the tests' own pushes, so they do not apply.
-for (const key of Object.keys(process.env)) if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(key)) delete process.env[key];
+// Git's config environment is inherited by child processes even when Bun's mutable process.env is
+// cleaned up. Every test Git process gets its own explicitly sanitized environment instead.
 
 // Bun scans a script's ancestors on startup. The default macOS temp folder can hold tens of
 // thousands of entries; keep test fixtures and their child processes out of that crowded folder.
@@ -49,6 +48,13 @@ export function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
+/** Git config injected by Petrina protects its own processes, but must not protect test fixtures. */
+export function testGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const clean = { ...env };
+  for (const name of Object.keys(clean)) if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(name) || name === "GIT_SSH_COMMAND") delete clean[name];
+  return clean;
+}
+
 /** Windows keeps files open a moment after a process ends: cleaning up is best effort. */
 export function removeDir(path: string): void {
   try {
@@ -60,7 +66,7 @@ export function removeDir(path: string): void {
 
 /** Use Bun's native result and a deadline: the Node synchronous wrapper can stall after Git has exited. */
 export const git = (cwd: string, ...args: string[]): string => {
-  const result = Bun.spawnSync(["git", ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true, timeout: 30_000 * SLOW, killSignal: "SIGKILL" });
+  const result = Bun.spawnSync(["git", ...args], { cwd, env: testGitEnv(), stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true, timeout: 30_000 * SLOW, killSignal: "SIGKILL" });
   const output = result.stdout.toString();
   if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed (${result.signalCode ?? result.exitCode}):\n${[output, result.stderr.toString()].filter(Boolean).join("\n")}`);
   return output.trim();
@@ -148,9 +154,7 @@ type Spawned = ReturnType<typeof spawnEngine>;
  * test's own bare repository wherever the tests run.
  */
 export function engineEnv(home: string): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env, PETRINA_HOME: home };
-  for (const name of Object.keys(env)) if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(name) || name === "GIT_SSH_COMMAND") delete env[name];
-  return env;
+  return { ...testGitEnv(), PETRINA_HOME: home };
 }
 
 export function spawnEngine(args: readonly string[], home: string) {

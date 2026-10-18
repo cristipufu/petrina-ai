@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import type { DeliveryMode, State, Task } from "@petrina/core";
 import type { Engine } from "../src/engine.js";
-import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, type World } from "./support.js";
+import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
 
 const worlds: World[] = [];
 const world = (name: string) => {
@@ -57,7 +57,7 @@ async function interruptedBeforeUpdate(
 }
 
 /** What the old delivery agent ran: plain git in the task's working copy, straight to GitHub. */
-const pushToGitHub = (w: World, cwd: string, ...refspecs: string[]) => execFileSync("git", ["push", "-q", w.remote, ...refspecs], { cwd });
+const pushToGitHub = (w: World, cwd: string, ...refspecs: string[]) => execFileSync("git", ["push", "-q", w.remote, ...refspecs], { cwd, env: testGitEnv() });
 
 function versionCommit(cwd: string): string {
   git(cwd, "commit", "-q", "--allow-empty", "-m", "Version 0.1.0");
