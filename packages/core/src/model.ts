@@ -554,13 +554,16 @@ export interface Task {
   returnToCheck?: number;
   /** The last time Petrina ran the product's checks on this task, and on which commit. */
   /** The tree is the code itself: a squash keeps it, so the checks still count. */
-  checks?: { at: number; sha?: string; tree?: string; results: readonly CheckRun[] };
-  /** How many times failing checks sent the work back right before the delivery check. */
+  /** The definition covers commands and hook inputs, separately from the code. */
+  checks?: { at: number; sha?: string; tree?: string; definition?: string; results: readonly CheckRun[] };
+  /** How many times failing checks sent the work back before review or delivery. */
   checkReturns?: number;
   /** The base's commit when the working copy was made: reviews, the tamper check and the review guide go by it, whatever later happens to refs. */
   baseSha?: string;
   /** The commit the last review round looked at: later rounds review only what changed since. */
   reviewedSha?: string;
+  /** The exact code that completed code review, including any later reviewed port. Missing on older tasks: they receive ordinary review. */
+  reviewedTree?: string;
   /** How much could go wrong, as the planner rated it from what the task touches. Sets review depth and the delivery check. */
   risk?: { level: RiskLevel; why: string };
   /** The commit the delivery check showed the coordinator, and the one they approved. */
@@ -580,6 +583,7 @@ export interface Task {
   /**
    * Main moved on and the task's change no longer applies cleanly: the working copy is on main with the
    * change applied and these files conflicting, until the builder brings it up to date.
+   * `head` permits a port review only when `reviewedTree` records a completed review of that exact code.
    */
   updating?: { from: string; onto: string; head?: string; files: readonly string[]; notes?: readonly string[] };
   /**

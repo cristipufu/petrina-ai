@@ -28,9 +28,10 @@ function hook(repo: string, name: string, script: string): void {
 /**
  * One task to done on a product that commits to main locally. `setup` runs on the clone before it becomes a
  * product, `beforeBuild` at the plan check and `atDeliveryCheck` at the first delivery check, before the
- * coordinator approves either.
+ * coordinator approves either. `atBuilderPermission` can land main or add work while the scripted builder
+ * is waiting for permission, before it reports its finished build.
  */
-async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void; beforeBuild?: (repo: string) => void; atDeliveryCheck?: (repo: string) => void } = {}) {
+async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void; beforeBuild?: (repo: string) => void; atDeliveryCheck?: (repo: string) => void; atBuilderPermission?: (repo: string, task: Task) => void } = {}) {
   const root = tempDir("petrina-update-");
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
@@ -46,12 +47,16 @@ async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void;
     let deliveryChecks = 0;
     const task = await waitFor(() => {
       const state = engine.getState();
+      const found = state.tasks.find((entry) => entry.id === taskId)!;
       for (const item of state.inbox) {
         if (item.taskId !== taskId) continue;
         if (item.kind === "plan") {
           hooks.beforeBuild?.(repo);
           engine.approve(item.id);
-        } else if (item.kind === "permission") engine.allow(item.id, "once");
+        } else if (item.kind === "permission") {
+          if (found.agent?.roleId === "builder") hooks.atBuilderPermission?.(repo, found);
+          engine.allow(item.id, "once");
+        }
         else if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
         else if (item.kind === "delivery") {
           deliveryChecks += 1;
@@ -59,7 +64,6 @@ async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void;
           engine.approve(item.id);
         }
       }
-      const found = state.tasks.find((entry) => entry.id === taskId) as Task | undefined;
       if (found?.state === "failed") throw new Error(`The task failed: ${found.error}`);
       return found?.state === "done" && found;
     }, "the work to ship", 90_000);
@@ -109,7 +113,7 @@ describe.concurrent("work brought up to date with main", () => {
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
   });
 
-  it("sends a conflict to the builder, then one reviewer looks at the port only, and ships one commit", async () => {
+  it("sends a first-review conflict to the builder, then every planned reviewer looks at the whole change", async () => {
     const { task, fakes, repo, before, deliveryChecks } = await ship({}, { beforeBuild: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main") });
     const text = lines(task);
     expect(text).toContain("Main moved on (1 new commit) and 1 file conflicts with this work, so the builder brings it up to date");
@@ -118,22 +122,26 @@ describe.concurrent("work brought up to date with main", () => {
     const update = fakes.prompts("builder").find((prompt) => prompt.includes("conflict markers"));
     expect(update).toContain("these files still have git's conflict markers: greeting.txt");
     expect(update).toMatch(/git log --stat [0-9a-f]{40}\.\.[0-9a-f]{40}/);
-    // After the update, one reviewer (not the planned two) looked only at the port, and said so.
+    // No ordinary review happened before the conflict: the full planned review must still happen.
     const updated = text.indexOf("Brought up to date with main: Added a greeting.");
-    expect(text.slice(updated).filter((line) => line === "Code reviewer started")).toHaveLength(1);
-    expect(text.slice(updated).some((line) => line.startsWith("Port review passed"))).toBe(true);
-    const port = fakes.openings("code reviewer").at(-1)!;
-    expect(port).toContain("Review only the port: run `git range-diff ");
-    expect(port).toContain("resolving conflicts in: greeting.txt");
-    // The journey shows the move, the builder's update and the one reviewer on the port, never as a repeat of a round.
+    expect(text.slice(updated).filter((line) => line === "Code reviewer started")).toHaveLength(2);
+    expect(text.some((line) => line.startsWith("Port review passed"))).toBe(false);
+    const reviews = fakes.openings("code reviewer");
+    expect(reviews).toHaveLength(2);
+    for (const review of reviews) {
+      expect(review).not.toContain("Review only the port");
+      expect(review).toContain(`git diff ${task.baseSha}...HEAD`);
+    }
+    // The journey shows the move, the update and the full first review.
     const steps = task.journey ?? [];
     const names = steps.map((step, index) => stepName(step, steps.slice(0, index), BUILT_IN_ROLES));
     const moved = names.indexOf("Main moved on");
     expect(moved).toBeGreaterThan(-1);
     expect(names[moved + 1]).toBe("Builder (update)");
-    expect(names.slice(moved + 2).filter((name) => name.startsWith("Code reviewer"))[0]).toBe("Code reviewer (port)");
-    const portStep = steps.find((step) => step.port && step.kind === "agent")!;
-    expect(portStep.team ?? [portStep.profileId]).toHaveLength(1);
+    expect(names.slice(moved + 2).filter((name) => name.startsWith("Code reviewer"))[0]).toBe("Code reviewers");
+    expect(steps.some((step) => step.port)).toBe(false);
+    const reviewStep = steps.find((step) => step.roleId === "code-reviewer")!;
+    expect(reviewStep.team).toHaveLength(2);
     expect(names.some((name) => name.includes("again"))).toBe(false);
     expect(journeyProblems(task)).toEqual([]);
     expect(deliveryChecks).toBe(1);
@@ -151,10 +159,64 @@ describe.concurrent("work brought up to date with main", () => {
   });
 
   it("asks again when a change made after the approval conflicts with main, once the builder brought it up to date and the review looked again", async () => {
-    const { task, repo, before, deliveryChecks } = await ship({}, { atDeliveryCheck: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main") });
+    const { task, fakes, repo, before, deliveryChecks } = await ship({}, { atDeliveryCheck: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main") });
     expect(lines(task)).toContain("Brought up to date with main: Added a greeting.");
+    // Both ordinary reviewers passed this exact feature; one independent reviewer can now review the port.
+    const reviews = fakes.openings("code reviewer");
+    expect(reviews).toHaveLength(3);
+    expect(reviews.slice(0, 2).every((prompt) => !prompt.includes("Review only the port"))).toBe(true);
+    expect(reviews[2]).toContain("Review only the port: run `git range-diff ");
+    expect(reviews[2]).toContain("resolving conflicts in: greeting.txt");
+    expect(lines(task).some((line) => line.startsWith("Port review passed"))).toBe(true);
+    const ports = task.journey!.filter((step) => step.port && step.roleId === "code-reviewer");
+    expect(ports).toHaveLength(1);
+    expect(ports[0]!.team ?? [ports[0]!.profileId]).toHaveLength(1);
+    expect(task.reviewedTree).toBe(git(repo, "rev-parse", "main^{tree}"));
+    expect(journeyProblems(task)).toEqual([]);
     expect(deliveryChecks).toBe(2);
     expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
+  });
+
+  it("gives unreviewed fixes the full planned review when main conflicts during a fix round", async () => {
+    let landed = false;
+    const { task, fakes, repo } = await ship({ reviewer: "important", fixes: "change" }, { atBuilderPermission: (repo, current) => {
+      if (!current.fixing || current.updating || landed) return;
+      landed = true;
+      land(repo, "greeting.txt", "Hi from main\n", "A greeting on main");
+    } });
+    expect(landed).toBe(true);
+    expect(lines(task)).toContain("Brought up to date with main: Added a greeting.");
+    expect(git(repo, "show", "main:welcome.txt")).toContain("Hello");
+    const reviews = fakes.openings("code reviewer");
+    expect(reviews).toHaveLength(4);
+    for (const review of reviews.slice(2)) {
+      expect(review).not.toContain("Review only the port");
+      expect(review).not.toContain("Review only what changed since");
+      expect(review).toContain(`git diff ${task.baseSha}...HEAD`);
+    }
+    expect(task.findings.filter((finding) => finding.severity === "blocking").every((finding) => finding.status === "fixed")).toBe(true);
+    expect(task.journey!.some((step) => step.port)).toBe(false);
+  });
+
+  it("reviews extra work done during a port with every planned reviewer", async () => {
+    let added = false;
+    const { task, fakes, repo } = await ship({}, {
+      atDeliveryCheck: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main"),
+      atBuilderPermission: (_repo, current) => {
+        if (!current.updating) return;
+        writeFileSync(join(current.worktree!, "welcome.txt"), "An unreviewed welcome-page fix\n");
+        added = true;
+      },
+    });
+    expect(added).toBe(true);
+    expect(git(repo, "show", "main:welcome.txt")).toBe("An unreviewed welcome-page fix");
+    const reviews = fakes.openings("code reviewer");
+    expect(reviews).toHaveLength(4);
+    for (const review of reviews.slice(2)) {
+      expect(review).not.toContain("Review only the port");
+      expect(review).toContain(`git diff ${task.baseSha}...HEAD`);
+    }
+    expect(task.journey!.some((step) => step.port && step.roleId === "code-reviewer")).toBe(false);
   });
 });
 

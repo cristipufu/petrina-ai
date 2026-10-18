@@ -62,13 +62,19 @@ export class Work {
       // One commit per task: the builder's work joins the branch's one commit, under its title.
       const sha = await git.commitAll(task.worktree!, this.updates.message(task));
       if (updating) {
-        // Up to date now. The change itself was reviewed already: the next review round looks only at the port.
+        // A first review, an unreviewed fix, or work beyond the conflicts needs the whole planned review.
+        // Check the saved code too: older updates recorded a head without recording any completed review.
+        const reviewed = updating.head && task.reviewedTree && task.reviewedTree === await git.treeOf(task.worktree!, updating.head);
+        const merged = reviewed ? await git.mergeTree(task.worktree!, updating.onto, updating.head) : undefined;
+        const portOnly = merged && (await git.changedFiles(task.worktree!, merged.tree, await git.head(task.worktree!))).every((file) => updating.files.includes(file));
         delete task.updating;
         delete task.reviewedSha;
         delete task.hunt;
-        if (updating.head) task.portReview = { from: updating.from, head: updating.head, onto: updating.onto, files: updating.files };
+        delete task.portReview;
+        if (portOnly && updating.head) task.portReview = { from: updating.from, head: updating.head, onto: updating.onto, files: updating.files };
+        else delete task.reviewedTree;
         this.k.log(task, "done", `Brought up to date with main: ${result.summary}`, roleId, used);
-      }
+      } else delete task.reviewedTree;
       await this.updates.fold(task);
       // The next fix round or update goes back to this conversation.
       const conversation = task.conversation;

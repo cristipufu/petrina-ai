@@ -91,8 +91,10 @@ export class Updates {
     if (!merged) throw new Error("Petrina could not bring the work up to date with main");
     const gained = await git.commitsSince(worktree, fork, latest.sha);
     const commits = `${gained} new commit${gained === 1 ? "" : "s"}`;
+    const reviewed = !!task.reviewedTree && task.reviewedTree === await git.treeOf(worktree);
     if (!merged.conflicts.length) {
       await git.moveTo(worktree, await git.commitTree(worktree, merged.tree, latest.sha, this.message(task)));
+      if (reviewed) task.reviewedTree = merged.tree;
       task.baseSha = latest.sha;
       task.base = latest.ref;
       // The version the last round reviewed, carried onto the new main too, so the next round still sees only what changed since.
@@ -108,8 +110,9 @@ export class Updates {
     const builder = lastIndexWhere(task.plan?.stages ?? [], (stage) => stage.roleId === "builder" && stage.kind === "do");
     if (builder < 0) throw new Error("Main moved on and the work conflicts with it, but the plan has no builder to bring it up to date");
     // On disk before the working copy moves: a restart in between finds the update and opens it again.
-    const head = await git.head(worktree);
-    task.updating = { from: fork, onto: latest.sha, head, files: merged.conflicts, ...(merged.notes.length ? { notes: merged.notes } : {}) };
+    // Only a completed review of this exact code permits the later review to cover the port alone.
+    const head = reviewed ? await git.head(worktree) : undefined;
+    task.updating = { from: fork, onto: latest.sha, ...(head ? { head } : {}), files: merged.conflicts, ...(merged.notes.length ? { notes: merged.notes } : {}) };
     // The builder ports the change by hand: whatever was approved before, the coordinator checks it again.
     delete task.approvedSha;
     delete task.approvedPatch;

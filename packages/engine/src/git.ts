@@ -365,13 +365,18 @@ export async function mergeInProgress(path: string): Promise<boolean> {
 
 /** The hooks git runs when committing, as the repository has them (core.hooksPath honoured): the ones that exist and git would run. */
 export async function commitHooks(path: string): Promise<CommitHook[]> {
-  const found: CommitHook[] = [];
+  return (await commitHookFiles(path)).map((hook) => hook.name);
+}
+
+/** The executable hook files, including local hooks outside the committed tree. */
+export async function commitHookFiles(path: string): Promise<{ name: CommitHook; path: string }[]> {
+  const found: { name: CommitHook; path: string }[] = [];
   for (const name of COMMIT_HOOKS) {
     const where = await run(["git", "rev-parse", "--path-format=absolute", "--git-path", `hooks/${name}`], path, undefined, { ownHooks: true });
     if (where.code !== 0 || !where.stdout) continue;
     const mode = await stat(where.stdout).then((info) => (info.isFile() ? info.mode : undefined)).catch(() => undefined);
     // Git skips a hook it cannot execute, except on Windows, where it runs every hook through its own shell.
-    if (mode !== undefined && (process.platform === "win32" || (mode & 0o111) !== 0)) found.push(name);
+    if (mode !== undefined && (process.platform === "win32" || (mode & 0o111) !== 0)) found.push({ name, path: where.stdout });
   }
   return found;
 }
@@ -561,10 +566,10 @@ export async function parents(path: string, sha: string): Promise<string[]> {
   return (await run(["git", "rev-list", "--parents", "--max-count=1", sha], path)).stdout.split(/\s+/).filter(Boolean).slice(1);
 }
 
-/** Files that differ between two commits. */
+/** Files that differ between two commits or trees. A failed read cannot establish that nothing changed. */
 export async function changedFiles(path: string, from: string, to: string): Promise<string[]> {
   if (!SHA.test(from) || !SHA.test(to)) return [];
-  return (await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", from, to], path)).stdout.split("\0").filter(Boolean);
+  return (await must(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", from, to], path)).split("\0").filter(Boolean);
 }
 
 /**

@@ -428,6 +428,11 @@ describe("recorded the way the engine records", () => {
     petrinaMoment(task, "update", { outcome: W.mainMoved(1), reason: W.conflicts, tone: "back" }, t + 110);
     task.stageIndex = build;
     task.updating = { from: "a", onto: "b", head: "c", files: ["greeting.txt"] };
+    // A saved head alone (including an older task) does not prove the feature completed review.
+    const unreviewed = journeyView({ ...task, state: "running" }, contextOf(state));
+    expect(unreviewed.nodes.some((node) => node.name === "Code reviewer (port)")).toBe(false);
+    expect(unreviewed.nodes.find((node) => node.roleId === "code-reviewer")!.team).toHaveLength(stages[review]!.profileIds.length);
+    task.reviewedTree = "the code that passed ordinary review";
     let view = journeyView({ ...task, state: "running" }, contextOf(state));
     expect(boxes(view).slice(2, 5)).toEqual(["Main moved on: done", "Builder (update): next", "Code reviewer (port): ahead"]);
     // The faint port review names the one reviewer the engine picks: on a tool other than the builder's.
@@ -454,6 +459,7 @@ describe("recorded the way the engine records", () => {
 
   it("names the port reviewer away from the latest builder's actual tool", () => {
     const task = atBuild();
+    task.reviewedTree = "the code that passed ordinary review";
     const state = emptyState();
     const build = task.plan!.stages[task.stageIndex]!;
     const planned = state.profiles.find((profile) => profile.id === build.profileIds[0])!;
@@ -469,6 +475,7 @@ describe("recorded the way the engine records", () => {
 
   it("names an added reviewer when it is chosen to review the port", () => {
     const task = atBuild();
+    task.reviewedTree = "the code that passed ordinary review";
     const added = addRole(NO_ROLE_CHANGES, ROLE_STARTS.find((start) => start.id === "security")!.draft);
     const state = { ...emptyState(), roles: libraryRoles(added.changes) };
     const review = task.plan!.stages.find((stage) => stage.kind === "review-chain")!;
@@ -480,6 +487,30 @@ describe("recorded the way the engine records", () => {
     const port = journeyView(task, contextOf(state)).nodes.find((node) => node.name === "Security specialist (port)")!;
     expect(port).toMatchObject({ roleId: added.roleId, profileId: reviewer });
     expect(port.team).toBeUndefined();
+  });
+
+  it.each(["update", "saved port"] as const)("keeps every planned reviewer, including an added role, during a %s without review proof", (kind) => {
+    const task = atBuild();
+    const added = addRole(NO_ROLE_CHANGES, ROLE_STARTS.find((start) => start.id === "security")!.draft);
+    const state = { ...emptyState(), roles: libraryRoles(added.changes) };
+    const review = task.plan!.stages.find((stage) => stage.kind === "review-chain")!;
+    const builder = task.plan!.stages[task.stageIndex]!.profileIds[0]!;
+    const builderTool = state.profiles.find((profile) => profile.id === builder)!.toolId;
+    const reviewer = state.profiles.find((profile) => profile.toolId !== builderTool)!.id;
+    const planned = { ...review, profileIds: [builder, reviewer], roleIds: ["code-reviewer", added.roleId] };
+    task.plan = { ...task.plan!, stages: task.plan!.stages.map((stage) => stage === review ? planned : stage) };
+    if (kind === "update") task.updating = { from: "a", onto: "b", head: "c", files: ["greeting.txt"] };
+    else {
+      endAgentStep(task, { outcome: W.broughtUpToDate, reason: W.upToDate }, task.journey!.at(-1)!.startedAt + 1);
+      task.portReview = { from: "a", head: "c", onto: "b", files: ["greeting.txt"] };
+      task.stageIndex = task.plan.stages.indexOf(planned);
+    }
+    const view = journeyView(task, contextOf(state));
+    expect(view.nodes.some((node) => node.name.includes("(port)"))).toBe(false);
+    const ordinary = view.nodes.find((node) => node.stageId === review.id)!;
+    expect(ordinary).toMatchObject({ roleId: "code-reviewer", team: [builder, reviewer] });
+    expect(planned.roleIds).toEqual(["code-reviewer", added.roleId]);
+    expect(task.reviewedTree).toBeUndefined();
   });
 
   it("picking up the same step continues its box", () => {

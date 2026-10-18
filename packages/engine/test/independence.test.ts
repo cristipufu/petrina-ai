@@ -139,7 +139,12 @@ describe.concurrent("reviews after a usage handoff", () => {
   it("reviews a real conflict port away from its latest builder, even when neither planned reviewer can do that", async () => {
     const f = await fixture({ controlled: true }, 3, ["sol-high", "opus-high"], "opus-high");
     try {
+      // The usage stand-in writes notes.txt. Include it in the reviewed feature so its handoff later
+      // remains a genuine port, rather than adding an unreviewed file alongside the conflict.
+      await f.advance(() => f.fakes.received("builder").length === 1, (role) => role !== "builder");
+      writeFileSync(join(f.task().worktree!, "notes.txt"), "A first draft\n");
       await f.advance(f.delivery);
+      expect(git(f.task().worktree!, "show", "HEAD:notes.txt")).toBe("A first draft");
       // The original build and review finished. A conflicting change lands before delivery.
       expect(f.task().builderSession?.toolId).toBe("claude-code");
       writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
@@ -150,6 +155,8 @@ describe.concurrent("reviews after a usage handoff", () => {
       await f.advance(() => f.task().portReview !== undefined && f.fakes.received("code reviewer").some((entry) => entry.text.includes("Review only the port")), (role) => role !== "code reviewer");
       const port = f.fakes.received("code reviewer").find((entry) => entry.text.includes("Review only the port"))!;
       expect(f.task().builderSession?.toolId).toBe("codex");
+      const update = f.task().timeline.find((entry) => entry.text.startsWith("Brought up to date with main:"))!;
+      expect(f.engine.s.profiles.find((profile) => profile.id === update.profileId)?.toolId).toBe("codex");
       expect(f.task().plan!.stages.find((stage) => stage.roleId === "builder")!.profileIds).toEqual(["opus-high"]);
       expect(f.model(port.session)).toBe("grok-4.7");
       const step = f.task().journey!.find((entry) => entry.roleId === "code-reviewer" && entry.port)!;
@@ -173,6 +180,80 @@ describe.concurrent("reviews after a usage handoff", () => {
       expect(verdicts.every((entry) => f.engine.s.profiles.find((profile) => profile.id === entry.profileId)?.toolId === "codex")).toBe(true);
     } finally { f.engine.shutdown(); }
   });
+
+  it("restores the full planned review when an older saved port has no proof of completed feature review", async () => {
+    const f = await fixture({ controlled: true }, 3);
+    try {
+      await f.advance(f.delivery);
+      writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
+      git(f.repo, "add", "greeting.txt");
+      git(f.repo, "commit", "-q", "-m", "A greeting on main");
+      f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
+      await f.advance(() => f.fakes.received("code reviewer").some((entry) => entry.text.includes("Review only the port")), (role) => role !== "code reviewer");
+      // Older releases saved this mark even for an unreviewed feature. A restart must not trust it.
+      f.engine.setPoolPaused(true);
+      const saved = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
+      delete saved.reviewedTree;
+      // Even a report already saved under that narrower scope cannot replace an ordinary review.
+      const key = Object.keys(saved.hunt!.profiles!)[0]!;
+      saved.hunt!.reported[key] = true;
+      const before = f.fakes.received("code reviewer").length;
+      f.restart();
+      f.engine.setPoolPaused(false);
+      await f.advance(f.delivery);
+      const reviews = f.fakes.received("code reviewer").slice(before);
+      expect(reviews).toHaveLength(2);
+      for (const review of reviews) {
+        expect(review.text).not.toContain("Review only the port");
+        expect(review.text).toContain(`git diff ${f.task().baseSha}...HEAD`);
+      }
+      expect(f.task().portReview).toBeUndefined();
+      expect(f.task().reviewedTree).toBe(git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
+    } finally { f.engine.shutdown(); }
+  });
+
+  for (const reopen of ["resume", "load"] as const) for (const legacy of [true, false]) {
+    it(`${legacy ? "replaces a legacy port conversation with full instructions" : "keeps a genuine port conversation"} for a single reviewer after ${reopen}`, async () => {
+      const f = await fixture({ planner: "short", controlled: true, reopen }, 1);
+      try {
+        await f.advance(f.delivery);
+        expect(f.fakes.openings("code reviewer")).toHaveLength(1);
+        writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
+        git(f.repo, "add", "greeting.txt");
+        git(f.repo, "commit", "-q", "-m", "A greeting on main");
+        f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
+        await f.advance(() => f.fakes.received("code reviewer").length === 2 && !!f.task().conversation?.briefed, (role) => role !== "code reviewer");
+        const port = f.fakes.received("code reviewer").at(-1)!;
+        expect(port.text).toContain("Review only the port");
+        expect(f.task().plan!.stages.find((stage) => stage.kind === "review-chain")!.profileIds).toHaveLength(1);
+        f.engine.setPoolPaused(true);
+        const saved = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
+        expect(saved.conversation?.sessionId).toBe(port.session);
+        if (legacy) delete saved.reviewedTree;
+        f.engine.sendMessage(f.task().id, "Check the welcome page too.");
+        f.restart();
+        f.engine.setPoolPaused(false);
+        if (legacy) {
+          await f.advance(() => f.fakes.received("code reviewer").length > 2 && !!f.task().conversation?.briefed, (role) => role !== "code reviewer");
+          expect(f.task().reviewedTree).toBeUndefined();
+        }
+        await f.advance(f.delivery);
+        const after = f.fakes.received("code reviewer").slice(2);
+        expect(after).toHaveLength(1);
+        expect(after.map((entry) => entry.text).join("\n")).toContain("Check the welcome page too.");
+        if (legacy) {
+          expect(after[0]!.session).not.toBe(port.session);
+          expect(after[0]!.text).not.toContain("Review only the port");
+          expect(after[0]!.text).toContain(`git diff ${f.task().baseSha}...HEAD`);
+          expect(after[0]!.text).toContain("Check every acceptance item");
+        } else {
+          expect(after[0]!.session).toBe(port.session);
+          expect(after[0]!.text).toContain("Petrina restarted");
+        }
+        expect(f.task().reviewedTree).toBe(git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
+      } finally { f.engine.shutdown(); }
+    });
+  }
 
   for (const status of ["ready", "logged-out", "unknown"] as const) it(`keeps review replacements within the checked tools when Grok is ${status}`, async () => {
     const f = await fixture({ controlled: true, limited: [{ model: "opus", role: "code reviewer", spendCap: true }] }, 1, ["sol-high", "opus-high"]);

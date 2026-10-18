@@ -32,7 +32,7 @@ export const GATE_TITLE: Record<GateKind, (title: string) => string> = {
   delivery: (title) => `Ready to ship “${title}”`,
 };
 
-/** Important findings still open: the review rounds ran out before they were settled. */
+/** Important findings still open when the work reaches the coordinator. */
 function stillBlocking(task: Task): number {
   return task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").length;
 }
@@ -48,6 +48,7 @@ export function gateStatus(task: Task, gate: GateKind): string {
   if (gate === "plan") return "Plan ready. Waiting for your OK";
   if (gate === "design") return callOn(task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check";
   const open = stillBlocking(task);
+  if (task.checks?.results.some((run) => !run.ok)) return "Checks still fail. Your call";
   // Never "done" while Important findings are open: the rounds ran out and the coordinator decides.
   if (open) return `Review rounds ran out with ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} open. Your call`;
   return "Reviews done. Waiting for your OK to ship";

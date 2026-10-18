@@ -576,6 +576,12 @@ export class Engine extends Kernel implements Commands {
     if (!item || !task) return;
     this.s.inbox = this.s.inbox.filter((entry) => entry.id !== itemId);
     delete task.error;
+    // An explicit Retry refreshes checks, pass or fail, even on unchanged work. Keep the output visible
+    // until that run finishes; ordinary stage changes and restarts keep its identity and reuse it.
+    if (task.checks) {
+      delete task.checks.sha;
+      delete task.checks.tree;
+    }
     this.tracking.retried(task);
     task.state = "waiting";
     task.statusLine = "Waiting for a free slot";

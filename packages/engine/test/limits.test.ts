@@ -21,7 +21,13 @@ async function fixture(limit: number, toolCap: number) {
   engine.setToolCap("codex", 2);
   const productId = await engine.addProduct(repo);
   const ids = Array.from({ length: 9 }, (_, index) => engine.addTask({ productId, title: `Change ${index}`, approveDelivery: true }));
-  const release = (session: string) => writeFileSync(join(fakes.dir, `release-${session}`), "go");
+  const released = new Set<string>();
+  const release = (session: string) => {
+    // The marker releases every turn in this conversation; later polls need not rewrite it.
+    if (released.has(session)) return;
+    writeFileSync(join(fakes.dir, `release-${session}`), "go");
+    released.add(session);
+  };
   const close = async () => {
     engine.shutdown();
     await Bun.sleep(100);
@@ -85,6 +91,10 @@ describe("slots are recorded and checked for every agent", () => {
       expect(f.fakes.received("researcher")).toHaveLength(9);
       expect(f.fakes.received("design reviewer").length).toBeGreaterThan(9);
       expect(f.fakes.received("code reviewer")).toHaveLength(27);
+    } catch (error) {
+      const state = f.engine.getState();
+      const tasks = state.tasks.map(({ id, state, statusLine, error }) => ({ id, state, statusLine, error }));
+      throw new Error(`${error instanceof Error ? error.message : String(error)}. Tasks: ${JSON.stringify(tasks)}. Slots: ${JSON.stringify(slotUses(state))}. Cap violations: ${JSON.stringify(failures)}`, { cause: error });
     } finally { unsub(); await f.close(); }
   });
 

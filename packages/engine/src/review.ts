@@ -60,6 +60,16 @@ export class Reviews {
    * ends. What each reviewer and voter hands back is saved as it arrives, so a restart only redoes the rest.
    */
   async runReview(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+    // Older saved port marks did not prove the feature had completed ordinary review.
+    if (task.portReview && !task.reviewedTree) {
+      delete task.portReview;
+      delete task.hunt;
+      delete task.reviewedSha;
+      // Its old conversation was briefed to look only at the port. A full review starts fresh,
+      // including for a one-person review that would otherwise resume with only "continue".
+      delete task.conversation;
+      this.k.commitNow();
+    }
     const round = task.rounds[stage.id] ?? 1;
     if (task.hunt?.stageId !== stage.id || task.hunt.round !== round) {
     // The work goes on top of the latest main before anyone reviews it: a conflict goes to the builder first,
@@ -79,11 +89,21 @@ export class Reviews {
     }
     this.k.log(task, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
     // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
-    // A later chain on the same code (a security review) goes by the run that just passed.
-    const passed = (await this.checks.ranOn(task)) && task.checks!.results.every((run) => run.ok);
-    if (!passed && (await this.checks.runProductChecks(task, await this.checks.ensureChecks(task, signal), signal)) > 0) {
-      this.k.log(task, "warn", "Reviewers wait until the checks pass");
-      return this.closeReviewRound(task, stage, round, false);
+    // A failed run is evidence too: it returns to the builder without spending a review round.
+    if (await this.checks.failing(task, signal, await this.checks.ensureChecks(task, signal))) {
+      // The check fix can reach beyond the port's conflicted files, so its review must be ordinary.
+      delete task.portReview;
+      delete task.reviewedTree;
+      if (this.checks.backToBuilder(task, "before review")) return "continue";
+      // The same delivery decision used after final checks exhaust their builder returns.
+      const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.gate === "delivery");
+      task.stageIndex = delivery >= 0 ? delivery : task.plan!.stages.length - 1;
+      task.sub = 0;
+      this.k.log(task, "warn", "Checks still fail: the builder returns are used up, so the decision goes to you");
+      this.k.commit();
+      if (delivery >= 0) return "continue";
+      this.k.gate(task, "delivery");
+      return "stop";
     }
       task.hunt = { stageId: stage.id, round, reported: {}, findings: task.findings.length };
       this.k.commit();
@@ -108,7 +128,7 @@ export class Reviews {
     }
     const outcome = vote ? this.tally(task, vote.findings) : this.raised(task);
     delete task.hunt;
-    return this.closeReviewRound(task, stage, round, true, outcome);
+    return this.closeReviewRound(task, stage, round, outcome);
   }
 
   /** What this round's reviewers raised, in plain counts. */
@@ -421,23 +441,23 @@ export class Reviews {
 
   /**
    * The end of a review round: back to the builder with what is Important, or on towards delivery. `outcome`: what
-   * the round's last box (its reviewers', or its voters') says, when reviewers looked at all.
+   * the round's last box (its reviewers', or its voters') says.
    */
-  private async closeReviewRound(task: MTask, stage: MStage, round: number, reviewed: boolean, outcome?: string): Promise<"continue" | "stop"> {
+  private async closeReviewRound(task: MTask, stage: MStage, round: number, outcome: string): Promise<"continue" | "stop"> {
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
     const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
     noteRoundEnd(task, stage.id, open.length);
     // A port review is one round: whatever it found, the rounds after it are ordinary ones.
     const port = task.portReview !== undefined;
     delete task.portReview;
+    if (end.kind !== "passed") delete task.reviewedTree;
+    else if (stage.roleId === "code-reviewer") task.reviewedTree = await git.treeOf(task.worktree!);
     this.k.tracking.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
-    if (outcome !== undefined) {
-      const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: W.reviewPassed };
-      endAgentStep(task, { outcome, ...reason }, Date.now());
-    }
+    const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: W.reviewPassed };
+    endAgentStep(task, { outcome, ...reason }, Date.now());
     if (end.kind === "send back") {
       // The next round reviews only what changed since what the reviewers looked at in this one.
-      const sha = reviewed ? await git.head(task.worktree!).catch(() => undefined) : undefined;
+      const sha = await git.head(task.worktree!).catch(() => undefined);
       if (sha) task.reviewedSha = sha;
       task.rounds[stage.id] = round + 1;
       task.stageIndex = end.builder;

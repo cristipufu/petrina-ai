@@ -4,7 +4,8 @@
 import { beginPetrinaStep, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, type Id, type ProductCheck } from "@petrina/core";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { cpus, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
@@ -125,10 +126,11 @@ export class ProductChecks {
    * hooks on the task's whole change. Failures become blocking findings, with the output as evidence. A check
    * only looks: whatever one changes in files git tracks is undone, so nothing unreviewed joins the work.
    */
-  async runProductChecks(task: MTask, checks: readonly ProductCheck[], signal: AbortSignal): Promise<number> {
+  async runProductChecks(task: MTask, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
     if (!task.worktree) return 0;
     const hooks = await this.noteHooks(task);
-    if (!checks.length && !hooks.length) return 0;
+    if (!checks.length && !hooks.length && !task.checks) return 0;
+    const definition = await this.definition(task, checks);
     // Resuming unfinished release notes revalidates the preparation first. Those repeated checks belong
     // to the same step's timeline: they do not complete the notes or start another agent step.
     const open = openStep(task);
@@ -137,13 +139,13 @@ export class ProductChecks {
     if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now());
     const finished = await this.turnToRun(task, signal);
     try {
-      return await this.runAll(task, checks, hooks, signal);
+      return await this.runAll(task, checks, hooks, definition, signal, kept);
     } finally {
       finished();
     }
   }
 
-  private async runAll(task: MTask, checks: readonly ProductCheck[], hooks: string[], signal: AbortSignal): Promise<number> {
+  private async runAll(task: MTask, checks: readonly ProductCheck[], hooks: string[], definition: string, signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
     if (!task.worktree) return 0;
     task.statusLine = "Running the product's checks";
     this.k.commit();
@@ -152,7 +154,7 @@ export class ProductChecks {
     const env = { ...withoutCredentials(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
     let results: CheckRun[];
     try {
-      const ran = await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id));
+      const ran = kept ?? await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id));
       if (signal.aborted) throw new Aborted();
       if ((await git.head(task.worktree).catch(() => "")) !== before) {
         await git.resetTo(task.worktree, before);
@@ -170,18 +172,9 @@ export class ProductChecks {
       }
     }
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
-    task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), results };
-    const failed = results.filter((run) => !run.ok);
-    // An earlier failure settles on this run, whatever anyone answered about it.
-    for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && !failed.some((run) => finding.text === `Check failed: ${run.name} (${run.command})`)) finding.status = "fixed";
-    }
-    for (const run of failed) {
-      const text = `Check failed: ${run.name} (${run.command})`;
-      if (task.findings.some((finding) => finding.text === text && finding.status === "open")) continue;
-      task.findings.push({ id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
-    }
-    this.k.log(task, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : `Checks passed: ${results.map((run) => run.name).join(", ")}`);
+    task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), definition, results };
+    const failed = this.settleFindings(task, results);
+    this.k.log(task, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
     if (failed.length && openStep(task)?.roleId === "release-manager") {
       endAgentStep(task, { outcome: W.interrupted, reason: W.checksFailed(failed.length), tone: "back", end: "failed" }, Date.now());
     } else {
@@ -191,11 +184,71 @@ export class ProductChecks {
     return failed.length;
   }
 
-  /** Whether the last run of the checks was on the code the task has now (its tree: a squash keeps it). */
-  async ranOn(task: MTask): Promise<boolean> {
+  /** A builder's answer cannot settle a failed check; only a fresh passing run can. */
+  private settleFindings(task: MTask, results: readonly CheckRun[]): readonly CheckRun[] {
+    const failed = results.filter((run) => !run.ok);
+    // An earlier failure settles on this run, whatever anyone answered about it.
+    for (const finding of task.findings) {
+      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && !failed.some((run) => finding.text === `Check failed: ${run.name} (${run.command})`)) finding.status = "fixed";
+    }
+    for (const run of failed) {
+      const text = `Check failed: ${run.name} (${run.command})`;
+      const finding = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === text);
+      if (finding) {
+        finding.status = "open";
+        finding.severity = "blocking";
+        finding.evidence = run.output.slice(-1500);
+      } else task.findings.push({ id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+    }
+    return failed;
+  }
+
+  /** The commands and hook inputs: a new definition needs a fresh run, even on the same tree. */
+  private async definition(task: MTask, checks: readonly ProductCheck[]): Promise<string> {
+    const hash = createHash("sha256").update(JSON.stringify(checks.filter((check) => check.argv.length).map((check) => check.argv)));
+    for (const hook of await git.commitHookFiles(task.worktree!)) {
+      hash.update(JSON.stringify([hook.name, hook.path])).update(await readFile(hook.path));
+      if (hook.name === "commit-msg") hash.update(await git.message(task.worktree!));
+      if (hook.name === "pre-commit") hash.update(task.baseSha ?? "");
+    }
+    return hash.digest("hex");
+  }
+
+  /** Whether the last run used the same code and definitions. A squash keeps its evidence, pass or fail. */
+  private async ranOn(task: MTask, checks: readonly ProductCheck[]): Promise<boolean> {
     if (!task.checks || !task.worktree) return false;
+    const definition = await this.definition(task, checks);
+    if (task.checks.definition) {
+      if (task.checks.definition !== definition) return false;
+    } else {
+      // Older runs identify product commands, but cannot establish which hook file or contents ran.
+      // Verify hooks once, then save their complete definition instead of guessing from command text.
+      const hooks = await this.noteHooks(task);
+      if (hooks.length) return false;
+      const commands = checks.filter((check) => check.argv.length).map((check) => commandText(check.argv));
+      if (JSON.stringify(commands) !== JSON.stringify(task.checks.results.map((run) => run.command))) return false;
+    }
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
-    return (!!tree && task.checks.tree === tree) || (!!sha && task.checks.sha === sha);
+    const matched = (!!tree && task.checks.tree === tree) || (!!sha && task.checks.sha === sha);
+    if (matched) task.checks.definition = definition;
+    // A hook may launch checks outside the committed tree: unchanged launcher bytes cannot prove
+    // their inputs stayed unchanged. Revalidate passes; a captured failure still blocks without retrying.
+    if (matched && task.checks.results.every((run) => run.ok) && (await this.noteHooks(task)).length) return false;
+    return matched;
+  }
+
+  /** Revalidating opaque or older hooks must not retry product checks with unchanged code and commands. */
+  private async savedProductResults(task: MTask, checks: readonly ProductCheck[]): Promise<readonly CheckRun[] | undefined> {
+    if (!task.checks || !task.worktree) return undefined;
+    if (task.checks.definition && (task.checks.definition !== await this.definition(task, checks) || !(await this.noteHooks(task)).length)) return undefined;
+    const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
+    if (!(tree && task.checks.tree === tree) && !(sha && task.checks.sha === sha)) return undefined;
+    const commands = checks.filter((check) => check.argv.length).map((check) => commandText(check.argv));
+    const results = task.checks.results.slice(0, commands.length);
+    if (JSON.stringify(commands) !== JSON.stringify(results.map((run) => run.command))) return undefined;
+    const hooks = task.checks.results.slice(commands.length);
+    if (!hooks.every((run) => run.command === "git hook run commit-msg" || run.command === "git hook run --ignore-missing pre-commit")) return undefined;
+    return results;
   }
 
   /**
@@ -225,12 +278,17 @@ export class ProductChecks {
     return true;
   }
 
-  /** Whether the checks (and the repository's commit hooks) fail on the code the task has now, running them unless they already passed on it. */
-  async failing(task: MTask, signal: AbortSignal): Promise<boolean> {
+  /** Reuse a completed run, including failures, until the code or check definition changes. */
+  async failing(task: MTask, signal: AbortSignal, checks?: readonly ProductCheck[]): Promise<boolean> {
     if (!task.worktree) return false;
-    if ((await this.ranOn(task)) && task.checks!.results.every((run) => run.ok)) return false;
     const product = this.k.productOf(task);
-    return (await this.runProductChecks(task, product ? checksFor(product, task.worktree) : [], signal)) > 0;
+    checks ??= product ? checksFor(product, task.worktree) : [];
+    if (await this.ranOn(task, checks)) {
+      const failed = this.settleFindings(task, task.checks!.results);
+      this.k.commit();
+      return failed.length > 0;
+    }
+    return (await this.runProductChecks(task, checks, signal, await this.savedProductResults(task, checks))) > 0;
   }
 
   /** The repository's commit hooks, as git would run them now, noted on the product for the builder's instructions. */
@@ -285,7 +343,7 @@ export class ProductChecks {
   }
 
   /** Failing checks send the work back to the builder, twice at most. */
-  private backToBuilder(task: MTask, when: string): boolean {
+  backToBuilder(task: MTask, when: string): boolean {
     const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
     if (builder < 0 || (task.checkReturns ?? 0) >= 2) return false;
     task.checkReturns = (task.checkReturns ?? 0) + 1;

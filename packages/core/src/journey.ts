@@ -503,7 +503,7 @@ function isDelivery(stage: Pick<Stage, "kind" | "roleId">): boolean {
 
 /** Whether the review stage at `index` looks only at the builder's port: the first review stage from here, after a port. */
 function portAt(task: Task, index: number): boolean {
-  if (!task.portReview && !task.updating?.head) return false;
+  if (!task.reviewedTree || (!task.portReview && !task.updating?.head)) return false;
   return index === (task.plan?.stages ?? []).findIndex((stage, at) => at >= task.stageIndex && stage.kind === "review-chain");
 }
 

@@ -165,7 +165,7 @@ If objections are listed as answered after the call, the coordinator checked the
 /** The builder's job when main moved on and the task's change no longer applies cleanly on top of it. */
 function updateInstructions(updating: NonNullable<Task["updating"]>, defaultBranch: string): string {
   const notes = updating.notes?.length ? `\nWhat git found:\n${updating.notes.map((note) => `- ${note}`).join("\n")}` : "";
-  return `${defaultBranch} moved on while this work was reviewed, and this task's change no longer applies cleanly on top of it. Petrina put this working copy on the latest ${defaultBranch} with the change applied, not committed yet; these files still have git's conflict markers: ${updating.files.join(", ")}.${notes}
+  return `${defaultBranch} moved on while this task was in progress, and this task's change no longer applies cleanly on top of it. Petrina put this working copy on the latest ${defaultBranch} with the change applied, not committed yet; these files still have git's conflict markers: ${updating.files.join(", ")}.${notes}
 Bring the work up to date first. Learn what changed on ${defaultBranch} before resolving anything, from the commits it gained since this work started (\`git log --stat ${updating.from}..${updating.onto}\`), and read the code as it is now. Port this task's change to where that code lives now, keep ${defaultBranch}'s version of everything this task did not change, and never bring back code ${defaultBranch} moved or removed. Leave no conflict markers.`;
 }
 
