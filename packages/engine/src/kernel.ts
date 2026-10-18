@@ -181,7 +181,10 @@ export abstract class Kernel {
     this.store = new Store(join(dataDir, "petrina.db"));
     const loaded = this.store.loadActive((state) => renameRoles(state as MState));
     this.s = (loaded ?? this.empty()) as MState;
-    this.idleSleep = new IdleSleepAssertion(options.awakeObserver ? { observe: options.awakeObserver } : {});
+    // An injected agent command is the engine test seam. Never let fake-agent tests spawn a real
+    // system sleep assertion; production launches use the default unless they inject an observer.
+    const awakeObserver = options.awakeObserver ?? (options.agentCommand ? () => {} : undefined);
+    this.idleSleep = new IdleSleepAssertion(awakeObserver ? { observe: awakeObserver } : {});
     if (loaded) {
       renameRoles(this.s);
       // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
@@ -756,6 +759,7 @@ export abstract class Kernel {
   stopHelpers(taskId: Id): void {
     for (const run of this.helperRuns.get(taskId) ?? []) run.close();
     this.helperRuns.delete(taskId);
+    this.syncIdleSleep();
   }
 
   async undoReadOnly(task: MTask, roleId: Id, worktree = task.worktree): Promise<void> {

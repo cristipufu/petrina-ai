@@ -39,7 +39,8 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
 
 describe("Engine with a fake ACP agent", () => {
   const repo = makeRepo();
-  const engine = new Engine(join(temp, "data"), { agentCommand: () => [process.execPath, fake] });
+  const awakeChanges: boolean[] = [];
+  const engine = new Engine(join(temp, "data"), { agentCommand: () => [process.execPath, fake], awakeObserver: (active) => awakeChanges.push(active) });
 
   afterAll(() => engine.shutdown());
 
@@ -75,6 +76,7 @@ describe("Engine with a fake ACP agent", () => {
     const task = state.tasks.find((entry) => entry.id === taskId)!;
     expect(task.error).toBeUndefined();
     expect(task.state).toBe("done");
+    expect(awakeChanges[0]).toBe(true);
     expect(task.landed?.branch).toBe("main");
     // The coordinator was asked a question, a permission and two checkpoints.
     expect(task.timeline.some((entry) => entry.text.startsWith("You answered: Formal"))).toBe(true);
@@ -88,6 +90,7 @@ describe("Engine with a fake ACP agent", () => {
     await until(engine, (s) => s.tasks.find((entry) => entry.id === taskId)?.cleanup?.removedAt !== undefined, () => {});
     expect(existsSync(task.worktree!)).toBe(false);
     expect(git(repo, "rev-parse", task.branch!)).toBe(git(repo, "rev-parse", "main"));
+    await until(engine, () => awakeChanges.at(-1) === false, () => {});
   });
 });
 

@@ -335,6 +335,7 @@ export class Turns {
     opened ??= await this.inSandbox(profile, (sandbox) => start(undefined, sandbox));
     const { run } = opened;
     this.k.runs.set(taskId, run);
+    this.k.syncIdleSleep();
     this.k.readUsage(profile.toolId);
     const picked = run.reopened !== undefined;
     const sandbox = this.sandboxState(task, opened.off, roleId, profileId, picked);
@@ -448,6 +449,7 @@ export class Turns {
       throw error;
     } finally {
       this.k.runs.delete(taskId);
+      this.k.syncIdleSleep();
       // Nothing the agent started may still write in the working copy once the step is over.
       await run.stop();
       // A read-only role runs in its tool's automatic mode, so it could change things: leave the
@@ -634,6 +636,7 @@ export class Turns {
     this.k.commit();
     const runs = this.k.helperRuns.get(taskId) ?? new Set();
     this.k.helperRuns.set(taskId, runs.add(run));
+    this.k.syncIdleSleep();
     this.k.readUsage(profile.toolId);
     const head = await git.head(copy).catch(() => undefined);
     try {
@@ -673,6 +676,7 @@ export class Turns {
       if (error instanceof ScreenWait) {
         this.yieldedStops.push(run.stop());
         runs.delete(run);
+        this.k.syncIdleSleep();
       }
       throw error;
     } finally {
@@ -682,6 +686,7 @@ export class Turns {
         } finally {
           // Draining still counts a reviewer who is working until its process is gone and its report can be recorded.
           runs.delete(run);
+          this.k.syncIdleSleep();
         }
       }
     }

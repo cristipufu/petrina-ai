@@ -408,7 +408,7 @@ export function makeWorld(name: string, options: { version?: string; address?: s
     remote,
     data,
     initial: git(clone, "rev-parse", "HEAD"),
-    start: (extra = {}) => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, ...extra }),
+    start: (extra = {}) => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, awakeObserver: () => {}, ...extra }),
     github: () => readGitHub(ghState),
     setGitHub: (change) => updateGitHub(ghState, change),
     script: () => JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript,
