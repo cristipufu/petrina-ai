@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
@@ -20,13 +21,18 @@ const after = (stop: Stop) => (stop === "quit" ? "an ordinary quit" : "a forced 
 const heardWorking = (task: Task | undefined) => !!task?.conversation?.briefed && task.timeline.some((entry) => entry.text === "Drafting the greeting");
 
 /** A product delivering locally with no checks, a task on it, and an engine on fake agents. */
-async function start(scenario: Scenario, description = "") {
+async function start(scenario: Scenario, description = "", holdBuilder = false) {
   const root = tempDir("petrina-pickup-");
   roots.push(root);
   const product = makeProduct(root);
   const home = join(root, "home");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
+  const hold = holdBuilder ? join(root, "hold-builder") : undefined;
+  if (hold) {
+    writeFileSync(hold, "");
+    writeFileSync(join(fakes.dir, "agents.json"), JSON.stringify({ hold: { title: "Add a greeting", file: hold } }));
+  }
   const engine = await EngineProcess.harness(home, fakes.dir);
   const productId = (await engine.act("addProduct", product)) as string;
   await engine.act("setProductDelivery", productId, "local", false);
@@ -43,7 +49,7 @@ async function start(scenario: Scenario, description = "") {
     await waitFor(() => fakes.marked("builder-working"), "the builder to start working");
     await engine.until((state) => heardWorking(find(state)), "the engine to hear the builder at work");
   };
-  return { product, home, fakes, engine, taskId, find, restart, finished, working };
+  return { product, home, fakes, engine, taskId, find, restart, finished, working, hold };
 }
 
 describe.concurrent("an agent waiting on a question when Petrina restarts", () => {
@@ -273,6 +279,30 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     expect(done.timeline.filter((entry) => entry.text === "Builder started")).toHaveLength(2);
     expect(done.timeline.some((entry) => entry.text === "Picked up where it left off" || entry.text.startsWith("Started this step again"))).toBe(false);
     await engine.quit();
+  });
+});
+
+describe.concurrent("coordinator notes during a builder turn", () => {
+  it("hands a short queue of notes over in one follow-up while preserving every note in order", async () => {
+    const run = await start({ planner: "short", builder: "plain" }, "[no-check]", true);
+    try {
+      await waitFor(() => existsSync(`${run.hold}.reached`), "the builder to reach the hold");
+      const messages = ["Keep it short", "Use a friendly tone", "Sign it from the team"];
+      for (let i = 0; i < messages.length; i++) await run.engine.act("sendMessage", run.taskId, messages[i], "queue", `batch-${i}`);
+      rmSync(run.hold!);
+      const done = await run.finished(run.engine);
+      const prompts = run.fakes.prompts("builder");
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain("Keep it short");
+      expect(prompts[1]).toContain("Use a friendly tone");
+      expect(prompts[1]).toContain("Sign it from the team");
+      expect(prompts[1]!.indexOf("Keep it short")).toBeLessThan(prompts[1]!.indexOf("Use a friendly tone"));
+      expect(prompts[1]!.indexOf("Use a friendly tone")).toBeLessThan(prompts[1]!.indexOf("Sign it from the team"));
+      expect(done.timeline.filter((entry) => entry.text.startsWith("You said:")).map((entry) => entry.text)).toEqual(messages.map((message) => `You said: ${message}`));
+    } finally {
+      if (run.hold) rmSync(run.hold, { force: true });
+      await run.engine.quit();
+    }
   });
 });
 

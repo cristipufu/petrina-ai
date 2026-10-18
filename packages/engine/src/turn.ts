@@ -472,12 +472,25 @@ export class Turns {
       if (!current) throw new Aborted();
       const prose = proseOf(reply.text);
       if (prose) this.k.say(current, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, role.id, profileId);
-      const message = options.main ? current.queued.shift() : undefined;
-      if (message) {
-        this.k.say(current, "you", message.text);
-        this.k.log(current, "you", `You said: ${message.text}`);
+      const batch: typeof current.queued = [];
+      if (options.main && current.queued.length) {
+        let size = 0;
+        while (batch.length < current.queued.length) {
+          const next = current.queued[batch.length]!;
+          if (batch.length > 0 && size + next.text.length > 12_000) break;
+          size += next.text.length;
+          batch.push(next);
+        }
+        current.queued.splice(0, batch.length);
+      }
+      if (batch.length) {
+        for (const message of batch) {
+          this.k.say(current, "you", message.text);
+          this.k.log(current, "you", `You said: ${message.text}`);
+        }
         this.k.commitNow();
-        reply = await send(`Message from the coordinator: ${message.text}\n\nTake it into account. When you are done, end with the result block again.`, "message");
+        const messages = batch.map((message, index) => `${index + 1}. ${message.text}`).join("\n");
+        reply = await send(`Messages from the coordinator, in order:\n${messages}\n\nTake all of them into account. When you are done, end with the result block again.`, "message");
         continue;
       }
       if (reply.stopReason === "cancelled") {
