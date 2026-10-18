@@ -441,7 +441,10 @@ describe('the app keyboard', () => {
     expect(host.textContent).toContain('J and K walk the board or the inbox');
   });
   it('keeps separate message drafts through task switches, tabs and closing', async () => {
-    await palette('Guest checkout'); await key('Enter'); await key('m');
+    // Open the Session directly: drafts do not need a Journey to mount before every message.
+    // The switch to Pricing still goes through the palette, including its separate return point.
+    await key('j'); await key('m');
+    expect(sheetId()).toBe('Guest checkout');
     await type('.composer textarea', 'Checkout draft');
     await palette('pricing'); await key('Enter'); await key('m');
     expect(el<HTMLTextAreaElement>('.composer textarea').value).toBe('');
@@ -449,7 +452,8 @@ describe('the app keyboard', () => {
     await click('#tab-plan'); await click('#tab-session');
     expect(el<HTMLTextAreaElement>('.composer textarea').value).toBe('Pricing draft');
     await key('Escape'); await key('Escape');
-    await palette('Guest checkout'); await key('Enter'); await key('m');
+    await key('m');
+    expect(sheetId()).toBe('Guest checkout');
     expect(el<HTMLTextAreaElement>('.composer textarea').value).toBe('Checkout draft');
     expect(host.querySelector('#tab-session .draft-mark')).not.toBeNull();
     await key('Enter');
