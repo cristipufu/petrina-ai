@@ -379,7 +379,7 @@ describe.concurrent("one vote per actual usable tool", () => {
     try {
       await f.advance(() => checkedFinding(f)?.votes?.length === 1, (role, session) => role !== "verifier" || f.model(session) === "gpt-6.1-sol");
       const saved = structuredClone(checkedFinding(f).votes![0]!);
-      f.restart();
+      await f.restart();
       await f.advance(f.delivery);
       expect(f.fakes.received("verifier").filter((entry) => f.model(entry.session) === "gpt-6.1-sol")).toHaveLength(1);
       expect(checkedFinding(f).votes?.find((vote) => vote.toolId === "codex")).toEqual(saved);
@@ -398,7 +398,7 @@ describe.concurrent("one vote per actual usable tool", () => {
       expect(partial.votes).toHaveLength(1);
       expect(f.delivery()).toBe(false);
       f.fakes.scenario({ controlled: true, builder: "plain", reviewer: "important", verifier: "not-a-bug" });
-      f.restart();
+      await f.restart();
       await f.advance(f.delivery);
       const opening = f.fakes.openings("verifier").at(-1)!;
       expect(opening.slice(opening.indexOf("## Important findings to check"))).not.toContain(`- [${partial.id}]`);
@@ -418,7 +418,7 @@ describe.concurrent("one vote per actual usable tool", () => {
       f.engine.saveRole(original.id, { ...draftOf(original), purpose: "Use the new voting instructions next round.", instructions: `${original.instructions}\nNew wording for the next voting round.` });
       f.engine.s.pool.limited!.push({ toolId: "claude-code", model: "opus", until: Date.now() + 3_600_000, reason: "Claude Code's weekly Opus limit" });
       f.fakes.scenario({ controlled: true, builder: "plain", reviewer: "important", verifier: "not-a-bug" });
-      f.restart();
+      await f.restart();
       await f.advance(f.delivery);
       expect(f.models("verifier")).toEqual(["opus", "sonnet"]);
       const opening = f.fakes.openings("verifier").at(-1)!;
@@ -450,7 +450,7 @@ describe.concurrent("one vote per actual usable tool", () => {
         expect(f.delivery()).toBe(false);
         expect(f.task().findings.every((finding) => !finding.verification)).toBe(true);
         f.fakes.scenario({ controlled: true, builder: "plain", reviewer: "important", verifier: "not-a-bug" });
-        f.restart();
+        await f.restart();
       }
       // Hold a fix until we have checked whether the corrected ballot sends the work back.
       await f.advance(() => f.delivery() || f.fakes.openings("builder").length === 2, (role) => role !== "builder");
@@ -541,7 +541,7 @@ describe.concurrent("one vote per actual usable tool", () => {
       const second = { by: "grok-xhigh", toolId: "grok", verdict: "not-a-bug" as const, reason: "Grok's finished verdict before its limit." };
       findings[0]!.votes = [first];
       findings[1]!.votes = [second];
-      f.restart();
+      await f.restart();
       await f.advance(() => f.task().state === "waiting");
       expect(f.delivery()).toBe(false);
       expect(f.task().findings.every((finding) => !finding.verification)).toBe(true);
