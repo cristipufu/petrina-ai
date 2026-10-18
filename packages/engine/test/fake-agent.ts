@@ -20,7 +20,7 @@ export interface Scenario {
   /** Shutdown tests: never answer the initial handshake. */
   silent?: boolean;
   /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
-  planner?: "short" | "tester-after" | "tester-first" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review";
+  planner?: "short" | "tester-after" | "tester-first" | "tester-with-design" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review";
   notes?: "work";
   /** The architect leaves product changes for the engine to save, in rounds and after a call. */
   architect?: "writes";
@@ -40,7 +40,7 @@ export interface Scenario {
    * "important": in the first round the reviewer on Opus raises one Important finding, the others a nit.
    * "important-twice": every reviewer raises it, each in its own words. Later rounds pass.
    */
-  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm";
+  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed";
   /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. "broken": it never hands back a usable result. */
   guide?: "change of mind" | "broken";
   /** How the planner rates the task's risk (unrated by default). */
@@ -54,7 +54,7 @@ export interface Scenario {
   /** Repair a partial ballot with a revised first verdict; the remaining findings are not bugs. */
   correctPartialVerification?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
-  tester?: "work" | "fail-once" | "writes";
+  tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once";
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
   releaseManager?: "hang";
   /**
@@ -523,6 +523,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
           ...(text.includes("[no-check]") ? [] : text.includes("[screens]") ? [screens, check] : text.includes("[two-checks]") ? [check, screens, check] : [check]),
           { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+          ...(plan.planner === "tester-with-design" ? [{ kind: "do", title: "Try acceptance", roleId: "tester", profileIds: ["opus-high"] }] : []),
           { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 },
         ],
       });
@@ -688,7 +689,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         const branch = /on branch (\S+?)\./.exec(text)?.[1];
         if (branch) run(session.cwd, "update-ref", `refs/heads/${branch}`, "HEAD~1");
       }
-      if ((plan.reviewer === "important" || plan.reviewer === "important-twice") && !text.includes("This is review round")) {
+      if (plan.reviewer === "confirm-fixed" && text.includes("This is review round")) return done({ verdict: "fail", findings: [], confirms: findingIds(text, "Findings so far (confirm or dispute by id)"), disputes: [] });
+      if ((plan.reviewer === "important" || plan.reviewer === "important-twice" || plan.reviewer === "confirm-fixed") && !text.includes("This is review round") && !(plan.fixes === "change" && existsSync(join(session.cwd, "welcome.txt")))) {
         const opus = session.model === "opus";
         if (plan.reviewer === "important" && !opus) return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
         return done({ verdict: "fail", findings: [{ text: opus ? "The greeting is missing on the welcome page." : "The GREETING is missing on the welcome page!", where: "greeting.txt", severity: "important", evidence: "Opened the welcome page" }], confirms: [], disputes: [] });
@@ -734,6 +736,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       });
     }
     case "tester":
+      if (plan.tester === "omit-once" && !marked("tester-omitted")) {
+        mark("tester-omitted");
+        return done({ summary: "It looks fine.", checks: [] });
+      }
       if (handedBack) return done({ summary: "Tried it after the hand back.", checks: [] }, terminal);
       if (plan.tester === "writes") {
         const final = marked("tester-passed-once");
@@ -749,6 +755,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return hang(sessionId, "tester-working");
       }
       // "fail-once": the second tester pass (the one on the final code) fails an acceptance item, once.
+      if (plan.tester === "always-fail") return done({ summary: "The greeting still does not appear.", checks: [{ text: "A greeting file exists", pass: false }] });
       if (plan.tester === "fail-once" && marked("tester-passed-once") && !marked("tester-failed-once")) {
         mark("tester-failed-once");
         return done({ summary: "Tried it: the greeting is missing on the welcome page.", checks: [{ text: "A greeting file exists", pass: false }] });

@@ -244,7 +244,9 @@ export class Driver {
             if (await this.checks.checksBeforeDelivery(current, signal)) continue;
             // The tester tried an earlier version of the change: the final code gets one more pass first.
             const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && entry.roleId === "tester");
-            if (tester >= 0 && current.testedPatch !== undefined && (await this.updates.patch(current)) !== current.testedPatch) {
+            const acceptanceFailed = current.acceptancePassed === false;
+            const acceptanceExhausted = acceptanceFailed && current.acceptanceBlocked;
+            if (tester >= 0 && current.testedPatch !== undefined && !acceptanceExhausted && (acceptanceFailed || (await this.updates.patch(current)) !== current.testedPatch)) {
               current.retest = true;
               current.stageIndex = tester;
               current.sub = 0;
@@ -294,6 +296,9 @@ export class Driver {
         // Give acceptance testing verified automated evidence first, so it can focus on the user cases.
         // Read-only review reuses this same run; changing code still requires fresh evidence.
         if (stage?.kind === "do" && stage.roleId === "tester" && !current.retest) {
+          // Resolve an already-known stale base before spending checks or acceptance on it.
+          // A saved Tester or Check finder first finishes the version it was already examining.
+          if (!current.conversation && (await this.updates.upToDate(current, signal)) === "conflict") continue;
           if (await this.checks.failing(current, signal, await this.checks.ensureChecks(current, signal))) {
             delete current.portReview;
             delete current.reviewedTree;

@@ -1,8 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS } from "@petrina/core";
-import { BACKGROUND, buildPrompt, LOGINS } from "../src/prompts.js";
+import { BACKGROUND, buildPrompt, formatFindings, LOGINS } from "../src/prompts.js";
 
 describe("prompts", () => {
+  it("hands a reviewer's reproduction to builders and voters, while keeping settled history concise", () => {
+    const finding = { id: "finding-1", text: "The greeting disappears", where: "greeting.txt:1", evidence: "Open the welcome page with an empty name; the heading disappears.", severity: "blocking" as const, raisedBy: "sol-high", confirmedBy: [], status: "open" as const };
+    expect(formatFindings([finding])).toContain(finding.evidence);
+    expect(formatFindings([{ ...finding, status: "fixed" }])).not.toContain(finding.evidence);
+    expect(formatFindings([{ ...finding, evidence: "x".repeat(10_000) }]).length).toBeLessThan(1600);
+  });
   it("tells every role to put its recommended answer first when it asks the coordinator", () => {
     const task = createDemoState(1_000_000_000).tasks[0]!;
     for (const role of BUILT_IN_ROLES) {

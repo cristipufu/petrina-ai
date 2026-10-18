@@ -833,6 +833,9 @@ export class Engine extends Kernel implements Commands {
     if (!call) this.stepNote(task, "changes", note, { id });
     afterChangesAsked(task, item.kind, note, Date.now());
     if (item.kind === "delivery") {
+      // A new coordinator request authorizes another bounded attempt at acceptance fixes.
+      delete task.acceptanceReturns;
+      delete task.acceptanceBlocked;
       // The Guide keeper looks for what reviewers missed, only when they had passed it: if Important findings
       // were open (the rounds ran out), the reviewers had caught it, and nothing was missed.
       if (!task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) task.miss = { note, at: Date.now() };

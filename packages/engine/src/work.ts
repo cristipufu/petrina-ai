@@ -99,25 +99,42 @@ export class Work {
         Date.now(),
       );
     } else if (role?.result === "checks") {
-      const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal);
+      const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal, {
+        check: (value) => {
+          const missing = task.brief?.acceptance.filter((item) => !value.checks.some((check) => check.text === item.text));
+          return missing?.length ? `Report pass or fail for every acceptance item, using its exact text. These are missing:\n${missing.map((item) => `- ${item.text}`).join("\n")}` : undefined;
+        },
+      });
       await this.learnings.note(task, result.learnings, roleId, profileId);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => ({ ...item, met: result.checks.find((check) => check.text === item.text)?.pass ?? item.met }));
       const failed = result.checks.filter((check) => !check.pass);
-      for (const check of failed) task.findings.push({ id: this.k.id(task.id), text: `Failed acceptance check: ${check.text}`, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });
+      for (const check of result.checks) {
+        const text = `Failed acceptance check: ${check.text}`;
+        const earlier = task.findings.find((finding) => finding.text === text);
+        if (earlier) earlier.status = check.pass ? "fixed" : "open";
+        else if (!check.pass) task.findings.push({ id: this.k.id(task.id), text, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });
+      }
       this.k.log(task, failed.length ? "warn" : "done", failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, profileId);
       endAgentStep(task, { outcome: W.checks(failed.length, result.checks.length), reason: failed.length ? W.checksFailed(failed.length) : W.checksPassed }, Date.now());
       task.testedPatch = (await this.updates.patch(task)) ?? task.testedPatch;
+      task.acceptancePassed = failed.length === 0;
+      if (!failed.length) delete task.acceptanceBlocked;
       if (task.retest) {
         // The final pass before the delivery check: on to the check, or back to the builder with what failed.
         delete task.retest;
         this.k.finishStep(task);
         const stages = task.plan?.stages ?? [];
         const builder = lastIndexWhere(stages, (entry) => entry.roleId === "builder" && entry.kind === "do");
-        if (failed.length && builder >= 0) {
+        if (failed.length && builder >= 0 && (task.acceptanceReturns ?? 0) < 2) {
+          task.acceptanceReturns = (task.acceptanceReturns ?? 0) + 1;
           task.stageIndex = builder;
           task.fixing = true;
           this.k.log(task, "warn", `Sent back to the builder: ${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed on the final code`);
         } else {
+          if (failed.length) {
+            task.acceptanceBlocked = true;
+            this.k.log(task, "warn", "Acceptance still fails: the builder returns are used up, so the decision goes to you");
+          }
           const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
           task.stageIndex = gate >= 0 ? gate : task.stageIndex + 1;
         }

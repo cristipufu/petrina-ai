@@ -59,6 +59,16 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("reviews that converge", () => {
+  it("keeps a finding open when reviewers confirm that the claimed fix is still broken", async () => {
+    const { task, fakes } = await untilDelivery({ reviewer: "confirm-fixed" });
+    const finding = task.findings.find((entry) => entry.text.toLowerCase().replace(/!$/, ".") === "the greeting is missing on the welcome page.")!;
+    expect(finding.answer?.fixed).toBe(true);
+    expect(finding.status).toBe("open");
+    expect(task.findings.filter((entry) => entry.text === finding.text)).toHaveLength(1);
+    expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(true);
+    expect(fakes.openings("builder").length).toBeLessThanOrEqual(3);
+  });
+
   it("has fresh agents vote on an Important finding, the builder answer it, and reviews only what changed next round", async () => {
     const { task, fakes, atOnce, voters } = await untilDelivery({ reviewer: "important" });
 
@@ -143,7 +153,7 @@ describe.concurrent("reviewers at once, then a vote", () => {
       const task = coordinate(engine);
       return fakes.marked("reviewer-working") && Object.keys(task?.hunt?.reported ?? {}).length === 1 && task;
     }, "one reviewer to report while the other works", 60_000);
-    engine.shutdown();
+    await engine.shutdown();
 
     engine = new Engine(join(root, "data"), options);
     try {

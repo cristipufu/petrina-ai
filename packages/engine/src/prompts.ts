@@ -156,8 +156,8 @@ export function formatFindings(findings: readonly Finding[]): string {
       ]
         .filter(Boolean)
         .join("\n");
-      // Evidence matters most where Petrina itself found the problem (a failing check): the builder sees the output.
-      const evidence = finding.evidence && finding.raisedBy === "petrina" && finding.status === "open" ? `\n  Evidence:\n${finding.evidence.slice(-1200).replace(/^/gm, "    ")}` : "";
+      // Keep the reproduction with an open finding so builders and fresh voters need not rediscover it.
+      const evidence = finding.evidence && finding.status === "open" ? `\n  Evidence:\n${finding.evidence.slice(-1200).replace(/^/gm, "    ")}` : "";
       return line + evidence;
     })
     .join("\n");

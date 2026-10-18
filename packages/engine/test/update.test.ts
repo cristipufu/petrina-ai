@@ -149,6 +149,18 @@ describe.concurrent("work brought up to date with main", () => {
     expect(git(repo, "show", "main:greeting.txt")).not.toContain("<<<<<<<");
   });
 
+  it("resolves main's conflict before spending the first acceptance turn", async () => {
+    const { task, fakes } = await ship({ planner: "tester-first" }, { beforeBuild: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main") });
+    const text = lines(task);
+    const updated = text.indexOf("Brought up to date with main: Added a greeting.");
+    expect(updated).toBeGreaterThan(-1);
+    expect(text.indexOf("Tester started")).toBeGreaterThan(updated);
+    expect(fakes.openings("tester")).toHaveLength(1);
+    expect(fakes.openings("code reviewer")).toHaveLength(2);
+    expect(task.acceptancePassed).toBe(true);
+    expect(journeyProblems(task)).toEqual([]);
+  });
+
   it("ships without asking again when main moves after the approval without touching the change", async () => {
     const { task, repo, before, deliveryChecks } = await ship({}, { atDeliveryCheck: (repo) => land(repo, "NEWS.md", "News\n", "News on main") });
     const text = lines(task);

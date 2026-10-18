@@ -10,6 +10,72 @@ const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
 describe("the tester tries the change once, and the final code once more", () => {
+  it("repairs an omitted acceptance report in the same conversation before accepting the pass", async () => {
+    const root = tempDir("petrina-acceptance-coverage-");
+    roots.push(root);
+    const fakes = new Fakes(join(root, "fake"));
+    fakes.scenario({ planner: "tester-with-design", builder: "plain", tester: "omit-once" });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+    try {
+      const productId = await engine.addProduct(makeProduct(root));
+      engine.setProductDelivery(productId, "local", true);
+      const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
+      const task = await waitFor(() => {
+        const state = engine.getState();
+        const plan = state.inbox.find((item) => item.taskId === id && item.kind === "plan");
+        if (plan) engine.approve(plan.id);
+        const question = state.inbox.find((item) => item.taskId === id && item.kind === "question");
+        if (question) engine.answer(question.id, question.options?.[0] ?? "Yes");
+        const found = state.tasks.find((task) => task.id === id)!;
+        if (found.state === "failed") throw new Error(found.error);
+        return state.inbox.some((item) => item.taskId === id && item.kind === "delivery") && found;
+      }, "a complete acceptance report", 120_000);
+      expect(fakes.prompts("tester")).toHaveLength(2);
+      expect(fakes.prompts("tester")[1]).toContain("Report pass or fail for every acceptance item");
+      expect(fakes.openings("tester")).toHaveLength(1);
+      expect(task.brief!.acceptance.every((item) => item.met)).toBe(true);
+      expect(task.acceptancePassed).toBe(true);
+    } finally { await engine.shutdown(); }
+  });
+
+  it.each([false, true])("bounds failing acceptance with changed code %s, keeps one finding, and saves the decision across restart", async (changes) => {
+    const root = tempDir("petrina-acceptance-bound-");
+    roots.push(root);
+    const fakes = new Fakes(join(root, "fake"));
+    fakes.scenario({ planner: "tester-first", builder: "plain", tester: "always-fail", ...(changes ? { fixes: "change" as const } : {}) });
+    const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] };
+    const data = join(root, "data");
+    let engine = new Engine(data, options);
+    try {
+      const productId = await engine.addProduct(makeProduct(root));
+      engine.setProductDelivery(productId, "local", true);
+      const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
+      const task = await waitFor(() => {
+        const state = engine.getState();
+        const plan = state.inbox.find((item) => item.taskId === id && item.kind === "plan");
+        if (plan) engine.approve(plan.id);
+        const found = state.tasks.find((task) => task.id === id)!;
+        if (found.state === "failed") throw new Error(found.error);
+        return state.inbox.some((item) => item.taskId === id && item.kind === "delivery") && found;
+      }, "bounded acceptance reaches the coordinator", 120_000);
+      expect(task.acceptancePassed).toBe(false);
+      expect(task.acceptanceReturns).toBe(2);
+      expect(fakes.openings("tester")).toHaveLength(4);
+      const findings = task.findings.filter((finding) => finding.text.startsWith("Failed acceptance check"));
+      expect(findings).toHaveLength(1);
+      expect(findings[0]!.status).toBe("open");
+      expect(journeyProblems(task)).toEqual([]);
+      engine.setPoolPaused(true);
+      await engine.shutdown();
+      engine = new Engine(data, options);
+      expect(engine.getState().tasks.find((task) => task.id === id)?.acceptanceReturns).toBe(2);
+      const gate = engine.getState().inbox.find((item) => item.taskId === id && item.kind === "delivery")!;
+      expect(gate).toBeDefined();
+      engine.requestChanges(gate.id, "Try another approach to make the greeting visible");
+      expect(engine.task(id)?.acceptanceReturns).toBeUndefined();
+    } finally { await engine.shutdown(); }
+  });
+
   it("keeps a tester's permitted edits before review and undoes its edits and commits on the final acceptance pass", async () => {
     const root = tempDir("petrina-tester-edits-");
     roots.push(root);

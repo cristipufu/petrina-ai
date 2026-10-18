@@ -609,6 +609,12 @@ export interface Task {
   hooking?: boolean;
   /** The change (its fingerprint) the tester last tried: fix rounds are reviewed, and the tester tries the final code once more before the delivery check. */
   testedPatch?: string;
+  /** Whether that acceptance run passed; a failed run can never satisfy the final acceptance check. */
+  acceptancePassed?: boolean;
+  /** Final acceptance failures return to the builder twice, then wait for the coordinator. */
+  acceptanceReturns?: number;
+  /** Acceptance still failed after those returns: wait for a coordinator decision, including after restart. */
+  acceptanceBlocked?: boolean;
   /** The tester is trying the final code right before the delivery check; the check follows, or the builder if it fails. */
   retest?: boolean;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */

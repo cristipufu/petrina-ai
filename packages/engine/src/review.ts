@@ -208,6 +208,9 @@ export class Reviews {
     await this.learnings.note(task, result.learnings, roleId, profileId);
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
+      // A builder's claim is not proof: confirming that the bug remains reopens the same finding.
+      // Native check findings remain governed by the actual check results.
+      if (finding?.status === "fixed" && finding.raisedBy !== "petrina") finding.status = "open";
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
     recordDisputes(task.findings, result.disputes, profileId, Date.now());
@@ -229,7 +232,9 @@ export class Reviews {
           confirmedBy: [],
           status: "open",
         });
-      } else if (same.status === "open" && same.raisedBy !== profileId && !same.confirmedBy.includes(profileId)) {
+      } else if ((same.status === "open" || same.status === "fixed") && same.raisedBy !== "petrina") {
+        if (same.status === "fixed") same.status = "open";
+        if (same.raisedBy === profileId || same.confirmedBy.includes(profileId)) continue;
         same.confirmedBy.push(profileId);
         backed += 1;
       }
