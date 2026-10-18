@@ -440,6 +440,25 @@ export function stepName(step: Named, earlier: readonly Named[], roles: readonly
   return parts.length ? `${role} (${parts.join(", ")})` : role;
 }
 
+function flowStepMarks(step: Named, name: string, earlier: readonly Named[]) {
+  const flowName = name.replace(/\s+\([^)]*\)$/, "");
+  const roundMark = step.round > 1 && !step.update && !step.fixing && !step.call && !step.port ? step.round : undefined;
+  const updateMark = !!step.update || (step.kind === "petrina" && step.work === "update");
+  const repeatMark = name.endsWith("again)") || earlier.some((entry) => sameStep(entry, step));
+  const fixMark = step.fixing ? Number(name.match(/\(fixes(?: (\d+))?/)?.[1] ?? 1) : undefined;
+  const portMark = !!step.port;
+  const callMark = !!step.call;
+  return {
+    flowName,
+    ...(roundMark ? { roundMark } : {}),
+    ...(updateMark ? { updateMark: true } : {}),
+    ...(repeatMark ? { repeatMark: true } : {}),
+    ...(fixMark ? { fixMark } : {}),
+    ...(portMark ? { portMark: true } : {}),
+    ...(callMark ? { callMark: true } : {}),
+  };
+}
+
 /**
  * A box on the journey.
  * - `done`, `failed` (stuck) and `cancelled`: it ended.
@@ -453,6 +472,14 @@ export interface JourneyNode {
   id: string;
   kind: JourneyStep["kind"];
   name: string;
+  /** Short title for the flow node; round, update and repeat details use visual marks. */
+  flowName?: string;
+  roundMark?: number;
+  updateMark?: boolean;
+  repeatMark?: boolean;
+  fixMark?: number;
+  portMark?: boolean;
+  callMark?: boolean;
   state: JourneyNodeState;
   run?: "working" | "paused" | "waiting";
   /** The task's live status line, on the live step, or on the next one while nothing is under way. */
@@ -463,6 +490,8 @@ export interface JourneyNode {
   team?: readonly Id[];
   fixing?: boolean;
   findingIds?: readonly Id[];
+  agentInputs?: JourneyStep["agentInputs"];
+  productChecks?: JourneyStep["productChecks"];
   builderConversation?: JourneyStep["builderConversation"];
   /** `petrina`: what Petrina did. */
   work?: JourneyWork;
@@ -627,10 +656,13 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
     else if (step.kind === "you" || step.asks?.some((ask) => ask.endedAt === undefined)) state = "you";
     else state = "now";
     const live = state === "now" || state === "you";
+    const earlier = recorded.slice(0, index);
+    const name = stepName(step, earlier, ctx.roles);
     return {
       id: step.id,
       kind: step.kind,
-      name: stepName(step, recorded.slice(0, index), ctx.roles),
+      name,
+      ...flowStepMarks(step, name, earlier),
       state,
       ...(state === "now" ? { run } : {}),
       ...(live && task.statusLine ? { live: task.statusLine } : {}),
@@ -639,6 +671,8 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...(step.team ? { team: step.team } : {}),
       ...(step.fixing ? { fixing: true } : {}),
       ...(step.findingIds ? { findingIds: step.findingIds } : {}),
+      ...(step.agentInputs ? { agentInputs: step.agentInputs } : {}),
+      ...(step.productChecks ? { productChecks: step.productChecks } : {}),
       ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}),
       ...(step.work ? { work: step.work } : {}),
       ...(step.stageId ? { stageId: step.stageId } : {}),
@@ -661,10 +695,12 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
     ahead.forEach((step, index) => {
       // While nothing is under way, the next step says what it waits for ("Waiting for a free slot", "Paused by you").
       const live = index === 0 && !open && task.state !== "queued" && task.statusLine ? { live: task.statusLine } : {};
+      const name = stepName(step, named, ctx.roles);
       nodes.push({
         id: `ahead:${step.stageId ?? "plan"}:${step.sub}${step.kind === "petrina" ? `:${step.work}` : ""}`,
         kind: step.kind,
-        name: stepName(step, named, ctx.roles),
+        name,
+        ...flowStepMarks(step, name, named),
         state: index === 0 ? "next" : "ahead",
         ...live,
         ...(step.roleId ? { roleId: step.roleId } : {}),

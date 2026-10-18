@@ -6,8 +6,8 @@ import type { JourneyNode, JourneyView } from "@petrina/core";
 
 /** Sizes in rem. Boxes are the same height so a row's arrows run straight. */
 export const SIZES = {
-  box: { w: 12, h: 7.5 },
-  you: { w: 12, h: 5.5 },
+  box: { w: 12, h: 8.25 },
+  you: { w: 12, h: 7.25 },
   start: { w: 10, h: 2.5 },
   end: { w: 12, h: 3.5 },
   ask: { w: 11, h: 4, gap: 0.5, drop: 0.75 },

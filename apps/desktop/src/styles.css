@@ -1820,8 +1820,15 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .jn-item { position: relative; display: flex; flex-direction: column; align-items: center; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--text); }
 .jn { width: 100%; flex: none; min-width: 0; }
 .jn-name { min-width: 0; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.jn-step-marks { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); }
+.jn-round-marks { display: inline-flex; gap: 2px; }
+.jn-round-marks i { width: 5px; height: 5px; border: 1px solid currentColor; border-radius: 1px; }
+.jn-round-marks i.current { background: currentColor; }
+.jn-fix-mark { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
 .jn-tool { color: var(--text-2); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
-.jn-foot { color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.jn-foot { color: var(--text-2); display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.jn-foot-text { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.jn-foot-divider { color: var(--line-strong); }
 .jn-foot .dot { display: inline-block; margin-right: 6px; vertical-align: 1px; }
 .jn-mark { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; }
 .jn-mark.done { background: var(--green-soft); color: var(--green-text); }
@@ -1830,6 +1837,7 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 
 /* An agent's step: role, tool and model, time and outcome. Outlines on the journey use --field, a boundary that must be seen (3:1 on the canvas in every theme). */
 .jn.k-box { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: var(--node-radius); background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); overflow: hidden; }
+.jn.k-box .jn-foot { margin-top: auto; min-height: var(--lh-meta); }
 .jn-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
 .jn-head .jn-name { flex: 1; }
 .jn.k-box.s-now { border: 2px solid var(--blue); box-shadow: 0 0 0 4px var(--blue-soft), var(--shadow-lift); }
@@ -1841,13 +1849,14 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .jn.k-box.s-failed .jn-foot { color: var(--red-text); font-weight: 600; }
 .jn.k-box.s-cancelled { background: var(--surface); }
 
-/* What waits for you: a capsule with your icon. */
-.jn.k-you { display: flex; align-items: center; gap: 8px; padding: 8px 20px 8px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); }
+/* Coordinator checkpoints use the same card shape, spacing and footer as agent steps. */
+.jn.k-you { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; border-radius: var(--node-radius); background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); overflow: hidden; }
 .jn.k-you.s-you { background: var(--you-fill); border: 2px solid var(--amber); }
 .jn.k-you.s-you .jn-foot { color: var(--amber-text); font-weight: 600; }
-.jn.k-you .jn-foot { -webkit-line-clamp: 1; display: -webkit-box; }
-.jn-you-icon { width: 24px; height: 24px; flex: none; }
-.jn-you-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.jn.k-you .jn-foot { margin-top: auto; min-height: var(--lh-meta); }
+.jn-you-icon { width: 20px; height: 20px; flex: none; }
+.jn-you-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.jn-you-head .jn-name { flex: 1; }
 
 /* Where it started and where it ended. */
 .jn.k-start, .jn.k-end, .jn.k-rest { display: flex; align-items: center; gap: 8px; padding: 4px 16px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); color: var(--text-2); font-weight: 500; }
@@ -1910,6 +1919,12 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-details-head { display: flex; align-items: center; gap: 8px; }
 .journey-details-head h3 { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: var(--fs-reading); line-height: var(--lh-reading); font-weight: 600; }
 .journey-details-head .label { font-size: var(--fs-control); line-height: var(--lh-control); }
+.journey-detail-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.journey-detail-tabs button { min-height: 36px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-control); cursor: pointer; }
+.journey-detail-tabs button:hover { color: var(--text); background: var(--hover); }
+.journey-detail-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.journey-detail-tabs button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.journey-tab-panel { display: grid; align-content: start; gap: 12px; min-width: 0; }
 .journey-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; }
 .journey-facts dt { color: var(--text-3); }
 .journey-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
@@ -1918,9 +1933,16 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-context { display: grid; gap: 8px; }
 .journey-context h4 { margin-top: 4px; font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
 .journey-context p { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.journey-input-record { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
+.journey-input-record summary { color: var(--text); font-size: var(--fs-control); font-weight: 600; cursor: pointer; }
+.journey-input-record summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+.journey-input-record[open] summary { margin-bottom: 2px; }
+.journey-input-record h4 { margin: 0; color: var(--text-2); }
+.journey-input-record .quiet-text { font-size: var(--fs-meta); }
 .journey-check-list { list-style: none; display: grid; gap: 8px; padding: 0; margin: 0; }
 .journey-check-list li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }
 .journey-check-list li > span:not(.label) { color: var(--text-2); }
+.journey-check-list .journey-check-detail { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .journey-asked { display: grid; gap: 8px; }
 .journey-asked ul { list-style: none; display: grid; gap: 8px; }
 .journey-asked li { display: grid; gap: 2px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }

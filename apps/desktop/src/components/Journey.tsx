@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type Keybo
 import { createPortal } from "react-dom";
 import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { Ban, Check, Flag, Hourglass, LocateFixed, Maximize, User, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Ban, Check, Flag, GitBranch, Hourglass, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
 import { journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
 import { ago, duration, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
@@ -25,6 +25,14 @@ const STATE_WORDS: Record<JourneyNode["state"], string> = {
 function stateWords(node: JourneyNode): string {
   if (node.state !== "now" || node.run === "working") return STATE_WORDS[node.state];
   return node.run === "paused" ? "Now, paused" : "Now, waiting";
+}
+
+function checkDiagnostic(output: string): string | undefined {
+  const lines = output.split(/\r?\n/).map((line) => line.replace(/^@[^|]+\|\s*/, "").trim());
+  const failures = lines.filter((line) => /^\(fail\)\s/i.test(line));
+  const causes = lines.filter((line) => /^(?:error|assertionerror):/i.test(line) || /^timed out waiting for\b/i.test(line));
+  const detail = [...failures, ...causes].filter((line, index, all) => all.indexOf(line) === index).slice(0, 6).join("\n").slice(0, 1000);
+  return detail || undefined;
 }
 
 /** Elapsed time from the step's start to its end (or now): pauses and waiting are not left out, so the words say elapsed. */
@@ -93,6 +101,14 @@ export function askOutcome(ask: JourneyAsk): string {
 
 const askKind = (ask: JourneyAsk) => (ask.kind === "question" ? "Question" : "Permission");
 
+// Journey node names retain their full internal label for history and matching.
+// The sidebar and canvas should show only the role/work name; round, retry, and
+// update metadata is rendered separately as node marks. Strip all trailing
+// metadata defensively so older saved journeys also get the clean label.
+function visibleStepName(node: JourneyNode): string {
+  return (node.flowName ?? node.name).replace(/\s+\([^)]*\)\s*$/, "");
+}
+
 /** Where a task the journey waited for stands. */
 const LANDING_WORDS: Record<ReturnType<typeof landingOf>, string> = {
   landed: "landed",
@@ -105,7 +121,9 @@ const LANDING_WORDS: Record<ReturnType<typeof landingOf>, string> = {
 
 /** One list item for screen readers: number, name, state, tool and model, time, outcome and why it moved on. */
 export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: number): string {
-  const parts = [`${index + 1}. ${node.name}`, stateWords(node)];
+  const marks = [node.roundMark ? `round ${node.roundMark}` : "", node.updateMark ? "update" : "", node.fixMark ? `fix ${node.fixMark}` : "", node.portMark ? "port review" : "", node.callMark ? "your call" : "", node.repeatMark ? "repeated" : ""].filter(Boolean);
+  const name = [visibleStepName(node), ...marks].join(", ");
+  const parts = [`${index + 1}. ${name}`, stateWords(node)];
   for (const profile of profilesOf(node, find)) parts.push(profileText(profile, find, true));
   if (node.kind === "wait" && node.waitsOn?.length) parts.push(`Waits for ${quoteTitles(node.waitsOn.map((entry) => entry.title))}`);
   const time = timeOf(node, now);
@@ -163,6 +181,19 @@ function Mark({ node }: { node: JourneyNode }) {
   return null;
 }
 
+function StepMarks({ node }: { node: JourneyNode }) {
+  if (!node.roundMark && !node.updateMark && !node.repeatMark && !node.fixMark && !node.portMark && !node.callMark) return null;
+  const label = [node.roundMark ? `Round ${node.roundMark}` : "", node.updateMark ? "Update" : "", node.fixMark ? `Fix ${node.fixMark}` : "", node.portMark ? "Port review" : "", node.callMark ? "Your call" : "", node.repeatMark ? "Repeated" : ""].filter(Boolean).join(", ");
+  return <span className="jn-step-marks" role="img" aria-label={label} title={label}>
+    {node.roundMark ? <span className="jn-round-marks" aria-hidden="true">{Array.from({ length: Math.min(node.roundMark, 5) }, (_, index) => <i key={index} className={index === Math.min(node.roundMark!, 5) - 1 ? "current" : ""} />)}</span> : null}
+    {node.updateMark ? <Pencil size={11} aria-hidden="true" /> : null}
+    {node.fixMark ? <span className="jn-fix-mark" aria-hidden="true"><Wrench size={10} />{node.fixMark}</span> : null}
+    {node.portMark ? <GitBranch size={11} aria-hidden="true" /> : null}
+    {node.callMark ? <MessageCircle size={11} aria-hidden="true" /> : null}
+    {node.repeatMark ? <RotateCw size={11} aria-hidden="true" /> : null}
+  </span>;
+}
+
 const JourneyBox = memo(function JourneyBox({ data }: NodeProps<Node<BoxData>>) {
   const { kind, node } = data;
   const classes = ["jn", `k-${kind}`, node ? `s-${node.state}` : undefined, node?.state === "now" ? `r-${node.run}` : undefined, node?.kind === "wait" ? "wait" : undefined, data.endState ? `e-${data.endState}` : undefined, data.selected ? "selected" : undefined, data.focused ? "focused" : undefined].filter(Boolean).join(" ");
@@ -182,18 +213,18 @@ const JourneyBox = memo(function JourneyBox({ data }: NodeProps<Node<BoxData>>) 
           </>
         ) : kind === "you" && node ? (
           <>
-            <span className="avatar tone-violet jn-you-icon">
-              <User size={12} strokeWidth={2.4} />
+            <span className="jn-you-head">
+              <span className="avatar tone-violet jn-you-icon">
+                <User size={12} strokeWidth={2.4} />
+              </span>
+              <span className="jn-name">{visibleStepName(node)}</span>
+              <Mark node={node} />
             </span>
-            <span className="jn-you-text">
-              <span className="jn-name">{node.name}</span>
-              {data.foot.split("\n").map((line) => (
-                <span key={line} className="jn-foot">
-                  {line}
-                </span>
-              ))}
-            </span>
-            <Mark node={node} />
+            {(data.foot || node.roundMark || node.updateMark || node.repeatMark || node.fixMark || node.portMark || node.callMark) && <span className="jn-foot">
+              {data.foot ? <span className="jn-foot-text">{data.foot.replaceAll("\n", " · ")}</span> : null}
+              {data.foot && (node.roundMark || node.updateMark || node.repeatMark || node.fixMark || node.portMark || node.callMark) ? <span className="jn-foot-divider">·</span> : null}
+              <StepMarks node={node} />
+            </span>}
           </>
         ) : node ? (
           <>
@@ -205,14 +236,15 @@ const JourneyBox = memo(function JourneyBox({ data }: NodeProps<Node<BoxData>>) 
               ) : (
                 <RoleAvatar role={data.role} size={20} />
               )}
-              <span className="jn-name">{node.name}</span>
+              <span className="jn-name">{visibleStepName(node)}</span>
               <Mark node={node} />
             </span>
             {data.tool && <span className="jn-tool" title={data.tool}>{data.tool}</span>}
-            {data.foot && (
+            {(data.foot || node.roundMark || node.updateMark || node.repeatMark || node.fixMark || node.portMark || node.callMark) && (
               <span className="jn-foot">
                 {node.state === "now" && <span className={`dot ${node.run === "working" ? "running" : node.run === "paused" ? "paused" : "waiting"}`} />}
-                {data.foot}
+                {data.foot ? <span className="jn-foot-text">{data.foot}</span> : null}{data.foot && (node.roundMark || node.updateMark || node.repeatMark || node.fixMark || node.portMark || node.callMark) ? <span className="jn-foot-divider">·</span> : null}
+                <StepMarks node={node} />
               </span>
             )}
           </>
@@ -447,6 +479,7 @@ export function JourneyList({ view, find, now, onFocusStep, onSelect }: { view: 
       {view.nodes.map((node, index) => (
         <li
           key={node.id}
+          data-step-id={node.id}
           tabIndex={index === tabStop ? 0 : -1}
           aria-current={node.state === "now" || node.state === "you" ? "step" : undefined}
           onFocus={() => {
@@ -465,11 +498,21 @@ export function JourneyList({ view, find, now, onFocusStep, onSelect }: { view: 
 // ── A step's details, under the diagram ────────────────────────────────────────────────
 
 function StepDetails({ node, task, find, now, onPlan, onClose }: { node: JourneyNode; task: Task; find: Lookup; now: number; onPlan: () => void; onClose?: () => void }) {
+  const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "conversation">("overview");
+  useEffect(() => setActiveTab("overview"), [node.id]);
   const role = find.role(node.roleId);
   const profiles = profilesOf(node, find);
   const planned = node.state === "next" || node.state === "ahead";
   const entries = task.timeline.filter((entry) => entry.step === node.id);
   const lines = task.session.filter((line) => line.step === node.id);
+  const checkTimeline = entries.find((entry) => entry.text.startsWith("Checks:") || entry.text.startsWith("Checks passed:"));
+  const journeySteps = task.journey ?? [];
+  const journeyIndex = journeySteps.findIndex((step) => step.id === node.id);
+  const previousJourneyStep = journeyIndex > 0 ? journeySteps[journeyIndex - 1] : undefined;
+  const latestChecksStep = [...journeySteps].reverse().find((step) => step.kind === "petrina" && step.work === "checks");
+  const checksBelongHere = latestChecksStep?.id === node.id || (node.kind === "you" && node.waitsFor === "delivery" && previousJourneyStep?.id === latestChecksStep?.id);
+  const currentCheckRuns = checksBelongHere && task.checks?.at !== undefined && latestChecksStep?.startedAt !== undefined && task.checks.at >= latestChecksStep.startedAt ? task.checks.results : undefined;
+  const acceptanceChecks = node.acceptanceChecks ? [...node.acceptanceChecks].sort((a, b) => ({ pass: 0, blocked: 1, fail: 2 }[a.result] - { pass: 0, blocked: 1, fail: 2 }[b.result])) : [];
   const time = timeOf(node, now);
   const recorded = !planned && !node.legacy && node.startedAt !== undefined;
   // Long tasks keep only their latest timeline events and conversation lines.
@@ -491,7 +534,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
           ) : (
             <RoleAvatar role={role} size={24} />
           )}
-          {node.name}
+          {visibleStepName(node)}
           <span className={`label ${node.state === "you" ? "needs-you" : node.state === "failed" ? "bad" : node.state === "now" ? "running" : node.state === "done" ? "ok" : ""}`}>{stateWords(node)}</span>
         </h3>
         {onClose && <button className="btn quiet small icon" aria-label="Close the step's details" title="Close" onClick={onClose}>
@@ -499,6 +542,29 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
         </button>}
       </div>
 
+      {!planned && <div className="journey-detail-tabs" role="tablist" aria-label={`${visibleStepName(node)} details`} onKeyDown={(event) => {
+        const tabs = ["overview", "timeline", "conversation"] as const;
+        const current = tabs.indexOf(activeTab);
+        const next = event.key === "ArrowRight" ? (current + 1) % tabs.length : event.key === "ArrowLeft" ? (current + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : current;
+        if (next === current) return;
+        event.preventDefault();
+        setActiveTab(tabs[next]!);
+        event.currentTarget.querySelector<HTMLButtonElement>(`[data-journey-tab="${tabs[next]}"]`)?.focus();
+      }}>
+        {(["overview", "timeline", "conversation"] as const).map((tab) => <button
+          key={tab}
+          type="button"
+          role="tab"
+          id={`journey-tab-${node.id}-${tab}`}
+          aria-selected={activeTab === tab}
+          aria-controls={`journey-panel-${node.id}-${tab}`}
+          tabIndex={activeTab === tab ? 0 : -1}
+          data-journey-tab={tab}
+          onClick={() => setActiveTab(tab)}
+        >{tab[0]!.toUpperCase() + tab.slice(1)}</button>)}
+      </div>}
+
+      {activeTab === "overview" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-overview`} aria-labelledby={`journey-tab-${node.id}-overview`}>
       {planned ? (
         <>
           <p className="note">
@@ -506,7 +572,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
               ? "Planned: the squad waits here for your OK before it goes on."
               : node.kind === "petrina"
                 ? "Planned: Petrina publishes the checked work itself."
-                : `Planned: ${node.name}${profiles.length ? ` on ${profiles.map((profile) => profileText(profile, find, true)).join(" and ")}` : ""}.`}
+                : `Planned: ${visibleStepName(node)}${profiles.length ? ` on ${profiles.map((profile) => profileText(profile, find, true)).join(" and ")}` : ""}.`}
             {node.live ? ` ${node.live}.` : ""}
           </p>
           {node.kind === "agent" && (
@@ -566,19 +632,40 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
 
       {node.legacy && <p className="note">This step ran before Petrina kept each task's journey, so its time and outcome were not recorded.</p>}
 
+      {node.kind === "agent" && (() => {
+        const priorName = previousJourneyStep?.roleId
+          ? find.role(previousJourneyStep.roleId)?.name ?? previousJourneyStep.roleId
+          : previousJourneyStep?.kind === "petrina"
+            ? previousJourneyStep.work === "checks" ? "Automated checks" : "Petrina"
+            : previousJourneyStep?.kind === "you" ? "Your checkpoint" : previousJourneyStep?.kind === "wait" ? "The task dependency" : undefined;
+        const priorResult = previousJourneyStep?.reason ?? previousJourneyStep?.outcome;
+        const inputs = node.agentInputs ?? [];
+        return <div className="journey-context">
+          <h4>Why this step started</h4>
+          <p>{previousJourneyStep
+            ? `${priorName ?? "The previous step"}${priorResult ? ` handed it on: ${priorResult}.` : " finished, so this step began."}`
+            : "This was the first agent step in the plan."}</p>
+          {inputs.length > 0 ? inputs.map((input) => {
+            const inputRole = find.role(input.roleId)?.name ?? input.roleId;
+            const profile = find.profile(input.profileId);
+            return <details className="journey-input-record" key={`${input.roleId}:${input.profileId}`}>
+              <summary>Input given to {inputRole}{inputs.length > 1 && profile ? ` (${profileText(profile, find, true)})` : ""}</summary>
+              <p className="quiet-text">{input.mode === "continued" ? "Updated context for its existing conversation." : "Context for a fresh conversation."}{input.stageTitle ? ` Assigned stage: ${input.stageTitle}.` : ""}</p>
+              {input.taskDescription && <div>
+                <h4>Task request</h4>
+                <p>{input.taskDescription}</p>
+              </div>}
+              {input.sections.length ? input.sections.map((section) => <div key={section.title}>
+                <h4>{section.title}</h4>
+                <p>{section.body}</p>
+              </div>) : <p className="note">No additional task context was recorded for this step.</p>}
+            </details>;
+          }) : <p className="note">The exact context given to this older step was not saved.</p>}
+        </div>;
+      })()}
+
       {node.kind === "agent" && node.roleId === "builder" && (
         <div className="journey-context">
-          <h4>Task request</h4>
-          <p>{task.description}</p>
-          {task.brief?.summary && <><h4>What success requires</h4><p>{task.brief.summary}</p></>}
-          {task.brief?.acceptance.length ? (
-            <>
-              <h4>Acceptance requirements</h4>
-              <ul className="journey-check-list">
-                {task.brief.acceptance.map((check) => <li key={check.text}>{check.text}</li>)}
-              </ul>
-            </>
-          ) : null}
           {node.fixing && (() => {
             const legacyIds = node.state === "now" && task.fixing
               ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id)
@@ -590,10 +677,15 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
             const journey = task.journey ?? [];
             const stepIndex = journey.findIndex((step) => step.id === node.id);
             const previous = stepIndex > 0 ? journey[stepIndex - 1] : undefined;
-            const sentBy = previous?.roleId ? find.role(previous.roleId)?.name : previous?.work === "checks" ? "Automated checks" : previous?.kind === "petrina" ? "Petrina" : "The previous step";
+            const latestTesterIndex = journey.reduce((latest, step, index) => ((step.kind === "agent" && step.roleId === "tester") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
+            const failedChecks = previous?.acceptanceChecks?.filter((check) => check.result !== "pass")
+              ?? (stepIndex - 1 === latestTesterIndex ? task.brief?.acceptance.filter((check) => check.verification === "failed" || check.verification === "blocked").map((check) => ({ text: check.text, result: check.verification === "failed" ? "fail" as const : "blocked" as const, ...(check.reason ? { reason: check.reason } : {}) })) : undefined)
+              ?? [];
             return <>
-              <h4>Why this fix started</h4>
-              <p>{previous?.reason ? `${sentBy} sent the work back: ${previous.reason}.` : "The previous review or check sent the work back for fixes."}</p>
+              {failedChecks.length > 0 && <>
+                <h4>Failed checks that triggered this fix</h4>
+                <ul className="journey-check-list">{failedChecks.map((check) => <li key={check.text}><strong>{check.text}</strong>{check.reason ? <span>{check.reason}</span> : null}</li>)}</ul>
+              </>}
               <h4>Builder conversation</h4>
               <p>{node.builderConversation === "resumed" ? "Petrina resumed the builder’s saved conversation for this fix round." : node.builderConversation === "new" ? "Petrina started a new builder conversation for this fix round." : "The conversation used for this fix round was not recorded."}</p>
               <h4>Findings assigned to this fix</h4>
@@ -605,11 +697,11 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
         </div>
       )}
 
-      {node.acceptanceChecks?.length ? (
+      {acceptanceChecks.length ? (
         <div className="journey-context">
           <h4>Acceptance checks</h4>
           <ul className="journey-check-list">
-            {node.acceptanceChecks.map((check) => <li key={check.text}>
+            {acceptanceChecks.map((check) => <li key={check.text}>
               <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" ? "bad" : "needs-you"}`}>{check.result === "pass" ? "Passed" : check.result === "fail" ? "Failed" : "Could not verify"}</span>
               <strong>{check.text}</strong>
               {check.reason ? <span>{check.reason}</span> : null}
@@ -617,6 +709,40 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
           </ul>
         </div>
       ) : null}
+
+      {node.kind === "petrina" && node.work === "checks" && (() => {
+        const recorded = node.productChecks;
+        if (recorded?.length) return <div className="journey-context">
+          <h4>Automated check results</h4>
+          <ul className="journey-check-list">{recorded.map((check) => <li key={check.name}>
+            <span className={`label ${check.result === "pass" ? "ok" : "bad"}`}>{check.result === "pass" ? "Passed" : check.result === "did-not-finish" ? "Timed out" : "Failed"}</span>
+            <strong>{check.name}</strong>
+            {check.detail ? <span className="journey-check-detail">{check.detail}</span> : null}
+          </li>)}</ul>
+        </div>;
+        if (currentCheckRuns?.length) return <div className="journey-context">
+          <h4>Automated check results</h4>
+          <ul className="journey-check-list">{currentCheckRuns.map((check) => <li key={check.name}>
+            <span className={`label ${check.ok ? "ok" : "bad"}`}>{check.ok ? "Passed" : check.timedOut ? "Timed out" : "Failed"}</span>
+            <strong>{check.name}</strong>
+            {!check.ok && checkDiagnostic(check.output) ? <span className="journey-check-detail">{checkDiagnostic(check.output)}</span> : null}
+          </li>)}</ul>
+        </div>;
+        if (checkTimeline) return <div className="journey-context">
+          <h4>Automated check results</h4>
+          <p>{checkTimeline.text}</p>
+        </div>;
+        return null;
+      })()}
+
+      {node.kind === "you" && node.waitsFor === "delivery" && currentCheckRuns?.some((check) => !check.ok) && <div className="journey-context">
+        <h4>Checks behind this delivery decision</h4>
+        <ul className="journey-check-list">{currentCheckRuns.map((check) => <li key={check.name}>
+          <span className={`label ${check.ok ? "ok" : "bad"}`}>{check.ok ? "Passed" : check.timedOut ? "Timed out" : "Failed"}</span>
+          <strong>{check.name}</strong>
+          {!check.ok && checkDiagnostic(check.output) ? <span className="journey-check-detail">{checkDiagnostic(check.output)}</span> : null}
+        </li>)}</ul>
+      </div>}
 
       {node.asks.length > 0 && (
         <div className="journey-asked">
@@ -634,8 +760,10 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
           </ul>
         </div>
       )}
+      </div>}
 
-      {recorded && (
+      {activeTab === "timeline" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-timeline`} aria-labelledby={`journey-tab-${node.id}-timeline`}>
+      {recorded ? (
         <div className="journey-part">
           <h4>This step on the timeline</h4>
           {entries.length > 0 ? <TimelineList entries={entries} now={now} find={find} /> : null}
@@ -643,13 +771,13 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
             <p className="note">{entries.length ? "Its earliest events are no longer kept: long tasks keep only their latest timeline events." : "Its part of the timeline is no longer kept: long tasks keep only their latest timeline events."}</p>
           )}
           {!entries.length && !timelineTrimmed && <p className="note">Nothing on the timeline yet.</p>}
-          {lines.length > 0 ? (
-            <StepConversation lines={lines} find={find} now={now} />
-          ) : sessionTrimmed ? (
-            <p className="note">Its part of the conversation is no longer kept: long tasks keep only their latest lines.</p>
-          ) : null}
         </div>
-      )}
+      ) : <p className="note">This step has no recorded timeline.</p>}
+      </div>}
+
+      {activeTab === "conversation" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-conversation`} aria-labelledby={`journey-tab-${node.id}-conversation`}>
+        {lines.length > 0 ? <StepConversation lines={lines} find={find} now={now} /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
+      </div>}
     </section>
   );
 }

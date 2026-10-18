@@ -86,7 +86,7 @@ describe('the journey in the task sheet', () => {
     await act(async () => host.querySelector<HTMLElement>(`.card-open[aria-describedby="status-${id}"]`)!.click());
   }
 
-  it('opens first in the Overview, and Enter on a step shows its details and its part of the timeline', async () => {
+  it('opens first in the Overview, and keeps the timeline and conversation in their own tabs', async () => {
     await mount(createDemoState(NOW));
     await openTask('pricing-refresh');
     expect(host.querySelector('.workspace-journey h2')?.textContent).toContain('Task flow');
@@ -98,9 +98,11 @@ describe('the journey in the task sheet', () => {
     expect(host.querySelector('#journey-details-title')?.textContent).toContain('Code reviewer');
     const details = host.querySelector('.journey-details')!;
     expect(details.textContent).toContain('sent back: 1 important');
+    await act(async () => details.querySelector<HTMLButtonElement>('[data-journey-tab="timeline"]')!.click());
     expect([...details.querySelectorAll('.tl .text')].map((entry) => entry.textContent)).toContain('Sent back to the builder: 1 important');
 
     // The selected run's conversation is read inline, without changing the task tab.
+    await act(async () => details.querySelector<HTMLButtonElement>('[data-journey-tab="conversation"]')!.click());
     expect(details.querySelector('.step-conversation')?.textContent).toContain('Conversation');
     expect(host.querySelector('.step-panel-bar')?.textContent).toContain('Step details');
     expect([...details.querySelectorAll('button')].some((button) => button.textContent?.includes('Read this step'))).toBe(false);
@@ -110,33 +112,123 @@ describe('the journey in the task sheet', () => {
     const state = createDemoState(NOW);
     const task = taskOf(state, 'pricing-refresh');
     const builder = task.journey!.find((step) => step.roleId === 'builder')!;
-    builder.fixing = true;
-    builder.startedAt = NOW - 100;
-    builder.endedAt = NOW;
-    builder.builderConversation = 'resumed';
-    task.findings = [...task.findings, { id: 'finding-fix-1', text: 'The checkout total drops the selected shipping fee.', severity: 'blocking', raisedBy: 'code-reviewer', confirmedBy: [], status: 'open', answer: { fixed: false, text: 'The work still needs a correction.', at: NOW }, evidence: 'The displayed total excludes shipping after changing the delivery method.' }];
-    task.brief = { summary: 'Keep the checkout total accurate.', forUsers: [], areas: [], risks: [], acceptance: [
-      { text: 'The total includes the selected shipping fee.', verification: 'passed', met: true },
-      { text: 'Type checks and all tests pass.', verification: 'failed', met: false },
-    ] };
+    builder.agentInputs = [{ roleId: 'builder', profileId: builder.profileId!, taskTitle: task.title, taskDescription: task.description, stageTitle: 'Build', sections: [{ title: 'Implementation brief', body: 'Build the requested checkout changes.' }], mode: 'fresh' }];
     const tester = task.journey!.findLast((step) => step.work === 'checks' && step.endedAt !== undefined)!;
     delete tester.acceptanceChecks;
+    tester.reason = 'one acceptance check failed';
+    tester.outcome = '1 acceptance check failed';
+    const testerIndex = task.journey!.indexOf(tester);
+    task.journey = [...task.journey!.slice(0, testerIndex + 1), { ...builder, id: 'builder-fix-test', fixing: true, startedAt: NOW - 100, endedAt: NOW, builderConversation: 'resumed', reason: undefined, outcome: 'Fixes ready', agentInputs: [{ roleId: 'builder', profileId: builder.profileId!, taskTitle: task.title, stageTitle: 'Build', sections: [{ title: 'Review findings', body: 'The checkout total drops the selected shipping fee.' }], mode: 'continued' }] }];
+    task.findings = [...task.findings, { id: 'finding-fix-1', text: 'The checkout total drops the selected shipping fee.', severity: 'blocking', raisedBy: 'code-reviewer', confirmedBy: [], status: 'open', answer: { fixed: false, text: 'The work still needs a correction.', at: NOW }, evidence: 'The displayed total excludes shipping after changing the delivery method.' }];
+    task.brief = { summary: 'Keep the checkout total accurate.', forUsers: [], areas: [], risks: [], acceptance: [
+      { text: 'Type checks and all tests pass.', verification: 'failed', met: false },
+      { text: 'The total includes the selected shipping fee.', verification: 'passed', met: true },
+    ] };
     await mount(state);
     await openTask('pricing-refresh');
-    const builderItem = [...host.querySelectorAll<HTMLElement>('.journey-list li')].find((item) => item.textContent?.includes('Builder (fixes)'))!;
+    const firstBuilderItem = [...host.querySelectorAll<HTMLElement>('.journey-list li')].find((item) => /^\d+\. Builder\./.test(item.textContent ?? ''))!;
+    await act(async () => firstBuilderItem.click());
+    expect(host.querySelector('.journey-details')?.textContent).toContain('Task request');
+    expect(host.querySelector('.journey-details')?.textContent).toContain(task.description);
+    const builderItem = host.querySelector<HTMLElement>('.journey-list li[data-step-id="builder-fix-test"]')!;
     await act(async () => builderItem.click());
     let details = host.querySelector('.journey-details')!;
-    expect(details.textContent).toContain('Task request');
-    expect(details.textContent).toContain(task.description);
-    expect(details.textContent).toContain('The total includes the selected shipping fee.');
+    expect(details.textContent).not.toContain('Task request');
+    expect(details.textContent).not.toContain(task.description);
+    expect(details.textContent).toContain('Input given to Builder');
+    expect(details.textContent).toContain('Type checks and all tests pass.');
     expect(details.textContent).toContain('resumed the builder’s saved conversation');
+    expect(details.textContent).toContain('Findings assigned to this fix');
     expect(details.textContent).toContain('The checkout total drops the selected shipping fee.');
 
-    const testerItem = [...host.querySelectorAll<HTMLElement>('.journey-list li')].find((item) => item.textContent?.includes('Automated checks (round 2)'))!;
+    const testerItem = [...host.querySelectorAll<HTMLElement>('.journey-list li')].find((item) => item.textContent?.includes('Automated checks, round 2'))!;
     await act(async () => testerItem.click());
     details = host.querySelector('.journey-details')!;
     expect(details.textContent).toContain('Type checks and all tests pass.');
     expect(details.textContent).toContain('Failed');
+    const acceptanceItems = [...details.querySelectorAll('.journey-check-list li')].map((item) => item.textContent ?? '');
+    expect(acceptanceItems[0]).toContain('The total includes the selected shipping fee.');
+    expect(acceptanceItems[1]).toContain('Type checks and all tests pass.');
+  });
+
+  it('names each automated check and its result on that journey step', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const checkStep = task.journey!.findLast((step) => step.kind === 'petrina' && step.work === 'checks')!;
+    checkStep.productChecks = [{ name: 'Type check', result: 'pass' }, { name: 'Tests', result: 'fail' }];
+    await mount(state);
+    await openTask('pricing-refresh');
+    const checkItem = host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${checkStep.id}"]`)!;
+    await act(async () => checkItem.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Type check');
+    expect(details.textContent).toContain('Passed');
+    expect(details.textContent).toContain('Tests');
+    expect(details.textContent).toContain('Failed');
+  });
+
+  it('shows the failed test behind a delivery checkpoint, not just “checks still fail”', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const deliveryIndex = task.journey!.findIndex((step) => step.kind === 'you' && step.waitsFor === 'delivery');
+    const checkStep = task.journey!.find((step) => step.kind === 'petrina' && step.work === 'checks')!;
+    task.journey = [...task.journey!.slice(0, deliveryIndex), { ...checkStep, id: 'checks-before-delivery', startedAt: NOW - 100, endedAt: NOW - 10 }, ...task.journey!.slice(deliveryIndex)];
+    task.checks = { at: NOW, definition: 'current', results: [
+      { name: 'Type check', command: 'bun run typecheck', ok: true, ms: 10, output: 'passed' },
+      { name: 'Tests', command: 'bun run test', ok: false, ms: 100, output: '@petrina/engine:test  | (fail) reviews after a usage handoff > keeps a real reviewer handoff independent with 1 pool slots and one slot per tool [66762.68ms]\n@petrina/engine:test  | error: Timed out waiting for the independent reviews' },
+      { name: 'Desktop shell', command: 'cargo check', ok: true, ms: 10, output: 'passed' },
+    ] };
+    await mount(state);
+    await openTask('pricing-refresh');
+    const delivery = task.journey!.find((step) => step.kind === 'you' && step.waitsFor === 'delivery')!;
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${delivery.id}"]`)!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Checks behind this delivery decision');
+    expect(details.textContent).toContain('Tests');
+    expect(details.textContent).toContain('Failed');
+    expect(details.textContent).toContain('keeps a real reviewer handoff independent');
+    expect(details.textContent).toContain('Timed out waiting for the independent reviews');
+  });
+
+  it('uses footer marks instead of parentheses in flow and selected-step titles', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const builder = task.journey!.find((step) => step.kind === 'agent' && step.roleId === 'builder')!;
+    const check = task.journey!.find((step) => step.kind === 'petrina' && step.work === 'checks')!;
+    task.journey = [{ ...check, id: 'check-round-3', round: 3 }, { ...check, id: 'check-round-3-repeat', round: 3 }];
+    const view = journeyView(task, contextOf(state));
+    expect(view.nodes[0]).toMatchObject({ name: 'Automated checks (round 3)', flowName: 'Automated checks', roundMark: 3 });
+    expect(view.nodes[1]).toMatchObject({ name: 'Automated checks (round 3, again)', flowName: 'Automated checks', roundMark: 3, repeatMark: true });
+    const spoken = spokenStep(view.nodes[1]!, 1, lookup(state), NOW);
+    expect(spoken).not.toContain('(');
+    expect(spoken).toContain('Automated checks, round 3, repeated');
+
+    const fixes = Array.from({ length: 6 }, (_, index) => ({ ...builder, id: `fix-${index}`, stageId: 'fix-stage', round: 1, fixing: true, endedAt: NOW - index - 1 }));
+    task.journey = [...fixes, { ...builder, id: 'fix-7', stageId: 'fix-stage', round: 1, fixing: true, endedAt: undefined, startedAt: NOW }];
+    const fix = journeyView(task, contextOf(state)).nodes.find((node) => node.id === 'fix-7')!;
+    expect(fix).toMatchObject({ name: 'Builder (fixes 7)', flowName: 'Builder', fixMark: 7 });
+
+    task.journey = [
+      { ...check, id: 'update-1', stageId: 'update-stage', work: 'update', round: 1, endedAt: NOW - 1 },
+      { ...check, id: 'update-2', stageId: 'update-stage', work: 'update', round: 1, endedAt: undefined, startedAt: NOW },
+    ];
+    expect(journeyView(task, contextOf(state)).nodes.find((node) => node.id === 'update-2')).toMatchObject({ name: 'Update branch (again)', flowName: 'Update branch', updateMark: true, repeatMark: true });
+
+    task.journey = [
+      { ...builder, id: 'tester-1', roleId: 'tester', stageId: 'test-stage', round: 2, fixing: false, update: false, endedAt: NOW - 1 },
+      { ...builder, id: 'tester-2', roleId: 'tester', stageId: 'test-stage', round: 2, fixing: false, update: false, endedAt: undefined, startedAt: NOW },
+    ];
+    state.roles.find((role) => role.id === 'tester')!.name = 'Verifiers';
+    expect(journeyView(task, contextOf(state)).nodes.find((node) => node.id === 'tester-2')).toMatchObject({ name: 'Verifiers (round 2, again)', flowName: 'Verifiers', roundMark: 2, repeatMark: true });
+    await mount(state);
+    await openTask('pricing-refresh');
+    await act(async () => host.querySelector<HTMLElement>('.journey-list li[data-step-id="tester-2"]')!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.querySelector('#journey-details-title')?.textContent).toContain('Verifiers');
+    expect(details.querySelector('#journey-details-title')?.textContent).not.toContain('(');
+    const canvasStep = host.querySelector<HTMLElement>('.react-flow__node[data-id="tester-2"] .jn-name')!;
+    expect(canvasStep.closest('.jn.k-box')?.querySelector('.jn-foot .jn-step-marks')).not.toBeNull();
+    expect(canvasStep.textContent).not.toContain('(');
   });
 
   it('stops following the live step while you read another one, until Back to now', async () => {
@@ -171,6 +263,7 @@ describe('the journey in the task sheet', () => {
     expect(host.querySelector('.journey-canvas')).toBe(canvas);
     expect(host.querySelector('.task-detail-panel')?.textContent).toContain('Why this plan');
     await act(async () => [...host.querySelectorAll<HTMLElement>('.journey-list li')][1]!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>('.journey-detail-tabs [data-journey-tab="conversation"]')!.click());
     expect(host.querySelector('.task-global-details')?.hasAttribute('hidden')).toBe(true);
     expect(host.querySelector('.task-detail-panel #journey-details-title')?.textContent).toContain('Builder');
     await act(async () => [...host.querySelectorAll<HTMLButtonElement>('.step-panel-bar button')][0]!.click());

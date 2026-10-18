@@ -240,6 +240,10 @@ export interface JourneyStep {
   profileId?: Id;
   /** Every agent on the step when several work at once (a review round's reviewers, its voters), `profileId` first. */
   team?: readonly Id[];
+  /** The role-specific context given to each agent in this step. Older saved steps have no snapshot. */
+  agentInputs?: readonly JourneyAgentInput[];
+  /** The product checks Petrina ran during this checks step. */
+  productChecks?: readonly JourneyProductCheck[];
   /** `petrina`: what Petrina did. */
   work?: JourneyWork;
   /** `you`: what it waits for. */
@@ -266,6 +270,25 @@ export interface JourneyAcceptanceCheck {
   text: string;
   result: "pass" | "fail" | "blocked";
   reason?: string;
+}
+
+export interface JourneyProductCheck {
+  name: string;
+  result: "pass" | "fail" | "did-not-finish";
+  /** A short diagnostic from the failed run, saved with the step for later review. */
+  detail?: string;
+}
+
+/** Plain-language context sections handed to one agent when its journey step starts. */
+export interface JourneyAgentInput {
+  roleId: Id;
+  profileId: Id;
+  taskTitle: string;
+  /** Present when this start included the task request; continued prompts only add updated context. */
+  taskDescription?: string;
+  stageTitle?: string;
+  sections: readonly { title: string; body: string }[];
+  mode: "fresh" | "continued";
 }
 
 export interface QueuedMessage {
