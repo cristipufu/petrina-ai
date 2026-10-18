@@ -211,7 +211,11 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
             );
           return speaker(group);
         })}
-        {task.queued.map((message) => (
+        {task.queued.map((message) => {
+          const recipients = Object.values(message.recipients ?? {});
+          const heard = recipients.filter(Boolean).length;
+          const note = heard ? `Sent to ${heard} of ${recipients.length} agents` : recipients.length ? `Queued for ${recipients.length} agents` : task.driving ? "Queued, delivered when you hand back" : live ? "Queued, delivered after the current step" : "Queued, delivered when an agent starts";
+          return (
           <div key={message.id} className="msg you queued" data-queued>
             <span className="avatar tone-violet" style={{ width: 28, height: 28 }} aria-hidden="true">
               <User size={16} />
@@ -219,8 +223,8 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
             <div style={{ minWidth: 0 }}>
               <div className="name">
                 You
-                <span className="queued-note">{task.driving ? "Queued, delivered when you hand back" : live ? "Queued, delivered after the current step" : "Queued, delivered when an agent starts"}</span>
-                <button className="btn ghost small" onClick={() => sim.removeQueued(task.id, message.id)} aria-describedby={`queued-${message.id}`}>
+                <span className="queued-note">{note}</span>
+                <button className="btn ghost small" disabled={heard > 0} title={heard ? "An agent has already received this message" : undefined} onClick={() => sim.removeQueued(task.id, message.id)} aria-describedby={`queued-${message.id}`}>
                   Remove
                 </button>
               </div>
@@ -229,7 +233,8 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
         {unsent.map((entry) => (
           <UnsentMessage key={entry.clientId} entry={entry} live={connected} />
         ))}

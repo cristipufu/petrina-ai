@@ -20,6 +20,7 @@ import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
 import type { Section } from "./context.js";
+import { takeMessages } from "./messages.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
@@ -374,8 +375,9 @@ export class Turns {
           delete task.conversation.asked;
           delete task.conversation.handback;
         }
-        const messages = task.queued.splice(0);
+        const messages = takeMessages(task, options.member);
         for (const message of messages) {
+          if (!message.firstDelivery) continue;
           this.k.say(task, "you", message.text);
           this.k.log(task, "you", `You said: ${message.text}`);
         }
@@ -670,6 +672,15 @@ export class Turns {
     const by = { roleId: role.id, profileId };
     // Every message to the agent and the reply it waits for is one entry in the work log.
     const send = (text: string, why: TurnReason) => this.k.tracking.turn(this.k.task(task.id) ?? task, agent, run, text, why, signal);
+    const sendQueued = (current: MTask, batch: ReturnType<typeof takeMessages>) => {
+      for (const message of batch) if (message.firstDelivery) {
+        this.k.say(current, "you", message.text);
+        this.k.log(current, "you", `You said: ${message.text}`);
+      }
+      this.k.commitNow();
+      const messages = batch.map((message, index) => `${index + 1}. ${message.text}`).join("\n");
+      return send(`Messages from the coordinator, in order:\n${messages}\n\nTake all of them into account. When you are done, end with the result block again.`, "message");
+    };
     const mayAsk = mayAskScreen(role);
     let reply = await send(opening, reason);
     if (options.main) this.briefed(task);
@@ -695,8 +706,9 @@ export class Turns {
         }
         // Given at once, in this conversation: the agent keeps its slot.
         current.screen!.heard = true;
-        const messages = current.queued.splice(0);
+        const messages = takeMessages(current, options.member);
         for (const message of messages) {
+          if (!message.firstDelivery) continue;
           this.k.say(current, "you", message.text);
           this.k.log(current, "you", `You said: ${message.text}`);
         }
@@ -704,25 +716,9 @@ export class Turns {
         reply = await send(screenPrompt(current.screen!.reason, messages.map((message) => message.text)), "continue");
         continue;
       }
-      const batch: typeof current.queued = [];
-      if (options.main && current.queued.length) {
-        let size = 0;
-        while (batch.length < current.queued.length) {
-          const next = current.queued[batch.length]!;
-          if (batch.length > 0 && size + next.text.length > 12_000) break;
-          size += next.text.length;
-          batch.push(next);
-        }
-        current.queued.splice(0, batch.length);
-      }
+      const batch = options.main || options.member ? takeMessages(current, options.member) : [];
       if (batch.length) {
-        for (const message of batch) {
-          this.k.say(current, "you", message.text);
-          this.k.log(current, "you", `You said: ${message.text}`);
-        }
-        this.k.commitNow();
-        const messages = batch.map((message, index) => `${index + 1}. ${message.text}`).join("\n");
-        reply = await send(`Messages from the coordinator, in order:\n${messages}\n\nTake all of them into account. When you are done, end with the result block again.`, "message");
+        reply = await sendQueued(current, batch);
         continue;
       }
       if (reply.stopReason === "cancelled") {
@@ -742,6 +738,13 @@ export class Turns {
       }
       const error = parsed.ok === true ? await options.check?.(parsed.value) : parsed.ok === "screen" ? NO_SCREEN_HERE : parsed.error;
       if (parsed.ok === true && !error) {
+        // Validation may await I/O. Notes arriving during it still reach this agent before its result is accepted.
+        const late = options.main || options.member ? takeMessages(current, options.member) : [];
+        if (late.length) {
+          reply = await sendQueued(current, late);
+          continue;
+        }
+        if (options.member) this.k.screenGroups.get(task.id)?.finished(options.member);
         // The result ends the agent's work. Repository cleanup and saving the result are Petrina's time.
         if (options.main) this.k.pauseStep(current);
         const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;

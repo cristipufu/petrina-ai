@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { findingCount, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
+import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
@@ -49,16 +50,62 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
     }, ship ? "the work to ship" : "the delivery check", 60_000);
     // One fresh voter per tool that can run here. With none installed, the two tools the reviewers were planned on.
     const voters = engine.getState().tools.filter((tool) => tool.status === "ready").length || 2;
-    return { task, fakes, atOnce, repo, before, voters };
+    return { task, fakes, atOnce, repo, before, voters, root };
   } finally {
     unsubscribe();
-    engine.shutdown();
+    await engine.shutdown();
   }
 }
 
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("reviews that converge", () => {
+  it("rechecks an older saved reopened finding instead of reusing its pre-fix ballot", async () => {
+    const run = await untilDelivery({ reviewer: "important" });
+    const data = join(run.root, "data");
+    const store = new Store(join(data, "petrina.db"));
+    const stageIndex = run.task.plan!.stages.findIndex((stage) => stage.kind === "review-chain");
+    const stage = run.task.plan!.stages[stageIndex]!;
+    try {
+      const state = store.load()!;
+      store.save({ ...state, inbox: [], tasks: state.tasks.map((task) => task.id !== run.task.id ? task : {
+        ...task, state: "waiting", stageIndex, sub: 0,
+        hunt: { stageId: stage.id, round: 2, reported: { "0": true, "1": true }, findings: task.findings.length },
+        findings: task.findings.map((finding) => finding.severity !== "blocking" ? finding : { ...finding, status: "open", confirmedBy: [finding.raisedBy] }),
+      }) });
+    } finally { store.close(); }
+    run.fakes.scenario({ builder: "plain", verifier: "not-a-bug" });
+    const engine = new Engine(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), run.fakes.dir] });
+    try {
+      const task = await waitFor(() => {
+        const state = engine.getState();
+        return state.inbox.some((item) => item.taskId === run.task.id && item.kind === "delivery") && state.tasks.find((task) => task.id === run.task.id);
+      }, "the reopened saved finding to be verified again");
+      const finding = task.findings.find((entry) => entry.severity === "blocking")!;
+      expect(finding.status).toBe("dismissed");
+      expect(finding.verification?.verdict).toBe("not-a-bug");
+      expect(finding.earlierReviews?.[0]?.verification?.verdict).toBe("real");
+      expect(run.fakes.openings("builder")).toHaveLength(2);
+    } finally { await engine.shutdown(); }
+    const saved = new Store(join(data, "petrina.db"));
+    try { expect(saved.load()!.tasks.find((task) => task.id === run.task.id)!.findings.find((finding) => finding.severity === "blocking")!.earlierReviews).toHaveLength(1); }
+    finally { saved.close(); }
+  });
+
+  it("requires fresh votes when one tool reopens a reported fix, retaining the earlier evidence", async () => {
+    const { task, fakes, voters } = await untilDelivery({ reviewer: "confirm-fixed-one-tool", verifier: "after-fix-not-a-bug" });
+    const finding = task.findings.find((entry) => entry.severity === "blocking")!;
+    expect(finding.answer?.fixed).toBe(true);
+    expect(finding.status).toBe("dismissed");
+    expect(finding.verification?.verdict).toBe("not-a-bug");
+    expect(finding.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("not-a-bug"));
+    expect(finding.earlierReviews).toHaveLength(1);
+    expect(finding.earlierReviews![0]!.verification?.verdict).toBe("real");
+    expect(finding.earlierReviews![0]!.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("real"));
+    expect(fakes.openings("verifier")).toHaveLength(voters * 2);
+    expect(fakes.openings("builder")).toHaveLength(2);
+  });
+
   it("keeps a finding open when reviewers confirm that the claimed fix is still broken", async () => {
     const { task, fakes } = await untilDelivery({ reviewer: "confirm-fixed" });
     const finding = task.findings.find((entry) => entry.text.toLowerCase().replace(/!$/, ".") === "the greeting is missing on the welcome page.")!;

@@ -11,6 +11,7 @@
 
 import { realpathSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import { routeMessages } from "./messages.js";
 import {
   AFTER_WORDS,
   CALL_WORDS,
@@ -685,7 +686,9 @@ export class Engine extends Kernel implements Commands {
     const message = { id: this.id(taskId), text: trimmed, at: Date.now() };
     this.remember(task, trimmed, message.id);
     const run = this.runs.get(taskId);
-    const interrupt = mode === "interrupt" && run !== undefined;
+    const runs = new Set(this.helperRuns.get(taskId) ?? []);
+    if (run) runs.add(run);
+    const interrupt = mode === "interrupt" && runs.size > 0;
     this.stepNote(task, interrupt ? "interrupt" : "message", trimmed, { id: message.id });
     if (interrupt) {
       task.queued.unshift(message);
@@ -693,14 +696,15 @@ export class Engine extends Kernel implements Commands {
     } else {
       task.queued.push(message);
     }
+    routeMessages(task, this.screenGroups.get(taskId)?.recipients() ?? Object.keys(task.hunt?.screenTurns ?? {}));
     this.commitNow();
-    if (interrupt) void run.cancel();
+    if (interrupt) for (const active of runs) void active.cancel();
   }
 
   /** Take back a message before any agent got it. */
   removeQueued(taskId: Id, messageId: Id): void {
     const task = this.task(taskId);
-    if (!task || !task.queued.some((message) => message.id === messageId)) return;
+    if (!task || !task.queued.some((message) => message.id === messageId && !Object.values(message.recipients ?? {}).some(Boolean))) return;
     task.queued = task.queued.filter((message) => message.id !== messageId);
     task.stepNotes = task.stepNotes?.filter((note) => note.id !== messageId);
     task.notes = task.notes?.filter((note) => note.id !== messageId);

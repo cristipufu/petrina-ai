@@ -525,6 +525,10 @@ describe("internal roles and reviewers asking for the screen", () => {
       await waitFor(() => f.onScreen().includes(first), "the first reviewer to get the screen");
       expect(slotUses(f.state())).toHaveLength(1);
       expect(f.fakes.received("code reviewer").filter((entry) => entry.text.includes("Check the Dock too"))).toHaveLength(1);
+      const message = f.task(id).queued[0]!;
+      expect(Object.values(message.recipients ?? {}).filter(Boolean)).toHaveLength(1);
+      f.engine.removeQueued(id, message.id);
+      expect(f.task(id).queued).toHaveLength(1);
       f.release(first);
       await waitFor(() => f.asking(id) && f.task(id).conversation?.sessionId !== first, "the next reviewer to wait for permission");
       expect(f.onScreen()).toEqual([first]);
@@ -539,7 +543,9 @@ describe("internal roles and reviewers asking for the screen", () => {
       for (const session of sessions) {
         expect(f.fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new", "resume"]);
         expect(f.fakes.received("code reviewer").filter((entry) => entry.session === session)).toHaveLength(2);
+        expect(f.fakes.received("code reviewer").filter((entry) => entry.session === session && entry.text.includes("Check the Dock too"))).toHaveLength(1);
       }
+      expect(f.task(id).queued).toEqual([]);
       expect(f.task(id).screen).toBeUndefined();
       expect(f.task(id).hunt).toBeUndefined();
     } finally { await f.close(); }

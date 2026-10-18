@@ -8,6 +8,7 @@ import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel, MTask } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
+import { takeMessages } from "./messages.js";
 
 export interface Section {
   title: string;
@@ -36,13 +37,13 @@ export class Context {
     private readonly currentChecks: (task: MTask) => Promise<boolean> = async () => false,
   ) {}
 
-  async sectionsFor(task: MTask, roleId: Id): Promise<Section[]> {
+  async sectionsFor(task: MTask, roleId: Id, member?: string): Promise<Section[]> {
     const role = this.k.role(roleId);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
     const points = reads.includes("guide-points") ? await this.guide.pendingPoints(task) : [];
     const currentChecks = reads.includes("check-results") && !!task.checks?.results.length ? await this.currentChecks(task) : false;
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
-    task.queued.splice(0);
+    takeMessages(task, member, Infinity);
     const source = task.source ? [{ title: "Approved starting point and delivery", body: workSummary({ ...task.source, product: { ...task.source.product, name: this.k.productOf(task)?.name ?? task.source.product.name } }) }] : [];
     const sections = [...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points, currentChecks))];
     if (task.handedBack?.length) sections.push({ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") });

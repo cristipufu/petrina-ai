@@ -1024,6 +1024,7 @@ export class Simulator {
 
   removeQueued(taskId: Id, messageId: Id): void {
     this.updateTask(taskId, (_d, task) => {
+      if (task.queued.some((message) => message.id === messageId && Object.values(message.recipients ?? {}).some(Boolean))) return;
       task.queued = task.queued.filter((message) => message.id !== messageId);
     });
   }

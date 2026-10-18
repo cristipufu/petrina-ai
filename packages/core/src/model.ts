@@ -298,6 +298,8 @@ export interface QueuedMessage {
   id: Id;
   text: string;
   at: number;
+  /** A grouped step keeps the message until every intended member has heard it. */
+  recipients?: Readonly<Record<string, boolean>>;
 }
 
 /**
@@ -506,6 +508,17 @@ export interface Finding {
   verification?: FindingVerification;
   /** Each voter's verdict, when fresh agents voted on it. */
   votes?: readonly Vote[];
+  /** When a review reopened a reported fix. Earlier votes do not judge the changed code. */
+  reopenedAt?: number;
+  /** Evidence from before a finding was reopened, retained as history rather than current support. */
+  earlierReviews?: readonly {
+    at: number;
+    confirmedBy: readonly Id[];
+    disputes?: readonly FindingDispute[];
+    verification?: FindingVerification;
+    votes?: readonly Vote[];
+    answer?: { fixed: boolean; text: string; at: number };
+  }[];
   /** The builder's answer when the finding came back to it. */
   answer?: { fixed: boolean; text: string; at: number };
   status: "open" | "fixed" | "dismissed" | "unverified";

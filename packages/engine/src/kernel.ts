@@ -236,7 +236,7 @@ export abstract class Kernel {
   readonly helperRuns = new Map<Id, Set<AgentRun>>();
 
   /** A live review group can reopen its waiting screen member without stopping its peers. */
-  readonly screenGroups = new Map<Id, { continue: () => void; running: (member: string) => boolean }>();
+  readonly screenGroups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void }>();
 
   /** Discarded review copies finish cleaning up before the task can start fresh. */
   readonly copyCleanups = new Map<Id, Promise<void>>();

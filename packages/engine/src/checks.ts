@@ -255,10 +255,18 @@ async function stopAll(pid: number | undefined, windows: boolean, processList?: 
   // Detached workers outlive both the check and its process group, so take a bounded snapshot
   // while the parent is still alive. Failure must remain distinguishable from an empty process tree.
   const workers = await descendantsKnown([pid], 3_200, processList);
-  for (const target of [-pid, ...(workers ?? []).reverse(), pid]) {
+  const targets = [-pid, ...(workers ?? []).reverse(), pid];
+  for (const target of targets) {
     try { process.kill(target, "SIGKILL"); } catch { /* Already gone. */ }
   }
-  return workers !== undefined;
+  // A signal being accepted does not mean the worker has exited. Keep the copy reserved until
+  // the group and the captured detached workers are gone, or report that cleanup is incomplete.
+  const alive = () => targets.some((target) => {
+    try { process.kill(target, 0); return true; }
+    catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  });
+  for (const end = Date.now() + 1_000; alive() && Date.now() < end;) await Bun.sleep(20);
+  return workers !== undefined && !alive();
 }
 
 /** Whether two sets of checks run the same commands (names and reasons aside). */

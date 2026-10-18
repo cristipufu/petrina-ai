@@ -12,6 +12,7 @@ const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> =
 
 function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
   const votes = independentVotes(finding.votes);
+  const beforeFix = !!finding.verification && !!finding.answer?.fixed && finding.verification.at < finding.answer.at;
   const followUp = finding.status === "open" && finding.severity === "pre-existing";
   const status = finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : finding.status === "unverified" ? "Could not verify" : followUp ? "Follow-up" : "Open";
   return (
@@ -36,7 +37,7 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
       {finding.verification && (
         <div className="issue-response">
           <b>
-            {VERDICT[finding.verification.verdict]}
+            {beforeFix && "Before the reported fix — "}{VERDICT[finding.verification.verdict]}
             {votes.length
               ? `: ${votes.filter((vote) => vote.verdict === "real").length} of ${votes.length} voter${votes.length === 1 ? "" : "s"} said it is real`
               : finding.votes?.length ? ": actual voting tools were not recorded"
@@ -47,10 +48,21 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
       )}
       {finding.answer && (
         <div className="issue-response">
-          <b>{finding.answer.fixed ? "The builder fixed it" : "The builder did not fix it"}</b>
+          <b>{finding.answer.fixed ? "Builder reported a fix" : "Builder left it unchanged"}</b>
           {finding.answer.text}
+          {finding.answer.fixed && finding.status === "open" && <p>{finding.raisedBy === "petrina" ? "The latest automated check still fails." : "A later reviewer reopened this finding."}</p>}
         </div>
       )}
+      {!!finding.earlierReviews?.length && <details className="issue-response">
+        <summary>Earlier reviews</summary>
+        {finding.earlierReviews.map((review, index) => <div key={index} className="issue-response">
+          {review.confirmedBy.length > 0 && <p>Confirmed by {review.confirmedBy.map((id) => profileText(find.profile(id), find, true)).join(" and ")}</p>}
+          {review.disputes?.map((dispute, i) => <p key={i}>Disputed by {profileText(find.profile(dispute.by), find, true)}: {dispute.reason}</p>)}
+          {review.verification && <><b>Before the reported fix — {VERDICT[review.verification.verdict]}</b>{review.verification.reason}</>}
+          {independentVotes(review.votes).map((vote) => <p key={vote.toolId}>{profileText(find.profile(vote.by), find, true)}: {vote.reason}</p>)}
+          {review.answer && <p>Builder reported {review.answer.fixed ? "a fix" : "no fix"}: {review.answer.text}</p>}
+        </div>)}
+      </details>}
       {finding.status === "dismissed" && !finding.disputes?.length && !finding.verification && (
         <div className="issue-response">
           <b>Dismissed by a later reviewer</b>

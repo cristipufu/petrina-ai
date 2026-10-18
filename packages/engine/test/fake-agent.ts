@@ -52,13 +52,13 @@ export interface Scenario {
    * "important-twice": every reviewer raises it, each in its own words. Later rounds pass.
    */
   reviewTodo?: boolean;
-  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed" | "question";
+  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed" | "confirm-fixed-one-tool" | "question";
   /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. "broken": it never hands back a usable result. */
   guide?: "change of mind" | "broken";
   /** How the planner rates the task's risk (unrated by default). */
   risk?: "low" | "high";
   /** The verifier's verdict (default "real"). "split": the first voter says real, later voters not-a-bug. "hold": wait until released. */
-  verifier?: "real" | "not-a-bug" | "hold" | "split";
+  verifier?: "real" | "not-a-bug" | "hold" | "split" | "after-fix-not-a-bug";
   /** Voting regressions: independent tools can disagree, or stop after a partial report. */
   verifierByModel?: Record<string, "real" | "not-a-bug" | "nit" | "pre-existing">;
   partialVerification?: boolean;
@@ -917,9 +917,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         if (branch) run(session.cwd, "update-ref", `refs/heads/${branch}`, "HEAD~1");
       }
       if (plan.reviewer === "confirm-fixed" && text.includes("This is review round")) return done({ verdict: "fail", findings: [], confirms: findingIds(text, "Findings so far (confirm or dispute by id)"), disputes: [] });
-      if ((plan.reviewer === "important" || plan.reviewer === "important-twice" || plan.reviewer === "confirm-fixed") && !text.includes("This is review round") && !(plan.fixes === "change" && existsSync(join(session.cwd, "welcome.txt")))) {
+      if (plan.reviewer === "confirm-fixed-one-tool" && text.includes("This is review round")) return done({ verdict: session.model === "opus" ? "fail" : "pass", findings: [], confirms: session.model === "opus" ? findingIds(text, "Findings so far (confirm or dispute by id)") : [], disputes: [] });
+      if ((plan.reviewer === "important" || plan.reviewer === "important-twice" || plan.reviewer === "confirm-fixed" || plan.reviewer === "confirm-fixed-one-tool") && !text.includes("This is review round") && !(plan.fixes === "change" && existsSync(join(session.cwd, "welcome.txt")))) {
         const opus = session.model === "opus";
-        if (plan.reviewer === "important" && !opus) return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
+        if ((plan.reviewer === "important" || plan.reviewer === "confirm-fixed-one-tool") && !opus) return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
         return done({ verdict: "fail", findings: [{ text: opus ? "The greeting is missing on the welcome page." : "The GREETING is missing on the welcome page!", where: "greeting.txt", severity: "important", evidence: "Opened the welcome page" }], confirms: [], disputes: [] });
       }
       if (tool === "claude-code") {
@@ -966,7 +967,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         while (!existsSync(join(dir, "release-vote"))) await Bun.sleep(20);
       }
       const ids = findingIds(text, "Important findings to check (a verdict on every one, by id)");
-      const verdict = plan.verifierByModel?.[session.model ?? ""] ?? (plan.verifier === "split" ? (notABug ? "not-a-bug" : "real") : plan.verifier === "hold" ? "real" : plan.verifier) ?? "real";
+      const verdict = plan.verifierByModel?.[session.model ?? ""] ?? (plan.verifier === "after-fix-not-a-bug" ? (text.includes("  The builder: fixed.") ? "not-a-bug" : "real") : plan.verifier === "split" ? (notABug ? "not-a-bug" : "real") : plan.verifier === "hold" ? "real" : plan.verifier) ?? "real";
       return done({
         verdicts: (plan.partialVerification ? ids.slice(0, 1) : ids).map((id) => ({
           id,

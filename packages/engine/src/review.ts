@@ -13,6 +13,7 @@ import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
+import { finishMessageGroup, routeMessages } from "./messages.js";
 import type { Updates } from "./update.js";
 
 /**
@@ -44,6 +45,24 @@ function sameFinding(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+/** A fix changes the code being judged. Keep the old reasons, but require fresh support if it is reopened. */
+function reopenFinding(finding: DeepMutable<Finding>, at: number): void {
+  finding.earlierReviews = [...(finding.earlierReviews ?? []), {
+    at,
+    confirmedBy: finding.confirmedBy,
+    ...(finding.disputes ? { disputes: finding.disputes } : {}),
+    ...(finding.verification ? { verification: finding.verification } : {}),
+    ...(finding.votes ? { votes: finding.votes } : {}),
+    ...(finding.answer ? { answer: finding.answer } : {}),
+  }];
+  finding.confirmedBy = [];
+  delete finding.disputes;
+  delete finding.verification;
+  delete finding.votes;
+  finding.status = "open";
+  finding.reopenedAt = at;
+}
+
 /** Tools that finished the whole ballot. Partial verdicts are saved, but cannot close a round alone. */
 function finishedVoters(findings: readonly Finding[]): Set<Id> {
   return new Set(findings[0]?.votes?.flatMap((vote) => vote.toolId && findings.every((finding) => finding.votes?.some((entry) => entry.toolId === vote.toolId)) ? [vote.toolId] : []));
@@ -65,6 +84,10 @@ export class Reviews {
    * ends. What each reviewer and voter hands back is saved as it arrives, so a restart only redoes the rest.
    */
   async runReview(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+    // Older saved tasks could reopen a fix while retaining the verdict on its previous code.
+    for (const finding of task.findings) {
+      if (finding.raisedBy !== "petrina" && finding.status === "open" && finding.answer?.fixed && (finding.reopenedAt ?? -Infinity) < finding.answer.at && (!finding.verification || finding.verification.at < finding.answer.at)) reopenFinding(finding, Date.now());
+    }
     // Older saved port marks did not prove the feature had completed ordinary review.
     if (task.portReview && !task.reviewedTree) {
       delete task.portReview;
@@ -198,7 +221,7 @@ export class Reviews {
           let by = profileId;
           const roleId = reviewerAt(stage, Number(key));
           const used = (id: Id) => { by = id; onUsed(id); };
-          const given = () => this.context.sectionsFor(task, roleId);
+          const given = () => this.context.sectionsFor(task, roleId, `review-${key}`);
           const result = continuing
             ? await this.turns.turn(task, roleId, profileId, given, ReviewResult, signal, { copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key })
             : await this.turns.parallel(task, roleId, profileId, copy, given, ReviewResult, signal, { key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, reviewerKey: key, agent, refresh: false });
@@ -219,7 +242,7 @@ export class Reviews {
       const finding = task.findings.find((entry) => entry.id === id);
       // A builder's claim is not proof: confirming that the bug remains reopens the same finding.
       // Native check findings remain governed by the actual check results.
-      if (finding?.status === "fixed" && finding.raisedBy !== "petrina") finding.status = "open";
+      if (finding?.status === "fixed" && finding.raisedBy !== "petrina") reopenFinding(finding, Date.now());
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
     recordDisputes(task.findings, result.disputes, profileId, Date.now());
@@ -242,8 +265,8 @@ export class Reviews {
           status: "open",
         });
       } else if ((same.status === "open" || same.status === "fixed") && same.raisedBy !== "petrina") {
-        if (same.status === "fixed") same.status = "open";
-        if (same.raisedBy === profileId || same.confirmedBy.includes(profileId)) continue;
+        if (same.status === "fixed") reopenFinding(same, Date.now());
+        if ((!same.answer?.fixed && same.raisedBy === profileId) || same.confirmedBy.includes(profileId)) continue;
         same.confirmedBy.push(profileId);
         backed += 1;
       }
@@ -265,7 +288,7 @@ export class Reviews {
   private pendingVote(task: MTask, stage: MStage): { findings: Task["findings"]; voters: Id[] } | undefined {
     const toolOf = (profileId: Id) => this.k.profile(profileId)?.toolId;
     const findings = task.findings.filter(
-      (finding) => finding.status === "open" && finding.severity === "blocking" && finding.raisedBy !== "petrina" && !finding.verification && new Set([finding.raisedBy, ...finding.confirmedBy].map(toolOf)).size < 2,
+      (finding) => finding.status === "open" && finding.severity === "blocking" && finding.raisedBy !== "petrina" && !finding.verification && new Set([...(finding.answer?.fixed ? [] : [finding.raisedBy]), ...finding.confirmedBy].map(toolOf).filter(Boolean)).size < 2,
     );
     if (!findings.length) return undefined;
     // Resolve usage and model fallbacks before choosing the electorate. A capped tool is still
@@ -322,7 +345,7 @@ export class Reviews {
         work: async (copy, room, seat, used, agent, continuing, signal) => {
           let by = seat;
           const missing = () => findings.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
-          const given = async () => [...await this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }];
+          const given = async () => [...await this.context.sectionsFor(task, "verifier", key), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }];
           const check = (value: z.infer<typeof VerifyResult>) => {
             const toolId = this.k.profile(by)!.toolId;
             for (const verdict of value.verdicts) {
@@ -406,6 +429,7 @@ export class Reviews {
     // One fresh pull-request read is shared by reviewers; a usage replacement reads again on its attempt.
     await this.turns.refresh(task);
     const pending = [...members];
+    const accepted = new Set<string>();
     const running = new Map<string, { agent: ActiveAgent; done: Promise<void> }>();
     let failure: unknown;
     let noOne: WaitingForUsage | undefined;
@@ -508,7 +532,13 @@ export class Reviews {
       }
       this.k.commit();
     };
-    this.k.screenGroups.set(task.id, { continue: continueScreen, running: (key) => running.has(key) });
+    this.k.screenGroups.set(task.id, {
+      continue: continueScreen,
+      running: (key) => running.has(key),
+      recipients: () => members.filter((member) => !accepted.has(member.key)).map((member) => member.key),
+      finished: (key) => { accepted.add(key); },
+    });
+    routeMessages(task, members.map((member) => member.key));
     try {
       if (task.screen?.member) continueScreen();
       else start();
@@ -529,6 +559,7 @@ export class Reviews {
         this.k.waitForUsage(task, noOne.words);
         throw noOne;
       }
+      if (!signal.aborted && !this.k.draining && !pending.length) finishMessageGroup(task, members.map((member) => member.key));
     } finally {
       this.k.screenGroups.delete(task.id);
       this.k.stopHelpers(task.id);

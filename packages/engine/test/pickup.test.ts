@@ -10,7 +10,17 @@ import type { Scenario } from "./fake-agent.js";
 import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const engines = new Set<EngineProcess>();
+afterAll(async () => {
+  await Promise.allSettled([...engines].filter((engine) => engine.proc.exitCode === null).map((engine) => engine.quit()));
+  roots.forEach(removeDir);
+}, 30_000 * SLOW);
+
+async function harness(home: string, dir: string, remote?: string): Promise<EngineProcess> {
+  const engine = await EngineProcess.harness(home, dir, remote);
+  engines.add(engine);
+  return engine;
+}
 
 type Reopen = "resume" | "load" | undefined;
 type Stop = "quit" | "kill";
@@ -34,7 +44,13 @@ async function start(scenario: Scenario, description = "", holdBuilder = false) 
     writeFileSync(hold, "");
     writeFileSync(join(fakes.dir, "agents.json"), JSON.stringify({ hold: { title: "Add a greeting", file: hold } }));
   }
-  const engine = await EngineProcess.harness(home, fakes.dir);
+  const engine = await harness(home, fakes.dir);
+  // These tests assert exact tools and saved conversation identities. A still-checking Codex may
+  // otherwise be replaced by the first ready peer before the scenario even starts.
+  await engine.until(
+    (state) => ["claude-code", "codex"].every((id) => state.setup?.checks.some((check) => check.id === id && check.status === "ready" && !check.checking)),
+    "Claude Code and Codex to be ready for the restart scenario",
+  );
   const productId = (await engine.act("addProduct", product)) as string;
   await engine.act("setProductDelivery", productId, "local", false);
   const taskId = (await engine.act("addTask", { productId, title: "Add a greeting", description })) as string;
@@ -42,7 +58,7 @@ async function start(scenario: Scenario, description = "", holdBuilder = false) 
   const restart = async (engine: EngineProcess, stop: Stop) => {
     if (stop === "quit") await engine.quit();
     else await engine.kill();
-    return EngineProcess.harness(home, fakes.dir);
+    return harness(home, fakes.dir);
   };
   const finished = async (engine: EngineProcess) => find(await engine.until((state) => find(state).state === "done", "the task to finish", 60_000));
   // The fake marks the moment it starts working; the engine reads what it said a moment later.
@@ -151,7 +167,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
         const store = new Store(join(run.home, "petrina.db"));
         expect(store.load()!.tasks.find((task) => task.id === run.taskId)!.conversation).toMatchObject(note);
         store.close();
-        engine = await EngineProcess.harness(run.home, run.fakes.dir);
+        engine = await harness(run.home, run.fakes.dir);
       } else {
         engine = await run.restart(engine, stop);
       }
@@ -239,7 +255,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     store.save({ ...saved, tasks: saved.tasks.map((task) => (task.conversation ? { ...task, conversation: { ...task.conversation, model: "an-older-model" } } : task)) });
     store.close();
 
-    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
+    const engine = await harness(run.home, run.fakes.dir);
     const done = await run.finished(engine);
     expect(run.fakes.opens().some((open) => open.how !== "new")).toBe(false);
     expect(run.fakes.openings("builder")[1]).toContain(`## ${WHERE_YOU_WERE}`);
@@ -258,7 +274,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     store.save({ ...saved, tasks: saved.tasks.map((task) => (task.conversation ? { ...task, conversation: { ...task.conversation, briefed: false } } : task)) });
     store.close();
 
-    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
+    const engine = await harness(run.home, run.fakes.dir);
     const done = await run.finished(engine);
     expect(run.fakes.opens().some((open) => open.how !== "new")).toBe(false);
     expect(run.fakes.openings("builder")[1]).toContain(`## ${WHERE_YOU_WERE}`);
@@ -276,7 +292,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     store.save({ ...saved, tasks: saved.tasks.map(({ conversation: _, ...task }) => task as Task) });
     store.close();
 
-    const engine = await EngineProcess.harness(run.home, run.fakes.dir);
+    const engine = await harness(run.home, run.fakes.dir);
     const done = await run.finished(engine);
     const openings = run.fakes.openings("builder");
     expect(openings).toHaveLength(2);
@@ -363,7 +379,7 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
     const home = join(w.dir, "home");
     const fakes = new Fakes(w.dir);
     fakes.scenario({ planner: "short", builder: "plain", releaseManager: "hang", reopen: "resume" });
-    let engine = await EngineProcess.harness(home, w.dir, w.remote);
+    let engine = await harness(home, w.dir, w.remote);
     const productId = (await engine.act("addProduct", w.clone)) as string;
     await engine.act("setProductDelivery", productId, "release", false);
     const taskId = (await engine.act("addTask", { productId, title: "Add a greeting" })) as string;
@@ -371,7 +387,7 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
     await waitFor(() => fakes.marked("release-manager-started"), "the Release Manager to start");
     expect(find(await engine.state()).conversation).toBeUndefined();
     await engine.kill();
-    engine = await EngineProcess.harness(home, w.dir, w.remote);
+    engine = await harness(home, w.dir, w.remote);
     const done = find(await engine.until((state) => find(state).state === "done", "the release", 60_000));
     expect(done.release?.tag).toBe("v0.1.0");
     expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(git(w.clone, "rev-parse", done.branch!));
