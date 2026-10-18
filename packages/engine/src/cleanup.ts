@@ -62,6 +62,8 @@ export class Cleanup {
     const copies = join(this.k.dataDir, "worktrees", task.productId, `${task.id}.copies`);
     if (again && task.cleanup?.reviewCopiesRemovedAt !== undefined && !existsSync(path) && !existsSync(copies)) return;
     this.removing.add(taskId);
+    this.k.cleanupJobs.add(taskId);
+    this.k.syncIdleSleep();
     let outcome: { removed: boolean } | { error: string };
     try {
       // On a full disk even this save fails; removing the copy is what frees the space, and the next change saves.
@@ -78,6 +80,8 @@ export class Cleanup {
       outcome = { error: error instanceof Error ? error.message : String(error) };
     } finally {
       this.removing.delete(taskId);
+      this.k.cleanupJobs.delete(taskId);
+      this.k.syncIdleSleep();
     }
     const current = this.k.task(taskId);
     if (!current) return;

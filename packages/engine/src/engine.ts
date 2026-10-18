@@ -189,6 +189,7 @@ export class Engine extends Kernel implements Commands {
     if (this.stopped) return Promise.resolve();
     // Stopped first: stopping agents still changes state, and nothing may save after the store closes.
     this.stopped = true;
+    this.stopIdleSleep();
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);

@@ -201,12 +201,16 @@ export class Driver {
   startDriver(taskId: Id, resume = false): void {
     const done = this.drive(taskId, resume);
     this.k.settling.set(taskId, done);
+    this.k.syncIdleSleep();
     void done.finally(() => {
-      if (this.k.settling.get(taskId) === done) this.k.settling.delete(taskId);
+      if (this.k.settling.get(taskId) === done) {
+        this.k.settling.delete(taskId);
+      }
       // Delivered or cancelled: now that nothing uses the working copy, it can go.
       this.k.tidy(taskId);
       // A resumed task waits for its previous driver's file handling before starting another one.
       this.schedule();
+      this.k.syncIdleSleep();
     });
   }
 

@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { IdleSleepAssertion } from "./awake.js";
 import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, headroom, kindWords, limitOf, nearLimit, endOpenStep, JOURNEY_WORDS as W, nextExpiry, onScreen, openStep, queueOf, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
@@ -105,6 +106,8 @@ export interface EngineOptions {
   checkEveryMs?: number;
   /** Tests: how long "For an hour" lasts. */
   screenHourMs?: number;
+  /** Tests: observe when the engine owns work, without starting the macOS sleep assertion. */
+  awakeObserver?: (active: boolean) => void;
 }
 
 export class Aborted extends Error {}
@@ -178,6 +181,7 @@ export abstract class Kernel {
     this.store = new Store(join(dataDir, "petrina.db"));
     const loaded = this.store.loadActive((state) => renameRoles(state as MState));
     this.s = (loaded ?? this.empty()) as MState;
+    this.idleSleep = new IdleSleepAssertion(options.awakeObserver ? { observe: options.awakeObserver } : {});
     if (loaded) {
       renameRoles(this.s);
       // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
@@ -228,6 +232,8 @@ export abstract class Kernel {
   readonly codexUsage: CodexUsage | undefined;
   readonly grokUsage: GrokUsage | undefined;
 
+  private readonly idleSleep: IdleSleepAssertion;
+
   readonly listeners = new Set<() => void>();
 
   readonly drivers = new Map<Id, AbortController>();
@@ -242,6 +248,9 @@ export abstract class Kernel {
 
   /** Discarded review copies finish cleaning up before the task can start fresh. */
   readonly copyCleanups = new Map<Id, Promise<void>>();
+
+  /** Finished-task working copies being removed. */
+  readonly cleanupJobs = new Set<Id>();
 
   readonly waiting = new Map<Id, { resolve: (value: string) => void; reject: (error: Error) => void }>();
 
@@ -269,6 +278,25 @@ export abstract class Kernel {
     for (const runs of this.helperRuns.values()) count += runs.size;
     for (const task of this.s.tasks) if (task.state === "running" && task.agent?.roleId === "release-manager") count += 1;
     return count;
+  }
+
+  /** Keep macOS awake only while this engine still owns active work or its cleanup. */
+  syncIdleSleep(): void {
+    const active = !this.stopped && (
+      this.drivers.size > 0 ||
+      this.settling.size > 0 ||
+      this.runs.size > 0 ||
+      [...this.helperRuns.values()].some((runs) => runs.size > 0) ||
+      this.screenGroups.size > 0 ||
+      this.switching.size > 0 ||
+      this.copyCleanups.size > 0 ||
+      this.cleanupJobs.size > 0
+    );
+    this.idleSleep.setActive(active);
+  }
+
+  stopIdleSleep(): void {
+    this.idleSleep.shutdown();
   }
 
   /**
@@ -524,8 +552,12 @@ export abstract class Kernel {
     const cleanup = Promise.all([stopped, this.copyCleanups.get(task.id)])
       .then(() => git.removeCopies(root, join(this.dataDir, "worktrees", task.productId, `${task.id}.copies`)))
       .catch((error: unknown) => this.log(task, "warn", `Could not remove the reviewers' working copies: ${error instanceof Error ? error.message : String(error)}`))
-      .finally(() => { if (this.copyCleanups.get(task.id) === cleanup) this.copyCleanups.delete(task.id); });
+      .finally(() => {
+        if (this.copyCleanups.get(task.id) === cleanup) this.copyCleanups.delete(task.id);
+        this.syncIdleSleep();
+      });
     this.copyCleanups.set(task.id, cleanup);
+    this.syncIdleSleep();
   }
 
   /**
@@ -1043,6 +1075,7 @@ export abstract class Kernel {
 
   commit(): void {
     if (this.stopped) return;
+    this.syncIdleSleep();
     // An activity or other update is about to be shown. The to-do item is written first, so a forced
     // kill once that update is visible still has the item.
     this.savePendingTodo();
@@ -1069,6 +1102,7 @@ export abstract class Kernel {
   /** Commit and save right away: what the coordinator said survives a forced kill a moment later. */
   commitNow(): void {
     if (this.stopped) return;
+    this.syncIdleSleep();
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
