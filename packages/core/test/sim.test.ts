@@ -1412,3 +1412,18 @@ describe("review rounds that converge", () => {
     expect(reviewRoundEnd(task(1, [5, 4, 3, 2]), stage, MAX_REVIEW_ROUNDS).kind).toBe("used up");
   });
 });
+
+
+describe("starting choices in the demo", () => {
+  for (const startFrom of [{ kind: "default" }, { kind: "pull-request", value: "7" }] as const) it(`asks for confirmation of a ${startFrom.kind === "default" ? "planner-selected product" : "pull request destination"} with the optional plan check off`, () => {
+    const sim = new Simulator(emptyState());
+    const id = sim.addTask({ productId: startFrom.kind === "default" ? "" : "p", title: "A small change", kind: "chore", approvePlan: false, startFrom });
+    for (let tick = 0; tick < 30 && !sim.getState().inbox.some((item) => item.taskId === id && item.kind === "plan"); tick++) sim.tick();
+    const plan = sim.getState().inbox.find((item) => item.taskId === id && item.kind === "plan");
+    expect(plan?.body).toContain("Works on: Product");
+    expect(task(sim, id).approvePlan).toBe(false);
+    sim.approve(plan!.id);
+    expect(task(sim, id).confirmWork).toBe(false);
+    expect(task(sim, id).source?.confirmed).toBe(true);
+  });
+});

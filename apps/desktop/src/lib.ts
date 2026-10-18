@@ -46,10 +46,10 @@ export function profileText(profile: AgentProfile | undefined, find: Lookup, ful
 /** Where delivered work stands, in words, or undefined before delivery. A closed pull request and "Mark as done" deliver nothing. */
 export function deliveryText(task: Task): { text: string; done: boolean } | undefined {
   if (task.release) return { text: `Released ${task.release.tag}`, done: true };
-  if (task.landed) return { text: `Delivered locally to ${task.landed.branch}`, done: true };
+  if (task.landed) return { text: task.localUpdate?.pushed ? `Committed to ${task.landed.branch} · pushed to GitHub` : `Delivered locally to ${task.landed.branch}`, done: true };
   if (task.pr?.state === "merged") return { text: `Pull request #${task.pr.number} merged`, done: true };
   if (task.pr && (task.pr.state === "closed" || landingOf(task) === "closed")) return { text: `Pull request #${task.pr.number} closed without merging`, done: false };
-  if (task.pr) return { text: `Pull request #${task.pr.number} · awaiting merge`, done: false };
+  if (task.pr) return { text: `${task.source?.start.kind === "pull-request" ? "Updated PR" : "Pull request"} #${task.pr.number} · awaiting merge`, done: false };
   if (landingOf(task) === "marked-done") return { text: "Marked as done · delivery not confirmed", done: false };
   return undefined;
 }

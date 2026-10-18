@@ -1,5 +1,6 @@
+import { StartFromFields } from "./TaskStart";
 import { useRef, useState } from "react";
-import { DELIVERY_LABEL, type DeliveryMode, type State, type TaskKind } from "@petrina/core";
+import { DELIVERY_LABEL, type DeliveryMode, type State, type TaskKind, type StartFrom } from "@petrina/core";
 import { sim } from "../engine";
 import { useFocusTrap, WaitingLine } from "./bits";
 
@@ -21,10 +22,12 @@ interface TaskOptionsProps {
   onPosition: (position: Position) => void;
   /** While the task is being saved: what is on screen is what was sent. */
   disabled?: boolean;
+  /** Replaces a delivery mode's usual label, for a chosen branch or pull request. */
+  deliveryText?: (mode: DeliveryMode) => string;
 }
 
 /** The kind of work, what happens when it is ready, and its place in the queue: the same in this dialog and in first run's More options. */
-export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPosition, disabled = false }: TaskOptionsProps) {
+export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPosition, disabled = false, deliveryText }: TaskOptionsProps) {
   return (
     <div className="options">
       <div className="opt">
@@ -42,7 +45,7 @@ export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPo
         <div className="segmented" role="radiogroup" aria-labelledby="new-delivery">
           {(Object.keys(DELIVERY_LABEL) as DeliveryMode[]).map((mode) => (
             <button key={mode} role="radio" aria-checked={delivery === mode} className={delivery === mode ? "on" : ""} onClick={() => onDelivery(mode)} disabled={disabled}>
-              {DELIVERY_LABEL[mode]}
+              {deliveryText?.(mode) ?? DELIVERY_LABEL[mode]}
             </button>
           ))}
         </div>
@@ -65,6 +68,7 @@ export function TaskOptions({ kind, delivery, position, onKind, onDelivery, onPo
 /** `waiting`: a notification's item that opens once this dialog closes. */
 export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waiting, onClose, onCreated }: { state: State; defaultProduct?: string; initialTitle?: string; waiting?: string; onClose: () => void; onCreated: () => void }) {
   const [productId, setProductId] = useState(defaultProduct ?? "");
+  const [startFrom, setStartFrom] = useState<StartFrom>({ kind: "default" });
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<TaskKind>("feature");
@@ -84,10 +88,11 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const box = useRef<HTMLDivElement>(null);
   useFocusTrap(box, onClose);
 
+  const invalidSource = (startFrom.kind === "branch" && !startFrom.name.trim()) || (startFrom.kind === "pull-request" && !startFrom.value.trim()) || (delivery === "release" && startFrom.kind !== "default");
   const add = (another: boolean) => {
-    if (!title.trim() || !productId) return;
+    if (!title.trim() || invalidSource) return;
     const titles = [title.trim(), ...batch.slice(1)];
-    for (const entry of titles) void Promise.resolve(sim.addTask({ productId, title: entry, description, kind, position, approvePlan, delivery, approveDelivery })).catch(() => undefined);
+    for (const entry of titles) void Promise.resolve(sim.addTask({ productId, title: entry, description, kind, position, approvePlan, delivery, approveDelivery, startFrom })).catch(() => undefined);
     if (another) {
       setTitle("");
       setDescription("");
@@ -105,6 +110,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
         <WaitingLine text={waiting} />
         {state.products.length <= 5 ? (
           <div className="segmented" role="radiogroup" aria-label="Product" style={{ marginBottom: 8 }}>
+            <button role="radio" aria-checked={!productId} className={!productId ? "on" : ""} onClick={() => pickProduct("")}>Let the planner choose</button>
             {state.products.map((product) => (
               <button key={product.id} role="radio" aria-checked={productId === product.id} className={`tone-${product.tone} ${productId === product.id ? "on" : ""}`} onClick={() => pickProduct(product.id)}>
                 <i style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--tone)" }} aria-hidden="true" />
@@ -114,7 +120,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
           </div>
         ) : (
           <select className="select" style={{ marginBottom: 8 }} aria-label="Product" value={productId} onChange={(event) => pickProduct(event.target.value)}>
-            <option value="" disabled>Choose a product</option>
+            <option value="">Let the planner choose</option>
             {[...state.products].sort((a, b) => a.name.localeCompare(b.name)).map((product) => (
               <option key={product.id} value={product.id}>
                 {product.name}
@@ -154,7 +160,18 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
           </div>
         )}
         <textarea className="details" aria-label="Details" placeholder="Add details, links or how you'll judge it's done (optional)" value={description} onChange={(event) => setDescription(event.target.value)} />
-        <TaskOptions kind={kind} delivery={delivery} position={position} onKind={setKind} onDelivery={setDelivery} onPosition={setPosition} />
+        <StartFromFields value={startFrom} onChange={setStartFrom} />
+        {delivery === "release" && startFrom.kind !== "default" && <p className="note bad" role="alert">Releases use the default branch. Change the starting point or delivery mode.</p>}
+        {startFrom.kind === "pull-request" && delivery !== "release" && <p className="note">The checked work will update this pull request’s working branch. Fork destinations are shown in the plan.</p>}
+        <TaskOptions
+          kind={kind}
+          delivery={delivery}
+          position={position}
+          onKind={setKind}
+          onDelivery={setDelivery}
+          onPosition={setPosition}
+          deliveryText={(mode) => (mode === "local" && startFrom.kind === "pull-request" ? "Commit to pull request branch" : mode === "local" ? `Commit to ${startFrom.kind === "branch" ? startFrom.name.trim() || "branch" : productOf(productId)?.defaultBranch ?? "main"}` : mode === "pull-request" && startFrom.kind === "pull-request" ? "Update pull request" : DELIVERY_LABEL[mode])}
+        />
         <div className="foot">
           <span className="left">
             <label className="toggle">
@@ -166,10 +183,10 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
               Ask me before shipping
             </label>
           </span>
-          <button className="btn quiet" onClick={() => add(true)} disabled={!title.trim() || !productId}>
+          <button className="btn quiet" onClick={() => add(true)} disabled={!title.trim() || invalidSource}>
             Add another <kbd>⇧↵</kbd>
           </button>
-          <button className="btn lead" onClick={() => add(false)} disabled={!title.trim() || !productId}>
+          <button className="btn lead" onClick={() => add(false)} disabled={!title.trim() || invalidSource}>
             Add to queue <kbd>↵</kbd>
           </button>
         </div>

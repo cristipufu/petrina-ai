@@ -1,7 +1,7 @@
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
 
-import { dueAnswers, followingCall, type Id, type StepNote, type Task } from "@petrina/core";
+import { dueAnswers, followingCall, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { checksFor, commandText } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
@@ -43,7 +43,8 @@ export class Context {
     const currentChecks = reads.includes("check-results") && !!task.checks?.results.length ? await this.currentChecks(task) : false;
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
     task.queued.splice(0);
-    const sections = CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points, currentChecks));
+    const source = task.source ? [{ title: "Approved starting point and delivery", body: workSummary({ ...task.source, product: { ...task.source.product, name: this.k.productOf(task)?.name ?? task.source.product.name } }) }] : [];
+    const sections = [...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points, currentChecks))];
     if (task.handedBack?.length) sections.push({ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") });
     return sections;
   }

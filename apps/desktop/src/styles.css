@@ -1975,3 +1975,11 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .panel-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 16px var(--pad); border-top: 1px solid var(--line); }
 .panel-foot .spacer { flex: 1; }
 .panel-error { flex-basis: 100%; }
+
+/* Starting choices follow the dialog and sheet at enlarged text sizes. */
+.start-fields { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
+.start-fields label, .task-start label { display: flex; flex: 1 1 180px; min-width: 0; flex-direction: column; gap: 6px; font-size: 0.8125rem; }
+.start-fields .select, .task-start .select { width: 100%; min-width: 0; box-sizing: border-box; }
+.task-start .stack { display: flex; flex-direction: column; gap: 12px; }
+.source-label { color: var(--muted); overflow-wrap: anywhere; }
+.card-meta .where { flex-wrap: wrap; }

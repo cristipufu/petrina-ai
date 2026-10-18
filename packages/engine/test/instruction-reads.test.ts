@@ -68,14 +68,23 @@ describe("reading a product's committed files", () => {
     });
   });
 
-  it("includes a coordinator note received while its review guide was being read", async () => {
-    const root = join(folder, "context");
+  for (const pullRequest of [false, true]) it(`includes a coordinator note received while its review guide was being read${pullRequest ? " for a pull request task" : ""}`, async () => {
+    const root = join(folder, `context-${pullRequest}`);
     const engine = new Engine(join(root, "data"), { codexCommand: null });
     try {
       engine.setPoolPaused(true);
       const productId = await engine.addProduct(makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Keep the coordinator's latest note" });
       const task = engine.task(taskId)!;
+      if (pullRequest) {
+        const product = engine.getState().products.find((entry) => entry.id === productId)!;
+        task.source = {
+          product,
+          start: { kind: "pull-request", number: 7, url: "https://github.com/acme/demo/pull/7", headRepo: "contributor/demo", branch: "review-work" },
+          destination: { mode: "pull-request", kind: "update-pr", repo: "contributor/demo", branch: "review-work" },
+          confirmed: true,
+        };
+      }
       let finish!: (points: string[]) => void;
       const pending = new Promise<string[]>((resolve) => { finish = resolve; });
       const guide = { pendingPoints: () => pending } as unknown as GuideKeeper;
@@ -86,14 +95,20 @@ describe("reading a product's committed files", () => {
       const sections = await reading;
       expect(sections.find((section) => section.title.startsWith("The coordinator's notes"))?.body).toContain("Keep the existing welcome page.");
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("Every greeting also shows on the welcome page.");
+      if (pullRequest) {
+        const source = sections.find((section) => section.title === "Approved starting point and delivery")?.body;
+        expect(source).toContain("from PR #7");
+        expect(source).toContain("Update PR #7 contributor/demo · review-work");
+        expect(task.source?.confirmed).toBe(true);
+      }
       expect(task.queued).toEqual([]);
     } finally {
       engine.shutdown();
     }
   });
 
-  it("keeps earlier role notes and new coordinator notes for an added reviewer while its guide is read", async () => {
-    const root = join(folder, "added-context");
+  for (const pullRequest of [false, true]) it(`keeps earlier role notes and new coordinator notes for an added reviewer while its guide is read${pullRequest ? " on a PR task" : ""}`, async () => {
+    const root = join(folder, `added-context-${pullRequest}`);
     const engine = new Engine(join(root, "data"), { codexCommand: null });
     try {
       engine.setPoolPaused(true);
@@ -101,6 +116,12 @@ describe("reading a product's committed files", () => {
       const productId = await engine.addProduct(makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Keep every role's notes" });
       const task = engine.task(taskId)!;
+      if (pullRequest) task.source = {
+        product: engine.getState().products.find((product) => product.id === productId)!,
+        start: { kind: "pull-request", number: 7, url: "https://github.com/acme/demo/pull/7", headRepo: "contributor/demo", branch: "review-work" },
+        destination: { mode: "pull-request", kind: "update-pr", repo: "contributor/demo", branch: "review-work" },
+        confirmed: true,
+      };
       task.handedBack = [{ stageId: "research", roleId: "researcher", roleName: "Researcher", title: "Research", at: Date.now(), summary: "The welcome page is important.", notes: ["Keep its greeting visible."] }];
       let finish!: (points: string[]) => void;
       const pending = new Promise<string[]>((resolve) => { finish = resolve; });
@@ -113,6 +134,7 @@ describe("reading a product's committed files", () => {
       expect(sections.find((section) => section.title.startsWith("The coordinator's notes"))?.body).toContain("Check the welcome page too.");
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("The welcome page must show who can see each greeting.");
       expect(sections.find((section) => section.title === "What earlier agents on this task handed back")?.body).toBe("Researcher, in “Research”: The welcome page is important.\n- Keep its greeting visible.");
+      if (pullRequest) expect(sections.find((section) => section.title === "Approved starting point and delivery")?.body).toContain("Update PR #7 contributor/demo · review-work");
       expect(task.queued).toHaveLength(0);
     } finally {
       engine.shutdown();

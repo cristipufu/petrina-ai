@@ -31,6 +31,7 @@ export class Work {
     if (role?.result === "build") {
       if (task.miss) await this.guide.proposeGuideLine(task, signal);
       const updating = task.updating;
+      const sourceName = task.source?.start.kind === "pull-request" ? `PR #${task.source.start.number}` : task.source?.start.branch ?? "main";
       if (updating) await this.updates.reopen(task);
       // In a fix round the builder answers every finding it was given, by id.
       const given = task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing") : [];
@@ -73,7 +74,7 @@ export class Work {
         delete task.portReview;
         if (portOnly && updating.head) task.portReview = { from: updating.from, head: updating.head, onto: updating.onto, files: updating.files };
         else delete task.reviewedTree;
-        this.k.log(task, "done", `Brought up to date with main: ${result.summary}`, roleId, used);
+        this.k.log(task, "done", `Brought up to date with ${sourceName}: ${result.summary}`, roleId, used);
       } else delete task.reviewedTree;
       await this.updates.fold(task);
       // The next fix round or update goes back to this conversation.
@@ -95,7 +96,7 @@ export class Work {
       if (!updating) this.k.log(task, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, used);
       endAgentStep(
         task,
-        updating ? { outcome: W.broughtUpToDate, reason: W.upToDate } : fixing ? { outcome: W.fixed(fixed), reason: W.fixesReady } : { outcome: sha ? W.built : W.unchanged, reason: W.readyForReview },
+        updating ? { outcome: W.broughtUpToDate, reason: sourceName === "main" ? W.upToDate : `up to date with ${sourceName}` } : fixing ? { outcome: W.fixed(fixed), reason: W.fixesReady } : { outcome: sha ? W.built : W.unchanged, reason: W.readyForReview },
         Date.now(),
       );
     } else if (role?.result === "checks") {

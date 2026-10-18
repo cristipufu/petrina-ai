@@ -12,7 +12,7 @@ const DESIGN_REVIEWER = "design-reviewer";
 const BUILDER = "builder";
 
 export interface PlanInput {
-  task: Pick<Task, "id" | "delivery" | "approveDelivery">;
+  task: Pick<Task, "id" | "delivery" | "approveDelivery" | "source">;
   result: z.infer<typeof PlanResult>;
   /** Every role; removed ones are left out like unknown ones. */
   roles: readonly Role[];

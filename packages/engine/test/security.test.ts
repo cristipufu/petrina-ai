@@ -246,6 +246,8 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
       engine.setPoolPaused(true);
       const first = engine.addTask({ productId, title: "First", description: "A greeting file. [quick]" });
       const second = engine.addTask({ productId, title: "Second", description: "A greeting file. [quick]" });
+      const addressQuestions = new Set<string>();
+      engine.subscribe(() => { for (const item of engine.getState().inbox) if (item.title.startsWith(`Is ${ADDRESS} the GitHub address`)) addressQuestions.add(item.id); });
       engine.setPoolPaused(false);
       const asked = (state: State) => state.inbox.filter((item) => item.kind === "question" && item.title.startsWith(`Is ${ADDRESS} the GitHub address`));
       let state = await until(engine, (current) => asked(current).length > 0, coordinator([]));
@@ -258,6 +260,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
       const done = taskOf(await finish(engine, first), first);
       expect(done.state).toBe("pr-open");
       await finish(engine, second);
+      expect(addressQuestions.size).toBe(1);
       expect(engine.getState().inbox.some((item) => item.title.startsWith("Is "))).toBe(false);
     } finally {
       engine.shutdown();

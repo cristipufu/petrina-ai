@@ -6,16 +6,18 @@ import type { z } from "zod";
 import { PlanResult } from "./roles.js";
 import { Kernel, type MTask, PLANNER_PROFILE, RISK_WORD, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import { normalizePlan } from "./plan.js";
+import type { Sources } from "./sources.js";
 import type { Turns } from "./turn.js";
 
 export class Planning {
-  constructor(private readonly k: Kernel, private readonly turns: Turns) {}
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly sources: Sources) {}
 
   async runPlanner(task: MTask, signal: AbortSignal): Promise<void> {
     const planner = this.k.onUsable(PLANNER_PROFILE);
-    const result = await this.turns.turn(task, "planner", planner, () => [], PlanResult, signal);
+    const result = await this.turns.turn(task, "planner", planner, () => [{ title: "Registered products and starting choices", body: `Registered products (choose exactly one by its id):\n${this.k.s.products.map((product) => JSON.stringify({ id: product.id, name: product.name, repo: product.repo, defaultBranch: product.defaultBranch ?? "main", existingLocalCopy: product.path })).join("\n")}\nCurrent coordinator choices: ${JSON.stringify(task.workChoice)}. The selected product and delivery mode are authoritative. ${task.explicitStart ? "The starting point was explicitly chosen too." : "You may propose a starting point from the task words."} Changes require the coordinator’s confirmation. Return worksOn as an array with exactly one structured choice: productId, startFrom ({kind: default}, {kind: branch, name}, or {kind: pull-request, value: number or link as text}), delivery (pull-request, local, release). Unknown products must be named honestly; never substitute another product. Never fetch, clone, create a worktree or change existing local work.` }], PlanResult, signal);
     // Unrated work is treated as medium: never shipped unasked, never short of reviewers.
     task.risk = result.risk ?? { level: "medium", why: "The planner did not rate it." };
+    await this.sources.propose(task, result.worksOn);
     task.plan = this.normalizePlan(task, result, planner);
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
     this.k.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", planner);
@@ -27,6 +29,6 @@ export class Planning {
   }
 
   private normalizePlan(task: MTask, result: z.infer<typeof PlanResult>, planner: string): DeepMutable<NonNullable<Task["plan"]>> {
-    return normalizePlan({ task, result, roles: this.k.s.roles, profiles: this.k.s.profiles, plannerProfileId: planner, releaseManagerProfileId: RELEASE_MANAGER_PROFILE, onUsable: (id) => this.k.onUsable(id) }) as DeepMutable<NonNullable<Task["plan"]>>;
+    return normalizePlan({ task: { ...task, source: task.proposedSource ?? task.source, delivery: task.proposedSource?.destination.mode ?? task.delivery }, result, roles: this.k.s.roles, profiles: this.k.s.profiles, plannerProfileId: planner, releaseManagerProfileId: RELEASE_MANAGER_PROFILE, onUsable: (id) => this.k.onUsable(id) }) as DeepMutable<NonNullable<Task["plan"]>>;
   }
 }

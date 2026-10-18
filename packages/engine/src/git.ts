@@ -45,8 +45,10 @@ export type Check<T> = { ok: true; value: T } | { ok: false; error: string };
 const SHA = /^[0-9a-f]{7,40}$/i;
 /** A whole commit id, as pushes and handoffs name commits. */
 const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
-/** Branch and tag names Petrina passes to git and gh: no leading dash, no "..", no "//". */
-const NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._\-/]+$/;
+/** Git ref names, passed only as individual arguments. Unicode and punctuation valid in git are preserved. */
+const NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*(?:^|\/)\.)(?!.*\.lock(?:\/|$))(?!.*[/.]$)(?!@$)[^\x00-\x20\x7f~^:?*\[\\]+$/;
+
+export const isBranchName = (value: string): boolean => NAME.test(value) && !value.endsWith(".lock") && !value.includes("@{") && !value.startsWith(".");
 
 export const isSha = (value: string): boolean => FULL_SHA.test(value);
 
@@ -94,7 +96,7 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export const FETCH_TIMEOUT_MS = 30_000;
 
 /** gh with the coordinator's login, pinned to the product's repository and run outside any working copy. */
-async function gh(cmd: Gh, repo: string, args: readonly string[], input?: string): Promise<RunResult> {
+export async function gh(cmd: Gh, repo: string, args: readonly string[], input?: string): Promise<RunResult> {
   if (!REPO.test(repo)) return { code: 2, stdout: "", stderr: `not a GitHub repository: ${repo}` };
   return run([...cmd, ...args, "--repo", repo], tmpdir(), input, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
 }
@@ -272,17 +274,23 @@ export type Fetched = { ok: true; sha: string } | { ok: false; error: string; ri
  */
 export async function fetchBranch(root: string, remote: Remote, branch: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Fetched> {
   if (!NAME.test(branch) || remote.url.startsWith("-")) return { ok: false, error: "not a branch Petrina fetches" };
+  return fetchRef(root, remote, `refs/heads/${branch}`, `refs/remotes/origin/${branch}`, timeoutMs);
+}
+
+/** Fetch an approved source, including a fork PR through the product repository’s PR reference. */
+export async function fetchRef(root: string, remote: Remote, from: string, to: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Fetched> {
+  if (!NAME.test(from) || !NAME.test(to) || remote.url.startsWith("-")) return { ok: false, error: "not a source Petrina fetches" };
   const risky = await riskySettings(root);
   if (risky.length) return { ok: false, error: "unsafe git settings", risky };
-  const fetched = await run(["git", "fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "--", remote.url, `+refs/heads/${branch}:refs/remotes/origin/${branch}`], root, undefined, {
+  const fetched = await run(["git", "fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "--", remote.url, `+${from}:${to}`], root, undefined, {
     credentials: true,
     local: remote.local === true,
     timeoutMs,
   });
   if (fetched.timedOut) return { ok: false, error: "timed out", timedOut: true };
   if (fetched.code !== 0) return failed(fetched);
-  const sha = await revParse(root, `refs/remotes/origin/${branch}`);
-  return sha ? { ok: true, sha } : { ok: false, error: `no ${branch} after fetching` };
+  const sha = await revParse(root, to);
+  return sha ? { ok: true, sha } : { ok: false, error: `no ${from} after fetching` };
 }
 
 /** What GitHub has for these exact ref names (annotated tags also as `<ref>^{}`), asked of GitHub itself. */
@@ -617,6 +625,18 @@ export async function checkedOut(root: string, branch: string): Promise<string[]
 export async function fastForward(root: string, branch: string, from: string, to: string, checkedOutHere: boolean): Promise<Check<void>> {
   if (!NAME.test(branch) || !FULL_SHA.test(from) || !FULL_SHA.test(to)) return { ok: false, error: "not an update Petrina makes" };
   if (!(await contains(root, to, from))) return { ok: false, error: `${to.slice(0, 7)} is not ahead of ${from.slice(0, 7)}` };
+  return moveLocalBranch(root, branch, from, to, checkedOutHere);
+}
+
+/** Replace only Petrina's exact unpushed task commit after carrying it onto newer source commits. */
+export async function replaceLocalDelivery(root: string, branch: string, from: string, to: string, checkedOutHere: boolean): Promise<Check<void>> {
+  if (!NAME.test(branch) || !FULL_SHA.test(from) || !FULL_SHA.test(to)) return { ok: false, error: "not a delivery Petrina replaces" };
+  const base = await revParse(root, `${from}^`);
+  if (!base || !(await contains(root, to, base))) return { ok: false, error: "the new delivery does not preserve the previous source commits" };
+  return moveLocalBranch(root, branch, from, to, checkedOutHere);
+}
+
+async function moveLocalBranch(root: string, branch: string, from: string, to: string, checkedOutHere: boolean): Promise<Check<void>> {
   const ref = `refs/heads/${branch}`;
   const located = await run(["git", "rev-parse", "--git-path", "index"], root);
   if (located.code !== 0) return failed(located);
@@ -655,6 +675,13 @@ export async function fastForward(root: string, branch: string, from: string, to
   } finally {
     if (!installed) rmSync(lock, { force: true });
   }
+}
+
+/** Create only an absent local destination, without checking out or touching its files. */
+export async function createBranchAt(root: string, branch: string, sha: string): Promise<Check<void>> {
+  if (!isBranchName(branch) || !isSha(sha)) return { ok: false, error: "not a local branch Petrina creates" };
+  const result = await run(["git", "update-ref", `refs/heads/${branch}`, sha, "0".repeat(sha.length)], root);
+  return result.code === 0 ? { ok: true, value: undefined } : failed(result);
 }
 
 export interface FileChange {

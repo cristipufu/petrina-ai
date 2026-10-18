@@ -189,6 +189,11 @@ describe.concurrent("Finished tasks free their working copies", () => {
     try {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "Pause during setup", description: "[quick]", delivery: "local", approvePlan: true });
+      // The plan check stays editable, so the copy is not created until the plan is approved.
+      const planned = await until(engine, (s) => !!itemOf(s, id, "plan"), () => {});
+      expect(taskOf(planned, id).worktree).toBeUndefined();
+      expect(existsSync(`${hold}.reached`)).toBe(false);
+      engine.approve(itemOf(planned, id, "plan")!.id);
       await waitForFile(`${hold}.reached`);
       const settling = engine.settling.get(id)!;
       expect(taskOf(engine.getState(), id).worktree).toBeUndefined();
@@ -207,8 +212,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
         expect(taskOf(engine.getState(), id).cleanup).toBeUndefined();
         engine.resume(id);
       }
-      await until(engine, (s) => s.inbox.some((item) => item.taskId === id && item.kind === "plan"), () => {});
-      expect(taskOf(engine.getState(), id).worktree).toBe(path);
+      await until(engine, (s) => taskOf(s, id).worktree === path && taskOf(s, id).state !== "paused", () => {});
       expect(existsSync(join(path, "README.md"))).toBe(true);
       expect(taskOf(engine.getState(), id).cleanup).toBeUndefined();
       expect(texts(taskOf(engine.getState(), id))).not.toContain(CLEANUP_WORDS.removed);
@@ -572,7 +576,11 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const id = engine.addTask({ productId, title: "Old copy", description: "[quick]", approveDelivery: false });
       const task = structuredClone(taskOf(await finish(engine, id), id));
       const cancelled = engine.addTask({ productId, title: "Older cancelled copy", description: "[quick]", approvePlan: true });
-      await until(engine, (s) => taskOf(s, cancelled).state === "needs-you", () => {});
+      // The plan check is editable before any copy exists. Approve it, then pause once the copy is there.
+      const planned = await until(engine, (s) => !!itemOf(s, cancelled, "plan"), () => {});
+      expect(taskOf(planned, cancelled).worktree).toBeUndefined();
+      engine.approve(itemOf(planned, cancelled, "plan")!.id);
+      await until(engine, (s) => !!taskOf(s, cancelled).worktree, () => {});
       engine.pause(cancelled);
       await until(engine, () => !engine.settling.has(cancelled), () => {});
       engine.shutdown();

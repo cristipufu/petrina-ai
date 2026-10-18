@@ -50,6 +50,7 @@ import {
   type UsageViewFor,
   type RoleChanges,
   type RoleDraft,
+  type WorkChoice,
 } from "@petrina/core";
 import * as library from "@petrina/core";
 import * as git from "./git.js";
@@ -71,6 +72,7 @@ import { Design } from "./design.js";
 import { Planning } from "./planning.js";
 import { Work } from "./work.js";
 import { TakeOver } from "./take-over.js";
+import { Sources } from "./sources.js";
 import { Driver } from "./driver.js";
 import { Cleanup } from "./cleanup.js";
 
@@ -81,6 +83,7 @@ export { recordDisputes } from "./review.js";
 /** The engine: every command the window can send (Commands) is a method here. */
 export class Engine extends Kernel implements Commands {
   private readonly tools: ToolChecks;
+  private readonly sources: Sources;
   private readonly turns: Turns;
   private readonly guide: GuideKeeper;
   private readonly context: Context;
@@ -100,20 +103,21 @@ export class Engine extends Kernel implements Commands {
   constructor(dataDir: string, options: EngineOptions = {}) {
     super(dataDir, options);
     this.tools = new ToolChecks(this);
-    this.turns = new Turns(this, this.tools);
+    this.connections = new Connections(this);
+    this.sources = new Sources(this, this.connections);
+    this.turns = new Turns(this, this.tools, this.sources);
     this.guide = new GuideKeeper(this, this.turns);
     this.context = new Context(this, this.guide, (task) => this.checks.current(task));
     this.checks = new ProductChecks(this, this.turns, this.context);
-    this.connections = new Connections(this);
-    this.updates = new Updates(this, this.connections);
+    this.updates = new Updates(this, this.connections, this.sources);
     this.shipping = new Shipping(this, this.turns, this.updates, this.checks, this.connections, this.tools);
     this.learnings = new Learnings(this);
     this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings, this.updates);
     this.design = new Design(this, this.turns, this.context);
-    this.planning = new Planning(this, this.turns);
+    this.planning = new Planning(this, this.turns, this.sources);
     this.work = new Work(this, this.turns, this.context, this.guide, this.updates, this.learnings);
     this.takeover = new TakeOver(this);
-    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections);
+    this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections, this.sources);
     this.cleanup = new Cleanup(this);
     // Tasks from before journeys were recorded: one step per finished stage, and the step under way, so new steps follow on from there.
     for (const task of this.s.tasks) if (!task.journey && task.startedAt !== undefined) task.journey = legacyJourney(task as unknown as Task, this.s.inbox as InboxItem[]) as MTask["journey"];
@@ -395,7 +399,7 @@ export class Engine extends Kernel implements Commands {
     const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId) : undefined;
     if (known) return known.id;
     const product = this.s.products.find((entry) => entry.id === input.productId);
-    if (!product) throw new Error("Unknown product");
+    if (!product && input.productId) throw new Error("Unknown product");
     const title = input.title.trim();
     if (!title) throw new Error("A task needs a title");
     let id = this.id("task");
@@ -403,7 +407,10 @@ export class Engine extends Kernel implements Commands {
     const queue = queueOf(this.s.tasks as Task[]);
     this.s.tasks.push({
       id,
-      productId: product.id,
+      productId: product?.id ?? "",
+      explicitStart: input.startFrom !== undefined,
+      workChoice: { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" },
+      ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
       title,
       description: input.description?.trim() ?? "",
       area: title.toLowerCase(),
@@ -414,8 +421,8 @@ export class Engine extends Kernel implements Commands {
       column: "queue",
       holdsSlot: false,
       approvePlan: input.approvePlan ?? false,
-      delivery: input.delivery ?? product.delivery ?? "pull-request",
-      approveDelivery: input.approveDelivery ?? product.approveDelivery ?? true,
+      delivery: input.delivery ?? product?.delivery ?? "pull-request",
+      approveDelivery: input.approveDelivery ?? product?.approveDelivery ?? true,
       stageIndex: -1,
       rounds: {},
       sub: 0,
@@ -434,6 +441,13 @@ export class Engine extends Kernel implements Commands {
     this.commit();
     this.schedule();
     return id;
+  }
+
+  async setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
+    const task = this.task(taskId);
+    if (!task || task.worktree || !this.s.inbox.some((item) => item.taskId === taskId && item.kind === "plan")) throw new Error("The starting point can be edited at the plan check before work starts.");
+    await this.sources.propose(task, [choice]);
+    this.commitNow();
   }
 
   moveInQueue(taskId: Id, index: number): void {
@@ -768,6 +782,9 @@ export class Engine extends Kernel implements Commands {
       return;
     }
     if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
+    const pending = this.s.inbox.find((entry) => entry.id === itemId);
+    const pendingTask = pending && this.task(pending.taskId);
+    if (pending?.kind === "plan" && pendingTask) this.sources.confirm(pendingTask);
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;

@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, headroom, kindWords, limitOf, nearLimit, endOpenStep, JOURNEY_WORDS as W, nextExpiry, openStep, queueOf, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
+import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, headroom, kindWords, limitOf, nearLimit, endOpenStep, JOURNEY_WORDS as W, nextExpiry, openStep, queueOf, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { GrokUsage } from "./grok-usage.js";
@@ -78,6 +78,8 @@ export interface EngineOptions {
   grokCommand?: readonly string[] | null;
   /** Tests: a folder standing in for every product's copy on GitHub. Never from settings or saved data. */
   remote?: string;
+  /** Tests: separate local remotes for fork working repositories. */
+  sourceRemotes?: Record<string, string>;
   /** Tests: how long a tool gets to reopen a conversation. */
   reopenTimeoutMs?: number;
   /** Tests: how long a tool gets to start a fresh conversation. */
@@ -317,7 +319,9 @@ export abstract class Kernel {
     delete task.agent;
     task.holdsSlot = false;
     beginYouStep(task, gate, Date.now());
-    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? deliveryLines(task as unknown as Task) : undefined;
+    const work = gate === "plan" ? task.proposedSource ?? task.source : task.source;
+    const workLine = work ? workSummary(work) : "";
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, deliveryLines(task as unknown as Task) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
     this.raise(task, gate, gateTitle(task as unknown as Task, gate), false, body ? { body } : {});
     task.statusLine = gateStatus(task as unknown as Task, gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
@@ -505,6 +509,11 @@ export abstract class Kernel {
 
   task(id: Id): MTask | undefined {
     return this.s.tasks.find((task) => task.id === id);
+  }
+
+  repositoryOf(task: MTask) {
+    const product = this.productOf(task);
+    return product && task.source ? { ...product, ...task.source.product, name: product.name } : product;
   }
 
   productOf(task: MTask) {

@@ -27,9 +27,9 @@ function hook(repo: string, name: string, script: string): void {
 
 /**
  * One task to done on a product that commits to main locally. `setup` runs on the clone before it becomes a
- * product, `beforeBuild` at the plan check and `atDeliveryCheck` at the first delivery check, before the
- * coordinator approves either. `atBuilderPermission` can land main or add work while the scripted builder
- * is waiting for permission, before it reports its finished build.
+ * product. `beforeBuild` runs at the first builder permission, once the working copy exists and before the
+ * builder writes. `atDeliveryCheck` runs at the first delivery check, before the coordinator approves it.
+ * `atBuilderPermission` can land main or add work while the scripted builder is waiting for permission.
  */
 async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void; beforeBuild?: (repo: string) => void; atDeliveryCheck?: (repo: string) => void; atBuilderPermission?: (repo: string, task: Task) => void } = {}) {
   const root = tempDir("petrina-update-");
@@ -45,16 +45,21 @@ async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void;
     engine.setProductDelivery(productId, "local", true);
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]", approvePlan: true });
     let deliveryChecks = 0;
+    let movedBeforeBuild = false;
     const task = await waitFor(() => {
       const state = engine.getState();
       const found = state.tasks.find((entry) => entry.id === taskId)!;
       for (const item of state.inbox) {
         if (item.taskId !== taskId) continue;
         if (item.kind === "plan") {
-          hooks.beforeBuild?.(repo);
+          // Approval itself happens while the working copy does not exist yet.
           engine.approve(item.id);
         } else if (item.kind === "permission") {
-          if (found.agent?.roleId === "builder") hooks.atBuilderPermission?.(repo, found);
+          if (found.agent?.roleId === "builder") {
+            // The copy exists and the builder has not written yet, so a commit here is a later move.
+            if (!movedBeforeBuild) { movedBeforeBuild = true; hooks.beforeBuild?.(repo); }
+            hooks.atBuilderPermission?.(repo, found);
+          }
           engine.allow(item.id, "once");
         }
         else if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");

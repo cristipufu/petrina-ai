@@ -50,14 +50,18 @@ import before from "./today-prompts.json";
 
 describe("saved role wording", () => {
   const contexts = promptContexts();
-  it("keeps main's default instructions and the Release Manager exactly as they were", () => {
+  it("keeps main's default instructions, except for the planner's confirmed-source workflow, and the Release Manager exactly as they were", () => {
     for (const [name, context] of Object.entries(contexts)) {
       const now = buildPrompt(context).replace(roleCard(context), "");
       const was = (before as Record<string, string>)[name]!;
       if (context.role.id === "planner") {
         const job = (text: string) => text.slice(text.indexOf("# Your job"), text.indexOf("## Design brief") > 0 ? text.indexOf("## Design brief") : text.length);
-        // Only the richer role list and the placement rules change for the planner.
-        expect(now.replace(job(now), "")).toBe(was.replace(job(was), ""));
+        // The planner works before setup and proposes one source. Everything outside those changes,
+        // the richer role list and main's placement rules keeps its earlier wording.
+        const expected = was
+          .replace(`Your working copy is ${context.worktree}, on branch ${context.branch}. Stay inside it.`, `Your planning folder is ${context.worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.`)
+          .replace('{"rationale":', '{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request"}], "rationale":');
+        expect(now.replace(job(now), "")).toBe(expected.replace(job(expected), ""));
         expect(now).toContain(plannerRoles(context.roles));
       } else if (context.role.id !== "builder") expect(now).toBe(was);
     }

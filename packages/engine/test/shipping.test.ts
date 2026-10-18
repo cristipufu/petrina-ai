@@ -242,12 +242,13 @@ describe.concurrent("shipping is never repeated blindly", () => {
     const run = await shipping("pull-request", { hold: "pr create" });
     await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to open the pull request");
     await run.engine.kill();
-    // Someone pushed more to the task's branch on GitHub: the pull request is no longer this work.
+    // Someone replaced the task branch with different work: the tested commit is absent.
     const branch = run.w.github().prs[0]!.headRefName;
     const clone = join(run.w.dir, "teammate");
     git(run.w.dir, "clone", "-q", "--branch", branch, run.w.remote, clone);
-    git(clone, "-c", "user.email=t@example.com", "-c", "user.name=Teammate", "commit", "-q", "--allow-empty", "-m", "More");
-    git(clone, "push", "-q", "origin", branch);
+    const other = git(clone, "-c", "user.email=t@example.com", "-c", "user.name=Teammate", "commit-tree", `${run.w.initial}^{tree}`, "-p", run.w.initial, "-m", "Different work");
+    git(run.w.remote, "fetch", "-q", clone, other);
+    git(run.w.remote, "update-ref", `refs/heads/${branch}`, other);
 
     const engine = await run.restart();
     const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");

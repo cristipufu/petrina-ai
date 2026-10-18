@@ -107,7 +107,8 @@ describe("product settings in the engine", () => {
       const taskId = engine.addTask({ productId: id, title: "Use the product name" });
       const task = () => engine.getState().tasks.find((task) => task.id === taskId)! as Task;
       await waitFor(() => fakes.received("planner").length === 1, "planner to start");
-      const { worktree, branch } = task();
+      expect(task().worktree).toBeUndefined();
+      expect(task().branch).toBeUndefined();
       // Its clone isn't linked to GitHub, so the product starts out keeping work on this machine.
       expect(task()).toMatchObject({ delivery: "local", approveDelivery: true });
       engine.updateProduct(id, { name: "Petrina AI", delivery: "pull-request", approveDelivery: false });
@@ -115,7 +116,9 @@ describe("product settings in the engine", () => {
       await waitFor(() => fakes.received("researcher").length === 1, "next agent to receive the saved name");
       expect(fakes.prompts("researcher")[0]).toContain('"Petrina AI"');
       expect(fakes.prompts("researcher")[0]).not.toContain('"Original product"');
-      expect(task()).toMatchObject({ worktree, branch, delivery: "local", approveDelivery: true });
+      expect(task().worktree).toBeDefined();
+      expect(task().branch).toBeDefined();
+      expect(task()).toMatchObject({ delivery: "local", approveDelivery: true });
     } finally { engine.shutdown(); await Bun.sleep(100); removeDir(root); }
   });
 });

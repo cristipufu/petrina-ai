@@ -62,7 +62,7 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
 describe.concurrent("reviews after a usage handoff", () => {
   for (const limit of [1, 2]) it(`keeps a real reviewer handoff independent with ${limit} pool slots and one slot per tool`, async () => {
     // With two seats it is the helper that hands over, while the pool is full.
-    const f = await fixture({ limited: [{ model: "opus", role: "code reviewer", spendCap: true }], reviewer: "important-twice" }, limit, limit === 2 ? ["sol-high", "opus-high"] : undefined);
+    const f = await fixture({ planner: "build-review", limited: [{ model: "opus", role: "code reviewer", spendCap: true }], reviewer: "important-twice" }, limit, limit === 2 ? ["sol-high", "opus-high"] : undefined);
     const violations: unknown[] = [];
     let peak = 0;
     const unsub = f.engine.subscribe(() => {

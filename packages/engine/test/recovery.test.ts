@@ -489,7 +489,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     }
   });
 
-  it("does not report success when GitHub's pull request is not at the checked commit", async () => {
+  it("confirms delivery when newer commits on GitHub follow the checked work", async () => {
     const w = world("verify");
     const { engine, taskId, hold } = await startHeld(w, "pull-request", "pr create");
     try {
@@ -501,9 +501,11 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/heads/${branch}`, other], { env: testGitEnv() });
       rmSync(hold);
       const task = taskOf(await finish(engine, taskId), taskId);
-      expect(task.state).toBe("failed");
-      expect(task.error).toContain("is not this work");
-      expect(task.pr).toBeUndefined();
+      expect(task.state).toBe("pr-open");
+      expect(task.error).toBeUndefined();
+      expect(task.pr?.number).toBe(w.github().prs[0]!.number);
+      expect(remoteRef(w.remote, `refs/heads/${branch}`)).toBe(other);
+      expect(w.github().calls.filter((args) => args[0] === "pr" && args[1] === "create")).toHaveLength(1);
     } finally {
       engine.shutdown();
     }

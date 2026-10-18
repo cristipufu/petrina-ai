@@ -6,6 +6,7 @@ import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, slotWait, s
 import * as git from "./git.js";
 import { Kernel, Aborted, type MTask, PLANNER_PROFILE } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
+import type { Sources } from "./sources.js";
 import type { Planning } from "./planning.js";
 import type { Work } from "./work.js";
 import type { Design } from "./design.js";
@@ -33,6 +34,7 @@ export class Driver {
     private readonly learnings: Learnings,
     private readonly shipping: Shipping,
     private readonly connections: Connections,
+    private readonly sources: Sources,
   ) {}
 
   schedule(): void {
@@ -187,11 +189,18 @@ export class Driver {
         this.shipping.askCarriedOver(task());
         return;
       }
-      await this.prepare(task(), signal);
+
       for (;;) {
         if (signal.aborted) throw new Aborted();
         const current = task();
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
+        // A restart can find the working copy detached by an interrupted commit hook. Put it back before
+        // review or delivery reads that original starting version as the task's work.
+        if (current.worktree && current.hooking) await this.recoverHook(current);
+        // The copy waits until the starting point is confirmed. While the plan check is still open it waits
+        // too, including for the default branch, so that check can still change the product, the start or the delivery.
+        if (!current.worktree && this.sourceSettled(current) && (current.stageIndex >= 0 || !current.approvePlan)) await this.prepare(current, signal);
+        if (current.stageIndex >= 0 && !current.worktree) { this.k.gate(current, "plan"); return; }
         // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
         if (stage && current.handChanges && (stage.gate === "delivery" || stage.roleId === "release-manager")) {
           const chain = lastIndexWhere(current.plan!.stages, (entry) => entry.kind === "review-chain");
@@ -313,7 +322,13 @@ export class Driver {
           }
         }
         if (current.stageIndex < 0) {
-          await this.planning.runPlanner(current, signal);
+          // Pausing while the copy is made already has a plan. Planning again would start a second one.
+          if (!current.plan) await this.planning.runPlanner(current, signal);
+          if (current.confirmWork || current.workError || !current.source?.confirmed) {
+            this.k.gate(current, "plan");
+            return;
+          }
+          // Show me the plan first stays editable until it is approved. Skipping that check prepares on the next pass.
           if (current.approvePlan) {
             this.k.gate(current, "plan");
             return;
@@ -346,15 +361,37 @@ export class Driver {
     }
   }
 
+  /** An interrupted commit hook left the working copy detached. The task's commit is still on its branch. */
+  private async recoverHook(task: MTask): Promise<void> {
+    if (!task.worktree || !task.hooking || !task.branch) return;
+    await git.reattach(task.worktree, task.branch);
+    delete task.hooking;
+    this.k.commit();
+  }
+
+  /** The starting point is recorded and confirmed, and no proposed change is still waiting. */
+  private sourceSettled(task: MTask): boolean {
+    if (task.confirmWork || task.workError || task.proposedSource) return false;
+    // Planning is still open, so the planner may change the starting point. Nothing is fetched yet.
+    if (task.stageIndex < 0 && !task.plan) return false;
+    if (task.source) return task.source.confirmed;
+    // A task already past planning, from before starting points were recorded, keeps a copy.
+    return task.stageIndex >= 0;
+  }
+
   private async prepare(task: MTask, signal: AbortSignal): Promise<void> {
-    const product = this.k.productOf(task);
+    const product = this.k.repositoryOf(task);
     if (!product?.path) throw new Error(`${product?.name ?? "This product"} has no local copy`);
     const branch = task.branch ?? git.branchName(task.title, task.id);
     const worktree = task.worktree ?? join(this.k.dataDir, "worktrees", product.id, task.id);
     const defaultBranch = product.defaultBranch ?? "main";
     let base = defaultBranch;
+    if (!task.worktree && task.source?.start.kind !== "default") {
+      const fetched = await this.sources.fetch(task, signal);
+      base = fetched.sha;
+    }
     // A new working copy starts from the latest main: GitHub's for GitHub deliveries, the main clone's own for local ones.
-    if (!task.worktree && task.delivery !== "local") {
+    if (!task.worktree && task.delivery !== "local" && (!task.source || task.source.start.kind === "default")) {
       const fetched = await this.connections.fetchDefault(task, signal);
       // A stalled or refused fetch never holds a task: it works from the local copy.
       if (!fetched.ok && !fetched.missing) this.k.log(task, "warn", `${fetched.timedOut ? "GitHub did not answer in time" : `Did not update from GitHub: ${this.connections.why(task, fetched)}`}, so this task starts from the local copy`);
@@ -376,8 +413,9 @@ export class Driver {
     // Known before the builder starts, so it runs them too.
     await this.checks.noteHooks(task);
     task.base = task.base ?? base;
-    // Pinned once, in the product's own clone: an agent moving a ref later changes nothing Petrina compares against.
-    task.baseSha = task.baseSha ?? (await git.revParse(product.path, task.base));
+    // Pin the commit actually checked out, before any agent starts; a shared source ref may move meanwhile.
+    task.baseSha = task.baseSha ?? (await git.head(worktree));
+    if (task.source && task.baseSha) task.source.initialSha ??= task.baseSha;
     this.k.commit();
   }
 

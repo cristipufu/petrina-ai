@@ -1,3 +1,4 @@
+import { TaskStart } from "../TaskStart";
 // The task sheet's Plan tab: why this plan, its risk, and its stages, with who works on each.
 
 import { Check, Repeat, ShieldCheck } from "lucide-react";
@@ -19,9 +20,12 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
   const plan = task.plan;
   if (!plan)
     return (
-      <div className="empty-state reading">
-        The planner writes the plan when the task starts. It picks the roles, the tools and the order for this task.
-      </div>
+      <>
+        <TaskStart key={task.id} task={task} state={state} />
+        <div className="empty-state reading">
+          The planner writes the plan when the task starts. It picks the roles, the tools and the order for this task.
+        </div>
+      </>
     );
 
   const planner = find.profile(plan.plannerProfileId);
@@ -41,6 +45,7 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
 
   return (
     <>
+      <TaskStart key={task.id} task={task} state={state} />
       <section className="sheet-section reading">
         <h2>Why this plan</h2>
         <p className="prose">{plan.rationale}</p>
