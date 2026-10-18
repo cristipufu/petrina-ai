@@ -47,7 +47,10 @@ import {
   type AskAnswer,
   type UsageRequest,
   type UsageViewFor,
+  type RoleChanges,
+  type RoleDraft,
 } from "@petrina/core";
+import * as library from "@petrina/core";
 import * as git from "./git.js";
 import { parseCommand } from "./checks.js";
 import { CODEX_USAGE_EVERY_MS } from "./codex-usage.js";
@@ -157,6 +160,37 @@ export class Engine extends Kernel implements Commands {
   /** The numbers one view needs, worked out from the work log. The log itself never leaves the engine. */
   usage<R extends UsageRequest>(request: R): UsageViewFor<R> {
     return this.tracking.usage(request);
+  }
+
+  saveRole(roleId: Id, draft: RoleDraft): void {
+    this.changeRoles((changes) => library.editRole(changes, roleId, draft));
+  }
+
+  addRole(draft: RoleDraft): Id {
+    let created = "";
+    this.changeRoles((changes) => {
+      const added = library.addRole(changes, draft);
+      created = added.roleId;
+      return added.changes;
+    });
+    return created;
+  }
+
+  resetRole(roleId: Id): void {
+    this.changeRoles((changes) => library.resetRole(changes, roleId));
+  }
+
+  /** Planned tasks still run a removed role, and past ones still show its name and icon. */
+  removeRole(roleId: Id): void {
+    this.changeRoles((changes) => library.removeRole(changes, roleId, this.s.tasks.some((task) => library.planUses(task as unknown as Task, roleId))));
+  }
+
+  private changeRoles(change: (changes: RoleChanges) => RoleChanges): void {
+    const next = change((this.s.roleChanges ?? library.NO_ROLE_CHANGES) as RoleChanges);
+    // New role objects every time: agents already working keep the ones they started with.
+    this.s.roleChanges = next as typeof this.s["roleChanges"];
+    this.s.roles = library.libraryRoles(next) as typeof this.s["roles"];
+    this.commitNow();
   }
 
   /**
@@ -588,6 +622,7 @@ export class Engine extends Kernel implements Commands {
     const at = task?.plan?.stages.findIndex((stage) => stage.id === stageId) ?? -1;
     const stage = task?.plan?.stages[at];
     if (!task || !stage || stage.kind !== "review-chain" || at <= task.stageIndex || !this.profile(profileId)) return;
+    if (stage.roleIds) stage.roleIds.push("code-reviewer");
     stage.profileIds.push(profileId);
     this.log(task, "you", `You added a reviewer to “${stage.title}”`);
     this.commit();

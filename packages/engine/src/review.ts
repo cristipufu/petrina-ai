@@ -1,7 +1,7 @@
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { endAgentStep, findingCount, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, reviewRoundEnd, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { endAgentStep, findingCount, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -101,7 +101,8 @@ export class Reviews {
     const vote = this.pendingVote(task, stage);
     if (vote?.voters.length) {
       // The reviewers' box ends with what they raised; the voters get a box of their own.
-      if (openStep(task)?.roleId === stage.roleId) endAgentStep(task, { outcome: this.raised(task), reason: W.toCheck(vote.findings.length) }, Date.now());
+      const roleId = openStep(task)?.roleId;
+      if (roleId === stage.roleId || (roleId && stage.roleIds?.includes(roleId))) endAgentStep(task, { outcome: this.raised(task), reason: W.toCheck(vote.findings.length) }, Date.now());
       await this.vote(task, vote.findings, vote.voters, signal);
       return "continue";
     }
@@ -118,7 +119,7 @@ export class Reviews {
   /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */
   nextAgent(task: MTask, stage: MStage): { roleId: Id; profileId: Id; reviewerKey?: string } | undefined {
     const reviewer = this.pendingReviewers(task, stage)[0];
-    if (reviewer) return { roleId: stage.roleId, profileId: reviewer.profileId, reviewerKey: reviewer.key };
+    if (reviewer) return { roleId: reviewerAt(stage, Number(reviewer.key)), profileId: reviewer.profileId, reviewerKey: reviewer.key };
     const voter = this.pendingVote(task, stage)?.voters[0];
     return voter ? { roleId: "verifier", profileId: voter } : undefined;
   }
@@ -149,23 +150,27 @@ export class Reviews {
     };
     if (stage.profileIds.length === 1) {
       const { key, profileId } = reviewers[0]!;
+      const roleId = reviewerAt(stage, Number(key));
       let by = profileId;
-      const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
-      await this.applyReview(task, stage, result, by);
+      const result = await this.turns.turn(task, roleId, profileId, () => this.context.sectionsFor(task, roleId), ReviewResult, signal, { reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
+      await this.applyReview(task, stage, result, by, roleId);
       reported(key);
       return;
     }
-    const role = this.k.role(stage.roleId)?.name ?? "Reviewer";
+    // Named by the reviewers looking now: a port review's one reviewer, or the whole stage's.
+    const roleIds = new Set(reviewers.map(({ key }) => reviewerAt(stage, Number(key))));
+    const role = roleIds.size === 1 ? this.k.role([...roleIds][0]!)?.name ?? "Reviewer" : "Reviewer";
     await this.together(
       task,
       reviewers.map(({ key, profileId }) => ({
-        roleId: stage.roleId,
+        roleId: reviewerAt(stage, Number(key)),
         profileId,
         reviewerKey: key,
         work: async (copy, room, seat, used) => {
           let by = profileId;
-          const result = await this.turns.parallel(task, stage.roleId, profileId, copy, () => this.context.sectionsFor(task, stage.roleId), ReviewResult, signal, { reviewerKey: key, used: (id) => { by = id; used(id); }, room, seat });
-          await this.applyReview(task, stage, result, by);
+          const roleId = reviewerAt(stage, Number(key));
+          const result = await this.turns.parallel(task, roleId, profileId, copy, () => this.context.sectionsFor(task, roleId), ReviewResult, signal, { key: `reviewer:${key}`, reviewerKey: key, used: (id) => { by = id; used(id); }, room, seat });
+          await this.applyReview(task, stage, result, by, roleId);
           reported(key);
         },
       })),
@@ -174,8 +179,8 @@ export class Reviews {
   }
 
   /** What one reviewer reported: its confirmations and disputes of earlier findings, and its own. */
-  private async applyReview(task: MTask, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id): Promise<void> {
-    await this.learnings.note(task, result.learnings, stage.roleId, profileId);
+  private async applyReview(task: MTask, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id, roleId: Id): Promise<void> {
+    await this.learnings.note(task, result.learnings, roleId, profileId);
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
@@ -195,6 +200,7 @@ export class Reviews {
           ...(finding.evidence ? { evidence: finding.evidence } : {}),
           severity: SEVERITY[finding.severity],
           raisedBy: profileId,
+          roleId,
           confirmedBy: [],
           status: "open",
         });
@@ -207,10 +213,10 @@ export class Reviews {
     // A confirmed existing finding asks for fixes just as a newly raised one does. Count each once.
     const named = new Set(result.findings.map((finding) => sameFinding(finding.text)));
     const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || named.has(sameFinding(finding.text))));
-    this.k.tracking.verdict(task, stage.roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
+    this.k.tracking.verdict(task, roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
     const confirmed = result.confirms.length + backed;
     const also = [confirmed ? `confirmed ${confirmed}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
-    this.k.log(task, important ? "warn" : "done", `${findingCount(raised.map((finding) => ({ severity: SEVERITY[finding.severity] })))}${also ? `; ${also}` : ""}`, stage.roleId, profileId);
+    this.k.log(task, important ? "warn" : "done", `${findingCount(raised.map((finding) => ({ severity: SEVERITY[finding.severity] })))}${also ? `; ${also}` : ""}`, roleId, profileId);
   }
 
   /**

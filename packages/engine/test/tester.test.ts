@@ -1,13 +1,51 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { journeyProblems, type Task } from "@petrina/core";
+import { readFileSync } from "node:fs";
+import { draftOf, journeyProblems, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
+import { MAY_CHANGE } from "../src/prompts.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
 describe("the tester tries the change once, and the final code once more", () => {
+  it("keeps a tester's permitted edits before review and undoes its edits and commits on the final acceptance pass", async () => {
+    const root = tempDir("petrina-tester-edits-");
+    roots.push(root);
+    const fakes = new Fakes(join(root, "fake"));
+    fakes.scenario({ planner: "tester-first", builder: "plain", reviewer: "important", fixes: "change", tester: "writes" });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+    try {
+      const tester = engine.getState().roles.find((role) => role.id === "tester")!;
+      engine.saveRole(tester.id, { ...draftOf(tester), canEdit: true });
+      const productId = await engine.addProduct(makeProduct(root));
+      engine.setProductDelivery(productId, "local", true);
+      const taskId = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
+      const task = await waitFor(() => {
+        const state = engine.getState();
+        for (const item of state.inbox.filter((item) => item.taskId === taskId)) {
+          if (item.kind === "plan") engine.approve(item.id);
+          else if (item.kind === "permission") engine.allow(item.id, "once");
+          else if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
+        }
+        const found = state.tasks.find((entry) => entry.id === taskId)!;
+        if (found.state === "failed") throw new Error(found.error);
+        return state.inbox.some((item) => item.taskId === taskId && item.kind === "delivery") && found;
+      }, "the final tester pass and delivery check", 120_000);
+      const openings = fakes.openings("tester");
+      expect(openings).toHaveLength(2);
+      expect(openings[0]).toContain(MAY_CHANGE.canEdit);
+      expect(openings[1]).toContain(MAY_CHANGE.afterReview);
+      expect(readFileSync(join(task.worktree!, "tester-edit.txt"), "utf8")).toBe("Before the review\n");
+      expect(task.timeline.some((entry) => entry.text === "Saved the changes from the Tester on the task's branch")).toBe(true);
+      expect(task.timeline.some((entry) => entry.text === "Undid commits from Tester, which is read-only")).toBe(true);
+      expect(engine.getState().roles.find((role) => role.id === tester.id)!.canEdit).toBe(true);
+    } finally {
+      engine.shutdown();
+    }
+  });
+
   it("skips the tester in fix rounds, tries the final code before the delivery check, and sends a failure there back to the builder", async () => {
     const root = tempDir("petrina-tester-");
     roots.push(root);

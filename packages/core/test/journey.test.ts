@@ -19,6 +19,7 @@ import {
   type JourneyView,
 } from "../src/journey.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
+import { addRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS } from "../src/roles.js";
 import type { JourneyStep, State, Task } from "../src/model.js";
 import { Simulator, type Triggers } from "../src/sim.js";
 
@@ -463,6 +464,21 @@ describe("recorded the way the engine records", () => {
     task.stageIndex = task.plan!.stages.findIndex((stage) => stage.kind === "review-chain");
     const port = journeyView(task, contextOf(state)).nodes.find((node) => node.name === "Code reviewer (port)")!;
     expect(state.profiles.find((profile) => profile.id === port.profileId)?.toolId).toBe(planned.toolId);
+    expect(port.team).toBeUndefined();
+  });
+
+  it("names an added reviewer when it is chosen to review the port", () => {
+    const task = atBuild();
+    const added = addRole(NO_ROLE_CHANGES, ROLE_STARTS.find((start) => start.id === "security")!.draft);
+    const state = { ...emptyState(), roles: libraryRoles(added.changes) };
+    const review = task.plan!.stages.find((stage) => stage.kind === "review-chain")!;
+    const builder = task.plan!.stages[task.stageIndex]!.profileIds[0]!;
+    const builderTool = state.profiles.find((profile) => profile.id === builder)!.toolId;
+    const reviewer = state.profiles.find((profile) => profile.toolId !== builderTool)!.id;
+    task.plan = { ...task.plan!, stages: task.plan!.stages.map((stage) => stage === review ? { ...stage, profileIds: [builder, reviewer], roleIds: ["code-reviewer", added.roleId] } : stage) };
+    task.updating = { from: "a", onto: "b", head: "c", files: ["greeting.txt"] };
+    const port = journeyView(task, contextOf(state)).nodes.find((node) => node.name === "Security specialist (port)")!;
+    expect(port).toMatchObject({ roleId: added.roleId, profileId: reviewer });
     expect(port.team).toBeUndefined();
   });
 

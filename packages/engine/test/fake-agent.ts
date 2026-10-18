@@ -18,7 +18,10 @@ import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
   /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
-  planner?: "short" | "tester-after" | "tester-first" | "limits" | "claude-build" | "two-opus";
+  planner?: "short" | "tester-after" | "tester-first" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review";
+  notes?: "work";
+  /** The architect leaves product changes for the engine to save, in rounds and after a call. */
+  architect?: "writes";
   /** Scheduling tests: each fresh agent waits for its own release file before answering. */
   controlled?: boolean;
   /**
@@ -43,7 +46,7 @@ export interface Scenario {
   /** The verifier's verdict on every finding it is given (default "real"). */
   verifier?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
-  tester?: "work" | "fail-once";
+  tester?: "work" | "fail-once" | "writes";
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
   releaseManager?: "hang";
   /**
@@ -71,7 +74,7 @@ export interface Scenario {
    * Claude model reports a rejected rate limit of kind `type` (default "five_hour") first; "gpt-6.1-sol" fails the
    * way Codex does, with a message. Only agents with this `role` when it is set.
    */
-  limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean }[];
+  limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean; afterRelease?: boolean }[];
   /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
   usage?: { model: string; status: "allowed" | "allowed_warning" | "rejected"; utilization?: number; type?: string; resetsAt?: number; overage?: boolean }[];
 }
@@ -190,6 +193,20 @@ function hang(sessionId: string, marker: string): Promise<Reply> {
 function roleOf(text: string): string {
   return /You are the ([A-Za-z ]+) in Petrina/.exec(text)?.[1]?.trim().toLowerCase() ?? "";
 }
+
+function addedId(text: string, name: string): string {
+  const id = new RegExp(`^- (added-[a-z0-9-]+) \\(${name}\\):`, "m").exec(text)?.[1];
+  if (!id) throw new Error(`The planner's list has no ${name}`);
+  return id;
+}
+
+const slug = (role: string) => role.replace(/[^a-z0-9]+/g, "-");
+/** A security finding the added Security reviewer blocks on once. */
+const SECURITY_FINDING = "Anyone can ask for the greeting as often as they like.";
+/** Why the added Security reviewer disputes the code reviewer's suggestion, once Petrina asks for a reason. */
+const DISPUTE_REASON = "The greeting's wording is the copywriter's call, not a review finding.";
+/** The finding an added reviewer disputed without a reason, by conversation, until it gives one. */
+const undisputed = new Map<string, string>();
 
 /** The body of a `## title` section of the prompt. */
 function section(text: string, title: string): string | undefined {
@@ -333,11 +350,12 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage));
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role));
   const until = limit && outOfUsage(limit);
-  if (limit && until) await runOut(limit, until, session, sessionId, client);
+  if (limit && until && !limit.afterRelease) await runOut(limit, until, session, sessionId, client);
   if (plan.controlled && session.turns === 1 && dir) {
     await say(`${session.role} is working`);
     while (!existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
   }
+  if (limit?.afterRelease && until) await runOut(limit, until, session, sessionId, client);
   const earlierAttempt = text.includes("in an earlier attempt at this step");
   // The coordinator drove this step in their terminal and handed it back: on this conversation, or in a fresh one.
   const handedBack = text.includes("handed it back");
@@ -377,6 +395,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-xhigh", "sol-xhigh"], maxRounds: 2 },
           ],
         });
+      if (plan.planner === "mixed-review") return done({
+        rationale: "Build it, then a code reviewer and the added Security specialist review it together.",
+        stages: [
+          { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 2 },
+        ],
+      });
       if (plan.planner === "tester-after")
         return done({
           rationale: "Build it, one reviewer, then try it out.",
@@ -421,6 +446,29 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 2 },
           ],
         });
+      if (plan.planner === "roles")
+        return done({
+          rationale: "Research, a design, a build, then a review with the security reviewer you added.",
+          ...riskOf(plan),
+          stages: [
+            { kind: "do", title: "Research", roleId: "researcher", profileIds: ["sol-high"] },
+            { kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 },
+            check,
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], roleIds: ["code-reviewer", addedId(text, "Security specialist")], maxRounds: 2 },
+            { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
+            { kind: "do", title: "Fact check", roleId: addedId(text, "Fact checker"), profileIds: ["opus-high"] },
+          ],
+        });
+      if (plan.planner === "copy")
+        return done({
+          rationale: "Build it, then the copywriter you added, then one reviewer.",
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "do", title: "Copy", roleId: addedId(text, "Copywriter"), profileIds: ["opus-high"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
+          ],
+        });
       if (plan.planner === "short")
         return done({
           rationale: "A small change: build it, one reviewer.",
@@ -448,6 +496,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       const call = section(text, "The coordinator's call (final, exact words)");
       const settled = section(text, "Objections answered after the call (answer every one again by id)");
+      if (plan.architect === "writes") writeFileSync(join(session.cwd, "architecture.txt"), call === undefined ? "Before the design review" : settled === undefined ? "After the coordinator's call" : "After the design check");
       if (call !== undefined && settled !== undefined) {
         // Changes asked for at the check: the note says the call was misread, so the first answer loses its
         // "Your call" tag and the others get it. Every note is rewritten to match the updated brief.
@@ -624,6 +673,14 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       });
     case "tester":
       if (handedBack) return done({ summary: "Tried it after the hand back.", checks: [] }, terminal);
+      if (plan.tester === "writes") {
+        const final = marked("tester-passed-once");
+        writeFileSync(join(session.cwd, "tester-edit.txt"), final ? "After the review\n" : "Before the review\n");
+        if (final) {
+          run(session.cwd, "add", "tester-edit.txt");
+          run(session.cwd, "commit", "--quiet", "-m", "Tester commits after the review");
+        }
+      }
       if (plan.tester === "work" && !marked("tester-worked")) {
         mark("tester-worked");
         await say("Trying it out");
@@ -642,8 +699,44 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       await held("release manager", text);
       return { text: releaseManager(session.cwd, text) };
     }
-    default:
-      return done({ summary: "Nothing to do.", notes: [] });
+    default: {
+      // A reviewer the coordinator added answers in the review's shape: it blocks once, then passes.
+      // The first time, it disputes the code reviewer's suggestion without a reason, then gives one when Petrina refuses that.
+      const blocks = { verdict: "fail", findings: [{ text: SECURITY_FINDING, where: "greeting.txt:1", severity: "important", evidence: "Nothing limits it." }], confirms: [] };
+      const disputed = undisputed.get(sessionId);
+      if (disputed && text.includes("Your result block could not be used")) {
+        undisputed.delete(sessionId);
+        return done({ ...blocks, disputes: [{ id: disputed, reason: DISPUTE_REASON }] });
+      }
+      if (text.includes('"verdict": "pass"')) {
+        if (text.includes(SECURITY_FINDING)) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
+        const suggestion = /^- \[([^\]]+)\] nit \(open\): Consider a friendlier greeting\./m.exec(text)?.[1];
+        const disputedId = suggestion ?? "a-finding-that-is-not-listed";
+        undisputed.set(sessionId, disputedId);
+        return done({ ...blocks, disputes: [disputedId] });
+      }
+      if (plan.notes === "work" && session.role !== "researcher" && session.restarts < 1) {
+        if (roleOf(text)) writeFileSync(join(session.cwd, `${slug(session.role)}.txt`), "A first draft\n");
+        await say("Drafting");
+        return hang(sessionId, `working-${slug(session.role)}`);
+      }
+      if (text.includes("[roles]") && session.role !== "researcher" && roleOf(text)) {
+        // Notes roles the coordinator added write a file. A read-only one commits it too, which Petrina undoes.
+        const name = slug(session.role);
+        const held = dir && join(dir, `hold-${name}`);
+        if (held && existsSync(held)) {
+          mark(`working-${name}`);
+          while (existsSync(held)) await Bun.sleep(50);
+        }
+        const readOnly = text.includes("you are read-only") || text.includes("You are read-only");
+        writeFileSync(join(session.cwd, `${name}.txt`), `Written while ${readOnly ? "read-only" : "changing the product"}\n`);
+        if (readOnly) {
+          run(session.cwd, "add", `${name}.txt`);
+          run(session.cwd, "commit", "--quiet", "-m", `${session.role} commits anyway`);
+        }
+      }
+      return done({ summary: `Notes from the ${session.role}.`, notes: [`A note from the ${session.role}`] });
+    }
   }
 }
 

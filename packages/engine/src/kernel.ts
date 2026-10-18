@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, endOpenStep, JOURNEY_WORDS as W, nextExpiry, openStep, queueOf, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
+import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, kindWords, endOpenStep, JOURNEY_WORDS as W, nextExpiry, openStep, queueOf, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { agentEnv } from "./env.js";
@@ -21,9 +21,6 @@ export type MState = DeepMutable<State>;
 export type MTask = DeepMutable<Task>;
 
 export type MStage = DeepMutable<Stage>;
-
-/** Roles that judge others' work: their tools were chosen for independence, so near a limit they are not swapped. */
-const REVIEWING = new Set(["code-reviewer", "security-reviewer", "verifier", "design-reviewer"]);
 
 export const PLANNER_PROFILE = "opus-high";
 
@@ -155,7 +152,8 @@ export abstract class Kernel {
     const loaded = this.store.load();
     this.s = (loaded ?? this.empty()) as MState;
     if (loaded) renameRoles(this.s);
-    this.s.roles = BUILT_IN_ROLES as MState["roles"];
+    this.s.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as MState["roleChanges"];
+    this.s.roles = libraryRoles(this.s.roleChanges) as MState["roles"];
     this.s.profiles = ENGINE_PROFILES as MState["profiles"];
     // Tests stand in the tools' own apps: those count as installed.
     this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
@@ -441,10 +439,21 @@ export abstract class Kernel {
   }
 
   async undoReadOnly(task: MTask, roleId: Id): Promise<void> {
-    const role = this.role(roleId);
-    if (role && !role.canEdit && task.worktree && !(await git.isClean(task.worktree))) {
+    const conversation = task.conversation?.roleId === roleId ? task.conversation : undefined;
+    const role = conversation?.role ?? this.role(roleId);
+    if (role && !(conversation?.access?.canEdit ?? role.canEdit) && task.worktree && !(await git.isClean(task.worktree))) {
       await git.discardChanges(task.worktree);
       this.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
+    }
+  }
+
+  /** Keep an editing role's work before another role's read-only clean-up can undo it. */
+  async saveRoleEdits(task: MTask, roleId: Id, profileId: Id): Promise<void> {
+    const conversation = task.conversation?.roleId === roleId ? task.conversation : undefined;
+    const role = conversation?.role ?? this.role(roleId);
+    if (role && (conversation?.access?.canEdit ?? role.canEdit)) {
+      const sha = await git.commitAll(task.worktree!, `${task.title}: ${role.name}`);
+      if (sha) this.log(task, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
     }
   }
 
@@ -489,9 +498,10 @@ export abstract class Kernel {
     if (!planned) return undefined;
     const stage = task?.plan?.stages[task.stageIndex];
     const round = task && stage ? task.rounds[stage.id] ?? 1 : 1;
+    const findings = roleId !== undefined && this.role(roleId)?.result === "findings";
     // Security and port reviews follow the latest builder, including a replacement that did the port.
     const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
-    let made: { toolId: Id; modelId?: string } | undefined = roleId === "security-reviewer" || (task?.portReview && roleId === stage?.roleId)
+    let made: { toolId: Id; modelId?: string } | undefined = roleId === "security-reviewer" || (task?.portReview && stage?.kind === "review-chain" && findings)
       ? (task?.builderSession ? { toolId: task.builderSession.toolId, modelId: task.builderSession.model } : builder ? this.profile(builder) : undefined)
       : undefined;
     if (task && stage?.kind === "converge" && task.sub === 1 && roleId === (stage.reviewerRoleId ?? "design-reviewer")) {
@@ -500,14 +510,14 @@ export abstract class Kernel {
       made = author ? { toolId: author.toolId, modelId: author.modelRan ?? author.modelAsked } : this.profile(legacy ?? stage.profileIds[0] ?? "");
     }
     let peers: Id[] = [];
-    if (task && stage?.kind === "review-chain" && stage.roleId === roleId && !task.portReview) {
+    if (task && stage?.kind === "review-chain" && findings && !task.portReview) {
       const hunt = task.hunt?.stageId === stage.id && task.hunt.round === round ? task.hunt : undefined;
       const key = reviewerKey ?? String(stage.profileIds.indexOf(plannedId));
       // Older rounds saved reports without the profiles at their positions. Their latest verdicts
       // name the actual reviewers; replace the reported positions' planned tools with those tools.
       const legacy = hunt && Object.keys(hunt.reported).some((key) => !hunt.profiles?.[key])
         ? this.tracking.log.moments({ taskId: task.id, kinds: ["verdict"] })
-          .filter((entry) => entry.stageId === stage.id && entry.round === round && entry.roleId === roleId)
+          .filter((entry) => entry.stageId === stage.id && entry.round === round)
           .slice(-Object.keys(hunt.reported).length)
           .flatMap((entry) => { const profile = this.profile(entry.profileId ?? ""); return profile ? [profile.toolId] : []; })
         : [];
@@ -529,7 +539,8 @@ export abstract class Kernel {
       profiles: state.profiles.filter((profile) => usable.includes(profile.toolId)),
       tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
     } : state;
-    return chooseWithRoom(candidates, planned, Date.now(), { keep: roleId !== undefined && REVIEWING.has(roleId), awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
+    const reviewing = roleId !== undefined && ["findings", "objections", "votes"].includes(this.role(roleId)?.result ?? "");
+    return chooseWithRoom(candidates, planned, Date.now(), { keep: reviewing, awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) }, room);
   }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */

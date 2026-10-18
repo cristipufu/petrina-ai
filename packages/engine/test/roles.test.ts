@@ -24,7 +24,7 @@ describe("every role's contract", () => {
   });
 
   it("tells a role the coordinator made its purpose, and has it hand back notes", () => {
-    const contract = contractFor({ ...BUILT_IN_ROLES[0]!, id: "copy-editor", purpose: "Tighten the wording of every screen." });
+    const contract = contractFor({ ...BUILT_IN_ROLES[1]!, id: "added-copy-editor", added: true, purpose: "Tighten the wording of every screen.", instructions: "Tighten the wording of every screen." });
     expect(contract.instructions(ctx())).toBe("Tighten the wording of every screen.");
     expect(contract.reads).toEqual(["notes", "brief"]);
     expect(contract.result.safeParse({ summary: "Done.", notes: [] }).success).toBe(true);

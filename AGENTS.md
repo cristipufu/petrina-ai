@@ -16,9 +16,12 @@ Agents act with the coordinator's own logins: GitHub (gh, git's credential helpe
 - runs its own git steps with hooks off, and credentials only where GitHub needs them, to the product's saved address (`packages/engine/src/git.ts`),
 - reads Codex's usage itself (`codex app-server`, one `account/rateLimits/read`, then the process is stopped), with the coordinator's login the way agents run, because Codex's ACP adapter keeps those numbers to itself (`packages/engine/src/codex-usage.ts`),
 - enforces its checkpoints (plan, design, delivery) in the engine, and
+- keeps planned steps that may change the product before the final review, and
 - undoes whatever a read-only role leaves behind.
 
 Petrina also runs each product's checks itself (`packages/engine/src/checks.ts`), so a passing check is evidence, not an agent's word. Those commands come from the Check finder agent or the coordinator, run as argument arrays without a shell or GitHub login, and do not pass through a tool's safety checker: a repository that misleads the Check finder could get a harmful command run. The coordinator sees and can change the checks in the product's settings. In the same way, Petrina runs the repository's own commit hooks (pre-commit, commit-msg), as git would find them, on each task's whole change: they are the repository's code, run with no GitHub login, never by Petrina's own git steps.
+
+Roles are records the coordinator edits (`packages/core/src/roles.ts`). Decide what a role does from its kind of result (`role.result`), never from its name, so roles the coordinator adds behave like the built-in role they work like.
 
 Do not add security or sandboxing mechanisms of Petrina's own unless the task is about that.
 

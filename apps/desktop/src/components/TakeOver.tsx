@@ -155,7 +155,9 @@ function TakeOverDialog({ task, state, find, onClose, onToast }: { task: Task; s
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [launched, setLaunched] = useState<Launched>();
-  const role = find.role(task.agent?.roleId);
+  const conversation = task.conversation?.roleId === task.agent?.roleId ? task.conversation : undefined;
+  const role = conversation?.role ?? find.role(task.agent?.roleId);
+  const canEdit = conversation?.access?.canEdit ?? role?.canEdit;
   const profile = find.profile(task.agent?.profileId);
   const tool = toolName(profile?.toolId);
   const terminals = state.terminals ?? [];
@@ -205,8 +207,8 @@ function TakeOverDialog({ task, state, find, onClose, onToast }: { task: Task; s
         ) : (
           <>
             <p className="prose">
-              {role?.canEdit === false
-                ? `Petrina stops the ${role.name} first. It only reads, so anything it left unsaved is undone, as always.`
+              {canEdit === false
+                ? `Petrina stops the ${role?.name ?? "agent"} first. It only reads, so anything it left unsaved is undone, as always.`
                 : `Petrina stops the ${role?.name ?? "agent"} first and saves its unfinished work.`}{" "}
               {TAKE_OVER_WORDS.inCharge(tool)}
             </p>

@@ -6,6 +6,7 @@
 import { callOn, followingCall } from "./call.js";
 import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, Role, Stage, Task } from "./model.js";
 import { queueOf } from "./scheduler.js";
+import { reviewerAt } from "./roles.js";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -534,8 +535,9 @@ function stageSteps(task: Task, stage: Stage, index: number, ctx: Pick<JourneyCo
       if (from > 0) return [];
       // A port of an already reviewed change gets one reviewer, as the engine picks it.
       if (portAt(task, index)) {
-        const profileId = stage.profileIds[portReviewerIndex(task, stage.profileIds, (id) => ctx.profiles.find((profile) => profile.id === id)?.toolId)];
-        return [{ ...base, kind: "agent", round, port: true, roleId: stage.roleId, ...(profileId ? { profileId } : {}) }];
+        const reviewer = portReviewerIndex(task, stage.profileIds, (id) => ctx.profiles.find((profile) => profile.id === id)?.toolId);
+        const profileId = stage.profileIds[reviewer];
+        return [{ ...base, kind: "agent", round, port: true, roleId: reviewerAt(stage, reviewer), ...(profileId ? { profileId } : {}) }];
       }
       // Every reviewer looks at the change at once: one step for the round.
       return [{ ...base, kind: "agent", round, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}), ...(stage.profileIds.length > 1 ? { team: [...stage.profileIds] } : {}) }];

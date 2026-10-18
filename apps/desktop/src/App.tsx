@@ -33,6 +33,8 @@ import { Toasts, useToasts } from "./toasts";
 // dialogs. The top bar, the rail, the keyboard, the palette's actions, notification landings and toasts
 // each live in a module of their own.
 
+import { RolePanel, type RolePanelTarget } from "./components/Roles";
+
 type Sheet = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string };
 
 /** Below this width the inbox opens over the board instead of beside it. */
@@ -89,6 +91,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const [newTitle, setNewTitle] = useState("");
   const [inboxOpen, setInboxOpen] = useState(() => viewportSize().width >= DOCKED_INBOX);
   const [sheet, setSheet] = useState<Sheet>();
+  const [rolePanel, setRolePanel] = useState<RolePanelTarget>();
   const [creating, setCreating] = useState(false);
   const [addingProduct, setAddingProduct] = useState(false);
   // The engine adds any clone. Of the demos, only first run's has clones to add, Skip setup included.
@@ -101,8 +104,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const focusArea = useRef<KeyArea | undefined>(undefined);
   const { toasts, showToast, toast, dismiss } = useToasts();
   // Read by notification clicks, which arrive outside React's renders.
-  const latest = useRef({ state, dialog: creating || addingProduct, sheet: sheet !== undefined });
-  latest.current = { state, dialog: creating || addingProduct, sheet: sheet !== undefined };
+  const latest = useRef({ state, dialog: creating || addingProduct || Boolean(rolePanel), sheet: sheet !== undefined });
+  latest.current = { state, dialog: creating || addingProduct || Boolean(rolePanel), sheet: sheet !== undefined };
 
   // What the top bar gives up as the window narrows (or zooms, or text grows), in this order: the
   // wordmark and repeated wording, then the search field, the pool's squares, then pool and theme
@@ -240,15 +243,15 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     const el = id ? Array.from(document.querySelectorAll<HTMLElement>(`[${attr}]`)).find((node) => node.getAttribute(attr) === id) : area === "inbox" ? inboxPanel.current : document.querySelector<HTMLElement>(".board");
     if (id) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
     // Give Tab a starting point at the highlighted item, without taking focus from a field.
-    if (el && !palette && !creating && !addingProduct && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
+    if (el && !palette && !creating && !addingProduct && !rolePanel && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
       el.focus({ preventScroll: true });
       focusArea.current = undefined;
     }
-  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, shortcuts]);
+  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, rolePanel, shortcuts]);
 
   useGlobalKeys({
     palette,
-    modal: creating || addingProduct || shortcuts,
+    modal: creating || addingProduct || shortcuts || Boolean(rolePanel),
     sheetOpen: Boolean(sheet),
     area,
     singleKeys,
@@ -256,7 +259,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     boardId: currentBoardId,
     inboxId: currentInboxId,
     togglePalette: () => {
-      if (creating || addingProduct) return;
+      if (creating || addingProduct || rolePanel) return;
       if (palette) setPalette(false);
       else openPalette();
     },
@@ -343,7 +346,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         )}
         {view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
-        {view === "library" && <LibraryPage state={state} find={find} />}
+        {view === "library" && <LibraryPage state={state} find={find} onRole={setRolePanel} />}
         {view === "settings" && <SettingsPage state={state} product={productSettings} onProduct={setProductSettings} onShortcuts={() => setShortcuts(true)} />}
       </main>
 
@@ -357,6 +360,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       {sheetTask && sheet && (
         <TaskSheet task={sheetTask} state={state} find={find} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
       )}
+
+      {rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}
 
       <TakeOverDialogs state={state} find={find} onToast={(title, detail) => toast(title, detail)} />
 

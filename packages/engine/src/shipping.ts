@@ -15,6 +15,7 @@ import {
   endYouStep,
   JOURNEY_WORDS as W,
   lastIndexWhere,
+  reviewerAt,
   openStep,
   petrinaMoment,
   type DeliveryMode,
@@ -248,7 +249,7 @@ export class Shipping {
     if (acceptance.length) parts.push(`### Acceptance\n${acceptance.map((item) => (item.met === undefined ? `- ${item.text}` : `- [${item.met ? "x" : " "}] ${item.text}`)).join("\n")}`);
     const runs = task.checks?.results ?? [];
     if (runs.length) parts.push(`### Checks Petrina ran on this commit\n${runs.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} (\`${run.command}\`)`).join("\n")}`);
-    const reviewers = [...new Set((task.plan?.stages ?? []).filter((stage) => stage.kind === "review-chain").flatMap((stage) => stage.profileIds.map((profileId) => this.k.describe(stage.roleId, profileId))))];
+    const reviewers = [...new Set((task.plan?.stages ?? []).filter((stage) => stage.kind === "review-chain").flatMap((stage) => stage.profileIds.map((profileId, position) => this.k.describe(reviewerAt(stage, position), profileId))))];
     if (reviewers.length) parts.push(`### Reviewed by\n${reviewers.map((reviewer) => `- ${reviewer}`).join("\n")}`);
     const followUps = task.findings.filter((finding) => finding.status === "open" && finding.severity === "pre-existing");
     // Only a count: an older problem a reviewer noted (a security one, say) is not for a public pull request.

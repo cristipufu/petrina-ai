@@ -25,10 +25,10 @@ export class Work {
   async runDo(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const roleId = stage.roleId;
     const profileId = stage.profileIds[0] ?? "opus-xhigh";
-    const role = this.k.role(roleId);
+    const role = task.conversation?.roleId === roleId && task.conversation.role ? task.conversation.role : this.k.role(roleId);
     const sections = () => this.context.sectionsFor(task, roleId);
 
-    if (roleId === "builder") {
+    if (role?.result === "build") {
       if (task.miss) await this.guide.proposeGuideLine(task, signal);
       const updating = task.updating;
       if (updating) await this.updates.reopen(task);
@@ -90,7 +90,7 @@ export class Work {
         updating ? { outcome: W.broughtUpToDate, reason: W.upToDate } : fixing ? { outcome: W.fixed(fixed), reason: W.fixesReady } : { outcome: sha ? W.built : W.unchanged, reason: W.readyForReview },
         Date.now(),
       );
-    } else if (roleId === "tester") {
+    } else if (role?.result === "checks") {
       const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal);
       await this.learnings.note(task, result.learnings, roleId, profileId);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => ({ ...item, met: result.checks.find((check) => check.text === item.text)?.pass ?? item.met }));
@@ -119,14 +119,13 @@ export class Work {
       }
     } else {
       const result = await this.turns.turn(task, roleId, profileId, sections, NotesResult, signal);
+      const handed = { at: Date.now(), profileId, stageId: stage.id, roleId, roleName: task.conversation?.role?.name ?? role?.name ?? roleId, title: stage.title, summary: result.summary, notes: result.notes };
+      task.handedBack = [...(task.handedBack ?? []).filter((entry) => entry.stageId !== stage.id), handed];
       this.k.say(task, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, profileId);
       this.k.log(task, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, profileId);
       endAgentStep(task, { outcome: W.wroteNotes, reason: W.notesReady }, Date.now());
     }
-    if (role && !role.canEdit && task.worktree && !(await git.isClean(task.worktree))) {
-      await git.discardChanges(task.worktree);
-      this.k.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
-    }
+    if (role?.result !== "build") await this.k.saveRoleEdits(task, roleId, profileId);
     this.k.finishStep(task);
     this.k.tracking.endStage(task, "done");
     if (this.k.rerun(task)) return "continue";

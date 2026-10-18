@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { checksFingerprint, detectChecks, parseCommand, runChecks } from "../src/checks.js";
 import { Engine } from "../src/engine.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor, SLOW } from "./support.js";
+import { Fakes, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -96,6 +96,17 @@ describe("a product's checks", () => {
 });
 
 describe("a check that misbehaves", () => {
+  it("reports fast failures when many checks finish together, without waiting for their timeout", async () => {
+    // A minute leaves room for 24 programs starting at once while the load climbs after SLOW was measured.
+    // A failure Petrina missed would still be cut off at that limit and show as timed out.
+    const results = await runChecks(root("petrina-checks-fast-"), Array.from({ length: 24 }, (_, index) => ({ name: `Check ${index}`, argv: [process.execPath, "-e", "console.error('Failed right away'); process.exit(1)"] })), process.env, 60_000 * SLOW);
+    for (const result of results) {
+      expect(result.ok).toBe(false);
+      expect(result.timedOut).toBeUndefined();
+      expect(result.output).toContain("Failed right away");
+    }
+  });
+
   it.skipIf(process.platform === "win32")("keeps only the end of a flood of output", async () => {
     const [run] = await runChecks(root("petrina-checks-flood-"), [{ name: "Noisy", argv: ["sh", "-c", "yes petrina | head -c 5000000; echo the-end"] }], process.env);
     expect(run!.ok).toBe(true);

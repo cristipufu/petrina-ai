@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ROLE_STARTS } from "@petrina/core";
 import { Context } from "../src/context.js";
 import { Engine } from "../src/engine.js";
 import { fileAt } from "../src/git.js";
@@ -86,6 +87,33 @@ describe("reading a product's committed files", () => {
       expect(sections.find((section) => section.title.startsWith("The coordinator's notes"))?.body).toContain("Keep the existing welcome page.");
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("Every greeting also shows on the welcome page.");
       expect(task.queued).toEqual([]);
+    } finally {
+      engine.shutdown();
+    }
+  });
+
+  it("keeps earlier role notes and new coordinator notes for an added reviewer while its guide is read", async () => {
+    const root = join(folder, "added-context");
+    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    try {
+      engine.setPoolPaused(true);
+      const reviewer = engine.addRole(ROLE_STARTS.find((start) => start.id === "security")!.draft);
+      const productId = await engine.addProduct(makeProduct(root));
+      const taskId = engine.addTask({ productId, title: "Keep every role's notes" });
+      const task = engine.task(taskId)!;
+      task.handedBack = [{ stageId: "research", roleId: "researcher", roleName: "Researcher", title: "Research", at: Date.now(), summary: "The welcome page is important.", notes: ["Keep its greeting visible."] }];
+      let finish!: (points: string[]) => void;
+      const pending = new Promise<string[]>((resolve) => { finish = resolve; });
+      const guide = { pendingPoints: () => pending } as unknown as GuideKeeper;
+      const reading = new Context(engine, guide).sectionsFor(task, reviewer);
+      engine.sendMessage(taskId, "Check the welcome page too.");
+      expect(task.queued).toHaveLength(1);
+      finish(["The welcome page must show who can see each greeting."]);
+      const sections = await reading;
+      expect(sections.find((section) => section.title.startsWith("The coordinator's notes"))?.body).toContain("Check the welcome page too.");
+      expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("The welcome page must show who can see each greeting.");
+      expect(sections.find((section) => section.title === "What earlier agents on this task handed back")?.body).toBe("Researcher, in “Research”: The welcome page is important.\n- Keep its greeting visible.");
+      expect(task.queued).toHaveLength(0);
     } finally {
       engine.shutdown();
     }

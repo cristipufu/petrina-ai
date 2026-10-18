@@ -50,6 +50,7 @@ export interface PromptContext {
   defaultBranch: string;
   /** Extra sections: the brief, objections, findings, review results, notes from the coordinator. */
   sections: readonly { title: string; body: string }[];
+  access?: { canEdit: boolean; afterReview?: boolean };
 }
 
 const RESULT_FOOTER = (shape: string) => `
@@ -77,6 +78,17 @@ If a check truly needs the running app on screen, don't do it: list it in your r
 /** Agents act with the coordinator's own logins: to read and investigate, never to publish. */
 export const LOGINS = `You act with the coordinator's own logins on this computer: GitHub (gh and git), SSH, AWS, Azure and Azure DevOps. Use them to read and investigate freely: code and repositories, private dependencies, pull requests, reviews and CI logs. Never push, open, merge, close or comment on pull requests, create tags or releases, or change anything else on GitHub: Petrina publishes the work itself after the coordinator approves it. Do not publish, merge or change shared resources anywhere else either (cloud accounts, Azure DevOps, registries), unless the task asks for it.`;
 
+export const MAY_CHANGE = {
+  readOnly: "You are read-only: anything you change in the working copy is undone when your step ends.",
+  afterReview: "This step comes after the final review, so you are read-only here: anything you change in the working copy is undone when your step ends.",
+  canEdit: "You may change the product: Petrina commits your changes on the task's branch when your step ends, and the reviewers check them.",
+} as const;
+
+export function roleCard(ctx: PromptContext): string {
+  if (ctx.role.id === "release-manager") return "";
+  return `\n\nYour role: ${ctx.role.purpose}\n${ctx.access?.afterReview ? MAY_CHANGE.afterReview : (ctx.access?.canEdit ?? ctx.role.canEdit) ? MAY_CHANGE.canEdit : MAY_CHANGE.readOnly}\nWhat you hand back: ${ctx.role.handsBack || ctx.role.result}`;
+}
+
 export function buildPrompt(ctx: PromptContext): string {
   const { task, product, role, worktree, branch } = ctx;
   const contract = contractFor(role);
@@ -94,7 +106,7 @@ ${LOGINS}
 ${task.description || "(no further description)"}
 
 # Your job
-${contract.instructions(ctx)}
+${contract.instructions(ctx)}${roleCard(ctx)}
 
 ${sections}
 
@@ -112,7 +124,7 @@ export function continuePrompt(ctx: PromptContext): string {
   return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}). What you learned before still holds; here is where things stand now.
 
 # Your job now
-${contract.instructions(ctx)}
+${contract.instructions(ctx)}${roleCard(ctx)}
 
 ${sections}
 

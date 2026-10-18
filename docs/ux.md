@@ -33,7 +33,7 @@ What success feels like: many pull requests a day, little time spent being the t
 | Task | Something you want done. Lives on the board |
 | Queue | Tasks waiting to start, in priority order |
 | Pool | How many agents may work at the same time (slots) |
-| Squad | The roles available: Planner, Architect, Builder, Reviewer… |
+| Squad | The roles available: Planner, Architect, Builder, Reviewer…, and any you add |
 | Agent | A role running on a tool, model and effort, working one stage of one task |
 | Plan | The stages the planner proposes for a task |
 | Inbox | Everything waiting on you |
@@ -289,7 +289,13 @@ Cards, board columns, the Agents page and the inbox show no usage numbers, so th
 
 ## Library
 
-- **Roles:** cards with icon, purpose, permissions and what each one hands back. Edited in a plain-language form.
+- **Roles:** a card per role with its icon, purpose, what it may change, what it sees and what it hands back. Built-in roles say "Built-in", plus "Edited" once changed; roles you add say "Added by you". **Add a role**, at the top of the section, starts one from blank, from a Security reviewer or from a Copywriter, with a name, an icon and a colour of your choice.
+  - **Edit** opens a panel from the right that asks, in plain words: what it's for (the planner reads this to decide when to bring it in), how it works (what the agent is told), what it may change and what it hands back. Below them it shows what Petrina decides: where its tasks sit on the board and what it sees. No code, ids or settings. Save is explicit (⌘↵); Cancel, Escape or closing with unsaved changes asks first.
+  - **What it may change:** Read-only (anything it changes is undone when its step ends) or Can change the product (its changes are saved on the task's branch and checked by the reviewers). Roles that change the product always work before the final review: Petrina handles delivery itself after it. The choice is locked, with the reason shown, for the Planner (always read-only), the reviewers (they never change the work they judge) and the Builder (it always makes changes).
+  - **What it hands back:** a role you add hands back Notes, which every later agent on the task reads, or Pass-or-fail findings, which put it in the review next to the code reviewers, its blocking findings going back to the builder. You choose once: to hand back something else, add a new role. Built-in roles keep their name, icon and kind of result, because Petrina depends on them; their description can change.
+  - **Reset to default** brings back Petrina's wording and settings for an edited built-in role, after you confirm. **Remove role** takes a role you added out of the Library and the planner, after a confirmation that names any unfinished task using it: tasks already planned with it still run it, and past tasks still show its name and icon.
+  - The **Release Manager** has View instead of Edit. It writes release notes, read-only, and can't be edited here. Petrina adds delivery last and handles publishing itself, as before.
+  - The engine saves the changes and keeps them across restarts. They reach the next agent that starts and the next plan the planner makes; an agent already working finishes with the version it started with. Roles you add appear in plans with their icon and name like any other; when the planner puts one where it can't work, the plan's reason says what Petrina changed. In the demo, changes apply to the simulated squad for the session.
 - **Tools on this machine:** Claude Code, Codex and the GitHub CLI, plus Grok when installed (Git and Node.js when missing), with the same statuses and fixes as first run, and Check again.
 - **Your terminal:** where Take over in terminal opens, the usual one on this machine unless you pick another. When Petrina finds none, it says so: take over still works by copying a command.
 - **Templates:** example plans the planner learns from.
@@ -320,7 +326,7 @@ Then the board, with the first card on its Plan step and a one-time tip that fol
 - Calm and airy, warm neutrals. Light mode puts white content on warm off-white surroundings; dark mode puts visibly raised charcoal surfaces on graphite. Both are deliberate, not inverted.
 - One accent colour (Petrina violet), used for the one solid button, New task, and for selection. Decisions lead with a charcoal button in light mode and a pale one in dark mode. Secondary actions are neutral surfaces or plain text. Semantic colours: running blue, needs-you amber, done green, failed red, queued slate.
 - Fewer borders, pills and chips: states, counts and tool information are quiet text.
-- Each role has an icon and a colour:
+- Each role has an icon and a colour. Roles you add pick their own:
 
 | Role | Icon | Colour |
 |---|---|---|

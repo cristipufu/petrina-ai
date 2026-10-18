@@ -4,6 +4,7 @@
 // for the demo, are built from this list. Adding a command: one entry here and in COMMAND_NAMES, its
 // argument schema, and its Engine method (and its Simulator method, if the demo should do something).
 
+import type { RoleDraft } from "./roles.js";
 import type { DeliveryMode, Id, TaskKind } from "./model.js";
 import type { ProductSettings } from "./products.js";
 import type { Clone, SetupStep } from "./setup.js";
@@ -36,6 +37,10 @@ export interface SaidContext {
 }
 
 export interface Commands {
+  saveRole(roleId: Id, draft: RoleDraft): void;
+  addRole(draft: RoleDraft): Id;
+  resetRole(roleId: Id): void;
+  removeRole(roleId: Id): void;
   // Products
   addProduct(path: string, name?: string): Promise<Id>;
   removeProduct(productId: Id): void;
@@ -106,6 +111,7 @@ export type CommandName = keyof Commands;
 
 /** Every command by name, for the code that handles them all the same way. */
 export const COMMAND_NAMES = [
+  "saveRole", "addRole", "resetRole", "removeRole",
   "addProduct",
   "removeProduct",
   "updateProduct",

@@ -276,6 +276,7 @@ function names(state: State, log: WorkLogReader) {
   return {
     tool: (id: Id) => tools.get(id)?.name ?? TOOL_NAMES[id] ?? id,
     role: (id: Id) => roles.get(id)?.name ?? id,
+    roleResult: (id: Id) => roles.get(id)?.result,
     product: (id: Id): { label: string; removed: boolean } => {
       const current = products.get(id);
       if (current) return { label: current.name, removed: false };
@@ -609,7 +610,10 @@ function squadView(turns: readonly WorkTurn[], moments: readonly WorkMoment[], b
     }
     return entry;
   };
-  const bucketOfRole = (roleId: Id) => (roleId === "code-reviewer" || roleId === "security-reviewer" ? "reviewer" : roleId === "architect" ? "architect" : roleId === "design-reviewer" ? "design-reviewer" : undefined);
+  const bucketOfRole = (roleId: Id) => {
+    const result = n.roleResult(roleId);
+    return result === "findings" ? "reviewer" : result === "brief" ? "architect" : result === "objections" ? "design-reviewer" : undefined;
+  };
   for (const [key, list] of agentStages) {
     const bucket = bucketOfRole(list[0]!.roleId);
     const who = labelOf(list[0]!.taskId, key);

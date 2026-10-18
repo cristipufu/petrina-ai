@@ -4,7 +4,7 @@
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { followingCall, type Role, type Task } from "@petrina/core";
+import { activeRoles, BUILT_IN_ROLES, stepOf, followingCall, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 
@@ -17,6 +17,7 @@ export const PlanResult = z.object({
         title: z.string().min(1).max(60),
         roleId: z.string(),
         profileIds: z.array(z.string()).default([]),
+        roleIds: z.array(z.string()).max(12).optional(),
         reviewerRoleId: z.string().optional(),
         reviewerProfileIds: z.array(z.string()).optional(),
         maxRounds: z.number().int().min(1).max(5).optional(),
@@ -127,6 +128,8 @@ export interface RoleContract {
   shape: string | ((ctx: PromptContext) => string);
   /** Its job on this task. */
   instructions: (ctx: PromptContext) => string;
+  /** A saved job whose task-specific introduction sits outside the editable wording. */
+  withInstructions?: (ctx: PromptContext, wording: string) => string;
 }
 
 /** The review round the task is in (1 for the first). */
@@ -193,7 +196,7 @@ export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
   {"kind": "review-chain", "title": "Review", "roleId": "code-reviewer", "profileIds": ["<profile id>", "<profile id on another tool>"], "maxRounds": 2}
 ], "risk": {"level": "medium", "why": "What it touches, in plain words"}}`,
     instructions: (ctx) => {
-      const roles = ctx.roles.filter((entry) => !entry.internal).map((entry) => `- ${entry.id}: ${entry.purpose}`).join("\n");
+      const roles = plannerRoles(ctx.roles);
       const toolName = (toolId: string) => ADAPTERS[toolId]?.name ?? toolId;
       const profiles = ctx.profiles.filter((profile) => !profile.standby).map((profile) => `- ${profile.id}: ${toolName(profile.toolId)} running ${profile.model} at ${profile.effort} effort`).join("\n");
       const tools = [...new Set(ctx.profiles.map((profile) => profile.toolId))];
@@ -215,6 +218,8 @@ Stage kinds:
 Rules:
 - Size the plan to the task. A small fix can be a builder and two reviewers. Something new deserves research, a converge design, a design gate, a builder, maybe a tester, and a review chain.
 - Always include exactly one builder stage before the review chain.
+- Use findings roles only in review-chain stages. For a mix of roles, list roleIds in the same order as profileIds. Notes and checks roles work in do stages; only the Architect and Design reviewer work in converge stages.
+- Put every stage that may change the product before the final review chain. Read-only stages may follow it. Petrina handles delivery itself.
 - Prefer putting the reviewer of a piece of work on a different tool than its author.
 - Do not add delivery stages; Petrina adds them.${oneTool}
 - Rate the task's risk from what it touches, and say why in plain words:
@@ -311,6 +316,12 @@ Do not change any files.`;
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
     shape: `{"verdict": "pass", "findings": [{"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": [], "disputes": [], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
+    withInstructions: ({ task, base, branch }, wording) => `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`).${task.portReview ? portClause(task.portReview) : ""}
+${wording}
+${GUIDE_RULE(base)}
+Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
+${LEARN}
+Do not change any files.`,
     instructions: ({ task, base, branch }) => {
       return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`) for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.${task.portReview ? portClause(task.portReview) : ""}
 ${GUIDE_RULE(base)}
@@ -324,6 +335,9 @@ Do not change any files.`;
     result: VerifyResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results"],
     shape: `{"verdicts": [{"id": "<finding id>", "verdict": "real", "reason": "What you checked and what it showed"}]}`,
+    withInstructions: ({ base, branch }, wording) => `Reviewers raised the Important findings below about the change on branch ${branch} (see \`git diff ${base}...HEAD\`). The starting version is ${base}.
+${wording}
+Do not change any files.`,
     instructions: ({ base, branch }) => {
       return `Reviewers raised the Important findings below about the change on branch ${branch} (see \`git diff ${base}...HEAD\`). Before any of them can send the work back to the builder, check each one yourself, with fresh eyes: read the code, and run a single test when that is the quickest proof. For each finding, by id, give your verdict:
 - "real": the change should not ship with it;
@@ -368,11 +382,41 @@ Do not change any files, and do not commit, tag, push or publish anything: Petri
   },
 };
 
-/** A role the coordinator made has no entry: it is told its purpose and hands back notes. */
-const CUSTOM: Omit<RoleContract, "instructions"> = { result: NotesResult, reads: ["notes", "brief"], shape: `{"summary": "What you found, in plain language", "notes": ["One finding per line"]}` };
+/** What the planner can choose, including roles the coordinator added. */
+export function plannerRoles(roles: readonly Role[]): string {
+  const fits = { do: 'a "do" stage', design: 'the author of a "converge" stage', "design-review": 'the reviewer of a "converge" stage', review: 'a reviewer in a "review-chain" stage' };
+  return activeRoles(roles).filter((role) => !role.internal && stepOf(role)).map((role) => `- ${role.id} (${role.name}): ${role.purpose} | ${role.canEdit ? "changes the product" : "read-only"} | hands back: ${role.handsBack || role.result} | fits: ${fits[stepOf(role)!]}`).join("\n");
+}
 
+/** The contract follows the result, so a coordinator's added reviewer works like a built-in reviewer. */
 export function contractFor(role: Role): RoleContract {
-  return ROLE_CONTRACTS[role.id] ?? { ...CUSTOM, instructions: () => role.purpose };
+  const builtIn = BUILT_IN_ROLES.find((entry) => entry.id === role.id);
+  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "findings" ? "code-reviewer" : "researcher"]!;
+  if (role.id === "release-manager") return contract;
+  return { ...contract, instructions: (ctx) => {
+    const original = contract.instructions(ctx);
+    if (builtIn && role.instructions === builtIn.instructions) {
+      // Changing a built-in reader to an editor must not leave its default "change nothing" wording in force.
+      if (role.canEdit && !builtIn.canEdit) return original
+        .replace("Do not change any files: your output is the design brief.", "Hand back the design brief.")
+        .replace("Do not change any files: describe the design in your notes.", "Describe the design in your notes.")
+        .replace(" Do not change any files.", "")
+        .replace(" Do not change files.", "");
+      return original;
+    }
+    // Keep runtime guidance and Petrina's fixed rules around the editable wording.
+    if (contract.withInstructions) return contract.withInstructions(ctx, role.instructions);
+    const defaultText = builtIn?.instructions;
+    if (defaultText && original.includes(defaultText)) return original.replace(defaultText, role.instructions);
+    if (role.result === "findings") {
+      const defaults = BUILT_IN_ROLES.find((entry) => entry.id === "code-reviewer")!.instructions;
+      return original.replace(defaults, `${role.instructions}\n${defaults}`);
+    }
+    if (role.result === "plan") return `${role.instructions}\n\n${original.slice(original.indexOf("Roles you can use:"))}`;
+    if (role.result === "brief" && followingCall(ctx.task)) return `${role.instructions}\n\n${original}`;
+    if (role.result === "notes") return role.canEdit ? `${role.instructions}\nDo not commit, push or open pull requests: Petrina commits your work.` : role.instructions;
+    return role.instructions;
+  } };
 }
 
 export function shapeFor(contract: RoleContract, ctx: PromptContext): string {

@@ -1,4 +1,4 @@
-import { landingOf, type AgentProfile, type Effort, type Id, type Role, type RunState, type State, type Task, type Tool } from "@petrina/core";
+import { landingOf, type AgentProfile, type Column, type Effort, type Id, type Role, type RoleIcon, type RoleResult, type RunState, type State, type Task, type Tone, type Tool } from "@petrina/core";
 
 export function lookup(state: State) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
@@ -91,3 +91,62 @@ export function safeUrl(url: string | undefined): string | undefined {
     return undefined;
   }
 }
+
+/** What each kind of result is, in the Library's words. */
+export const RESULT_WORDS: Record<RoleResult, { label: string; detail: string }> = {
+  plan: { label: "A plan", detail: "The steps for the task, with a reason for each." },
+  notes: { label: "Notes", detail: "A summary and a list that every later agent on the task reads." },
+  brief: { label: "A design brief", detail: "What changes for users, the parts that change, an acceptance checklist and risks." },
+  objections: { label: "Objections", detail: "Each one blocking or not. The architect answers every one." },
+  build: { label: "A change ready for review", detail: "With a plain-language summary that goes into the pull request." },
+  checks: { label: "Pass or fail per acceptance item", detail: "Failed checks go back to the builder." },
+  findings: { label: "Pass-or-fail findings", detail: "It joins the review next to the code reviewers. Its blocking findings go back to the builder." },
+  delivery: { label: "Release notes", detail: "Notes for a release that Petrina publishes itself." },
+  "check-discovery": { label: "Product checks", detail: "The checks Petrina runs on the work." },
+  guide: { label: "Review guide point", detail: "A proposed point to help future reviews." },
+  votes: { label: "Verdicts on findings", detail: "An independent check of important findings." },
+};
+
+/** The stage a task is in while a role works on it, as the Products page counts them. */
+export const COLUMN_LABEL: Record<Column, string> = {
+  queue: "Queue",
+  planning: "Planning",
+  designing: "Designing",
+  building: "Building",
+  reviewing: "Reviewing",
+  ready: "Ready to ship",
+  done: "Done",
+};
+
+export const ICON_NAME: Record<RoleIcon, string> = {
+  lightbulb: "Light bulb",
+  shield: "Shield",
+  pen: "Pen",
+  megaphone: "Megaphone",
+  chart: "Chart",
+  globe: "Globe",
+  users: "People",
+  bug: "Bug",
+  book: "Book",
+  compass: "Compass",
+  scale: "Scales",
+  palette: "Palette",
+  hammer: "Hammer",
+  flask: "Flask",
+  search: "Magnifier",
+  map: "Map",
+  rocket: "Rocket",
+};
+
+export const TONE_NAME: Record<Tone, string> = {
+  blue: "Blue",
+  teal: "Teal",
+  green: "Green",
+  orange: "Orange",
+  amber: "Amber",
+  pink: "Pink",
+  purple: "Purple",
+  violet: "Violet",
+  indigo: "Indigo",
+  slate: "Slate",
+};

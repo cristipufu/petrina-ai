@@ -1,7 +1,7 @@
 // The task sheet's Plan tab: why this plan, its risk, and its stages, with who works on each.
 
 import { Check, Repeat, ShieldCheck } from "lucide-react";
-import type { RiskLevel, Stage, State, Task } from "@petrina/core";
+import { reviewerAt, type RiskLevel, type Stage, type State, type Task } from "@petrina/core";
 import { sim } from "../../engine";
 import { profileText, type Lookup } from "../../lib";
 import { ProfileText, RoleAvatar } from "../bits";
@@ -9,7 +9,7 @@ import { ProfileText, RoleAvatar } from "../bits";
 const KIND_LABEL: Record<Stage["kind"], string> = {
   do: "",
   converge: "Until both agree",
-  "review-chain": "One after another",
+  "review-chain": "At the same time",
   gate: "Your check",
 };
 
@@ -96,14 +96,22 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
                       </>
                     ) : (
                       <>
-                        <RoleAvatar role={role} size={20} />
-                        {role?.name}
-                        {stage.profileIds.map((profileId, at) => (
-                          <span key={`${profileId}-${at}`} className="row" style={{ gap: 8 }}>
-                            {at > 0 && <span aria-label="then">→</span>}
-                            {select(stage, "profileIds", at, profileId, editable)}
-                          </span>
-                        ))}
+                        {stage.kind !== "review-chain" && (
+                          <>
+                            <RoleAvatar role={role} size={20} />
+                            {role?.name}
+                          </>
+                        )}
+                        {stage.profileIds.map((profileId, at) => {
+                          const reviewer = stage.kind === "review-chain" ? find.role(reviewerAt(stage, at)) : undefined;
+                          return (
+                            <span key={`${profileId}-${at}`} className="row" style={{ gap: 8 }}>
+                              {at > 0 && <span aria-label="and">·</span>}
+                              {stage.kind === "review-chain" && <><RoleAvatar role={reviewer} size={20} />{reviewer?.name}</>}
+                              {select(stage, "profileIds", at, profileId, editable)}
+                            </span>
+                          );
+                        })}
                         {stage.kind === "review-chain" && editable && (
                           <button className="btn quiet small" onClick={() => sim.addReviewer(task.id, stage.id, "sonnet-medium")}>
                             Add a reviewer

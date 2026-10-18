@@ -2,12 +2,13 @@ import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { queueOf, slotUses, type State } from "@petrina/core";
 import { mode, sim } from "../engine";
 import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
-import { ProductName, RoleAvatar, ROLE_ICONS } from "./bits";
+import { ProductName, RoleAvatar } from "./bits";
 import { LimitStepper } from "./Pool";
 import { UsageList } from "./Usage";
 import { ReviewsPanel } from "./Reviews";
 import { drivingText, openHandBack } from "./TakeOver";
 import { CheckAgain, shownChecks, ToolList, useCheckOnReturn } from "./Tools";
+import { RolesSection, type RolePanelTarget } from "./Roles";
 import type { SheetTab } from "./TaskCard";
 
 /** One tile per pool slot: who is in it, what they are doing, and a way in. Several reviewers at once have a tile each. */
@@ -124,7 +125,7 @@ function TerminalPicker({ state }: { state: State }) {
 const TOOL_STATUS = { ready: "Ready", "logged-out": "Needs you to log in", "not-installed": "Not installed" } as const;
 
 /** The squad's roles, the tools found on this machine, and the profiles built from them. */
-export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
+export function LibraryPage({ state, find, onRole }: { state: State; find: Lookup; onRole: (target: RolePanelTarget) => void }) {
   // Back from running a fix in Terminal: the tools are checked again by themselves.
   useCheckOnReturn(mode === "engine");
   const usage = (profileId: string) =>
@@ -139,39 +140,11 @@ export function LibraryPage({ state, find }: { state: State; find: Lookup }) {
       <div className="page-head">
         <div>
           <h1>Library</h1>
-          <p>Roles are separate from tools: any role can run on any tool, model and effort.</p>
+          <p>Roles are separate from tools: any role can run on any tool, model and effort. Edit what each one does, or add your own.</p>
         </div>
       </div>
 
-      <h2 className="section-title">Roles</h2>
-      <div className="grid">
-        {state.roles.map((role) => {
-          const Icon = ROLE_ICONS[role.icon];
-          return (
-            <div key={role.id} className="tile role-card">
-              <div className="head">
-                <span className={`avatar tone-${role.tone}`} style={{ width: 32, height: 32, borderRadius: 10 }} aria-hidden="true">
-                  <Icon size={18} strokeWidth={2.2} />
-                </span>
-                <div>
-                  <div className="name">{role.name}</div>
-                  <div className="quiet-text" style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>
-                    {role.canEdit ? "Edits the product" : "Read-only"}
-                    {role.internal ? " · Run by Petrina" : ""}
-                  </div>
-                </div>
-              </div>
-              <div style={{ color: "var(--text-2)" }}>{role.purpose}</div>
-              <dl>
-                <dt>Sees</dt>
-                <dd>{role.sees}</dd>
-                <dt>Hands back</dt>
-                <dd>{role.handsBack}</dd>
-              </dl>
-            </div>
-          );
-        })}
-      </div>
+      <RolesSection state={state} onOpen={onRole} />
 
       <h2 className="section-title">Tools on this machine</h2>
       {state.setup ? (

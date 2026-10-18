@@ -33,24 +33,78 @@ export interface AgentProfile {
   standby?: boolean;
 }
 
-export type RoleIcon = "map" | "book" | "compass" | "scale" | "palette" | "hammer" | "flask" | "search" | "rocket";
+export type RoleIcon =
+  | "map"
+  | "book"
+  | "compass"
+  | "scale"
+  | "palette"
+  | "hammer"
+  | "flask"
+  | "search"
+  | "rocket"
+  | "shield"
+  | "pen"
+  | "lightbulb"
+  | "megaphone"
+  | "chart"
+  | "globe"
+  | "users"
+  | "bug";
+
+/** The icons and colours a role the coordinator adds can pick from. */
+export const ROLE_ICON_CHOICES: readonly RoleIcon[] = ["lightbulb", "shield", "pen", "megaphone", "chart", "globe", "users", "bug", "book", "compass", "scale", "palette", "hammer", "flask", "search", "map", "rocket"];
 
 export type Tone = "indigo" | "orange" | "violet" | "purple" | "pink" | "blue" | "green" | "teal" | "slate" | "amber";
 
-/** A role is data: what the agent is for, what it may do, what it sees and what it hands back. */
+export const TONE_CHOICES: readonly Tone[] = ["blue", "teal", "green", "orange", "amber", "pink", "purple", "violet", "indigo", "slate"];
+
+/**
+ * The kind of result a role hands back. It decides which kind of step the role works in, and it never
+ * changes: built-in roles have theirs, and a role the coordinator adds hands back notes or findings.
+ */
+export type RoleResult = "plan" | "notes" | "brief" | "objections" | "build" | "checks" | "findings" | "delivery" | "check-discovery" | "guide" | "votes";
+
+/** A role is data: what the agent is for, how it works, what it may do, what it sees and what it hands back. */
 export interface Role {
   id: Id;
   name: string;
   icon: RoleIcon;
   tone: Tone;
+  /** What the role is for. The planner reads it to decide when to bring the role in. */
   purpose: string;
+  /** How it works: what the agent is told. Petrina adds the task, the notes and its own rules around it. */
+  instructions: string;
   canEdit: boolean;
   sees: string;
   handsBack: string;
+  result: RoleResult;
   /** The board column a task sits in while this role works on it. */
   column: Column;
   /** Petrina runs this role itself: the planner is never told it exists, and a plan cannot use it. */
   internal?: boolean;
+  /** The coordinator added it. */
+  added?: boolean;
+  /** A built-in role the coordinator changed. */
+  edited?: boolean;
+  /** An added role the coordinator removed: gone from the Library and the planner, still known to tasks planned with it. */
+  removed?: boolean;
+}
+
+/** What the coordinator changed in a built-in role. Fields never changed keep following Petrina's defaults. */
+export interface RoleEdit {
+  purpose?: string;
+  instructions?: string;
+  canEdit?: boolean;
+  handsBack?: string;
+}
+
+/** Everything the coordinator changed in the roles, saved by the engine. */
+export interface RoleChanges {
+  /** Built-in roles, by id: only the fields that differ from Petrina's defaults. */
+  edits: Readonly<Record<Id, RoleEdit>>;
+  /** Roles the coordinator added, in the order they were added. */
+  added: readonly Role[];
 }
 
 export type Column = "queue" | "planning" | "designing" | "building" | "reviewing" | "ready" | "done";
@@ -69,6 +123,8 @@ export interface Stage {
   roleId: Id;
   /** `do`: one profile. `converge`: the author. `review-chain`: the reviewers, in order. */
   profileIds: readonly Id[];
+  /** `review-chain`: the role of each reviewer in `profileIds`, in order. Missing: `roleId`. */
+  roleIds?: readonly Id[];
   /** `converge` only. */
   reviewerRoleId?: Id;
   reviewerProfileIds?: readonly Id[];
@@ -236,6 +292,16 @@ export interface ConversationNote {
   sessionId: string;
   /** The working copy's commit when the step first started. */
   head?: string;
+  /**
+   * What the step's agent may change, as it stood when the step first started. A restart keeps it,
+   * so a role made read-only meanwhile never undoes work its agent already did.
+   */
+  access?: { canEdit: boolean; afterReview?: boolean };
+  /**
+   * The role as it stood when the step first started. Its agent keeps this version, wording and
+   * name included, until the step finishes, restarts included: a change to the role reaches the next agent.
+   */
+  role?: Role;
   /** When the step first started. */
   startedAt: number;
   /** The question the agent is waiting on in this conversation, with the coordinator's answer once there is one. */
@@ -356,6 +422,8 @@ export interface Finding {
   evidence?: string;
   severity: "blocking" | "suggestion" | "pre-existing";
   raisedBy: Id;
+  /** The role of the reviewer who raised it, when it is not the code reviewer. */
+  roleId?: Id;
   confirmedBy: readonly Id[];
   /** Later reviewers who think it is wrong, and why. */
   disputes?: readonly FindingDispute[];
@@ -401,6 +469,8 @@ export interface Hunt {
   voted?: Readonly<Record<Id, true>>;
   /** How many findings the task had when the round began: what the round's reviewers raise comes after. */
   findings?: number;
+  /** Each parallel agent's starting role, by reviewer place or voter profile, through interruptions. */
+  roles?: Readonly<Record<string, Role>>;
 }
 
 /** One voter's verdict on an Important finding. */
@@ -423,6 +493,18 @@ export interface FindingDispute {
   by: Id;
   reason: string;
   at: number;
+}
+
+/** What a role that hands back notes handed back. Every later agent on the task reads it. */
+export interface HandedBack {
+  stageId: Id;
+  roleId: Id;
+  profileId?: Id;
+  at: number;
+  roleName?: string;
+  title?: string;
+  summary: string;
+  notes: readonly string[];
 }
 
 export interface PullRequest {
@@ -541,7 +623,8 @@ export interface Task {
   branch?: string;
   worktree?: string;
   base?: string;
-  /** What the builder reported, in plain language, and its one-line commit title. Goes into the pull request. */
+  /** Notes handed back by earlier steps, for every later agent on the task. */
+  handedBack?: readonly HandedBack[];
   /**
    * What the builder reported, in plain language: its one-line commit title, and a pull request's description,
    * which Petrina publishes as the builder wrote it.
@@ -727,7 +810,10 @@ export interface State {
   now: number;
   seq: number;
   products: readonly Product[];
+  /** Every role: the built-in ones as the coordinator left them, then the ones they added. */
   roles: readonly Role[];
+  /** What the coordinator changed in the roles. `roles` is built from it. */
+  roleChanges?: RoleChanges;
   tools: readonly Tool[];
   profiles: readonly AgentProfile[];
   tasks: readonly Task[];

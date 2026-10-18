@@ -540,6 +540,28 @@ describe('the app keyboard', () => {
     expect(document.activeElement).toBe(field);
     expect(el('.inbox-item.selected').getAttribute('data-inbox-id')).toBe(id);
   });
+  it('leaves the role panel its own keys: Escape asks before unsaved changes go, and app shortcuts wait', async () => {
+    const button = (text: string) => { const found = Array.from(host.querySelectorAll('button')).find((entry) => entry.textContent?.trim() === text); expect(found, text).toBeDefined(); return found!; };
+    const roles = simulator.getState().roles;
+    await key('l');
+    await click('[aria-label="Edit the Researcher"]');
+    await type('.role-form textarea', 'Finds out what people expect.');
+    await key('k', { ctrlKey: true }); expect(host.querySelector('.command-palette')).toBeNull();
+    await key('Escape');
+    expect(host.querySelector('[role=alertdialog]')?.textContent).toContain('Discard your changes?');
+    await act(async () => button('Keep editing').click());
+    expect(host.querySelector('[role=alertdialog]')).toBeNull();
+    expect(el('.sheet.panel').contains(document.activeElement)).toBe(true);
+    for (const name of ['b', 'j', 'i', '?']) await key(name);
+    await key('n', { metaKey: true });
+    expect(el('.rail button[title="Library (L)"]').getAttribute('aria-current')).toBe('page');
+    expect(host.querySelector('.dialog')).toBeNull();
+    expect(el<HTMLTextAreaElement>('.role-form textarea').value).toBe('Finds out what people expect.');
+    await key('Escape');
+    await act(async () => button('Discard changes').click());
+    expect(host.querySelector('.sheet.panel')).toBeNull();
+    expect(simulator.getState().roles).toBe(roles);
+  });
   it('does not act while typing or repeat the pause key, and can disable single keys', async () => {
     await key('j'); await key('p'); const paused = simulator.getState();
     await key('p', {repeat:true}); expect(simulator.getState()).toBe(paused);

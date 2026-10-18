@@ -23,7 +23,7 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
       <p className="issue-text">{finding.text}</p>
       {finding.evidence && <p className="issue-evidence">{finding.evidence}</p>}
       <p className="issue-who">
-        Raised by {profileText(find.profile(finding.raisedBy), find, true)}
+        Raised by {finding.roleId && find.role(finding.roleId) ? `${find.role(finding.roleId)!.name} on ` : ""}{profileText(find.profile(finding.raisedBy), find, true)}
         {finding.confirmedBy.length > 0 && `. Confirmed by ${finding.confirmedBy.map((profileId) => profileText(find.profile(profileId), find, true)).join(" and ")}`}
       </p>
       {(finding.disputes ?? []).map((dispute, index) => (

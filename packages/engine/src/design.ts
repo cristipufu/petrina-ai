@@ -39,6 +39,7 @@ export class Design {
       }
       this.k.log(task, "done", round === 1 ? "Design brief ready" : "Answered every objection", stage.roleId, by);
       endAgentStep(task, round === 1 ? { outcome: W.wroteBrief, reason: W.briefReady } : { outcome: W.answeredAll, reason: W.objectionsAnswered }, Date.now());
+      await this.k.saveRoleEdits(task, stage.roleId, by);
       await this.k.undoReadOnly(task, stage.roleId);
       this.k.finishStep(task);
       if (this.k.rerun(task)) return "continue";
@@ -108,6 +109,7 @@ export class Design {
     task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as MTask["objections"];
     this.k.log(task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, by);
     endAgentStep(task, { outcome: W.followed, reason: W.followsCall }, Date.now());
+    await this.k.saveRoleEdits(task, stage.roleId, by);
     await this.k.undoReadOnly(task, stage.roleId);
     this.k.finishStep(task);
     this.k.tracking.endStage(task, "settled");

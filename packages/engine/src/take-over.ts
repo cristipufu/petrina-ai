@@ -29,7 +29,7 @@ export class TakeOver {
     const agent = { ...task.agent! };
     const conversation = task.conversation!;
     const profile = this.k.profile(agent.profileId)!;
-    const role = this.k.role(agent.roleId)!;
+    const role = conversation.role ?? this.k.role(agent.roleId)!;
     const terminal = how === "open" ? pickTerminal(this.k.found, this.k.s.terminal) : undefined;
     if (how === "open" && !terminal) throw new Error(TAKE_OVER_WORDS.noTerminal);
 
@@ -57,7 +57,7 @@ export class TakeOver {
       const worktree = current.worktree!;
       let saved: { sha: string; files: string[] } | undefined;
       try {
-        if (role.canEdit) {
+        if (conversation.access?.canEdit ?? role.canEdit) {
           const files = (await git.changedSince(worktree, await git.head(worktree))).map((entry) => entry.file);
           const sha = files.length
             ? await git.commitAll(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.k.describe(role.id, profile.id)}`)

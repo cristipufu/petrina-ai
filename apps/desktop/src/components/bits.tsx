@@ -1,16 +1,24 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import {
   Bell,
   BookOpen,
+  Bug,
+  ChartColumn,
   Check,
   Compass,
   FlaskConical,
+  Globe,
   Hammer,
+  Lightbulb,
   Map as MapIcon,
+  Megaphone,
   Palette,
+  PenLine,
   Rocket,
   Scale,
   Search,
+  Shield,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { LONG_PIPELINE, pipelineOf, stepTip, stripOf, type AgentProfile, type Product, type Role, type RoleIcon, type Task } from "@petrina/core";
@@ -26,6 +34,14 @@ export const ROLE_ICONS: Record<RoleIcon, LucideIcon> = {
   flask: FlaskConical,
   search: Search,
   rocket: Rocket,
+  shield: Shield,
+  pen: PenLine,
+  lightbulb: Lightbulb,
+  megaphone: Megaphone,
+  chart: ChartColumn,
+  globe: Globe,
+  users: Users,
+  bug: Bug,
 };
 
 export function Logo({ size = 24 }: { size?: number }) {
@@ -230,7 +246,7 @@ const traps: HTMLElement[] = [];
  * Shift+Tab before its first goes to its last, and focus that dropped out of it (the button you
  * used disappeared) comes back on the next Tab. A dialog opened over it takes over until it closes,
  * Escape included: it closes the topmost dialog only. Focus moves in when it opens and goes back to
- * whatever had it before when it closes, or to `returnTo` when that is gone.
+ * whatever had it before when it closes, or to `returnTo` when that is gone, then the dialog beneath it.
  */
 export function useFocusTrap(ref: RefObject<HTMLElement | null>, onEscape?: () => void, returnTo?: () => HTMLElement | null): void {
   // Read while rendering, before the dialog's own autofocus moves it.
@@ -274,7 +290,8 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, onEscape?: () =
       // Only once the dialog is gone and focus went with it: never pull it from where someone moved it.
       const at = document.activeElement;
       if (box.isConnected || (at && at !== document.body)) return;
-      const back = opener instanceof HTMLElement && opener.isConnected && opener !== document.body ? opener : fallback.current?.();
+      // A click on the scrim can leave no opener. Return to the uncovered dialog in that case.
+      const back = opener instanceof HTMLElement && opener.isConnected && opener !== document.body ? opener : fallback.current?.() ?? traps.at(-1);
       back?.focus();
     };
   }, [ref, opener]);
@@ -298,4 +315,37 @@ export function useViewport(): { width: number; height: number } {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   return size;
+}
+
+/**
+ * Ask before something that cannot be taken back, or that loses what the coordinator typed. It opens
+ * over everything, Escape or Cancel keeps things as they were, and focus goes back where it was.
+ */
+export function ConfirmDialog({ title, confirm, cancel = "Cancel", onConfirm, onCancel, children }: { title: string; confirm: string; cancel?: string; onConfirm: () => void; onCancel: () => void; children?: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const id = useId();
+  useFocusTrap(box, onCancel);
+  return (
+    <>
+      <div className="dialog-scrim" onClick={onCancel} />
+      <div ref={box} className="dialog confirm" role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={children ? `${id}-body` : undefined} tabIndex={-1}>
+        <h2 className="heading" id={`${id}-title`}>
+          {title}
+        </h2>
+        {children && (
+          <div className="confirm-body" id={`${id}-body`}>
+            {children}
+          </div>
+        )}
+        <div className="foot">
+          <button className="btn quiet" autoFocus onClick={onCancel}>
+            {cancel}
+          </button>
+          <button className="btn lead" onClick={onConfirm}>
+            {confirm}
+          </button>
+        </div>
+      </div>
+    </>
+  );
 }

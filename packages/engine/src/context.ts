@@ -40,7 +40,9 @@ export class Context {
     const points = reads.includes("guide-points") ? await this.guide.pendingPoints(task) : [];
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
     task.queued.splice(0);
-    return CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points));
+    const sections = CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points));
+    if (task.handedBack?.length) sections.push({ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") });
+    return sections;
   }
 
   /**

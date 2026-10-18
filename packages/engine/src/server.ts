@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
-import { COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
+import { ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, type RoleIcon, type Tone, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
 import type { Engine } from "./engine.js";
 
 const ALLOWED_ORIGINS = new Set(["http://localhost:1430", "http://127.0.0.1:1430", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"]);
@@ -32,7 +32,22 @@ const NewTask = z.object({
  * What each command's arguments may be, checked before the engine sees them. The compiler holds this to
  * the command table (Commands in @petrina/core): every command, nothing else, arguments the engine takes.
  */
+const RoleDraft = z.object({
+  name: z.string().max(ROLE_LIMITS.name * 10),
+  icon: z.enum(ROLE_ICON_CHOICES as unknown as [RoleIcon, ...RoleIcon[]]),
+  tone: z.enum(TONE_CHOICES as unknown as [Tone, ...Tone[]]),
+  purpose: z.string().max(ROLE_LIMITS.purpose * 10),
+  instructions: z.string().max(ROLE_LIMITS.instructions * 10),
+  canEdit: z.boolean(),
+  handsBack: z.string().max(ROLE_LIMITS.handsBack * 10),
+  result: z.enum(["plan", "notes", "brief", "objections", "build", "checks", "findings", "delivery", "check-discovery", "guide", "votes"]),
+});
+
 const ARGS = {
+  saveRole: z.tuple([z.string(), RoleDraft]),
+  addRole: z.tuple([RoleDraft]),
+  resetRole: z.tuple([z.string()]),
+  removeRole: z.tuple([z.string()]),
   addProduct: z.tuple([z.string().min(1).max(4096), z.string().max(200).optional()]),
   removeProduct: z.tuple([z.string()]),
   setProductChecks: z.tuple([z.string(), z.union([z.null(), z.array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) })).max(12)])]),

@@ -36,6 +36,7 @@ import type {
   InboxKind,
   Product,
   Role,
+  RoleChanges,
   Stage,
   State,
   Task,
@@ -45,6 +46,8 @@ import { balanced, extraSlot, pickStarts, queueOf, slotUses, slotWait, type Cand
 import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, noteRoundEnd, reviewRoundEnd, type DeepMutable } from "./flow.js";
 import { findingCount } from "./findings.js";
 import type { NewTaskInput } from "./commands.js";
+import * as library from "./roles.js";
+import type { RoleDraft } from "./roles.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js";
 import { askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type TurnReport, type WorkMoment, type WorkStageKind } from "./worklog.js";
@@ -141,9 +144,10 @@ interface ScriptContext {
 }
 
 /** What each role says while it works, in plain language. */
-function scriptFor(roleId: Id, ctx: ScriptContext): string[] {
+function scriptFor(role: Role | undefined, ctx: ScriptContext): string[] {
   const { area, product, round, fixing, following, objecting } = ctx;
-  switch (roleId) {
+  if (role?.added) return role.result === "findings" ? ["Reading the design and the acceptance checklist", `Going through the change to ${area}`, "Writing findings"] : [`Reading what the task needs from the ${role.name.toLowerCase()}`, `Working on ${area}`, "Writing notes for the squad"];
+  switch (role?.id) {
     // Only a release has one: Petrina sets the version and publishes it (see `ship`).
     case "release-manager":
       return ["Reading every commit since the previous release", "Grouping the changes: new, improved, fixed", "Writing the release notes"];
@@ -665,8 +669,45 @@ export class Simulator {
       const at = task.plan?.stages.findIndex((stage) => stage.id === stageId) ?? -1;
       const stage = task.plan?.stages[at];
       if (!stage || stage.kind !== "review-chain" || at <= task.stageIndex || !d.profiles.some((profile) => profile.id === profileId)) return;
+      // Reviewers you add from the plan are code reviewers.
+      if (stage.roleIds) stage.roleIds = [...stage.profileIds.map((_, position) => library.reviewerAt(stage, position)), "code-reviewer"];
       stage.profileIds.push(profileId);
       this.log(d, task, "you", `You added a reviewer to “${stage.title}”`);
+    });
+  }
+
+  // ── The role library ───────────────────────────────────────────────────────
+
+  /** Change a role for this session of the demo. Like the engine, it refuses what the squad does not allow, in plain words. */
+  saveRole(roleId: Id, draft: RoleDraft): void {
+    this.changeRoles((changes) => library.editRole(changes, roleId, draft));
+  }
+
+  /** Add a role: the demo planner uses it from the next task it plans. */
+  addRole(draft: RoleDraft): Id {
+    let created = "";
+    this.changeRoles((changes) => {
+      const added = library.addRole(changes, draft);
+      created = added.roleId;
+      return added.changes;
+    });
+    return created;
+  }
+
+  resetRole(roleId: Id): void {
+    this.changeRoles((changes) => library.resetRole(changes, roleId));
+  }
+
+  removeRole(roleId: Id): void {
+    this.changeRoles((changes) => library.removeRole(changes, roleId, this.state.tasks.some((task) => library.planUses(task, roleId))));
+  }
+
+  private changeRoles(change: (changes: RoleChanges) => RoleChanges): void {
+    // Checked before anything changes: a refused change leaves the roles as they were.
+    const next = change(this.state.roleChanges ?? library.NO_ROLE_CHANGES);
+    this.update((d) => {
+      d.roleChanges = next as Draft["roleChanges"];
+      d.roles = library.libraryRoles(next) as Draft["roles"];
     });
   }
 
@@ -800,7 +841,7 @@ export class Simulator {
           : undefined;
       case "review-chain": {
         const profileId = stage.profileIds[task.sub];
-        return profileId ? { roleId: stage.roleId, profileId } : undefined;
+        return profileId ? { roleId: library.reviewerAt(stage, task.sub), profileId } : undefined;
       }
       case "gate":
         return undefined;
@@ -829,16 +870,16 @@ export class Simulator {
       task.hunt = { stageId: current.id, round, reported: {}, findings: task.findings.length };
     }
     // A review round's reviewers share its step on the journey; each joins it as it starts.
-    beginAgentStep(task, next.roleId, next.profileId, d.now, current?.kind === "review-chain" ? current.profileIds : undefined);
+    beginAgentStep(task, current?.kind === "review-chain" ? current.roleId : next.roleId, next.profileId, d.now, current?.kind === "review-chain" ? current.profileIds : undefined);
     const agent: ActiveAgent = { ...next, since: d.now, step: 0 };
     task.agent = agent;
     // Reviewers look at the change together, as the engine's do: the ones still to report work beside this
     // one, each in a slot of its own while the pool and its tool allow.
     delete task.helpers;
-    for (const profileId of current?.kind === "review-chain" ? current.profileIds.slice(task.sub + 1) : []) {
+    for (const [index, profileId] of (current?.kind === "review-chain" ? current.profileIds.slice(task.sub + 1) : []).entries()) {
       const tool = d.profiles.find((profile) => profile.id === profileId)?.toolId ?? "unknown";
       if (!extraSlot(d as State, tool)) break;
-      task.helpers = [...(task.helpers ?? []), { roleId: current!.roleId, profileId, since: d.now, step: 0 }];
+      task.helpers = [...(task.helpers ?? []), { roleId: library.reviewerAt(current!, task.sub + 1 + index), profileId, since: d.now, step: 0 }];
     }
     task.state = "running";
     task.holdsSlot = true;
@@ -864,7 +905,7 @@ export class Simulator {
     const product = d.products.find((entry) => entry.id === task.productId)?.name ?? "the product";
     const round = this.round(task);
     const following = !!this.following(task);
-    const lines = scriptFor(agent.roleId, { area: task.area, product, round, fixing: task.fixing, following, objecting: this.disagree.has(task.id) });
+    const lines = scriptFor(d.roles.find((role) => role.id === agent.roleId), { area: task.area, product, round, fixing: task.fixing, following, objecting: this.disagree.has(task.id) });
     const line = lines[agent.step];
     if (line === undefined) {
       this.finish(d, task);
@@ -952,7 +993,7 @@ export class Simulator {
     this.endTurn(d, task, "finished");
 
     if (task.stageIndex < 0) {
-      task.plan = composePlan(task) as DeepMutable<NonNullable<Task["plan"]>>;
+      task.plan = composePlan(task, library.activeRoles(d.roles)) as DeepMutable<NonNullable<Task["plan"]>>;
       task.risk = DEMO_RISK[task.kind];
       const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
       this.log(d, task, "milestone", `Plan ready: ${count} stages. ${task.plan.rationale}`, agent.roleId, agent.profileId);
@@ -1073,7 +1114,11 @@ export class Simulator {
     }
 
     if (stage.kind === "review-chain") {
-      if (round === 1 && task.sub === 0) {
+      const added = d.roles.find((role) => role.id === agent.roleId)?.added;
+      if (added) {
+        if (round === 1) task.findings.push({ id: this.id(d, task.id), text: `Check ${task.area} with real data before the next release.`, severity: "suggestion", roleId: agent.roleId, raisedBy: agent.profileId, confirmedBy: [], status: "open" });
+        this.log(d, task, "done", "Nothing blocking", agent.roleId, agent.profileId);
+      } else if (round === 1 && task.sub === 0) {
         task.findings.push({
           id: this.id(d, task.id),
           text: `${capitalize(task.area)} fails when the email address contains a plus sign, and no test covers it.`,
