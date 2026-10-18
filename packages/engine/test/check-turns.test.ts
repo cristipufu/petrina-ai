@@ -114,11 +114,14 @@ try {
       if (task) {
         waited = true;
         if (!waitingStep) {
+          // Admission reserves a place before opening the diagnostic log and reporting start.
+          // Wait for that report before comparing a running check with its queued peer.
+          const running = engine.getState().tasks.flatMap((entry) => entry.journey?.at(-1)?.productChecks ?? []).find((check) => check.result === "running");
+          if (!running) return;
           const step = task.journey!.at(-1)!;
           expect(step).toMatchObject({ kind: "petrina", work: "checks" });
           expect(step.endedAt).toBeUndefined();
           expect(step.productChecks).toEqual([expect.objectContaining({ name: "Held check", result: "pending" })]);
-          const running = engine.getState().tasks.flatMap((entry) => entry.journey?.at(-1)?.productChecks ?? []).find((check) => check.result === "running");
           expect(running?.name).toBe("Held check");
           expect(running?.startedAt).toBeNumber();
           waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt };
