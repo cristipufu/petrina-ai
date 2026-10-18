@@ -47,6 +47,12 @@ export interface Scenario {
   risk?: "low" | "high";
   /** The verifier's verdict on every finding it is given (default "real"). */
   verifier?: "real" | "not-a-bug";
+  /** Voting regressions: independent tools can disagree, or stop after a partial report. */
+  verifierByModel?: Record<string, "real" | "not-a-bug" | "nit" | "pre-existing">;
+  partialVerification?: boolean;
+  limitAfterPartial?: boolean;
+  /** Repair a partial ballot with a revised first verdict; the remaining findings are not bugs. */
+  correctPartialVerification?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
   tester?: "work" | "fail-once" | "writes";
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
@@ -704,14 +710,29 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           ? { missed: false, line: "", why: "The note asks for a new colour: a change of mind, not a miss." }
           : { missed: true, line: "Every greeting also shows on the welcome page.", why: "The reviewers checked the greeting only where it was added." },
       );
-    case "verifier":
+    case "verifier": {
+      const correction = plan.partialVerification && session.turns > 1 ? plan.correctPartialVerification : undefined;
+      if (plan.partialVerification && session.turns > 1 && !correction) {
+        if (plan.limitAfterPartial) await runOut({ model: session.model!, spendCap: true }, Date.now() + 3_600_000, session, sessionId, client);
+        return hang(sessionId, "partial-verification");
+      }
+      if (correction) {
+        const opening = session.history.flatMap((update) => update.sessionUpdate === "user_message_chunk" && update.content.type === "text" ? [update.content.text] : [])[0]!;
+        return done({ verdicts: findingIds(opening, "Important findings to check (a verdict on every one, by id)").map((id, index) => {
+          const verdict = index === 0 ? correction : "not-a-bug";
+          return { id, verdict, reason: `After checking every finding, this one ${verdict === "real" ? "is a real problem" : "is not a bug"}.` };
+        }) });
+      }
+      const ids = findingIds(text, "Important findings to check (a verdict on every one, by id)");
+      const verdict = plan.verifierByModel?.[session.model ?? ""] ?? plan.verifier ?? "real";
       return done({
-        verdicts: findingIds(text, "Important findings to check (a verdict on every one, by id)").map((id) => ({
+        verdicts: (plan.partialVerification ? ids.slice(0, 1) : ids).map((id) => ({
           id,
-          verdict: plan.verifier ?? "real",
-          reason: plan.verifier === "not-a-bug" ? "The welcome page shows the greeting already." : "The welcome page has no greeting: confirmed by opening it.",
+          verdict,
+          reason: verdict === "not-a-bug" ? "The welcome page shows the greeting already." : "The welcome page has no greeting: confirmed by opening it.",
         })),
       });
+    }
     case "tester":
       if (handedBack) return done({ summary: "Tried it after the hand back.", checks: [] }, terminal);
       if (plan.tester === "writes") {

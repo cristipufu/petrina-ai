@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { findingCount, type CheckRun, type Finding, type Task } from "@petrina/core";
+import { findingCount, independentVotes, type CheckRun, type Finding, type Task } from "@petrina/core";
 import { ago, profileText, type Lookup } from "../../lib";
 import { openFirst } from "./order";
 
@@ -11,6 +11,7 @@ const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "Important"
 const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> = { real: "Checked: real", "not-a-bug": "Checked: not a bug", nit: "Checked: only a nit", "pre-existing": "Checked: older than this change" };
 
 function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
+  const votes = independentVotes(finding.votes);
   const followUp = finding.status === "open" && finding.severity === "pre-existing";
   const status = finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : followUp ? "Follow-up" : "Open";
   return (
@@ -36,8 +37,9 @@ function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
         <div className="issue-response">
           <b>
             {VERDICT[finding.verification.verdict]}
-            {finding.votes?.length
-              ? `: ${finding.votes.filter((vote) => vote.verdict === "real").length} of ${finding.votes.length} voter${finding.votes.length === 1 ? "" : "s"} said it is real`
+            {votes.length
+              ? `: ${votes.filter((vote) => vote.verdict === "real").length} of ${votes.length} voter${votes.length === 1 ? "" : "s"} said it is real`
+              : finding.votes?.length ? ": actual voting tools were not recorded"
               : `, by ${profileText(find.profile(finding.verification.by), find, true)}`}
           </b>
           {finding.verification.reason}

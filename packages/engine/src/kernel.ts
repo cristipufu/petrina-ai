@@ -579,11 +579,19 @@ export abstract class Kernel {
     const usable = this.usableTools() as Id[];
     // Usage stand-ins follow the same login checks as the plan: Ready tools first, otherwise the
     // ones we couldn't check. Before checks have run, keep the existing installed-tool selection.
-    const candidates = checked ? {
+    let candidates = checked ? {
       ...state,
       profiles: state.profiles.filter((profile) => usable.includes(profile.toolId)),
       tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
     } : state;
+    if (roleId !== undefined && this.role(roleId)?.result === "votes") {
+      // A voter owns one actual tool's place, not a nominal profile's place. Other tools have
+      // voters of their own: a model fallback stays on this tool; a usage limit drops its place.
+      // A full cap still waits, rather than giving a partner another vote.
+      const ready = candidates.tools.filter((tool) => tool.status === "ready");
+      if ((ready.length && !ready.some((tool) => tool.id === planned.toolId)) || !candidates.profiles.some((profile) => profile.toolId === planned.toolId)) return { kind: "none", waiting: "Waiting for a usable review tool" };
+      candidates = { ...candidates, profiles: candidates.profiles.filter((profile) => profile.toolId === planned.toolId) };
+    }
     const reviewing = roleId !== undefined && ["findings", "objections", "votes"].includes(this.role(roleId)?.result ?? "");
     const own = task && roleId !== undefined && roleId === stage?.roleId ? this.builderConversation(task, plannedId) : undefined;
     const now = Date.now();

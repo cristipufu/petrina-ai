@@ -53,6 +53,7 @@ What agents learned about working in this repository, added with the coordinator
 - Keep disposable test repositories and package installs in a separate temporary folder; nested folders can accidentally use Petrina’s own repository and packages.
 - Tests that hold agents waiting must also let the Check finder finish, even when it is not in the plan.
 - Simulated keyboard events do not trigger the browser’s automatic clicks; use headless browser key presses when testing focus returned by a closing dialog.
+- Restart tests should wait until Petrina records the agent’s activity; the fake agent can mark itself as working before Petrina hears it.
 
 ## Review guide
 

@@ -1,7 +1,7 @@
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { endAgentStep, findingCount, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { endAgentStep, findingCount, independentVotes, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -42,6 +42,11 @@ function mostCommon(votes: readonly Vote[]): Vote | undefined {
 /** The same finding, however it is spaced or capitalised. */
 function sameFinding(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Tools that finished the whole ballot. Partial verdicts are saved, but cannot close a round alone. */
+function finishedVoters(findings: readonly Finding[]): Set<Id> {
+  return new Set(findings[0]?.votes?.flatMap((vote) => vote.toolId && findings.every((finding) => finding.votes?.some((entry) => entry.toolId === vote.toolId)) ? [vote.toolId] : []));
 }
 
 export class Reviews {
@@ -249,8 +254,17 @@ export class Reviews {
       (finding) => finding.status === "open" && finding.severity === "blocking" && finding.raisedBy !== "petrina" && !finding.verification && new Set([finding.raisedBy, ...finding.confirmedBy].map(toolOf)).size < 2,
     );
     if (!findings.length) return undefined;
-    const voted = task.hunt?.voted ?? {};
-    const voters = this.voters(stage).filter((profileId) => !voted[profileId]);
+    // Resolve usage and model fallbacks before choosing the electorate. A capped tool is still
+    // usable and waits for its seat. Older votes remain history; their nominal names do not prove
+    // an actual tool voted, so only newly recorded identities cover a tool's place.
+    const covered = finishedVoters(findings);
+    const planned = this.voters(stage);
+    const voters = planned.flatMap((id) => {
+      const choice = this.k.choose(id, task, "verifier");
+      return choice && choice.kind !== "none" && !covered.has(choice.profile.toolId) ? [choice.profile.id] : [];
+    });
+    // With no finished ballot and nobody usable, keep the review waiting for usage, never pass it.
+    if (!voters.length && !covered.size && planned[0]) voters.push(planned[0]);
     return { findings: findings as Task["findings"], voters };
   }
 
@@ -278,30 +292,44 @@ export class Reviews {
    */
   private async vote(task: MTask, findings: Task["findings"], voters: readonly Id[], signal: AbortSignal): Promise<void> {
     const ids = new Set(findings.map((finding) => finding.id));
+    // Keep the starting role under the stage's voter profile through model fallbacks and restarts.
+    const planned = this.voters(task.plan!.stages[task.stageIndex]!);
     await this.together(
       task,
       voters.map((profileId) => ({
         roleId: "verifier",
         profileId,
         work: async (copy, room, seat, used) => {
-          const result = await this.turns.parallel(task, "verifier", profileId, copy, async () => [...await this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(findings) }], VerifyResult, signal, {
+          let by = seat;
+          const missing = () => findings.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
+          await this.turns.parallel(task, "verifier", profileId, copy, async () => [...await this.context.sectionsFor(task, "verifier"), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }], VerifyResult, signal, {
+            key: `verifier:${planned.find((id) => this.k.profile(id)?.toolId === this.k.profile(profileId)?.toolId) ?? profileId}`,
             room,
             seat,
-            used,
+            used: (id) => { by = id; used(id); },
             check: (value) => {
-              const missing = findings.filter((finding) => !value.verdicts.some((verdict) => verdict.id === finding.id));
-              return missing.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(missing)}` : undefined;
+              const toolId = this.k.profile(by)!.toolId;
+              for (const verdict of value.verdicts) {
+                const finding = task.findings.find((entry) => entry.id === verdict.id && ids.has(entry.id));
+                if (!finding) continue;
+                const previous = finding.votes?.findLast((vote) => vote.toolId === toolId);
+                if (previous?.by === by && previous.verdict === verdict.verdict && previous.reason === verdict.reason) continue;
+                // A repair can revise an earlier verdict. Keep both reasons; the latest one counts for this tool.
+                finding.votes = [...(finding.votes ?? []), { by, toolId, verdict: verdict.verdict, reason: verdict.reason }];
+              }
+              // A partial report is finished work too. Keep its reasons before asking for the rest,
+              // so a limit or restart only redoes the missing verdicts on this tool.
+              this.k.commitNow();
+              const left = missing();
+              return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left)}` : undefined;
             },
           });
-          for (const verdict of result.verdicts) {
-            const finding = task.findings.find((entry) => entry.id === verdict.id && ids.has(entry.id));
-            if (finding) finding.votes = [...(finding.votes ?? []).filter((vote) => vote.by !== profileId), { by: profileId, verdict: verdict.verdict, reason: verdict.reason }];
-          }
-          task.hunt = { ...task.hunt!, voted: { ...task.hunt?.voted, [profileId]: true } };
+          task.hunt = { ...task.hunt!, voted: { ...task.hunt?.voted, [by]: true } };
           this.k.commit();
         },
       })),
       (running, waiting) => `${running} fresh agent${running === 1 ? "" : "s"} voting on ${findings.length} important finding${findings.length === 1 ? "" : "s"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
+      () => finishedVoters(findings).size > 0,
     );
   }
 
@@ -311,7 +339,8 @@ export class Reviews {
     const at = Date.now();
     let real = 0;
     for (const finding of task.findings.filter((entry) => ids.has(entry.id))) {
-      const votes = finding.votes ?? [];
+      // One actual tool, one vote. Do not guess an older nominal vote's missing identity.
+      const votes = independentVotes(finding.votes);
       const yes = votes.filter((vote) => vote.verdict === "real");
       const outcome = yes.length * 2 >= votes.length ? (yes[0] ?? votes[0]) : mostCommon(votes.filter((vote) => vote.verdict !== "real"));
       if (!outcome) continue;
@@ -335,7 +364,7 @@ export class Reviews {
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
-  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id) => boolean, seat: Id, used: (profileId: Id) => void) => Promise<void> }[], status: (running: number, waiting: number) => string): Promise<void> {
+  private async together(task: MTask, members: readonly { roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id) => boolean, seat: Id, used: (profileId: Id) => void) => Promise<void> }[], status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
     const root = this.k.productOf(task)!.path!;
     const folder = join(this.k.dataDir, "worktrees", task.productId, `${task.id}.copies`);
     const sha = await git.head(task.worktree!);
@@ -419,7 +448,7 @@ export class Reviews {
       }
       if (failure !== undefined) throw failure;
       // The rest looked at the change and reported; the ones left wait for usage, and the driver starts them again after.
-      if (noOne) {
+      if (noOne && !canFinishWithoutUsage()) {
         this.k.waitForUsage(task, noOne.words);
         throw noOne;
       }

@@ -1,7 +1,12 @@
 // How reviews are going, from what every task already records: how many rounds work takes to pass,
 // what became of each finding, and how each reviewer profile's findings held up.
 
-import type { Finding, Id, Task } from "./model.js";
+import type { Finding, Id, Task, Vote } from "./model.js";
+
+/** The latest vote per proven actual tool. Older nominal attributions remain history, never guessed identities. */
+export function independentVotes(votes: readonly Vote[] = []): Vote[] {
+  return [...new Map(votes.filter((vote) => vote.toolId).map((vote) => [vote.toolId, vote])).values()];
+}
 
 export interface ReviewStats {
   /** Tasks whose review is over: passed, or handed to the coordinator with rounds used up. */

@@ -467,7 +467,7 @@ export interface Hunt {
   reported: Readonly<Record<Id, true>>;
   /** The profile reserved or actually used at each position, kept after reporting and across restarts. */
   profiles?: Readonly<Record<Id, Id>>;
-  /** Per voter profile, the findings it gave a verdict on. */
+  /** Per actual voter profile, whether it finished the round's findings. Older records used planned profiles. */
   voted?: Readonly<Record<Id, true>>;
   /** How many findings the task had when the round began: what the round's reviewers raise comes after. */
   findings?: number;
@@ -478,6 +478,8 @@ export interface Hunt {
 /** One voter's verdict on an Important finding. */
 export interface Vote {
   by: Id;
+  /** The actual independent tool. Absent in older votes whose planned attribution cannot prove who ran. */
+  toolId?: Id;
   verdict: FindingVerification["verdict"];
   reason: string;
 }
