@@ -5,7 +5,7 @@ import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, type DeliveryMode, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
-import { EngineProcess, Fakes, git, makeWorld, removeDir, waitFor, type World } from "./support.js";
+import { EngineProcess, Fakes, git, makeWorld, remoteRef, removeDir, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];
 const holds: string[] = [];
@@ -111,6 +111,40 @@ describe.concurrent("shipping is never repeated blindly", () => {
     // A commit to main needs no agent.
     expect(run.fakes.openings("release manager")).toHaveLength(0);
     await engine.quit();
+  });
+
+  it("does not push local main when recovering a task cancelled just after its local move", async () => {
+    const run = await shipping("local");
+    let engine: Awaited<ReturnType<typeof run.restart>> | undefined;
+    try {
+      const done = run.find(await run.engine.until((state) => delivered(run.find(state)) && !!run.find(state).cleanup?.removedAt, "the local delivery and cleanup"));
+      const tested = git(run.w.clone, "rev-parse", "main");
+      expect(done.landed?.sha).toBe(tested.slice(0, 7));
+      await run.engine.kill();
+
+      // Simulate cancellation after local main advanced but before the push step began.
+      git(run.w.remote, "update-ref", "refs/heads/main", run.w.initial);
+      const store = new Store(join(run.home, "petrina.db"));
+      const state = store.load()!;
+      const saved = state.tasks.find((task) => task.id === run.taskId) as unknown as Record<string, unknown>;
+      delete saved.landed;
+      delete saved.finishedAt;
+      Object.assign(saved, {
+        state: "cancelled",
+        column: "done",
+        shipping: { start: tested, base: run.w.initial, prepared: { tested, summary: "Ready." }, step: "update", boot: "an earlier run", moves: 0, failures: 0 },
+      });
+      store.save(state);
+      store.close();
+
+      engine = await run.restart();
+      const task = run.find(await engine.until((current) => run.find(current).shipping === undefined, "cancelled delivery settlement"));
+      expect(task.state).toBe("cancelled");
+      expect(task.landed?.sha).toBe(tested.slice(0, 7));
+      expect(remoteRef(run.w.remote, "refs/heads/main")).toBe(run.w.initial);
+    } finally {
+      if (engine) await engine.quit();
+    }
   });
 
   it("carries on publishing when GitHub clearly has nothing, and 'Try again' on a stuck step checks first", async () => {

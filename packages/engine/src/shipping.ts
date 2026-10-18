@@ -889,7 +889,16 @@ export class Shipping {
     try {
       const delivery = await this.lookForDelivery(task);
       if (delivery.found === "unknown") return this.keepCancelledCopy(task);
-      if (delivery.found === true) await delivery.record(new AbortController().signal);
+      if (delivery.found === true) {
+        if (task.delivery === "local") {
+          // The local branch may have advanced just before cancellation. Record that fact, but do not
+          // reuse normal delivery recovery: landLocal would start a fresh push after the coordinator cancelled.
+          const product = this.k.productOf(task)!;
+          this.recordLanded(task, product.defaultBranch ?? "main", task.shipping!.prepared!.tested, "found");
+        } else {
+          await delivery.record(new AbortController().signal);
+        }
+      }
       else if (delivery.found === "other") this.k.log(task, "warn", `After you cancelled it, Petrina could not tell what went out: ${delivery.text}`);
       else if (task.delivery === "release") await this.pushedWhileCancelled(task);
       // Looked up: what went out is recorded, and the delivery is over.
