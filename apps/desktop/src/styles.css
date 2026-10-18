@@ -1122,6 +1122,30 @@ kbd {
 .session-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-2); }
 .session-head strong { color: var(--text); font-weight: 600; }
 .session-head .btn { margin-left: auto; }
+/* Sandboxed or not, next to the status; hover or focus says what that covers, under the header's right edge so it stays in the sheet. */
+.session-head:has(.sandbox) { position: relative; }
+.session-head .sandbox { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: var(--fs-meta); line-height: 18px; font-weight: 500; color: var(--text-2); cursor: default; }
+.session-head .sandbox.on svg { color: var(--green); }
+.session-head .sandbox.off { border-color: var(--amber-line); background: var(--amber-soft); color: var(--amber-text); }
+.session-head .sandbox:hover::after, .session-head .sandbox:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 3;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--lead);
+  color: var(--on-lead);
+  box-shadow: var(--shadow-lift);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-weight: 500;
+  width: max-content;
+  max-width: min(22rem, 100%);
+  white-space: normal;
+  pointer-events: none;
+}
 /* Take over: the button with why it is off, or what you can do while you drive. */
 .session-head .take-over, .session-head .driving-controls { margin-left: auto; display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .session-head .take-over .btn, .session-head .driving-controls .btn { margin-left: 0; }

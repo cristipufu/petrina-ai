@@ -11,7 +11,7 @@ await launch({
   mode: "app",
   loginShell: false,
   engine: {
-    agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), dir!, `--script=${join(dir!, "agents.json")}`],
+    agentCommand: (profile) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), dir!, `--script=${join(dir!, "agents.json")}`, `--record-tool=${profile.toolId}`],
     gh: [process.execPath, join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json"), remote ?? join(dir!, "github.git")],
     ...(remote ? { remote } : {}),
     // Tests never open a real terminal window.

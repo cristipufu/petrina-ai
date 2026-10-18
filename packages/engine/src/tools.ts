@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import type { AgentProfile, Tool } from "@petrina/core";
+import type { ClaudeSandbox } from "./sandbox.js";
 
 /** How Petrina drives one tool through ACP. */
 export interface ToolAdapter {
@@ -25,6 +26,11 @@ export interface ToolAdapter {
    */
   login: "report" | "open";
   models: readonly string[];
+  /**
+   * The session option that carries Claude Code's own sandbox settings to its adapter. Unset: the
+   * tool keeps its own setup (including Codex's workspace sandbox) and gets no sandbox settings from Petrina.
+   */
+  sandboxMeta?: (sandbox: ClaudeSandbox) => Record<string, unknown>;
 }
 
 export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
@@ -38,6 +44,8 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     mode: "auto",
     login: "report",
     models: ["Opus 5.5", "Fable 5.1", "Sonnet 5.5"],
+    // The adapter hands `_meta.claudeCode.options` to Claude Code as its own settings.
+    sandboxMeta: (sandbox) => ({ claudeCode: { options: { sandbox } } }),
   },
   codex: {
     id: "codex",

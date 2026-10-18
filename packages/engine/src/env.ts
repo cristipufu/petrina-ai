@@ -32,13 +32,29 @@ const SESSION_VARS = [
 /** A GitHub token by its look, whatever the variable holding it is called (an npm registry's, say). */
 const GITHUB_TOKEN = /^\s*(gh[pousr]_|github_pat_)/;
 
+/** Programs that ask for a password or passphrase in a window: git and ssh fall back to them when a login is missing. */
+const ASKPASS_VARS = ["GIT_ASKPASS", "SSH_ASKPASS"];
+
 /**
  * The environment every agent runs in: the coordinator's own, logins included, with nothing that waits
- * for a typed answer, and in the background (tools that would open a browser stay quiet, and Petrina's
- * own `open` refuses).
+ * for a typed answer or opens a sign-in window, and in the background (tools that would open a browser
+ * stay quiet, and Petrina's own `open` refuses). Saved logins keep working: git's credential helpers stay
+ * as configured, and only the programs that would ask are off (git's askpass, also from core.askPass;
+ * ssh's; Git Credential Manager's windows, the Azure DevOps helper). A missing or expired login fails
+ * instead, and the coordinator renews it in their own terminal.
  */
 export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return { ...ownSession(env), GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", BROWSER: "none", PETRINA_AGENT: "1" };
+  const own = ownSession(env);
+  for (const name of ASKPASS_VARS) delete own[name];
+  return {
+    ...withGitConfig(own, [["core.askPass", ""]]),
+    GIT_TERMINAL_PROMPT: "0",
+    GH_PROMPT_DISABLED: "1",
+    GCM_INTERACTIVE: "never",
+    SSH_ASKPASS_REQUIRE: "never",
+    BROWSER: "none",
+    PETRINA_AGENT: "1",
+  };
 }
 
 /** The environment without another coding agent's session in it: what Petrina starts is a session of its own. */

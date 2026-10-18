@@ -156,6 +156,8 @@ export interface ActiveAgent {
   since: number;
   /** How far the agent is through its current step list. */
   step: number;
+  /** Whether its commands run in its tool's own sandbox, and why not when they don't. Unset until its conversation opens. */
+  sandbox?: { on: true } | { on: false; reason: string };
 }
 
 export interface TimelineEntry {

@@ -1,15 +1,16 @@
 // A scripted ACP agent for tests. It reads which role it is from the prompt and answers
 // like that role would, so the engine can be tested end to end without spending tokens.
 //
-// bun fake-agent.ts [dir]: with a dir (the restart tests), it records every prompt it gets in
-// dir/prompts.jsonl, keeps its conversations in dir/conversations so the next engine can reopen
-// them, notes how each was opened in dir/opens.jsonl and every setting it was given in
-// dir/config.jsonl, follows dir/scenario.json, and drops marker files there at the moments a test
-// waits for. With "--script=<file>", the builder and the Release Manager follow the AgentScript in that file.
+// bun fake-agent.ts [dir] [--record-tool=<id>]: with a dir (the restart tests), it records every prompt it
+// gets in dir/prompts.jsonl, keeps its conversations in dir/conversations so the next engine can
+// reopen them, notes how each was opened (as which tool, with which logins and sandbox settings) in
+// dir/opens.jsonl and every setting it was given in dir/config.jsonl, follows dir/scenario.json, and
+// drops marker files there at the moments a test waits for. With "--script=<file>", the builder and
+// the Release Manager follow the AgentScript in that file.
 //
 // With --tool=claude-code or --tool=codex (the work-log tests), it also reports usage, settings and
 // limits the way that tool's adapter does. With FAKE_BARE_ACK set, it acknowledges a settings change
-// without saying what the session ended up on.
+// without saying what the session ended up on. --record-tool only labels openings, keeping the generic choices.
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -20,8 +21,8 @@ import * as acp from "@agentclientprotocol/sdk";
 export interface Scenario {
   /** Shutdown tests: never answer the initial handshake. */
   silent?: boolean;
-  /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. */
-  planner?: "short" | "tester-after" | "tester-first" | "tester-with-design" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review";
+  /** "short": build and one reviewer. "tester-after": build, one reviewer, then a tester. "pair": build, then two reviewers at once, one on each tool. */
+  planner?: "short" | "tester-after" | "tester-first" | "tester-with-design" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair";
   notes?: "work";
   /** The architect leaves product changes for the engine to save, in rounds and after a call. */
   architect?: "writes";
@@ -63,6 +64,8 @@ export interface Scenario {
    * first), or "stall" (it offers resume and never answers). Unset: it cannot reopen conversations.
    */
   reopen?: "resume" | "load" | "stall";
+  /** "unavailable": Claude Code's sandbox cannot start, so any conversation asked to open in it is refused, as Claude Code does. */
+  sandbox?: "unavailable";
   /** What the Check finder hands back: a passing check (default), a failing one, one that changes a tracked file, or one that commits. "broken": never a usable result. */
   checks?: "pass" | "fail" | "writes" | "commits" | "slow" | "broken";
   /** "work" builder: how many restarts it works through before it finishes (default 1). */
@@ -128,6 +131,7 @@ interface ConfigOption {
 // as that file exists.
 const dir = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
 const tool = process.argv.find((arg) => arg.startsWith("--tool="))?.slice("--tool=".length) as "claude-code" | "codex" | "grok" | undefined;
+const recordedTool = process.argv.find((arg) => arg.startsWith("--record-tool="))?.slice("--record-tool=".length) ?? tool ?? "";
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
@@ -164,18 +168,57 @@ function keep(sessionId: string): void {
 }
 
 /** A conversation from this process or an earlier one, or an error like a tool that lost it. */
-function reopen(sessionId: string, how: "resume" | "load"): Conversation {
+function reopen(sessionId: string, how: "resume" | "load", meta: unknown): Conversation {
+  refuseSandbox(sessionId, how, meta);
   const file = conversationFile(sessionId);
   const found = sessions.get(sessionId) ?? (file && existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Conversation) : undefined);
   if (!found) throw new Error(`No conversation ${sessionId}`);
   sessions.set(sessionId, found);
-  opened(sessionId, how);
+  opened(sessionId, how, meta);
   return found;
 }
 
-function opened(sessionId: string, how: "new" | "resume" | "load"): void {
-  // Whether this agent runs in the agents' environment: the coordinator's logins, in the background.
-  if (dir) appendFileSync(join(dir, "opens.jsonl"), `${JSON.stringify({ session: sessionId, how, background: process.env.PETRINA_AGENT === "1" && process.env.BROWSER === "none" })}\n`);
+/** The stand-in logins the test engines run with (see engineEnv in support.ts). */
+const TEST_GH_TOKEN = "petrina-test-gh-login";
+/** Git settings passed down through the environment, as [key, value]. */
+const gitSettings = () =>
+  Object.keys(process.env)
+    .filter((name) => name.startsWith("GIT_CONFIG_KEY_"))
+    .map((name) => [process.env[name], process.env[name.replace("_KEY_", "_VALUE_")]] as const);
+/** The coordinator's logins, untouched: their GitHub token, SSH agent, git credential helpers and gh config. */
+const logins = () => process.env.GH_TOKEN === TEST_GH_TOKEN && !!process.env.SSH_AUTH_SOCK && !process.env.GIT_SSH_COMMAND && !process.env.GH_CONFIG_DIR && !gitSettings().some(([key]) => key === "credential.helper");
+/**
+ * Nothing waits for a typed answer or opens a sign-in window: git (no terminal prompt, no askpass program, also
+ * none from core.askPass), gh, ssh and Git Credential Manager.
+ */
+const quiet = () =>
+  process.env.GIT_TERMINAL_PROMPT === "0" &&
+  process.env.GH_PROMPT_DISABLED === "1" &&
+  process.env.GCM_INTERACTIVE === "never" &&
+  process.env.SSH_ASKPASS_REQUIRE === "never" &&
+  !process.env.GIT_ASKPASS &&
+  !process.env.SSH_ASKPASS &&
+  gitSettings().some(([key, value]) => key === "core.askPass" && value === "");
+/** Claude Code's sandbox settings, where its adapter takes them. */
+const sandboxOf = (meta: unknown) => (meta as { claudeCode?: { options?: { sandbox?: unknown } } } | undefined)?.claudeCode?.options?.sandbox;
+
+function opened(sessionId: string, how: "new" | "resume" | "load", meta: unknown, refused = false): void {
+  // The agents' environment: in the background, the coordinator's logins, nothing that asks; and the sandbox settings it was sent.
+  const sandbox = sandboxOf(meta);
+  const autoMode = (meta as { autoMode?: unknown } | undefined)?.autoMode === true;
+  const background = process.env.PETRINA_AGENT === "1" && process.env.BROWSER === "none";
+  if (dir) appendFileSync(join(dir, "opens.jsonl"), `${JSON.stringify({ session: sessionId, how, tool: recordedTool, background, logins: logins(), quiet: quiet(), ...(sandbox ? { sandbox } : {}), ...(autoMode ? { autoMode } : {}), ...(refused ? { refused } : {}) })}\n`);
+}
+
+/** Claude Code's own report, word for word, when its required sandbox cannot start (the connector passes it on). */
+const SANDBOX_UNAVAILABLE =
+  "Claude Code returned an error result: Sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed · install missing tools (e.g. apt install bubblewrap socat) or see https://code.claude.com/docs/en/sandboxing. Set sandbox.failIfUnavailable=false to allow unsandboxed execution.";
+
+/** A conversation asked to open in a sandbox that cannot start is refused, new or reopened, before anything else. */
+function refuseSandbox(sessionId: string, how: "new" | "resume" | "load", meta: unknown): void {
+  if (scenario().sandbox !== "unavailable" || !sandboxOf(meta)) return;
+  opened(sessionId, how, meta, true);
+  throw acp.RequestError.internalError({ details: SANDBOX_UNAVAILABLE });
 }
 
 /** Send an update and keep it in the conversation's history. */
@@ -465,6 +508,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "opus-xhigh"], maxRounds: 1 },
+          ],
+        });
+      if (plan.planner === "pair")
+        return done({
+          rationale: "Build it, then two reviewers at once, one on each tool.",
+          ...riskOf(plan),
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 1 },
           ],
         });
       if (plan.planner === "limits") return done({
@@ -865,18 +917,19 @@ acp
       while (existsSync(holdOpen)) await Bun.sleep(20);
     }
     const sessionId = crypto.randomUUID();
+    refuseSandbox(sessionId, "new", ctx.params._meta);
     sessions.set(sessionId, { cwd: ctx.params.cwd, role: "", turns: 0, restarts: 0, history: [], options: configOptions() });
     keep(sessionId);
-    opened(sessionId, "new");
+    opened(sessionId, "new", ctx.params._meta);
     return { sessionId, configOptions: sessions.get(sessionId)!.options };
   })
   .onRequest("session/resume", async (ctx) => {
     // A tool that never answers: Petrina gives up and starts a fresh conversation.
     if (scenario().reopen === "stall") await new Promise(() => undefined);
-    return { configOptions: reopen(ctx.params.sessionId, "resume").options };
+    return { configOptions: reopen(ctx.params.sessionId, "resume", ctx.params._meta).options };
   })
   .onRequest("session/load", async (ctx) => {
-    const conversation = reopen(ctx.params.sessionId, "load");
+    const conversation = reopen(ctx.params.sessionId, "load", ctx.params._meta);
     // Load streams the whole conversation back before it answers.
     for (const update of conversation.history) await ctx.client.notify(acp.methods.client.session.update, { sessionId: ctx.params.sessionId, update });
     return { configOptions: conversation.options };

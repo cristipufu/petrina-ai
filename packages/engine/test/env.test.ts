@@ -2,6 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { agentEnv, loginShellPath, mergePath, pathFromEnv, withoutCredentials } from "../src/env.js";
 import { ADAPTERS } from "../src/tools.js";
 import { BACKGROUND } from "../src/prompts.js";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("agent safety", () => {
@@ -14,7 +17,44 @@ describe("agent safety", () => {
 
   it("gives agents the coordinator's own logins, with nothing waiting for a typed answer and in the background", () => {
     const logins = { GH_TOKEN: "token", GITHUB_TOKEN: "token", SSH_AUTH_SOCK: "/tmp/agent", AWS_PROFILE: "work", AZURE_CONFIG_DIR: "/u/.azure", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "manager", PATH: "/bin" };
-    expect(agentEnv(logins)).toEqual({ ...logins, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", BROWSER: "none", PETRINA_AGENT: "1" });
+    expect(agentEnv(logins)).toEqual({
+      ...logins,
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_1: "core.askPass",
+      GIT_CONFIG_VALUE_1: "",
+      GIT_TERMINAL_PROMPT: "0",
+      GH_PROMPT_DISABLED: "1",
+      GCM_INTERACTIVE: "never",
+      SSH_ASKPASS_REQUIRE: "never",
+      BROWSER: "none",
+      PETRINA_AGENT: "1",
+    });
+  });
+
+  // A stand-in password program that answers at once (a real one would open a window): /usr/bin/true.
+  it.skipIf(process.platform === "win32")("never runs a password program: a missing login fails at once, a saved one still answers", () => {
+    const home = mkdtempSync(join(tmpdir(), "petrina-askpass-"));
+    try {
+      const config = join(home, "gitconfig");
+      writeFileSync(config, "[core]\n\taskPass = /usr/bin/true\n");
+      const own = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1" };
+      const fill = (env: NodeJS.ProcessEnv) => spawnSync("git", ["credential", "fill"], { cwd: home, env, input: "protocol=https\nhost=example.invalid\n\n", encoding: "utf8" });
+      // Without Petrina's settings git asks the password program, from git's settings or from the environment.
+      for (const env of [own, { ...own, GIT_ASKPASS: "/usr/bin/true", SSH_ASKPASS: "/usr/bin/true" }]) {
+        expect(fill(env).stdout).toContain("password=");
+        const agent = fill(agentEnv(env));
+        expect(agent.status).not.toBe(0);
+        expect(agent.stdout).not.toContain("password=");
+        expect(agent.stderr).toContain("terminal prompts disabled");
+      }
+      // A saved login, through the coordinator's credential helper, still works.
+      writeFileSync(config, "[core]\n\taskPass = /usr/bin/true\n[credential]\n\thelper = \"!f() { echo username=me; echo password=saved; }; f\"\n");
+      const saved = fill(agentEnv(own));
+      expect(saved.status).toBe(0);
+      expect(saved.stdout).toContain("password=saved");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("runs Petrina's own git steps on working copies with no login at all", () => {

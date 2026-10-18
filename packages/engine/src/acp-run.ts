@@ -6,6 +6,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
+import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { grokTurnReport } from "./grok-usage.js";
 import { descendantsKnown } from "./process-tree.js";
@@ -323,6 +324,8 @@ export class AgentRun {
    * does not start within `startTimeoutMs` is stopped and throws, so a step never waits forever.
    * A login probe gets a failed start at once while its tool stops; a task waits for the tool and
    * its programs to stop before it can release the working copy. `onGone` observes either stop.
+   * With `sandbox`, the conversation opens in Claude Code's own sandbox; when Claude Code says it
+   * cannot start, new or reopened, this throws SandboxUnavailable instead.
    */
   static async start(options: {
     profile: AgentProfile;
@@ -337,6 +340,7 @@ export class AgentRun {
     onGone?: (gone: Promise<void>) => void;
     /** A login check only opens a conversation, never sends work or runs in a product's copy. */
     probe?: boolean;
+    sandbox?: ClaudeSandbox;
   }): Promise<AgentRun> {
     const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
@@ -488,8 +492,10 @@ export class AgentRun {
       // Notices let Codex announce a reroute as a typed update instead of text in the reply.
       const init = await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} } } });
       const sessionId = options.reopen;
-      // Grok's auto mode is metadata on the session, not a config option and not always-approve.
-      const meta = adapter.sessionMeta ? { _meta: { ...adapter.sessionMeta } } : {};
+      // Keep the tool's session mode (Grok's auto mode) and add sandbox settings only for Claude Code.
+      // The same metadata goes to new, resumed and loaded conversations.
+      const sessionMeta = { ...adapter.sessionMeta, ...(options.sandbox && adapter.sandboxMeta ? adapter.sandboxMeta(options.sandbox) : {}) };
+      const meta = Object.keys(sessionMeta).length ? { _meta: sessionMeta } : {};
       if (sessionId === undefined) return connection.newSession({ cwd, mcpServers: [], ...meta });
       const how = init.agentCapabilities?.sessionCapabilities?.resume ? "resume" : init.agentCapabilities?.loadSession ? "load" : undefined;
       if (!how) throw new ReopenFailed(`${adapter.name} cannot reopen conversations`);
@@ -501,7 +507,8 @@ export class AgentRun {
         const opened = await Promise.race([how === "resume" ? connection.resumeSession(params) : connection.loadSession(params), late]);
         return { ...opened, sessionId, how };
       } catch (error) {
-        throw error instanceof ReopenFailed ? error : new ReopenFailed(`${adapter.name} could not reopen the conversation`);
+        if (error instanceof ReopenFailed || sandboxFailure(error) !== undefined) throw error;
+        throw new ReopenFailed(`${adapter.name} could not reopen the conversation`);
       } finally {
         clearTimeout(timer);
       }
@@ -561,6 +568,8 @@ export class AgentRun {
       // A tool check must report its deadline promptly. It tracks onGone before checking again;
       // a task instead waits for all file handling before cleanup can remove its working copy.
       if (!options.probe) await gone;
+      const unsandboxed = options.sandbox && !signal.aborted ? sandboxFailure(error) : undefined;
+      if (unsandboxed !== undefined) throw new SandboxUnavailable(unsandboxed);
       if (options.reopen !== undefined && !(error instanceof ReopenFailed) && !signal.aborted) throw new ReopenFailed(`${adapter.name} could not reopen the conversation`);
       throw error;
     }

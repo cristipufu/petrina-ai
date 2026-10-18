@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { ArrowRight, Send, User } from "lucide-react";
-import type { MessageMode, SessionLine, State, Task } from "@petrina/core";
+import { ArrowRight, Send, ShieldCheck, ShieldOff, User } from "lucide-react";
+import type { ActiveAgent, Id, MessageMode, SessionLine, State, Task } from "@petrina/core";
 import { sim, useEngineStatus, useUnsent } from "../engine";
 import { ago, profileText, type Lookup } from "../lib";
 import { RoleAvatar } from "./bits";
@@ -56,6 +56,24 @@ export function StepConversation({ lines, find, now }: { lines: readonly Session
       ))}
     </div>
   </section>;
+}
+
+const SANDBOX_TIPS: Readonly<Record<string, string>> = {
+  "claude-code":
+    "Claude Code's own sandbox: its commands can change only the working copy, temporary folders, package download caches and sign-in caches. Also the product's shared git history, and whatever your or the product's Claude Code settings allow. Reading, websites and your logins stay open, and Auto mode can let a command run outside it (on a Mac, SSH and headless browsers). On a Mac, process-list checks can fail; Petrina's own checks run the full test suite.",
+  codex: "Sandboxed by Codex's own workspace sandbox, as Codex sets it.",
+};
+
+/** Whether the agent's commands run in its tool's own sandbox; hover or focus says what that covers, or why it is off. */
+function Sandbox({ sandbox, toolId }: { sandbox: NonNullable<ActiveAgent["sandbox"]>; toolId: Id }) {
+  const tip = sandbox.on ? (SANDBOX_TIPS[toolId] ?? "The tool's own sandbox.") : `Running without Claude Code's sandbox: ${sandbox.reason}. Auto mode still reviews each command.`;
+  const label = sandbox.on ? "Sandboxed" : "Not sandboxed";
+  return (
+    <span className={`sandbox ${sandbox.on ? "on" : "off"}`} tabIndex={0} data-tip={tip} aria-label={`${label}. ${tip}`}>
+      {sandbox.on ? <ShieldCheck size={12} aria-hidden="true" /> : <ShieldOff size={12} aria-hidden="true" />}
+      {label}
+    </span>
+  );
 }
 
 /** Join the agent working on a task: its live conversation, with anything it waits on below. */
@@ -147,6 +165,8 @@ function Log({ task, state, find, scroller, onToast, onTab, step, onStepDone, ac
             <span className="quiet-text">{profileText(profile, find, true)}</span>
             <span className={`dot ${task.state}`} aria-hidden="true" />
             <span>{task.driving ? "Paused while you drive" : live ? "Working" : task.state === "needs-you" ? "Waiting on you" : "Idle"}</span>
+            {/* While you drive, the tool runs in your terminal with your own setup: Petrina's sandbox settings don't apply. */}
+            {task.agent?.sandbox && !task.driving && <Sandbox sandbox={task.agent.sandbox} toolId={profile.toolId} />}
           </>
         ) : (
           <span>No agent is working on this right now. Messages wait until one starts.</span>

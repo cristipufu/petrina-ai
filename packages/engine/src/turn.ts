@@ -1,11 +1,12 @@
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, slotWait, stepMayChange, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason, type CheckId } from "@petrina/core";
+import { addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type Task, type TurnReason, type CheckId } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
+import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox.js";
 import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere } from "./prompts.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
 import { ADAPTERS } from "./tools.js";
@@ -168,11 +169,12 @@ export class Turns {
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const head = same?.head ?? (task.worktree ? await git.head(task.worktree).catch(() => undefined) : undefined);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
-    const start = (sessionId?: string, command = this.k.options.agentCommand?.(profile)): Promise<AgentRun> =>
+    const start = (sessionId?: string, sandbox?: ClaudeSandbox, command = this.k.options.agentCommand?.(profile)): Promise<AgentRun> =>
       AgentRun.start({
         profile,
         ...(command ? { command } : {}),
         ...(env ? { env } : {}),
+        ...(sandbox ? { sandbox } : {}),
         cwd: task.worktree!,
         signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
@@ -201,24 +203,28 @@ export class Turns {
         },
       }).catch(async (error: unknown) => {
         // A fresh conversation that does not open is the tool's problem: name it, with its fix.
-        if (sessionId !== undefined || signal.aborted) throw error;
+        // Claude Code refusing its sandbox is not that: the caller opens the same conversation again without it.
+        if (sessionId !== undefined || signal.aborted || error instanceof SandboxUnavailable) throw error;
         throw await this.tools.problem(profile.toolId, error);
       });
-    let run: AgentRun | undefined;
+    let opened: { run: AgentRun; off?: string } | undefined;
     let notBack: string | undefined;
     if (reopen ?? back) {
       try {
-        run = await start((reopen ?? back)!.sessionId);
+        opened = await this.inSandbox(profile, (sandbox) => start((reopen ?? back)!.sessionId, sandbox));
       } catch (error) {
         if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
         if (reopen) again = error.message;
         else notBack = error.message;
       }
     }
-    run ??= await start();
+    opened ??= await this.inSandbox(profile, (sandbox) => start(undefined, sandbox));
+    const { run } = opened;
     this.k.runs.set(taskId, run);
     this.k.readUsage(profile.toolId);
     const picked = run.reopened !== undefined;
+    const sandbox = this.sandboxState(task, opened.off, roleId, profileId, picked);
+    if (task.agent) task.agent.sandbox = sandbox;
     const wentBack = picked && !reopen && back !== undefined;
     const where = saved ? this.whereYouWere(task, role, startedAt) : undefined;
     if (wentBack) {
@@ -317,6 +323,7 @@ export class Turns {
    * of its own (`copy`) so none disturbs another: always a fresh conversation, never reopened after a
    * restart, so the caller saves what it hands back as it arrives. Its starting role is kept in the review
    * round through interruptions and usage replacements. It leaves the status line to its group.
+   * `agent` is its group's record of it, which learns whether it is sandboxed.
    */
   async parallel<T>(
     task: MTask,
@@ -326,7 +333,7 @@ export class Turns {
     given: Given,
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string; key?: string } = {},
+    options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string; key?: string; agent?: ActiveAgent } = {},
   ): Promise<T> {
     if (!this.k.role(roleId) || !this.k.productOf(task) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     if (signal.aborted) throw new Aborted();
@@ -382,13 +389,18 @@ export class Turns {
   }
 
   /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
-  private async attemptTogether<T>(task: MTask, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; took?: { from: string; words: string } }): Promise<T> {
+  private async attemptTogether<T>(task: MTask, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; took?: { from: string; words: string }; agent?: ActiveAgent }): Promise<T> {
     const roleId = role.id;
     const product = this.k.productOf(task);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
     const profileId = profile.id;
     this.mustBeReady(profile);
     const taskId = task.id;
+    // A usage handoff can change tools: the group's record describes this attempt, not the previous one.
+    if (options.agent) {
+      options.agent.profileId = profileId;
+      delete options.agent.sandbox;
+    }
     // The group records the profiles that actually start, including stand-ins, rather than the plan.
     // Different reviewer roles still share the round's one journey step; voters have their own.
     const stage = task.plan?.stages[task.stageIndex];
@@ -407,34 +419,41 @@ export class Turns {
     this.k.commit();
     const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
     const command = this.k.options.agentCommand?.(profile);
-    const run = await AgentRun.start({
-      profile,
-      ...(command ? { command } : {}),
-      env: this.envFor(),
-      cwd: copy,
-      signal,
-      ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
-      callbacks: {
-        onActivity: (line) => {
-          const current = this.k.task(taskId);
-          if (!current) return;
-          this.k.say(current, "activity", line, roleId, profileId);
-          this.k.commit();
+    const { run, off } = await this.inSandbox(profile, (sandbox) =>
+      AgentRun.start({
+        profile,
+        ...(command ? { command } : {}),
+        env: this.envFor(),
+        ...(sandbox ? { sandbox } : {}),
+        cwd: copy,
+        signal,
+        ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
+        callbacks: {
+          onActivity: (line) => {
+            const current = this.k.task(taskId);
+            if (!current) return;
+            this.k.say(current, "activity", line, roleId, profileId);
+            this.k.commit();
+          },
+          onPlanStep: (line) => {
+            const current = this.k.task(taskId);
+            if (current && !current.timeline.slice(-5).some((entry) => entry.text === line && entry.profileId === profileId)) this.k.log(current, "status", line, roleId, profileId);
+            this.k.commit();
+          },
+          onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits),
+          onLog: (text) => void this.k.agentLog(taskId, text),
+          onUsage: (info) => this.k.recordUsage(info),
+          onCleanupIncomplete: () => { const current = this.k.task(taskId); if (current) this.k.log(current, "warn", CLEANUP_INCOMPLETE); },
         },
-        onPlanStep: (line) => {
-          const current = this.k.task(taskId);
-          if (current && !current.timeline.slice(-5).some((entry) => entry.text === line && entry.profileId === profileId)) this.k.log(current, "status", line, roleId, profileId);
-          this.k.commit();
-        },
-        onPermission: (info) => this.permission(taskId, info, signal, { roleId, profileId }, agent.waits),
-        onLog: (text) => void this.k.agentLog(taskId, text),
-        onCleanupIncomplete: () => { const current = this.k.task(taskId); if (current) this.k.log(current, "warn", CLEANUP_INCOMPLETE); },
-        onUsage: (info) => this.k.recordUsage(info),
-      },
-    }).catch(async (error: unknown) => {
+      }),
+    ).catch(async (error: unknown) => {
       if (signal.aborted) throw error;
       throw await this.tools.problem(profile.toolId, error);
     });
+    // Its group's record of it, shown in the header or among the helpers, says whether it is sandboxed.
+    const sandbox = this.sandboxState(task, off, roleId, profileId);
+    if (options.agent) options.agent.sandbox = sandbox;
+    this.k.commit();
     const runs = this.k.helperRuns.get(taskId) ?? new Set();
     this.k.helperRuns.set(taskId, runs.add(run));
     this.k.readUsage(profile.toolId);
@@ -538,6 +557,39 @@ export class Turns {
    */
   private envFor(): NodeJS.ProcessEnv {
     return agentEnv(process.env);
+  }
+
+  /**
+   * Opens an agent's conversation in its tool's own sandbox. Codex always runs in its own; Claude Code's is
+   * asked for here, unless it could not start earlier in this run of Petrina. When Claude Code says it cannot
+   * start, the same conversation opens again without it, and later agents skip it. `off` says why it is off.
+   * Other tools keep their own session settings.
+   */
+  private async inSandbox(profile: AgentProfile, start: (sandbox?: ClaudeSandbox) => Promise<AgentRun>): Promise<{ run: AgentRun; off?: string }> {
+    if (!ADAPTERS[profile.toolId]?.sandboxMeta) return { run: await start() };
+    if (this.k.sandboxOff === undefined) {
+      try {
+        return { run: await start(claudeSandbox()) };
+      } catch (error) {
+        if (!(error instanceof SandboxUnavailable)) throw error;
+        this.k.sandboxOff = error.reason;
+      }
+    }
+    return { run: await start(), off: this.k.sandboxOff };
+  }
+
+  /**
+   * Whether the agent is sandboxed, for the Session tab; without the sandbox, its session says so once, with the
+   * reason. A conversation picked up again (after a restart, or for a fix round or an update) that already said it does not repeat it.
+   */
+  private sandboxState(task: MTask, off: string | undefined, roleId: Id, profileId: Id, reopened = false): ActiveAgent["sandbox"] {
+    const toolId = this.k.profile(profileId)?.toolId;
+    if (toolId !== "claude-code" && toolId !== "codex") return undefined;
+    if (off === undefined) return { on: true };
+    const line = `Running without Claude Code's sandbox: ${off}`;
+    const said = reopened && task.session.some((entry) => entry.from === "system" && entry.text === line && entry.roleId === roleId && entry.profileId === profileId);
+    if (!said) this.k.say(task, "system", line, roleId, profileId);
+    return { on: false, reason: off };
   }
 
   /** The tool's own safety check flagged something: the coordinator decides. Petrina adds no rules of its own. */

@@ -277,6 +277,9 @@ export abstract class Kernel {
 
   readonly machine = thisMachine();
 
+  /** Why Claude Code's sandbox could not start in this run of Petrina: later agents run without it, and say so. */
+  sandboxOff: string | undefined;
+
   /** The terminals on this machine, the usual one first. */
   readonly found: FoundTerminal[];
 

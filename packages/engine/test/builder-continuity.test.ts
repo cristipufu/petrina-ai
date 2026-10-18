@@ -119,7 +119,16 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
     try {
       f.engine.s.pool.limited = [{ toolId: "codex", until: later(), reason: "Codex is out" }];
       f.engine.setPoolPaused(false);
-      await f.advance(() => f.fakes.marked("builder-working"));
+      // The fake marks itself working before Petrina hears the step. Wait until this conversation is briefed.
+      await f.advance(() => {
+        const task = f.task();
+        const conversation = task.conversation;
+        return !!conversation
+          && f.fakes.marked("builder-working")
+          && conversation.toolId === "grok"
+          && conversation.briefed === true
+          && task.timeline.some((entry) => entry.text === "Drafting the greeting" && entry.at >= conversation.startedAt);
+      });
       const saved = f.engine.s.tasks.find((task) => task.id === f.task().id)!;
       const original = saved.conversation!;
       expect(original.toolId).toBe("grok");

@@ -241,6 +241,7 @@ This is the "open in terminal" experience, made friendly.
 
 - A chat transcript of the task. Every message names its speaker, including You, keeps its paragraphs, and sits on a quiet background on both sides. Tool activity is grouped into quiet readable lines between messages ("Ran the tests: 42 passed", "Edited 3 files in Checkout").
 - New messages only scroll the conversation when you are already at the bottom, so reading earlier messages is never interrupted.
+- For Claude Code and Codex, the header shows **Sandboxed** or **Not sandboxed** next to the agent's status. Hovering (or focusing) it says what the tool's own sandbox covers, or why it is off. It is hidden while you drive in your terminal, which runs with your own setup. When Claude Code's sandbox can't start, the session also says so once: "Running without Claude Code's sandbox", with the reason.
 - The composer has two modes:
   - **Queue** (default): delivered when the agent finishes its current step. Queued messages wait at the end of the conversation, outlined and marked as queued, each with Remove. They scroll with the conversation, so a long queue never pushes the composer or Send out of view, and sending always brings your message into view.
   - **Interrupt**: stops the current step and delivers now.

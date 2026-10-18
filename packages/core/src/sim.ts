@@ -879,7 +879,8 @@ export class Simulator {
     }
     // A review round's reviewers share its step on the journey; each joins it as it starts.
     beginAgentStep(task, current?.kind === "review-chain" ? current.roleId : next.roleId, next.profileId, d.now, current?.kind === "review-chain" ? current.profileIds : undefined);
-    const agent: ActiveAgent = { ...next, since: d.now, step: 0 };
+    // Claude Code and Codex have known sandbox states; other tools keep their own setup.
+    const agent: ActiveAgent = { ...next, since: d.now, step: 0, ...(["claude-code", "codex"].includes(toolId) ? { sandbox: { on: true as const } } : {}) };
     task.agent = agent;
     // Reviewers look at the change together, as the engine's do: the ones still to report work beside this
     // one, each in a slot of its own while the pool and its tool allow.

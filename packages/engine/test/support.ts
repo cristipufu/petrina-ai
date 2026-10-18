@@ -143,13 +143,28 @@ export async function firstLine(stream: ReadableStream<Uint8Array>): Promise<str
 
 type Spawned = ReturnType<typeof spawnEngine>;
 
+export interface Open {
+  session: string;
+  how: "new" | "resume" | "load";
+  tool: string;
+  background: boolean;
+  logins: boolean;
+  quiet: boolean;
+  sandbox?: unknown;
+  autoMode?: true;
+  refused?: true;
+}
+
 /**
  * The environment test engines run in. Git settings passed down through the environment are
  * dropped (inside a Petrina agent they switch pushing off), so Petrina can push to the
- * test's own bare repository wherever the tests run.
+ * test's own bare repository wherever the tests run. The coordinator's logins are stand-ins, a
+ * GitHub token and an SSH agent, so a fake agent can tell whether it got them.
  */
 export function engineEnv(home: string): Record<string, string | undefined> {
-  return { ...testGitEnv(), PETRINA_HOME: home };
+  const env: Record<string, string | undefined> = { ...testGitEnv(), PETRINA_HOME: home, GH_TOKEN: "petrina-test-gh-login", SSH_AUTH_SOCK: join(home, "ssh-agent.sock") };
+  delete env.GH_CONFIG_DIR;
+  return env;
 }
 
 export function spawnEngine(args: readonly string[], home: string) {
@@ -258,8 +273,12 @@ export class Fakes {
     return this.lines<{ role: string; session: string; text: string }>("prompts.jsonl").filter((entry) => !role || entry.role === role);
   }
 
-  /** How each conversation was opened, and whether its agent ran in the agents' environment. */
-  opens(): { session: string; how: "new" | "resume" | "load"; background: boolean }[] {
+  /**
+   * How each conversation was opened, as which tool: whether its agent ran in the agents' environment (in the
+   * background, with the coordinator's logins and nothing that asks), Claude Code's sandbox settings if it was
+   * sent them, and whether it refused them.
+   */
+  opens(): Open[] {
     return this.lines("opens.jsonl");
   }
 

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { EARLIER_ATTEMPT, formatWhereYouWere, WHERE_YOU_WERE } from "../src/prompts.js";
+import { claudeSandbox } from "../src/sandbox.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
 import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, SLOW, tempDir, waitFor } from "./support.js";
@@ -94,7 +95,11 @@ describe.concurrent("an agent waiting on a question when Petrina restarts", () =
         const session = architect[0]!.session;
         expect(architect.every((entry) => entry.session === session)).toBe(true);
         expect(run.fakes.openings("architect")).toHaveLength(1);
-        expect(run.fakes.opens().filter((open) => open.session === session).map((open) => open.how)).toEqual(["new", reopen]);
+        // Reopened like a new one: Claude Code's sandbox settings, and the coordinator's logins.
+        expect(run.fakes.opens().filter((open) => open.session === session)).toEqual([
+          { session, how: "new", tool: "claude-code", background: true, logins: true, quiet: true, sandbox: claudeSandbox() },
+          { session, how: reopen, tool: "claude-code", background: true, logins: true, quiet: true, sandbox: claudeSandbox() },
+        ]);
         const line = architect[1]!.text;
         expect(line).toStartWith("Petrina restarted while you were on “Design, round 1” as the Architect. You had just started this step. Your last action may not have finished, so check the working copy, then continue where you left off.");
         expect(line).toContain(`The coordinator answered your question “${QUESTION}”: Formal`);
@@ -169,12 +174,13 @@ describe.concurrent("a builder working when Petrina restarts", () => {
         expect(done.session.filter((entry) => entry.from === "activity" && entry.text === "Editing notes.txt")).toHaveLength(1);
         expect(done.session.filter((entry) => entry.text === "Use a friendly tone")).toHaveLength(1);
         expect(done.session.filter((entry) => entry.text === "Keep it short")).toHaveLength(1);
-        // The same rules as a fresh one: model, effort, then the safety mode; and in the background.
+        // The same rules as a fresh one: model, effort, then the safety mode; in the background with the
+        // coordinator's logins, and nothing new for Codex, which keeps its own sandbox.
         const rules = ["model=gpt-6.1-sol", "reasoning_effort=xhigh", "mode=agent"];
         expect(run.fakes.settings(session)).toEqual([...rules, ...rules]);
         expect(run.fakes.opens().filter((open) => open.session === session)).toEqual([
-          { session, how: "new", background: true },
-          { session, how: reopen, background: true },
+          { session, how: "new", tool: "codex", background: true, logins: true, quiet: true },
+          { session, how: reopen, tool: "codex", background: true, logins: true, quiet: true },
         ]);
       } else {
         const fresh = run.fakes.openings("builder")[1]!;
