@@ -95,8 +95,10 @@ describe("Grok account usage", () => {
 
   it("stops an unresponsive CLI, and reports refusal and missing executables without an AI turn", async () => {
     const hanging = server({ hang: true, ignoreStop: true });
-    await expect(readGrokUsage({ command: hanging.command, env: process.env, timeoutMs: 500 })).rejects.toThrow("in time");
-    if (hanging.asked().length) await waitFor(() => !alive(hanging.asked()[0]!.pid), "the hanging Grok reader to stop", 5000);
+    let pid: number | undefined;
+    await expect(readGrokUsage({ command: hanging.command, env: process.env, timeoutMs: 500, onProcess: (child) => { pid = child.pid; } })).rejects.toThrow("in time");
+    expect(pid).toBeGreaterThan(0);
+    await waitFor(() => !alive(pid!), "the hanging Grok reader to stop", 5000);
     const refused = server({ error: "Authentication required" });
     await expect(readGrokUsage({ command: refused.command, env: process.env })).rejects.toThrow("Authentication required");
     await expect(readGrokUsage({ command: [join(refused.dir, "no-such-grok")], env: process.env })).rejects.toThrow("could not start");

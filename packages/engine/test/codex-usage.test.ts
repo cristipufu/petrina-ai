@@ -57,10 +57,15 @@ describe("what Codex's app-server says about usage", () => {
 
   it("gives up within its time limit when Codex does not answer, and says plainly when it refuses or is missing", async () => {
     const hanging = appServer({ hang: true });
-    const started = Date.now();
-    await expect(readCodexUsage({ command: hanging.command, env: process.env, timeoutMs: 700 })).rejects.toThrow("Codex did not answer within 1 seconds");
-    expect(Date.now() - started).toBeLessThan(10_000);
-    await waitFor(() => !alive(hanging.asked()[0]!.pid), "the hanging app-server to be gone", 5_000);
+    for (const server of [hanging, appServer({ hang: true, bootDelayMs: 1500 })]) {
+      let pid: number | undefined;
+      const started = Date.now();
+      await expect(readCodexUsage({ command: server.command, env: process.env, timeoutMs: 700, onProcess: (child) => { pid = child.pid; } })).rejects.toThrow("Codex did not answer within 1 seconds");
+      expect(Date.now() - started).toBeLessThan(10_000);
+      // The deadline may pass before the executable handles even its first request.
+      expect(pid).toBeGreaterThan(0);
+      await waitFor(() => !alive(pid!), "the hanging app-server to be gone", 5_000);
+    }
     const refusing = appServer({ error: "not logged in" });
     await expect(readCodexUsage({ command: refusing.command, env: process.env })).rejects.toThrow("not logged in");
     await expect(readCodexUsage({ command: [join(hanging.dir, "no-such-codex"), "app-server"], env: process.env })).rejects.toThrow("Codex is not installed");
