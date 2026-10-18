@@ -10,7 +10,7 @@ import { addToSection, AGENTS_FILE, appendPoints, cleanPoint, GUIDE, GUIDE_FILE,
 /** What AGENTS.md says about the review guide, so every agent reads it, in Petrina or not. */
 const GUIDE_SECTION = "## Review guide";
 const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.`;
-import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, type MTask } from "./kernel.js";
+import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, type MTask, ScreenWait } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 
@@ -49,7 +49,7 @@ export class GuideKeeper {
     const miss = task.miss;
     if (!product || !miss || !task.worktree) return;
     const attempts = task.stepAttempts;
-    const conversation = task.conversation;
+    const conversation = task.conversation?.roleId === "guide-keeper" ? undefined : task.conversation;
     const restore = () => {
       if (attempts === undefined) delete task.stepAttempts;
       else task.stepAttempts = attempts;
@@ -74,6 +74,7 @@ export class GuideKeeper {
         signal,
         { status: "Looking for what the reviewers missed", used: (id) => (ran = id) },
       );
+      this.k.releaseScreen(task);
       restore();
       const proposed = !!result.missed && !!result.line && !hasPoint(guide, result.line);
       endAgentStep(task, { outcome: proposed ? W.guidePoint : W.noGuidePoint, reason: W.backToBuilder }, Date.now());
@@ -87,7 +88,8 @@ export class GuideKeeper {
         this.k.log(task, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", ran);
       }
     } catch (error) {
-      if (signal.aborted || error instanceof Aborted) throw error;
+      if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) throw error;
+      this.k.releaseScreen(task);
       restore();
       if (error instanceof WaitingForUsage) throw error;
       // Petrina carries on without it, but it is still a failure in Analytics.

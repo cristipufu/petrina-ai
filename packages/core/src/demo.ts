@@ -65,6 +65,11 @@ export const DEMO_TRIGGERS: Triggers = {
     body: "Search by tag needs an index to stay fast with many notes.",
     detail: "bun run db:migrate add-tags-index",
   },
+  // A builder checking a Mac app window: everything else is done offscreen, this needs the real screen.
+  "quick-note|builder|1|3": {
+    kind: "screen",
+    title: "Click the menu bar icon and check the quick note window opens in front, takes focus and closes with Esc",
+  },
 };
 
 /** Demo tasks whose architects end up disagreeing, so the coordinator can make the call. */
@@ -98,6 +103,7 @@ const SPECS: readonly Spec[] = [
   { id: "tag-search", productId: "notes", title: "Search by tag", description: "Type #tag in search to see every note with that tag.", area: "tag search", kind: "feature" },
   { id: "stripe-retries", productId: "shop", title: "Retry failed Stripe webhooks", description: "When a webhook fails, retry it a few times before giving up.", area: "webhooks", kind: "bug" },
   { id: "gift-cards", productId: "shop", title: "Gift cards", description: "Sell gift cards people can send by email and spend at checkout.", area: "gift cards", kind: "feature" },
+  { id: "quick-note", productId: "notes", title: "Quick note window opens behind others", description: "On the Mac app, the quick note window from the menu bar sometimes opens behind other windows.", area: "the quick note window", kind: "bug" },
 ];
 
 const MINUTE = 60_000;
@@ -232,6 +238,7 @@ function shift(placed: Placed, now: number, ago: number, priority: number): Plac
       ...(task.pr ? { pr: { ...task.pr, openedAt: at(task.pr.openedAt) } } : {}),
       ...(task.cleanup?.removedAt !== undefined ? { cleanup: { ...task.cleanup, removedAt: at(task.cleanup.removedAt) } } : {}),
       ...(task.checks ? { checks: { ...task.checks, at: at(task.checks.at) } } : {}),
+      ...(task.screen ? { screen: { ...task.screen, at: at(task.screen.at) } } : {}),
       timeline: task.timeline.map((entry) => ({ ...entry, at: at(entry.at) })),
       session: task.session.map((line) => ({ ...line, at: at(line.at) })),
       ...(task.journey
@@ -436,6 +443,7 @@ function buildDemo(now: number): Demo {
   place("login-loop", 0, (task) => task.column === "reviewing" && task.sub === 0 && (task.agent?.step ?? 0) === 2, 101);
   place("dark-mode", 4 * MINUTE, (_task, items) => items.some((item) => item.kind === "question"), 102);
   place("gift-cards", 6 * MINUTE, (_task, items) => items.some((item) => item.kind === "disagreement"), 107);
+  place("quick-note", 3 * MINUTE, (_task, items) => items.some((item) => item.kind === "screen"), 108);
   place("weekly-digest", 9 * MINUTE, (_task, items) => items.some((item) => item.kind === "plan"), 103);
   place("pricing-refresh", 26 * MINUTE, (_task, items) => items.some((item) => item.kind === "delivery"), 104);
   place("sentry", 3 * 60 * MINUTE, (task) => task.cleanup?.removedAt !== undefined, 105);
@@ -568,7 +576,7 @@ const PORTFOLIO_WORK: readonly { title: string; area: string; kind: TaskKind; de
 ];
 
 type Target =
-  | "queued" | "held" | "design-running" | "build-running" | "review-running" | "question" | "permission"
+  | "queued" | "held" | "design-running" | "build-running" | "review-running" | "question" | "permission" | "screen"
   | "plan-gate" | "design-gate" | "delivery-gate" | "pr-open" | "done";
 
 /** What each task in the portfolio is doing when the app opens. At most eight hold a slot. */
@@ -577,6 +585,7 @@ const PORTFOLIO_TARGETS: readonly Target[] = [
   "plan-gate", "design-gate", "delivery-gate", "delivery-gate", "design-gate", "plan-gate", "delivery-gate",
   "pr-open", "pr-open", "pr-open", "done", "done", "done", "done", "done", "done",
   "queued", "queued", "queued", "queued", "queued", "held", "queued", "queued", "queued", "queued", "queued", "held", "queued", "queued",
+  "screen",
 ];
 
 const reach: Record<Exclude<Target, "queued" | "held">, (task: Task, inbox: readonly InboxItem[]) => boolean> = {
@@ -585,6 +594,7 @@ const reach: Record<Exclude<Target, "queued" | "held">, (task: Task, inbox: read
   "review-running": (task) => task.column === "reviewing" && task.state === "running" && (task.agent?.step ?? 0) >= 1,
   question: (_task, inbox) => inbox.some((item) => item.kind === "question"),
   permission: (_task, inbox) => inbox.some((item) => item.kind === "permission"),
+  screen: (_task, inbox) => inbox.some((item) => item.kind === "screen"),
   "plan-gate": (_task, inbox) => inbox.some((item) => item.kind === "plan"),
   "design-gate": (_task, inbox) => inbox.some((item) => item.kind === "design"),
   "delivery-gate": (_task, inbox) => inbox.some((item) => item.kind === "delivery"),
@@ -643,6 +653,9 @@ function buildPortfolioDemo(now: number): Demo {
     }
     if (target === "permission") {
       triggers[`${id}|builder|1|2`] = { kind: "permission", title: "Add a new package: date-fns", body: "Formatting dates in the user's timezone.", detail: "npm install date-fns" };
+    }
+    if (target === "screen") {
+      triggers[`${id}|builder|1|2`] = { kind: "screen", title: "Open the app on screen and check the first page appears without a blank flash" };
     }
 
     if (target === "queued" || target === "held") {

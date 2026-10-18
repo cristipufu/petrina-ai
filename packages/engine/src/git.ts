@@ -822,12 +822,18 @@ export async function addCopy(root: string, path: string, sha: string): Promise<
   await oneAtATime(root, () => must(["git", "worktree", "add", "--detach", "--quiet", path, sha], root));
 }
 
-/** Remove every copy in a folder, and git's record of them, whatever state they were left in. */
-export async function removeCopies(root: string, folder: string): Promise<void> {
+/** Remove copies and git's records, keeping only conversations that are waiting for the screen. */
+export async function removeCopies(root: string, folder: string, keep: readonly string[] = []): Promise<void> {
   const names = await readdir(folder).catch(() => [] as string[]);
+  const kept = new Set(keep);
   await oneAtATime(root, async () => {
-    for (const name of names) await run(["git", "worktree", "remove", "--force", join(folder, name)], root);
-    await rm(folder, { recursive: true, force: true });
+    for (const name of names) {
+      const copy = join(folder, name);
+      if (kept.has(copy)) continue;
+      await run(["git", "worktree", "remove", "--force", copy], root);
+      if (kept.size) await rm(copy, { recursive: true, force: true });
+    }
+    if (!kept.size) await rm(folder, { recursive: true, force: true });
     await run(["git", "worktree", "prune"], root);
   });
 }

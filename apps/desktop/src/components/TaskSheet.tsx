@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, ArrowUpToLine, Ban, CheckCircle2, ChevronRight, Clock3, Ellipsis, ExternalLink, GitPullRequest, Hand, ListOrdered, LoaderCircle, MessageSquare, Pause, Play, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, ArrowUpToLine, Ban, Check, CheckCircle2, ChevronRight, Clock3, Ellipsis, ExternalLink, GitPullRequest, Hand, ListOrdered, LoaderCircle, MessageSquare, Monitor, Pause, Play, TriangleAlert, X } from "lucide-react";
 import { TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
-import { duration, safeUrl, STATE_LABEL, type Lookup } from "../lib";
+import { duration, safeUrl, STATE_LABEL, stateLabel, type Lookup } from "../lib";
 import { ProductName, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
 import { Journey } from "./Journey";
 import { Ask } from "./Inbox";
@@ -81,7 +81,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
   const canPause = task.state === "running" || task.state === "needs-you" || task.state === "waiting";
   // Pause and Cancel wait until the coordinator hands back.
   const driving = task.driving !== undefined;
-  const stateLabel = driving ? "You're driving" : STATE_LABEL[task.state];
+  const label = driving ? "You're driving" : stateLabel(task, state);
 
   useEffect(() => { globalScroll.current = 0; scroller.current?.scrollTo({ top: 0 }); setSessionStep(undefined); setSelectedStep(undefined); }, [task.id]);
   useLayoutEffect(() => { scroller.current?.scrollTo({ top: selectedStep ? 0 : globalScroll.current }); }, [selectedStep]);
@@ -128,7 +128,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
           <button className="btn quiet small" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" /> Back</button>
           <div className="task-workspace-title">
             <h1 className="sheet-title" id="sheet-title" title={task.title}>{task.title}</h1>
-            <div className="sheet-meta"><ProductName product={product} /><span aria-hidden="true">·</span><span>{stateLabel}</span>{task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}</div>
+            <div className="sheet-meta"><ProductName product={product} /><span aria-hidden="true">·</span><span>{label}</span>{task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}{task.screenAllowed && <span>· Screen allowed for this task</span>}</div>
           </div>
           <div className="sheet-actions">
             {prUrl && (
@@ -166,6 +166,12 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
                 </button>
                 {menu && (
                   <div className="menu" role="menu" style={{ right: 0, top: "calc(100% + 4px)" }}>
+                    {/* Its screen requests go ahead even while the switch is off, one agent at a time. */}
+                    <button role="menuitemcheckbox" aria-checked={task.screenAllowed === true} autoFocus={task.state !== "queued"} onClick={act(() => sim.setTaskScreen(task.id, !task.screenAllowed))}>
+                      <Monitor size={16} />
+                      Allow the screen for this task
+                      {task.screenAllowed && <Check size={16} className="menu-check" aria-hidden="true" />}
+                    </button>
                     {task.state === "queued" && (
                       <>
                         <button role="menuitem" autoFocus onClick={act(() => sim.moveToTop(task.id))}>
@@ -178,7 +184,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, onClos
                         </button>
                       </>
                     )}
-                    <button role="menuitem" className="danger" autoFocus={task.state !== "queued"} disabled={driving} title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined} onClick={act(() => sim.cancel(task.id))}>
+                    <button role="menuitem" className="danger" disabled={driving} title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined} onClick={act(() => sim.cancel(task.id))}>
                       <Ban size={16} />
                       {driving ? `Cancel task (${TAKE_OVER_WORDS.handBackFirst.toLowerCase()})` : "Cancel task"}
                     </button>

@@ -1,4 +1,4 @@
-import { landingOf, type AgentProfile, type Column, type Effort, type Id, type Role, type RoleIcon, type RoleResult, type RunState, type State, type Task, type Tone, type Tool } from "@petrina/core";
+import { landingOf, onScreen, SCREEN_WORDS, screenOn, screenWait, type AgentProfile, type Column, type Effort, type Id, type Role, type RoleIcon, type RoleResult, type RunState, type State, type Task, type Tone, type Tool } from "@petrina/core";
 
 export function lookup(state: State) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
@@ -28,6 +28,26 @@ export const STATE_LABEL: Record<RunState, string> = {
   done: "Completed",
   cancelled: "Cancelled",
 };
+
+/** A task's state in words. A task waiting for the screen says so instead of waiting for a slot. */
+export function stateLabel(task: Task, state: State): string {
+  return screenWait(task, state, state.now) ? SCREEN_WORDS.flag : STATE_LABEL[task.state];
+}
+
+/**
+ * What the top bar's screen mark says: an agent is on the screen, or agents may use it. Nothing when
+ * the switch is off and nobody is on the screen.
+ */
+export function screenMark(state: State): { label: string; inUse: boolean } | undefined {
+  if (onScreen(state.tasks)) return { label: "An agent is using the screen", inUse: true };
+  if (screenOn(state.pool, state.now)) return { label: "Agents may use the screen", inUse: false };
+  return undefined;
+}
+
+/** A time of day, for "On until 15:40". */
+export function clockTime(at: number): string {
+  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
 
 const EFFORT_LABEL: Record<Effort, string> = {
   low: "low effort",

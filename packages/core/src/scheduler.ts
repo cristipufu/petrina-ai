@@ -1,5 +1,6 @@
 import type { Id, Pool, State, Task } from "./model.js";
 import { byRoom, headroom, toolCapNow } from "./usage.js";
+import { screenReady } from "./screen.js";
 
 /** A pool slot in use: which task holds it, on which tool, and the agent in it when there is one. */
 export interface SlotUse {
@@ -105,7 +106,8 @@ export function queueOf(tasks: readonly Task[]): Task[] {
 /** How many queued tasks will start as soon as slots allow: the "starts next" line. */
 export function startsNextCount(state: State): number {
   if (state.pool.paused) return 0;
-  const waiting = state.tasks.filter((task) => task.state === "waiting").length;
+  // A task waiting for the screen holds no claim on a slot until the screen is its turn.
+  const waiting = state.tasks.filter((task) => task.state === "waiting" && screenReady(task, state, state.now)).length;
   const free = Math.max(0, state.pool.limit - slotUses(state).length - waiting);
   return queueOf(state.tasks).filter((task) => !task.held).slice(0, free).length;
 }

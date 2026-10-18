@@ -29,20 +29,23 @@ export function boardOrder(tasks: readonly Task[], visible: (task: Task) => bool
   return [...sections["needs-you"], ...sections.working, ...sections.waiting, ...sections.queue, ...(showDone ? sections.done : [])].map((task) => task.id);
 }
 
+/** Agents kept waiting first, then by task priority and age. Quiet screen requests come after everything else. */
 export function inboxOrder(state: State): InboxItem[] {
   const started = new Map(state.tasks.map((task) => [task.id, task.startedAt ?? 0]));
-  return [...state.inbox].sort((a, b) => Number(b.blocking) - Number(a.blocking) || (started.get(a.taskId) ?? 0) - (started.get(b.taskId) ?? 0) || a.at - b.at);
+  const rank = (item: InboxItem) => (item.blocking ? 0 : item.kind === "screen" ? 2 : 1);
+  return [...state.inbox].sort((a, b) => rank(a) - rank(b) || (started.get(a.taskId) ?? 0) - (started.get(b.taskId) ?? 0) || a.at - b.at);
 }
 
 /**
  * The line under "Needs you": agents waiting on the coordinator, tasks stuck until they act, and what
- * waits at a checkpoint. "Nobody is stuck" only when nothing is.
+ * waits at a checkpoint. "Nobody is stuck" only when nothing is. A quiet screen request is none of these.
  */
 export function inboxSummary(items: readonly InboxItem[]): string {
-  if (items.length === 0) return "You're not blocking anyone.";
-  const waiting = items.filter((item) => item.blocking).length;
-  const stuck = items.filter((item) => !item.blocking && item.kind === "stuck").length;
-  const rest = items.length - waiting - stuck;
+  const counted = items.filter((item) => item.kind !== "screen");
+  if (counted.length === 0) return "You're not blocking anyone.";
+  const waiting = counted.filter((item) => item.blocking).length;
+  const stuck = counted.filter((item) => !item.blocking && item.kind === "stuck").length;
+  const rest = counted.length - waiting - stuck;
   const parts: string[] = [];
   if (waiting) parts.push(`${waiting} agent${waiting === 1 ? " is" : "s are"} waiting on you.`);
   if (stuck) parts.push(`${stuck} task${stuck === 1 ? " is" : "s are"} stuck until you act on ${stuck === 1 ? "it" : "them"}.`);

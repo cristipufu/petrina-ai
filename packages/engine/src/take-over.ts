@@ -54,7 +54,7 @@ export class TakeOver {
         this.backToWork(current);
         throw new Error("The agent finished its step just as you took over. Take over again on its next step if you want to.");
       }
-      const worktree = current.worktree!;
+      const worktree = this.k.agentWorktree(current);
       let saved: { sha: string; files: string[] } | undefined;
       try {
         if (conversation.access?.canEdit ?? role.canEdit) {
@@ -64,7 +64,7 @@ export class TakeOver {
             : undefined;
           if (sha) saved = { sha, files };
         } else {
-          await this.k.undoReadOnly(current, role.id);
+          await this.k.undoReadOnly(current, role.id, worktree);
         }
         current.driving = { since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head: await git.head(worktree), ...(saved ? { saved } : {}) };
       } catch (error) {
@@ -125,7 +125,7 @@ export class TakeOver {
     const task = this.k.task(taskId);
     if (!task?.driving) throw new Error("You're not driving this task");
     const driving = task.driving;
-    const worktree = task.worktree!;
+    const worktree = this.k.agentWorktree(task);
     const [open, where, files, commits, clean] = await Promise.all([
       sessionState(this.takeOverDir(taskId), this.k.machine.platform),
       git.workingState(worktree),
@@ -166,7 +166,7 @@ export class TakeOver {
       const open = await sessionState(dir, this.k.machine.platform);
       if (open === "running") throw new Error(TAKE_OVER_WORDS.stillOpen(tool));
       if (open === "unknown" && !anyway) throw new Error(TAKE_OVER_WORDS.cannotTell(tool));
-      const worktree = task.worktree!;
+      const worktree = this.k.agentWorktree(task);
       const problem = this.branchProblem(task, await git.workingState(worktree));
       if (problem) throw new Error(problem);
       const role = this.k.role(driving.roleId)!;
@@ -176,6 +176,16 @@ export class TakeOver {
         : await git.commitAll(worktree, `${task.title} (changes made by hand)\n\nMade by the coordinator in their own terminal while driving the ${role.name}, and saved by Petrina at the hand back.\n\nDriven by hand: ${this.k.describe(role.id, driving.profileId)}`);
       const text = handBackNote({ role: role.name, tool, took: Date.now() - driving.since, ...(driving.saved ? { saved: driving.saved.files } : {}), commits, files, leftovers: leftovers !== undefined, note });
       const head = await git.head(worktree);
+
+      // A reviewer works detached from the task's branch. Keep the coordinator's edits in both:
+      // its conversation continues in its own copy, and the task's later checks and reviews see them.
+      if (files.length && worktree !== task.worktree) {
+        const parent = await git.head(task.worktree!);
+        const merged = await git.mergeTree(task.worktree!, parent, head);
+        if (!merged || merged.conflicts.length) throw new Error("Your changes overlap with the task's working copy. Resolve them in the reviewer's copy, then hand back again.");
+        const kept = await git.commitTree(task.worktree!, merged.tree, parent, `${task.title} (changes made by hand)\n\n${text}`);
+        await git.moveTo(task.worktree!, kept);
+      }
 
       this.k.say(task, "system", `You handed back to the ${role.name}`, role.id, driving.profileId);
       this.k.say(task, "you", text);
@@ -254,7 +264,7 @@ export class TakeOver {
   }
 
   private launchInput(task: MTask, tool: LaunchInput["tool"], sessionId: string, model: string, effort: string): LaunchInput {
-    return { platform: this.k.machine.platform, dir: this.takeOverDir(task.id), worktree: task.worktree!, tool, sessionId, model, effort };
+    return { platform: this.k.machine.platform, dir: this.takeOverDir(task.id), worktree: this.k.agentWorktree(task), tool, sessionId, model, effort };
   }
 
   /** Write the launcher and open it in the terminal, or only write it for the coordinator to run. */
@@ -288,7 +298,9 @@ export class TakeOver {
   /** Why hand back cannot go on with the working copy as it is, in plain words. */
   private branchProblem(task: MTask, where: { branch?: string; busy?: string }): string | undefined {
     if (where.busy) return `The working copy is in the middle of ${where.busy}. Finish it or abort it in your terminal, then hand back.`;
-    if (where.branch !== task.branch) return "The working copy is no longer on the task's branch. Switch back to it in your terminal, then hand back.";
+    const separate = this.k.agentWorktree(task) !== task.worktree;
+    if (separate && where.branch) return "The reviewer's working copy switched to a branch. Return it to where the reviewer was working, then hand back.";
+    if (!separate && where.branch !== task.branch) return "The working copy is no longer on the task's branch. Switch back to it in your terminal, then hand back.";
     return undefined;
   }
 }

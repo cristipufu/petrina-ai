@@ -8,6 +8,7 @@ import {
   Hand,
   Lightbulb,
   Map as MapIcon,
+  Monitor,
   PackageSearch,
   PanelRightClose,
   PartyPopper,
@@ -42,6 +43,7 @@ const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> =
   driving: { label: "You're driving", icon: SquareTerminal, tone: "blue" },
   guide: { label: "Review guide", icon: BookOpen, tone: "teal" },
   learnings: { label: "Learnings", icon: Lightbulb, tone: "teal" },
+  screen: { label: "Screen", icon: Monitor, tone: "slate" },
 };
 
 /** Where the inbox opens after a click on a notification: at an item, or at its top with a note. */
@@ -389,6 +391,16 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
           </button>
           <button className="btn quiet danger" onClick={() => sim.cancel(item.taskId)}>
             Cancel task
+          </button>
+        </div>
+      )}
+
+      {/* Quiet: listed last, with no notification, and never counted as blocking. */}
+      {item.kind === "screen" && (
+        <div className="ask-actions">
+          <button className="btn" onClick={() => sim.allowScreen(item.taskId)}>
+            <Monitor size={16} aria-hidden="true" />
+            Allow now
           </button>
         </div>
       )}

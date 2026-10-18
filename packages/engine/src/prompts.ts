@@ -13,7 +13,14 @@ export const NeedsInput = z.object({
   }),
 });
 
-export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string } | { ok: "input"; question: string; options: string[] };
+/** An agent that needs the running app on screen ends its turn with this instead of its result. */
+export const NeedsScreen = z.object({
+  needsScreen: z.object({
+    reason: z.string().trim().min(3),
+  }),
+});
+
+export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string } | { ok: "input"; question: string; options: string[] } | { ok: "screen"; reason: string };
 
 /** Find the last ```petrina block (or a trailing ```json block) and validate it. */
 export function parseResult<T>(text: string, schema: z.ZodType<T>): Parsed<T> {
@@ -28,6 +35,8 @@ export function parseResult<T>(text: string, schema: z.ZodType<T>): Parsed<T> {
   }
   const input = NeedsInput.safeParse(json);
   if (input.success) return { ok: "input", question: input.data.needsInput.question, options: input.data.needsInput.options };
+  const screen = NeedsScreen.safeParse(json);
+  if (screen.success) return { ok: "screen", reason: screen.data.needsScreen.reason };
   const parsed = schema.safeParse(json);
   if (!parsed.success) return { ok: false, error: parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ") };
   return { ok: true, value: parsed.data };
@@ -51,6 +60,11 @@ export interface PromptContext {
   /** Extra sections: the brief, objections, findings, review results, notes from the coordinator. */
   sections: readonly { title: string; body: string }[];
   access?: { canEdit: boolean; afterReview?: boolean };
+  /**
+   * The screen: "ask" when the agent may ask for it, or the reason it has it now (only the agent that has it is
+   * told it may use it). Unset: every role except the Release Manager is told how to ask.
+   */
+  screen?: "ask" | { reason: string };
 }
 
 const RESULT_FOOTER = (shape: string) => `
@@ -72,8 +86,42 @@ When you offer options, put the answer you recommend first: the coordinator sees
 export const BACKGROUND = `Work in the background: the coordinator is using this computer while you work. Never open windows or apps on their screen. That means no open, xdg-open or start, no visible browser, no desktop app window and no terminal window. In tests, use stand-ins for anything that would open one. Stop every server and browser you start before you finish.
 Check what you build without windows:
 - Web UIs, including Tauri and Electron front ends: in a headless browser (Playwright with headless: true, or headless Chrome) on a free port.
-- Native Mac app screens (SwiftUI, AppKit): render views offscreen to images in snapshot tests, never by launching the app.
-If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.`;
+- Native Mac app screens (SwiftUI, AppKit): render views offscreen to images in snapshot tests, never by launching the app.`;
+
+/** How a step's agent asks for the screen. Petrina decides; only the agent that has the screen is told it may use it. */
+export const ASK_FOR_SCREEN = `If a check truly needs the running app on screen (clicking through it, menus, the Dock, real window behaviour), ask for the screen. First do everything else you can in the background, then end your turn with this block instead of your usual result, giving the reason in plain language:
+
+\`\`\`petrina
+{"needsScreen": {"reason": "What you need to check on screen, in plain language"}}
+\`\`\`
+
+Petrina tells you in this conversation when you may use the screen. Until then, never use it.`;
+
+/** The Release Manager never pauses or reopens a conversation. */
+const NO_SCREEN = "If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.";
+
+/** Every agent except the Release Manager may ask, including internal roles and parallel reviewers. */
+export function mayAskScreen(role: Role): boolean {
+  return role.result !== "delivery";
+}
+
+/** What the agent that has the screen may do, and what it must clean up. */
+export function screenRules(reason: string): string {
+  return `You may now use the screen for: ${reason}. You may run the app on screen, take real screenshots and click through it. You are the only agent on the screen. When you are done with it, close every window and app you opened and stop everything you started.`;
+}
+
+function background(screen: PromptContext["screen"]): string {
+  if (!screen) return `${BACKGROUND}\n${NO_SCREEN}`;
+  if (screen === "ask") return `${BACKGROUND}\n${ASK_FOR_SCREEN}`;
+  return `${BACKGROUND}\n${ASK_FOR_SCREEN}\n\nThe coordinator has allowed it, so you have the screen now, as the one exception to working in the background. ${screenRules(screen.reason)}`;
+}
+
+/** Back in its own conversation from an earlier step: it has the screen only when told so now. */
+function screenNow(screen: PromptContext["screen"]): string {
+  if (!screen) return "";
+  if (screen === "ask") return 'You do not have the screen now, even if you had it earlier in this conversation. If a check truly needs it, first do everything else in the background, then end your turn with {"needsScreen": {"reason": "…"}} instead of your result.\n\n';
+  return `${screenRules(screen.reason)}\n\n`;
+}
 
 /** Agents act with the coordinator's own logins: to read and investigate, never to publish. */
 export const LOGINS = `You act with the coordinator's own logins on this computer: GitHub (gh and git), SSH, AWS, Azure and Azure DevOps. Use them to read and investigate freely: code and repositories, private dependencies, pull requests, reviews and CI logs. Never push, open, merge, close or comment on pull requests, create tags or releases, or change anything else on GitHub: Petrina publishes the work itself after the coordinator approves it. Do not publish, merge or change shared resources anywhere else either (cloud accounts, Azure DevOps, registries), unless the task asks for it.`;
@@ -98,7 +146,7 @@ The coordinator who reads your work is a product person, not a developer: everyt
 
 Your working copy is ${worktree}, on branch ${branch}. Stay inside it.
 
-${BACKGROUND}
+${background(ctx.screen ?? (mayAskScreen(role) ? "ask" : undefined))}
 
 ${LOGINS}
 
@@ -128,7 +176,7 @@ ${contract.instructions(ctx)}${roleCard(ctx)}
 
 ${sections}
 
-Keep a short to-do list as you work, written in plain language: the coordinator watches it live.
+${screenNow(ctx.screen ?? (mayAskScreen(ctx.role) ? "ask" : undefined))}Keep a short to-do list as you work, written in plain language: the coordinator watches it live.
 ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
 }
 
@@ -189,11 +237,20 @@ export function restartPrompt(where: WhereYouWere, unheard: { answer?: { questio
   return parts.join("\n\n");
 }
 
+/** The one line a conversation reopened for the screen gets, followed by what it has not heard yet. Nothing restarted. */
+export function screenPrompt(reason: string, messages: readonly string[]): string {
+  const parts = [screenRules(reason)];
+  if (messages.length) parts.push(`Messages from the coordinator you have not seen yet, in order:\n${messages.map((text) => `- ${text}`).join("\n")}`);
+  parts.push(`${messages.length ? "Take them into account. " : ""}When you are done, end with the result block.`);
+  return parts.join("\n\n");
+}
+
 export const WHERE_YOU_WERE = "Where you were when Petrina restarted";
+export const WHERE_YOU_WERE_SCREEN = "Where you were when you asked for the screen";
 
 /** For a fresh conversation on a step whose conversation could not be reopened. */
-export function formatWhereYouWere(where: WhereYouWere, reason: string): string {
-  return [`Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`, ...whereDetails(where, "you")].join("\n\n");
+export function formatWhereYouWere(where: WhereYouWere, reason: string, cause: "restart" | "screen" = "restart"): string {
+  return [cause === "screen" ? `You asked for the screen while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did in the background: build on it instead of redoing it, and check it first.` : `Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`, ...whereDetails(where, "you")].join("\n\n");
 }
 
 /** What was done in the step so far and which files changed: the same in a restart's summary and a take-over's. */

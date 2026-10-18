@@ -137,6 +137,7 @@ const NEED: Record<InboxKind, (who: string, task: string) => string> = {
   driving: () => "You're driving",
   guide: (who) => `${who}: a point for the review guide`,
   learnings: (who) => `${who}: lessons about working in this repository`,
+  screen: (who) => `${who} needs the screen`,
 };
 
 /** The notification for one inbox item. */

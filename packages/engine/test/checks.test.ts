@@ -1,14 +1,14 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
-import { checksFingerprint, detectChecks, parseCommand, runChecks } from "../src/checks.js";
+import { checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "../src/checks.js";
 import { CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
 import { Engine } from "../src/engine.js";
 import { Store } from "../src/store.js";
-import { Fakes, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
+import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -189,6 +189,8 @@ setInterval(() => {}, 1000);`);
     }
   });
 
+  // The parent and both detached workers are alive. The first list fails. A later real list stops
+  // them. When every list fails, those workers stay running and the check says cleanup is incomplete.
   for (const outcome of ["recovers", "cannot read"] as const) it.skipIf(process.platform === "win32")(`reports an unavailable process tree accurately when cleanup ${outcome}`, async () => {
     const dir = root("petrina-checks-process-list-");
     const worker = join(dir, "worker.ts");
@@ -212,6 +214,7 @@ setInterval(() => {}, 1000);`);
     const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
     const workers = () => [childPid, grandPid].filter(existsSync).map((file) => Number(readFileSync(file, "utf8")));
     const timeouts: number[] = [];
+    let captured: number[] = [];
     const processList = async (timeout: number) => {
       timeouts.push(timeout);
       const pids = workers();
@@ -219,6 +222,7 @@ setInterval(() => {}, 1000);`);
       expect(pids).toHaveLength(2);
       expect(pids.every(alive)).toBe(true);
       expect(pids).not.toContain(sentinel.pid);
+      if (timeouts.length === 1) captured = [...pids];
       if (outcome === "cannot read" || timeouts.length === 1) return undefined;
       return readProcessList(timeout);
     };
@@ -230,18 +234,24 @@ setInterval(() => {}, 1000);`);
       const found = parseDescendants(await readProcessList(4_000) ?? "", [parentId]);
       for (const pid of workers()) expect(found).toContain(pid);
       expect(found).not.toContain(sentinel.pid);
+      const stoppingAt = Date.now();
       stop.abort();
       const [run] = await running as Awaited<ReturnType<typeof runChecks>>;
       expect(run!.ok).toBe(false);
+      expect(run!.timedOut).toBeUndefined();
+      expect(Date.now() - stoppingAt).toBeLessThan(5000);
       expect(timeouts).toEqual([1_000, 2_000]);
+      expect(captured).toHaveLength(2);
+      expect(alive(parentId)).toBe(false);
       expect(alive(sentinel.pid!)).toBe(true);
       if (outcome === "recovers") {
         expect(run!.cleanupIncomplete).toBeUndefined();
-        await waitFor(() => workers().every((pid) => !alive(pid)), "the detached workers to exit", 3_000);
+        expect(run!.output).not.toContain(CLEANUP_INCOMPLETE);
+        expect(captured.every((pid) => !alive(pid))).toBe(true);
       } else {
         expect(run!.cleanupIncomplete).toBe(true);
         expect(run!.output).toContain(CLEANUP_INCOMPLETE);
-        expect(workers().every(alive)).toBe(true);
+        expect(captured.every(alive)).toBe(true);
       }
     } finally {
       stop.abort();
@@ -360,6 +370,93 @@ describe("Petrina runs the checks itself during a task", () => {
         } finally { store.close(); }
       } finally {
         engine.shutdown();
+      }
+    });
+  }
+});
+
+describe("a stopped check keeps an incomplete cleanup warning", () => {
+  // The process list fails only while this check or hook is stopped. The engine's own PATH stands in
+  // for ps, so the rest of the suite still sees the real one.
+  for (const kind of ["check", "hook"] as const) {
+    it.skipIf(process.platform === "win32")(`saves it when cancelling a ${kind} cannot list the programs it started`, async () => {
+      const dir = tempDir("petrina-check-stop-warn-");
+      const home = join(dir, "data");
+      const fakes = new Fakes(join(dir, "fake"));
+      fakes.scenario({ planner: "short", builder: "plain" });
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      const blind = join(dir, "blind");
+      const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+      writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ -f ${quote(blind)} ]; then exit 1; fi\nexec /bin/ps "$@"\n`);
+      chmodSync(join(bin, "ps"), 0o755);
+      const worker = join(dir, "worker.ts");
+      const childPid = join(dir, "child.pid");
+      const ready = join(dir, "ready");
+      writeFileSync(worker, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(childPid)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`);
+      const hang = `import { spawn } from "node:child_process";\nimport { existsSync, writeFileSync } from "node:fs";\nconst child = spawn(process.execPath, [${JSON.stringify(worker)}], { detached: true, stdio: "ignore" });\nchild.unref();\nwhile (!existsSync(${JSON.stringify(childPid)})) await Bun.sleep(20);\nwriteFileSync(${JSON.stringify(ready)}, "ready");\nsetInterval(() => {}, 1000);\n`;
+      const parent = join(dir, kind === "check" ? "parent.ts" : "pass.ts");
+      const hookScript = join(dir, "hook.ts");
+      writeFileSync(parent, kind === "check" ? hang : "process.exit(0);\n");
+      if (kind === "hook") writeFileSync(hookScript, hang);
+      const repo = makeProduct(dir);
+      if (kind === "hook") {
+        const hook = join(repo, ".git", "hooks", "pre-commit");
+        writeFileSync(hook, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(hookScript)}\n`);
+        chmodSync(hook, 0o755);
+      }
+      const launcher = join(dir, "engine.ts");
+      writeFileSync(launcher, `process.env.PATH = ${JSON.stringify(bin)} + ":" + process.env.PATH;\nawait import(${JSON.stringify(HARNESS)});\n`);
+      let engine: EngineProcess | undefined;
+      const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+      try {
+        engine = await EngineProcess.start(home, [launcher, home, fakes.dir]);
+        const productId = await engine.act("addProduct", repo) as string;
+        await engine.act("setProductChecks", productId, [{ name: "Detached", command: commandText([process.execPath, parent]) }]);
+        await engine.act("setProductDelivery", productId, "local", true);
+        const id = await engine.act("addTask", { productId, title: "Add a greeting", description: "[no-check]" }) as string;
+        await waitFor(async () => {
+          const state = await engine!.state();
+          for (const item of state.inbox) {
+            if (item.kind === "plan" || item.kind === "design") await engine!.act("approve", item.id);
+            else if (item.kind === "question") await engine!.act("answer", item.id, item.options?.[0] ?? "Yes");
+            else if (item.kind === "permission") await engine!.act("allow", item.id, "once");
+          }
+          const task = state.tasks.find((entry) => entry.id === id);
+          if (task?.state === "failed") throw new Error(task.error ?? task.statusLine);
+          return existsSync(ready);
+        }, `the ${kind} to start its detached program`, 90_000);
+        const pid = Number(readFileSync(childPid, "utf8"));
+        expect(alive(pid)).toBe(true);
+        writeFileSync(blind, "");
+        await engine.act("cancel", id);
+        const state = await waitFor(async () => {
+          const next = await engine!.state();
+          const task = next.tasks.find((entry) => entry.id === id);
+          return task?.checks?.results.some((run) => run.cleanupIncomplete) ? next : undefined;
+        }, "the stopped run to keep its cleanup warning");
+        const task = state.tasks.find((entry) => entry.id === id)!;
+        const run = task.checks!.results.find((entry) => entry.cleanupIncomplete)!;
+        expect(task.state).toBe("cancelled");
+        expect(task.checks?.sha).toBeUndefined();
+        expect(task.checks?.tree).toBeUndefined();
+        expect(run.output).toContain(CLEANUP_INCOMPLETE);
+        if (kind === "hook") expect(run.command).toContain("pre-commit");
+        expect(task.timeline.some((entry) => entry.text === CLEANUP_INCOMPLETE)).toBe(true);
+        expect(task.findings.some((finding) => finding.text.startsWith("Check failed"))).toBe(false);
+        expect(alive(pid)).toBe(true);
+        const store = new Store(join(home, "petrina.db"));
+        try {
+          const saved = store.load()!.tasks.find((entry) => entry.id === id)!;
+          expect(saved.checks?.sha).toBeUndefined();
+          expect(saved.checks?.tree).toBeUndefined();
+          expect(saved.checks?.results.some((entry) => entry.cleanupIncomplete)).toBe(true);
+          expect(saved.timeline.some((entry) => entry.text === CLEANUP_INCOMPLETE)).toBe(true);
+        } finally { store.close(); }
+      } finally {
+        if (engine?.proc.exitCode === null) await engine.quit().catch(() => engine!.kill());
+        try { process.kill(Number(readFileSync(childPid, "utf8")), "SIGKILL"); } catch { /* Already gone. */ }
+        removeDir(dir);
       }
     });
   }

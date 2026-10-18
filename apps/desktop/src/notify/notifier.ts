@@ -24,8 +24,9 @@ export class InboxWatch {
    */
   update(inbox: readonly InboxItem[], synced: boolean): InboxItem[] {
     if (!synced) return [];
-    // "You're driving" follows the coordinator's own take-over: it needs no notification.
-    const fresh = this.ready ? inbox.filter((item) => !this.known.has(item.id) && item.kind !== "driving") : [];
+    // "You're driving" follows the coordinator's own take-over: it needs no notification. A screen request is
+    // quiet: it waits in the inbox with no notification or in-app message.
+    const fresh = this.ready ? inbox.filter((item) => !this.known.has(item.id) && item.kind !== "driving" && item.kind !== "screen") : [];
     for (const item of inbox) this.known.add(item.id);
     this.ready = true;
     return fresh;

@@ -63,6 +63,13 @@ What agents learned about working in this repository, added with the coordinator
 - The portfolio demo uses different task identifiers from the main demo; locate its cards by visible text or state.
 - For a stable demo screen, stop its clock; pausing the pool still lets active agents finish.
 - Once any agent tool’s login check is Ready, a tool whose check is still running is left out, so a step can move to the tool that answered first. A test that names the tool has to wait until that check has finished.
+- To try the take-over launcher by hand without installing anything, generate it from a small bun script that imports launchPlan from packages/engine/src/terminal.ts (that file only type-imports @petrina/core) and run the generated script with sh, in a folder outside the working copy.
+- packages/engine/test/terminal.test.ts imports the server, so even a single launcher test needs `bun install --frozen-lockfile` first (about a second with the cache).
+- Engine test deadlines stretch with the machine's load through SLOW in packages/engine/test/support.ts (waitFor, until and waitForFile already use it); give any new hang-catching wait the same stretch instead of a fixed limit.
+- Use the engine package’s test command for focused runs too; it supplies the suite’s process limits and timeouts.
+- A launcher script can be run with /bin/sh and a stand-in script given as the tool's arguments, without any freshly written file being executed directly, which avoids macOS holding back new programs on their first run.
+- In happy-dom screen tests, explicitly move focus away from a field when imitating an outside click; the click helper does not reproduce that browser behavior.
+- To try the take-over launcher by hand without installing anything, generate it from a small bun script that imports launchPlan from packages/engine/src/terminal.ts (that file only type-imports @petrina/core) and run the generated script wit
 
 ## Review guide
 

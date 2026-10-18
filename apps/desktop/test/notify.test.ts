@@ -118,6 +118,13 @@ describe("what is new", () => {
     const fresh = item("question");
     expect(watch.update([item("driving"), fresh], true)).toEqual([fresh]);
   });
+
+  it("never notifies a screen request: it waits quietly in the inbox", () => {
+    const watch = new InboxWatch();
+    watch.update([], true);
+    const fresh = item("question");
+    expect(watch.update([item("screen"), fresh], true)).toEqual([fresh]);
+  });
 });
 
 describe("in front or away", () => {

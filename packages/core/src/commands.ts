@@ -5,7 +5,7 @@
 // argument schema, and its Engine method (and its Simulator method, if the demo should do something).
 
 import type { RoleDraft } from "./roles.js";
-import type { DeliveryMode, Id, TaskKind } from "./model.js";
+import type { DeliveryMode, Id, ScreenMode, TaskKind } from "./model.js";
 import type { ProductSettings } from "./products.js";
 import type { Clone, SetupStep } from "./setup.js";
 import type { HandBackPreview, Launched } from "./takeover.js";
@@ -74,6 +74,8 @@ export interface Commands {
   setToolCap(toolId: Id, cap: number): void;
   setPoolPaused(paused: boolean): void;
   setTerminal(terminalId: Id): void;
+  /** "Agents may use the screen": Off, For an hour, or On. */
+  setScreenUse(mode: ScreenMode): void;
   // A task
   pause(taskId: Id): void;
   resume(taskId: Id): void;
@@ -83,6 +85,10 @@ export interface Commands {
   removeQueued(taskId: Id, messageId: Id): void;
   setStageProfile(taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): void;
   addReviewer(taskId: Id, stageId: Id, profileId: Id): void;
+  /** Allow now: this task's screen request may go ahead, still one agent at a time. */
+  allowScreen(taskId: Id): void;
+  /** "Allow the screen for this task". */
+  setTaskScreen(taskId: Id, allowed: boolean): void;
   // The inbox
   answer(itemId: Id, answer: string, context?: SaidContext): void;
   decideForMe(itemId: Id): void;
@@ -135,6 +141,7 @@ export const COMMAND_NAMES = [
   "setToolCap",
   "setPoolPaused",
   "setTerminal",
+  "setScreenUse",
   "pause",
   "resume",
   "cancel",
@@ -143,6 +150,8 @@ export const COMMAND_NAMES = [
   "removeQueued",
   "setStageProfile",
   "addReviewer",
+  "allowScreen",
+  "setTaskScreen",
   "answer",
   "decideForMe",
   "allow",

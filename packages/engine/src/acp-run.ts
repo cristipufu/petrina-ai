@@ -9,7 +9,7 @@ import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { grokTurnReport } from "./grok-usage.js";
-import { descendantsKnown } from "./process-tree.js";
+import { descendants, descendantsKnown } from "./process-tree.js";
 import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 
 export interface PermissionInfo {
@@ -272,7 +272,8 @@ async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: bo
   let complete = true;
   let pids = [child.pid];
   if (collectPrograms && running(child)) {
-    const workers = await descendantsKnown([child.pid]);
+    // One read, long enough for a slow process list. A failed read is not an empty tree.
+    const workers = await descendants([child.pid]);
     if (workers === undefined) complete = false;
     else pids.push(...workers);
   }

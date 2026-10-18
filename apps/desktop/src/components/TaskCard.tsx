@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState, type DragEvent } from "react";
-import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
-import { TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
+import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Monitor, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
+import { screenWait, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
-import { deliveryText, duration, STATE_LABEL, type Lookup } from "../lib";
+import { deliveryText, duration, stateLabel, type Lookup } from "../lib";
 import { Pipeline, ProductName, ProfileText, RoleAvatar, useDismiss } from "./bits";
 import { drivingText, openHandBack } from "./TakeOver";
 
@@ -30,11 +30,11 @@ export type SheetTab = "overview" | "plan" | "design" | "review" | "session";
  * The state a card names next to its product. Working cards say it through their status line,
  * and cards that need the coordinator through their section and amber edge.
  */
-function flagOf(task: Task, now: number): { text: string; tone: string } | undefined {
-  if (task.driving) return { text: drivingText(task, now), tone: "needs-you" };
+function flagOf(task: Task, state: State): { text: string; tone: string } | undefined {
+  if (task.driving) return { text: drivingText(task, state.now), tone: "needs-you" };
   if (task.state === "queued") return task.held ? { text: "On hold", tone: "" } : undefined;
   if (task.state === "running" || task.state === "needs-you") return undefined;
-  return { text: STATE_LABEL[task.state], tone: task.state === "pr-open" ? "" : task.state };
+  return { text: stateLabel(task, state), tone: task.state === "pr-open" ? "" : task.state };
 }
 
 export function TaskCard({ task, state, find, selected, queuePosition, hasDraft, onFocus, startsNext, onOpen, onDragStart, onDragEnd, dragging, drop }: CardProps) {
@@ -55,7 +55,9 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
   const rounds = task.plan?.stages.reduce((max, stage) => Math.max(max, task.rounds[stage.id] ?? 1), 1) ?? 1;
   const canPause = task.state === "running" || task.state === "needs-you" || task.state === "waiting";
   const driving = task.driving !== undefined;
-  const flag = flagOf(task, state.now);
+  const flag = flagOf(task, state);
+  // Waiting for the coordinator's OK to use the screen: Allow now stays in view, not only on hover.
+  const screenAsk = screenWait(task, state, state.now) === "ask";
   const delivery = deliveryText(task);
   const showAgent = role && profile && (task.state === "running" || task.state === "needs-you" || task.state === "paused");
   // Reviewers looking at once, or voters: one line for all of them.
@@ -73,7 +75,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
   };
 
   return (
-    <article className={classes.join(" ")} draggable={queued} onDragStart={(event) => onDragStart?.(event, task.id)} onDragEnd={onDragEnd} aria-label={`${task.title}, ${task.held ? "On hold" : STATE_LABEL[task.state]}`} data-task-id={task.id} tabIndex={-1} onFocus={onFocus} onMouseDown={onFocus}>
+    <article className={classes.join(" ")} draggable={queued} onDragStart={(event) => onDragStart?.(event, task.id)} onDragEnd={onDragEnd} aria-label={`${task.title}, ${task.held ? "On hold" : stateLabel(task, state)}`} data-task-id={task.id} tabIndex={-1} onFocus={onFocus} onMouseDown={onFocus}>
       <div className="card-meta">
         <span className="where">
           {queued && <GripVertical size={14} className="grip" aria-hidden="true" />}
@@ -109,6 +111,15 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
       )}
 
       {!queued && !finished && <Pipeline task={task} onActivate={() => onOpen(task.id)} />}
+
+      {screenAsk && (
+        <div className="card-ask">
+          <button className="btn small" onClick={() => sim.allowScreen(task.id)} aria-describedby={`status-${task.id}`}>
+            <Monitor size={16} aria-hidden="true" />
+            Allow now
+          </button>
+        </div>
+      )}
 
       <div className="card-foot">
         <div className="card-info">

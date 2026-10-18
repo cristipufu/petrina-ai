@@ -1,16 +1,19 @@
 // The task sheet's Overview tab: who is working now, what the task is waiting for, what it used, and how it got here.
 
 import { useState } from "react";
-import { User } from "lucide-react";
-import type { Role, State, Task } from "@petrina/core";
+import { Monitor, User } from "lucide-react";
+import { SCREEN_WORDS, screenWait, type Role, type State, type Task } from "@petrina/core";
 import { deliveryText, duration, profileText, type Lookup } from "../../lib";
+import { sim } from "../../engine";
 import { RoleAvatar } from "../bits";
 import { WhatItUsed } from "./WhatItUsed";
 import { Journey } from "../Journey";
 import { TimelineList } from "../Timeline";
 
-function nowSentence(task: Task, role: Role | undefined): string {
+function nowSentence(task: Task, role: Role | undefined, state: State): string {
   if (task.driving) return role ? `You're driving the ${role.name.toLowerCase()} in your terminal` : "You're driving in your terminal";
+  const screen = screenWait(task, state, state.now);
+  if (screen) return screen === "ask" ? `${role?.name ?? "The agent"} needs the screen. Waiting for your OK` : SCREEN_WORDS.turn;
   if (task.state === "needs-you") return role ? `${role.name} is waiting on you` : "Waiting on you";
   if (task.state === "running" && role) return `${role.name} is working`;
   if (task.state === "paused") return role ? `Paused while the ${role.name.toLowerCase()} was working` : "Paused";
@@ -34,8 +37,10 @@ function nowSentence(task: Task, role: Role | undefined): string {
 
 export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, separateFlow = false }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void; separateFlow?: boolean }) {
   const [all, setAll] = useState(false);
-  const role = find.role(task.agent?.roleId);
-  const profile = find.profile(task.agent?.profileId);
+  // Waiting for the screen, the agent that asked is still the one this step is about.
+  const role = find.role(task.agent?.roleId ?? task.screen?.roleId);
+  const profile = find.profile(task.agent?.profileId ?? task.screen?.profileId);
+  const screenAsk = screenWait(task, state, state.now) === "ask";
   const entries = all ? task.timeline : task.timeline.slice(-14);
 
   return (
@@ -60,7 +65,7 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
             </span>
           )}
           <div style={{ minWidth: 0 }}>
-            <div className="who">{nowSentence(task, role)}</div>
+            <div className="who">{nowSentence(task, role, state)}</div>
             {profile && <div className="tool">{profileText(profile, find, true)}</div>}
             <div className="what">
               <span className={`dot ${task.state}`} aria-hidden="true" />
@@ -69,6 +74,12 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
                 {task.agent && <span className="num quiet-text"> · {duration(task.driving?.since ?? task.agent.since, state.now)}</span>}
               </span>
             </div>
+            {screenAsk && (
+              <button className="btn small outline now-action" onClick={() => sim.allowScreen(task.id)}>
+                <Monitor size={16} aria-hidden="true" />
+                Allow now
+              </button>
+            )}
           </div>
         </div>
       </section>
