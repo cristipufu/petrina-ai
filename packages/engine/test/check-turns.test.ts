@@ -3,12 +3,88 @@ import { readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
+import { Aborted } from "../src/kernel.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
 describe("tasks' checks take turns on one machine", () => {
+  for (const checkRuns of [1, 2]) it(`hands a released place to the waiting task before a new arrival (limit ${checkRuns})`, async () => {
+    const root = tempDir("petrina-check-handoff-");
+    roots.push(root);
+    const engine = new Engine(join(root, "data"), { codexCommand: null, checkRuns });
+    engine.setPoolPaused(true);
+    const held: (() => void)[] = [];
+    try {
+      const productId = await engine.addProduct(makeProduct(root));
+      const task = engine.task(engine.addTask({ productId, title: "A check waiting its turn" }))!;
+      const acquire = () => engine["checks"]["turnToRun"](task, new AbortController().signal);
+      for (let i = 0; i < checkRuns; i++) held.push(await acquire());
+      const started: string[] = [];
+      const queued = acquire().then((release) => { started.push("waiting task"); held.push(release); return release; });
+      held[0]!();
+      // Arrive in the same turn, before the waiting task's promise resumes.
+      const newcomer = acquire().then((release) => { started.push("new arrival"); held.push(release); return release; });
+      const releaseWaiting = await queued;
+      expect(started).toEqual(["waiting task"]);
+      // A repeated completion must not hand out a second place.
+      held[0]!();
+      await Promise.resolve();
+      expect(started).toEqual(["waiting task"]);
+      releaseWaiting();
+      await newcomer;
+      expect(started).toEqual(["waiting task", "new arrival"]);
+    } finally {
+      for (const release of held) release();
+      await engine.shutdown();
+    }
+  });
+
+  it("skips a cancelled waiter and rejects an already cancelled run without taking a place", async () => {
+    const root = tempDir("petrina-check-cancel-");
+    roots.push(root);
+    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    engine.setPoolPaused(true);
+    const held: (() => void)[] = [];
+    try {
+      const productId = await engine.addProduct(makeProduct(root));
+      const task = engine.task(engine.addTask({ productId, title: "A cancelled check" }))!;
+      const acquire = (signal = new AbortController().signal) => engine["checks"]["turnToRun"](task, signal);
+      const cancelled = new AbortController();
+      cancelled.abort();
+      expect(await acquire(cancelled.signal).then(() => "started", (error) => error)).toBeInstanceOf(Aborted);
+      const releaseFirst = await acquire();
+      held.push(releaseFirst);
+      // Already aborted requests must also reject while the queue is occupied.
+      expect(await acquire(cancelled.signal).then(() => "started", (error) => error)).toBeInstanceOf(Aborted);
+      const controller = new AbortController();
+      const waiting = acquire(controller.signal).then(() => "started", (error) => error);
+      const next = acquire().then((release) => { held.push(release); return release; });
+      controller.abort();
+      expect(await waiting).toBeInstanceOf(Aborted);
+      releaseFirst();
+      const releaseNext = await next;
+      releaseNext();
+      const releaseBusy = await acquire();
+      held.push(releaseBusy);
+      const late = new AbortController();
+      const handedOff = acquire(late.signal).then(() => "started", (error) => error);
+      const follower = acquire().then((release) => { held.push(release); return release; });
+      releaseBusy();
+      // Abort after the place was reserved, before the waiting continuation runs.
+      late.abort();
+      expect(await handedOff).toBeInstanceOf(Aborted);
+      const releaseFollower = await follower;
+      releaseFollower();
+      // Cancellation and repeated releases leave the queue usable.
+      held.push(await acquire());
+    } finally {
+      for (const release of held) release();
+      await engine.shutdown();
+    }
+  });
+
   it("runs one task's checks while the other waits its turn, and both get through", async () => {
     const root = tempDir("petrina-check-turns-");
     roots.push(root);

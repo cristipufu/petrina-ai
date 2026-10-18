@@ -37,6 +37,7 @@ export class ProductChecks {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
 
   private async turnToRun(task: MTask, signal: AbortSignal): Promise<() => void> {
+    if (signal.aborted || this.k.stopped) throw new Aborted();
     const most = this.k.options.checkRuns ?? 1;
     if (this.running >= most) {
       task.statusLine = "Waiting to run the checks: another task's run comes first";
@@ -52,17 +53,25 @@ export class ProductChecks {
           reject(new Aborted());
         };
         this.line.push(go);
-        signal.addEventListener("abort", stop, { once: true });
+        if (signal.aborted) stop();
+        else signal.addEventListener("abort", stop, { once: true });
       });
-    }
-    this.running += 1;
+    } else this.running += 1;
     let done = false;
-    return () => {
+    const finished = () => {
       if (done) return;
       done = true;
-      this.running -= 1;
-      this.line.shift()?.();
+      const next = this.line.shift();
+      // Reserve this place for the waiter before its promise resumes. New arrivals must stay in line.
+      if (next) next();
+      else this.running -= 1;
     };
+    // Cancellation can arrive after the handoff but before this continuation gets its turn.
+    if (signal.aborted || this.k.stopped) {
+      finished();
+      throw new Aborted();
+    }
+    return finished;
   }
 
   /**
@@ -169,6 +178,7 @@ export class ProductChecks {
   }
 
   private async runAll(task: MTask, checks: readonly ProductCheck[], hooks: string[], definition: string, signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
+    if (signal.aborted || this.k.stopped) throw new Aborted();
     if (!task.worktree) return 0;
     task.statusLine = "Running the product's checks";
     this.k.commit();
