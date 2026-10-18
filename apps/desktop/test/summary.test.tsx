@@ -32,23 +32,20 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
 describe('what each task says at a glance', () => {
-  it('puts the to-do item on the card while its actions change, with a quiet Next line', async () => {
+  it('keeps the to-do item on the card while its actions change, with Next only in the details', async () => {
     const working = card('login-loop');
     expect(text(working.querySelector('.card-status'))).toBe('Trying to prove “done” wrong');
-    const next = working.querySelector('.card-next p')!;
-    expect(text(next)).toBe('Next: your OK to ship, or fixes by the builder if blocking issues are found');
-    // Screen readers hear the whole sentence with the card.
-    expect(working.querySelector('.card-open')!.getAttribute('aria-describedby')).toBe(`status-login-loop ${next.id}`);
+    expect(working.textContent).not.toContain('Next:');
+    expect(working.querySelector('.card-open')!.getAttribute('aria-describedby')).toBe('status-login-loop');
     // Tool activity moves on; the card's main line stays.
     await act(async () => simulator.tick());
     expect(simulator.getState().tasks.find((task) => task.id === 'login-loop')!.statusLine).toBe('Running the tests');
     expect(text(card('login-loop').querySelector('.card-status'))).toBe('Trying to prove “done” wrong');
   });
 
-  it('says what a task waits for first, and never shows Next on queued or finished cards', () => {
+  it('says what a task waits for first, without Next on any Board card', () => {
     expect(text(card('guest-checkout').querySelector('.card-status'))).toBe('Waiting for your permission');
-    expect(text(card('guest-checkout').querySelector('.card-next p'))).toBe('Next: code review (Claude Code · Opus 5.5 and Codex · sol), then your OK to ship');
-    expect(card('export-pdf').querySelector('.card-next')).toBeNull();
+    for (const card of host.querySelectorAll('.card')) expect(card.textContent).not.toContain('Next:');
   });
 
   it('shows the to-do item, the latest action, the time left and Next under Right now', async () => {
@@ -93,7 +90,8 @@ describe('what each task says at a glance', () => {
     const who = host.querySelector<HTMLSelectElement>('select[aria-label="Who does design"]')!;
     expect(who).not.toBeNull();
     await act(async () => { who.value = 'codex-xhigh'; who.dispatchEvent(new Event('change', { bubbles: true })); });
-    expect(text(card('weekly-digest').querySelector('.card-next p'))).toBe('Next: design (Codex · sol), then design review (Codex · sol)');
+    await act(async () => host.querySelector<HTMLButtonElement>('.sheet [role="tab"][id="tab-overview"]')!.click());
+    expect(host.querySelector('.now')!.textContent).toContain('Next: design (Codex · sol), then design review (Codex · sol)');
   });
 
   it('gives the Agents page tiles the same main line as the cards', async () => {

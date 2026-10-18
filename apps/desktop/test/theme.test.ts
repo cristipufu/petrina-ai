@@ -146,15 +146,6 @@ describe("themes", () => {
 
   it("paints Next and the action line as quiet small text, readable in every look including hover", () => {
     const css = readFileSync(resolve(__dirname, "../src/styles.css"), "utf8");
-    const hoverAt = css.indexOf(".card:is(:hover, :focus-within) .card-next[data-full]::after");
-    const hoverRule = css.slice(hoverAt, css.indexOf("}", hoverAt));
-    expect(hoverRule).toContain("color: var(--text-2)");
-    expect(hoverRule).toContain("background: var(--card-face)");
-    expect(hoverRule).toContain("font-size: var(--fs-meta)");
-    expect(hoverRule).toContain("font-weight: 400");
-    expect(hoverRule).not.toContain("on-lead");
-    expect(hoverRule).not.toContain("font-weight: 500");
-
     const style = document.createElement("style");
     style.textContent = css;
     document.head.append(style);
@@ -165,18 +156,17 @@ describe("themes", () => {
         host.innerHTML = `
           <article class="card">
             <p class="card-status"><span>Working out the records</span></p>
-            <div class="card-next"><p>Next: design review</p></div>
           </article>
           <article class="card held"></article>
-          <div class="sheet"><div class="now"><div class="now-line">Reading the code</div></div></div>
+          <div class="sheet"><div class="now"><div class="now-line">Next: design review</div><div class="now-line">Reading the code</div></div></div>
           <div class="sheet"><div class="now needs-you"><div class="now-line">The to-do it was on</div></div></div>
           <div class="sheet"><div class="now failed"><div class="now-line">Reading the code</div></div></div>
           <div class="hover-probe" style="background: var(--hover)"></div>
           <div class="surface-probe" style="background: var(--surface)"></div>
           <div class="held-probe" style="background: var(--held)"></div>`;
         document.body.append(host);
-        const next = host.querySelector<HTMLElement>(".card-next p");
-        const action = host.querySelector<HTMLElement>(".now-line");
+        const next = host.querySelector<HTMLElement>(".now-line");
+        const action = host.querySelector<HTMLElement>(".now-line + .now-line");
         const status = host.querySelector<HTMLElement>(".card-status");
         if (!next || !action || !status) throw new Error("missing line");
         const nextCss = getComputedStyle(next);

@@ -1,5 +1,5 @@
-import { sourceLabel, mainLine, nextLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
-import { useCallback, useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import { sourceLabel, mainLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
+import { useCallback, useRef, useState, type DragEvent } from "react";
 import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Monitor, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { sim } from "../engine";
 import { deliveryText, duration, stateLabel, type Lookup } from "../lib";
@@ -37,32 +37,6 @@ function flagOf(task: Task, state: State): { text: string; tone: string } | unde
   return { text: stateLabel(task, state), tone: task.state === "pr-open" ? "" : task.state };
 }
 
-/**
- * What comes next, as one quiet line. When it does not fit, it is clipped, and hovering or focusing
- * the card shows all of it; screen readers always get the whole sentence.
- */
-function NextLine({ id, text }: { id: string; text: string }) {
-  const line = useRef<HTMLParagraphElement>(null);
-  const [clipped, setClipped] = useState(false);
-  useLayoutEffect(() => {
-    const element = line.current;
-    if (!element) return;
-    const measure = () => setClipped(element.scrollWidth > element.clientWidth + 1);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [text]);
-  return (
-    <div className="card-next" data-full={clipped ? text : undefined}>
-      <p ref={line} id={id}>
-        {text}
-      </p>
-    </div>
-  );
-}
-
 export function TaskCard({ task, state, find, selected, queuePosition, hasDraft, onFocus, startsNext, onOpen, onDragStart, onDragEnd, dragging, drop }: CardProps) {
   const [menu, setMenu] = useState(false);
   const menuBox = useRef<HTMLSpanElement>(null);
@@ -88,7 +62,6 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
   const showAgent = role && profile && (task.state === "running" || task.state === "needs-you" || task.state === "paused");
   // Reviewers looking at once, or voters: one line for all of them.
   const together = 1 + (task.helpers?.length ?? 0);
-  const next = nextLine(state, task);
 
   const classes = ["card", task.state];
   if (task.held) classes.push("held");
@@ -120,7 +93,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
       </div>
 
       <h3 className="card-title">
-        <button className="card-open" onClick={() => onOpen(task.id)} aria-describedby={next ? `status-${task.id} next-${task.id}` : `status-${task.id}`}>
+        <button className="card-open" onClick={() => onOpen(task.id)} aria-describedby={`status-${task.id}`}>
           {task.title}
         </button>
       </h3>
@@ -137,8 +110,6 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
           <span>{mainLine(task)}</span>
         </p>
       )}
-
-      {next && <NextLine id={`next-${task.id}`} text={next} />}
 
       {!queued && !finished && <Pipeline task={task} onActivate={() => onOpen(task.id)} />}
 

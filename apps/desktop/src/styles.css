@@ -637,37 +637,12 @@ kbd {
   -webkit-line-clamp: 3;
   overflow: hidden;
 }
-/* What comes next: one quiet line under the main one. When it is clipped, hovering or focusing the card shows all of it in place, in the same quiet small text. */
-.card-next { position: relative; min-width: 0; margin-top: -4px; padding-left: 16px; pointer-events: none; }
-.card-next p,
 .now .now-line {
   color: var(--text-2);
   font-size: var(--fs-meta);
   line-height: var(--lh-meta);
   font-weight: 400;
 }
-.card-next p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card:is(:hover, :focus-within) .card-next[data-full]::after {
-  content: attr(data-full);
-  position: absolute;
-  z-index: 3;
-  top: -4px;
-  left: 8px;
-  right: -8px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--card-face);
-  color: var(--text-2);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-lift);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-meta);
-  font-weight: 400;
-  overflow-wrap: anywhere;
-  pointer-events: none;
-}
-/* A pipeline step's own tooltip wins. */
-.card:has(.pipeline li:hover, .pipeline li:focus-visible) .card-next::after { display: none; }
 
 .card-foot {
   display: flex;
