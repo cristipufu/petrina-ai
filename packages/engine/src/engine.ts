@@ -651,10 +651,10 @@ export class Engine extends Kernel implements Commands {
     this.log(task, "you", `You answered: ${answer}`);
     const asked = task.conversation?.asked;
     if (item && asked?.itemId === itemId) asked.answer = answer;
-    if (item) this.unblock(task);
+    const waiter = this.waiting.get(itemId);
+    if (item || waiter) this.unblock(task);
     else task.queued.push({ id: this.id(task.id), text: `About your question “${about}”: ${answer}`, at: Date.now() });
     this.commitNow();
-    const waiter = this.waiting.get(itemId);
     this.waiting.delete(itemId);
     waiter?.resolve(answer);
     // Asked before a restart: no agent holds a slot for it, so the step waits for one.
@@ -669,8 +669,10 @@ export class Engine extends Kernel implements Commands {
 
   allow(itemId: Id, _scope: "once" | "always" = "once"): void {
     this.takeover.notDrivingItem(itemId);
-    const item = this.takeItem(itemId);
+    const item = this.s.inbox.find((entry) => entry.id === itemId);
     if (!item) return;
+    if (item.kind !== "permission") throw new Error("Use Allow only for a permission request. The request is still in your inbox.");
+    this.takeItem(itemId);
     const task = this.task(item.taskId);
     if (task) {
       this.tracking.answered(task, item, "allowed");
@@ -728,6 +730,7 @@ export class Engine extends Kernel implements Commands {
       this.learnings.accept(itemId);
       return;
     }
+    if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
     const item = this.takeItem(itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;

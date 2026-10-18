@@ -414,6 +414,7 @@ export abstract class Kernel {
 
   unblock(task: MTask): void {
     if (task.state !== "needs-you") return;
+    if (this.s.inbox.some((item) => item.taskId === task.id && item.blocking)) return;
     task.state = task.holdsSlot ? "running" : "waiting";
     task.statusLine = task.holdsSlot ? "Back to work" : "Waiting for a free slot";
   }

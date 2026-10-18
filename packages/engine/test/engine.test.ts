@@ -56,8 +56,17 @@ describe("Engine with a fake ACP agent", () => {
         for (const item of snapshot.inbox) {
           if (asked.has(item.id)) continue;
           asked.add(item.id);
-          if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
-          else if (item.kind === "permission") current.allow(item.id, "once");
+          if (item.kind === "question") {
+            expect(() => current.approve(item.id)).toThrow("question");
+            expect(() => current.allow(item.id, "once")).toThrow("permission");
+            expect(current.getState().inbox.some((entry) => entry.id === item.id)).toBe(true);
+            current.answer(item.id, item.options?.[0] ?? "Yes");
+          }
+          else if (item.kind === "permission") {
+            expect(() => current.approve(item.id)).toThrow("permission");
+            expect(current.getState().inbox.some((entry) => entry.id === item.id)).toBe(true);
+            current.allow(item.id, "once");
+          }
           else current.approve(item.id);
         }
       },
@@ -77,6 +86,47 @@ describe("Engine with a fake ACP agent", () => {
     expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
     expect(existsSync(task.worktree!)).toBe(true);
+  });
+});
+
+describe("answers to a request missing from the inbox", () => {
+  it("resumes its live waiter without an extra agent turn, and keeps other open permissions blocking", async () => {
+    const engine = new Engine(join(temp, "orphan-data"), { agentCommand: () => [process.execPath, fake] });
+    try {
+      const repo = makeRepo("orphan-repo");
+      const productId = await engine.addProduct(repo);
+      engine.setProductDelivery(productId, "local", true);
+      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file.", kind: "feature" });
+      const state = await until(engine, (s) => s.inbox.some((item) => item.taskId === taskId && item.kind === "permission"), (current, snapshot) => {
+        for (const item of snapshot.inbox) {
+          if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
+          else if (item.kind === "plan" || item.kind === "design") current.approve(item.id);
+        }
+      });
+      const permission = state.inbox.find((item) => item.taskId === taskId && item.kind === "permission")!;
+      // A second permission may be open while another member of a review team asks.
+      const livePermission = engine.s.inbox.find((item) => item.id === permission.id)!;
+      engine.s.inbox.push({ ...livePermission, id: "another-permission" });
+      engine.allow("another-permission", "once");
+      expect(engine.getState().tasks.find((t) => t.id === taskId)!.state).toBe("needs-you");
+      expect(engine.getState().inbox.some((item) => item.id === permission.id)).toBe(true);
+      // Reproduce state saved by an older version after a wrong inbox action consumed the item.
+      engine.s.inbox = engine.s.inbox.filter((item) => item.id !== permission.id);
+      engine.answer(permission.id, "allow", { taskId, about: permission.title });
+      const recovered = engine.getState().tasks.find((t) => t.id === taskId)!;
+      expect(recovered.state).toBe("running");
+      expect(recovered.statusLine).toBe("Back to work");
+      expect(recovered.queued).toEqual([]);
+      const final = await until(engine, (s) => s.tasks.find((t) => t.id === taskId)?.state === "done", (current, snapshot) => {
+        for (const item of snapshot.inbox) {
+          if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
+          else if (item.kind === "permission") current.allow(item.id, "once");
+          else current.approve(item.id);
+        }
+      });
+      expect(final.tasks.find((t) => t.id === taskId)!.timeline.some((entry) => entry.text === "You answered: allow")).toBe(true);
+      expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+    } finally { engine.shutdown(); }
   });
 });
 
