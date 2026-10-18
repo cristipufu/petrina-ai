@@ -102,38 +102,65 @@ export class Work {
       const result = await this.turns.turn(task, roleId, profileId, sections, TestResult, signal, {
         check: (value) => {
           const missing = task.brief?.acceptance.filter((item) => !value.checks.some((check) => check.text === item.text));
-          return missing?.length ? `Report pass or fail for every acceptance item, using its exact text. These are missing:\n${missing.map((item) => `- ${item.text}`).join("\n")}` : undefined;
+          return missing?.length ? `Report pass, fail, or blocked for every acceptance item, using its exact text. For blocked checks, include a reason naming what prevented verification. These are missing:\n${missing.map((item) => `- ${item.text}`).join("\n")}` : undefined;
         },
       });
       await this.learnings.note(task, result.learnings, roleId, profileId);
-      if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => ({ ...item, met: result.checks.find((check) => check.text === item.text)?.pass ?? item.met }));
-      const failed = result.checks.filter((check) => !check.pass);
+      if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => {
+        const check = result.checks.find((entry) => entry.text === item.text);
+        if (!check) return item;
+        return {
+          ...item,
+          met: check.result === "pass" ? true : check.result === "fail" ? false : undefined,
+          verification: check.result === "pass" ? "passed" : check.result === "fail" ? "failed" : "blocked",
+          ...(check.result === "blocked" && check.reason ? { reason: check.reason } : { reason: undefined }),
+        };
+      });
+      const failed = result.checks.filter((check) => check.result === "fail");
+      const blocked = result.checks.filter((check) => check.result === "blocked");
       for (const check of result.checks) {
-        const text = `Failed acceptance check: ${check.text}`;
-        const earlier = task.findings.find((finding) => finding.text === text);
-        if (earlier) earlier.status = check.pass ? "fixed" : "open";
-        else if (!check.pass) task.findings.push({ id: this.k.id(task.id), text, severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open" });
+        const text = check.result === "blocked" ? `Could not verify acceptance check: ${check.text}` : `Failed acceptance check: ${check.text}`;
+        const alternate = check.result === "blocked" ? `Failed acceptance check: ${check.text}` : `Could not verify acceptance check: ${check.text}`;
+        const earlier = task.findings.find((finding) => finding.text === text || finding.text === alternate);
+        if (earlier) {
+          earlier.text = text;
+          earlier.status = check.result === "pass" ? "fixed" : check.result === "blocked" ? "unverified" : "open";
+          if (check.result === "blocked" && check.reason) earlier.evidence = check.reason;
+          else if (check.result === "pass") delete earlier.evidence;
+        } else if (check.result === "fail") task.findings.push({
+          id: this.k.id(task.id), text,
+          severity: "blocking", raisedBy: profileId, confirmedBy: [], status: "open",
+        });
       }
-      this.k.log(task, failed.length ? "warn" : "done", failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, profileId);
-      endAgentStep(task, { outcome: W.checks(failed.length, result.checks.length), reason: failed.length ? W.checksFailed(failed.length) : W.checksPassed }, Date.now());
+      const unverified = blocked.length > 0;
+      this.k.log(task, failed.length || unverified ? "warn" : "done", unverified
+        ? `${blocked.length} acceptance check${blocked.length === 1 ? "" : "s"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}`
+        : failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, profileId);
+      endAgentStep(task, {
+        outcome: unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : W.checks(failed.length, result.checks.length),
+        reason: unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : W.checksPassed,
+      }, Date.now());
       task.testedPatch = (await this.updates.patch(task)) ?? task.testedPatch;
-      task.acceptancePassed = failed.length === 0;
-      if (!failed.length) delete task.acceptanceBlocked;
+      task.acceptancePassed = failed.length === 0 && !unverified;
+      task.acceptanceUnverified = unverified;
+      if (!unverified) delete task.acceptanceBlocked;
       if (task.retest) {
         // The final pass before the delivery check: on to the check, or back to the builder with what failed.
         delete task.retest;
         this.k.finishStep(task);
         const stages = task.plan?.stages ?? [];
         const builder = lastIndexWhere(stages, (entry) => entry.roleId === "builder" && entry.kind === "do");
-        if (failed.length && builder >= 0 && (task.acceptanceReturns ?? 0) < 2) {
+        if (failed.length && !unverified && builder >= 0 && (task.acceptanceReturns ?? 0) < 2) {
           task.acceptanceReturns = (task.acceptanceReturns ?? 0) + 1;
           task.stageIndex = builder;
           task.fixing = true;
           this.k.log(task, "warn", `Sent back to the builder: ${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed on the final code`);
         } else {
-          if (failed.length) {
+          if (failed.length || unverified) {
             task.acceptanceBlocked = true;
-            this.k.log(task, "warn", "Acceptance still fails: the builder returns are used up, so the decision goes to you");
+            this.k.log(task, "warn", unverified
+              ? "Acceptance could not be fully verified, so the decision goes to you"
+              : "Acceptance still fails: the builder returns are used up, so the decision goes to you");
           }
           const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
           task.stageIndex = gate >= 0 ? gate : task.stageIndex + 1;

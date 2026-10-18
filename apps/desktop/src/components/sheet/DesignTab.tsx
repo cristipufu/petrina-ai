@@ -80,15 +80,18 @@ export function DesignView({ task, find }: { task: Task; find: Lookup }) {
             <h2>Acceptance checklist</h2>
             <ul className="checks">
               {brief.acceptance.map((item) => {
-                const met = item.met ?? (task.state === "pr-open" || task.state === "done" || task.column === "ready");
+                const met = item.verification === "blocked" ? false : item.met ?? (task.state === "pr-open" || task.state === "done" || task.column === "ready");
                 return (
                   <li key={item.text} className="check">
                     <span className={`box ${met ? "on" : ""}`} aria-hidden="true">
                       {met && <Check size={12} strokeWidth={3} />}
                     </span>
                     <span>
-                      <span className="sr-only">{met ? "Met: " : "Not met yet: "}</span>
+                      <span className="sr-only">{item.verification === "blocked" ? "Could not verify: " : met ? "Met: " : "Not met yet: "}</span>
                       {item.text}
+                      {item.verification === "blocked" && (
+                        <span className="check-unverified">Could not verify{item.reason ? ` · ${item.reason}` : ""}</span>
+                      )}
                     </span>
                   </li>
                 );

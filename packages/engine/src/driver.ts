@@ -245,7 +245,7 @@ export class Driver {
             // The tester tried an earlier version of the change: the final code gets one more pass first.
             const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && entry.roleId === "tester");
             const acceptanceFailed = current.acceptancePassed === false;
-            const acceptanceExhausted = acceptanceFailed && current.acceptanceBlocked;
+            const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || current.acceptanceUnverified === true;
             if (tester >= 0 && current.testedPatch !== undefined && !acceptanceExhausted && (acceptanceFailed || (await this.updates.patch(current)) !== current.testedPatch)) {
               current.retest = true;
               current.stageIndex = tester;
@@ -423,6 +423,7 @@ export class Driver {
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */
   private shipsUnasked(task: MTask): boolean {
     if (task.risk?.level !== "low" || !this.k.productOf(task)?.shipLowRisk) return false;
+    if (task.acceptanceUnverified || task.acceptancePassed === false) return false;
     if (task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) return false;
     return task.checks?.results.every((run) => run.ok) ?? true;
   }

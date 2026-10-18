@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { createDemoState, type Vote } from "@petrina/core";
+import { DesignView } from "../src/components/sheet/DesignTab";
 import { ReviewView } from "../src/components/sheet/ReviewTab";
 import { lookup } from "../src/lib";
 
@@ -28,6 +29,37 @@ describe("actual voting tools", () => {
     expect(html).not.toContain("1 of 1 voter");
     expect(html).toContain("The page already shows the greeting.");
   });
+});
+
+it("labels an acceptance result that could not be checked without calling it a defect", () => {
+  const state = createDemoState(1_000_000_000);
+  const task = {
+    ...state.tasks[0]!,
+    findings: [{ id: "finding", text: "Could not verify acceptance check: A real session can write safely", severity: "blocking" as const, status: "unverified" as const, raisedBy: "sol-high", confirmedBy: [], evidence: "The account limit prevented a session." }],
+  };
+  const html = renderToStaticMarkup(<ReviewView task={task} find={lookup(state)} />);
+  expect(html).toContain("Could not verify");
+  expect(html).toContain("The account limit prevented a session.");
+  expect(html).not.toContain("class=\"label bad\">Open");
+});
+
+it("shows why an acceptance item could not be checked and leaves its box unchecked", () => {
+  const state = createDemoState(1_000_000_000);
+  const task = {
+    ...state.tasks[0]!,
+    column: "ready" as const,
+    brief: {
+      summary: "Verify safe writes in a real session.",
+      forUsers: [],
+      areas: [],
+      acceptance: [{ text: "A real session can write safely", verification: "blocked" as const, reason: "The account limit prevented a session." }],
+      risks: [],
+    },
+  };
+  const html = renderToStaticMarkup(<DesignView task={task} find={lookup(state)} />);
+  expect(html).toContain("Could not verify · The account limit prevented a session.");
+  expect(html).toContain('class="sr-only">Could not verify: </span>A real session can write safely');
+  expect(html).not.toContain("box on");
 });
 
 describe("check cleanup", () => {

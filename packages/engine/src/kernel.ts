@@ -138,7 +138,11 @@ export const RISK_WORD: Record<RiskLevel, string> = { low: "Low", medium: "Mediu
 
 /** What the delivery check says beside the work: its risk, and what Petrina's own run of the checks found. */
 function deliveryLines(task: Task): string | undefined {
-  const lines = [task.risk ? `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}` : "", checksLine(task) ?? ""].filter(Boolean);
+  const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked") ?? [];
+  const acceptance = unverified.length
+    ? `${unverified.length} acceptance ${unverified.length === 1 ? "check could not" : "checks could not"} be verified:\n${unverified.map((item) => `• ${item.text}${item.reason ? ` — ${item.reason}` : ""}`).join("\n")}`
+    : "";
+  const lines = [task.risk ? `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}` : "", checksLine(task) ?? "", acceptance].filter(Boolean);
   return lines.length ? lines.join("\n") : undefined;
 }
 

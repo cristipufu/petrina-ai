@@ -1094,6 +1094,7 @@ kbd {
 .check .box { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--field); flex: none; margin-top: 3px; display: grid; place-items: center; }
 .check .box.on { background: var(--green); border-color: var(--green); color: #fff; }
 [data-theme="dark"] .check .box.on { color: #0f1a13; }
+.check-unverified { display: block; margin-top: 3px; color: var(--text-2); font-size: var(--fs-meta); line-height: 1.45; }
 
 .issues { list-style: none; display: flex; flex-direction: column; }
 .issue { display: grid; gap: 8px; padding: 16px 0; border-top: 1px solid var(--line); }

@@ -214,7 +214,7 @@ When something new lands in the inbox and you are not looking at Petrina, you ge
 
 - **Overview:** anything waiting for you, what you asked for, who is on it right now (role, tool, model and effort in words), and the timeline: one row per event with its time aligned on the left, and a clear break at each stage change.
 - **Plan:** why this plan, then the stages as a spacious numbered list. Stages that have not started can change tool or model, and a review can gain a reviewer. "Re-plan" sends a note to the planner.
-- **Design:** the brief in one reading column (what changes for users, which parts of the product, the acceptance checklist, risks), then the disagreements. Each one separates the issue, its status, who raised it and the architect's answer, with open blockers first. Objections your call settled carry a "Your call" tag, your words, and the architect's note on how the brief follows them.
+- **Design:** the brief in one reading column (what changes for users, which parts of the product, the acceptance checklist, risks), then the disagreements. Acceptance items that could not be checked say so with the reason; they stay unchecked and require the coordinator's decision before delivery. Each disagreement separates the issue, its status, who raised it and the architect's answer, with open blockers first. Objections your call settled carry a "Your call" tag, your words, and the architect's note on how the brief follows them.
 - **Review:** the tamper check, then the findings: open blockers first, each with its status, who raised it and who confirmed it.
 - **Session:** join the agent that is working right now (below).
 

@@ -12,6 +12,7 @@ export function ReviewsPanel({ state, find }: { state: State; find: Lookup }) {
   const outcomes = [
     [findings.fixed, "fixed"],
     [findings.notABug, "not a bug"],
+    [findings.unverified, "could not verify"],
     [findings.downgraded, "downgraded by the checker"],
     [findings.kept, "kept by the builder, with a reason"],
     [findings.open, "still open"],

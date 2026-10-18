@@ -18,7 +18,7 @@ export interface ReviewStats {
   /** Deliveries the coordinator sent back after every reviewer had passed them. */
   sentBack: number;
   /** What became of the reviewers' findings (Petrina's own checks aside). */
-  findings: { total: number; fixed: number; notABug: number; downgraded: number; kept: number; open: number };
+  findings: { total: number; fixed: number; notABug: number; unverified: number; downgraded: number; kept: number; open: number };
   /** Per reviewer profile, most findings first. */
   profiles: ProfileStats[];
 }
@@ -75,6 +75,7 @@ export function reviewStats(tasks: readonly Task[]): ReviewStats {
       total: findings.length,
       fixed: findings.filter((finding) => finding.status === "fixed").length,
       notABug: findings.filter((finding) => finding.status === "dismissed").length,
+      unverified: findings.filter((finding) => finding.status === "unverified").length,
       downgraded: findings.filter((finding) => finding.status === "open" && downgraded(finding)).length,
       kept: findings.filter((finding) => finding.status === "open" && !downgraded(finding) && finding.answer?.fixed === false).length,
       open: findings.filter((finding) => finding.status === "open" && !downgraded(finding) && finding.answer?.fixed !== false).length,

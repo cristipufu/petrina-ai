@@ -87,9 +87,15 @@ export const GuideResult = z.object({
   why: z.string().trim().min(3).max(400),
 });
 
+const AcceptanceCheckResult = z.union([
+  z.object({ text: z.string(), result: z.enum(["pass", "fail", "blocked"]), reason: z.string().optional() }),
+  // Older saved agent sessions may still hand back the original pass/fail shape.
+  z.object({ text: z.string(), pass: z.boolean() }).transform(({ text, pass }) => ({ text, result: pass ? "pass" as const : "fail" as const })),
+]).refine((check) => check.result !== "blocked" || Boolean(check.reason?.trim()), "A blocked acceptance check needs a reason");
+
 export const TestResult = z.object({
   summary: z.string().min(3),
-  checks: z.array(z.object({ text: z.string(), pass: z.boolean() })).default([]),
+  checks: z.array(AcceptanceCheckResult).default([]),
   learnings: LEARNED,
 });
 
@@ -285,9 +291,9 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
   "tester": {
     result: TestResult,
     reads: ["notes", "brief", "report", "check-results"],
-    shape: `{"summary": "How it went", "checks": [{"text": "An acceptance item", "pass": true}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
+    shape: `{"summary": "How it went", "checks": [{"text": "An acceptance item", "result": "pass"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: () => {
-      return `Run the product and check every acceptance item like a user would. Do not change files. Report each check as pass or fail.\n${LEARN}`;
+      return `Run the product and check every acceptance item like a user would. Do not change files. For each item, report "result": "pass" when verified, "fail" when you reproduced a product defect, or "blocked" when you could not perform the check. For a blocked check, give a short "reason" naming what prevented verification. A blocked check is not a product failure, but it is not evidence that the item passes; do not guess or retry unchanged checks.\n${LEARN}`;
     },
   },
   "code-reviewer": {

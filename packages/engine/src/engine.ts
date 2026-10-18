@@ -836,6 +836,7 @@ export class Engine extends Kernel implements Commands {
       // A new coordinator request authorizes another bounded attempt at acceptance fixes.
       delete task.acceptanceReturns;
       delete task.acceptanceBlocked;
+      delete task.acceptanceUnverified;
       // The Guide keeper looks for what reviewers missed, only when they had passed it: if Important findings
       // were open (the rounds ran out), the reviewers had caught it, and nothing was missed.
       if (!task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) task.miss = { note, at: Date.now() };

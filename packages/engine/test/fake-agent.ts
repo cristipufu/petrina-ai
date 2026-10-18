@@ -55,7 +55,7 @@ export interface Scenario {
   /** Repair a partial ballot with a revised first verdict; the remaining findings are not bugs. */
   correctPartialVerification?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
-  tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once";
+  tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once" | "blocked";
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
   releaseManager?: "hang";
   /**
@@ -756,6 +756,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return hang(sessionId, "tester-working");
       }
       // "fail-once": the second tester pass (the one on the final code) fails an acceptance item, once.
+      if (plan.tester === "blocked") return done({ summary: "I could not open the live session because its account limit is exhausted.", checks: [{ text: "A greeting file exists", result: "blocked", reason: "The Claude Code weekly limit prevents opening a live session." }] });
       if (plan.tester === "always-fail") return done({ summary: "The greeting still does not appear.", checks: [{ text: "A greeting file exists", pass: false }] });
       if (plan.tester === "fail-once" && marked("tester-passed-once") && !marked("tester-failed-once")) {
         mark("tester-failed-once");

@@ -13,13 +13,13 @@ const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> =
 function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
   const votes = independentVotes(finding.votes);
   const followUp = finding.status === "open" && finding.severity === "pre-existing";
-  const status = finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : followUp ? "Follow-up" : "Open";
+  const status = finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : finding.status === "unverified" ? "Could not verify" : followUp ? "Follow-up" : "Open";
   return (
     <li className="issue">
       <div className="issue-status">
         <span className={`label ${finding.status === "fixed" ? "ok" : finding.status === "open" && !followUp ? (finding.severity === "blocking" ? "bad" : "warn") : ""}`}>{status}</span>
         <span aria-hidden="true">·</span>
-        <span>{FINDING_TAG[finding.severity]}</span>
+        <span>{finding.status === "unverified" ? "Acceptance check" : FINDING_TAG[finding.severity]}</span>
       </div>
       <p className="issue-text">{finding.text}</p>
       {finding.evidence && <p className="issue-evidence">{finding.evidence}</p>}

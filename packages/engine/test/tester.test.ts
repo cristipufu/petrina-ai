@@ -31,10 +31,44 @@ describe("the tester tries the change once, and the final code once more", () =>
         return state.inbox.some((item) => item.taskId === id && item.kind === "delivery") && found;
       }, "a complete acceptance report", 120_000);
       expect(fakes.prompts("tester")).toHaveLength(2);
-      expect(fakes.prompts("tester")[1]).toContain("Report pass or fail for every acceptance item");
+      expect(fakes.prompts("tester")[1]).toContain("Report pass, fail, or blocked");
       expect(fakes.openings("tester")).toHaveLength(1);
       expect(task.brief!.acceptance.every((item) => item.met)).toBe(true);
       expect(task.acceptancePassed).toBe(true);
+    } finally { await engine.shutdown(); }
+  });
+
+  it("keeps unavailable acceptance checks unverified and prevents an unchanged retry or low-risk auto-ship", async () => {
+    const root = tempDir("petrina-acceptance-blocked-");
+    roots.push(root);
+    const fakes = new Fakes(join(root, "fake"));
+    fakes.scenario({ planner: "tester-with-design", builder: "plain", tester: "blocked", risk: "low" });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+    try {
+      const productId = await engine.addProduct(makeProduct(root));
+      engine.updateProduct(productId, { name: "Shop", delivery: "local", approveDelivery: true, shipLowRisk: true });
+      const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
+      const task = await waitFor(() => {
+        const state = engine.getState();
+        const plan = state.inbox.find((item) => item.taskId === id && item.kind === "plan");
+        if (plan) engine.approve(plan.id);
+        const question = state.inbox.find((item) => item.taskId === id && item.kind === "question");
+        if (question) engine.answer(question.id, question.options?.[0] ?? "Yes");
+        const found = state.tasks.find((task) => task.id === id)!;
+        if (found.state === "failed") throw new Error(found.error);
+        return state.inbox.some((item) => item.taskId === id && item.kind === "delivery") && found;
+      }, "the coordinator to receive an unverified acceptance result", 120_000);
+      const delivery = engine.getState().inbox.find((item) => item.taskId === id && item.kind === "delivery")!;
+      expect(task.state).toBe("needs-you");
+      expect(task.acceptancePassed).toBe(false);
+      expect(task.acceptanceUnverified).toBe(true);
+      expect(task.brief!.acceptance[0]).toMatchObject({ verification: "blocked", reason: "The Claude Code weekly limit prevents opening a live session." });
+      expect(task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking")).toHaveLength(0);
+      expect(delivery.title).toContain("1 acceptance check could not be verified");
+      expect(delivery.body).toContain("Claude Code weekly limit prevents opening a live session");
+      expect(fakes.openings("tester")).toHaveLength(1);
+      expect(task.journey!.filter((step) => step.roleId === "tester")).toHaveLength(1);
+      expect(task.landed).toBeUndefined();
     } finally { await engine.shutdown(); }
   });
 

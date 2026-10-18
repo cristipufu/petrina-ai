@@ -40,7 +40,9 @@ function stillBlocking(task: Task): number {
 /** What a checkpoint is called in the inbox. A delivery with Important findings still open says so first. */
 export function gateTitle(task: Task, gate: GateKind): string {
   const open = gate === "delivery" ? stillBlocking(task) : 0;
-  return open ? `Your call on “${task.title}”: ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} still open` : GATE_TITLE[gate](task.title);
+  if (open) return `Your call on “${task.title}”: ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} still open`;
+  const unverified = gate === "delivery" ? task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0 : 0;
+  return unverified ? `Your call on “${task.title}”: ${unverified === 1 ? "1 acceptance check could not be verified" : `${unverified} acceptance checks could not be verified`}` : GATE_TITLE[gate](task.title);
 }
 
 /** The task's status line while a checkpoint waits on the coordinator. */
@@ -51,6 +53,8 @@ export function gateStatus(task: Task, gate: GateKind): string {
   if (task.checks?.results.some((run) => !run.ok)) return "Checks still fail. Your call";
   // Never "done" while Important findings are open: the rounds ran out and the coordinator decides.
   if (open) return `Review rounds ran out with ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} open. Your call`;
+  const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0;
+  if (unverified) return `${unverified === 1 ? "1 acceptance check could not be verified" : `${unverified} acceptance checks could not be verified`}. Your call`;
   return "Reviews done. Waiting for your OK to ship";
 }
 

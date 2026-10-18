@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDemoState } from "../src/demo.js";
-import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, reviewRoundEnd, type DeepMutable } from "../src/flow.js";
+import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, reviewRoundEnd, type DeepMutable } from "../src/flow.js";
 import { BUILT_IN_ROLES } from "../src/library.js";
 import type { Finding, Stage, Task } from "../src/model.js";
 
@@ -24,6 +24,12 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
   it("says what each checkpoint waits for", () => {
     expect(gateStatus(planned, "plan")).toBe("Plan ready. Waiting for your OK");
     expect(gateStatus(planned, "delivery")).toBe("Reviews done. Waiting for your OK to ship");
+  });
+
+  it("keeps an unverified acceptance item at the delivery decision", () => {
+    const task = copy({ brief: { ...planned.brief!, acceptance: [{ text: "A real session can write safely", verification: "blocked", reason: "The account limit prevented a session." }] } });
+    expect(gateTitle(task, "delivery")).toContain("1 acceptance check could not be verified");
+    expect(gateStatus(task, "delivery")).toBe("1 acceptance check could not be verified. Your call");
   });
 
   it("sends a delivery back to the builder, and a plan back to the planner", () => {

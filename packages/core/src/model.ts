@@ -382,7 +382,7 @@ export interface DesignBrief {
   summary: string;
   forUsers: readonly string[];
   areas: readonly string[];
-  acceptance: readonly { text: string; met?: boolean }[];
+  acceptance: readonly { text: string; met?: boolean; verification?: "passed" | "failed" | "blocked"; reason?: string }[];
   risks: readonly string[];
 }
 
@@ -435,7 +435,7 @@ export interface Finding {
   votes?: readonly Vote[];
   /** The builder's answer when the finding came back to it. */
   answer?: { fixed: boolean; text: string; at: number };
-  status: "open" | "fixed" | "dismissed";
+  status: "open" | "fixed" | "dismissed" | "unverified";
 }
 
 export type RiskLevel = "low" | "medium" | "high";
@@ -617,6 +617,8 @@ export interface Task {
   acceptanceReturns?: number;
   /** Acceptance still failed after those returns: wait for a coordinator decision, including after restart. */
   acceptanceBlocked?: boolean;
+  /** At least one acceptance item could not be checked; never send the same unavailable probe back unchanged. */
+  acceptanceUnverified?: boolean;
   /** The tester is trying the final code right before the delivery check; the check follows, or the builder if it fails. */
   retest?: boolean;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
