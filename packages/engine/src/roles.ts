@@ -301,7 +301,7 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
   "code-reviewer": {
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
-    shape: `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": ["<id of an earlier finding you agree with>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
+    shape: `{"verdict": "pass", "findings": [{"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": ["<id only if that specific problem is still present in the current code; omit if fixed>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: ({ task, base, branch }) => {
       return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it. Your job is to try to prove that it is NOT done.${
         task.portReview
@@ -321,7 +321,7 @@ Do not change any files.`;
   "security-reviewer": {
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
-    shape: `{"verdict": "pass", "findings": [{"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": [], "disputes": [], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
+    shape: `{"verdict": "pass", "findings": [{"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": ["<id only if that specific security problem is still present in the current code; omit if fixed>"], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     withInstructions: ({ task, base, branch }, wording) => `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`).${task.portReview ? portClause(task.portReview) : ""}
 ${wording}
 ${GUIDE_RULE(base)}
@@ -332,7 +332,7 @@ Do not change any files.`,
       return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. Review the change on branch ${branch} (\`git diff ${base}...HEAD\`) for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.${task.portReview ? portClause(task.portReview) : ""}
 ${GUIDE_RULE(base)}
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
-Each finding says where it is and how someone could misuse it. Tag it "important" only if the change should not ship with it, "nit" for hardening that can wait, and "pre-existing" for a problem the change did not cause. Report a whole class of problem once, listing every place. Never repeat a finding listed below: confirm or dispute it by id instead.
+${BUILT_IN_ROLES.find((entry) => entry.id === "security-reviewer")!.instructions}
 ${LEARN}
 Do not change any files.`;
     },

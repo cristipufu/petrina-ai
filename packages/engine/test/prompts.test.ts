@@ -46,6 +46,18 @@ describe("prompts", () => {
     expect(prompt).toContain("look for bugs, missing tests, weakened tests");
   });
 
+  it("defines confirmations as current bugs in code and security review prompts", () => {
+    const meaning = '"Confirms" means "still broken now"';
+    for (const id of ["code-reviewer", "security-reviewer"]) {
+      const role = BUILT_IN_ROLES.find((entry) => entry.id === id)!;
+      const prompt = promptFor(role);
+      expect(prompt).toContain(meaning);
+      expect(prompt).toContain("only if that specific");
+      expect(prompt).toContain("current code");
+      expect(prompt).toContain("omit if fixed");
+    }
+  });
+
   it("checks nearby cases for regressions on every product without needing a local review guide", () => {
     const roles = libraryRoles({ edits: { "code-reviewer": { purpose: "Review the changed checkout." } }, added: [] });
     const role = roles.find((entry) => entry.id === "code-reviewer")!;

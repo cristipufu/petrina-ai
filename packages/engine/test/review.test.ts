@@ -156,6 +156,9 @@ describe.concurrent("reviews that converge", () => {
     const second = fakes.openings("code reviewer").filter((text) => text.includes("This is review round 2"));
     expect(second.length).toBeGreaterThan(0);
     expect(second[0]).toContain(`git diff ${task.reviewedSha}..HEAD`);
+    const secondReview = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!;
+    expect(secondReview.result?.findings?.some((finding) => finding.id === important[0]!.id)).toBe(false);
+    expect(important[0]!.status).toBe("fixed");
     expect(lines(task).some((line) => line.startsWith("Review passed: "))).toBe(true);
   });
 
