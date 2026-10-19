@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mainLine, nextLine, timeLeft, workedSoFar, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
+import { ADAPTERS } from "../src/tools.js";
 import { EngineProcess, Fakes, removeDir, tempDir, makeProduct, waitFor, git } from "./support.js";
 
 const roots: string[] = [];
@@ -16,8 +17,13 @@ async function setup(role: "code-reviewer" | "security-reviewer" = "code-reviewe
   fakes.scenario({ planner: "short", builder: "plain", reviewTodo: true, ...(role === "security-reviewer" ? { risk: "high" } : {}), ...(important ? { reviewer: "important" } : {}) });
   const home = join(root, "home");
   const clock = join(root, "clock"); writeFileSync(clock, "0");
-  const launch = () => EngineProcess.start(home, [join(import.meta.dir, "clock-harness.ts"), home, fakes.dir, clock]);
+  const launch = async () => {
+    const engine = await EngineProcess.start(home, [join(import.meta.dir, "clock-harness.ts"), home, fakes.dir, clock]);
+    await engine.until(state => Object.keys(ADAPTERS).every(id => state.tools.some(tool => tool.id === id && tool.status === "ready") && state.setup?.checks.some(check => check.id === id && check.status === "ready" && !check.checking)), "every review tool to be ready");
+    return engine;
+  };
   const engine = await launch();
+  await engine.act("setPoolLimit", Object.keys(ADAPTERS).length);
   const productId = await engine.act("addProduct", makeProduct(root));
   await engine.act("setProductDelivery", productId, "local", true);
   const taskId = await engine.act("addTask", { productId, title: "Check the greeting", approvePlan: true });
@@ -245,7 +251,7 @@ describe("real grouped review summaries", () => {
     try {
       await run.approve();
       for (const model of models) for (const name of ["publish-1", "action-1", "result-1", "finish"]) run.go(`${name}-code-reviewer-${model}`);
-      const voting = await engine.until((state) => run.find(state).agent?.roleId === "verifier" && Object.keys(run.find(state).hunt?.work ?? {}).some((key) => key.startsWith("verifier:")), "the fresh voters");
+      const voting = await engine.until((state) => run.find(state).agent?.roleId === "verifier" && Object.keys(run.find(state).hunt?.work ?? {}).filter(key => key.startsWith("verifier:")).length === Object.keys(ADAPTERS).length, "every fresh voter");
       const voters = [...new Set([run.find(voting).agent!, ...(run.find(voting).helpers ?? [])].map((agent) => {
         const profile = voting.profiles.find((profile) => profile.id === agent.profileId)!;
         return `${profile.modelId}-${profile.effort}`;
@@ -288,6 +294,7 @@ describe("real grouped review summaries", () => {
         } finally { store.close(); }
         run.fakes.scenario({ planner: "short", builder: "plain", reviewTodo: true });
         engine = await run.launch();
+        expect(run.find(await engine.state()).hunt?.voterProfiles).toBeUndefined();
         await engine.act("setPoolPaused", false);
         const reserved = await engine.until((state) => {
           // An older vote without a tool does not fill a seat, so every ready tool still votes.

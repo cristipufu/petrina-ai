@@ -429,7 +429,9 @@ export class Reviews {
         return [choice.profile.id];
       });
       // Nobody can vote yet: leave the electorate open until at least one tool is usable.
-      if (planned.length && task.hunt) {
+      // A paused scheduler may ask who would run next before tool checks finish.
+      // Keep that preview provisional until work can start; an existing ballot stays durable.
+      if (planned.length && task.hunt && !this.k.admissionsClosed) {
         task.hunt.voterProfiles = planned;
         this.k.commitNow();
       }
