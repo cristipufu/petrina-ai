@@ -391,6 +391,7 @@ function Diagram({ nodes, edges, items, contentHeight, height, target, focused, 
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onlyRenderVisibleElements
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
           proOptions={{ hideAttribution: true }}
@@ -922,8 +923,10 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
   const byId = useMemo(() => new Map(view.nodes.map((node) => [node.id, node])), [view]);
   const selectedId = selected;
   const nodes = useMemo(
-    () =>
-      layout.items.map((item) => {
+    () => {
+      const present = new Set(layout.items.map((item) => item.id));
+      for (const id of cache.current.keys()) if (!present.has(id)) cache.current.delete(id);
+      return layout.items.map((item) => {
         const node = byId.get(item.id);
         const data: BoxData = {
           kind: item.kind,
@@ -946,7 +949,8 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
         const made: Node<BoxData> = { id: item.id, type: "journey", position: { x: item.x, y: item.y }, data, width: item.width, height: item.height, draggable: false, selectable: false, connectable: false };
         cache.current.set(item.id, { key, node: made });
         return made;
-      }),
+      });
+    },
     [layout, byId, find, start, view.end, view.rest, state.now, selectedId, focused],
   );
   const edges = useMemo(

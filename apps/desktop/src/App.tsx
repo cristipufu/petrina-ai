@@ -98,6 +98,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const liveSheetTask = sheet ? find.task(sheet.taskId) : undefined;
   const wantedTaskId = sheet?.taskId;
   useEffect(() => {
+    // A closed sheet must not retain an archived conversation or its recorded agent inputs.
+    setFetchedTask(undefined);
     if (!wantedTaskId || liveSheetTask) return;
     let cancelled = false;
     Promise.resolve().then(() => sim.taskDetails(wantedTaskId)).then(

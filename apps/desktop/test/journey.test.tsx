@@ -437,6 +437,7 @@ describe('the journey in the task sheet', () => {
     const scroller = host.querySelector<HTMLElement>('.task-detail-panel .sheet-scroll')!;
     Object.defineProperty(scroller, 'scrollHeight', { value: 900, configurable: true });
     await act(async () => [...host.querySelectorAll<HTMLElement>('.journey-list li')][1]!.click());
+    expect(host.querySelector('.session-head')).toBeNull();
     scroller.scrollTop = 45;
     await act(async () => simulator.sendMessage('pricing-refresh', 'A new note while I read this step'));
     expect(scroller.scrollTop).toBe(45);

@@ -266,7 +266,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
             {tab === "review" && <ReviewView task={task} find={find} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />}
-            {tab === "session" && <Session.Log key={sessionStep?.id ?? "latest"} active={!selectedStep} task={task} state={state} find={find} scroller={scroller} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
+            {tab === "session" && !selectedStep && <Session.Log key={sessionStep?.id ?? "latest"} task={task} state={state} find={find} scroller={scroller} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
           </div>
           </div></div>
 

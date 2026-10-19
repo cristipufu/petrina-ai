@@ -37,6 +37,15 @@ function groupLines(lines: readonly SessionLine[]): (SessionLine | SessionLine[]
   return groups;
 }
 
+/** Collapsing releases the rows and their icons, rather than only hiding a long list. */
+function ActivityGroup({ lines, className = "", reveal = false, children }: { lines: SessionLine[]; className?: string; reveal?: boolean; children: (line: SessionLine) => ReactNode }) {
+  const [expanded, setExpanded] = useState(reveal);
+  return <details className={`step-activity ${className}`} open={expanded} data-line={lines[0]!.id} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+    <summary>{lines.length} agent action{lines.length === 1 ? "" : "s"}</summary>
+    {expanded && <ul className="activity" aria-label="What the agent did">{lines.map(children)}</ul>}
+  </details>;
+}
+
 function when(at: number, now: number): string {
   const value = ago(at, now);
   return value === "now" ? "just now" : `${value} ago`;
@@ -65,7 +74,7 @@ export function StepConversation({ lines, find, now, live = false, taskId, repos
   return <section ref={section} className="step-conversation" aria-label="This step's conversation">
     <div className="chat">
       {groupLines(lines).map((group) => Array.isArray(group) ? (
-        <details key={group[0]!.id} className="step-activity"><summary>{group.length} agent action{group.length === 1 ? "" : "s"}</summary><ul className="activity">{group.map((line) => <li key={line.id}><ArrowRight size={12} aria-hidden="true" /><span>{line.productId && `${messageProduct(line.productId, find, repositories)}: `}{line.text}</span></li>)}</ul></details>
+        <ActivityGroup key={group[0]!.id} lines={group}>{(line) => <li key={line.id}><ArrowRight size={12} aria-hidden="true" /><span>{line.productId && `${messageProduct(line.productId, find, repositories)}: `}{line.text}</span></li>}</ActivityGroup>
       ) : group.from === "system" ? (
         <p key={group.id} className="system">{group.text} · {when(group.at, now)}</p>
       ) : (
@@ -211,18 +220,15 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
         {groupLines(task.session).map((group) => {
           if (Array.isArray(group))
             return (
-              <details key={group[0]!.id} className={`step-activity session-activity ${group.some((line) => inStep(line)) ? "in-step" : ""}`}>
-                <summary>{group.length} agent action{group.length === 1 ? "" : "s"}</summary>
-              <ul className="activity" aria-label="What the agent did">
-                {group.map((line) => (
+              <ActivityGroup key={group[0]!.id} lines={group} className={`session-activity ${group.some((line) => inStep(line)) ? "in-step" : ""}`} reveal={group.some((line) => Boolean(inStep(line)))}>
+                {(line) => (
                   <li key={line.id} data-line={line.id} className={inStep(line)}>
                     <ArrowRight size={12} aria-hidden="true" />
                     {stepStart(line)}
                     <span>{line.productId && `${messageProduct(line.productId, find, task.repositories)}: `}{line.text}</span>
                   </li>
-                ))}
-              </ul>
-              </details>
+                )}
+              </ActivityGroup>
             );
           if (group.from === "system")
             return (

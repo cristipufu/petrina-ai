@@ -113,6 +113,10 @@ describe("History", () => {
     expect(location.pathname).toBe("/history");
     expect(location.search).toBe(position);
     expect(projection.tasks).toHaveLength(0);
+    // Closing releases the fetched body. Reopening reads the current saved task afresh.
+    await click('.history-card');
+    expect(details).toHaveBeenCalledTimes(2);
+    await click('.sheet [aria-label="Close"]');
     await button("Previous");
     expect(host!.querySelector(".history-card")?.getAttribute("data-task-id")).toBe("archive-54");
   });

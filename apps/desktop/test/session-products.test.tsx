@@ -10,6 +10,7 @@ let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => { host = document.createElement('div'); document.body.append(host); root = createRoot(host); });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
+async function expand() { await act(async () => { const details = host.querySelector('details')!; details.open = true; details.dispatchEvent(new Event('toggle')); }); }
 
 for (const view of ['session', 'step']) {
   it(`names the product on messages and individual actions in the ${view} conversation`, async () => {
@@ -31,11 +32,16 @@ for (const view of ['session', 'step']) {
     expect(names[0]!.textContent).toContain(`Builder · ${first.name}`);
     expect(names[1]!.textContent).toContain(`You · ${second.name}`);
     expect(names[2]!.textContent).not.toContain(' · ');
+    expect(host.querySelector('.activity li')).toBeNull();
+    expect(host.querySelector('details')?.open).toBe(false);
+    await expand();
     expect([...host.querySelectorAll('.activity li')].map((line) => line.textContent)).toEqual([
       `${first.name}: Reading the code`, `${second.name}: Running the tests`, 'Thinking it through',
     ]);
     expect(host.querySelector('details summary')?.textContent).toBe('3 agent actions');
-    expect(host.querySelector('details')?.open).toBe(false);
+    await act(async () => { const details = host.querySelector('details')!; details.open = false; details.dispatchEvent(new Event('toggle')); });
+    expect(host.querySelector('.activity li')).toBeNull();
+    expect(host.querySelector('.chat .bubble')?.textContent).toBe('I checked the page');
   });
 
   it(`keeps the saved product name after product removal in the ${view} conversation`, async () => {
@@ -51,6 +57,7 @@ for (const view of ['session', 'step']) {
       ? <Session.Log task={task} state={state} find={lookup(state)} scroller={{ current: host }} onTab={() => {}} />
       : <StepConversation taskId={task.id} repositories={task.repositories} find={lookup(state)} now={state.now} lines={lines} />));
     expect(host.querySelector('.msg .name')?.textContent).toContain(`Builder · ${removed.name}`);
+    await expand();
     expect(host.querySelector('.activity li')?.textContent).toBe(`${removed.name}: Reading the code`);
   });
 }
