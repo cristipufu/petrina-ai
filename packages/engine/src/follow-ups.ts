@@ -287,6 +287,8 @@ export class FollowUps {
   private profile(): AgentProfile | undefined {
     const ready = new Set(this.k.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id));
     const open = this.k.s.profiles.filter((profile) => !profile.standby && extraSlot(this.k.activeState(), profile.toolId) && !limitOf(this.k.s.pool, profile, Date.now()));
+    const effort = (profile: AgentProfile) => profile.effort === "high" ? 0 : profile.effort === "medium" ? 1 : profile.effort === "low" ? 2 : 3;
+    open.sort((a, b) => effort(a) - effort(b));
     return open.find((profile) => ready.has(profile.toolId)) ?? (this.k.options.agentCommand ? open[0] : undefined);
   }
 
@@ -298,6 +300,8 @@ export class FollowUps {
     this.k.commit();
     let cwd: string | undefined;
     let run: AgentRun | undefined;
+    const answerDeadline = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const parent = join(this.k.dataDir, "matching");
       await mkdir(parent, { recursive: true });
@@ -310,14 +314,18 @@ export class FollowUps {
         ...(profile.toolId === "claude-code" ? { sandbox: claudeSandbox() } : {}),
         ...(command ? { command } : {}),
         callbacks: { onActivity() {}, onPlanStep() {}, async onPermission() { return "deny"; } },
-        signal: AbortSignal.any([this.stopped.signal, AbortSignal.timeout(this.k.options.startTimeoutMs ?? 30_000)]),
+        signal: AbortSignal.any([this.stopped.signal, answerDeadline.signal]),
+        startTimeoutMs: this.k.options.startTimeoutMs ?? 30_000,
         browser: false,
       });
+      // Startup and comparison have separate budgets; opening the tool cannot consume its thinking time.
+      timer = setTimeout(() => answerDeadline.abort(), 120_000);
       const turn = await run.prompt(prompt);
       const parsed = parseResult(turn.text, MatchBody);
       if (parsed.ok !== true) return "unavailable";
       return { groups: parsed.value.groups, ...(parsed.value.uncertain ? { uncertain: parsed.value.uncertain } : {}) };
     } finally {
+      clearTimeout(timer);
       await run?.stop().catch(() => undefined);
       if (cwd) await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
       this.k.s.backgroundAgents = this.k.s.backgroundAgents.filter((agent) => agent.id !== id);

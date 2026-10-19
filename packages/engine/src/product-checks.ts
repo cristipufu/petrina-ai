@@ -18,6 +18,7 @@ import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
+import { beginSideStep } from "./side-step.js";
 
 /** Keep the failed test name and short cause with the journey step without saving the whole log twice. */
 function checkDiagnostic(output: string): string | undefined {
@@ -119,20 +120,7 @@ export class ProductChecks {
     if (!continuing && seen && !unstartable) return seen.checks;
     const declared = detectChecks(repository.worktree);
     // A side errand inside the step: it leaves the step's own restart bookkeeping as it found it.
-    const attempts = repository.stepAttempts;
-    const conversation = repository.conversation?.roleId === "check-finder" ? undefined : repository.conversation;
-    const { todo, stepClock } = task;
-    const restore = () => {
-      if (attempts === undefined) delete repository.stepAttempts;
-      else repository.stepAttempts = attempts;
-      if (conversation === undefined) delete repository.conversation;
-      else repository.conversation = conversation;
-      // The errand's own to-do item and working time are not the step's.
-      if (todo === undefined) delete task.todo;
-      else task.todo = todo;
-      if (stepClock === undefined) delete task.stepClock;
-      else task.stepClock = stepClock;
-    };
+    const restore = beginSideStep(this.k, scope, "check-finder");
     const why = !product.checks ? "first time" : unstartable ? "a check could not start" : "the CI, build or hook files changed";
     // On a tool the squad can use, like every other step.
     const finder = this.k.onUsable(CHECK_FINDER_PROFILE);

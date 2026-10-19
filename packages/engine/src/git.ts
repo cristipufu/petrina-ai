@@ -399,12 +399,15 @@ export async function commitHooks(path: string): Promise<CommitHook[]> {
 /** The executable hook files, including local hooks outside the committed tree. */
 export async function commitHookFiles(path: string): Promise<{ name: CommitHook; path: string }[]> {
   const found: { name: CommitHook; path: string }[] = [];
-  for (const name of COMMIT_HOOKS) {
-    const where = await run(["git", "rev-parse", "--path-format=absolute", "--git-path", `hooks/${name}`], path, undefined, { ownHooks: true });
-    if (where.code !== 0 || !where.stdout) continue;
-    const mode = await stat(where.stdout).then((info) => (info.isFile() ? info.mode : undefined)).catch(() => undefined);
+  const where = await run(["git", "rev-parse", "--path-format=absolute", ...COMMIT_HOOKS.flatMap((name) => ["--git-path", `hooks/${name}`])], path, undefined, { ownHooks: true });
+  if (where.code !== 0) return found;
+  const paths = where.stdout.split("\n");
+  for (const [index, name] of COMMIT_HOOKS.entries()) {
+    const file = paths[index];
+    if (!file) continue;
+    const mode = await stat(file).then((info) => (info.isFile() ? info.mode : undefined)).catch(() => undefined);
     // Git skips a hook it cannot execute, except on Windows, where it runs every hook through its own shell.
-    if (mode !== undefined && (process.platform === "win32" || (mode & 0o111) !== 0)) found.push({ name, path: where.stdout });
+    if (mode !== undefined && (process.platform === "win32" || (mode & 0o111) !== 0)) found.push({ name, path: file });
   }
   return found;
 }
@@ -463,8 +466,8 @@ export async function treeOf(path: string, ref = "HEAD"): Promise<string | undef
  * The branch's work as one commit on top of where it forked from `base`, with the same code and `message`.
  * Returns how many commits it folded: 0 when it already was one commit with that message, or had none.
  */
-export async function squash(path: string, base: string, message: string): Promise<number> {
-  const fork = await mergeBase(path, "HEAD", base);
+export async function squash(path: string, base: string, message: string, resolvedFork?: string): Promise<number> {
+  const fork = resolvedFork ?? await mergeBase(path, "HEAD", base);
   if (!fork) return 0;
   const count = Number((await run(["git", "rev-list", "--count", `${fork}..HEAD`], path)).stdout);
   if (!(count > 0)) return 0;
@@ -744,10 +747,13 @@ const HALF_DONE: readonly (readonly [string, string])[] = [
 
 /** The branch a working copy is on (undefined when it is on none), and a merge, rebase, cherry-pick or revert left half done. */
 export async function workingState(path: string): Promise<{ branch?: string; busy?: string }> {
-  const branch = await run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], path);
-  for (const [marker, what] of HALF_DONE) {
-    const where = await run(["git", "rev-parse", "--git-path", marker], path);
-    if (where.code === 0 && where.stdout && existsSync(resolve(path, where.stdout))) return { ...(branch.code === 0 ? { branch: branch.stdout } : {}), busy: what };
+  const [branch, where] = await Promise.all([
+    run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], path),
+    run(["git", "rev-parse", ...HALF_DONE.flatMap(([marker]) => ["--git-path", marker])], path),
+  ]);
+  const paths = where.stdout.split("\n");
+  for (const [index, [, what]] of HALF_DONE.entries()) {
+    if (where.code === 0 && paths[index] && existsSync(resolve(path, paths[index]!))) return { ...(branch.code === 0 ? { branch: branch.stdout } : {}), busy: what };
   }
   return branch.code === 0 && branch.stdout ? { branch: branch.stdout } : {};
 }
@@ -772,9 +778,14 @@ const SKIP_MARKERS = /^\+.*(\b(it|test|describe)\.(skip|only)\(|\bxit\(|\bxdescr
 /** A mechanical check before review: deleted test files and newly skipped tests block the change. */
 export async function tamperCheck(path: string, base: string): Promise<string[]> {
   const problems: string[] = [];
-  const deleted = (await run(["git", "diff", "--no-ext-diff", "--name-only", "--diff-filter=D", `${base}...HEAD`], path)).stdout.split("\n").filter(Boolean);
+  // Keep structured deletion names (including binary tests) rather than inferring them from patch prose.
+  const [removed, diff] = await Promise.all([
+    run(["git", "diff", "--no-ext-diff", "--name-only", "-z", "--diff-filter=D", `${base}...HEAD`], path),
+    run(["git", "diff", "--no-ext-diff", "--no-textconv", "--unified=0", `${base}...HEAD`], path),
+  ]);
+  const deleted = removed.stdout.split("\0").filter(Boolean);
   for (const file of deleted) if (TEST_FILE.test(file)) problems.push(`A test file was deleted: ${file}`);
-  const patch = (await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--unified=0", `${base}...HEAD`], path)).stdout;
+  const patch = diff.stdout;
   let file = "";
   for (const line of patch.split("\n")) {
     if (line.startsWith("+++ b/")) file = line.slice(6);

@@ -97,17 +97,37 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const [detailsRetry, setDetailsRetry] = useState(0);
   const liveSheetTask = sheet ? find.task(sheet.taskId) : undefined;
   const wantedTaskId = sheet?.taskId;
+  const needsDetails = !liveSheetTask || liveSheetTask.detailsOmitted === true;
+  const latestDetails = useRef({ id: wantedTaskId, revision: liveSheetTask?.detailsRevision });
+  latestDetails.current = { id: wantedTaskId, revision: liveSheetTask?.detailsRevision };
   useEffect(() => {
     // A closed sheet must not retain an archived conversation or its recorded agent inputs.
     setFetchedTask(undefined);
-    if (!wantedTaskId || liveSheetTask) return;
+    if (!wantedTaskId || !needsDetails) return;
     let cancelled = false;
-    Promise.resolve().then(() => sim.taskDetails(wantedTaskId)).then(
-      (task) => { if (!cancelled) setFetchedTask({ id: wantedTaskId, task }); },
-      (error) => { if (!cancelled) setFetchedTask({ id: wantedTaskId, error: failureText(error) }); },
-    );
-    return () => { cancelled = true; };
-  }, [wantedTaskId, Boolean(liveSheetTask), detailsRetry]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let loaded: string | undefined;
+    let first = true;
+    const load = async () => {
+      const revision = latestDetails.current.revision;
+      if (first || loaded !== revision) {
+        first = false;
+        try {
+          const task = await sim.taskDetails(wantedTaskId);
+          if (cancelled) return;
+          loaded = task?.detailsRevision ?? revision;
+          setFetchedTask({ id: wantedTaskId, task });
+        } catch (error) {
+          if (cancelled) return;
+          loaded = revision;
+          setFetchedTask((previous) => ({ ...previous, id: wantedTaskId, error: failureText(error) }));
+        }
+      }
+      if (!cancelled) timer = setTimeout(() => { void load(); }, 400);
+    };
+    void load();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [wantedTaskId, needsDetails, detailsRetry]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [messageFocus, setMessageFocus] = useState<string>();
   const messageFocused = useCallback(() => setMessageFocus(undefined), []);
@@ -172,11 +192,11 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   useEffect(() => { setBoardId(currentBoardId); previousBoard.current = boardIds; }, [currentBoardId, boardIds]);
   useEffect(() => { setInboxId(currentInboxId); previousInbox.current = inboxIds; }, [currentInboxId, inboxIds]);
   const area = keyArea(view, inboxOpen, owner, Boolean(sheet));
-  const sheetTask = liveSheetTask ?? (fetchedTask?.id === wantedTaskId ? fetchedTask?.task : undefined);
+  const sheetTask = !needsDetails ? liveSheetTask : (fetchedTask?.id === wantedTaskId ? fetchedTask?.task : undefined);
   const loadingDetails = Boolean(sheet && !sheetTask && fetchedTask?.id !== wantedTaskId);
   const detailsError = !sheetTask && fetchedTask?.id === wantedTaskId ? fetchedTask?.error : undefined;
   // Only the open historical task joins this view of the sheet. The board and Analytics keep the engine projection.
-  const detailState = useMemo(() => sheetTask && !liveSheetTask ? { ...state, tasks: [...state.tasks, sheetTask] } : state, [state, sheetTask, liveSheetTask]);
+  const detailState = useMemo(() => sheetTask && sheetTask !== liveSheetTask ? { ...state, tasks: [...state.tasks.filter((task) => task.id !== sheetTask.id), sheetTask] } : state, [state, sheetTask, liveSheetTask]);
   const detailFind = useMemo(() => lookup(detailState), [detailState]);
   const missing = route.missing ? "Page not found"
     : sheet && !sheetTask && !loadingDetails && !detailsError ? "Task not found"

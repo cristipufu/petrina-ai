@@ -719,6 +719,7 @@ export class AgentRun {
         const option = sessionOptions.find((entry) => entry.id === configId);
         // A value the tool doesn't offer is not forced: the session keeps the tool's default, and that is recorded.
         if (!option || !choices(option).some((entry) => entry.value === value)) return false;
+        if (option.currentValue === value) return true;
         const before = sessionOptions;
         const response = await connection.setSessionConfigOption({ sessionId: session.sessionId, configId, value });
         const echoed = (response as { configOptions?: ConfigOption[] } | undefined)?.configOptions;

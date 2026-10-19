@@ -843,7 +843,7 @@ describe.concurrent("one task across products", () => {
       expect(fixes[1]!.text).toContain(`You own only product ${second}`);
       expect(task.rounds[task.plan!.stages.find((stage) => stage.kind === "review-chain")!.id]).toBe(2);
       expect(reviewedHeads.size).toBe(2);
-      const roundTwoReviews = fakes.openings("code reviewer").filter((text) => text.includes("This is review round 2"));
+      const roundTwoReviews = fakes.received("code reviewer").map((entry) => entry.text).filter((text) => text.includes("This is review round 2"));
       expect(roundTwoReviews.length).toBeGreaterThan(0);
       for (const [productId, sha] of reviewedHeads) for (const review of roundTwoReviews) {
         expect(review).toContain(`Product id: ${productId}; copy:`);

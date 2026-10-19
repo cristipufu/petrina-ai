@@ -80,6 +80,8 @@ export interface RepositoryState {
   stepAttempts?: number;
   /** The conversation the current step's agent has open, so it can pick it up after a restart. */
   conversation?: ConversationNote;
+  /** Main-step bookkeeping retained durably while an internal errand owns the current conversation. */
+  sideStep?: { roleId: Id; conversation?: ConversationNote; stepAttempts?: number; todo?: string; stepClock?: StepClock };
   /** Set while the task is being shipped. */
   shipping?: ShippingRecord;
   releasePreview?: { start: string; base?: string; version: string; tag: string; after: string; notes: string; summary: string };
@@ -91,7 +93,7 @@ export const REPOSITORY_FIELDS = [
   "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
   "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
   "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
-  "cleanup", "conversation", "stepAttempts", "acceptanceReturns", "releasePreview"
+  "cleanup", "conversation", "sideStep", "stepAttempts", "acceptanceReturns", "releasePreview"
 ] as const;
 export type RepositoryField = typeof REPOSITORY_FIELDS[number];
 export type TaskRepository = RepositoryState & {
@@ -151,6 +153,9 @@ export interface TaskScopeState {
 
 /** Queue membership and progress through the plan. A waiting task owns no new work. */
 export interface TaskProgress {
+  /** Window summaries omit histories; full details are fetched only for the open task. */
+  detailsOmitted?: boolean;
+  detailsRevision?: string;
   /** Position in the queue. Lower starts first. */
   priority: number;
   held: boolean;

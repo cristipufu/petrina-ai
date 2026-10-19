@@ -112,6 +112,7 @@ function finishedVoters(findings: readonly Finding[]): Set<Id> {
 }
 
 export class Reviews {
+  private readonly inputs = new WeakMap<MTask, { digest: string; input: ReviewInput }>();
   constructor(
     private readonly k: Kernel,
     private readonly turns: Turns,
@@ -190,7 +191,9 @@ export class Reviews {
       if (task.repositories) task.activeProductId = task.leadProductId ?? task.repositories[0]!.productId;
       task.statusLine = "Preparing the review";
       this.k.commit();
-      const input = await prepareReviewInput(this.k.dataDir, executionFor(task), await this.context.captureReview(executionFor(task)), signal);
+      const snapshot = await this.context.captureReview(executionFor(task));
+      const input = await prepareReviewInput(this.k.dataDir, executionFor(task), snapshot, signal);
+      this.inputs.set(task, { digest: input.digest, input: snapshot });
       signal.throwIfAborted();
       task.hunt = { stageId: stage.id, round, reported: {}, findings: task.findings.length, input };
       this.k.commit();
@@ -252,6 +255,7 @@ export class Reviews {
   }
 
   private forgetSessions(task: MTask, stageId: Id): void {
+    this.inputs.delete(task);
     if (!task.reviewSessions) return;
     delete task.reviewSessions[stageId];
     if (!Object.keys(task.reviewSessions).length) delete task.reviewSessions;
@@ -293,6 +297,8 @@ export class Reviews {
   }
 
   private async input(task: MTask, signal: AbortSignal): Promise<ReviewInput> {
+    const cached = this.inputs.get(task);
+    if (cached && cached.digest === task.hunt?.input?.digest) return cached.input;
     if (!task.hunt?.input) {
       if (Object.keys(task.hunt?.reported ?? {}).length) throw new Error("The review's saved inputs are missing. Start this review again before continuing.");
       const scope = executionFor(task);
@@ -301,7 +307,9 @@ export class Reviews {
       task.hunt!.input = input;
       this.k.commitNow();
     }
-    return readReviewInput(task.hunt!.input!);
+    const input = await readReviewInput(task.hunt!.input!);
+    this.inputs.set(task, { digest: task.hunt!.input!.digest, input });
+    return input;
   }
 
   /**
@@ -672,10 +680,14 @@ export class Reviews {
     const signal = AbortSignal.any([parentSignal, stop.signal]);
     const root = this.k.repositoryOf(scope)!.path!;
     const folder = join(this.k.dataDir, "worktrees", scope.work.productId, `${task.id}.copies`);
-    const sha = task.hunt?.input?.heads[scope.work.productId] ?? await git.head(scope.work.worktree!);
+    const restoreSha = await git.head(scope.work.worktree!);
+    const sha = task.hunt?.input?.heads[scope.work.productId] ?? restoreSha;
 
     // Pin all repositories before any reviewer starts. Every peer receives its own complete map.
-    const versions = task.repositories ? await Promise.all(task.repositories.map(async (work) => ({ productId: work.productId, root: work.source!.product.path!, path: work.worktree!, sha: task.hunt?.input?.heads[work.productId] ?? await git.head(work.worktree!) }))) : [];
+    const versions = task.repositories ? await Promise.all(task.repositories.map(async (work) => {
+      const restoreSha = await git.head(work.worktree!);
+      return { productId: work.productId, root: work.source!.product.path!, path: work.worktree!, restoreSha, sha: task.hunt?.input?.heads[work.productId] ?? restoreSha };
+    })) : [];
     // Only saved screen conversations keep their copies; interrupted background peers start fresh.
     const keptCopies = () => Object.values(task.hunt?.screenTurns ?? {}).flatMap((entry) => [entry.copy, ...Object.values(entry.copies ?? {})]);
     await git.removeCopies(root, folder, keptCopies());
@@ -855,21 +867,18 @@ export class Reviews {
       for (const work of versions) if (work.root !== root) await git.removeCopies(work.root, folder, keptCopies());
       for (const work of versions) {
         const state = await git.worktreeStatus(work.path);
-        if (state.head !== work.sha) await git.resetTo(work.path, work.sha);
+        if (state.head !== work.restoreSha) await git.resetTo(work.path, work.restoreSha);
         if (!state.clean) await git.discardChanges(work.path);
       }
       // Copies share the repository's branches, so a read-only agent could still have moved the task's
       // branch or written into its copy by path: the task's copy goes back to how the group found it.
       if (scope.work.worktree && members.every((member) => !this.k.role(member.roleId)?.canEdit)) {
         const state = await git.worktreeStatus(scope.work.worktree);
-        if (state.head !== sha) {
-          await git.resetTo(scope.work.worktree, sha);
+        if (state.head !== restoreSha) {
+          await git.resetTo(scope.work.worktree, restoreSha);
           this.k.log(task, "warn", `Undid commits from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
         }
-        if (!state.clean) {
-          await git.discardChanges(scope.work.worktree);
-          this.k.log(task, "warn", `Undid changes from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
-        }
+        await this.k.undoReadOnly(scope, members[0]!.roleId, scope.work.worktree, state.clean);
       }
     }
   }

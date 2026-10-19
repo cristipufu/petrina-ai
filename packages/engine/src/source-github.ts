@@ -54,15 +54,19 @@ export async function branchExists(repo: string, branch: string, cmd: git.Gh = G
 }
 
 export async function background(repo: string, pr: SourcePr, cmd: git.Gh = GH): Promise<string> {
-  // Sequential: consistent reads and test fakes share one GitHub record.
-  const reviews = (await api(repo, `pulls/${pr.number}/reviews?per_page=100`, cmd)).flat() as any[];
-  const discussion = (await api(repo, `issues/${pr.number}/comments?per_page=100`, cmd)).flat() as any[];
-  const files = (await api(repo, `pulls/${pr.number}/comments?per_page=100`, cmd)).flat() as any[];
-  const runs = (await api(repo, `commits/${pr.head}/check-runs?per_page=100`, cmd)).flatMap((page: any) => {
+  const [reviewPages, discussionPages, filePages, runPages, statusPages] = await Promise.all([
+    api(repo, `pulls/${pr.number}/reviews?per_page=100`, cmd),
+    api(repo, `issues/${pr.number}/comments?per_page=100`, cmd),
+    api(repo, `pulls/${pr.number}/comments?per_page=100`, cmd),
+    api(repo, `commits/${pr.head}/check-runs?per_page=100`, cmd),
+    api(repo, `commits/${pr.head}/status?per_page=100`, cmd),
+  ]);
+  const reviews = reviewPages.flat() as any[], discussion = discussionPages.flat() as any[], files = filePages.flat() as any[];
+  const runs = runPages.flatMap((page: any) => {
     if (!Array.isArray(page?.check_runs)) throw new Error("GitHub returned unreadable check results. Retry to refresh them.");
     return page.check_runs;
   });
-  const statuses = (await api(repo, `commits/${pr.head}/status?per_page=100`, cmd)).flatMap((page: any) => {
+  const statuses = statusPages.flatMap((page: any) => {
     if (!Array.isArray(page?.statuses)) throw new Error("GitHub returned unreadable status results. Retry to refresh them.");
     return page.statuses;
   });

@@ -21,14 +21,15 @@ vi.mock("../src/engine", () => ({
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined; host = undefined; page.mockClear(); details.mockClear(); });
-async function mount(path = "/history?demo") {
+async function mount(path = "/history?demo", active = false) {
   history.replaceState(null, "", path);
   const base = createDemoState(1_000_000_000_000);
   const template = base.tasks.find((task) => task.id === "guest-checkout")!;
   const tasks: Task[] = Array.from({ length: 55 }, (_, index) => ({ ...template, id: `archive-${index}`, title: `Finished task ${index}`, state: "done", column: "done", holdsSlot: false, productId: index % 2 ? "shop" : "billing", finishedAt: base.now - (55 - index) * 60_000 }));
+  if (active) tasks[0] = { ...tasks[0]!, state: "running", column: "building", finishedAt: undefined };
   simulator = new Simulator({ ...base, tasks, inbox: [], pool: { ...base.pool, paused: true } });
   // The live websocket contains no completed task bodies. Only an opened task may fetch one.
-  projection = { ...simulator.getState(), tasks: [], history: { revision: 1, total: tasks.length, products: [], reviews: reviewStats([]), reviewsByProduct: {}, steps: [] } };
+  projection = { ...simulator.getState(), tasks: active ? [{ ...tasks[0]!, detailsOmitted: true, detailsRevision: "boot:1", timeline: [], session: [], journey: undefined }] : [], history: { revision: 1, total: tasks.length, products: [], reviews: reviewStats([]), reviewsByProduct: {}, steps: [] } };
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   await act(async () => root!.render(<App />));
 }
@@ -42,6 +43,22 @@ async function searchSettled() { await act(async () => { await new Promise((reso
 async function button(label: string) { await act(async () => [...host!.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === label)!.click()); }
 
 describe("History", () => {
+  it("fetches only the open active task's full details, refreshes changed details and stops after closing", async () => {
+    await mount("/tasks/archive-0?demo", true);
+    expect(host!.querySelector(".task-workspace")).toBeTruthy();
+    expect(details.mock.calls.map(([id]) => id)).toEqual(["archive-0"]);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
+    expect(details).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      projection = { ...projection, tasks: [{ ...projection.tasks[0]!, detailsRevision: "boot:2" }] };
+      root!.render(<App />);
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
+    expect(details).toHaveBeenCalledTimes(2);
+    await click('.sheet [aria-label="Close"]');
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
+    expect(details).toHaveBeenCalledTimes(2);
+  });
   it("finds a finished task from the command palette without loading finished bodies into live state", async () => {
     await mount("/?demo");
     await click('.topbar [aria-label="Find tasks, products or actions"]');

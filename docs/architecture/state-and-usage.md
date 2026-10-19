@@ -12,11 +12,15 @@ Repository operations receive a `RepositoryContext` containing the task and its 
 
 ## Finished task history
 
-Completed and cancelled tasks appear in History rather than Board. The window receives active task bodies and compact historical totals, review aggregates and recent step timing records. `historyPage` reads at most one page of lightweight summaries, ordered by finish time and task id, with a stable cursor and optional product and title-word filters. SQLite indexes the history and its search. `taskDetails` reads the full record only when someone opens it.
+Completed and cancelled tasks appear in History rather than Board. The window receives active task summaries and compact historical totals, review aggregates and recent step timing records. `historyPage` reads at most one page of lightweight summaries, ordered by finish time and task id, with a stable cursor and optional product and title-word filters. SQLite indexes the history and its search. `taskDetails` reads the full record only when someone opens it.
 
 The selected archived task is added only to its workspace’s display state, so opening it cannot double-count Analytics or product totals. The simulator offers the same commands against its small fixture.
 
 ## Window snapshots
+
+Live summaries omit conversation bodies, timeline history and journey inputs. The open task fetches its complete record when its revision changes, with at most one request in flight and no background detail requests after closing. Revisions include the engine boot, so reconnecting after a restart refreshes the details. The simulator still supplies complete records directly.
+
+SQLite stores active task bodies in separate rows. A streaming update marks only its task dirty; metadata and that row are saved together, without serializing untouched peers. Global transitions retain a complete save, and shutdown saves every task. Existing local data moves to rows atomically on its first load; finished records retain their history indexes.
 
 Each window has at most one unacknowledged live snapshot, identified by a transport counter independent of task ids and the state's counter. It acknowledges in a microtask after applying the state, without depending on paints in a hidden desktop window, so background inbox notifications keep arriving. A suspended or slow window holds up only its own next snapshot.
 

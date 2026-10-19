@@ -193,7 +193,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
         // The same rules as a fresh one: model, effort, then the safety mode; in the background with the
         // coordinator's logins, and nothing new for Codex, which keeps its own sandbox.
         const rules = ["model=gpt-6.1-sol", "reasoning_effort=xhigh", "mode=agent"];
-        expect(run.fakes.settings(session)).toEqual([...rules, ...rules]);
+        expect(run.fakes.settings(session)).toEqual(rules);
         expect(run.fakes.opens().filter((open) => open.session === session)).toEqual([
           { session, how: "new", tool: "codex", background: true, logins: true, quiet: true },
           { session, how: reopen, tool: "codex", background: true, logins: true, quiet: true },

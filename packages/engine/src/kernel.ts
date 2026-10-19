@@ -444,14 +444,33 @@ export abstract class Kernel {
   };
 
   /** A bounded live update: all completed tasks are represented by archive totals, never bodies. */
+  private readonly taskRevisions = new Map<Id, number>();
+  private readonly dirtyTasks = new Set<Id>();
+  private allTasksDirty = true;
+  private nextTaskRevision = 0;
+
+  private changed(target?: MTask | RepositoryContext): void {
+    const revision = ++this.nextTaskRevision;
+    if (target) {
+      const task = executionOf(target).task;
+      this.dirtyTasks.add(task.id);
+      this.taskRevisions.set(task.id, revision);
+    } else {
+      this.allTasksDirty = true;
+      for (const task of this.s.tasks) this.taskRevisions.set(task.id, revision);
+    }
+  }
+
+  private detailRevision(id: Id): string { return `${this.boot}:${this.taskRevisions.get(id) ?? 0}`; }
+
   windowState = (): State => {
     // A terminal result must be in the archive before the window stops seeing its live body.
     if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
-    const tasks = this.s.tasks.filter((task) => !finishedTask(task)).map(taskView) as Task[];
+    const tasks = this.s.tasks.filter((task) => !finishedTask(task)).map((task) => ({ ...taskView(task), detailsOmitted: true, detailsRevision: this.detailRevision(task.id), session: [], timeline: [], journey: undefined, designSessions: undefined, reviewSessions: undefined, handedBack: undefined })) as Task[];
     const usageReads: NonNullable<State["pool"]["usageReads"]> = Object.fromEntries(
       ([["codex", this.codexUsage], ["grok", this.grokUsage], ["antigravity", this.antigravityUsage]] as const).flatMap(([toolId, reader]) => reader?.snapshot() ? [[toolId, reader.snapshot()!]] : []),
     );
-    const dependencies = this.stopped ? [] : [...new Set([...this.s.inbox.map((item) => item.taskId), ...tasks.flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])].flatMap((id) => {
+    const dependencies = this.stopped ? [] : [...new Set([...this.s.inbox.map((item) => item.taskId), ...this.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])].flatMap((id) => {
       const item = this.store.history.item(id);
       return item ? [item] : [];
     });
@@ -875,13 +894,13 @@ export abstract class Kernel {
     this.syncIdleSleep();
   }
 
-  async undoReadOnly(target: MTask | RepositoryContext, roleId: Id, worktree?: string): Promise<void> {
+  async undoReadOnly(target: MTask | RepositoryContext, roleId: Id, worktree?: string, knownClean?: boolean): Promise<void> {
     const scope = executionOf(target);
     const { work: repository } = scope;
     worktree ??= repository.worktree;
     const conversation = repository.conversation?.roleId === roleId ? repository.conversation : undefined;
     const role = conversation?.role ?? this.role(roleId);
-    if (role && !(conversation?.access?.canEdit ?? role.canEdit) && worktree && !(await git.isClean(worktree))) {
+    if (role && !(conversation?.access?.canEdit ?? role.canEdit) && worktree && !(knownClean ?? await git.isClean(worktree))) {
       await git.discardChanges(worktree);
       this.log(scope, "warn", `Undid changes from ${role.name}, which is read-only`);
     }
@@ -1006,7 +1025,7 @@ export abstract class Kernel {
       ? (repository?.builderSession ? { toolId: repository!.builderSession.toolId, modelId: repository!.builderSession.model } : builder ? this.profile(builder) : undefined)
       : undefined;
     if (task && stage?.kind === "converge" && task.sub === 1 && roleId === (stage.reviewerRoleId ?? "design-reviewer")) {
-      const author = this.tracking.log.turns({ taskId: task.id }).filter((turn) => turn.stageId === stage.id && turn.round === round && turn.roleId === stage.roleId && turn.end === "finished").at(-1);
+      const author = this.tracking.log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
       const legacy = task.session.findLast((line) => line.from === "agent" && line.roleId === stage.roleId)?.profileId;
       made = author ? { toolId: author.toolId, modelId: author.modelRan ?? author.modelAsked } : this.profile(legacy ?? stage.profileIds[0] ?? "");
     }
@@ -1017,8 +1036,7 @@ export abstract class Kernel {
       // Older rounds saved reports without the profiles at their positions. Their latest verdicts
       // name the actual reviewers; replace the reported positions' planned tools with those tools.
       const legacy = hunt && Object.keys(hunt.reported).some((key) => !hunt.profiles?.[key])
-        ? this.tracking.log.moments({ taskId: task.id, kinds: ["verdict"] })
-          .filter((entry) => entry.stageId === stage.id && entry.round === round)
+        ? this.tracking.log.moments({ taskId: task.id, stageId: stage.id, round, kinds: ["verdict"] })
           .slice(-Object.keys(hunt.reported).length)
           .flatMap((entry) => { const profile = this.profile(entry.profileId ?? ""); return profile ? [profile.toolId] : []; })
         : [];
@@ -1218,8 +1236,9 @@ export abstract class Kernel {
     await appendFile(join(dir, `${taskId}.log`), text).catch(() => undefined);
   }
 
-  commit(): void {
+  commit(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
+    this.changed(target);
     this.syncIdleSleep();
     // An activity or other update is about to be shown. The to-do item is written first, so a forced
     // kill once that update is visible still has the item.
@@ -1235,8 +1254,9 @@ export abstract class Kernel {
    * moment, so a run of plan updates does not stall the scheduler on the disk. The next update writes
    * the item first.
    */
-  noteTodo(): void {
+  noteTodo(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
+    this.changed(target);
     this.todoPending = true;
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     this.s.now = Date.now();
@@ -1245,14 +1265,15 @@ export abstract class Kernel {
   }
 
   /** Commit and save right away: what the coordinator said survives a forced kill a moment later. */
-  commitNow(): void {
+  commitNow(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
+    this.changed(target);
     this.syncIdleSleep();
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     this.todoPending = false;
-    this.save();
+    this.save(false);
     for (const listener of this.listeners) listener();
   }
 
@@ -1262,7 +1283,7 @@ export abstract class Kernel {
     this.saveTimer = setTimeout(() => {
       this.saveTimer = undefined;
       try {
-        if (!this.stopped) this.save();
+        if (!this.stopped) this.save(false);
       } catch {
         // A full disk, for example: the next change saves again.
       }
@@ -1275,21 +1296,26 @@ export abstract class Kernel {
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     this.todoPending = false;
-    this.save();
+    this.save(false);
   }
 
   /**
    * Save now. The saved time and the step clocks belong to the same snapshot: after a forced stop, a step's
    * working time ends at the last save, so the time Petrina was not running is never counted.
    */
-  save(): void {
+  save(all = true): void {
     this.todoPending = false;
     this.s.now = Date.now();
     const revision = this.store.history.info().revision;
     const retired = this.retiredTasks();
-    this.store.save(this.activeState(), retired, [...this.archiveCache.values()] as Task[]);
+    const complete = all || this.allTasksDirty;
+    const changedArchive = [...this.archiveCache.values()].filter((task) => complete || this.dirtyTasks.has(task.id));
+    this.store.save(this.activeState(), retired, changedArchive as Task[], complete ? undefined : [...this.dirtyTasks]);
+    this.allTasksDirty = false;
+    this.dirtyTasks.clear();
     const ids = new Set(retired);
     this.s.tasks = this.s.tasks.filter((task) => !ids.has(task.id));
+    for (const id of ids) this.taskRevisions.delete(id);
     if (!this.stopped && this.store.history.info().revision !== revision) for (const listener of this.listeners) listener();
   }
 }

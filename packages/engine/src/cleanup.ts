@@ -54,7 +54,7 @@ export class Cleanup {
           for (const path of await git.linkedWorktrees(product.path).catch(() => [])) remember(path);
         }
       }
-      for (const id of ids) await this.removeCopy(id);
+      for (const id of ids) await this.removeCopy(id, true);
     } finally {
       this.sweeping = false;
     }
@@ -65,10 +65,12 @@ export class Cleanup {
    * are saved first. A copy removed before whose folder came back (a program wrote into it late) goes again,
    * quietly.
    */
-  async removeCopy(taskId: Id): Promise<void> {
-    await this.removeContext(taskId);
-    await this.removeCaptures(taskId);
+  async removeCopy(taskId: Id, storageSwept = false): Promise<void> {
     const task = this.k.task(taskId);
+    if (!storageSwept && (!task || finishedTask(task))) {
+      await this.removeContext(taskId);
+      await this.removeCaptures(taskId);
+    }
     if (task?.repositories) return this.removeRepositoryCopies(task);
     const path = task && this.copyOf(task);
     if (!task || !path || !this.finishedWith(task) || this.removing.has(taskId) || this.k.stopped) return;

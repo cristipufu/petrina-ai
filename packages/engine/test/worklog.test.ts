@@ -309,7 +309,8 @@ describe("A step a usage limit stopped", () => {
       const log = new WorkLog(again);
       expect(log.owedRetries()).toEqual(["task-3|builder|opus-high"]);
       again.query("UPDATE work_meta SET value = 'not a list' WHERE key = 'owed-retries'").run();
-      expect(log.owedRetries()).toEqual([]);
+      expect(log.owedRetries()).toEqual(["task-3|builder|opus-high"]);
+      expect(new WorkLog(again).owedRetries()).toEqual([]);
       log.close();
       // Petrina is stopping: nothing more is written.
       log.setOwedRetries(["task-4|builder|opus-high"]);

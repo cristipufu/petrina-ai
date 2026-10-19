@@ -180,6 +180,8 @@ export interface WorkInfo {
 export interface TurnFilter {
   taskId?: Id;
   productId?: Id;
+  stageId?: Id;
+  round?: number;
   /** Turns that count at or after this time (when they ended, or started if lost). */
   from?: number;
   to?: number;
@@ -499,7 +501,7 @@ export class MemoryWorkLog implements WorkLogReader {
   }
 
   turns(filter: TurnFilter): WorkTurn[] {
-    return this.turnList.filter((turn) => matches(turnAt(turn), turn.taskId, turn.productId, filter));
+    return this.turnList.filter((turn) => matches(turnAt(turn), turn.taskId, turn.productId, filter) && (filter.stageId === undefined || turn.stageId === filter.stageId) && (filter.round === undefined || turn.round === filter.round));
   }
 
   lines(filter: TurnFilter): TokenLine[] {
@@ -508,7 +510,7 @@ export class MemoryWorkLog implements WorkLogReader {
   }
 
   moments(filter: MomentFilter): WorkMoment[] {
-    return this.momentList.filter((moment) => matches(moment.at, moment.taskId, moment.productId, filter) && (!filter.kinds || filter.kinds.includes(moment.kind)));
+    return this.momentList.filter((moment) => matches(moment.at, moment.taskId, moment.productId, filter) && (filter.stageId === undefined || moment.stageId === filter.stageId) && (filter.round === undefined || moment.round === filter.round) && (!filter.kinds || filter.kinds.includes(moment.kind)));
   }
 
   productTallies(): Map<Id, Tally> {

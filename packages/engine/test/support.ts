@@ -266,7 +266,8 @@ export class EngineProcess {
   /** Logical engine state for fixture assertions, like Engine.getState(). Window tests use windowState(). */
   async state(): Promise<State> {
     const current = await this.windowState();
-    if (!current.history?.total) return current;
+    const active = await Promise.all(current.tasks.map((task) => this.act("taskDetails", task.id) as Promise<Task>));
+    if (!current.history?.total) return { ...current, tasks: active };
     const { history: _history, ...rest } = current;
     const archived: Task[] = [];
     let cursor: string | undefined;
@@ -275,7 +276,7 @@ export class EngineProcess {
       archived.push(...await Promise.all(page.items.map((item) => this.act("taskDetails", item.id) as Promise<Task>)));
       cursor = page.nextCursor;
     } while (cursor);
-    return { ...rest, tasks: [...current.tasks, ...archived] };
+    return { ...rest, tasks: [...active, ...archived] };
   }
 
   async task(id: string): Promise<Task> {

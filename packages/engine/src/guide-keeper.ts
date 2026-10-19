@@ -13,6 +13,7 @@ const GUIDE_SECTION = "## Review guide";
 const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.`;
 import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, ScreenWait } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
+import { beginSideStep } from "./side-step.js";
 import type { Turns } from "./turn.js";
 
 export class GuideKeeper {
@@ -57,20 +58,7 @@ export class GuideKeeper {
     const product = this.k.productOf(scope);
     const miss = task.miss;
     if (!product || !miss || !repository.worktree) return;
-    const attempts = repository.stepAttempts;
-    const conversation = repository.conversation?.roleId === "guide-keeper" ? undefined : repository.conversation;
-    const { todo, stepClock } = task;
-    const restore = () => {
-      if (attempts === undefined) delete repository.stepAttempts;
-      else repository.stepAttempts = attempts;
-      if (conversation === undefined) delete repository.conversation;
-      else repository.conversation = conversation;
-      // The errand's own to-do item and working time are not the step's.
-      if (todo === undefined) delete task.todo;
-      else task.todo = todo;
-      if (stepClock === undefined) delete task.stepClock;
-      else task.stepClock = stepClock;
-    };
+    const restore = beginSideStep(this.k, scope, "guide-keeper");
     // On a tool the squad can use, like every other step.
     const keeper = this.k.onUsable(GUIDE_KEEPER_PROFILE);
     let ran: Id = keeper;

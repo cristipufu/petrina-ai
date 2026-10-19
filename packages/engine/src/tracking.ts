@@ -408,7 +408,6 @@ export class Tracking {
     } finally {
       if (profile.toolId === "codex") void this.refreshCodexLimits(CODEX_AFTER_TURN_MS);
       if (profile.toolId === "grok") this.k.readUsage("grok", CODEX_AFTER_TURN_MS);
-      if (profile.toolId === "antigravity") this.k.readUsage("antigravity", CODEX_AFTER_TURN_MS);
     }
   }
 

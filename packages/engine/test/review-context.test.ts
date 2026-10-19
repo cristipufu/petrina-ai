@@ -37,6 +37,17 @@ async function bare() {
 }
 
 describe("immutable review inputs", () => {
+  for (const empty of ["old", "new", "both"]) it(`prepares a port whose ${empty} commit range is empty`, async () => {
+    const f = await bare();
+    try {
+      f.scope.work.portReview = { from: f.base, head: empty === "new" ? f.first : f.base, onto: empty === "old" ? f.base : f.first, files: ["greeting.txt"] };
+      const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
+      const input = await readReviewInput(ref);
+      const body = readFileSync(input.artifacts![0]!.file, "utf8");
+      expect(body).toContain("No commits in this range.");
+      if (empty !== "both") expect(body).toContain("+FIRST-CHANGE");
+    } finally { await f.engine.shutdown(); }
+  });
   it("keeps earlier facts frozen while delivering new coordinator notes, including after saving and reopening the input", async () => {
     const f = await bare();
     try {

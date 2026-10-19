@@ -76,7 +76,6 @@ export class Design {
       recordStepResult(task, { objections: task.objections.filter((objection) => due.includes(objection.id)) });
       endAgentStep(task, round === 1 ? { outcome: W.wroteBrief, reason: W.briefReady } : { outcome: W.answeredAll, reason: W.objectionsAnswered }, Date.now());
       await this.k.saveRoleEdits(scope, stage.roleId, by);
-      await this.k.undoReadOnly(scope, stage.roleId);
       this.k.finishStep(scope);
       if (this.k.rerun(task)) return "continue";
       if (this.nextProduct(scope, stage)) return "continue";
@@ -97,7 +96,6 @@ export class Design {
     const blocking = result.objections.filter((objection) => objection.blocking).length;
     recordStepResult(task, { objections: task.objections.slice(before) });
     endAgentStep(task, blocking ? { outcome: W.objections(result.objections.length, blocking), reason: W.blocking(blocking), tone: "back" } : { outcome: W.objections(result.objections.length, 0), reason: W.noBlocking }, Date.now());
-    await this.k.undoReadOnly(scope, reviewerRole);
     this.k.finishStep(scope);
     if (this.k.rerun(task)) return "continue";
     this.k.tracking.designRound(scope, stage, { roleId: reviewerRole, profileId: reviewer }, round, result.objections.length, blocking);
@@ -171,7 +169,6 @@ export class Design {
     this.k.log(scope, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, by);
     endAgentStep(task, { outcome: W.followed, reason: W.followsCall }, Date.now());
     await this.k.saveRoleEdits(scope, stage.roleId, by);
-    await this.k.undoReadOnly(scope, stage.roleId);
     this.k.finishStep(scope);
     if (this.nextProduct(scope, stage)) return "continue";
     this.k.tracking.endStage(scope, "settled");

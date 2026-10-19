@@ -324,6 +324,29 @@ describe.concurrent("one approved product and starting point", () => {
 });
 
 describe.concurrent("pull request background and source movement", () => {
+  it("reuses brief background reads only for the same source and forces fresh reads for explicit refreshes", async () => {
+    const { w, start } = setup("background-cache"); pull(w);
+    const engine = start(); engine.setPoolPaused(true);
+    try {
+      const productId = await engine.addProduct(w.clone);
+      const task = engine.task(engine.addTask({ productId, title: "Cache source background", backlog: true }))!;
+      const scope = executionFor(task), sources = engine["sources"];
+      scope.work.source = await sources.resolve(task, { productId, startFrom: { kind: "pull-request", value: "7" }, delivery: "pull-request" });
+      await sources.refresh(scope);
+      const count = w.github().calls.length;
+      await sources.refresh(scope);
+      expect(w.github().calls).toHaveLength(count);
+      w.setGitHub((github) => { github.prs.find((pr) => pr.number === 7)!.title = "Changed on GitHub"; });
+      await sources.refresh(scope, true);
+      expect(scope.work.prBackground!.text).toContain("Changed on GitHub");
+      w.setGitHub((github) => { github.prs.push({ ...github.prs.find((pr) => pr.number === 7)!, number: 8, url: `https://github.com/${REPO}/pull/8`, title: "Another approved source" }); });
+      const source = scope.work.source;
+      if (source.start.kind !== "pull-request") throw new Error("Expected a pull request source");
+      scope.work.source = { ...source, start: { ...source.start, number: 8 } };
+      await sources.refresh(scope);
+      expect(scope.work.prBackground!.text).toContain("PR #8: Another approved source");
+    } finally { await engine.shutdown(); }
+  });
   it("reads every comment and reply page and check version, then refreshes a continued builder without changing the accepted brief", async () => {
     const { w, fakes, start } = setup("background"); fakes.scenario({ builder: "plain", reopen: "resume" }); const source = pull(w);
     w.setGitHub((state) => { state.pages = {

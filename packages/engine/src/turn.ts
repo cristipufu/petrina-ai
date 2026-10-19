@@ -167,7 +167,7 @@ export class Turns {
         this.k.say(scope, "agent", message.text, roleId, profileId);
         last = { key: message.id, line: task.session.at(-1)!.id };
       }
-      this.k.commit();
+      this.k.commit(scope);
     };
   }
 
@@ -199,7 +199,7 @@ export class Turns {
       mode,
     } as const;
     step.agentInputs = [...(step.agentInputs ?? []).filter((entry) => entry.roleId !== roleId || entry.profileId !== profileId), input];
-    this.k.commitNow();
+    this.k.commitNow(scope);
   }
 
   /** One attempt at the step by one agent on one profile. */
@@ -217,7 +217,7 @@ export class Turns {
     // Paused, cancelled or stopped while getting here: no agent starts, and the task stays as the coordinator left it.
     if (signal.aborted) throw new Aborted();
     this.mustBeReady(profile);
-    if (role.result !== "plan") await this.sources.refresh(scope);
+    if (role.result !== "plan") await this.sources.refresh(scope, !!repository.conversation || task.fixing);
 
     // A conversation noted before a restart: the same step and role carry on from where it was. Only the
     // same tool and model reopen it, and never the Release Manager: interrupted shipping is checked first.
@@ -292,7 +292,7 @@ export class Turns {
       this.k.log(scope, "milestone", `${role.name} started`, roleId, profileId);
     }
     if (same) { same.role = role; same.access = access; }
-    this.k.commitNow();
+    this.k.commitNow(scope);
 
     const live = () => this.k.task(taskId);
     const env = this.envFor();
@@ -324,7 +324,7 @@ export class Turns {
               this.k.showReviewWork(current);
             } else current.statusLine = line;
             this.k.say(scope, "activity", line, roleId, profileId);
-            this.k.commit();
+            this.k.commit(scope);
           },
           // The to-do item is kept apart from the status line: tool activity never overwrites it, nor it the activity.
           onPlanStep: (line) => {
@@ -342,7 +342,7 @@ export class Turns {
               current.todo = text;
             }
             if (current.timeline.at(-1)?.text !== text) this.k.log(scope, "status", text, roleId, profileId);
-            this.k.noteTodo();
+            this.k.noteTodo(scope);
           },
           onPermission: (info) => this.permission(scope, info, signal, { roleId, profileId }, agent.waits, options.reviewKey),
           onLog: (text) => void this.k.agentLog(taskId, text),
@@ -371,7 +371,7 @@ export class Turns {
     options.started?.();
     this.k.runs.set(taskId, run);
     this.k.syncIdleSleep();
-    this.k.readUsage(profile.toolId);
+    if (profile.toolId !== "antigravity") this.k.readUsage(profile.toolId);
     const picked = run.reopened !== undefined;
     const sandbox = this.sandboxState(scope, opened.off, roleId, profileId, picked);
     if (task.agent) task.agent.sandbox = sandbox;
@@ -414,7 +414,7 @@ export class Turns {
       // Keep the latest reopened or replacement conversation when this member yields to a peer.
       if (pending) pending.conversation = repository.conversation;
     }
-    this.k.commitNow();
+    this.k.commitNow(scope);
     const headBefore = !role.canEdit ? head : undefined;
     try {
       // The last moment to notice a pause before the agent gets any work.
@@ -473,7 +473,7 @@ export class Turns {
       if (screen) screen.heard = true;
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
       if (signal.aborted || !live()) throw new Aborted();
-      this.k.commitNow();
+      this.k.commitNow(scope);
       // A reopened conversation carries on after the interruption; a fresh one gets its first instructions.
       const askScreen = options.member ? (reason: string) => {
         const current = this.k.task(taskId);
@@ -486,7 +486,7 @@ export class Turns {
         if (current.screen) this.k.log(scope, "status", SCREEN_WORDS.asked(reason), roleId, profileId);
         const granted = !current.screen && this.k.askScreen(current, roleId, profileId, reason, options.member);
         if (granted) repository.conversation = conversation;
-        this.k.commitNow();
+        this.k.commitNow(scope);
         return granted;
       } : undefined;
       const result = await this.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: !options.copy, ...(askScreen ? { askScreen } : {}) });
@@ -579,7 +579,7 @@ export class Turns {
         role = structuredClone(this.k.role(roleId)!);
         if (task.hunt) {
           task.hunt.roles = { ...task.hunt.roles, [key]: role };
-          this.k.commitNow();
+          this.k.commitNow(scope);
         }
       }
       options.used?.(profile.id);
@@ -594,7 +594,7 @@ export class Turns {
       const active = [task.agent, ...(task.helpers ?? [])].find((agent) => agent?.reviewKey === key);
       if (active) active.profileId = profile.id;
       this.k.showReviewWork(task);
-      this.k.commitNow();
+      this.k.commitNow(scope);
       const since = Date.now();
       try {
         return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
@@ -646,7 +646,7 @@ export class Turns {
       this.k.say(scope, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
       this.k.log(scope, "milestone", `${role.name} started`, roleId, profileId);
     }
-    this.k.commit();
+    this.k.commit(scope);
     const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
     const command = this.k.options.agentCommand?.(profile);
     const offered = typeof options.resume === "function" ? await options.resume(profile, role) : options.resume;
@@ -671,7 +671,7 @@ export class Turns {
             work.activity = line;
             this.k.showReviewWork(current);
             this.k.say(scope, "activity", line, roleId, profileId);
-            this.k.commit();
+            this.k.commit(scope);
           },
           onPlanStep: (line) => {
             const current = this.k.task(taskId);
@@ -681,7 +681,7 @@ export class Turns {
             work.todo = text;
             this.k.showReviewWork(current);
             this.k.log(scope, "status", text, roleId, profileId);
-            this.k.noteTodo();
+            this.k.noteTodo(scope);
           },
           onPermission: (info) => this.permission(scope, info, signal, { roleId, profileId }, agent.waits, options.key),
           onLog: (text) => void this.k.agentLog(taskId, text),
@@ -709,11 +709,11 @@ export class Turns {
     // Its group's record of it, shown in the header or among the helpers, says whether it is sandboxed.
     const sandbox = this.sandboxState(scope, off, roleId, profileId);
     if (options.agent) options.agent.sandbox = sandbox;
-    this.k.commit();
+    this.k.commit(scope);
     const runs = this.k.helperRuns.get(taskId) ?? new Set();
     this.k.helperRuns.set(taskId, runs.add(run));
     this.k.syncIdleSleep();
-    this.k.readUsage(profile.toolId);
+    if (profile.toolId !== "antigravity") this.k.readUsage(profile.toolId);
     const head = await git.head(copy).catch(() => undefined);
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
@@ -737,7 +737,7 @@ export class Turns {
           if (task.screen) this.k.log(scope, "status", SCREEN_WORDS.asked(reason), roleId, profileId);
           const granted = !task.screen && this.k.askScreen(task, roleId, profileId, reason, options.member);
           if (granted) repository.conversation = conversation;
-          this.k.commitNow();
+          this.k.commitNow(scope);
           return granted;
         },
       });
@@ -788,7 +788,7 @@ export class Turns {
         this.k.say(scope, "you", message.text);
         this.k.log(scope, "you", `You said: ${message.text}`);
       }
-      this.k.commitNow();
+      this.k.commitNow(scope);
       const messages = batch.map((message, index) => `${index + 1}. ${message.text}`).join("\n");
       return send(`Messages from the coordinator, in order:\n${messages}\n\nTake all of them into account. When you are done, end with the result block again.`, "message");
     };
@@ -818,7 +818,7 @@ export class Turns {
           if (options.main) this.k.pauseStep(current);
           const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
           if (work?.clock) work.clock = pauseClock(work.clock, Date.now());
-          this.k.commitNow();
+          this.k.commitNow(scope);
           throw new ScreenWait();
         }
         // Given at once, in this conversation: the agent keeps its slot.
@@ -829,7 +829,7 @@ export class Turns {
           this.k.say(scope, "you", message.text);
           this.k.log(scope, "you", `You said: ${message.text}`);
         }
-        this.k.commitNow();
+        this.k.commitNow(scope);
         reply = await send(screenPrompt(current.screen!.reason, messages.map((message) => message.text)), "continue");
         continue;
       }
@@ -849,7 +849,7 @@ export class Turns {
         // Heard from here on: a restart does not hand the answer over again.
         const note = repository.conversation;
         if (note && (options.main || (note.roleId === role.id && note.profileId === profileId))) delete note.asked;
-        this.k.commitNow();
+        this.k.commitNow(scope);
         reply = await send(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`, "answer");
         continue;
       }
@@ -905,7 +905,7 @@ export class Turns {
               const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
               if (work?.clock) work.clock = pauseClock(work.clock, finishedAt);
               // Durable references are saved before the agent stops or its working copy is cleaned.
-              this.k.commitNow();
+              this.k.commitNow(scope);
               attached = true;
               return parsed.value;
             } finally {
@@ -1016,8 +1016,8 @@ export class Turns {
       work.waiting = status;
       this.k.showReviewWork(task);
     }
-    if (kind === "question" && note && (main || owns)) this.k.commitNow();
-    else this.k.commit();
+    if (kind === "question" && note && (main || owns)) this.k.commitNow(scope);
+    else this.k.commit(scope);
     try {
       return await new Promise<string>((resolve, reject) => {
         this.k.waiting.set(id, { resolve, reject });
@@ -1032,7 +1032,7 @@ export class Turns {
           if (work.clock) work.clock = resumeClock(work.clock, Date.now());
         }
         this.k.showReviewWork(task);
-        this.k.commitNow();
+        this.k.commitNow(scope);
       }
     }
   }
@@ -1066,6 +1066,6 @@ export class Turns {
     const { work: repository } = scope;
     if (!repository.conversation || repository.conversation.briefed) return;
     repository.conversation.briefed = true;
-    this.k.commitNow();
+    this.k.commitNow(scope);
   }
 }

@@ -238,7 +238,8 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
       expect(db.history.get("task-00001")).toEqual(old.tasks[0]);
       expect(db.history.page({}).items.map((entry) => entry.id)).toEqual(["task-00004", "task-00001", "task-00002"]);
       const saved = db.database.query<{ value: string }, []>("SELECT value FROM kv WHERE key = 'state'").get()!;
-      expect(JSON.parse(saved.value).tasks.map((entry: Task) => entry.id)).toEqual(active.tasks.map((entry) => entry.id));
+      expect(JSON.parse(saved.value).tasks).toEqual([]);
+      expect(JSON.parse(saved.value).taskIds).toEqual(active.tasks.map((entry) => entry.id));
     } finally { db.close(); }
     const reopened = new Store(file);
     try {

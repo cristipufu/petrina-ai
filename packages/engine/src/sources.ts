@@ -10,6 +10,7 @@ import { mkdir, readdir, realpath, rm } from "node:fs/promises";
 import { isAbsolute, resolve, dirname } from "node:path";
 
 export class Sources {
+  private readonly backgroundReads = new WeakMap<RepositoryContext["work"], { source: string; at: number }>();
   constructor(private readonly k: Kernel, private readonly connections: Connections) {}
 
   async resolve(task: MTask, choice: WorkChoice, candidate?: TaskSource["product"]): Promise<TaskSource> {
@@ -270,11 +271,16 @@ export class Sources {
     this.k.log(task, "you", workSummary(scope.work.source!));
   }
 
-  async refresh(scope: RepositoryContext): Promise<void> {
+  async refresh(scope: RepositoryContext, force = false): Promise<void> {
     const { task, work: repository } = scope;
     if (task.repositories && (repository.pr || repository.release || repository.landed)) return;
     if (repository.source?.start.kind !== "pull-request") return;
-    return this.connections.serial(repository.productId, () => this.readBackground(scope));
+    return this.connections.serial(repository.productId, async () => {
+      // Prompt background may be shared briefly; fetch/delivery identity checks bypass this cache.
+      const cached = this.backgroundReads.get(repository);
+      if (!force && cached?.source === JSON.stringify(repository.source) && Date.now() - cached.at < 15_000) return;
+      await this.readBackground(scope);
+    });
   }
 
   private async readBackground(scope: RepositoryContext): Promise<void> {
@@ -286,6 +292,7 @@ export class Sources {
     if (pr.state !== "open") throw new Error(`PR #${pr.number} is ${pr.state}. Publishing is stopped and the task's work is preserved.`);
     const text = await background(source.product.repo, pr, this.k.options.gh);
     repository.prBackground = { readAt: Date.now(), head: pr.head, text };
+    this.backgroundReads.set(repository, { source: JSON.stringify(source), at: repository.prBackground.readAt });
     this.k.commitNow();
   }
 
@@ -294,7 +301,7 @@ export class Sources {
     const source = repository.source!;
     const product = this.k.repositoryOf(scope)!;
     const remote = await this.connections.requireConnection(scope, signal);
-    if (source.start.kind === "pull-request") await this.refresh(scope);
+    if (source.start.kind === "pull-request") await this.refresh(scope, true);
     const ref = source.start.kind === "pull-request" ? `refs/petrina/sources/${task.id}` : `refs/remotes/origin/${source.start.branch}`;
     const from = source.start.kind === "pull-request" ? `refs/pull/${source.start.number}/head` : `refs/heads/${source.start.branch}`;
     // The last tip this task actually fetched. Read before the fetch replaces it.

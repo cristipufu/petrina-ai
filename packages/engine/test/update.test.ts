@@ -182,7 +182,7 @@ describe.concurrent("work brought up to date with main", () => {
     const reviews = fakes.openings("code reviewer");
     expect(reviews).toHaveLength(3);
     expect(reviews.slice(0, 2).every((prompt) => !prompt.includes("Review only the port"))).toBe(true);
-    expect(reviews[2]).toContain("Review only the port: run `git range-diff ");
+    expect(reviews[2]).toContain("Review only the port of the already reviewed change, using the prepared port comparison and resolved files");
     expect(reviews[2]).toContain("resolving conflicts in: greeting.txt");
     expect(lines(task).some((line) => line.startsWith("Port review passed"))).toBe(true);
     const ports = task.journey!.filter((step) => step.port && step.roleId === "code-reviewer");

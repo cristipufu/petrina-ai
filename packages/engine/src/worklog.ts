@@ -60,6 +60,7 @@ const SCHEMA = [
     total INTEGER
   )`,
   "CREATE INDEX IF NOT EXISTS work_turns_task ON work_turns (task_id)",
+  "CREATE INDEX IF NOT EXISTS work_turns_stage_round ON work_turns (task_id, stage_id, round)",
   "CREATE INDEX IF NOT EXISTS work_turns_at ON work_turns (at)",
   "CREATE INDEX IF NOT EXISTS work_turns_product ON work_turns (product_id, at)",
   `CREATE TABLE IF NOT EXISTS work_tokens (
@@ -214,11 +215,13 @@ function turnOf(row: TurnRow): WorkTurn {
 
 const num = (value: number | undefined) => (value === undefined ? null : value);
 
-function where(filter: TurnFilter, alias = ""): { sql: string; params: (string | number)[] } {
+function where(filter: TurnFilter, alias = "", moments = false): { sql: string; params: (string | number)[] } {
   const parts: string[] = [];
   const params: (string | number)[] = [];
   if (filter.taskId !== undefined) parts.push(`${alias}task_id = ?`), params.push(filter.taskId);
   if (filter.productId !== undefined) parts.push(`${alias}product_id = ?`), params.push(filter.productId);
+  if (filter.stageId !== undefined) parts.push(moments ? "json_extract(data, '$.stageId') = ?" : `${alias}stage_id = ?`), params.push(filter.stageId);
+  if (filter.round !== undefined) parts.push(moments ? "json_extract(data, '$.round') = ?" : `${alias}round = ?`), params.push(filter.round);
   if (filter.from !== undefined) parts.push(`${alias}at >= ?`), params.push(filter.from);
   if (filter.to !== undefined) parts.push(`${alias}at < ?`), params.push(filter.to);
   return { sql: parts.length ? `WHERE ${parts.join(" AND ")}` : "", params };
@@ -227,6 +230,7 @@ function where(filter: TurnFilter, alias = ""): { sql: string; params: (string |
 /** The engine's work log. Every write is synchronous, so nothing is lost between two turns. */
 export class WorkLog implements WorkLogReader {
   private closed = false;
+  private retryKeys?: string[];
 
   constructor(private readonly db: Database) {
     for (const statement of SCHEMA) db.run(statement);
@@ -262,9 +266,11 @@ export class WorkLog implements WorkLogReader {
   owedRetries(): string[] {
     // Stopping: the database may already be gone, and nothing is owed any more.
     if (this.closed) return [];
+    if (this.retryKeys) return [...this.retryKeys];
     try {
       const saved = JSON.parse(this.meta("owed-retries") ?? "[]") as unknown;
-      return Array.isArray(saved) ? saved.filter((key): key is string => typeof key === "string") : [];
+      this.retryKeys = Array.isArray(saved) ? saved.filter((key): key is string => typeof key === "string") : [];
+      return [...this.retryKeys];
     } catch {
       return [];
     }
@@ -273,6 +279,7 @@ export class WorkLog implements WorkLogReader {
   setOwedRetries(keys: readonly string[]): void {
     if (this.closed) return;
     this.setMeta("owed-retries", JSON.stringify(keys));
+    this.retryKeys = [...keys];
   }
 
   /** Turns left unfinished when Petrina stopped: their time and tokens are unknown. */
@@ -463,7 +470,7 @@ export class WorkLog implements WorkLogReader {
   }
 
   moments(filter: MomentFilter): WorkMoment[] {
-    const { sql, params } = where(filter);
+    const { sql, params } = where(filter, "", true);
     const kinds = filter.kinds?.length ? `${sql ? " AND" : "WHERE"} kind IN (${filter.kinds.map(() => "?").join(", ")})` : "";
     return this.db
       .query<MomentRow, (string | number)[]>(`SELECT id, at, kind, task_id, product_id, data FROM work_moments ${sql}${kinds} ORDER BY seq`)

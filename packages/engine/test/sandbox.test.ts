@@ -106,7 +106,7 @@ describe("Claude Code's own sandbox", () => {
       const taskId = engine.addTask({ productId, title: "Add a greeting" });
       const seated = await waitFor(() => {
         const task = engine.getState().tasks.find((task) => task.id === taskId);
-        return task?.agent?.roleId === "planner" ? task : undefined;
+        return task?.agent?.roleId === "planner" && task.agent.sandbox ? task : undefined;
       }, "the planner to be seated");
       const entry = await waitFor(() => fakes.received("planner")[0], "the planner to start");
       const open = fakes.opens().find((item) => item.session === entry.session);

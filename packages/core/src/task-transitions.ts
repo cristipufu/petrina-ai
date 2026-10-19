@@ -10,7 +10,7 @@ import { reviewerAt } from "./roles.js";
 import { MAX_STEP_RECORDS, stepRecord } from "./summary.js";
 
 type MutableTask = DeepMutable<TaskState>;
-type Execution = DeepMutable<Pick<RepositoryState, "stepAttempts" | "conversation">>;
+type Execution = DeepMutable<Pick<RepositoryState, "stepAttempts" | "conversation" | "sideStep">>;
 
 /** One request shape for coordinator-created real and scripted tasks. */
 export function createTaskState(input: NewTaskInput, products: readonly Product[], seed: { id: Id; timelineId: Id; now: number; priority: number; area?: string }): MutableTask {
@@ -130,6 +130,7 @@ export function pauseTaskState(task: MutableTask, execution: Execution, now: num
   task.state = "paused"; task.holdsSlot = false; task.statusLine = "Paused by you";
   delete task.agent; delete task.helpers; delete execution.conversation;
   delete task.reviewSessions;
+  if (execution.sideStep) delete execution.sideStep.conversation;
   stopTaskActivity(task); stopCheckProgress(task, now);
   return true;
 }
@@ -146,6 +147,7 @@ export function cancelTaskState(task: MutableTask, execution: Execution, now: nu
   task.finishedAt = now; task.statusLine = "Cancelled";
   delete task.agent; delete task.helpers; delete execution.conversation;
   delete task.reviewSessions;
+  delete execution.sideStep;
   stopTaskActivity(task); stopCheckProgress(task, now);
   endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, now);
 }

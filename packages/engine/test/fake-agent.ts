@@ -1186,7 +1186,7 @@ acp
     }
     const sessionId = crypto.randomUUID();
     refuseSandbox(sessionId, "new", ctx.params._meta);
-    sessions.set(sessionId, { cwd: ctx.params.cwd, role: "", turns: 0, restarts: 0, history: [], options: configOptions() });
+    sessions.set(sessionId, { cwd: ctx.params.cwd, role: "", model: "default", effort: "high", turns: 0, restarts: 0, history: [], options: configOptions() });
     keep(sessionId);
     opened(sessionId, "new", ctx.params._meta);
     return { sessionId, configOptions: sessions.get(sessionId)!.options };

@@ -14,6 +14,7 @@ export class AgentBrowser {
   static async start(parent: string | undefined, env: NodeJS.ProcessEnv, onLog?: (text: string) => void): Promise<AgentBrowser> {
     // macOS browser sockets have a short path limit. Its ordinary per-user temp
     // path (or Petrina's data path) can already be too long before Playwright adds a name.
+    await mkdir(browserTempRoot(), { recursive: true, mode: 0o700 });
     const directory = await realpath(await mkdtemp(join(browserTempRoot(), "petrina-browser-")));
     const registration = parent ? join(parent, `${randomUUID()}.json`) : undefined;
     if (parent) {
@@ -126,6 +127,9 @@ async function stopBrowser(child: ChildProcess, directory: string): Promise<void
 /** Kill any browser still using this session's folder, then wait until it is actually gone. */
 async function reap(directory: string, owned: number[] | undefined): Promise<void> {
   const marked = await processesUsing(directory);
+  // Both ownership sources agree that there is nothing to reap. Unknown scans
+  // still follow the full recovery path and can never become a false success.
+  if (owned !== undefined && !owned.length && marked !== undefined && !marked.length) return;
   let targets = [...new Set([...(owned ?? []), ...(marked ?? [])])].filter((pid) => pid !== process.pid);
   const still = () => targets.filter(alive);
   if (still().length) forceKill(still());
@@ -193,8 +197,8 @@ function processesUsing(directory: string): Promise<number[] | undefined> {
   });
 }
 
-function browserTempRoot(): string {
-  return process.platform === "darwin" ? "/private/tmp" : tmpdir();
+export function browserTempRoot(): string {
+  return join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "petrina-browsers");
 }
 
 /** Reap each registered browser before startup; only the session's own temp folder is eligible. */

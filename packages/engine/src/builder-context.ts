@@ -24,9 +24,10 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
   const file = join(root, `${digest}.md`);
   try {
     await mkdir(root, { recursive: true, mode: 0o700 });
-    try { await writeFile(file, packet, { flag: "wx", mode: 0o600 }); }
+    let written = false;
+    try { await writeFile(file, packet, { flag: "wx", mode: 0o600 }); written = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
-    if (hash(await readFile(file, "utf8")) !== digest) return { sections: all };
+    if (!written && hash(await readFile(file, "utf8")) !== digest) return { sections: all };
     const snapshot: BuilderContext = { scope, file, digest, hashes: Object.fromEntries(keyed.map((entry) => [entry.key, entry.digest])) };
     const intact = previous && previous.scope === scope && dirname(previous.file) === root
       && await readFile(previous.file, "utf8").then((text) => hash(text) === previous.digest, () => false);

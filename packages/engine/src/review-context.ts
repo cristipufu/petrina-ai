@@ -32,7 +32,7 @@ async function immutable(folder: string, suffix: string, body: string): Promise<
       await rename(temporary, file);
     } finally { await rm(temporary, { force: true }); }
   }
-  if (digest(await readFile(file, "utf8")) !== hash) throw new Error("The saved review material changed. Try the review again.");
+  if (existing !== undefined && digest(existing) !== hash) throw new Error("The saved review material changed. Try the review again.");
   return { file, digest: hash };
 }
 
@@ -69,7 +69,12 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
     ];
     if (work.portReview) {
       const port = work.portReview;
-      parts.push(`## Port of the previously reviewed change\n${await output(path, ["range-diff", "--no-color", `${port.from}..${port.head}`, `${port.onto}..${head}`])}`);
+      // Git rejects range-diff when either side has no commits. Explicit before/after
+      // patches still show a removed or newly introduced change without inventing a port.
+      const comparison = port.from === port.head || port.onto === head
+        ? `Previous reviewed change:\n${port.from === port.head ? "No commits in this range." : await output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", `${port.from}..${port.head}`, "--"])}\n\nCurrent port:\n${port.onto === head ? "No commits in this range." : await output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", `${port.onto}..${head}`, "--"])}`
+        : await output(path, ["range-diff", "--no-color", `${port.from}..${port.head}`, `${port.onto}..${head}`]);
+      parts.push(`## Port of the previously reviewed change\n${comparison}`);
       parts.push(`## Resolved files against the new base\n${await output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", `${port.onto}..${head}`, "--", ...port.files])}`);
     }
     signal.throwIfAborted();

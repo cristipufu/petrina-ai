@@ -6,6 +6,8 @@ Owns role contracts, tool configuration, context, messages, permissions and scre
 
 ### Source locations from planning
 
+Selected products provide the Planner with a bounded navigation packet from their exact local default-branch tree: top-level paths, workspace scripts and clearly partial AGENTS.md/README excerpts. Packets are shared by tree version, contain no prior agent's conclusions, and do not replace reading the actual selected source or its complete instructions.
+
 The planner may hand on up to eight source locations it already inspected, each tied to a product and exact commit. They contain paths only, without architecture recommendations or inferred requirements. The engine verifies that the prepared copy still has that revision and location before showing them to the Architect, or the first Builder when design is skipped. They are an explicitly incomplete navigation aid, never requirements; independent reviewers receive none. Changed sources and old records fall back to ordinary discovery. No extra research turn is added, and this does not establish a measured speed-up.
 
 ### Source locations in a design
@@ -27,6 +29,8 @@ Each participant has a complete current context packet to read after compaction,
 The first code or security review starts fresh. Each reviewer seat saves its own completed conversation within that stage. Fix rounds recreate its detached copies at the same paths and reopen that conversation with current findings, Builder answers, check evidence and prepared comparisons. Unchanged request and brief sections are replaced by an immutable complete context packet, available after compaction. Journey inputs record exactly what was sent.
 
 A changed role, planned or actual profile, request or approved source starts a complete fresh review; an unavailable native session or context packet does too. Usage replacements retain only their own conversation when selected again. Completed references survive an engine restart, are cleared when the stage ends or the task is paused/cancelled, and never belong to another reviewer. Verifiers always start fresh.
+
+Check finder and Guide keeper errands save the main step's conversation, attempts, to-do item and clock durably before using their own conversation. An interrupted errand can reopen without losing the main session; finishing or falling back restores its bookkeeping. Explicit task pause still clears the main native conversation, and cancellation drops the errand.
 
 ### Continued Builder context
 

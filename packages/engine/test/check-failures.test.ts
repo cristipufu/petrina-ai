@@ -70,6 +70,20 @@ const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 const checkSteps = (task: Task) => task.journey!.filter((step) => step.kind === "petrina" && step.work === "checks");
 
 describe.concurrent("failed checks are evidence until something changes", () => {
+  it("keeps an early static failure current across returns and restart, with heavy checks visibly skipped", async () => {
+    const f = await fixture(true, { planner: "short", builder: "plain" });
+    try {
+      f.engine.setProductChecks(f.productId, [{ name: "Tests", command: f.command("--pass") }, { name: "Type check", command: f.command() }]);
+      const task = await f.delivery();
+      expect(f.runs()).toEqual(["failed"]);
+      const step = checkSteps(task)[0]!;
+      expect(step.productChecks!.map((check) => [check.name, check.result])).toEqual([["Tests", "skipped"], ["Type check", "fail"]]);
+      expect(f.fakes.openings("code reviewer")).toEqual([]);
+      await f.restart();
+      expect(await f.engine["checks"].current(executionFor(f.engine.task(f.taskId)!))).toBe(true);
+      expect(f.runs()).toEqual(["failed"]);
+    } finally { await f.engine.shutdown(); }
+  });
   it("gives built-in and edited builders the check commands without telling them to rerun the full suite", async () => {
     for (const builderInstructions of [undefined, "Use a focused test for the changed behavior."]) {
       const f = await fixture(true, { planner: "short", builder: "plain" }, { builderInstructions, checkArgs: ["--pass"] });

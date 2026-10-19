@@ -27,13 +27,17 @@ export class Updates {
   }
 
   /** The branch as one commit on top of where it forked, with the same code and the task's message. */
-  async fold(scope: RepositoryContext): Promise<void> {
+  async fold(scope: RepositoryContext): Promise<string | undefined> {
     const { work: repository } = scope;
     // While the builder brings the work up to date, the branch sits on main with the change not committed yet.
     if (!repository.worktree || repository.updating) return;
-    const base = (await this.settleBase(scope)) ?? repository.base;
+    const settled = await this.settleBase(scope);
+    const base = settled.base ?? repository.base;
     if (!base) return;
-    await git.squash(repository.worktree, base, this.message(scope));
+    const fork = settled.fork ?? await git.mergeBase(repository.worktree, "HEAD", base);
+    if (!fork) return;
+    await git.squash(repository.worktree, base, this.message(scope), fork);
+    return fork;
   }
 
   /**
@@ -43,23 +47,24 @@ export class Updates {
    * would be folded into the task's commit. The base follows the branch's latest meeting with main, read from
    * the product's own clone with no network. The same when the noted base is not in the branch at all.
    */
-  private async settleBase(scope: RepositoryContext): Promise<string | undefined> {
+  private async settleBase(scope: RepositoryContext): Promise<{ base?: string; fork?: string }> {
     const { task, work: repository } = scope;
     const worktree = repository.worktree!;
     const base = repository.baseSha;
     const product = this.k.repositoryOf(scope);
-    if (!base || !product?.path) return base;
+    if (!base || !product?.path) return { base };
     const branch = repository.source?.start.branch ?? product.defaultBranch ?? "main";
     const main = repository.source?.start.kind === "pull-request"
       ? await git.revParse(product.path, `refs/petrina/sources/${task.id}`)
       : (repository.delivery !== "local" || repository.localUpdate?.pushed === false ? await git.revParse(product.path, `refs/remotes/origin/${branch}`) : undefined) ?? (await git.revParse(product.path, `refs/heads/${branch}`));
-    if (!main) return base;
+    if (!main) return { base };
     const met = await git.mergeBase(worktree, "HEAD", main);
-    if (!met || met === base) return base;
+    if (!met) return { base };
+    if (met === base) return { base, fork: base };
     const forward = await git.contains(worktree, met, base);
     const baseInBranch = await git.contains(worktree, await git.head(worktree), base);
     // The usual case: the branch forked at the base and main moved on since. Nothing to settle.
-    if (!forward && baseInBranch) return base;
+    if (!forward && baseInBranch) return { base, fork: base };
     repository.baseSha = met;
     this.k.log(
       scope,
@@ -69,7 +74,7 @@ export class Updates {
         : `The work's noted base was not in the branch: it now counts from ${met.slice(0, 7)}, where the branch last met ${branch}`,
     );
     this.k.commit();
-    return met;
+    return { base: met, fork: met };
   }
 
   /** The change itself (git's patch-id), from where the branch forked to `ref`. */
@@ -93,7 +98,7 @@ export class Updates {
     const worktree = repository.worktree;
     const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? "main";
     if (!worktree) return "current";
-    await this.fold(scope);
+    const foldedFork = await this.fold(scope);
     const latest = await this.latestMain(scope, signal, fresh);
     if (!latest) return "current";
     // Checked before treating an older tip as already current. A rewrite can keep the first starting commit
@@ -101,7 +106,7 @@ export class Updates {
     if (repository.baseSha && repository.baseSha !== latest.sha && !(await git.contains(worktree, latest.sha, repository.baseSha))) {
       throw new Error("The starting branch's history was replaced or diverged. The task's work is preserved; it cannot be published safely without a decision.");
     }
-    const fork = await git.mergeBase(worktree, "HEAD", latest.sha);
+    const fork = foldedFork === latest.sha ? foldedFork : await git.mergeBase(worktree, "HEAD", latest.sha);
     if (!fork) throw new Error(`The work and ${latest.ref} share no history, so Petrina could not bring the work up to date`);
     if (fork === latest.sha) return "current";
     if (!(await git.isClean(worktree))) throw new Error(`The working copy has changes Petrina did not commit, so it could not bring the work up to date with ${sourceName}`);

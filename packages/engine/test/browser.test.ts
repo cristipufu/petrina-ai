@@ -1,18 +1,18 @@
 import { afterAll, expect, it } from "bun:test";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, linkSync, lstatSync, readFileSync, readdirSync, renameSync, symlinkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Engine } from "../src/engine.js";
-import { AgentBrowser, recoverBrowserTemps } from "../src/browser.js";
+import { AgentBrowser, browserTempRoot, recoverBrowserTemps } from "../src/browser.js";
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { parseDescendants, readProcessList } from "../src/process-tree.js";
 import { engineEnv, Fakes, firstLine, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
 const root = tempDir("petrina-browser-");
+mkdirSync(browserTempRoot(), {recursive:true});
 afterAll(() => removeDir(root));
 
 export async function connectBrowser(browser: AgentBrowser) {
@@ -124,7 +124,7 @@ it("the browser server exposes page tools, confines output and stops cleanly eve
 it("restart reaps registered interrupted browser output and ignores outside paths", async () => {
   const registry = join(root, "registry");
   mkdirSync(registry);
-  const interrupted = mkdtempSync(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "petrina-browser-"));
+  const interrupted = mkdtempSync(join(browserTempRoot(), "petrina-browser-"));
   writeFileSync(join(interrupted, "leftover.png"), "leftover");
   const product = join(root, "product-kept"); mkdirSync(product);
   writeFileSync(join(product, "keep.txt"), "product work");
@@ -162,7 +162,7 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
   const work = tempDir("petrina-browser-startup-pending-");
   const data = join(work, "data");
   const registry = join(data, "browser-temp");
-  const stale = mkdtempSync(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "petrina-browser-"));
+  const stale = mkdtempSync(join(browserTempRoot(), "petrina-browser-"));
   const bin = join(work, "bin");
   const reached = join(work, "ps-reached");
   const hold = join(work, "ps-hold");
@@ -203,7 +203,7 @@ for (const replacement of [false, true]) it(`does not advertise a ready engine o
   const fake = join(work, "fake");
   const bin = join(work, "bin");
   const registry = join(home, "browser-temp");
-  const session = mkdtempSync(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "petrina-browser-"));
+  const session = mkdtempSync(join(browserTempRoot(), "petrina-browser-"));
   mkdirSync(registry, { recursive: true });
   mkdirSync(bin);
   mkdirSync(fake, { recursive: true });
