@@ -1,3 +1,4 @@
+import { beginRepair, acceptanceVersion } from "./repositories.js";
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
@@ -8,7 +9,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CheckRun } from "@petrina/core";
+import type { CheckRun, DeepMutable, JourneyProductCheck } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
@@ -25,6 +26,8 @@ function checkDiagnostic(output: string): string | undefined {
   const detail = [...failures, ...causes].filter((line, index, all) => all.indexOf(line) === index).slice(0, 6).join("\n").slice(0, 1000);
   return detail || undefined;
 }
+
+type CheckEntries = Map<string, DeepMutable<JourneyProductCheck>>;
 
 export class ProductChecks {
   /**
@@ -70,6 +73,10 @@ export class ProductChecks {
     if (signal.aborted || this.k.stopped) {
       finished();
       throw new Aborted();
+    }
+    if (this.k.admissionsClosed) {
+      finished();
+      throw new WaitingForUsage(this.k.draining ? this.k.drainLine : "Waiting for the pool to resume");
     }
     return finished;
   }
@@ -170,21 +177,31 @@ export class ProductChecks {
     // A checks step's elapsed time includes waiting for another task's run.
     if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now());
     const step = openStep(task);
-    if (step) step.productChecks = [
-      ...checks.filter((check) => check.argv.length).map((check, index) => ({ id: `check-${index}`, name: check.name, result: "pending" as const })),
-      ...hooks.map((hook) => ({ id: `hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" as const })),
-    ];
+    const prefix = step?.productChecks?.length ? `run-${step.productChecks.length}:` : "";
+    const entries: CheckEntries = new Map<string, DeepMutable<JourneyProductCheck>>([
+      ...checks.filter((check) => check.argv.length).map((check, index) => [`check-${index}`, { id: `${prefix}check-${index}`, name: check.name, result: "pending" as const }] as const),
+      ...hooks.map((hook) => [`hook-${hook}`, { id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" as const }] as const),
+    ]);
+    if (step) {
+      // Continuing release notes reuse their journey node. Each revalidation keeps its own
+      // progress and original diagnostics instead of replacing the earlier run's evidence.
+      for (const check of step.productChecks ?? []) if (check.result === "pending" || check.result === "running") {
+        check.result = "stopped";
+        check.endedAt = Date.now();
+      }
+      step.productChecks = [...(step.productChecks ?? []), ...entries.values()];
+    }
     this.k.commit();
     let finished: (() => void) | undefined;
     let complete = false;
     try {
       finished = await this.turnToRun(task, signal);
-      const failures = await this.runAll(task, checks, hooks, definition, signal, kept);
+      const failures = await this.runAll(task, checks, hooks, definition, signal, entries, kept);
       complete = true;
       return failures;
     } finally {
       if (step && !complete) {
-        for (const check of step.productChecks ?? []) if (check.result === "pending" || check.result === "running") {
+        for (const check of entries.values()) if (check.result === "pending" || check.result === "running") {
           check.result = "stopped";
           check.endedAt = Date.now();
         }
@@ -194,7 +211,7 @@ export class ProductChecks {
     }
   }
 
-  private async runAll(task: MTask, checks: readonly ProductCheck[], hooks: string[], definition: string, signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
+  private async runAll(task: MTask, checks: readonly ProductCheck[], hooks: string[], definition: string, signal: AbortSignal, entries: CheckEntries, kept?: readonly CheckRun[]): Promise<number> {
     if (signal.aborted || this.k.stopped) throw new Aborted();
     if (!task.worktree) return 0;
     task.statusLine = "Running the product's checks";
@@ -205,10 +222,11 @@ export class ProductChecks {
     const step = openStep(task);
     const progress = (id: string, event: CheckProgress) => {
       if (this.k.stopped || signal.aborted || step?.endedAt !== undefined || openStep(task)?.id !== step?.id) return;
-      const check = step?.productChecks?.find((entry) => entry.id === id);
+      const check = entries.get(id);
       if (!check) return;
       if (event.kind === "started") { check.result = "running"; check.startedAt = event.at; }
       else {
+        check.run = { ...event.run };
         check.result = event.run.ok ? "pass" : event.run.timedOut ? "did-not-finish" : signal.aborted ? "stopped" : "fail";
         check.endedAt = event.at;
         if (!event.run.ok) check.detail = checkDiagnostic(event.run.output);
@@ -222,7 +240,7 @@ export class ProductChecks {
       const ran = kept ?? await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress(`check-${event.index}`, event));
       if (kept) kept.forEach((run, index) => progress(`check-${index}`, { kind: "finished", index, at: Date.now(), run }));
       if (signal.aborted) {
-        this.noteStopped(task, ran);
+        this.noteStopped(task, ran, entries);
         throw new Aborted();
       }
       if ((await git.head(task.worktree).catch(() => "")) !== before) {
@@ -234,7 +252,7 @@ export class ProductChecks {
       }
       const hooksRan = await this.runHooks(task, hooks, env, signal, progress);
       if (signal.aborted) {
-        this.noteStopped(task, [...ran, ...hooksRan]);
+        this.noteStopped(task, [...ran, ...hooksRan], entries);
         throw new Aborted();
       }
       results = [...ran, ...hooksRan];
@@ -246,7 +264,7 @@ export class ProductChecks {
       }
     }
     const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
-    task.checks = { at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), definition, results };
+    task.checks = { current: true, at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), definition, results };
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     const failed = this.settleFindings(task, results);
@@ -264,10 +282,18 @@ export class ProductChecks {
    * A pause or cancel stopped the run before every program it started could be listed. Keep the warning
    * and the runs, without a commit or tree, so this does not count as a finished check of the work.
    */
-  private noteStopped(task: MTask, runs: readonly CheckRun[]): void {
-    if (!runs.some((run) => run.cleanupIncomplete)) return;
-    this.k.log(task, "warn", CLEANUP_INCOMPLETE);
+  private noteStopped(task: MTask, runs: readonly CheckRun[], entries: CheckEntries): void {
+    if (!runs.length) return;
+    if (runs.some((run) => run.cleanupIncomplete)) this.k.log(task, "warn", CLEANUP_INCOMPLETE);
     task.checks = { at: Date.now(), results: runs.map((run) => ({ ...run })) };
+    const remaining = [...entries.values()];
+    for (const run of runs) {
+      const index = remaining.findIndex((check) => check.name === run.name);
+      if (index < 0) continue;
+      const [check] = remaining.splice(index, 1);
+      check!.run = { ...run };
+      if (!run.ok) check!.detail = checkDiagnostic(run.output);
+    }
     this.k.commitNow();
   }
 
@@ -276,16 +302,16 @@ export class ProductChecks {
     const failed = results.filter((run) => !run.ok);
     // An earlier failure settles on this run, whatever anyone answered about it.
     for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && !failed.some((run) => finding.text === `Check failed: ${run.name} (${run.command})`)) finding.status = "fixed";
+      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(task.productId)) && !failed.some((run) => finding.text === `Check failed: ${run.name} (${run.command})`)) finding.status = "fixed";
     }
     for (const run of failed) {
       const text = `Check failed: ${run.name} (${run.command})`;
-      const finding = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === text);
+      const finding = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === text && (!task.repositories || finding.productIds?.includes(task.productId)));
       if (finding) {
         finding.status = "open";
         finding.severity = "blocking";
         finding.evidence = run.output.slice(-1500);
-      } else task.findings.push({ id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+      } else task.findings.push({ ...(task.repositories ? { productIds: [task.productId] } : {}), id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
     }
     return failed;
   }
@@ -383,6 +409,7 @@ export class ProductChecks {
     const product = this.k.productOf(task);
     checks ??= product ? checksFor(product, task.worktree) : [];
     if (await this.ranOn(task, checks)) {
+      if (task.checks) task.checks.current = true;
       const failed = this.settleFindings(task, task.checks!.results);
       this.k.commit();
       return failed.length > 0;
@@ -441,8 +468,15 @@ export class ProductChecks {
     return runs;
   }
 
+  async acceptanceVersion(task: MTask): Promise<string | undefined> {
+    if (task.repositories) return acceptanceVersion(task);
+    const base = task.baseSha ?? task.base;
+    return task.worktree && base ? git.patchId(task.worktree, (await git.mergeBase(task.worktree, "HEAD", base)) ?? base, "HEAD") : undefined;
+  }
+
   /** Failing checks send the work back to the builder, twice at most. */
   backToBuilder(task: MTask, when: string): boolean {
+    if (task.repositories) return beginRepair(this.k, task, "checks", task.stageIndex);
     const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
     if (builder < 0 || (task.checkReturns ?? 0) >= 2) return false;
     task.checkReturns = (task.checkReturns ?? 0) + 1;

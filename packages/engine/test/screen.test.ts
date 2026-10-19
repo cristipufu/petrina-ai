@@ -138,7 +138,6 @@ describe("an agent that needs the screen", () => {
       const session = f.task(id).conversation!.sessionId;
 
       await f.restart();
-      await Bun.sleep(400);
       const task = f.task(id);
       expect(task.state).toBe("waiting");
       expect(task.statusLine).toBe(NEEDS);

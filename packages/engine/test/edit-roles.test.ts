@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, draftOf, journeyProblems, mainLine, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
+import { BUILT_IN_ROLES, draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, REPAIR_RULE, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { dispatch } from "../src/server.js";
@@ -267,6 +267,8 @@ describe("roles the coordinator edits and adds", () => {
     // The coordinator changes a built-in role's wording and adds three of their own.
     const researcher = (await engine.state()).roles.find((role) => role.id === "researcher")!;
     await engine.act("saveRole", "researcher", { ...researcher, purpose: "Finds out what people expect, with sources." });
+    const builder = (await engine.state()).roles.find((role) => role.id === "builder")!;
+    await engine.act("saveRole", "builder", { ...draftOf(builder), instructions: "Keep the greeting simple and match this product's style." });
     const security = (await engine.act("addRole", start("security"))) as string;
     const copywriter = (await engine.act("addRole", COPYWRITER)) as string;
     const factChecker = (await engine.act("addRole", FACT_CHECKER)) as string;
@@ -334,11 +336,17 @@ describe("roles the coordinator edits and adds", () => {
     expect(finding.severity).toBe("blocking");
     expect(finding.status).toBe("fixed");
     expect(said("Sent back to the builder: 1 important")).toBe(true);
-    expect(fakes.openings("builder")[1]).toContain(finding.text);
+    const repair = fakes.openings("builder")[1]!;
+    expect(repair).toContain(finding.text);
+    expect(repair).toContain("Keep the greeting simple and match this product's style.");
+    expect(repair.split(REPAIR_RULE)).toHaveLength(2);
+    expect(repair).toContain("fast focused static or type check");
+    expect(repair).toContain("Petrina runs them on the finished work before review");
     const reviews = fakes.openings("security specialist");
     expect(reviews[0]).toContain("Review the change on branch");
     expect(reviews[0]).toContain("Look for security problems the change brings in");
     expect(reviews[0]).toContain("## What the builder reports");
+    for (const prompt of reviews) for (const rule of FINDING_REVIEW_RULES) expect(prompt.split(rule)).toHaveLength(2);
     expect(reviews[1]).toContain("## Findings so far (confirm or dispute by id)");
     // It follows the rule that a dispute always gives its reason: it is told so, and Petrina refused its dispute without one.
     expect(reviews[0]).toContain("Dispute findings you think are wrong by id, always with the reason and your evidence");

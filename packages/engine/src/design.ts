@@ -1,3 +1,4 @@
+import { designWorkKey } from "./repositories.js";
 // Design convergence: the architect writes the brief and a design reviewer objects, round after round,
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
@@ -44,6 +45,7 @@ export class Design {
       await this.k.undoReadOnly(task, stage.roleId);
       this.k.finishStep(task);
       if (this.k.rerun(task)) return "continue";
+      if (this.nextProduct(task, stage)) return "continue";
       task.sub = 1;
       this.k.commit();
       return "continue";
@@ -91,6 +93,18 @@ export class Design {
     return "continue";
   }
 
+  private nextProduct(task: MTask, stage: MStage): boolean {
+    if (!task.repositories || !this.k.role(stage.roleId)?.canEdit) return false;
+    this.k.saveRepository(task);
+    const key = designWorkKey(task, stage.id);
+    const own = task.repositories.find((work) => work.productId === task.productId)!;
+    own.completedStages = [...new Set([...own.completedStages, key])];
+    const next = task.repositories.find((work) => !work.completedStages.includes(key));
+    this.k.selectRepository(task, next?.productId ?? task.leadProductId ?? task.repositories[0]!.productId);
+    this.k.commitNow();
+    return !!next;
+  }
+
   /** The coordinator made the call: the architect updates the brief to follow it, then the design goes to the coordinator's check. */
   private async followCall(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue"> {
     const call = task.call!;
@@ -116,6 +130,7 @@ export class Design {
     await this.k.saveRoleEdits(task, stage.roleId, by);
     await this.k.undoReadOnly(task, stage.roleId);
     this.k.finishStep(task);
+    if (this.nextProduct(task, stage)) return "continue";
     this.k.tracking.endStage(task, "settled");
     this.k.log(task, "done", CALL_WORDS.settled);
     if (this.k.rerun(task)) return "continue";

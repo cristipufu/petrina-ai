@@ -7,6 +7,7 @@ import {
   createDemoState,
   draftOf,
   editRole,
+  FINDING_REVIEW_RULES,
   libraryRoles,
   journeyProblems,
   NO_ROLE_CHANGES,
@@ -15,6 +16,7 @@ import {
   resetRole,
   ROLE_LIMITS,
   ROLE_STARTS,
+  REPAIR_RULE,
   Simulator,
   stepMayChange,
   type Role,
@@ -34,6 +36,22 @@ describe("the role library", () => {
     const roles = libraryRoles(undefined);
     expect(roles.map((role) => role.id)).toEqual(BUILT_IN_ROLES.map((role) => role.id));
     expect(roles.every((role) => role.instructions && role.result && !role.edited && !role.added)).toBe(true);
+  });
+
+  it("shows the canonical repair and review rules in editable defaults without replacing saved wording", () => {
+    expect(builtIn("builder").instructions).toContain(REPAIR_RULE);
+    for (const id of ["code-reviewer", "security-reviewer"]) {
+      const role = builtIn(id);
+      for (const rule of FINDING_REVIEW_RULES) expect(role.instructions.split(rule)).toHaveLength(2);
+    }
+    for (const id of ["builder", "code-reviewer", "security-reviewer"]) {
+      const role = builtIn(id);
+      // The defaults fit the same editor limits as coordinator-authored wording.
+      expect(() => editRole(NO_ROLE_CHANGES, id, draftOf(role))).not.toThrow();
+      const changes = editRole(NO_ROLE_CHANGES, id, { ...draftOf(role), instructions: "Follow our product's conventions." });
+      expect(roleIn(changes, id).instructions).toBe("Follow our product's conventions.");
+      expect(roleIn(resetRole(changes, id), id).instructions).toBe(role.instructions);
+    }
   });
 
   it("loads data saved before roles were editable, and ignores what is not a role change", () => {

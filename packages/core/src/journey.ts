@@ -220,7 +220,9 @@ function sameStep(a: StepKey & Pick<JourneyStep, "kind">, b: StepKey & Pick<Jour
 }
 
 function push(task: JourneyTask, step: Omit<JourneyStep, "id">): JourneyStep {
-  const recorded: JourneyStep = { id: `j${(task.journey?.length ?? 0) + 1}`, ...step };
+  const previous = task.journey?.at(-1);
+  const trigger = previous ? { after: previous.id, reason: previous.reason ?? previous.outcome ?? "Previous step ended" } : { reason: "Task started" };
+  const recorded: JourneyStep = { id: `j${(task.journey?.length ?? 0) + 1}`, trigger, ...step };
   task.journey = [...(task.journey ?? []), recorded];
   return recorded;
 }
@@ -693,7 +695,7 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...(step.findingIds ? { findingIds: step.findingIds } : {}),
       ...(step.result ? { result: step.result } : {}),
       ...(step.agentInputs ? { agentInputs: step.agentInputs } : {}),
-      ...(step.productChecks ? { productChecks: step.productChecks } : {}),
+      ...(step.productChecks ? { productChecks: step.productChecks.map(({ run: _run, ...check }) => check) } : {}),
       ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}),
       ...(step.work ? { work: step.work } : {}),
       ...(step.stageId ? { stageId: step.stageId } : {}),

@@ -39,6 +39,7 @@ export function useHistoryPage(state: State, enabled: boolean, product: string, 
 }
 
 function outcome(item: HistoryItem): string {
+  if (item.deliveries?.length) return item.deliveries.map((work) => `${item.products?.find((product) => product.id === work.productId)?.name ?? work.productId}: ${work.nothingToPublish ? "Nothing to publish" : outcome({ ...item, ...work, deliveries: undefined })}`).join(" · ");
   if (item.release) return `Released ${item.release.tag}`;
   if (item.landed) return item.localUpdate?.pushed ? `Committed to ${item.landed.branch} · pushed to GitHub` : `Delivered locally to ${item.landed.branch}`;
   if (item.pr?.state === "merged") return `Pull request #${item.pr.number} merged`;
@@ -73,10 +74,11 @@ export function History({ page, error, reload, position, onPosition, find, selec
         <div className="history-summary" aria-live="polite"><span className="num">{page.total.toLocaleString()} {page.total === 1 ? "task" : "tasks"}{position?.query ? ` matching “${position.query}”` : " in history"}</span></div>
         {page.items.length ? <div className="history-grid">{page.items.map((item) => {
           const date = item.finishedAt ?? item.createdAt;
-          const delivered = landingOf(item) === "landed";
+          const delivered = item.deliveries?.length ? item.deliveries.every((work) => work.nothingToPublish || landingOf({ ...item, ...work }) === "landed") : landingOf(item) === "landed";
+          const names = item.products?.map((product) => find.product(product.id)?.name ?? product.name);
           const Icon = item.state === "cancelled" ? Ban : delivered ? CheckCircle2 : CircleMinus;
           return <a key={item.id} href={hrefFor(item.id)} className={`history-card ${item.state} ${selectedId === item.id ? "selected" : ""}`} data-task-id={item.id} onFocus={() => onFocus(item.id)} onClick={(event) => followLink(event, () => onOpen(item.id))}>
-            <div className="history-card-meta"><ProductName product={find.product(item.productId)} /><time dateTime={new Date(date).toISOString()} title={new Date(date).toLocaleString()}>{new Date(date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</time></div>
+            <div className="history-card-meta">{names?.length ? <span title={names.join(" · ")} aria-label={names.join(" · ")}>{names.slice(0, 2).join(" · ")}{names.length > 2 ? ` +${names.length - 2} products` : ""}</span> : <ProductName product={find.product(item.productId)} />}<time dateTime={new Date(date).toISOString()} title={new Date(date).toLocaleString()}>{new Date(date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</time></div>
             <h2 title={item.title}>{item.title}</h2>
             <div className={`history-outcome ${delivered ? "delivered" : "unconfirmed"}`}><Icon size={15} aria-hidden="true" /><span>{outcome(item)}</span></div>
             {drafts[item.id] && <span className="draft-note"><span className="draft-mark" aria-hidden="true" />Unsent message</span>}

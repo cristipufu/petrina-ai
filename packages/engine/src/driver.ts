@@ -1,6 +1,7 @@
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
 
+import { designWorkKey, invalidateAcceptance } from "./repositories.js";
 import { join } from "node:path";
 import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
@@ -38,7 +39,18 @@ export class Driver {
   ) {}
 
   schedule(): void {
-    if (this.k.stopped || this.k.draining) return;
+    if (this.k.stopped) return;
+    if (this.k.draining) {
+      // Settings and permission answers still update the app while admissions are closed.
+      this.k.syncScreen();
+      for (const task of this.k.s.tasks) {
+        if (task.state === "waiting" && screenReady(task as Task, this.k.activeState(), Date.now())) {
+          task.statusLine = this.k.draining ? this.k.drainLine : "Waiting for the pool to resume";
+        }
+      }
+      this.k.commit();
+      return;
+    }
     // Limits that ended no longer hold anyone back.
     this.k.expireLimits();
     this.k.syncScreen();
@@ -138,13 +150,14 @@ export class Driver {
     return this.seatOf(this.nextAgent(task), task);
   }
 
-  private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
+  private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
     if (!next) return { toolId: "none" };
     // This task's own slot does not count: it is the seat being filled. A stand-in whose tool is full yields.
     const room = task ? (toolId: Id) => !slotWait(this.k.activeState(), { taskId: task.id, toolId }) : undefined;
     const choice = this.k.choose(next.profileId, task, next.roleId, room, next.reviewerKey);
     if (!choice) return { agent: next, toolId: this.k.profile(next.profileId)?.toolId ?? "unknown" };
     if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting };
+    if (next.requiredToolId && next.requiredToolId !== choice.profile.toolId) return { toolId: next.requiredToolId, waiting: "Waiting for the remaining independent voter" };
     return { agent: { roleId: next.roleId, profileId: choice.profile.id }, toolId: choice.profile.toolId };
   }
 
@@ -173,7 +186,7 @@ export class Driver {
     return true;
   }
 
-  private nextAgent(task: MTask): { roleId: Id; profileId: Id; reviewerKey?: string } | undefined {
+  private nextAgent(task: MTask): { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined {
     if (task.screen) {
       const reviewerKey = task.screen.member?.startsWith("review-") ? task.screen.member.slice(7) : task.plan?.stages[task.stageIndex]?.profileIds.length === 1 ? "0" : undefined;
       return { roleId: task.screen.roleId, profileId: task.screen.profileId, reviewerKey };
@@ -185,7 +198,7 @@ export class Driver {
       case "do":
         // Petrina publishes by itself: the Release Manager's seat is needed only for a release's notes.
         if (stage.roleId === "release-manager" && !needsReleaseManager(task)) return undefined;
-        return { roleId: stage.roleId, profileId: stage.profileIds[0] ?? PLANNER_PROFILE };
+        return { roleId: stage.roleId, profileId: (task.repositories && this.k.role(stage.roleId)?.result === "build" ? task.plan?.products?.find((work) => work.productId === task.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? PLANNER_PROFILE };
       case "converge":
         return task.sub === 0
           ? { roleId: stage.roleId, profileId: stage.profileIds[0] ?? PLANNER_PROFILE }
@@ -239,6 +252,22 @@ export class Driver {
         if (current.worktree && current.hooking) await this.recoverHook(current);
         // The copy waits until the starting point is confirmed. While the plan check is still open it waits
         // too, including for the default branch, so that check can still change the product, the start or the delivery.
+        if (current.repositories && !current.confirmWork && current.stageIndex >= 0) {
+          for (const work of current.repositories) {
+            this.k.selectRepository(current, work.productId);
+            await this.sources.addApproved(current, work.productId, signal);
+            if (work.preparation !== "ready") { await this.prepare(current, signal); work.preparation = "ready"; this.k.commitNow(); }
+          }
+          if (stage?.kind === "do" && this.k.role(stage.roleId)?.canEdit) for (const work of current.repositories) {
+            this.k.selectRepository(current, work.productId);
+            if (work.pr || work.release || work.landed) continue;
+            await this.shipping.clearUnpublishedVersion(current);
+          }
+          const editing = stage && this.k.role(stage.roleId)?.canEdit && (stage.kind === "do" || (stage.kind === "converge" && current.sub === 0));
+          const progress = stage?.kind === "converge" ? designWorkKey(current, stage.id) : stage?.id;
+          const nextProduct = current.repair?.products[current.repair.index] ?? (editing && progress ? current.repositories.find((work) => !work.completedStages.includes(progress))?.productId : undefined) ?? current.leadProductId ?? current.repositories[0]!.productId;
+          this.k.selectRepository(current, nextProduct);
+        }
         if (!current.worktree && this.sourceSettled(current) && (current.stageIndex >= 0 || !current.approvePlan)) await this.prepare(current, signal);
         if (current.stageIndex >= 0 && !current.worktree) { this.k.gate(current, "plan"); return; }
         // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
@@ -257,7 +286,7 @@ export class Driver {
         }
         // Acceptance was tried on this change already. Fixes are reviewed, and the final code is tried once more
         // right before the delivery check, so a tester pass per fix round is spared.
-        if (stage?.kind === "do" && stage.roleId === "tester" && !current.retest && current.testedPatch !== undefined) {
+        if (stage?.kind === "do" && stage.roleId === "tester" && !current.retest && current.testedPatch !== undefined && (!current.repositories || current.acceptancePassed)) {
           this.k.log(current, "milestone", "Acceptance will be tried once more on the final code, right before your delivery check");
           current.stageIndex += 1;
           current.sub = 0;
@@ -281,21 +310,39 @@ export class Driver {
               current.holdsSlot = false;
               delete current.agent;
               current.column = this.k.columnFor(current);
-              current.statusLine = this.k.draining ? "Waiting: Petrina is restarting" : "Waiting for the pool to resume";
+              current.statusLine = this.k.draining ? this.k.drainLine : "Waiting for the pool to resume";
               this.k.commit();
               return;
             }
+            const checking = current.repositories ?? [undefined];
+            let sentBack = false;
+            for (const work of checking) {
+              if (work) { this.k.selectRepository(current, work.productId); if (work.pr || work.release || work.landed) continue; }
             await this.guide.writeGuide(current);
             await this.learnings.write(current);
             // What the coordinator checks is the work as it would land: one commit on top of the latest main.
-            if ((await this.updates.upToDate(current, signal)) === "conflict") continue;
+            if ((await this.updates.upToDate(current, signal)) === "conflict") { sentBack = true; break; }
             // Right before the coordinator is asked to ship, the checks run again on what would ship.
-            if (await this.checks.checksBeforeDelivery(current, signal)) continue;
+            if (await this.checks.checksBeforeDelivery(current, signal)) { sentBack = true; break; }
+            await this.learnings.offer(current);
+            if (current.delivery === "release" && current.repositories) {
+              const releaseStage = current.plan!.stages.find((entry) => entry.kind === "do" && entry.roleId === "release-manager")!;
+              await this.shipping.previewRelease(current, releaseStage, signal);
+            }
+            const checkedHead = await git.head(current.worktree!).catch(() => undefined);
+            if (checkedHead) current.checkedSha = checkedHead;
+            if (work) work.nothingToPublish = current.delivery !== "release" && checkedHead === current.baseSha;
+            const checkedPatch = await this.updates.patch(current);
+            if (checkedPatch) current.checkedPatch = checkedPatch;
+            this.k.saveRepository(current);
+            }
+            if (sentBack) continue;
+            await invalidateAcceptance(current);
             // The tester tried an earlier version of the change: the final code gets one more pass first.
             const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && entry.roleId === "tester");
             const acceptanceFailed = current.acceptancePassed === false;
             const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || current.acceptanceUnverified === true;
-            if (tester >= 0 && current.testedPatch !== undefined && !acceptanceExhausted && (acceptanceFailed || (await this.updates.patch(current)) !== current.testedPatch)) {
+            if (tester >= 0 && current.testedPatch !== undefined && !acceptanceExhausted && (acceptanceFailed || (await this.checks.acceptanceVersion(current)) !== current.testedPatch)) {
               current.retest = true;
               current.stageIndex = tester;
               current.sub = 0;
@@ -313,6 +360,13 @@ export class Driver {
               if (head) current.approvedSha = head;
               if (patch) current.approvedPatch = patch;
               current.approvedFor = { by: "task", mode: current.delivery, destination: destination(current, this.k.productOf(current)) };
+              if (current.repositories) {
+                this.k.saveRepository(current);
+                for (const work of current.repositories) {
+                  work.approvedSha = work.checkedSha; work.approvedPatch = work.checkedPatch;
+                  work.approvedFor = { by: "task", mode: work.delivery, destination: destination(work, this.k.s.products.find((product) => product.id === work.productId)) };
+                }
+              }
               this.k.log(current, "milestone", "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
               current.stageIndex += 1;
               current.sub = 0;
@@ -324,12 +378,12 @@ export class Driver {
           return;
         }
         // Petrina is stopping: the step waits for the restart instead of starting an agent it would cut short.
-        if (this.k.draining) {
+        if (this.k.admissionsClosed) {
           current.state = "waiting";
           current.holdsSlot = false;
           delete current.agent;
           current.column = this.k.columnFor(current);
-          current.statusLine = "Waiting: Petrina is restarting";
+          current.statusLine = this.k.draining ? this.k.drainLine : "Waiting for the pool to resume";
           this.k.commit();
           return;
         }
@@ -348,7 +402,16 @@ export class Driver {
           // Resolve an already-known stale base before spending checks or acceptance on it.
           // A saved Tester or Check finder first finishes the version it was already examining.
           if (!current.conversation && (await this.updates.upToDate(current, signal)) === "conflict") continue;
-          if (await this.checks.failing(current, signal, await this.checks.ensureChecks(current, signal))) {
+          let failed = false;
+          let conflict = false;
+          for (const work of current.repositories ?? [undefined]) {
+            if (work) this.k.selectRepository(current, work.productId);
+            if (!current.conversation && await this.updates.upToDate(current, signal) === "conflict") { conflict = true; break; }
+            failed = await this.checks.failing(current, signal, await this.checks.ensureChecks(current, signal)) || failed;
+            this.k.saveRepository(current);
+          }
+          if (conflict) continue;
+          if (failed) {
             delete current.portReview;
             delete current.reviewedTree;
             if (this.checks.backToBuilder(current, "before acceptance testing")) continue;
@@ -391,8 +454,23 @@ export class Driver {
       }
     } catch (error) {
       if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) return;
-      // The task already says it waits for usage and has let go of its slot.
-      if (error instanceof WaitingForUsage) return;
+      if (error instanceof WaitingForUsage) {
+        // Admission may close during an awaited preparation step. Every such exit must
+        // release its reservation and remain schedulable, even if the callee only threw.
+        const current = this.k.task(taskId);
+        if (current && ["running", "waiting"].includes(current.state)) this.k.waitForUsage(current, this.k.draining ? this.k.drainLine : error.words);
+        return;
+      }
+      const current = task();
+      if (current.repositories) {
+        const failedProduct = current.productId;
+        for (const work of current.repositories) {
+          if (work.pr || work.release || work.landed || work.shipping?.step || work.shipping?.pushed) continue;
+          this.k.selectRepository(current, work.productId);
+          await this.shipping.clearUnpublishedVersion(current);
+        }
+        this.k.selectRepository(current, failedProduct);
+      }
       this.k.fail(taskId, error);
     } finally {
       if (this.k.drivers.get(taskId) === controller) this.k.drivers.delete(taskId);
@@ -424,25 +502,37 @@ export class Driver {
     if (signal.aborted) throw new Aborted();
     const product = this.k.repositoryOf(task);
     if (!product?.path) throw new Error(`${product?.name ?? "This product"} has no local copy`);
-    const branch = task.branch ?? git.branchName(task.title, task.id);
-    const worktree = task.worktree ?? join(this.k.dataDir, "worktrees", product.id, task.id);
+    const own = task.repositories?.find((work) => work.productId === task.productId);
+    const savedCopy = own?.preparingCopy;
+    const branch = task.branch ?? savedCopy?.branch ?? git.branchName(task.title, task.id);
+    const worktree = task.worktree ?? savedCopy?.path ?? join(this.k.dataDir, "worktrees", product.id, task.id);
     const defaultBranch = product.defaultBranch ?? "main";
-    let base = defaultBranch;
-    if (!task.worktree && task.source?.start.kind !== "default") {
+    let base = savedCopy?.base ?? defaultBranch;
+    if (!savedCopy && !task.worktree && task.source?.start.kind !== "default") {
       const fetched = await this.sources.fetch(task, signal);
       base = fetched.sha;
     }
     // A new working copy starts from the latest main: GitHub's for GitHub deliveries, the main clone's own for local ones.
-    if (!task.worktree && task.delivery !== "local" && (!task.source || task.source.start.kind === "default")) {
+    if (!savedCopy && !task.worktree && task.delivery !== "local" && (!task.source || task.source.start.kind === "default")) {
       const fetched = await this.connections.fetchDefault(task, signal);
       // A stalled or refused fetch never holds a task: it works from the local copy.
       if (!fetched.ok && !fetched.missing) this.k.log(task, "warn", `${fetched.timedOut ? "GitHub did not answer in time" : `Did not update from GitHub: ${this.connections.why(task, fetched)}`}, so this task starts from the local copy`);
       if (await git.revParse(product.path, `refs/remotes/origin/${defaultBranch}`)) base = `origin/${defaultBranch}`;
     }
+    if (!task.worktree && task.delivery === "local" && (!task.source || task.source.start.kind === "default") && base === defaultBranch && !await git.revParse(product.path, `refs/heads/${defaultBranch}`)) {
+      // A changed remote default can leave the approved branch only at origin. Passing its
+      // bare name makes git guess and attach the task copy to that destination branch.
+      base = await git.revParse(product.path, `refs/remotes/origin/${defaultBranch}`) ?? base;
+      if (savedCopy && savedCopy.base !== base) { savedCopy.base = base; this.k.commitNow(); }
+    }
     // Stopped before its first copy was made: none is made. Only cancellation removes a newly made copy;
     // a pause, shutdown or resumed task keeps it, even though the old driver's signal is aborted.
     if (signal.aborted && !task.worktree) throw new Aborted();
-    await git.ensureWorktree(product.path, worktree, branch, base);
+    if (own && !own.preparingCopy) {
+      own.preparingCopy = { path: worktree, branch, base: await git.revParse(product.path, base) ?? base };
+      this.k.commitNow();
+    }
+    await git.ensureWorktree(product.path, worktree, branch, own?.preparingCopy?.base ?? base);
     if (!task.branch && !signal.aborted) this.k.log(task, "milestone", "Set up a fresh working copy");
     task.branch = branch;
     task.worktree = worktree;
@@ -458,6 +548,7 @@ export class Driver {
     // Pin the commit actually checked out, before any agent starts; a shared source ref may move meanwhile.
     task.baseSha = task.baseSha ?? (await git.head(worktree));
     if (task.source && task.baseSha) task.source.initialSha ??= task.baseSha;
+    if (own) delete own.preparingCopy;
     this.k.commit();
   }
 
@@ -480,6 +571,7 @@ export class Driver {
     }
     this.k.s.inbox = this.k.s.inbox.filter(keep);
     for (const task of this.k.s.tasks) {
+      if (task.workValidating) { task.workValidating = false; task.workError = "Validation was interrupted. Apply the saved choices to check them again."; }
       if (task.driving) {
         // Still in the coordinator's hands: the step keeps its seat, and Hand back works as before.
         task.state = "needs-you";
@@ -502,6 +594,10 @@ export class Driver {
 
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */
   private shipsUnasked(task: MTask): boolean {
+    // Shared work also needs the saved task choice and combined acceptance; single-product work keeps
+    // the product's existing low-risk opt-in, even when its ordinary deliveries ask first.
+    if (task.repositories && (task.approveDelivery || task.acceptancePassed !== true)) return false;
+    if (task.repositories && (!task.repositories.every((work) => this.k.s.products.find((product) => product.id === work.productId)?.shipLowRisk && !!work.checks?.results.length && work.checks.results.every((run) => run.ok)))) return false;
     if (task.risk?.level !== "low" || !this.k.productOf(task)?.shipLowRisk) return false;
     if (task.acceptanceUnverified || task.acceptancePassed === false) return false;
     if (task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) return false;

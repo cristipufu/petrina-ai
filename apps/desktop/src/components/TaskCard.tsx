@@ -1,4 +1,4 @@
-import { sourceLabel, mainLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
+import { sourceLabel, taskProductIds, mainLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
 import { useCallback, useRef, useState, type DragEvent } from "react";
 import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Monitor, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { sim } from "../engine";
@@ -79,8 +79,8 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
       <div className="card-meta">
         <span className="where">
           {queued && <GripVertical size={14} className="grip" aria-hidden="true" />}
-          <ProductName product={find.product(task.productId)} />
-          {task.source && <span className="source-label">{sourceLabel(task.source)}</span>}
+          {taskProductIds(task).length > 1 ? <span>{taskProductIds(task).slice(0, 2).map((id) => find.product(id)?.name ?? task.repositories?.find((work) => work.productId === id)?.source?.product.name ?? id).join(" · ")}{taskProductIds(task).length > 2 && <button className="linkish" aria-label={`Show all ${taskProductIds(task).length} products`} onClick={() => onOpen(task.id, "plan")}> +{taskProductIds(task).length - 2} products</button>}</span> : <ProductName product={find.product(task.productId)} />}
+          {!task.repositories && task.source && <span className="source-label">{sourceLabel(task.source)}</span>}
           {queued && queuePosition !== undefined && <span className="num">#{queuePosition + 1} in queue</span>}
           {startsNext && <span className="next-up">Starts next</span>}
         </span>

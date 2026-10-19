@@ -2,9 +2,9 @@ import { open, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Read on demand from the task's current working copy. Images are never copied or saved by Petrina. */
-export async function readTaskImage(worktree: string | undefined, imagePath: string): Promise<{ mime: string; data: string }> {
-  if (!worktree) throw new Error("This screenshot is no longer available: the task has no working copy.");
+/** Relative links use one copy; absolute links may name another current task copy. Nothing is retained. */
+export async function readTaskImage(worktree: string | undefined, imagePath: string, absoluteRoots: readonly string[] = []): Promise<{ mime: string; data: string }> {
+  if (!worktree && !absoluteRoots.length) throw new Error("This screenshot is no longer available: the task has no working copy.");
   if (!imagePath || imagePath.includes("\0")) throw new Error("This screenshot's location is not valid.");
   let location = imagePath;
   if (location.startsWith("file:")) {
@@ -13,14 +13,20 @@ export async function readTaskImage(worktree: string | undefined, imagePath: str
   } else if (/^[a-z][a-z0-9+.-]*:/i.test(location) && !/^[a-z]:[\\/]/i.test(location)) {
     throw new Error("Only screenshots in this task's working copy can be previewed.");
   }
-  let folder: string;
+  const absolute = isAbsolute(location);
+  if (!absolute && !worktree) throw new Error("This screenshot is no longer available: the task has no working copy.");
   let filename: string;
   try {
-    folder = await realpath(worktree);
-    filename = await realpath(resolve(folder, location));
+    filename = await realpath(absolute ? location : resolve(await realpath(worktree!), location));
   } catch { throw new Error("This screenshot is no longer available in the task's working copy."); }
-  const inside = relative(folder, filename);
-  if (!inside || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+  const roots = absolute ? [worktree, ...absoluteRoots].filter((root): root is string => !!root) : [worktree!];
+  const folders = await Promise.all([...new Set(roots)].map((root) => realpath(root).catch(() => undefined)));
+  if (!folders.some(Boolean)) throw new Error("This screenshot is no longer available in the task's working copy.");
+  if (!folders.some((folder) => {
+    if (!folder) return false;
+    const inside = relative(folder, filename);
+    return !!inside && inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside);
+  })) {
     throw new Error("Only screenshots in this task's working copy can be previewed.");
   }
   const maxBytes = 8 * 1024 * 1024;

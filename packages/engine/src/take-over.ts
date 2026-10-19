@@ -66,7 +66,8 @@ export class TakeOver {
         } else {
           await this.k.undoReadOnly(current, role.id, worktree);
         }
-        current.driving = { since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head: await git.head(worktree), ...(saved ? { saved } : {}) };
+        const repositoryCopies = conversation.repositoryCopies ? Object.fromEntries(await Promise.all(Object.entries(conversation.repositoryCopies).map(async ([id, path]) => [id, { path, head: await git.head(path) }]))) : undefined;
+        current.driving = { ...(repositoryCopies ? { repositoryCopies } : {}), since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head: await git.head(worktree), ...(saved ? { saved } : {}) };
       } catch (error) {
         // The agent has stopped, but the working copy is not ready for the coordinator: the agent carries on instead.
         this.k.log(current, "warn", `Could not get the working copy ready for you, so the ${role.name} carries on: ${error instanceof Error ? error.message : String(error)}`, role.id, profile.id);
@@ -180,9 +181,37 @@ export class TakeOver {
       const text = handBackNote({ role: role.name, tool, took: Date.now() - driving.since, ...(driving.saved ? { saved: driving.saved.files } : {}), commits, files, leftovers: leftovers !== undefined, note });
       const head = await git.head(worktree);
 
+      const changedProducts = new Set<Id>(files.length ? [task.productId] : []);
+      if (task.repositories && driving.repositoryCopies) {
+        const prepared: { work: NonNullable<MTask["repositories"]>[number]; sha: string; snapshot: string; head: string }[] = [];
+        for (const [id, copy] of Object.entries(driving.repositoryCopies)) {
+          const work = task.repositories.find((entry) => entry.productId === id);
+          if (!work?.worktree || copy.path === work.worktree) continue;
+          if (await git.currentBranch(copy.path)) throw new Error(`Keep ${work.source!.product.name} on its saved review snapshot, then hand back again.`);
+          if (!await git.isClean(copy.path)) await git.commitAll(copy.path, `${task.title} (changes made by hand)`);
+          const changed = await git.changedSince(copy.path, copy.head);
+          if (!changed.length) continue;
+          const head = await git.head(copy.path);
+          const parent = await git.head(work.worktree);
+          const merged = await git.mergeTree(work.worktree, parent, head);
+          if (!merged || merged.conflicts.length) throw new Error(`Your changes to ${work.source!.product.name} overlap with its task copy. Resolve them in the snapshot, then hand back again.`);
+          prepared.push({ work, snapshot: copy.path, head, sha: await git.commitTree(work.worktree, merged.tree, parent, `${task.title} (changes made by hand)`) });
+        }
+        for (const kept of prepared) {
+          changedProducts.add(kept.work.productId);
+          await git.moveTo(kept.work.worktree!, kept.sha);
+          if (kept.work.checks) kept.work.checks.current = false;
+          kept.work.reviewedTree = undefined;
+          kept.work.checkedSha = undefined;
+          kept.work.checkedPatch = undefined;
+          if (kept.work.productId === task.productId) { task.reviewedTree = undefined; task.checkedSha = undefined; task.checkedPatch = undefined; }
+          driving.repositoryCopies[kept.work.productId]!.head = kept.head;
+        }
+        if (prepared.length) task.handChanges = true;
+      }
       // A reviewer works detached from the task's branch. Keep the coordinator's edits in both:
       // its conversation continues in its own copy, and the task's later checks and reviews see them.
-      if (files.length && worktree !== task.worktree) {
+      if (files.length && worktree !== task.worktree && (!task.repositories || !driving.repositoryCopies)) {
         const parent = await git.head(task.worktree!);
         const merged = await git.mergeTree(task.worktree!, parent, head);
         if (!merged || merged.conflicts.length) throw new Error("Your changes overlap with the task's working copy. Resolve them in the reviewer's copy, then hand back again.");
@@ -200,7 +229,7 @@ export class TakeOver {
         task.conversation.head = head;
         task.conversation.handback = text;
       }
-      if (files.length) await this.reviewHandChanges(task);
+      if (changedProducts.size) await this.reviewHandChanges(task, [...changedProducts]);
       delete task.driving;
       this.k.s.inbox = this.k.s.inbox.filter((item) => !(item.taskId === taskId && item.kind === "driving"));
       await removeLauncher(dir);
@@ -221,14 +250,21 @@ export class TakeOver {
    * Otherwise the chain the coordinator drove in, or the last one behind, runs again once the step
    * they drove finishes, without using up a review round.
    */
-  private async reviewHandChanges(task: MTask): Promise<void> {
-    const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
-    for (const problem of problems) {
-      if (!task.findings.some((finding) => finding.text === problem && finding.status === "open")) {
-        task.findings.push({ id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+  private async reviewHandChanges(task: MTask, changedProducts: readonly Id[]): Promise<void> {
+    const active = task.productId;
+    for (const productId of changedProducts) {
+      if (task.repositories) this.k.selectRepository(task, productId);
+      const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
+      task.tamper = { at: Date.now(), sha: await git.head(task.worktree!), problems };
+      for (const problem of problems) {
+        if (!task.findings.some((finding) => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(productId)))) {
+          task.findings.push({ ...(task.repositories ? { productIds: [productId] } : {}), id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+        }
       }
+      this.k.log(task, problems.length ? "warn" : "done", problems.length ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tests check on your changes passed: no tests removed or skipped");
+      this.k.saveRepository(task);
     }
-    this.k.log(task, problems.length ? "warn" : "done", problems.length ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tests check on your changes passed: no tests removed or skipped");
+    if (task.repositories) this.k.selectRepository(task, active);
     task.handChanges = true;
     const stages = task.plan?.stages ?? [];
     if (stages.some((stage, index) => index > task.stageIndex && stage.kind === "review-chain")) return;

@@ -46,7 +46,8 @@ export function FindingItem({ finding, find }: { finding: Finding; find: Lookup 
           {finding.verification.reason}
         </div>
       )}
-      {finding.answer && (
+      {finding.answers && Object.entries(finding.answers).map(([id, answer]) => <div className="issue-response" key={id}><b>{find.product(id)?.name ?? id}: {answer.fixed ? "Builder answered: fixed" : "Builder answered: not fixed"}</b>{answer.text}</div>)}
+      {!finding.answers && finding.answer && (
         <div className="issue-response">
           <b>{finding.answer.fixed ? "Builder reported a fix" : "Builder left it unchanged"}</b>
           {finding.answer.text}
@@ -74,12 +75,27 @@ export function FindingItem({ finding, find }: { finding: Finding; find: Lookup 
 }
 
 export function ReviewView({ task, find }: { task: Task; find: Lookup }) {
-  const reviewing = task.plan?.stages.some((stage, index) => stage.kind === "review-chain" && index <= task.stageIndex) || task.state === "pr-open" || task.state === "done";
-  const runs = task.checks?.results ?? [];
-  if (task.findings.length === 0 && runs.length === 0) return <div className="empty-state">{reviewing ? "Nothing to fix. Every reviewer passed it." : "Reviews start after the build."}</div>;
+  const reviews = (task.plan?.stages ?? []).flatMap((stage, index) => stage.kind === "review-chain" ? [index] : []);
+  const reviewing = reviews.some((index) => index <= task.stageIndex);
+  // Reaching review is not completion: all planned review steps must be behind us.
+  const reviewed = reviews.length > 0 && (reviews.every((index) => index < task.stageIndex) || task.state === "pr-open" || task.state === "done");
+  const emptyReview = reviewed ? "Nothing to fix. Every reviewer passed it." : reviewing ? "No findings reported yet." : "Reviews start after the build.";
+  const together = task.findings.filter((finding) => finding.productIds?.length !== 1 || !task.repositories?.some((work) => work.productId === finding.productIds?.[0]));
+  if (task.repositories) return <>
+    {task.repositories.map((work) => <section className="sheet-section repository-row" key={work.productId}>
+      <h2>{work.source?.product.name ?? work.productId}</h2><p className="note">{work.source?.product.repo}</p>
+      <p className="note">Deleted or skipped tests: {work.tamper ? work.tamper.problems.length ? "Needs attention" : "Passed" : "Not run"}</p>
+      {work.checks?.current === false && <p className="note">These checks cover an earlier version. Current checks: Not run</p>}
+      {!work.checks?.results.length && <p className="note">Product checks: Not run</p>}
+      {!!work.checks?.results.length && <ChecksSection runs={work.checks.results} at={work.checks.at} />}
+      <FindingsSection find={find} findings={task.findings.filter((finding) => finding.productIds?.length === 1 && finding.productIds[0] === work.productId)} empty={together.length ? "No findings assigned only to this product. Shared findings appear under Together." : emptyReview} />
+    </section>)}
+    <section className="sheet-section"><h2>Together</h2>{!together.length && <p className="quiet-text">{emptyReview}</p>}<ol className="issues">{openFirst(together.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" }))).map((finding) => <FindingItem key={finding.id} finding={finding} find={find} />)}</ol></section>
+  </>;
 
-  const findings = openFirst(task.findings.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" })));
-  const open = findings.filter((finding) => finding.status === "open");
+  const runs = task.checks?.results ?? [];
+  if (task.findings.length === 0 && runs.length === 0) return <div className="empty-state">{emptyReview}</div>;
+
   // Petrina's own findings that aren't failing checks come from the tamper check.
   const tampered = task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed"));
 
@@ -92,22 +108,18 @@ export function ReviewView({ task, find }: { task: Task; find: Lookup }) {
           {tampered ? "Tamper check found tests removed, weakened or skipped: see the findings below." : "Tamper check passed: no tests were removed, weakened or skipped."}
         </p>
       )}
-      {findings.length === 0 ? (
-        <p className="quiet-text">Nothing to fix. Every reviewer passed it.</p>
-      ) : (
-        <section className="sheet-section">
-          <h2>
-            Findings <span className="quiet-text num">{findingCount(open)}</span>
-          </h2>
-          <ol className="issues">
-            {findings.map((finding) => (
-              <FindingItem key={finding.id} finding={finding} find={find} />
-            ))}
-          </ol>
-        </section>
-      )}
+      <FindingsSection find={find} findings={task.findings} empty={emptyReview} />
     </>
   );
+}
+
+function FindingsSection({ findings, find, empty }: { findings: readonly Finding[]; find: Lookup; empty: string }) {
+  if (!findings.length) return <p className="quiet-text">{empty}</p>;
+  const ordered = openFirst(findings.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" })));
+  return <section className="sheet-section">
+    <h2>Findings <span className="quiet-text num">{findingCount(findings.filter((finding) => finding.status === "open"))}</span></h2>
+    <ol className="issues">{ordered.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} />)}</ol>
+  </section>;
 }
 
 /** What Petrina saw when it ran the product's checks itself: evidence, never an agent's word. */

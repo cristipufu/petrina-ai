@@ -1,3 +1,4 @@
+import { taskProductIds } from "./repositories.js";
 import { boardSections } from "./board.js";
 import type { InboxItem, State, Task } from "./model.js";
 
@@ -20,7 +21,7 @@ export function matchesWords(query: string, ...fields: string[]): boolean {
 export function searchTasks(state: State, query: string): Task[] {
   const names = new Map(state.products.map((product) => [product.id, product.name]));
   const rank = (task: Task) => task.state === "needs-you" || task.state === "failed" ? 0 : task.state === "done" || task.state === "cancelled" ? 2 : 1;
-  return state.tasks.filter((task) => matchesWords(query, task.title, names.get(task.productId) ?? ""))
+  return state.tasks.filter((task) => matchesWords(query, task.title, ...taskProductIds(task).map((id) => names.get(id) ?? "")))
     .sort((a, b) => rank(a) - rank(b) || a.priority - b.priority || a.createdAt - b.createdAt);
 }
 

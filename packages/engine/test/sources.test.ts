@@ -257,9 +257,9 @@ describe.concurrent("one approved product and starting point", () => {
       expect(task.workChoice).toEqual(original);
       const item = itemOf(state, id, "plan")!;
       if (proposed === "unknown" || proposed === "multiple") {
-        expect(task.workError).toContain(proposed === "unknown" ? "Needs adding" : "several products");
+        expect(task.workError).toContain(proposed === "unknown" ? "Needs adding" : "already included");
         expect(() => engine.approve(item.id)).toThrow();
-        await engine.setTaskStart(id, original);
+        await engine.setTaskProducts(id, [original]);
       } else expect(task.proposedSource?.destination).toMatchObject({ branch: proposed === "branch" ? "release-2.x" : "main", mode: choice.delivery });
       engine.approve(item.id);
       expect(taskOf(await finish(engine, id), id).error).toBeUndefined();

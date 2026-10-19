@@ -2,9 +2,13 @@ import type { DeliveryMode, Product, Task } from "./model.js";
 
 export type StartFrom = { kind: "default" } | { kind: "branch"; name: string } | { kind: "pull-request"; value: string };
 
-/** A planner proposes one entry. An array keeps unsupported multi-product proposals visible. */
+/** A structured repository choice, proposed by the planner or selected by the coordinator. */
 export interface WorkChoice {
   productId: string;
+  repo?: string;
+  reason?: string;
+  builderProfileId?: string;
+  lead?: boolean;
   startFrom: StartFrom;
   delivery: DeliveryMode;
 }

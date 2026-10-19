@@ -165,10 +165,20 @@ describe("the tester tries the change once, and the final code once more", () =>
     // tester's pass on the final code fails once.
     fakes.scenario({ planner: "tester-first", reviewer: handoff ? "important-twice" : "important", fixes: "change", tester: "fail-once", ...(handoff ? { learnings: "tester", limited: [{ model: "opus", role: "tester" }] } : {}) });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+    let roundTwoReviewHead: string | undefined;
+    let unsubscribe = () => {};
     try {
       const productId = await engine.addProduct(makeProduct(root));
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+      unsubscribe = engine.subscribe(() => {
+        const current = engine.task(taskId);
+        const reviewStage = current?.plan?.stages.find((stage) => stage.kind === "review-chain");
+        if (!roundTwoReviewHead && current?.worktree && reviewStage && current.stageIndex > current.plan!.stages.indexOf(reviewStage)
+          && current.journey?.some((step) => step.roleId === "code-reviewer" && step.round === 2 && step.reason === "review passed")) {
+          roundTwoReviewHead = git(current.worktree, "rev-parse", "HEAD");
+        }
+      });
       const task = await waitFor(() => {
         const state = engine.getState();
         for (const item of state.inbox) {
@@ -187,6 +197,13 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(lines).toContain("Acceptance will be tried once more on the final code, right before your delivery check");
       expect(lines.filter((line) => line === "Trying the acceptance list once more on the final code")).toHaveLength(2);
       expect(lines).toContain("Sent back to the builder: 1 acceptance check failed on the final code");
+      // The later acceptance failure returns to the builder after round two passed. The next review
+      // should start from the code round two actually examined, while retaining the fixed finding.
+      expect(roundTwoReviewHead).toMatch(/^[0-9a-f]{40}$/);
+      const repeatedReview = fakes.openings("code reviewer").filter((text) => text.includes("This is review round 2")).at(-1)!;
+      expect(repeatedReview).toContain(`git diff ${roundTwoReviewHead}..HEAD`);
+      expect(repeatedReview.toLowerCase()).toContain("greeting is missing on the welcome page");
+      expect(repeatedReview).toContain("The builder: fixed. Fixed it.");
       // The failure on the final code was fixed, and the tester saw the code that ships.
       const acceptance = task.findings.filter((finding) => finding.text.startsWith("Failed acceptance check"));
       expect(acceptance).toHaveLength(1);
@@ -214,6 +231,7 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(task.timeline.filter((entry) => entry.text === "Tester started").map((entry) => entry.step)).toEqual([attempts[0]!.id, ...testers.slice(1).map((step) => step.id)]);
       expect(journeyProblems(task)).toEqual([]);
     } finally {
+      unsubscribe();
       engine.shutdown();
     }
   });

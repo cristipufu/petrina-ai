@@ -1,3 +1,4 @@
+import { involvesProduct } from "./repositories.js";
 import type { DeliveryMode, Id, Product, Task } from "./model.js";
 
 const ABBREVIATIONS = new Set(["ai", "api", "ui", "ux", "cli", "sdk"]);
@@ -38,7 +39,7 @@ export function validateProductSettings(settings: ProductSettings, products: rea
 }
 
 export function productHistory(tasks: readonly Task[], productId: Id): { unfinished: number; finished: number } {
-  const own = tasks.filter((task) => task.productId === productId);
-  const finished = own.filter((task) => task.state === "done" || task.state === "cancelled").length;
+  const own = tasks.filter((task) => involvesProduct(task, productId));
+  const finished = own.filter((task) => (task.state === "done" || task.state === "cancelled") && !task.repositories?.some((work) => work.shipping?.step || work.pr?.state === "open" || (work.pr?.state === "closed" && !work.landingAccepted) || (work.localUpdate && !work.localUpdate.pushed))).length;
   return { unfinished: own.length - finished, finished };
 }

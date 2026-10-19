@@ -346,7 +346,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       {!sending && item.kind === "plan" && (
         <div className="ask-actions">
           <button className="btn lead" disabled={!!task?.workError} onClick={() => sim.approve(item.id)}>
-            Approve plan
+            {task?.workRows?.some((row) => row.addition && !row.addition.ready) ? `Approve plan and add ${task.workRows.filter((row) => row.addition && !row.addition.ready).length} product${task.workRows.filter((row) => row.addition && !row.addition.ready).length === 1 ? "" : "s"}` : "Approve plan"}
           </button>
           <button className="btn" onClick={() => onOpen(item.taskId, "plan")}>
             See the plan
@@ -407,7 +407,13 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
       )}
 
       {item.kind === "shipping" &&
-        (task?.shipping?.carriedOver ? (
+        (task?.repositories?.some((work) => work.pr?.state === "closed" && !work.landingAccepted) ? (
+          <div className="ask-actions">
+            <p className="note">Resolving the closed pull requests resumes any unfinished approved deliveries. Open companion pull requests still need to merge.</p>
+            <button className="btn lead" onClick={() => sim.markDone(item.id)}>Accept the closed pull requests and continue</button>
+            <button className="btn" onClick={() => sim.checkShipping(item.id)}>Check again</button>
+          </div>
+        ) : task?.shipping?.carriedOver ? (
           // From before the update: Petrina cannot look it up, so the coordinator checks GitHub and chooses.
           <div className="ask-actions">
             <button className="btn lead" onClick={() => sim.markDone(item.id)} title="You found it on GitHub">

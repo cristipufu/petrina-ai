@@ -9,6 +9,7 @@ import type { ServerWebSocket } from "bun";
 import { z } from "zod";
 import { ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, type RoleIcon, type Tone, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
 import type { Engine } from "./engine.js";
+import { Coordination, serial, type LifecycleControl } from "./coordination.js";
 
 const ALLOWED_ORIGINS = new Set(["http://localhost:1430", "http://127.0.0.1:1430", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"]);
 
@@ -19,6 +20,7 @@ const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
 const NewTask = z.object({
   backlog: z.boolean().optional(),
+  worksOn: z.array(WorkChoiceSchema).max(20).optional(),
   startFrom: StartFromSchema.optional(),
   productId: z.string(),
   title: z.string().min(1).max(200),
@@ -49,7 +51,7 @@ const RoleDraft = z.object({
 const ARGS = {
   historyPage: z.tuple([z.object({ productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
   taskDetails: z.tuple([TaskId]),
-  previewImage: z.tuple([TaskId, z.string().min(1).max(4096)]),
+  previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),
   saveRole: z.tuple([z.string(), RoleDraft]),
   addRole: z.tuple([RoleDraft]),
   resetRole: z.tuple([z.string()]),
@@ -60,6 +62,9 @@ const ARGS = {
   updateProduct: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean(), shipLowRisk: z.boolean().optional() })]),
   setProductDelivery: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]),
   setTaskStart: z.tuple([z.string(), WorkChoiceSchema]),
+  setTaskProducts: z.tuple([z.string(), z.array(WorkChoiceSchema).max(20)]),
+  setTaskAddition: z.tuple([z.string(), z.string(), z.string().min(1).max(200), z.string().min(1).max(4096)]),
+  setTaskApproval: z.tuple([z.string(), z.boolean()]),
   addTask: z.tuple([NewTask]),
   queueTask: z.tuple([TaskId]),
   moveToBacklog: z.tuple([TaskId]),
@@ -124,7 +129,12 @@ export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
   const { name, args } = Envelope.parse(raw);
   const checked = ARGS[name].parse(args) as unknown[];
   const method = engine[name] as (...args: unknown[]) => unknown;
-  return await method.apply(engine, checked);
+  return await serial(engine, async () => {
+    const before = engine.s?.inbox.map(item => item.id) ?? [];
+    const result = await method.apply(engine, checked);
+    engine.store?.noteHandled(before.filter(id => !engine.s.inbox.some(item => item.id === id)));
+    return result;
+  });
 }
 
 interface Socket {
@@ -132,8 +142,9 @@ interface Socket {
 }
 
 /** `port` 0 picks a free one: read it back from the returned server. */
-export function serve(engine: Engine, options: { port: number; token: string; ui?: string }) {
+export function serve(engine: Engine, options: { port: number; token: string; ui?: string; lifecycle?: LifecycleControl }) {
   const { token, ui } = options;
+  const coordination = new Coordination(engine, options.lifecycle);
   let hosts = new Set<string>();
   let selfOrigins = new Set<string>();
   const sockets = new Set<ServerWebSocket<Socket>>();
@@ -187,6 +198,14 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
         if (!tokenOk(bearer)) return new Response("Unauthorized", { status: 401, headers: healthHeaders });
         if (url.pathname === "/api/health" && request.method === "GET") return Response.json({ ok: true, pid: process.pid }, { headers: healthHeaders });
         if (url.pathname === "/api/state" && request.method === "GET") return Response.json(engine.windowState());
+        if (url.pathname === "/api/coordinate" && request.method === "POST") {
+          try {
+            const { name, args } = await request.json() as { name: string; args: unknown };
+            return Response.json(await coordination.call(name, args));
+          } catch {
+            return Response.json({ outcome: "failed", message: "The coordination request could not be completed. Retry changes with their original request reference." });
+          }
+        }
         const imagePath = /^\/api\/images\/([A-Za-z0-9_-]+)\/([a-f0-9-]{36})$/.exec(url.pathname);
         if (imagePath && request.method === "GET") {
           const image = await engine.reportImage(imagePath[1]!, imagePath[2]!);

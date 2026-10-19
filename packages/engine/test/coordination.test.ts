@@ -1,0 +1,612 @@
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { InboxKind } from "@petrina/core";
+import { Engine } from "../src/engine.js";
+import { Coordination, requestRevision } from "../src/coordination.js";
+import { EngineClient } from "../src/engine-client.js";
+import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
+import { serve } from "../src/server.js";
+import { writeConnection } from "../src/instance.js";
+import { mcpRequest, mcpTools } from "../src/mcp.js";
+import { runChecks } from "../src/checks.js";
+import { CLI, firstLine, removeDir, tempDir, engineEnv, SLOW, waitFor } from "./support.js";
+const roots: string[] = [];
+const engines: Engine[] = [];
+afterAll(async () => {
+  await Promise.all(engines.map((e) => e.shutdown()));
+  roots.forEach(removeDir);
+});
+function fixture() {
+  const home = tempDir("petrina-coordinate-");
+  roots.push(home);
+  const e = new Engine(home, { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  engines.push(e);
+  e.setPoolPaused(true);
+  // These tests exercise decisions and persistence without admitting real agents.
+  e.schedule = () => {};
+  e.s.products.push({ id: "product", name: "Example", repo: "local/example", tone: "blue", delivery: "local" });
+  const taskId = e.addTask({ productId: "product", title: "First task" });
+  const c = new Coordination(e);
+  const offer = (kind: InboxKind, body = "Full request"): string => {
+    const id = e.id("inbox");
+    e.s.inbox.push({ id, kind, taskId, title: `A ${kind} request`, body, at: Date.now(), blocking: kind === "question" || kind === "permission" });
+    return id;
+  };
+  const inspect = async (itemId: string) => c.call("inbox.inspect", { itemId });
+  return { e, c, home, taskId, offer, inspect };
+}
+describe("focused coordination and durable decisions", () => {
+  it("bounds and filters lists before pagination, rejects changed continuations and keeps task queries small", async () => {
+    const { e, c, taskId } = fixture();
+    for (let i = 0; i < 130; i++) e.addTask({ productId: "product", title: `Work ${i}`, description: "x".repeat(8000) });
+    const page = await c.call("task.list", {});
+    expect((page.items as unknown[]).length).toBe(25);
+    expect(page.next).toBeString();
+    expect((await c.call("task.list", { limit: 100 })).items).toHaveLength(100);
+    expect((await c.call("task.list", { limit: 101 })).outcome).toBe("invalid");
+    const filtered = await c.call("task.list", { search: "First" });
+    expect(filtered.items).toHaveLength(1);
+    const next = await c.call("task.list", { cursor: page.next });
+    expect((next.items as { id: string }[])[0]!.id).not.toBe((page.items as { id: string }[])[0]!.id);
+    e.moveToTop(e.s.tasks.at(-1)!.id);
+    expect((await c.call("task.list", { cursor: page.next })).outcome).toBe("changed");
+    expect(JSON.stringify(await c.call("task.inspect", { taskId })).length).toBeLessThan(2000);
+  });
+  it("saves creation and message outcomes, rejects conflicting references and keeps them after restart", async () => {
+    const { e, c, home } = fixture();
+    const args = { productId: "product", title: "Once", requestId: "create-once" };
+    const created = await c.call("task.add", args);
+    expect(await c.call("task.add", args)).toEqual(created);
+    expect((await c.call("task.add", { ...args, title: "Different" })).outcome).toBe("conflict");
+    const sent = await c.call("task.message", { taskId: created.taskId, text: "Only once", requestId: "message-once" });
+    expect(sent.messageId).toBeString();
+    await e.shutdown();
+    const restarted = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+    engines.push(restarted);
+    const again = new Coordination(restarted);
+    expect(await again.call("task.add", args)).toEqual(created);
+    expect(await again.call("task.message", { taskId: created.taskId, text: "Only once", requestId: "message-once" })).toEqual(sent);
+    expect(restarted.task(String(created.taskId))!.queued).toHaveLength(1);
+  });
+  it("reads and filters paged history without loading archived conversations, and keeps focused waits bounded", async () => {
+    const { e, c, taskId } = fixture();
+    const template = structuredClone(e.task(taskId)!);
+    e.s.products.push({ id: "other", name: "Other", repo: "local/other", tone: "green" });
+    for (let index = 0; index < 150; index++) {
+      const product = e.s.products.find((product) => product.id === (index % 2 ? "product" : "other"))!;
+      const choice = { productId: product.id, startFrom: { kind: "default" as const }, delivery: "local" as const };
+      e.s.tasks.push({
+        ...structuredClone(template), id: `history-${String(index).padStart(3, "0")}`, title: `Archived request ${index}`, description: "long request ".repeat(1000),
+        productId: product.id, selectedProducts: [choice], workChoice: choice, workProduct: { id: product.id, name: product.name, repo: product.repo },
+        held: index % 3 === 0, state: index % 4 ? "done" : "cancelled", column: "done", finishedAt: index + 1,
+      });
+    }
+    e.save();
+    expect(e.activeState().tasks).toHaveLength(1);
+    e.getState = () => { throw new Error("A focused read must not load the full archive"); };
+    e.store.history.all = () => { throw new Error("A focused read must not load every conversation"); };
+    expect((await c.call("task.list", {})).items).toHaveLength(1);
+    const page = await c.call("task.history", {});
+    expect(page.items).toHaveLength(25);
+    expect(page.total).toBe(150);
+    expect((page.items as { id: string }[])[0]!.id).toBe("history-149");
+    expect(JSON.stringify(page)).not.toContain("long request");
+    expect((await c.call("task.history", { limit: 100 })).items).toHaveLength(100);
+    expect((await c.call("task.history", { limit: 101 })).outcome).toBe("invalid");
+    const next = await c.call("task.history", { cursor: page.next });
+    expect((next.items as { id: string }[])[0]!.id).toBe("history-124");
+    expect((await c.call("task.history", { productId: "other", states: ["cancelled"], held: true, search: "arch req" })).total).toBe(13);
+    expect((await c.call("task.list", { states: ["cancelled"] })).total).toBe(38);
+    expect((await c.call("task.list", { states: ["queued", "done"] })).outcome).toBe("invalid");
+    expect((await c.call("task.history", { states: [] })).total).toBe(0);
+    e.s.inbox.push({ id: "archived-offer", taskId: "history-148", kind: "learnings", title: "Saved learning offer", body: "A lesson", at: 1, blocking: false });
+    const readBody = e.store.history.get.bind(e.store.history);
+    try {
+      e.store.history.get = () => { throw new Error("Filtering inbox requests must only read history summaries"); };
+      expect((await c.call("inbox.list", { productId: "other" })).items).toHaveLength(1);
+      expect((await c.call("inbox.list", { productId: "product" })).items).toHaveLength(0);
+    } finally { e.store.history.get = readBody; }
+    expect(JSON.stringify(await c.call("task.inspect", { taskId: "history-149" })).length).toBeLessThan(2000);
+    expect((await c.call("task.read", { taskId: "history-149", section: "request" })).shortened).toBe(true);
+    expect((await c.call("watch.wait", { target: "task", taskId: "history-149", condition: "state", states: ["done"], timeoutMs: 0 })).outcome).toBe("completed");
+    expect((await c.call("engine.status", {})).outcome).toBe("completed");
+    expect((await c.call("pool.inspect", {})).outcome).toBe("completed");
+    e.s.tasks.push({ ...structuredClone(template), id: "another-finished", state: "done", column: "done", finishedAt: 200 });
+    e.save();
+    expect((await c.call("task.history", { cursor: page.next })).outcome).toBe("changed");
+  });
+  it("lists shared current work, history and inbox requests under each product without reading archived bodies", async () => {
+    const { e, c, taskId } = fixture();
+    e.s.products.push({ id: "other", name: "Other", repo: "local/other", tone: "green" });
+    const sharedId = e.addTask({ productId: "product", title: "Shared transfer", worksOn: ["product", "other"].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "local" })) });
+    const otherId = e.addTask({ productId: "other", title: "Other transfer" });
+    const ids = async (name: string, args: Record<string, unknown>) => ((await c.call(name, args)).items as { id: string }[]).map((item) => item.id).sort();
+    expect(await ids("task.list", { productId: "product" })).toEqual([taskId, sharedId].sort());
+    expect(await ids("task.list", { productId: "other" })).toEqual([sharedId, otherId].sort());
+    expect((await c.call("task.list", {})).total).toBe(3);
+    const shared = e.task(sharedId)!, other = e.task(otherId)!;
+    shared.held = true;
+    // Once planning records ownership, the selected repository still does not narrow membership.
+    shared.repositories = ["product", "other"].map((productId) => ({ productId, delivery: "local", completedStages: [] }));
+    shared.activeProductId = "product";
+    e.selectRepository(shared, "other");
+    expect(await ids("task.list", { productId: "product", taskId: sharedId, states: ["queued"], held: true, search: "SHARED" })).toEqual([sharedId]);
+    expect(await ids("task.list", { productId: "other", held: false })).toEqual([otherId]);
+    expect(await ids("task.list", { productId: "other", taskId })).toEqual([]);
+    expect(await ids("task.list", { productId: "other", states: ["backlog"] })).toEqual([]);
+    e.s.inbox.push(
+      { id: "shared-request", taskId: sharedId, kind: "question", title: "Shared question", body: "Details", at: 1, blocking: true },
+      { id: "first-request", taskId, kind: "permission", title: "First permission", body: "Details", at: 2, blocking: true },
+      { id: "other-request", taskId: otherId, kind: "permission", title: "Other permission", body: "Details", at: 3, blocking: true },
+    );
+    expect(await ids("inbox.list", { productId: "product" })).toEqual(["first-request", "shared-request"]);
+    expect(await ids("inbox.list", { productId: "other" })).toEqual(["other-request", "shared-request"]);
+    expect(await ids("inbox.list", { productId: "other", taskId: sharedId, kinds: ["question"], blocking: true, search: "SHARED" })).toEqual(["shared-request"]);
+    expect(await ids("inbox.list", { productId: "other", taskId })).toEqual([]);
+    e.s.inbox = e.s.inbox.map((item) => ({ ...item, kind: "learnings", blocking: false }));
+    Object.assign(shared, { state: "done", column: "done", finishedAt: 200 });
+    Object.assign(other, { state: "cancelled", column: "done", finishedAt: 100 });
+    e.save();
+    expect(e.activeState().tasks.map((task) => task.id)).toEqual([taskId]);
+    e.getState = () => { throw new Error("A product filter must not reconstruct history"); };
+    e.store.history.all = () => { throw new Error("A product filter must not load the archive"); };
+    const readBody = e.store.history.get.bind(e.store.history);
+    try {
+      e.store.history.get = () => { throw new Error("A product filter must only read history summaries"); };
+      expect(await ids("task.history", { productId: "product" })).toEqual([sharedId]);
+      expect(await ids("task.history", { productId: "other" })).toEqual([otherId, sharedId].sort());
+      expect((await c.call("task.history", {})).total).toBe(2);
+      expect(await ids("task.history", { productId: "other", taskId: sharedId, states: ["done"], held: true, search: "sha tra" })).toEqual([sharedId]);
+      expect(await ids("task.history", { productId: "other", states: ["cancelled"], held: false })).toEqual([otherId]);
+      expect(await ids("task.history", { productId: "product", taskId: otherId })).toEqual([]);
+      expect(await ids("inbox.list", { productId: "product" })).toEqual(["first-request", "shared-request"]);
+      expect(await ids("inbox.list", { productId: "other" })).toEqual(["other-request", "shared-request"]);
+      expect(await ids("inbox.list", { productId: "other", taskId: sharedId, kinds: ["learnings"], blocking: false, search: "SHARED" })).toEqual(["shared-request"]);
+      expect(await ids("inbox.list", { productId: "product", taskId: otherId })).toEqual([]);
+      expect((await c.call("inbox.list", { taskId: "missing" })).outcome).toBe("missing");
+    } finally { e.store.history.get = readBody; }
+  });
+  it("keeps task and message receipts after archival and replacement without restoring finished bodies to active work", async () => {
+    const { e, c, home } = fixture();
+    const args = { productId: "product", title: "Archived once", backlog: true, requestId: "archived-create" };
+    const created = await c.call("task.add", args);
+    const sent = await c.call("task.message", { taskId: created.taskId, text: "Keep this instruction", requestId: "archived-message" });
+    const task = e.task(String(created.taskId))!;
+    task.state = "done";
+    task.column = "done";
+    task.finishedAt = 1;
+    e.save();
+    expect(e.activeState().tasks.some((task) => task.id === created.taskId)).toBe(false);
+    await e.shutdown();
+    const restarted = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+    engines.push(restarted);
+    restarted.getState = () => { throw new Error("Do not reconstruct the archive"); };
+    const again = new Coordination(restarted);
+    expect(await again.call("task.add", args)).toEqual(created);
+    expect(await again.call("task.message", { taskId: created.taskId, text: "Keep this instruction", requestId: "archived-message" })).toEqual(sent);
+    expect(restarted.activeState().tasks.some((task) => task.id === created.taskId)).toBe(false);
+    expect((await again.call("task.inspect", { taskId: created.taskId })).task).toHaveProperty("state", "done");
+    expect((await again.call("task.read", { taskId: created.taskId, section: "messages" })).text).toContain("Keep this instruction");
+  });
+  it("keeps partially delivered group messages and reports saved review results from before full handoffs were recorded", async () => {
+    const { e, c, taskId } = fixture();
+    const sent = await c.call("task.message", { taskId, text: "Check both views", requestId: "group-message" });
+    const task = e.task(taskId)!;
+    task.queued[0]!.recipients = { "review-0": true, "review-1": false };
+    const denied = await c.call("task.remove-message", { taskId, messageId: sent.messageId, requestId: "remove-delivered" });
+    expect(denied.outcome).toBe("invalid");
+    expect(denied.message).toContain("already received");
+    expect(task.queued).toHaveLength(1);
+    expect(task.queued[0]!.recipients).toEqual({ "review-0": true, "review-1": false });
+    task.queued[0]!.recipients = { "review-0": false, "review-1": false };
+    expect((await c.call("task.remove-message", { taskId, messageId: sent.messageId, requestId: "remove-unheard" })).outcome).toBe("completed");
+    expect(task.queued).toEqual([]);
+    task.journey = [{ id: "review", kind: "agent", roleId: "code-reviewer", stageId: "review", round: 1, sub: 0, startedAt: 1, result: { findings: [] } }];
+    const node = await c.call("journey.node", { taskId, nodeId: "review" });
+    expect(node.result).toBe("recorded");
+    expect(JSON.parse(String(node.text)).result).toEqual({ findings: [] });
+    expect(node.input).toBe("unavailable");
+  });
+  it("binds checkpoint approval to source and all assignments, while unrelated activity stays valid", async () => {
+    const { e, c, taskId, offer, inspect } = fixture();
+    const t = e.task(taskId)!;
+    t.source = {
+      product: { id: "product", name: "Example", repo: "local/example" },
+      start: { kind: "default", branch: "main" },
+      destination: { mode: "local", repo: "local/example", branch: "main", kind: "branch" },
+      confirmed: true,
+    };
+    t.plan = {
+      stages: [{ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["opus-high"] }],
+      rationale: "Do the work",
+      plannerProfileId: "opus-high",
+    };
+    const itemId = offer("plan"),
+      first = await inspect(itemId);
+    t.plan.stages[0]!.profileIds[0] = "sol-xhigh";
+    expect((await c.call("inbox.approve", { itemId, revision: first.revision, requestId: "old-plan" })).outcome).toBe("changed");
+    expect(e.s.inbox.some((i) => i.id === itemId)).toBe(true);
+    const second = await inspect(itemId);
+    t.workChoice = { productId: "product", startFrom: { kind: "branch", name: "feature" }, delivery: "local" };
+    expect((await c.call("inbox.approve", { itemId, revision: second.revision, requestId: "old-source" })).outcome).toBe("changed");
+    const third = await inspect(itemId);
+    e.say(t, "activity", "An unrelated clock tick");
+    const args = { itemId, revision: third.revision, requestId: "approve-once" };
+    expect((await c.call("inbox.approve", args)).outcome).toBe("completed");
+    expect(await c.call("inbox.approve", args)).toEqual(await c.call("inbox.approve", args));
+    expect((await c.call("inbox.approve", { ...args, requestId: "already-gone" })).outcome).toBe("handled");
+  });
+  it("serializes app plan edits with decisions and returns the saved outcome after a lost reply", async () => {
+    const { e, c, taskId, offer, inspect } = fixture();
+    e.task(taskId)!.plan = {
+      stages: [{ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["opus-high"] }],
+      rationale: "",
+      plannerProfileId: "opus-high",
+    };
+    const itemId = offer("plan"),
+      read = await inspect(itemId);
+    const { dispatch } = await import("../src/server.js");
+    const edit = dispatch(e, { name: "setStageProfile", args: [taskId, "build", "profileIds", 0, "sol-xhigh"] });
+    const approve = c.call("inbox.approve", { itemId, revision: read.revision, requestId: "raced" });
+    await edit;
+    expect((await approve).outcome).toBe("changed");
+  });
+  it("separates questions, once-only permissions, checkpoints, lessons and review-guide proposals", async () => {
+    const { e, c, offer, inspect } = fixture();
+    for (const kind of ["question", "permission", "learnings", "guide", "screen", "stuck", "driving"] as const) {
+      const itemId = offer(kind, "- First useful lesson\n- Second useful lesson"),
+        read = await inspect(itemId);
+      expect((await c.call("inbox.approve", { itemId, revision: read.revision, requestId: `wrong-${kind}` })).outcome).toBe("invalid");
+      expect(e.s.inbox.some((i) => i.id === itemId)).toBe(true);
+    }
+    const question = e.s.inbox.find((i) => i.kind === "question")!;
+    const qa = { itemId: question.id, revision: requestRevision(e, question), answer: "Blue", requestId: "answer-once" };
+    const answered = await c.call("inbox.answer", qa);
+    expect(answered.outcome).toBe("completed");
+    expect(await c.call("inbox.answer", qa)).toEqual(answered);
+    const permission = e.s.inbox.find((i) => i.kind === "permission")!,
+      permissionRead = await inspect(permission.id);
+    const allow = { itemId: permission.id, revision: permissionRead.revision, requestId: "allow-once" };
+    expect((await c.call("inbox.allow", allow)).outcome).toBe("completed");
+    expect((await c.call("inbox.allow", allow)).outcome).toBe("completed");
+    const learning = e.s.inbox.find((i) => i.kind === "learnings")!,
+      read = await inspect(learning.id),
+      base = { itemId: learning.id, revision: read.revision };
+    expect((await c.call("learning.accept", { ...base, positions: [], requestId: "empty" })).outcome).toBe("invalid");
+    expect((await c.call("learning.accept", { ...base, positions: [2], requestId: "outside" })).outcome).toBe("invalid");
+    expect(e.s.inbox.some((i) => i.id === learning.id)).toBe(true);
+    expect((await c.call("learning.accept", { ...base, positions: [0], requestId: "selected" })).outcome).toBe("completed");
+    expect(e.s.products[0]!.learnings).toHaveLength(1);
+    expect(e.s.products[0]!.learningsDeclined).toContain("Second useful lesson");
+    const guide = e.s.inbox.find((i) => i.kind === "guide")!;
+    expect((await c.call("review-guide.accept", { itemId: guide.id, revision: (await inspect(guide.id)).revision, requestId: "guide-yes" })).outcome).toBe(
+      "completed",
+    );
+    // Keep the app's existing review-guide acceptance button working too.
+    const appGuide = offer("guide", "Check another nearby case");
+    e.approve(appGuide);
+    expect(e.s.products[0]!.reviewGuide).toHaveLength(2);
+    const declined = offer("learnings", "- A third lesson");
+    expect((await c.call("learning.decline", { itemId: declined, revision: (await inspect(declined)).revision, requestId: "declined" })).outcome).toBe(
+      "completed",
+    );
+  });
+  it("preserves original long diagnostics after later checks and a restart, and reports unavailable evidence honestly", async () => {
+    const { e, c, home, taskId } = fixture(),
+      t = e.task(taskId)!;
+    const directory = join(home, "checks", taskId);
+    mkdirSync(directory, { recursive: true });
+    const prefix = "Original failure near the beginning\n", repeated = "long output\n";
+    const original = prefix + repeated.repeat(9000);
+    const source = `process.stdout.write(${JSON.stringify(prefix)} + ${JSON.stringify(repeated)}.repeat(9000)); process.exit(1)`;
+    const [run] = await runChecks(home, [{ name: "Tests", argv: [process.execPath, "-e", source] }], process.env, 10_000 * SLOW, undefined, directory);
+    run!.output = original.slice(-6000);
+    t.journey = [
+      {
+        id: "checks",
+        kind: "petrina",
+        work: "checks",
+        round: 1,
+        sub: 0,
+        startedAt: 1,
+        endedAt: 2,
+        productChecks: [{ name: "Tests", result: "fail", run: run! }],
+        outcome: "Failed",
+        reason: "Back to builder",
+      },
+    ];
+    t.checks = { at: 3, sha: "newer", results: [{ name: "Tests", command: "test stand-in", ok: true, ms: 1, output: "pass" }] };
+    let page = await c.call("journey.check", { taskId, nodeId: "checks", index: 0 });
+    expect(page.text).toStartWith("Original failure");
+    expect(page.commandOutcome).toBe("failed");
+    expect(page.relevance).toBe("historical");
+    expect(page.completeness).toBe("complete");
+    let all = String(page.text);
+    const next = page.next;
+    e.commitNow();
+    await e.shutdown();
+    const restarted = new Engine(home, { admissionsClosed: true, codexCommand: null, grokCommand: null, terminals: () => [] });
+    engines.push(restarted);
+    const focused = new Coordination(restarted);
+    while (page.next) {
+      page = await focused.call("journey.check", { taskId, nodeId: "checks", index: 0, cursor: page.next });
+      all += page.text;
+    }
+    expect(all).toBe(original);
+    writeFileSync(run!.logPath!, "Changed");
+    expect((await focused.call("journey.check", { taskId, nodeId: "checks", index: 0, cursor: next })).outcome).toBe("changed");
+    const old = restarted.task(taskId)!;
+    delete old.journey![0]!.productChecks![0]!.run;
+    expect((await focused.call("journey.check", { taskId, nodeId: "checks", index: 0 })).outcome).toBe("unavailable");
+    expect((await focused.call("journey.check", { taskId, index: 0 })).completeness).toBe("excerpt-only");
+  });
+  it("reports missing, unfinished and incomplete diagnostics separately, and keeps UTF-8 pages intact", async () => {
+    const { e, c, home, taskId } = fixture();
+    const directory = join(home, "checks", taskId);
+    mkdirSync(directory, { recursive: true });
+    const original = "é🙂λ".repeat(10);
+    const [run] = await runChecks(home, [{ name: "Check", argv: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(original)}); process.exit(1)`] }], process.env, 10_000 * SLOW, undefined, directory);
+    run!.logComplete = false;
+    run!.interrupted = true;
+    e.task(taskId)!.checks = {
+      at: 1,
+      results: [run!],
+    };
+    let page = await c.call("journey.check", { taskId, index: 0, limit: 1 }),
+      all = String(page.text);
+    expect(page.commandOutcome).toBe("unfinished");
+    expect(page.completeness).toBe("incomplete");
+    while (page.next) {
+      page = await c.call("journey.check", { taskId, index: 0, limit: 1, cursor: page.next });
+      all += page.text;
+    }
+    expect(all).toBe(original);
+    e.task(taskId)!.checks!.results[0]!.logPath = join(directory, "missing.log");
+    expect((await c.call("journey.check", { taskId, index: 0 })).completeness).toBe("missing-file");
+  });
+  it("uses one drain definition for admitted steps, questions, permissions and cleanup, while saved screen work waits separately", async () => {
+    const { e, home, taskId, offer } = fixture();
+    await Promise.all([...e.backgroundWork]);
+    let release!: () => void;
+    const work = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    e.settling.set(taskId, work);
+    const t = e.task(taskId)!;
+    t.state = "running";
+    t.holdsSlot = true;
+    t.agent = { roleId: "builder", profileId: "opus-high", since: Date.now(), step: 0 };
+    offer("question");
+    offer("permission");
+    offer("screen");
+    let cleaned!: () => void;
+    const cleanup = e.trackWork(
+      new Promise<void>((resolve) => {
+        cleaned = resolve;
+      }),
+    );
+    const store = new LifecycleStore(home);
+    let stops = 0;
+    const life = new EngineLifecycle(e, store, async () => {
+      stops++;
+      store.finish("completed");
+    });
+    try {
+      expect((life.status().blockers as { kind: string }[]).map((item) => item.kind)).toEqual(["question", "permission", "screen"]);
+      expect((await life.request("stop", { requestId: "drain-everything" })).outcome).toBe("pending");
+      expect(stops).toBe(0);
+      expect(await e.drain(0)).toBeGreaterThan(0);
+      e.s.inbox = [];
+      t.holdsSlot = false;
+      delete t.agent;
+      e.settling.delete(taskId);
+      release();
+      expect(life.status().drained).toBe(false);
+      cleaned();
+      await cleanup;
+      t.screen = { reason: "A saved screen check", roleId: "builder", profileId: "opus-high", at: Date.now() };
+      t.state = "waiting";
+      expect(life.status().screenWaiting).toHaveLength(1);
+      expect(await e.drain(0)).toBe(0);
+      expect(life.status().drained).toBe(true);
+      await waitFor(() => stops === 1, "one fully drained stop");
+    } finally {
+      release();
+      cleaned();
+      life.close();
+      store.close();
+      e.settling.delete(taskId);
+    }
+  });
+  it("distinguishes confirmed delivery, awaiting merge, landing, cancellation and unconfirmed mark done", async () => {
+    const { e, c, taskId } = fixture();
+    const task = e.task(taskId)!;
+    task.state = "done";
+    expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("landing", "marked-done");
+    expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("deliveryConfirmed", false);
+    expect((await c.call("watch.wait", { target: "task", taskId, condition: "delivered", timeoutMs: 0 })).outcome).toBe("timed-out");
+    task.state = "pr-open";
+    task.pr = { number: 1, url: "https://github.com/example/product/pull/1", state: "open", openedAt: 1 };
+    expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("deliveryConfirmed", true);
+    expect((await c.call("watch.wait", { target: "task", taskId, condition: "delivered", timeoutMs: 0 })).outcome).toBe("completed");
+    expect((await c.call("watch.wait", { target: "task", taskId, condition: "landed", timeoutMs: 0 })).outcome).toBe("timed-out");
+    task.state = "done";
+    task.pr.state = "merged";
+    expect((await c.call("watch.wait", { target: "task", taskId, condition: "landed", timeoutMs: 0 })).outcome).toBe("completed");
+    task.state = "cancelled";
+    expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("landing", "cancelled");
+    expect((await c.call("watch.wait", { target: "task", taskId, condition: "delivered", timeoutMs: 0 })).outcome).toBe("timed-out");
+  });
+  it("supports quiet deadlines, already satisfied conditions, filtered inbox changes and lost continuity", async () => {
+    const { e, c, taskId, offer } = fixture();
+    expect((await c.call("watch.wait", { target: "pool", condition: "drained", timeoutMs: 1000 * SLOW })).outcome).toBe("completed");
+    expect((await c.call("watch.wait", { target: "task", taskId, condition: "state", states: ["queued"], timeoutMs: 0 })).outcome).toBe("completed");
+    const quiet = await c.call("watch.wait", { target: "task", taskId, timeoutMs: 5 });
+    expect(quiet.outcome).toBe("timed-out");
+    const watching = c.call("watch.wait", { target: "inbox", kinds: ["question"], timeoutMs: 1000 * SLOW });
+    offer("question");
+    e.commit();
+    expect((await watching).outcome).toBe("completed");
+    expect((await c.call("watch.wait", { target: "task", taskId, marker: "another-boot.123", timeoutMs: 0 })).outcome).toBe("continuity-lost");
+    const drained = c.call("watch.wait", { target: "pool", condition: "drained", timeoutMs: 5 });
+    expect((await drained).outcome).toBe("completed");
+  });
+});
+
+describe("the shared terminal and MCP connection", () => {
+  it("reconnects a focused watch and reports lost continuity after engine replacement", async () => {
+    const { e, home, taskId } = fixture();
+    const token = "watch-key-01234567890123456789012";
+    const first = serve(e, { port: 0, token });
+    let replacement: ReturnType<typeof serve> | undefined;
+    const connect = (server: ReturnType<typeof serve>) =>
+      writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, token, pid: process.pid });
+    connect(first);
+    const client = new EngineClient(home, () => {
+      throw new Error("A watch must never launch an engine");
+    });
+    try {
+      const initial = await client.call("watch.wait", { target: "task", taskId, timeoutMs: 0 });
+      const listeners = e.listeners.size;
+      const watching = client.call("watch.wait", { target: "task", taskId, marker: initial.marker, timeoutMs: 3000 * SLOW });
+      await waitFor(() => e.listeners.size > listeners, "the focused watch connection");
+      first.stop(true);
+      await e.shutdown();
+      const next = new Engine(home, { admissionsClosed: true, codexCommand: null, grokCommand: null, terminals: () => [] });
+      engines.push(next);
+      replacement = serve(next, { port: 0, token });
+      connect(replacement);
+      const result = await watching;
+      expect(result.outcome).toBe("continuity-lost");
+      expect(result.reconnected).toBe(true);
+      expect(JSON.stringify(result).length).toBeLessThan(3000);
+    } finally {
+      first.stop(true);
+      replacement?.stop(true);
+    }
+  });
+
+  it("uses typed discoverable tools and the same engine for both interfaces without exposing its key", async () => {
+    const { e, home, taskId, offer, inspect } = fixture(),
+      store = new LifecycleStore(home);
+    const life = new EngineLifecycle(e, store, async () => {}),
+      token = "coordination-key-0123456789012345";
+    const server = serve(e, { port: 0, token, lifecycle: life });
+    writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, token, pid: process.pid });
+    const client = new EngineClient(home, () => {
+      throw new Error("Unexpected launch");
+    });
+    const cli = async (...args: string[]) => {
+      const proc = Bun.spawn([process.execPath, CLI, ...args, "--json"], { env: engineEnv(home), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+      expect(out + err).not.toContain(token);
+      return { result: JSON.parse(out), code };
+    };
+    try {
+      const tools = mcpTools();
+      expect(tools.length).toBeGreaterThan(40);
+      expect(tools.find((t) => t.name === "petrina_task_add")!.inputSchema).toHaveProperty("properties.requestId");
+      const added = await cli("task", "add", "--product-id", "product", "--title", "From terminal", "--backlog", "--request-id", "terminal-create");
+      expect(added.code).toBe(0);
+      const rpc = async (name: string, args: Record<string, unknown>) => {
+        const reply = await mcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }, client);
+        return (reply!.result as { structuredContent: Record<string, unknown> }).structuredContent;
+      };
+      expect((await rpc("petrina_task_inspect", { taskId: added.result.taskId })).outcome).toBe("completed");
+      expect(e.task(String(added.result.taskId))!.state).toBe("backlog");
+      const update = { taskId: added.result.taskId, title: "Reviewed terminal request", description: "Ready to queue", requestId: "review-backlog" };
+      expect((await rpc("petrina_task_update_backlog", update)).outcome).toBe("completed");
+      expect((await cli("task", "queue", String(added.result.taskId), "--request-id", "queue-reviewed")).code).toBe(0);
+      expect((await rpc("petrina_task_update_backlog", update)).outcome).toBe("completed");
+      expect((await cli("task", "backlog", String(added.result.taskId), "--request-id", "back-to-review")).code).toBe(0);
+      expect((await rpc("petrina_task_queue", { taskId: added.result.taskId, requestId: "mcp-queue" })).outcome).toBe("completed");
+      expect((await rpc("petrina_task_update_backlog", { ...update, requestId: "too-late" })).outcome).toBe("invalid");
+      expect((await rpc("petrina_task_add", { productId: "product", title: "From MCP", requestId: "mcp-create" })).outcome).toBe("completed");
+      const itemId = offer("question"),
+        read = await inspect(itemId);
+      expect((await cli("inbox", "answer", itemId, "--revision", String(read.revision), "--answer", "Yes", "--request-id", "terminal-answer")).code).toBe(0);
+      const lessons = offer("learnings", "- A selected lesson"),
+        lessonRead = await rpc("petrina_learning_inspect", { itemId: lessons });
+      expect(
+        (await rpc("petrina_learning_accept", { itemId: lessons, revision: lessonRead.revision, positions: [0], requestId: "mcp-learning" })).outcome,
+      ).toBe("completed");
+      expect((await cli("engine", "pause", "--wait", "--request-id", "terminal-pause")).code).toBe(0);
+      expect((await rpc("petrina_engine_resume", { requestId: "mcp-resume" })).outcome).toBe("completed");
+      expect(e.s.pool.paused).toBe(false);
+      expect((await rpc("petrina_task_inspect", { taskId })).outcome).toBe("completed");
+      const proc = Bun.spawn([process.execPath, CLI, "mcp"], { env: engineEnv(home), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+      try {
+        proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } }) + "\n");
+        expect(JSON.parse(await firstLine(proc.stdout)).result.capabilities).toHaveProperty("tools");
+        proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }) + "\n");
+        const listed = JSON.parse(await firstLine(proc.stdout)).result.tools;
+        expect(listed.length).toBe(tools.length);
+        for (const tool of listed) {
+          expect(tool.annotations).not.toHaveProperty("destructiveHint", false);
+          expect(tool.annotations).not.toHaveProperty("openWorldHint", false);
+        }
+        const callTool = async (name: string, args: Record<string, unknown>) => {
+          proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name, arguments: args } }) + "\n");
+          const response = JSON.parse(await firstLine(proc.stdout));
+          expect(JSON.stringify(response)).not.toContain(token);
+          return response.result.structuredContent;
+        };
+        const created = await callTool("petrina_task_add", { productId: "product", title: "From stdio", requestId: "stdio-create" });
+        expect(created.outcome).toBe("completed");
+        expect((await callTool("petrina_task_inspect", { taskId: created.taskId })).outcome).toBe("completed");
+        Object.assign(e.task(created.taskId)!, { state: "done", column: "done", finishedAt: Date.now() });
+        e.save();
+        expect((await callTool("petrina_task_history", { search: "stdio" })).items).toHaveLength(1);
+        expect((await cli("task", "history", "--search", "stdio")).result.items).toHaveLength(1);
+        expect((await callTool("petrina_task_inspect", { taskId: created.taskId })).task).toHaveProperty("state", "done");
+        const selected = [created.taskId, taskId];
+        expect((await callTool("petrina_watch_wait", { target: "task", taskIds: selected, condition: "state", states: ["done"], limit: 1, timeoutMs: 0 })).outcome).toBe("timed-out");
+        const terminalWait = await cli("watch", "wait", "--target", "task", "--task-ids", JSON.stringify(selected), "--condition", "state", "--states", '["done"]', "--limit", "1", "--timeout-ms", "0");
+        expect(terminalWait.code).toBe(3);
+        expect(terminalWait.result.outcome).toBe("timed-out");
+        const question = offer("question"),
+          questionRead = await callTool("petrina_inbox_inspect", { itemId: question });
+        const decisionWait = await callTool("petrina_watch_wait", { target: "task", taskIds: selected, condition: "decision", limit: 1, timeoutMs: 0 });
+        expect(decisionWait.outcome).toBe("completed");
+        expect(decisionWait.result.items[0].id).toBe(taskId);
+        expect((await cli("watch", "wait", "--target", "task", "--task-ids", JSON.stringify(selected), "--condition", "decision", "--limit", "1", "--timeout-ms", "0")).result.outcome).toBe("completed");
+        expect(
+          (await callTool("petrina_inbox_answer", { itemId: question, revision: questionRead.revision, answer: "Yes", requestId: "stdio-answer" })).outcome,
+        ).toBe("completed");
+        e.task(taskId)!.journey = [
+          {
+            id: "recorded",
+            kind: "agent",
+            round: 1,
+            sub: 0,
+            startedAt: 1,
+            roleId: "builder",
+            profileId: "opus-high",
+            trigger: { reason: "Plan approved" },
+            agentResults: [{ roleId: "builder", profileId: "opus-high", at: 2, value: { summary: "Ready" } }],
+          },
+        ];
+        expect((await callTool("petrina_journey_node", { taskId, nodeId: "recorded" })).result).toBe("recorded");
+        expect((await cli("journey", "node", "--task-id", taskId, "--node-id", "recorded")).result.result).toBe("recorded");
+        const decline = offer("learnings", "- A declined lesson"),
+          declineRead = await callTool("petrina_learning_inspect", { itemId: decline });
+        expect((await callTool("petrina_learning_decline", { itemId: decline, revision: declineRead.revision, requestId: "stdio-decline" })).outcome).toBe(
+          "completed",
+        );
+        expect((await callTool("petrina_engine_pause", { requestId: "stdio-pause", wait: true })).outcome).toBe("completed");
+        expect((await callTool("petrina_engine_resume", { requestId: "stdio-resume" })).outcome).toBe("completed");
+        expect((await cli("task", "add", "--title", "Choose the product", "--start-from", '{"kind":"default"}', "--request-id", "planner-chooses")).code).toBe(
+          0,
+        );
+      } finally {
+        proc.stdin.end();
+        await proc.exited;
+      }
+    } finally {
+      life.close();
+      store.close();
+      server.stop(true);
+    }
+  });
+});

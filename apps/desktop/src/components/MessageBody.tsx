@@ -24,7 +24,7 @@ export function messageParts(text: string): MessagePart[] {
 }
 
 /** Screenshot bytes live only in a visible preview, never in saved task or window state. */
-export function MessageBody({ text, taskId, finished = false }: { text: string; taskId: string; finished?: boolean }) {
+export function MessageBody({ text, taskId, productId, finished = false }: { text: string; taskId: string; productId?: string; finished?: boolean }) {
   const parts = useMemo(() => messageParts(text), [text]);
   const content: ReactNode[] = [];
   for (let index = 0; index < parts.length; index++) {
@@ -36,12 +36,13 @@ export function MessageBody({ text, taskId, finished = false }: { text: string; 
       images.push(parts[index + 2] as typeof part);
       index += 2;
     }
-    content.push(<span className="message-images" key={first}>{images.map((image, item) => <ImagePreview key={`${item}:${image.path}`} taskId={taskId} path={image.path} label={image.label} finished={finished} />)}</span>);
+    content.push(<span className="message-images" key={first}>{images.map((image, item) => <ImagePreview key={`${item}:${image.path}`} taskId={taskId} productId={productId} path={image.path} label={image.label} finished={finished} />)}</span>);
   }
   return <>{content}</>;
 }
 
-function ImagePreview({ taskId, path, label, finished }: { taskId: string; path: string; label: string; finished: boolean }) {
+/** Both saved report pictures and links share the same bounded, visible-only image lifetime. */
+export function ImagePreview({ taskId, productId, path, imageId, label, finished }: { taskId: string; productId?: string; path?: string; imageId?: string; label: string; finished: boolean }) {
   const box = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
   const [url, setUrl] = useState<string>();
@@ -52,7 +53,8 @@ function ImagePreview({ taskId, path, label, finished }: { taskId: string; path:
     const element = box.current;
     if (!element || finished) return;
     if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
-    const observer = new IntersectionObserver(([entry]) => setVisible(Boolean(entry?.isIntersecting)), { rootMargin: "100px" });
+    // Fast scrolling can queue both entering and leaving this one observed image.
+    const observer = new IntersectionObserver((entries) => setVisible(Boolean(entries.at(-1)?.isIntersecting)), { rootMargin: "100px" });
     observer.observe(element);
     return () => observer.disconnect();
   }, [finished]);
@@ -62,10 +64,14 @@ function ImagePreview({ taskId, path, label, finished }: { taskId: string; path:
     let disposed = false;
     let objectUrl: string | undefined;
     setError(undefined);
-    void Promise.resolve().then(() => sim.previewImage(taskId, path)).then(({ mime, data }) => {
-      if (disposed) return;
+    void Promise.resolve().then(async () => {
+      if (imageId) return sim.image(taskId, imageId);
+      const { mime, data } = await (productId ? sim.previewImage(taskId, path!, productId) : sim.previewImage(taskId, path!));
       const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
-      objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      return new Blob([bytes], { type: mime });
+    }).then((blob) => {
+      if (disposed) return;
+      objectUrl = URL.createObjectURL(blob);
       setUrl(objectUrl);
     }).catch((reason: unknown) => {
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -76,12 +82,13 @@ function ImagePreview({ taskId, path, label, finished }: { taskId: string; path:
       disposed = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [taskId, path, visible || expanded, finished, attempt]);
+  }, [taskId, productId, path, imageId, visible || expanded, finished, attempt]);
 
+  // A loading thumbnail stays focusable when closing releases its offscreen image.
   return <span ref={box} className="message-image">
     {finished ? <span className="message-image-unavailable"><ImageIcon size={16} aria-hidden="true" /><strong>{label}</strong><span>Preview unavailable after the task finishes.</span></span>
       : error ? <span className="message-image-unavailable"><ImageIcon size={16} aria-hidden="true" /><strong>{label}</strong><span role="status">{error}</span><button className="btn ghost small" onClick={() => setAttempt((value) => value + 1)}>Try again</button></span>
-      : <button className="message-image-open" disabled={!url} onClick={() => setExpanded(true)} aria-label={`Enlarge ${label} screenshot`}>
+      : <button className="message-image-open" aria-disabled={!url} onClick={() => { if (url) setExpanded(true); }} aria-label={`Enlarge ${label} screenshot`}>
           {url ? <img src={url} alt={`${label} screenshot`} decoding="async" onError={() => setError("This screenshot could not be displayed.")} /> : <span className="message-image-loading"><ImageIcon size={22} aria-hidden="true" />{visible ? "Loading screenshot…" : "Screenshot"}</span>}
           <span className="message-image-caption"><strong>{label}</strong><Expand size={14} aria-hidden="true" /></span>
         </button>}

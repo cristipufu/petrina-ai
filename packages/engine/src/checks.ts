@@ -125,7 +125,9 @@ export async function runChecks(
       ].filter(Boolean).join("\n");
       const finished: CheckRun = {
         ...result,
-        ok: !run.error && !run.timedOut && run.code === 0,
+        ok: !run.error && !run.timedOut && !signal?.aborted && run.code === 0,
+        ...(log ? { logComplete: run.outputComplete && !result.logError } : {}),
+        ...(signal?.aborted ? { interrupted: true } : {}),
         ...(run.timedOut ? { timedOut: true } : {}),
         ...(run.cleanupIncomplete ? { cleanupIncomplete: true } : {}),
         output: tidyOutput(output),
@@ -138,7 +140,7 @@ export async function runChecks(
 
 interface CheckLog {
   write(bytes: Uint8Array): Promise<void>;
-  close(): Promise<Pick<CheckRun, "logPath" | "logError">>;
+  close(): Promise<Pick<CheckRun, "logPath" | "logFileIdentity" | "logError">>;
 }
 
 /** Stream all output to disk; at most one chunk from each pipe waits in memory. */
@@ -163,8 +165,16 @@ async function checkLog(directory: string): Promise<CheckLog> {
     },
     async close() {
       await pending;
+      let logFileIdentity: CheckRun["logFileIdentity"];
+      try {
+        const info = await handle.stat({ bigint: true });
+        if (info.isFile()) logFileIdentity = { device: info.dev.toString(), inode: info.ino.toString() };
+        else logError ??= "The diagnostic is not a regular file.";
+      } catch (error) {
+        logError ??= String(error);
+      }
       try { await handle.close(); } catch (error) { logError ??= String(error); }
-      return { logPath: path, ...(logError ? { logError } : {}) };
+      return { logPath: path, ...(logFileIdentity ? { logFileIdentity } : {}), ...(logError ? { logError } : {}) };
     },
   };
 }
@@ -173,13 +183,15 @@ async function checkLog(directory: string): Promise<CheckLog> {
  * One command, with only the end of its output kept while it runs, so a noisy check never fills
  * memory. It gets a process group of its own: a timeout or a stopped task ends everything it started.
  */
-function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>): Promise<{ code: number | null; output: string; timedOut: boolean; cleanupIncomplete?: boolean; error?: string }> {
+function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; cleanupIncomplete?: boolean; error?: string }> {
   return new Promise((resolve) => {
     const windows = process.platform === "win32";
     let kept = "";
     let cut = false;
     let timedOut = false;
     let done = false;
+    let outputComplete = false;
+    let endedPipes = 0;
     let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
     let stopping: Promise<boolean> | undefined;
@@ -191,7 +203,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
       clearTimeout(grace);
       signal?.removeEventListener("abort", stop);
       for (const reader of readers) void reader.cancel().catch(() => undefined);
-      const result = { code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, ...(error ? { error } : {}) };
+      const result = { code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, outputComplete, ...(error ? { error } : {}) };
       // The parent can exit before detached workers. Do not release the working copy until their stop settles.
       void (stopping ?? Promise.resolve(true)).then((clean) => resolve({ ...result, ...(!clean ? { cleanupIncomplete: true } : {}) }));
     };
@@ -227,6 +239,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
       try {
         while (!done) {
           const next = await reader.read();
+          if (next.done) endedPipes += 1;
           if (next.done || done) break;
           keep(decoder.decode(next.value, { stream: true }));
           await log?.write(next.value);
@@ -240,7 +253,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     };
     // Bun can emit node:child_process exit/close inside spawn(), losing both the result and buffered output.
     // Its native handle retains the exit promise and stream bytes even when the command has already ended.
-    const output = Promise.all([drain(child.stdout), drain(child.stderr)]);
+    const output = Promise.all([drain(child.stdout), drain(child.stderr)]).then(() => { outputComplete = endedPipes === 2; });
     // A background program can keep the pipes open after the check exits: don't wait on it for long.
     void child.exited.then((code) => {
       if (!done) grace ??= setTimeout(() => finish(code), 5000);

@@ -21,7 +21,7 @@ export class GuideKeeper {
   acceptGuideLine(itemId: Id): void {
     const item = this.k.takeItem(itemId);
     const task = item && this.k.task(item.taskId);
-    const product = task && this.k.productOf(task);
+    const product = task && (item.productId ? this.k.s.products.find((entry) => entry.id === item.productId) : this.k.productOf(task));
     const point = cleanPoint(item?.body ?? "");
     if (!point || !task || !product) return;
     const existing = product.reviewGuide?.find((line) => line.text === point);

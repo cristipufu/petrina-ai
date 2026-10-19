@@ -37,7 +37,7 @@ export class Context {
     private readonly currentChecks: (task: MTask) => Promise<boolean> = async () => false,
   ) {}
 
-  async sectionsFor(task: MTask, roleId: Id, member?: string): Promise<Section[]> {
+  async sectionsFor(task: MTask, roleId: Id, member?: string, copies?: Readonly<Record<string, string>>): Promise<Section[]> {
     const role = this.k.role(roleId);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
     const points = reads.includes("guide-points") ? await this.guide.pendingPoints(task) : [];
@@ -45,8 +45,14 @@ export class Context {
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
     takeMessages(task, member, Infinity);
     const source = task.source ? [{ title: "Approved starting point and delivery", body: workSummary({ ...task.source, product: { ...task.source.product, name: this.k.productOf(task)?.name ?? task.source.product.name } }) }] : [];
-    const sections = [...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points, currentChecks))];
-    if (task.handedBack?.length) sections.push({ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") });
+    const map = task.repositories ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => [
+      work.source ? workSummary(work.source) : work.productId,
+      `Product id: ${work.productId}; copy: ${copies?.[work.productId] ?? work.worktree ?? "preparing"}; base version: ${work.baseSha ?? "not prepared"}; last completed review: ${work.reviewedSha ?? "none; inspect the full change"}`,
+      `Builder report: ${work.report?.summary ?? "not yet built"}. Checks: ${work.checks?.results.map((run) => `${run.name}: ${run.ok ? "passed" : "failed"}`).join(", ") || "Not run"}`,
+      `Review guide: use this product’s REVIEW.md at its saved base version.`,
+    ].join("\n")).join("\n\n") + `\n\n${role?.canEdit ? `You own only product ${task.productId}. Read the other copies when needed; change only your own product. Return your own title, report and PR description.` : "Inspect every repository and the behaviour across them together."}\nFor every acceptance result and finding, explicitly return productIds naming every affected product. Unassigned items stay under Together for the coordinator. Passing separate suites cannot prove shared acceptance. For each lesson, return {productId, text} naming its product; unassigned lessons stay under Together and are never added to a repository automatically. Shared repairs require a separate answer from every affected builder and combined verification.` }] : [];
+    const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points, currentChecks))];
+    if (task.handedBack?.length) sections.push({ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}${entry.productId ? ` · ${task.repositories?.find((work) => work.productId === entry.productId)?.source?.product.name ?? entry.productId}` : ""}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") });
     return sections;
   }
 
@@ -98,7 +104,7 @@ export class Context {
 
   private findingsToAnswer(task: MTask): Section[] {
     if (!task.fixing) return [];
-    const open = task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing");
+    const open = task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(task.productId)));
     const logs = task.checks?.results.filter((run) => !run.ok).flatMap((run) => {
       const saved = run.logPath ? `- ${run.name}: ${JSON.stringify(run.logPath)}${run.logError ? " (incomplete)" : ""}` : "";
       const error = run.logError ? `- ${run.name}: Could not save the complete output: ${run.logError}` : "";

@@ -1,3 +1,5 @@
+import { companionText, landingState, repositoryDelivered } from "@petrina/core";
+import { api } from "./source-github.js";
 // Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
 // top of the latest main, approved for this delivery and destination, with the checks passing on it. Petrina
 // publishes the exact commit it checked, with what the builder wrote to go out with it: it pushes the branch and
@@ -32,6 +34,7 @@ import { dirname, join } from "node:path";
 import * as git from "./git.js";
 import { sourcePr } from "./source-github.js";
 import { ReleaseNotesResult, TEXT_LIMITS } from "./roles.js";
+import { WaitingForUsage } from "./usage.js";
 import { Aborted, type Kernel, type MStage, type MTask, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import { type Connections, Unreachable } from "./connection.js";
 import type { ProductChecks } from "./product-checks.js";
@@ -110,6 +113,167 @@ export class Shipping {
    * moved and it gets ready again).
    */
   async deliver(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+    if (task.repositories) {
+      try { return await this.deliverMany(task, stage, signal); }
+      finally {
+        if (!this.k.stopped && ["needs-you", "paused", "failed"].includes(task.state)) await this.clearUnpublishedPreparations(task);
+      }
+    }
+    return this.deliverOne(task, stage, signal);
+  }
+
+  private async clearUnpublishedPreparations(task: MTask): Promise<void> {
+    const current = task.productId;
+    for (const work of task.repositories!) {
+      if (work.pr || work.release || work.landed || work.shipping?.step || work.shipping?.pushed) continue;
+      this.k.selectRepository(task, work.productId);
+      await this.clearUnpublishedVersion(task);
+    }
+    this.k.selectRepository(task, current);
+  }
+
+  private async deliverMany(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+    this.k.saveRepository(task);
+    for (const work of task.repositories!.filter((entry) => entry.pr?.state === "closed" && !entry.landingAccepted)) {
+      const state = await git.prState(work.source!.product.repo, work.pr!.number, this.k.options.gh);
+      if (state) work.pr!.state = state;
+    }
+    if (task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) { this.finishMany(task); return "stop"; }
+    // Complete preparation everywhere before the first publication. Already delivered records are immutable.
+    for (const work of task.repositories!) {
+      if (repositoryDelivered(work)) continue;
+      this.k.selectRepository(task, work.productId);
+      if (task.shipping?.step) {
+        if (await this.checkDelivery(task, signal) === "stop" && !repositoryDelivered(work)) return "stop";
+        this.k.saveRepository(task);
+        if (repositoryDelivered(work)) continue;
+      }
+      if (!task.shipping?.prepared) {
+        if (task.delivery !== "local") await this.tools.needGitHub(task);
+        if (await this.readyToShip(task, signal) === "back") return "continue";
+        if (task.delivery !== "release" && task.baseSha === await git.head(task.worktree!)) {
+          work.nothingToPublish = true;
+          this.k.log(task, "done", `${task.source!.product.name}: Nothing to publish`);
+          this.k.commitNow();
+          continue;
+        }
+        const result = await this.prepare(task, stage, signal);
+        if (result !== "ready") return result;
+        this.k.saveRepository(task);
+      }
+    }
+    const preview = companionText(task.repositories!);
+    if (preview) for (const work of task.repositories!) {
+      if (!work.nothingToPublish && (work.delivery === "pull-request" || work.source?.destination.kind === "update-pr")) work.companion ??= { text: preview, state: "pending" };
+    }
+    this.k.commitNow();
+    for (const work of task.repositories!) {
+      if (repositoryDelivered(work)) continue;
+      this.k.selectRepository(task, work.productId);
+      if (task.shipping?.prepared?.body && preview) task.shipping.prepared.body = `${task.shipping.prepared.body.replace(/\n*Part of a change across: [^\n]*$/u, "")}\n\n${preview}`;
+      const result = await this.deliverOne(task, stage, signal);
+      this.k.saveRepository(task);
+      if (!repositoryDelivered(work)) return result;
+      if (work.pr?.state === "closed" && !work.landingAccepted) { this.finishMany(task); return "stop"; }
+      if (signal.aborted || task.state === "cancelled") return "stop";
+      task.state = "running";
+      this.k.commitNow();
+    }
+    // Linking has its own saved progress and recovery; it never reopens or republishes a delivery.
+    const text = companionText(task.repositories!);
+    if (text) for (const work of task.repositories!.filter((entry) => entry.pr)) {
+      this.k.selectRepository(task, work.productId);
+      if (work.companion?.state === "done" && work.companion.text === text) continue;
+      work.companion = { text, state: "checking" };
+      task.statusLine = `Finishing companion links for ${work.source!.product.name}`;
+      this.k.commitNow();
+      try {
+        const repo = work.source!.product.repo;
+        const number = work.pr!.number;
+        const existing = work.source!.destination.kind === "update-pr";
+        if (existing) {
+          const comments = (await api(repo, `issues/${number}/comments?per_page=100`, this.k.options.gh)).flat() as { body?: string }[];
+          if (!comments.some((comment) => comment.body === text)) {
+            const posted = await git.gh(this.k.options.gh ?? ["gh"], repo, ["pr", "comment", String(number), "--body-file", "-"], text);
+            if (posted.code) throw new Error(posted.stderr || "Could not confirm the companion comment.");
+          }
+          const confirmed = (await api(repo, `issues/${number}/comments?per_page=100`, this.k.options.gh)).flat() as { body?: string }[];
+          if (!confirmed.some((comment) => comment.body === text)) throw new Error("Could not confirm the companion comment. Check again before retrying.");
+        } else {
+          const read = await git.gh(this.k.options.gh ?? ["gh"], repo, ["pr", "view", String(number), "--json", "body"]);
+          if (read.code) throw new Error("Could not read the companion links. Check again.");
+          const body = JSON.parse(read.stdout).body;
+          if (typeof body !== "string") throw new Error("GitHub did not return the pull request description.");
+          const next = `${body.replace(/\n*Part of a change across: [^\n]*\.?$/u, "")}\n\n${text}`;
+          if (body !== next) {
+            const edited = await git.gh(this.k.options.gh ?? ["gh"], repo, ["pr", "edit", String(number), "--body-file", "-"], next);
+            if (edited.code) throw new Error(edited.stderr || "Could not finish companion links.");
+          }
+        }
+        work.companion.state = "done";
+        this.k.commitNow();
+      } catch (error) {
+        work.companion.state = "pending";
+        this.k.raise(task, "stuck", "Deliveries are saved; companion links need finishing", false, { body: String(error) });
+        task.statusLine = "Deliveries saved. Finish links";
+        this.k.commitNow();
+        return "stop";
+      }
+    }
+    this.finishMany(task);
+    return "stop";
+  }
+
+  private finishMany(task: MTask): void {
+    this.k.saveRepository(task);
+    const landed = landingState(task.repositories!);
+    delete task.agent;
+    task.holdsSlot = false;
+    if (task.repositories!.every(repositoryDelivered) && task.repositories!.every((work) => !work.companion || work.companion.state === "done") && !task.deliveryRecorded) { this.k.tracking.delivered(task); task.deliveryRecorded = true; }
+    if (landed === "unfinished") {
+      task.state = "needs-you"; task.column = "ready"; task.statusLine = "Confirmed deliveries are saved. Unfinished deliveries need retry";
+      if (!this.k.s.inbox.some((item) => item.taskId === task.id && ["stuck", "shipping"].includes(item.kind))) this.k.raise(task, "stuck", "Resume the unfinished deliveries", false);
+    } else if (landed === "decision") {
+      task.state = "needs-you";
+      task.column = "ready";
+      const names = task.repositories!.filter((work) => work.pr?.state === "closed" && !work.landingAccepted).map((work) => work.source!.product.name);
+      task.statusLine = `${names.join(", ")}: pull request closed without merging. Your decision is needed`;
+      if (!this.k.s.inbox.some((item) => item.taskId === task.id && item.kind === "shipping")) this.k.raise(task, "shipping", task.statusLine, false, { body: "Confirmed deliveries remain saved. Dependent tasks stay blocked until you explicitly decide this change has landed." });
+    } else if (landed === "waiting") {
+      task.state = "pr-open"; task.column = "ready"; task.statusLine = "Waiting for every pull request to merge";
+    } else if (landed === "landed") {
+      task.state = "done"; task.column = "done"; task.statusLine = "All products have landed"; task.finishedAt ??= Date.now();
+    }
+    this.k.commitNow();
+    this.k.schedule();
+  }
+
+  /** Release previews contain text only; no version files change until shared approval. */
+  async previewRelease(task: MTask, stage: MStage, signal: AbortSignal): Promise<void> {
+    if (!task.repositories || task.delivery !== "release") return;
+    const start = await git.head(task.worktree!);
+    if (task.releasePreview?.start === start && task.releasePreview.base === task.baseSha) return;
+    task.shipping = { moves: 0, failures: 0, start, base: task.baseSha };
+    await this.chooseVersion(task, signal);
+    const log = await this.sincePreviousRelease(task, signal);
+    const result = await this.turns.turn(task, "release-manager", stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE, () => [log], ReleaseNotesResult, signal);
+    const shipping = task.shipping!;
+    task.releasePreview = { start, base: task.baseSha, version: shipping.version!, tag: shipping.tag!, after: shipping.after!, notes: result.notes, summary: result.summary };
+    delete task.shipping;
+    this.k.finishStep(task);
+    this.k.commitNow();
+  }
+
+  /** A known-unpublished version commit is preparation, so it never reaches an editing role. */
+  async clearUnpublishedVersion(task: MTask): Promise<void> {
+    if (!task.shipping?.step && !task.shipping?.pushed && task.shipping?.start) {
+      await this.backToWork(task);
+      delete task.shipping;
+      this.k.commitNow();
+    }
+  }
+
+  private async deliverOne(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     if (signal.aborted) throw new Aborted();
     if (!task.shipping?.step) {
       // Nothing starts shipping to GitHub without a GitHub login: no half-done delivery.
@@ -121,6 +285,9 @@ export class Shipping {
         if (prepared !== "ready") return prepared;
       }
     }
+    // Check preparation or release notes may have finished after admissions closed. Publishing
+    // is its own step; an already-started delivery still settles all of its saved steps.
+    if (this.k.admissionsClosed && !task.shipping?.step) throw new WaitingForUsage("Waiting for the pool to resume before publishing");
     // Petrina's own step on the journey, from its first look on GitHub until it went out.
     beginPetrinaStep(task, "delivery", Date.now());
     // Looked up before publishing, and first after an interruption: what is already there is recorded, not made again.
@@ -204,12 +371,27 @@ export class Shipping {
     this.k.commitNow();
     const tested = await this.setVersion(task);
     // A version commit changes what ships: the checks run on it too.
-    if (tested !== start && (await this.checks.failing(task, signal))) return this.preparationFailed(task, `The product's checks fail with the version set to ${shipping.version}`);
+    if (tested !== start && (await this.checks.failing(task, signal))) return this.preparationFailed(task, `The product's checks fail with the version set to ${shipping.version}`, signal);
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
+    const preview = task.releasePreview;
+    if (task.repositories && preview && (preview.start !== start || preview.version !== shipping.version || preview.tag !== shipping.tag || preview.after !== shipping.after)) {
+      await this.backToWork(task);
+      delete task.releasePreview;
+      this.clearApproval(task);
+      delete task.shipping;
+      // The delivery gate can pause before it runs again. Restore every unpublished product
+      // now, while the previous approval still describes the original work.
+      await this.clearUnpublishedPreparations(task);
+      const gate = task.plan!.stages.findIndex((entry) => entry.gate === "delivery");
+      task.stageIndex = gate;
+      this.k.log(task, "warn", "The release preview changed, so shared delivery approval is needed again.");
+      this.k.commitNow();
+      return "continue";
+    }
     const log = await this.sincePreviousRelease(task, signal);
     const profileId = stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE;
     let by = profileId;
-    const result = await this.turns.turn(task, "release-manager", profileId, () => [log], ReleaseNotesResult, signal, {
+    const result = preview ?? await this.turns.turn(task, "release-manager", profileId, () => [log], ReleaseNotesResult, signal, {
       used: (id) => (by = id),
       check: (value) => (!value.notes.trim() ? `"notes" is empty: write the release notes.` : value.notes.length > TEXT_LIMITS.notes ? `the release notes are longer than GitHub allows (${TEXT_LIMITS.notes} characters). Shorten them.` : undefined),
     });
@@ -398,13 +580,32 @@ export class Shipping {
   /**
    * Not ready (the product's checks fail with the version set): nothing is published, and main and GitHub stay
    * as they were. The version change goes, and the task goes back to the builder, then review and the delivery
-   * check again. After two failures Petrina stops and asks.
+   * check again. After two failures Petrina stops and asks. Shared tasks keep their approval and return to
+   * the delivery check instead; the coordinator can retry preparation or ask for changes.
    */
-  private async preparationFailed(task: MTask, summary: string): Promise<"continue" | "stop"> {
+  private async preparationFailed(task: MTask, summary: string, signal: AbortSignal): Promise<"continue" | "stop"> {
     const shipping = task.shipping!;
     await this.backToWork(task);
     const failures = shipping.failures + 1;
     const reason = /[.!?]$/.test(summary.trim()) ? summary.trim() : `${summary.trim()}.`;
+    if (task.repositories) {
+      // Only delivery preparation changed. Keep the reviewed work and its approval; no builder owns this failure.
+      delete task.shipping;
+      this.k.clearStep(task);
+      this.k.saveRepository(task);
+      await this.clearUnpublishedPreparations(task);
+      // Check the restored work, so failures belonging only to the removed version do not reach a builder.
+      await this.checks.failing(task, signal);
+      this.k.saveRepository(task);
+      const delivery = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
+      if (delivery < 0) throw new Error("The plan has no delivery check before release preparation");
+      task.stageIndex = delivery;
+      task.sub = 0;
+      const problem = `${this.k.repositoryOf(task)!.name}: getting the release ready failed. ${reason} Nothing was published. Your approved work is saved; try delivery again or send it back with a note.`;
+      this.k.log(task, "warn", problem);
+      this.k.gate(task, "delivery", problem);
+      return "stop";
+    }
     task.findings.push({ id: this.k.id(task.id), text: `Getting the delivery ready failed, so nothing was published: ${reason}`, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
     task.shipping = { moves: 0, failures };
     this.clearApproval(task);
@@ -956,8 +1157,9 @@ export class Shipping {
       this.k.log(task, "status", `Pull request #${pr.number} went out while you cancelled it: ${pr.url}`);
     } else {
       if (how) this.k.log(task, "done", how === "updated" ? `Updated PR #${pr.number}: ${task.report?.summary ?? "The checked work was added"}. Delivered to ${task.source!.destination.repo} · ${task.source!.destination.branch}` : `Petrina opened pull request #${pr.number}, and checked it on GitHub`);
-      this.k.tracking.delivered(task);
+      if (!task.repositories) this.k.tracking.delivered(task);
       endPetrinaStep(task, { outcome: how === "updated" ? `Updated pull request #${pr.number}` : how ? W.openedPr(pr.number) : W.alreadyOut(`pull request #${pr.number}`) }, Date.now());
+      if (task.repositories) { this.k.saveRepository(task); this.saveOutcome(); return "done"; }
       if (pr.state === "open") {
         delete task.agent;
         task.holdsSlot = false;
@@ -978,7 +1180,7 @@ export class Shipping {
     if (task.state === "cancelled") this.k.log(task, "status", `Release ${release.tag} went out while you cancelled it: ${release.url}`);
     else {
       if (how) this.k.log(task, "done", `Petrina published release ${release.tag}, and checked it on GitHub`);
-      this.k.tracking.delivered(task);
+      if (!task.repositories) this.k.tracking.delivered(task);
       endPetrinaStep(task, { outcome: how ? W.released(release.tag) : W.alreadyOut(`release ${release.tag}`) }, Date.now());
       this.finished(task, `Released ${release.tag}`);
     }
@@ -1035,7 +1237,7 @@ export class Shipping {
         : `${branch} moved forward to it while you cancelled it (${sha.slice(0, 7)})`);
     }
     else {
-      this.k.tracking.delivered(task);
+      if (!task.repositories) this.k.tracking.delivered(task);
       if (how) this.k.log(task, "done", how === "found" ? `Checked: ${branch} already has it (${sha.slice(0, 7)})` : `Petrina moved ${branch} forward to it (${sha.slice(0, 7)}), and checked the main copy`);
       endPetrinaStep(task, { outcome: how === "moved" ? W.movedMain(branch) : W.alreadyOut(`${branch} has it`) }, Date.now());
       this.finished(task, `Committed to ${branch}`);
@@ -1054,6 +1256,7 @@ export class Shipping {
   }
 
   private finished(task: MTask, statusLine: string): void {
+    if (task.repositories) { task.statusLine = statusLine; this.k.saveRepository(task); return; }
     delete task.agent;
     task.holdsSlot = false;
     task.state = "done";
@@ -1117,7 +1320,7 @@ export class Shipping {
   }
 
   settleCancelledTasks(): void {
-    for (const task of this.k.s.tasks) if (task.state === "cancelled" && task.shipping?.step) void this.settleCancelled(task.id);
+    for (const task of this.k.s.tasks) if (task.state === "cancelled" && task.shipping?.step) void this.k.trackWork(this.settleCancelled(task.id));
   }
 
   /** A cancelled release with no release on GitHub: say so when its push of the default branch and tag went out. */
@@ -1225,8 +1428,18 @@ export class Shipping {
 
   /** "Mark as done": it went out another way. */
   markDone(itemId: Id): void {
+    const pending = this.k.s.inbox.find((item) => item.id === itemId);
+    const shared = pending && this.k.task(pending.taskId);
+    if (shared?.repositories && !shared.repositories.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) throw new Error("Check each unfinished delivery before marking this shared task as landed.");
     const task = this.takeShippingItem(itemId);
     if (!task) return;
+    if (task.repositories) {
+      for (const work of task.repositories) if (work.pr?.state === "closed" && !work.landingAccepted) work.landingAccepted = { at: Date.now() };
+      this.k.log(task, "you", "You resolved the closed pull requests. Open companion pull requests still need to land.");
+      if (landingState(task.repositories) === "unfinished") { this.k.toWaiting(task); this.k.commitNow(); this.k.schedule(); }
+      else this.finishMany(task);
+      return;
+    }
     if (!task.pr && (task.delivery === "pull-request" || task.shipping?.carriedOver)) {
       // An update's destination is the PR's working branch, not its base. Its existing approved-PR
       // path keeps the earlier cleanup rules; this extra attribution proof is for newly opened PRs.
@@ -1316,8 +1529,24 @@ export class Shipping {
    * Unless GitHub confirms the pull request ended, it is still open, and the copy stays.
    */
   async pollPullRequests(): Promise<void> {
+    for (const task of this.k.s.tasks.filter((entry) => entry.repositories)) {
+      if (this.k.stopped || this.k.drivers.has(task.id) || this.following.has(task.id)) continue;
+      this.following.add(task.id);
+      try {
+        this.k.saveRepository(task);
+        for (const work of task.repositories!) if (work.pr?.state === "open") {
+          const state = await git.prState(work.source!.product.repo, work.pr.number, this.k.options.gh).catch(() => undefined);
+          if (state === "merged" || state === "closed") {
+            work.pr.state = state;
+            if (task.productId === work.productId && task.pr) task.pr.state = state;
+            this.k.log(task, "done", `${work.source!.product.name}: ${state === "merged" ? "Pull request merged" : "Pull request closed without merging"}`);
+          }
+        }
+        if ((task.state !== "cancelled" && task.repositories!.every(repositoryDelivered)) || task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) this.finishMany(task);
+      } finally { this.following.delete(task.id); }
+    }
     const following = (task: MTask) => task.pr?.state === "open" && !!task.worktree && (task.state === "pr-open" || ((task.state === "done" || task.state === "cancelled") && task.cleanup?.removedAt === undefined));
-    await Promise.all([...this.k.s.tasks.filter((task) => needsPullRequestCheck(task as Task)).map((task) => this.checkUnrecordedPullRequest(task)), ...this.k.s.tasks.filter(following).map(async (task) => {
+    await Promise.all([...this.k.s.tasks.filter((task) => !task.repositories && needsPullRequestCheck(task as Task)).map((task) => this.checkUnrecordedPullRequest(task)), ...this.k.s.tasks.filter((task) => !task.repositories && following(task)).map(async (task) => {
       if (this.k.stopped || this.following.has(task.id)) return;
       this.following.add(task.id);
       try {

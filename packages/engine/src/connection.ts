@@ -112,7 +112,7 @@ export class Connections {
     if (!git.sameRepo(address, product.repo)) return { ok: false, reason: `${product.name}'s address ${address} is not ${product.repo} on GitHub` };
     // Older GitHub clones may use HTTP or the read-only git protocol; use HTTPS for both fetch and
     // delivery rather than enabling those transports, keeping the saved repository and origin unchanged.
-    return { ok: true, remote: this.k.options.remote ? { url: this.k.options.remote, local: true } : { url: /^(?:http|git):\/\//i.test(address) ? `https://github.com/${product.repo}.git` : address } };
+    return { ok: true, remote: (this.k.options.remotes?.[product.repo] ?? this.k.options.remote) ? { url: (this.k.options.remotes?.[product.repo] ?? this.k.options.remote)!, local: true } : { url: /^(?:http|git):\/\//i.test(address) ? `https://github.com/${product.repo}.git` : address } };
   }
 
   /** Show the coordinator the address the clone has now; the answer is kept. A connection that cannot be used comes back as is. */

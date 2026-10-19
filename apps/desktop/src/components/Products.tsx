@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { involvesProduct } from "@petrina/core";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { DELIVERY_LABEL, type Column, type Product, type ProductsUsage, type State } from "@petrina/core";
 import { mod } from "../keyboard";
@@ -20,7 +21,7 @@ export interface ProductStats {
 
 export function productStats(state: State): ProductStats[] {
   return state.products.map((product) => {
-    const tasks = state.tasks.filter((task) => task.productId === product.id);
+    const tasks = state.tasks.filter((task) => involvesProduct(task, product.id));
     const byColumn = { backlog: 0, queue: 0, planning: 0, designing: 0, building: 0, reviewing: 0, ready: 0, done: 0 } as Record<Column, number>;
     const history = state.history?.products.find((entry) => entry.productId === product.id);
     byColumn.done = (history?.done ?? 0) + (history?.cancelled ?? 0);

@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, journeyView, usageLines, type AgentProfile, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
@@ -226,14 +227,17 @@ describe.concurrent("an agent that runs out of usage", () => {
   });
 
   it("waits for usage when every tool is out, then goes back to its own conversation by itself", async () => {
-    const run = await start({ planner: "claude-build", builder: "plain", reopen: "resume", limited: [{ model: "opus", role: "builder", resetsInMs: 2500 }] });
+    const run = await start({ planner: "claude-build", builder: "plain", reopen: "resume", limited: [{ model: "opus", role: "builder" }] }, {
+      // Set the other tools' limits before any task can run. A late fixture update
+      // must not erase Claude's already reported limit or admit a replacement.
+      before: (engine) => {
+        engine.s.pool.limited = [
+          { toolId: "codex", until: Date.now() + 3_600_000, reason: "Codex's usage limit" },
+          { toolId: "grok", until: Date.now() + 3_600_000, reason: "Grok's rate limit" },
+        ];
+      },
+    });
     try {
-      // Codex and Grok are out for longer than Claude Code, so only Claude Code's own conversation can carry on.
-      await waitFor(() => run.find().plan, "the plan");
-      run.engine.s.pool.limited = [
-        { toolId: "codex", until: Date.now() + 120_000, reason: "Codex's usage limit" },
-        { toolId: "grok", until: Date.now() + 120_000, reason: "Grok's rate limit" },
-      ];
       const waiting = await waitFor(() => {
         const task = run.find();
         return task.state === "waiting" && task.statusLine.startsWith("Waiting for usage") && task;
@@ -246,6 +250,15 @@ describe.concurrent("an agent that runs out of usage", () => {
       const startedAt = box.startedAt;
       expect(box).toMatchObject({ roleId: "builder", profileId: "opus-high" });
       expect(box.endedAt).toBeUndefined();
+
+      // Keep the fake limit in force until the agent has reported it and the task is visibly waiting.
+      // Then shorten both fake and pool expiries together to exercise the automatic wake without
+      // letting machine load consume a tiny quota window before the fake agent can report it.
+      const resetAt = Date.now() + 1500;
+      writeFileSync(join(run.fakes.dir, "limit-opus"), String(resetAt));
+      const claudeLimit = run.engine.s.pool.limited!.find((limit) => limit.toolId === "claude-code")!;
+      claudeLimit.until = resetAt;
+      run.engine.schedule();
 
       const task = await run.done();
       const builders = run.fakes.received("builder");

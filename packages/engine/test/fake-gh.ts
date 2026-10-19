@@ -194,7 +194,7 @@ function main(): void {
   }
   const positional = args[2] && !args[2].startsWith("-") ? args[2] : undefined;
   // `gh repo view` names the repository itself; everything else is pinned with --repo.
-  const repo = noun === "api" ? (verb?.startsWith(`repos/${state.repo}/`) ? state.repo : undefined) : command === "repo view" ? positional : flag("--repo");
+  const repo = noun === "api" ? (verb?.startsWith(`repos/${state.repo}/`) ? state.repo : undefined) : command === "repo view" ? positional ?? flag("--repo") : flag("--repo");
   if (repo !== state.repo) fail(`fake gh only knows ${state.repo}, not ${repo}`);
   if (count(state.fail)) fail("HTTP 502: Bad Gateway (https://api.github.com/graphql)");
   if (state.hidden) {
@@ -231,7 +231,7 @@ function main(): void {
     if (/^(pulls|issues)\/\d+\/(reviews|comments)/.test(endpoint)) answer("[[]]");
     fail("Unknown API endpoint");
   }
-  if (command === "repo view") answer(flag("--jq") === ".nameWithOwner" ? state.repo : JSON.stringify({ nameWithOwner: state.repo }));
+  if (command === "repo view") answer(flag("--jq") === ".nameWithOwner" ? state.repo : JSON.stringify({ nameWithOwner: state.repo, defaultBranchRef: { name: "main" } }));
 
   if (command === "pr list") {
     if (count(state.stale)) answer("[]");
@@ -247,6 +247,19 @@ function main(): void {
     if (!pr) fail(`no pull requests found for branch "${positional}"`);
     refreshPr(pr!);
     answer(flag("--jq") === ".state" ? pr!.state : JSON.stringify(pick(pr!)));
+  }
+  if (command === "pr edit" || command === "pr comment") {
+    const pr = state.prs.find((entry) => String(entry.number) === positional);
+    if (!pr) fail("Pull request not found");
+    const body = readFileSync(0, "utf8");
+    if (command === "pr edit") pr!.body = body;
+    else {
+      const endpoint = `issues/${pr!.number}/comments?per_page=100`;
+      state.pages ??= {};
+      const comments = state.pages[endpoint]?.flat() ?? [];
+      state.pages[endpoint] = [[...comments, { body }]];
+    }
+    save(); answer(pr!.url);
   }
   if (command === "pr create") {
     const head = flag("--head")!;

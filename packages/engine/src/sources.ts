@@ -1,14 +1,20 @@
-import { deliveryLabel, workSummary, type TaskSource, type WorkChoice } from "@petrina/core";
+import { productName, deliveryLabel, workSummary, type TaskSource, type WorkChoice } from "@petrina/core";
 import * as git from "./git.js";
 import { background, branchExists, prNumber, sourcePr } from "./source-github.js";
 import type { Kernel, MTask } from "./kernel.js";
 import type { Connections } from "./connection.js";
 
+import { mkdir, readdir, realpath, rm } from "node:fs/promises";
+import { isAbsolute, resolve, dirname } from "node:path";
+
 export class Sources {
   constructor(private readonly k: Kernel, private readonly connections: Connections) {}
 
-  async resolve(task: MTask, choice: WorkChoice): Promise<TaskSource> {
-    const registered = this.k.s.products.find((entry) => entry.id === choice.productId);
+  async resolve(task: MTask, choice: WorkChoice, candidate?: TaskSource["product"]): Promise<TaskSource> {
+    const row = task.workRows?.find((entry) => entry.choice === choice || (entry.choice.productId === choice.productId && entry.choice.repo === choice.repo));
+    const addition = row?.addition;
+    const registered = this.k.s.products.find((entry) => entry.id === choice.productId) ?? this.k.s.products.find((entry) => entry.repo.toLowerCase() === (choice.repo ?? choice.productId).toLowerCase())
+      ?? (addition && row?.source ? { ...row.source.product, id: addition.productId, name: addition.name, path: addition.path } : candidate);
     if (!registered) throw new Error(`Needs adding: ${choice.productId || "a product"}. Add it through Products, then choose it here, or replace it with a registered product.`);
     const product = task.workProduct?.id === choice.productId ? { ...task.workProduct, name: registered.name } : { id: registered.id, name: registered.name, repo: registered.repo, path: registered.path, remote: registered.remote, defaultBranch: registered.defaultBranch ?? "main" };
     const { startFrom, delivery } = choice;
@@ -25,13 +31,17 @@ export class Sources {
     } else {
       const branch = startFrom.kind === "branch" ? startFrom.name : product.defaultBranch ?? "main";
       if (!git.isBranchName(branch) || (await git.run(["git", "check-ref-format", "--branch", branch], this.k.dataDir)).code) throw new Error("Enter an exact, valid branch name.");
-      if (startFrom.kind === "branch") await branchExists(product.repo, branch, this.k.options.gh);
+      if ((startFrom.kind === "branch" || task.workRows) && !product.repo.startsWith("local/")) await branchExists(product.repo, branch, this.k.options.gh);
       start = { kind: startFrom.kind, branch };
     }
     return { product, start, destination: { mode: delivery, kind: start.kind === "pull-request" ? "update-pr" : delivery === "pull-request" ? "new-pr" : delivery === "release" ? "release" : "branch", repo, branch: start.branch, ...(remote ? { remote } : {}) }, confirmed: false };
   }
 
-  async propose(task: MTask, proposal: readonly WorkChoice[] | undefined): Promise<void> {
+  async propose(task: MTask, proposal: readonly WorkChoice[] | undefined, coordinator = false): Promise<void> {
+    const selected = task.selectedProducts ?? (task.workChoice?.productId ? [task.workChoice] : []);
+    if (task.workRows || (proposal && selected.some((choice) => !proposal.some((entry) => entry.productId === choice.productId))) || selected.length > 1 || (proposal?.length ?? 0) > 1 || proposal?.some((choice) => choice.repo && !this.k.s.products.some((product) => product.id === choice.productId || product.repo.toLowerCase() === choice.repo?.toLowerCase()))) {
+      return this.proposeMany(task, proposal ?? selected, coordinator);
+    }
     // Tasks saved before starting choices existed already chose this product and its default branch.
     if (!task.workChoice && task.productId) task.workChoice = { productId: task.productId, startFrom: { kind: "default" }, delivery: task.delivery };
     const choices = proposal ?? (task.workChoice ? [task.workChoice] : []);
@@ -74,7 +84,165 @@ export class Sources {
     this.k.commitNow();
   }
 
+  private async proposeMany(task: MTask, proposal: readonly WorkChoice[], coordinator: boolean): Promise<void> {
+    task.workValidating = true;
+    task.workError = "Checking every product and starting point with GitHub…";
+    this.k.commitNow();
+    const prior = task.workRows;
+    const selected = task.selectedProducts ?? [];
+    const choices = proposal.map((choice) => {
+      const product = this.k.s.products.find((entry) => entry.id === choice.productId) ?? this.k.s.products.find((entry) => entry.repo.toLowerCase() === (choice.repo ?? choice.productId).toLowerCase());
+      return product ? { ...choice, productId: product.id, repo: product.repo } : choice;
+    });
+    if (!coordinator) for (const choice of selected) if (!choices.some((entry) => entry.productId === choice.productId)) choices.push(choice);
+    task.workProposal = [...proposal];
+    task.confirmWork = true;
+    task.approvePlan = true;
+    task.workRows = [];
+    for (const raw of choices) {
+      const product = this.k.s.products.find((entry) => entry.id === raw.productId || (raw.repo && entry.repo.toLowerCase() === raw.repo.toLowerCase()));
+      const choice = { ...raw, ...(product ? { productId: product.id, repo: product.repo } : {}) };
+      const earlier = selected.find((entry) => entry.productId === choice.productId);
+      const saved = prior?.find((row) => row.choice.productId === choice.productId && row.choice.repo === choice.repo);
+      const row: NonNullable<MTask["workRows"]>[number] = { choice, ...(saved?.addition ? { addition: saved.addition, source: saved.source } : {}) };
+      if (!coordinator) {
+        if (!proposal.some((entry) => entry.productId === choice.productId) && earlier) row.change = "omitted";
+        else if (!earlier) row.change = "added";
+        else if (JSON.stringify(earlier.startFrom) !== JSON.stringify(choice.startFrom) || earlier.delivery !== choice.delivery) { row.change = "changed"; row.previous = earlier; }
+      }
+      task.workRows.push(row);
+      try {
+        if (!product && !row.addition) {
+          const repo = choice.repo ?? choice.productId;
+          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("Needs adding: choose a registered product or an exact GitHub repository.");
+          const read = await git.gh(this.k.options.gh ?? ["gh"], repo, ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]);
+          if (read.code) throw new Error(`Could not check ${repo} on GitHub. Retry when it is accessible.`);
+          const data = JSON.parse(read.stdout);
+          if (data.nameWithOwner?.toLowerCase() !== repo.toLowerCase() || !data.defaultBranchRef?.name) throw new Error(`GitHub did not confirm ${repo} and its default branch.`);
+          const candidate = { id: choice.productId || repo, name: repo.split("/")[1]!, repo, defaultBranch: data.defaultBranchRef.name, remote: `https://github.com/${repo}.git` };
+          // Resolve branch and PR choices without cloning. A fork stays within this row.
+          row.source = { product: candidate, start: { kind: "default", branch: candidate.defaultBranch }, destination: { mode: choice.delivery, kind: choice.delivery === "release" ? "release" : choice.delivery === "local" ? "branch" : "new-pr", repo, branch: candidate.defaultBranch, remote: candidate.remote }, confirmed: false };
+          // Validation never creates an addition record: only the coordinator can confirm its folder.
+          row.source = await this.resolve(task, choice, candidate);
+          row.error = "Needs adding: confirm this product’s name and permanent folder.";
+        } else row.source = await this.resolve(task, choice);
+      } catch (error) { row.error = error instanceof Error ? error.message : String(error); }
+      if (row.source && task.workRows.filter((entry) => entry.source?.product.repo.toLowerCase() === row.source!.product.repo.toLowerCase()).length > 1) row.error = "This repository is already included. Leave out the duplicate.";
+      if (!earlier && (product?.approveDelivery !== false) && !task.approveDelivery) {
+        task.approveDelivery = true;
+        task.approvalExplanation = `${product?.name ?? row.source?.product.name ?? choice.productId} asks before shipping, so shared delivery approval is on. You can change it here.`;
+      }
+    }
+    task.workValidating = false;
+    task.workError = !task.workRows.length ? "Choose at least one product." : task.workRows.some((row) => row.error) ? task.workRows.filter((row) => row.error).map((row) => row.error).join("\n") : undefined;
+    const item = this.k.s.inbox.find((entry) => entry.taskId === task.id && entry.kind === "plan");
+    if (item) item.body = task.workRows.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error].filter(Boolean).join("\n")).join("\n\n");
+    this.k.commitNow();
+  }
+
+  async configureAddition(task: MTask, repo: string, name: string, path: string): Promise<void> {
+    const row = task.workRows?.find((entry) => entry.source?.product.repo.toLowerCase() === repo.toLowerCase());
+    if (!row?.source || this.k.s.products.some((product) => product.repo.toLowerCase() === repo.toLowerCase())) throw new Error("Choose a repository that needs adding.");
+    const displayName = productName(name, this.k.s.products);
+    if (!isAbsolute(path)) throw new Error("Choose a full permanent folder path.");
+    const folder = resolve(path);
+    if (row.addition?.created && row.addition.path === folder) return;
+    const occupied = await readdir(folder).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; });
+    if (occupied) throw new Error("That folder already exists. Choose an unused folder; Petrina leaves existing folders untouched.");
+    const id = row.addition?.productId ?? this.k.id("product");
+    row.addition = { name: displayName, path: folder, productId: id };
+    row.source.product = { ...row.source.product, id, name: displayName, path: folder };
+    row.choice.productId = id;
+    const work = task.repositories?.find((entry) => entry.productId === id);
+    if (work && !work.worktree) {
+      work.source = { ...row.source, confirmed: true };
+      work.workProduct = work.source.product;
+      if (task.productId === id) { task.source = work.source; task.workProduct = work.workProduct; }
+    }
+    try { row.source = await this.resolve(task, row.choice); delete row.error; }
+    catch (error) { row.error = String(error); }
+    task.workError = task.workRows!.some((entry) => entry.error) ? "Some product choices need your attention." : undefined;
+    this.k.commitNow();
+  }
+
+  async addApproved(task: MTask, productId: string, signal: AbortSignal): Promise<void> {
+    const row = task.workRows?.find((entry) => entry.source?.product.id === productId);
+    const addition = row?.addition;
+    if (!addition || addition.ready) return;
+    if (!row.source?.confirmed && !task.repositories?.find((work) => work.productId === productId)?.source?.confirmed) throw new Error("Approve the complete plan before adding products.");
+    task.statusLine = `Adding ${addition.name}…`;
+    this.k.commitNow();
+    if (!addition.created) {
+      await mkdir(dirname(addition.path), { recursive: true });
+      // Exclusive creation: an unrelated occupied folder is never retried or removed.
+      await mkdir(addition.path);
+      addition.created = true;
+      this.k.commitNow();
+    }
+    if (signal.aborted) throw new Error("Adding this product was interrupted. The folder is saved for Retry.");
+    const localRemote = this.k.options.remotes?.[row.source!.product.repo] ?? this.k.options.remote;
+    const remote = localRemote ?? row.source!.product.remote!;
+    const completeClone = async () => {
+      const info = await git.repoInfo(addition.path).catch(() => undefined);
+      if (!info || resolve(info.root) !== resolve(await realpath(addition.path))) return false;
+      const matches = localRemote ? info.remote === localRemote : !!info.remote && git.sameRepo(info.remote, row.source!.product.repo);
+      if (!matches) throw new Error(`${addition.name} couldn’t be added. Its saved folder belongs to a different repository. Change folder; Petrina leaves it untouched.`);
+      const branch = row.source!.product.defaultBranch ?? "main";
+      // A full clone can check out a newly chosen default; keep the approved branch.
+      return !!(await git.revParse(addition.path, `refs/heads/${branch}`) ?? await git.revParse(addition.path, `refs/remotes/origin/${branch}`));
+    };
+    if (!await completeClone()) {
+      const files = await readdir(addition.path);
+      // Only the saved clone folder is resumable. Incomplete clone metadata can be replaced;
+      // any user files keep the folder occupied and require a different destination.
+      if (files.length && files.every((name) => name === ".git")) await rm(resolve(addition.path, ".git"), { recursive: true, force: true });
+      else if (files.length) throw new Error(`${addition.name} couldn’t be added. Its interrupted folder is saved. Change folder if it contains unrelated files.`);
+      const cloned = await git.run(["git", "clone", "--", remote, addition.path], this.k.dataDir, undefined, { credentials: true, local: !!(this.k.options.remote || this.k.options.remotes), timeoutMs: git.FETCH_TIMEOUT_MS });
+      if (cloned.code) throw new Error(`${addition.name} couldn’t be added. Your plan and folder are saved. ${cloned.stderr}`);
+      if (!await completeClone()) throw new Error(`${addition.name} couldn’t be added. The clone did not confirm the approved repository and default branch. Your plan and folder are saved.`);
+    }
+    const product = { ...row.source!.product, id: addition.productId, name: addition.name, path: await realpath(addition.path), tone: "blue" as const, delivery: row.choice.delivery, approveDelivery: true };
+    if (!this.k.s.products.some((entry) => entry.id === product.id)) { this.k.s.products.push(product); this.k.tracking.product(product, { addedAt: Date.now() }); }
+    addition.ready = true;
+    this.k.commitNow();
+  }
+
   confirm(task: MTask): void {
+    if (task.workValidating) throw new Error("Wait for every product choice to finish validation.");
+    if (task.workRows) {
+      const invalid = task.workRows.some((row) => {
+        if (row.error || !row.source) return true;
+        if (this.k.s.products.some((product) => product.id === row.source!.product.id)) return false;
+        const addition = row.addition;
+        return !addition?.name.trim() || !isAbsolute(addition.path) || addition.productId !== row.source.product.id || row.source.product.path !== addition.path;
+      });
+      if (!task.workRows.length || invalid) throw new Error("Correct every product and starting point, and confirm folders for additions before approval.");
+      if (new Set(task.workRows.map((row) => row.source!.product.repo.toLowerCase())).size !== task.workRows.length) throw new Error("Choose each repository once.");
+      this.k.saveRepository(task);
+      const prepared = task.repositories;
+      task.repositories = task.workRows.map((row) => {
+        const prior = prepared?.find((work) => work.productId === row.source!.product.id && JSON.stringify(work.source?.start) === JSON.stringify(row.source!.start) && JSON.stringify(work.source?.destination) === JSON.stringify(row.source!.destination));
+        return prior ?? ({ productId: row.source!.product.id, source: { ...row.source!, confirmed: true }, workProduct: row.source!.product, workChoice: row.choice, delivery: row.choice.delivery, completedStages: [], preparation: "waiting" }); });
+      task.excludedRepositories = [...(task.excludedRepositories ?? []), ...(prepared ?? []).filter((work) => (work.worktree || work.preparingCopy) && !task.repositories!.some((kept) => kept.productId === work.productId))];
+      if (task.plan) {
+        const builder = task.plan.stages.find((stage) => this.k.role(stage.roleId)?.result === "build")?.profileIds[0];
+        const reviewers = task.plan.stages.filter((stage) => stage.kind === "review-chain").flatMap((stage) => stage.profileIds);
+        if (!builder || !reviewers.length) throw new Error("Every product needs a builder and review coverage.");
+        task.plan.products = task.workRows.map((row) => ({ productId: row.source!.product.id, builderProfileId: row.choice.builderProfileId && this.k.profile(row.choice.builderProfileId) ? row.choice.builderProfileId : builder, reviewerProfileIds: reviewers }));
+        task.plan.leadProductId = task.plan.products.some((work) => work.productId === task.plan!.leadProductId) ? task.plan.leadProductId : task.repositories[0]!.productId;
+      }
+      task.leadProductId = task.workRows.find((row) => row.choice.lead)?.source?.product.id ?? task.plan?.leadProductId ?? task.repositories[0]!.productId;
+      if (task.plan) {
+        task.plan.leadProductId = task.leadProductId;
+        for (const stage of task.plan.stages) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = task.repositories.length > 1 ? `Deliver across ${task.repositories.length} products` : deliveryLabel({ source: task.repositories[0]!.source, delivery: task.repositories[0]!.delivery });
+      }
+      delete task.activeProductId;
+      this.k.selectRepository(task, task.repositories[0]!.productId);
+      task.confirmWork = false;
+      delete task.workError;
+      this.k.log(task, "you", task.workRows.map((row) => workSummary(row.source!)).join("\n\n"));
+      return;
+    }
     // An older task may already have its working copy and an ordinary plan check.
     if (task.worktree && !task.source && !task.workProposal) return;
     if (task.workError || (!task.source && !task.proposedSource)) throw new Error(task.workError ?? "Choose a valid product and starting point first.");
@@ -92,6 +260,7 @@ export class Sources {
   }
 
   async refresh(task: MTask): Promise<void> {
+    if (task.repositories && (task.pr || task.release || task.landed)) return;
     if (task.source?.start.kind !== "pull-request") return;
     return this.connections.serial(task.productId, () => this.readBackground(task));
   }

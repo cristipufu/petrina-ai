@@ -27,7 +27,7 @@ export function TimelineList({ entries, now, find }: { entries: readonly Timelin
             </span>
             <span className="text">
               {entryRole && entry.tone !== "you" && <span className="sr-only">{entryRole.name}: </span>}
-              {entry.text}
+              {entry.productId && <span className="quiet-text">{find.product(entry.productId)?.name ?? entry.productId} · </span>}{entry.text}
             </span>
           </li>
         );

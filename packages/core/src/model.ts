@@ -137,6 +137,8 @@ export interface Plan {
   stages: readonly Stage[];
   rationale: string;
   plannerProfileId: Id;
+  products?: readonly { productId: Id; builderProfileId: Id; reviewerProfileIds: readonly Id[] }[];
+  leadProductId?: Id;
 }
 
 export type TaskKind = "new" | "feature" | "bug" | "chore";
@@ -168,6 +170,7 @@ export interface TimelineEntry {
   at: number;
   roleId?: Id;
   profileId?: Id;
+  productId?: Id;
   text: string;
   tone: "status" | "milestone" | "you" | "warn" | "done";
   /** The journey step it belongs to. */
@@ -186,6 +189,7 @@ export interface SessionLine {
   from: "agent" | "you" | "system" | "activity";
   roleId?: Id;
   profileId?: Id;
+  productId?: Id;
   text: string;
   /** The journey step it belongs to. */
   step?: Id;
@@ -222,6 +226,8 @@ export interface JourneyAsk {
 export interface JourneyStep {
   /** Unique within the task. Timeline and session lines carry it. */
   id: Id;
+  /** Why this step began, captured then rather than reconstructed from later task state. */
+  trigger?: { after?: Id; reason: string };
   /**
    * `agent`: a role at work. `you`: waiting for the coordinator. `wait`: waiting for other tasks to land.
    * `petrina`: Petrina's own work, with no agent.
@@ -254,6 +260,8 @@ export interface JourneyStep {
   team?: readonly Id[];
   /** The role-specific context given to each agent in this step. Older saved steps have no snapshot. */
   agentInputs?: readonly JourneyAgentInput[];
+  /** The original accepted response, plus any pictures saved with that response. */
+  agentResults?: readonly { roleId: Id; profileId: Id; at: number; value: unknown; images?: readonly ReportImage[] }[];
   /** The product checks Petrina ran during this checks step. */
   productChecks?: readonly JourneyProductCheck[];
   /** `petrina`: what Petrina did. */
@@ -286,6 +294,8 @@ export interface JourneyAcceptanceCheck {
 
 export interface JourneyProductCheck {
   id?: string;
+  /** Original run, including its complete diagnostic link. Never points to a later run. */
+  run?: CheckRun;
   name: string;
   result: "pending" | "running" | "pass" | "fail" | "did-not-finish" | "stopped" | "skipped";
   startedAt?: number;
@@ -335,6 +345,7 @@ export interface StepNote {
  * pauses, cancels or asks for changes; Petrina stopping keeps it. The Release Manager never has one.
  */
 export interface ConversationNote {
+  repositoryCopies?: Readonly<Record<Id, string>>;
   /** The step: its stage (or the plan), the design round and the reviewer position. */
   step: string;
   roleId: Id;
@@ -398,6 +409,7 @@ export interface ScreenRequest {
  * conversation, in the task's working copy. The step is paused and keeps its seat in the pool.
  */
 export interface Driving {
+  repositoryCopies?: Readonly<Record<Id, { path: string; head: string }>>;
   since: number;
   roleId: Id;
   profileId: Id;
@@ -463,7 +475,7 @@ export interface DesignBrief {
   summary: string;
   forUsers: readonly string[];
   areas: readonly string[];
-  acceptance: readonly { text: string; met?: boolean; verification?: "passed" | "failed" | "blocked"; reason?: string }[];
+  acceptance: readonly { text: string; productIds?: readonly Id[]; versions?: Readonly<Record<Id, string>>; met?: boolean; verification?: "passed" | "failed" | "blocked" | "stale"; reason?: string }[];
   risks: readonly string[];
 }
 
@@ -506,6 +518,8 @@ export interface DesignCall {
 export interface Finding {
   id: Id;
   text: string;
+  productIds?: readonly Id[];
+  answers?: Readonly<Record<Id, { fixed: boolean; text: string; at: number }>>;
   where?: string;
   /** How the reviewer knows. */
   evidence?: string;
@@ -520,11 +534,13 @@ export interface Finding {
   verification?: FindingVerification;
   /** Each voter's verdict, when fresh agents voted on it. */
   votes?: readonly Vote[];
-  /** When a review reopened a reported fix. Earlier votes do not judge the changed code. */
+  /** When a review reopened a fix or dismissal. Earlier support does not judge the new reproduction. */
   reopenedAt?: number;
   /** Evidence from before a finding was reopened, retained as history rather than current support. */
   earlierReviews?: readonly {
     at: number;
+    /** The reproduction attached to the code before this reopening. */
+    evidence?: string;
     confirmedBy: readonly Id[];
     disputes?: readonly FindingDispute[];
     verification?: FindingVerification;
@@ -564,12 +580,16 @@ export interface Hunt {
   round: number;
   /** Per reviewer position in the stage, what it reported. */
   reported: Readonly<Record<Id, true>>;
+  /** Each reviewer position’s verdict on repaired shared findings, settled only after everyone reports. */
+  fixReviews?: Readonly<Record<Id, Readonly<Record<Id, boolean>>>>;
   /** The profile reserved or actually used at each position, kept after reporting and across restarts. */
   profiles?: Readonly<Record<Id, Id>>;
   /** Parallel agents that asked for the screen: their copies and conversations survive the wait. */
-  screenTurns?: Readonly<Record<string, { reason: string; at: number; copy: string; conversation: ConversationNote; allowed?: boolean }>>;
+  screenTurns?: Readonly<Record<string, { reason: string; at: number; copy: string; copies?: Readonly<Record<Id, string>>; conversation: ConversationNote; allowed?: boolean }>>;
   /** Per actual voter profile, whether it finished the round's findings. Older records used planned profiles. */
   voted?: Readonly<Record<Id, true>>;
+  /** Required independent ballot seats, fixed when voting begins and retained through a drain. */
+  voterProfiles?: readonly Id[];
   /** How many findings the task had when the round began: what the round's reviewers raise comes after. */
   findings?: number;
   /** Each parallel agent's starting role, by reviewer place or voter profile, through interruptions. */
@@ -613,6 +633,8 @@ export interface FindingDispute {
 
 /** What a role that hands back notes handed back. Every later agent on the task reads it. */
 export interface HandedBack {
+  /** The product an editing role worked on; absent for shared, read-only notes. */
+  productId?: Id;
   stageId: Id;
   roleId: Id;
   profileId?: Id;
@@ -647,7 +669,50 @@ export interface Cleanup {
   error?: string;
 }
 
+export interface WorkRow {
+  choice: WorkChoice;
+  previous?: WorkChoice;
+  change?: "added" | "changed" | "omitted";
+  source?: TaskSource;
+  error?: string;
+  addition?: { name: string; path: string; productId: Id; created?: boolean; ready?: boolean };
+}
+
+/** These fields belong to one repository, never to a whole shared task. */
+export const REPOSITORY_FIELDS = [
+  "productId", "workChoice", "workProduct", "source", "prBackground", "delivery",
+  "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
+  "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
+  "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
+  "cleanup", "conversation", "stepAttempts", "acceptanceReturns", "releasePreview"
+] as const;
+export type RepositoryField = typeof REPOSITORY_FIELDS[number];
+export type TaskRepository = Pick<Task, RepositoryField> & {
+  completedStages: readonly Id[];
+  preparation?: "waiting" | "ready";
+  preparingCopy?: { path: string; branch: string; base: string };
+  nothingToPublish?: boolean;
+  landingAccepted?: { at: number };
+  companion?: { text: string; state: "pending" | "checking" | "done" };
+  removed?: boolean;
+};
+
 export interface Task {
+  /** Retained coordinator choices and the complete validated scope, before any fetching. */
+  selectedProducts?: readonly WorkChoice[];
+  workRows?: readonly WorkRow[];
+  repositories?: readonly TaskRepository[];
+  excludedRepositories?: readonly TaskRepository[];
+  leadProductId?: Id;
+  /** The repository whose saved fields are currently loaded for an editing conversation. */
+  activeProductId?: Id;
+  repair?: { products: readonly Id[]; index: number; returnStage: number; kind: "checks" | "acceptance" | "review" };
+  testedVersions?: Readonly<Record<Id, string>>;
+  designRevision?: number;
+  approvalExplanation?: string;
+  deliveryRecorded?: boolean;
+  sharedLessons?: readonly Lesson[];
+
   workChoice?: WorkChoice;
   workProduct?: TaskSource["product"];
   /** Explicit New task choices stay authoritative until the coordinator approves a change. */
@@ -657,7 +722,9 @@ export interface Task {
   workProposal?: readonly WorkChoice[];
   workError?: string;
   confirmWork?: boolean;
+  workValidating?: boolean;
   prBackground?: PullRequestBackground;
+  tamper?: { at: number; sha: string; problems: readonly string[] };
   id: Id;
   productId: Id;
   title: string;
@@ -697,7 +764,7 @@ export interface Task {
   /** The last time Petrina ran the product's checks on this task, and on which commit. */
   /** The tree is the code itself: a squash keeps it, so the checks still count. */
   /** The definition covers commands and hook inputs, separately from the code. */
-  checks?: { at: number; sha?: string; tree?: string; definition?: string; results: readonly CheckRun[] };
+  checks?: { current?: boolean; at: number; sha?: string; tree?: string; definition?: string; results: readonly CheckRun[] };
   /** How many times failing checks sent the work back before review or delivery. */
   checkReturns?: number;
   /** The base's commit when the working copy was made: reviews, the tamper check and the review guide go by it, whatever later happens to refs. */
@@ -810,6 +877,7 @@ export interface Task {
   conversation?: ConversationNote;
   /** Set while the task is being shipped. */
   shipping?: ShippingRecord;
+  releasePreview?: { start: string; base?: string; version: string; tag: string; after: string; notes: string; summary: string };
   /** Set while the coordinator drives the current step in their own terminal. */
   driving?: Driving;
   /** Files changed by hand that no review chain has looked at from its first reviewer yet. Nothing ships while set. */
@@ -836,6 +904,7 @@ export interface Task {
 export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide" | "learnings" | "screen";
 
 export interface InboxItem {
+  productId?: Id;
   id: Id;
   taskId: Id;
   kind: InboxKind;
@@ -925,8 +994,13 @@ export interface CheckRun {
   output: string;
   /** Private complete output on this machine, independent of the working copy and prompt excerpt. */
   logPath?: string;
+  /** Identity captured from the file Petrina opened for this check; absent on older saved runs. */
+  logFileIdentity?: { device: string; inode: string };
   /** The log could not be saved completely; this never changes the command's own result. */
   logError?: string;
+  /** Whether both output pipes reached their end before the command settled. Absent on older runs. */
+  logComplete?: boolean;
+  interrupted?: boolean;
   timedOut?: boolean;
   /** Petrina could not obtain a process-tree snapshot while stopping this command. */
   cleanupIncomplete?: boolean;

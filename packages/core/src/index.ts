@@ -26,3 +26,4 @@ export * from "./source.js";
 export * from "./screen.js";
 export * from "./summary.js";
 export * from "./history.js";
+export * from "./repositories.js";

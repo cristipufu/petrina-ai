@@ -7,6 +7,10 @@ import { TaskHistory } from "./history-store.js";
 /** A stopped/finished task still involved in delivery or removing its copy stays in runtime state. */
 export function settledHistoryTask(task: Task): boolean {
   if (!copyNoLongerNeeded(task) || task.driving || task.shipping?.step !== undefined || task.shipping?.carriedOver) return false;
+  if (task.repositories) return [...task.repositories, ...(task.excludedRepositories ?? [])].every((work) => {
+    if (work.shipping?.step !== undefined || work.shipping?.carriedOver || work.localUpdate?.pushed === false || work.cleanup?.foreignPullRequest) return false;
+    return !(work.worktree || work.preparingCopy) || (work.cleanup?.removedAt !== undefined && work.cleanup.reviewCopiesRemovedAt !== undefined);
+  });
   if (task.worktree || (task.state === "cancelled" && task.startedAt !== undefined)) return task.cleanup?.removedAt !== undefined && task.cleanup.reviewCopiesRemovedAt !== undefined;
   return true;
 }
@@ -22,6 +26,7 @@ export class Store {
     this.db.run("PRAGMA journal_mode = WAL");
     this.db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)");
     this.history = new TaskHistory(this.db);
+    this.db.run("CREATE TABLE IF NOT EXISTS coordination_handled_items (id TEXT PRIMARY KEY)");
   }
 
   /** Explicit compatibility/debug read, including archived conversations. Production uses loadActive. */
@@ -82,6 +87,14 @@ export class Store {
   }
 
   /** The same database holds the work log, in its own tables. */
+  handled(id: string): boolean {
+    return !!this.db.query("SELECT id FROM coordination_handled_items WHERE id = ?").get(id);
+  }
+
+  noteHandled(ids: readonly string[]): void {
+    for (const id of ids) this.db.query("INSERT OR IGNORE INTO coordination_handled_items VALUES (?)").run(id);
+  }
+
   get database(): Database {
     return this.db;
   }

@@ -54,3 +54,27 @@ it("keeps each agent's latest report when another update arrives before its pict
     engine.store.close();
   }
 });
+
+it("keeps the latest report for each product when the same builder works across products", () => {
+  const engine = kernel();
+  try {
+    const shared = task("shared", false);
+    shared.repositories = ["first", "second"].map((productId) => ({ productId, delivery: "local", completedStages: [] }));
+    engine.s.tasks.push(shared);
+    shared.productId = "first";
+    engine.say(shared, "agent", "First product checked", "builder", "sol-high");
+    const first = shared.session.at(-1)!;
+    shared.productId = "second";
+    engine.say(shared, "agent", "Second product checked", "builder", "sol-high");
+    const second = shared.session.at(-1)!;
+    for (let index = 0; index < MAX_SESSION_LINES; index++) engine.say(shared, "activity", `Checking the shared work ${index}`);
+    expect(shared.session).toContain(first);
+    expect(shared.session).toContain(second);
+    expect(first.productId).toBe("first");
+    expect(second.productId).toBe("second");
+    expect(shared.session).toHaveLength(MAX_SESSION_LINES);
+  } finally {
+    engine.tracking.close();
+    engine.store.close();
+  }
+});

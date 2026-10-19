@@ -151,11 +151,12 @@ Results that hand back notes, objections, a build, acceptance checks or findings
 export function buildPrompt(ctx: PromptContext): string {
   const { task, product, role, worktree, branch } = ctx;
   const contract = contractFor(role);
-  const sections = ctx.sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
+  const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
+  const sections = [...map, ...ctx.sections].map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
   return `You are the ${role.name} in Petrina, a squad of AI agents working on the product "${product.name}" (${product.repo}).
 The coordinator who reads your work is a product person, not a developer: everything you write for them is plain language, short, and free of code.
 
-${role.id === "planner" ? `Your planning folder is ${worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.` : `Your working copy is ${worktree}, on branch ${branch}. Stay inside it.`}
+${role.id === "planner" ? `Your planning folder is ${worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.` : `Your working copy is ${worktree}, on branch ${branch}. ${task.repositories ? "You may read every copy in the approved product map below; change only the product assigned to your conversation." : "Stay inside it."}`}
 
 ${background(ctx.screen ?? (mayAskScreen(role) ? "ask" : undefined))}
 
@@ -178,8 +179,10 @@ ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
  * already knows still holds, so it gets its job as it stands now and the context, without the introduction.
  */
 export function continuePrompt(ctx: PromptContext): string {
+  const { task } = ctx;
   const contract = contractFor(ctx.role);
-  const sections = ctx.sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
+  const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
+  const sections = [...map, ...ctx.sections].map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
   return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}). What you learned before still holds; here is where things stand now.
 
 # Your job now

@@ -80,7 +80,7 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
     shortcut: "↵", run: finish(() => onTask(task.id)),
   })), ...pastTasks.map((task) => ({
     id: `task-${task.id}`, label: task.title,
-    detail: `${state.products.find((product) => product.id === task.productId)?.name ?? "Product"} · ${task.state === "cancelled" ? "Cancelled" : landingOf(task) === "marked-done" ? "Marked as done" : landingOf(task) === "closed" ? "Closed without merging" : "Finished"}`,
+    detail: `${task.products?.map((product) => product.name).join(" · ") ?? state.products.find((product) => product.id === task.productId)?.name ?? "Product"} · ${task.state === "cancelled" ? "Cancelled" : landingOf(task) === "marked-done" ? "Marked as done" : landingOf(task) === "closed" ? "Closed without merging" : "Finished"}`,
     shortcut: "↵", run: finish(() => onTask(task.id)),
   }))].slice(0, 40);
   const productRows: PaletteAction[] = search.products.slice(0, 20).flatMap((entry) => [{

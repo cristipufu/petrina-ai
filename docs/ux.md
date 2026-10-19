@@ -291,9 +291,12 @@ This is the "open in terminal" experience, made friendly.
   - You choose the terminal in the Library, under Your terminal: Terminal on macOS by default (iTerm2 and other installed ones selectable), Windows Terminal or else a PowerShell window on Windows, and on Linux the system default, then the desktop's own, then common ones.
 - Anything the task is waiting on (a question, a permission, a checkpoint) shows at the end of the conversation with the same wording and buttons as the inbox, so you can unblock without leaving the session. It scrolls with the conversation; the composer stays compact at the bottom.
 - Earlier agents of the task (previous stages) can be read the same way.
-- Chosen page captures sit beside their agent's report, fitted to the conversation width, with a plain-language caption below each picture. They remain after the agent leaves and after restarting Petrina. Reports without pictures keep their usual appearance.
+- Chosen page captures sit beside their agent's report, fitted to the conversation width, with a plain-language caption below each picture. They remain after the agent leaves and after restarting Petrina while the task is unfinished. Like screenshot links, they load only near the viewport and enlarge in place; leaving view releases their image memory. Finishing or cancelling a task removes the pictures, while their captions stay with the report and explain that the preview is unavailable. Reports without pictures keep their usual appearance.
 
 ## New task
+
+Products is a searchable checklist. It preselects the current product and permits several products or none. Each selected product has its own starting point and delivery choice; kind of work, queue position and Ask me before shipping are shared. Several products always require plan approval. Works on retains coordinator choices omitted by the planner, identifies proposed changes and additions, and confirms a permanent folder before Petrina clones anything. The task sheet groups changes, evidence and deliveries by repository, with shared and unassigned results under Together. Partial delivery keeps confirmed links and offers a retry for unfinished work.
+
 
 ⌘N from anywhere.
 

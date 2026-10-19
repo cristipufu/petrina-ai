@@ -1,4 +1,5 @@
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, expect, it, spyOn } from "bun:test";
+import * as files from "node:fs/promises";
 import { createRequire } from "node:module";
 import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -150,6 +151,23 @@ it("rejects missing, broken, outside and blank-caption pictures without saving a
   }
   await expect(preserveCaptures(captures, fresh, [{ path: "chosen.png", caption: "  " }])).rejects.toThrow("caption");
   expect(existsSync(fresh)).toBe(false);
+});
+
+it("removes a report's newly written bytes when saving is interrupted or a write fails partway", async () => {
+  const writeFile = files.writeFile;
+  for (const interrupt of [true, false]) {
+    const folder = join(root, `interrupted-${interrupt}`);
+    const controller = new AbortController();
+    const saving = spyOn(files, "writeFile").mockImplementation(async (path, data, options) => {
+      await writeFile(path, data, options);
+      if (interrupt) controller.abort();
+      else throw new Error("Disk write interrupted");
+    });
+    try {
+      await expect(preserveCaptures(captures, folder, [{ path: "chosen.png", caption: "A checked page" }], controller.signal)).rejects.toThrow();
+      expect(readdirSync(folder)).toEqual([]);
+    } finally { saving.mockRestore(); }
+  }
 });
 
 it("all five reporting roles allow optional pictures and require a caption on each one", () => {

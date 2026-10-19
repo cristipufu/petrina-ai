@@ -9,6 +9,7 @@ const [home, dir, remote] = process.argv.slice(2);
 await launch({
   home: home!,
   mode: "app",
+  newKey: process.argv.includes("--new-key"),
   loginShell: false,
   engine: {
     agentCommand: (profile) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), dir!, `--script=${join(dir!, "agents.json")}`, `--record-tool=${profile.toolId}`],

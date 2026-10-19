@@ -1,7 +1,8 @@
+import { beginRepair, productsFor } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { assignedProducts, endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -17,15 +18,14 @@ import { finishMessageGroup, routeMessages } from "./messages.js";
 import type { Updates } from "./update.js";
 
 /**
- * A later reviewer thinks findings are wrong: each dispute is kept with who and why. One reviewer's
- * dispute dismisses a finding nobody else backed; Petrina's own checks and confirmed findings stay open.
+ * Keep each dispute with who and why. Status is settled after every reviewer reports, so an objection
+ * arriving before a confirmation cannot hide a problem from the rest of the round.
  */
 export function recordDisputes(findings: DeepMutable<Finding>[], disputes: readonly { id: string; reason: string }[], by: Id, at: number): void {
   for (const dispute of disputes) {
     const finding = findings.find((entry) => entry.id === dispute.id);
     if (!finding || finding.status !== "open") continue;
     finding.disputes = [...(finding.disputes ?? []), { by, reason: dispute.reason, at }];
-    if (finding.raisedBy !== "petrina" && finding.confirmedBy.length === 0) finding.status = "dismissed";
   }
 }
 
@@ -45,10 +45,50 @@ function sameFinding(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-/** A fix changes the code being judged. Keep the old reasons, but require fresh support if it is reopened. */
-function reopenFinding(finding: DeepMutable<Finding>, at: number): void {
+function closedFinding(finding: Finding): boolean {
+  return finding.status === "fixed" || finding.status === "dismissed";
+}
+
+function needsCurrentEvidence(finding: Finding): boolean {
+  return finding.raisedBy !== "petrina" && (closedFinding(finding) || finding.reopenedAt !== undefined || finding.answer?.fixed === true);
+}
+
+/** Equal wording on an independent product cannot reopen another product's closed finding. */
+function sameReviewFinding(earlier: Finding, reported: Pick<Finding, "text" | "productIds">, task?: Task): boolean {
+  if (sameFinding(earlier.text) !== sameFinding(reported.text)) return false;
+  if (!task?.repositories || !needsCurrentEvidence(earlier)) return true;
+  const prior = assignedProducts(task, earlier.productIds), incoming = assignedProducts(task, reported.productIds);
+  // Ordinary open reports combine owners; overlapping shared findings and unassigned ownership keep their identity.
+  return !prior.length || !incoming.length || prior.some((id) => incoming.includes(id));
+}
+
+/** Closed findings are judged again only from current reproductions, never unexplained old ids. */
+export function checkReviewEvidence(findings: readonly Finding[], result: z.infer<typeof ReviewResult>, task?: Task): string | undefined {
+  const missing = new Set(result.confirms.filter((id) => {
+    const finding = findings.find((entry) => entry.id === id);
+    return finding && needsCurrentEvidence(finding) && !result.confirmationEvidence[id]?.trim();
+  }));
+  for (const reported of result.findings) {
+    const finding = findings.find((entry) => sameReviewFinding(entry, reported, task));
+    if (finding && needsCurrentEvidence(finding) && !reported.evidence?.trim()) missing.add(finding.id);
+  }
+  return missing.size ? `Current evidence is required to reopen or support a previously closed finding. For ${[...missing].join(", ")}, return "confirms": [{"id": "<finding id>", "evidence": "<exact current failing case, expected and observed result>"}]. Include a nearby passing control when it distinguishes the regression. If there is no current failing case, omit the confirmation. The old report alone is not current evidence.` : undefined;
+}
+
+/** Preserve independent current reproductions when more than one reviewer supplies evidence. */
+export function addEvidence(finding: DeepMutable<Finding>, evidence: string | undefined): void {
+  const current = evidence?.trim();
+  const previous = finding.evidence?.trim();
+  // Match a complete block, including multi-paragraph proofs, rather than shared words within one.
+  if (!current || finding.raisedBy === "petrina" || (previous && `\n\n${previous}\n\n`.includes(`\n\n${current}\n\n`))) return;
+  finding.evidence = previous ? `${previous}\n\n${current}` : current;
+}
+
+/** A new reproduction reopens the same finding; its earlier support and dismissal remain history. */
+function reopenFinding(finding: DeepMutable<Finding>, at: number, evidence?: string): void {
   finding.earlierReviews = [...(finding.earlierReviews ?? []), {
     at,
+    ...(finding.evidence ? { evidence: finding.evidence } : {}),
     confirmedBy: finding.confirmedBy,
     ...(finding.disputes ? { disputes: finding.disputes } : {}),
     ...(finding.verification ? { verification: finding.verification } : {}),
@@ -61,6 +101,7 @@ function reopenFinding(finding: DeepMutable<Finding>, at: number): void {
   delete finding.votes;
   finding.status = "open";
   finding.reopenedAt = at;
+  if (evidence !== undefined) finding.evidence = evidence.trim();
 }
 
 /** Tools that finished the whole ballot. Partial verdicts are saved, but cannot close a round alone. */
@@ -102,23 +143,30 @@ export class Reviews {
     if (task.hunt?.stageId !== stage.id || task.hunt.round !== round) {
     // The work goes on top of the latest main before anyone reviews it: a conflict goes to the builder first,
     // so a port after the review (and a review of that port) stays the exception.
+    let failedChecks = false;
+    for (const work of task.repositories ?? [undefined]) {
+    if (work) this.k.selectRepository(task, work.productId);
     if ((await this.updates.upToDate(task, signal)) === "conflict") return "continue";
     // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
     delete task.handChanges;
     const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
+    task.tamper = { at: Date.now(), sha: await git.head(task.worktree!), problems };
     // Petrina's own findings settle on what it sees now, whatever anyone answered.
     for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && !problems.includes(finding.text)) finding.status = "fixed";
+      if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(task.productId)) && !problems.includes(finding.text)) finding.status = "fixed";
     }
     for (const problem of problems) {
-      if (!task.findings.some((finding) => finding.text === problem && finding.status === "open")) {
-        task.findings.push({ id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+      if (!task.findings.some((finding) => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(task.productId)))) {
+        task.findings.push({ ...(task.repositories ? { productIds: [task.productId] } : {}), id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
       }
     }
     this.k.log(task, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
     // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
     // A failed run is evidence too: it returns to the builder without spending a review round.
-    if (await this.checks.failing(task, signal, await this.checks.ensureChecks(task, signal))) {
+    failedChecks = await this.checks.failing(task, signal, await this.checks.ensureChecks(task, signal)) || failedChecks;
+      this.k.saveRepository(task);
+      }
+    if (failedChecks) {
       // The check fix can reach beyond the port's conflicted files, so its review must be ordinary.
       delete task.portReview;
       delete task.reviewedTree;
@@ -128,11 +176,12 @@ export class Reviews {
       task.stageIndex = delivery >= 0 ? delivery : task.plan!.stages.length - 1;
       task.sub = 0;
       this.k.log(task, "warn", "Checks still fail: the builder returns are used up, so the decision goes to you");
-      this.k.commit();
+      this.k.commitNow();
       if (delivery >= 0) return "continue";
       this.k.gate(task, "delivery");
       return "stop";
     }
+      if (task.repositories) this.k.selectRepository(task, task.leadProductId ?? task.repositories[0]!.productId);
       task.hunt = { stageId: stage.id, round, reported: {}, findings: task.findings.length };
       this.k.commit();
     }
@@ -166,11 +215,11 @@ export class Reviews {
   }
 
   /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */
-  nextAgent(task: MTask, stage: MStage): { roleId: Id; profileId: Id; reviewerKey?: string } | undefined {
+  nextAgent(task: MTask, stage: MStage): { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined {
     const reviewer = this.pendingReviewers(task, stage)[0];
     if (reviewer) return { roleId: reviewerAt(stage, Number(reviewer.key)), profileId: reviewer.profileId, reviewerKey: reviewer.key };
     const voter = this.pendingVote(task, stage)?.voters[0];
-    return voter ? { roleId: "verifier", profileId: voter } : undefined;
+    return voter ? { roleId: "verifier", profileId: voter, requiredToolId: this.k.profile(voter)?.toolId } : undefined;
   }
 
   /** The stage's reviewers who have not reported this round, by their place in the stage. */
@@ -193,16 +242,17 @@ export class Reviews {
    * A stage with one reviewer runs it as usual instead: it can pick up its conversation, or be taken over.
    */
   private async hunt(task: MTask, stage: MStage, reviewers: readonly { key: string; profileId: Id }[], signal: AbortSignal): Promise<void> {
+    const check = (result: z.infer<typeof ReviewResult>) => checkReviewEvidence(task.findings, result, task);
     const reported = (key: string) => {
       task.hunt = { ...task.hunt!, reported: { ...task.hunt!.reported, [key]: true } };
-      this.k.commit();
+      this.k.commitNow();
     };
-    if (stage.profileIds.length === 1) {
+    if (stage.profileIds.length === 1 && !task.repositories) {
       const { key, profileId } = reviewers[0]!;
       const roleId = reviewerAt(stage, Number(key));
       let by = profileId;
-      const result = await this.turns.turn(task, roleId, profileId, () => this.context.sectionsFor(task, roleId), ReviewResult, signal, { reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
-      await this.applyReview(task, stage, result, by, roleId);
+      const result = await this.turns.turn(task, roleId, profileId, () => this.context.sectionsFor(task, roleId), ReviewResult, signal, { check, reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
+      await this.applyReview(task, stage, result, by, roleId, key);
       reported(key);
       return;
     }
@@ -221,11 +271,11 @@ export class Reviews {
           let by = profileId;
           const roleId = reviewerAt(stage, Number(key));
           const used = (id: Id) => { by = id; onUsed(id); };
-          const given = () => this.context.sectionsFor(task, roleId, `review-${key}`);
+          const given = () => this.context.sectionsFor(task, roleId, `review-${key}`, this.turns.repositoryCopies.get(copy));
           const result = continuing
-            ? await this.turns.turn(task, roleId, profileId, given, ReviewResult, signal, { copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key })
-            : await this.turns.parallel(task, roleId, profileId, copy, given, ReviewResult, signal, { key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, reviewerKey: key, agent, refresh: false });
-          await this.applyReview(task, stage, result, by, roleId);
+            ? await this.turns.turn(task, roleId, profileId, given, ReviewResult, signal, { check, copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key })
+            : await this.turns.parallel(task, roleId, profileId, copy, given, ReviewResult, signal, { check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, reviewerKey: key, agent, refresh: false });
+          await this.applyReview(task, stage, result, by, roleId, key);
           this.k.finishReviewWork(task, `reviewer:${key}`);
           reported(key);
         },
@@ -236,26 +286,35 @@ export class Reviews {
   }
 
   /** What one reviewer reported: its confirmations and disputes of earlier findings, and its own. */
-  private async applyReview(task: MTask, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id, roleId: Id): Promise<void> {
+  private async applyReview(task: MTask, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id, roleId: Id, reviewerKey: string): Promise<void> {
     await this.learnings.note(task, result.learnings, roleId, profileId);
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
-      // A builder's claim is not proof: confirming that the bug remains reopens the same finding.
+      // Fresh proof can challenge a claimed fix or dismissal without creating another finding.
       // Native check findings remain governed by the actual check results.
-      if (finding?.status === "fixed" && finding.raisedBy !== "petrina") reopenFinding(finding, Date.now());
+      const evidence = result.confirmationEvidence[id];
+      if (finding && closedFinding(finding) && finding.raisedBy !== "petrina") reopenFinding(finding, Date.now(), evidence);
+      else if (finding) addEvidence(finding, evidence);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
-    recordDisputes(task.findings, result.disputes, profileId, Date.now());
+    recordDisputes(task.findings.filter((finding) => !task.repositories || productsFor(task, finding.productIds).length > 0), result.disputes, profileId, Date.now());
+    if (task.repositories && task.hunt) for (const finding of task.findings) {
+      const owners = productsFor(task, finding.productIds);
+      if (owners.length < 2 || finding.raisedBy === "petrina" || finding.text.startsWith("Failed acceptance check:") || !owners.every((id) => finding.answers?.[id]?.fixed)) continue;
+      const passed = result.verdict === "pass" && !result.confirms.includes(finding.id) && !result.findings.some((entry) => sameReviewFinding(finding, entry, task));
+      task.hunt.fixReviews = { ...task.hunt.fixReviews, [finding.id]: { ...task.hunt.fixReviews?.[finding.id], [reviewerKey]: passed } };
+    }
     // A finding is raised once. Another reviewer raising an open one backs it; a repeat of a settled one is dropped.
     const raised: typeof result.findings = [];
     let backed = 0;
     for (const finding of result.findings) {
-      const same = task.findings.find((entry) => sameFinding(entry.text) === sameFinding(finding.text));
+      const same = task.findings.find((entry) => sameReviewFinding(entry, finding, task));
       if (!same) {
         raised.push(finding);
         task.findings.push({
           id: this.k.id(task.id),
           text: finding.text,
+          ...(task.repositories ? { productIds: productsFor(task, finding.productIds) } : {}),
           ...(finding.where ? { where: finding.where } : {}),
           ...(finding.evidence ? { evidence: finding.evidence } : {}),
           severity: SEVERITY[finding.severity],
@@ -264,19 +323,24 @@ export class Reviews {
           confirmedBy: [],
           status: "open",
         });
-      } else if ((same.status === "open" || same.status === "fixed") && same.raisedBy !== "petrina") {
-        if (same.status === "fixed") reopenFinding(same, Date.now());
-        if ((!same.answer?.fixed && same.raisedBy === profileId) || same.confirmedBy.includes(profileId)) continue;
+      } else if ((same.status === "open" || closedFinding(same)) && same.raisedBy !== "petrina") {
+        if (task.repositories) {
+          const incoming = productsFor(task, finding.productIds), prior = productsFor(task, same.productIds);
+          same.productIds = [...new Set([...prior, ...incoming])];
+        }
+        if (closedFinding(same)) reopenFinding(same, Date.now(), finding.evidence);
+        else addEvidence(same, finding.evidence);
+        if ((same.reopenedAt === undefined && !same.answer?.fixed && same.raisedBy === profileId) || same.confirmedBy.includes(profileId)) continue;
         same.confirmedBy.push(profileId);
         backed += 1;
       }
     }
     const important = raised.some((finding) => finding.severity === "important");
     // A confirmed existing finding asks for fixes just as a newly raised one does. Count each once.
-    const named = new Set(result.findings.map((finding) => sameFinding(finding.text)));
+    const named = (finding: Finding) => result.findings.some((entry) => sameReviewFinding(finding, entry, task));
     const seen = new Set([...(openStep(task)?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id)]);
-    recordStepResult(task, { findings: task.findings.filter((finding) => seen.has(finding.id) || named.has(sameFinding(finding.text))) });
-    const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || named.has(sameFinding(finding.text))));
+    recordStepResult(task, { findings: task.findings.filter((finding) => seen.has(finding.id) || named(finding)) });
+    const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || named(finding)));
     this.k.tracking.verdict(task, roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
     const confirmed = result.confirms.length + backed;
     const also = [confirmed ? `confirmed ${confirmed}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
@@ -288,22 +352,75 @@ export class Reviews {
    * and the voters who have not voted yet: one fresh agent per tool.
    */
   private pendingVote(task: MTask, stage: MStage): { findings: Task["findings"]; voters: Id[] } | undefined {
+    // Scheduling asks this before running the step. Settle the complete reviewer group first,
+    // so a finding that needs no ballot cannot make the task wait for a voter's usage or slot.
+    this.settleReviews(task, stage);
     const toolOf = (profileId: Id) => this.k.profile(profileId)?.toolId;
     const findings = task.findings.filter(
-      (finding) => finding.status === "open" && finding.severity === "blocking" && finding.raisedBy !== "petrina" && !finding.verification && new Set([...(finding.answer?.fixed ? [] : [finding.raisedBy]), ...finding.confirmedBy].map(toolOf).filter(Boolean)).size < 2,
+      (finding) => finding.status === "open" && finding.severity === "blocking" && (!task.repositories || productsFor(task, finding.productIds).length > 0) && finding.raisedBy !== "petrina" && !finding.verification && new Set([...((finding.reopenedAt !== undefined || finding.answer?.fixed) ? [] : [finding.raisedBy]), ...finding.confirmedBy].map(toolOf).filter(Boolean)).size < 2,
     );
     if (!findings.length) return undefined;
     // Resolve usage and model fallbacks before choosing the electorate. A capped tool is still
     // usable and waits for its seat. Older votes remain history; their nominal names do not prove
     // an actual tool voted, so only newly recorded identities cover a tool's place.
     const covered = finishedVoters(findings);
-    const planned = this.voters(stage);
+    let planned = task.hunt?.voterProfiles;
+    if (!planned) {
+      const tools = new Set<Id>();
+      planned = this.voters(stage).flatMap((id) => {
+        const choice = this.k.choose(id, task, "verifier");
+        if (!choice || choice.kind === "none" || tools.has(choice.profile.toolId)) return [];
+        tools.add(choice.profile.toolId);
+        return [choice.profile.id];
+      });
+      // Nobody can vote yet: leave the electorate open until at least one tool is usable.
+      if (planned.length && task.hunt) {
+        task.hunt.voterProfiles = planned;
+        this.k.commitNow();
+      }
+    }
+    if (task.hunt?.voterProfiles && !this.k.admissionsClosed) {
+      // Keep the existing usage-handoff rule: an unavailable tool can yield to a new
+      // independent tool, or leave a completed partner's ballot to settle the findings.
+      // A cap, a pause or a drain never makes a usable participant disappear.
+      const requiredTools = new Set(planned.map(id => this.k.profile(id)?.toolId));
+      const available = planned.flatMap(id => {
+        const tool = this.k.profile(id)?.toolId;
+        if (covered.has(tool ?? "")) return [id];
+        const choice = this.k.choose(id, task, "verifier");
+        if (!choice || choice.kind === "none") return covered.size ? [] : [id];
+        if (choice.profile.toolId === tool) return [id];
+        if (requiredTools.has(choice.profile.toolId) || covered.has(choice.profile.toolId)) return covered.size ? [] : [id];
+        requiredTools.delete(tool);
+        requiredTools.add(choice.profile.toolId);
+        return [choice.profile.id];
+      });
+      if (!covered.size && !available.some(id => this.k.choose(id, task, "verifier")?.kind !== "none")) {
+        // No complete ballot and every original tool is out: a newly recovered independent
+        // tool may finish the missing verdicts, keeping the partial reasons already saved.
+        for (const id of this.voters(stage)) {
+          const choice = this.k.choose(id, task, "verifier");
+          if (choice && choice.kind !== "none" && !available.some(existing => this.k.profile(existing)?.toolId === choice.profile.toolId)) available.push(choice.profile.id);
+        }
+      }
+      if (JSON.stringify(available) !== JSON.stringify(planned)) {
+        planned = available;
+        task.hunt.voterProfiles = planned;
+        this.k.commitNow();
+      }
+    }
     const voters = planned.flatMap((id) => {
+      if (covered.has(this.k.profile(id)?.toolId ?? "")) return [];
       const choice = this.k.choose(id, task, "verifier");
-      return choice && choice.kind !== "none" && !covered.has(choice.profile.toolId) ? [choice.profile.id] : [];
+      // Once admitted to the electorate, a missing independent tool cannot be replaced by a
+      // finished partner's vote. Same-tool model substitutions retain that tool's seat.
+      return choice && choice.kind !== "none" && choice.profile.toolId === this.k.profile(id)?.toolId ? [choice.profile.id] : [];
     });
     // With no finished ballot and nobody usable, keep the review waiting for usage, never pass it.
-    if (!voters.length && !covered.size && planned[0]) voters.push(planned[0]);
+    if (!voters.length && !covered.size) {
+      const waiting = planned[0] ?? this.voters(stage)[0];
+      if (waiting) voters.push(waiting);
+    }
     return { findings: findings as Task["findings"], voters };
   }
 
@@ -332,7 +449,7 @@ export class Reviews {
   private async vote(task: MTask, findings: Task["findings"], voters: readonly Id[], signal: AbortSignal): Promise<void> {
     const ids = new Set(findings.map((finding) => finding.id));
     // Keep each review position stable through model fallbacks and restarts.
-    const planned = this.voters(task.plan!.stages[task.stageIndex]!);
+    const planned = task.hunt?.voterProfiles ?? this.voters(task.plan!.stages[task.stageIndex]!);
     await this.together(
       task,
       voters.map((profileId) => {
@@ -347,7 +464,7 @@ export class Reviews {
         work: async (copy, room, seat, used, agent, continuing, signal) => {
           let by = seat;
           const missing = () => findings.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
-          const given = async () => [...await this.context.sectionsFor(task, "verifier", key), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }];
+          const given = async () => [...await this.context.sectionsFor(task, "verifier", key, this.turns.repositoryCopies.get(copy)), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }];
           const check = (value: z.infer<typeof VerifyResult>) => {
             const toolId = this.k.profile(by)!.toolId;
             for (const verdict of value.verdicts) {
@@ -427,14 +544,19 @@ export class Reviews {
     const root = this.k.repositoryOf(task)!.path!;
     const folder = join(this.k.dataDir, "worktrees", task.productId, `${task.id}.copies`);
     const sha = await git.head(task.worktree!);
+    this.k.saveRepository(task);
+    // Pin all repositories before any reviewer starts. Every peer receives its own complete map.
+    const versions = task.repositories ? await Promise.all(task.repositories.map(async (work) => ({ productId: work.productId, root: work.source!.product.path!, path: work.worktree!, sha: await git.head(work.worktree!) }))) : [];
     // Only saved screen conversations keep their copies; interrupted background peers start fresh.
-    const keptCopies = () => Object.values(task.hunt?.screenTurns ?? {}).map((entry) => entry.copy);
+    const keptCopies = () => Object.values(task.hunt?.screenTurns ?? {}).flatMap((entry) => [entry.copy, ...Object.values(entry.copies ?? {})]);
     await git.removeCopies(root, folder, keptCopies());
+    for (const work of versions) if (work.root !== root) await git.removeCopies(work.root, folder, keptCopies());
     // One fresh pull-request read is shared by reviewers; a usage replacement reads again on its attempt.
     await this.turns.refresh(task);
     const pending = [...members];
     const accepted = new Set<string>();
     const running = new Map<string, { agent: ActiveAgent; done: Promise<void> }>();
+    const yielded = new Set<string>();
     let failure: unknown;
     let noOne: WaitingForUsage | undefined;
     let wake: (() => void) | undefined;
@@ -442,7 +564,7 @@ export class Reviews {
       if (signal.aborted) return;
       this.k.selectScreen(task);
       if (task.screen?.member) task.conversation ??= task.hunt?.screenTurns?.[task.screen.member]?.conversation;
-      const agents = [...running.entries()].sort(([a], [b]) => Number(b === task.screen?.member) - Number(a === task.screen?.member)).map(([, entry]) => entry.agent);
+      const agents = [...running.entries()].filter(([key]) => !yielded.has(key)).sort(([a], [b]) => Number(b === task.screen?.member) - Number(a === task.screen?.member)).map(([, entry]) => entry.agent);
       if (agents.length) {
         task.holdsSlot = true;
         task.agent = agents[0]!;
@@ -460,6 +582,8 @@ export class Reviews {
     };
     // A handoff replaces this member's seat; its working peers still count against every cap.
     const roomFor = (key: string) => (toolId: Id) => {
+      const member = members.find(member => member.key === key);
+      if (member && this.k.role(member.roleId)?.result === "votes" && this.k.profile(member.profileId)?.toolId !== toolId) return false;
       const state = this.k.activeState();
       let uses = slotUses(state);
       const agent = running.get(key)?.agent;
@@ -470,9 +594,9 @@ export class Reviews {
       return pickStarts({ candidates: [{ taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
     };
     const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id) => boolean, seat: Id, continuing: boolean) => {
+      yielded.delete(member.key);
       const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0, reviewKey: member.reviewKey };
       let completed = false;
-      if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, seat);
       const used = (profileId: Id) => {
         agent.profileId = profileId;
         if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, profileId);
@@ -481,7 +605,29 @@ export class Reviews {
       };
       const done = Promise.resolve()
         .then(() => continuing ? undefined : git.addCopy(root, copy, sha))
-        .then(() => member.work(copy, room, seat, used, agent, continuing, signal))
+        .then(async () => {
+          const copies: Record<string, string> = { [task.productId]: copy };
+          for (const work of versions) if (work.productId !== task.productId) {
+            const peer = join(folder, `${member.key}-${work.productId}`);
+            if (!continuing) await git.addCopy(work.root, peer, work.sha);
+            copies[work.productId] = peer;
+          }
+          if (versions.length) this.turns.repositoryCopies.set(copy, copies);
+          try { await member.work(copy, room, seat, used, agent, continuing, signal); }
+          finally {
+            const saved = task.hunt?.screenTurns?.[member.key];
+            if (saved && versions.length) { saved.copies = copies; saved.conversation.repositoryCopies = copies; this.k.commitNow(); }
+            else for (const work of versions) if (work.productId !== task.productId && copies[work.productId]) {
+              try { await git.removeWorktree(work.root, copies[work.productId]!); }
+              catch (error) {
+                // A cleanup failure cannot replace a saved report or the original review error.
+                // The group's final cleanup below still removes folders and prunes each repository.
+                this.k.log(task, "warn", `Could not remove a review copy yet: ${error instanceof Error ? error.message : String(error)}`);
+              }
+            }
+            this.turns.repositoryCopies.delete(copy);
+          }
+        })
         .then(() => {
           completed = true;
           if (task.hunt?.screenTurns) delete task.hunt.screenTurns[member.key];
@@ -507,9 +653,12 @@ export class Reviews {
         });
       running.set(member.key, { agent, done });
       show();
+      // Saving the profile notifies listeners, which may change permissions and schedule again.
+      // Expose its reservation first so that reentrant scheduling counts every seat and cannot admit it twice.
+      if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, seat);
     };
     const continueScreen = () => {
-      if (signal.aborted || failure !== undefined || this.k.draining) return;
+      if (signal.aborted || failure !== undefined || this.k.admissionsClosed) return;
       const member = members.find((entry) => entry.key === task.screen?.member);
       const saved = member && task.hunt?.screenTurns?.[member.key];
       if (!member || !saved || running.has(member.key)) return;
@@ -520,7 +669,7 @@ export class Reviews {
     };
     const start = () => {
       while (pending.length && failure === undefined && !task.screen && !Object.keys(task.hunt?.screenTurns ?? {}).length) {
-        if (this.k.draining || signal.aborted) break;
+        if (this.k.admissionsClosed || signal.aborted) break;
         const member = pending[0]!;
         const room = roomFor(member.key);
         const choice = this.k.choose(member.profileId, task, member.roleId, room, member.reviewerKey);
@@ -539,6 +688,7 @@ export class Reviews {
     this.k.screenGroups.set(task.id, {
       continue: continueScreen,
       running: (key) => running.has(key),
+      yield: (key) => { yielded.add(key); show(); },
       recipients: () => members.filter((member) => !accepted.has(member.key)).map((member) => member.key),
       finished: (key) => { accepted.add(key); },
     });
@@ -573,6 +723,11 @@ export class Reviews {
       // A member who yielded the screen released its seat before its process exited.
       await this.turns.releasedStops();
       await git.removeCopies(root, folder, keptCopies());
+      for (const work of versions) if (work.root !== root) await git.removeCopies(work.root, folder, keptCopies());
+      for (const work of versions) {
+        if (await git.head(work.path).catch(() => work.sha) !== work.sha) await git.resetTo(work.path, work.sha);
+        if (!await git.isClean(work.path).catch(() => true)) await git.discardChanges(work.path);
+      }
       // Copies share the repository's branches, so a read-only agent could still have moved the task's
       // branch or written into its copy by path: the task's copy goes back to how the group found it.
       if (task.worktree && members.every((member) => !this.k.role(member.roleId)?.canEdit)) {
@@ -582,6 +737,21 @@ export class Reviews {
         }
         await this.k.undoReadOnly(task, members[0]!.roleId);
       }
+    }
+  }
+
+  /** Settle objections and shared repairs together, only after the whole reviewer group reports. */
+  private settleReviews(task: MTask, stage: MStage): void {
+    if (!task.hunt || this.pendingReviewers(task, stage).length) return;
+    const reviewers = Object.keys(task.hunt.reported);
+    for (const finding of task.findings) {
+      if (finding.status !== "open" || finding.raisedBy === "petrina" || finding.text.startsWith("Failed acceptance check:")) continue;
+      if (task.repositories && !productsFor(task, finding.productIds).length) continue;
+      if (finding.disputes?.length && !finding.confirmedBy.length) finding.status = "dismissed";
+      if (!task.repositories) continue;
+      const owners = productsFor(task, finding.productIds);
+      const reviews = task.hunt.fixReviews?.[finding.id];
+      if (owners.length > 1 && finding.status === "open" && !finding.confirmedBy.length && owners.every((id) => finding.answers?.[id]?.fixed) && reviewers.length && reviewers.every((key) => reviews?.[key] === true)) finding.status = "fixed";
     }
   }
 
@@ -598,14 +768,48 @@ export class Reviews {
     delete task.portReview;
     if (end.kind !== "passed") delete task.reviewedTree;
     else if (stage.roleId === "code-reviewer") task.reviewedTree = await git.treeOf(task.worktree!);
+    if (task.repositories && end.kind === "passed") {
+      this.k.saveRepository(task);
+      const trees = await Promise.all(task.repositories.map((work) => work.worktree ? git.treeOf(work.worktree) : undefined));
+      // Read first, then update both records and their active projection without yielding:
+      // a state save between Git reads must not write stale projection fields over the anchors.
+      task.repositories.forEach((work, index) => { if (work.worktree) work.reviewedTree = trees[index]; });
+      task.reviewedTree = task.repositories.find((work) => work.productId === task.productId)?.reviewedTree;
+    }
+    // Each shared reviewer sees every repository snapshot. Keep a separate anchor for each
+    // one so a later repair reviews only work added since this completed round.
+    // Security-only stages do not advance the code-review baseline; partial rounds never close here.
+    if (stage.roleId === "code-reviewer") {
+      if (task.repositories) {
+        this.k.saveRepository(task);
+        const heads = await Promise.all(task.repositories.map((work) => work.worktree ? git.head(work.worktree).catch(() => undefined) : undefined));
+        task.repositories.forEach((work, index) => {
+          const sha = heads[index];
+          if (sha) work.reviewedSha = sha;
+          else delete work.reviewedSha;
+        });
+        task.reviewedSha = task.repositories.find((work) => work.productId === task.activeProductId)?.reviewedSha;
+      } else {
+        const sha = await git.head(task.worktree!).catch(() => undefined);
+        if (sha) task.reviewedSha = sha;
+      }
+    }
     this.k.tracking.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
     const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: W.reviewPassed };
     endAgentStep(task, { outcome, ...reason }, Date.now());
     if (end.kind === "send back") {
-      // The next round reviews only what changed since what the reviewers looked at in this one.
-      const sha = await git.head(task.worktree!).catch(() => undefined);
-      if (sha) task.reviewedSha = sha;
       task.rounds[stage.id] = round + 1;
+      if (task.repositories) {
+        if (beginRepair(this.k, task, "review", task.stageIndex)) return "continue";
+        // This decision is a delivery checkpoint. Approval must resume after it, not re-enter review.
+        const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
+        if (delivery < 0) throw new Error("The plan has no delivery check after review");
+        task.stageIndex = delivery;
+        task.sub = 0;
+        this.k.log(task, "warn", "No builder can take the remaining findings, so the decision goes to you");
+        this.k.commit();
+        return "continue";
+      }
       task.stageIndex = end.builder;
       task.sub = 0;
       task.fixing = true;

@@ -11,9 +11,10 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Engine, type EngineOptions } from "./engine.js";
 import { loginShellPath, mergePath } from "./env.js";
-import { claimFolder, type Connection, previousToken, removeConnection, writeConnection } from "./instance.js";
+import { answers, claimFolder, type Connection, FolderLock, previousToken, readConnection, removeConnection, writeConnection } from "./instance.js";
 import { OutputLog } from "./log.js";
 import { serve } from "./server.js";
+import { EngineLifecycle, LifecycleStore } from "./lifecycle.js";
 
 export interface LaunchOptions {
   home: string;
@@ -33,14 +34,17 @@ export interface LaunchOptions {
 /** What the engine tells the shell. One line of JSON, `type` first. */
 export type ShellMessage = { type: "ready" | "running"; owned: boolean; url: string; token: string } | { type: "error"; message: string };
 
-/** How long a stopping engine waits for reviewers, voters and a delivery in flight to hand back. */
-const DRAIN_MS = 4 * 60_000;
 const ALREADY_RUNNING = "Petrina's engine is already running. Open it with bun run open.";
 const BUSY = "Another Petrina engine holds this folder but does not answer. Wait a moment and try again; if it stays like this, stop the other engine";
 
 function tell(message: ShellMessage): void {
   // Written straight to the pipe: the shell reads it, nothing logs it.
   writeSync(1, `${JSON.stringify(message)}\n`);
+}
+
+/** Let the desktop shell distinguish an accepted lifecycle drain from a lost engine. */
+function signalDesktopHandoff(active: boolean): void {
+  try { writeSync(1, `${JSON.stringify({ type: "handoff", active })}\n`); } catch { /* The app may have closed already. */ }
 }
 
 export async function launch(options: LaunchOptions): Promise<void> {
@@ -56,7 +60,56 @@ export async function launch(options: LaunchOptions): Promise<void> {
   process.on("unhandledRejection", (reason) => console.error("Unhandled error:", reason));
 
   await mkdir(home, { recursive: true, mode: 0o700 });
-  const claim = await claimFolder(home);
+  const lifecycleStore = new LifecycleStore(home);
+  const prior = lifecycleStore.current;
+  const recovery = app && !process.env.PETRINA_LIFECYCLE_REPLACEMENT;
+  const unfinishedHandoff = (op: typeof prior) => op && (["stop", "restart"].includes(op.kind) || op.phase === "starting") && !["completed", "failed"].includes(op.phase);
+  const followHandoff = async () => {
+    // The shell's old child may have exited before its requested replacement starts. This
+    // recovery process follows a live replacement. Only confirmed loss of ownership and its
+    // process lets recovery fail the handoff and claim the folder for one new engine.
+    log.discard();
+    const deadline = Date.now() + 25_000;
+    for (;;) {
+      const operation = lifecycleStore.current;
+      if (operation?.phase === "failed") return;
+      if (operation?.kind === "stop" && operation.phase === "completed") {
+        tell({ type: "error", message: "The engine was intentionally stopped. Use petrina engine start to start it again." });
+        break;
+      }
+      const connection = readConnection(home);
+      if (operation?.phase === "completed" && connection && await answers(connection, 500)) {
+        tell({ type: "running", owned: false, url: connection.url, token: connection.token });
+        break;
+      }
+      const ownership = FolderLock.take(home);
+      try {
+        if (ownership && lifecycleStore.failAbandoned(home, ownership)) return;
+      } finally { ownership?.release(); }
+      if (Date.now() >= deadline) {
+        tell({ type: "error", message: "The engine handoff is still in progress. Reconnect to follow it; no additional engine was started." });
+        break;
+      }
+      await Bun.sleep(100);
+    }
+    lifecycleStore.close();
+    process.exit(0);
+  };
+  if (recovery && unfinishedHandoff(prior) && prior?.phase !== "draining") await followHandoff();
+  // Desktop reconnect/recovery is not permission to undo an intentional stop.
+  if (app && prior?.kind === "stop" && prior.phase === "completed") {
+    log.discard();
+    tell({ type: "error", message: "The engine was intentionally stopped. Use petrina engine start to start it again." });
+    lifecycleStore.close();
+    process.exit(0);
+  }
+  let claim = await claimFolder(home);
+  while (claim.kind === "free" && recovery && unfinishedHandoff(lifecycleStore.current)) {
+    if (lifecycleStore.failAbandoned(home, claim.lock)) break;
+    claim.lock.release();
+    await followHandoff();
+    claim = await claimFolder(home);
+  }
   if (claim.kind !== "free") {
     // Stepping aside: the log belongs to the engine that holds the folder.
     log.discard();
@@ -66,12 +119,31 @@ export async function launch(options: LaunchOptions): Promise<void> {
   }
 
   const { lock } = claim;
+  const latest = lifecycleStore.current;
+  const recoverFailedHandoff = recovery && latest?.phase === "failed" && ["pause", "stop", "restart"].includes(latest.kind);
+  if (app && latest && ((latest.kind === "stop" && ["stopping", "completed"].includes(latest.phase)) || (latest.phase === "failed" && !recoverFailedHandoff))) {
+    // Recheck after taking ownership: the app may have opened while the old owner was handing
+    // the folder back. Recovery must not turn that intentional stop into a fresh launch.
+    lock.release();
+    log.discard();
+    tell({ type: "error", message: latest.error ?? "The engine was intentionally stopped. Use petrina engine start to start it again." });
+    lifecycleStore.close();
+    process.exit(0);
+  }
+  if (recoverFailedHandoff || (!app && latest && (["completed", "failed"].includes(latest.phase)))) {
+    // Recovery and explicit legacy `serve` keep the failed/finished receipt. Reserve the new
+    // start while holding ownership so every reconnect discovers the same engine.
+    lifecycleStore.begin("start", { requestId: `${app ? "recovery" : "serve"}-${randomBytes(12).toString("hex")}` }, latest!.scheduling, undefined, process.pid);
+  }
+  // Taking ownership also transfers an offline caller's reservation to this engine.
+  lifecycleStore.noteLauncher(process.pid);
   log.open(join(home, "engine.log"));
   console.log(`${new Date().toISOString()} Petrina engine starting (process ${process.pid}, ${app ? "started by the app" : "started by hand"}, data in ${home})`);
 
   let engine: Engine | undefined;
   let server: ReturnType<typeof serve> | undefined;
   let stopping = false;
+  let lifecycle: EngineLifecycle | undefined;
   const stop = async (code = 0) => {
     if (stopping) return;
     stopping = true;
@@ -79,13 +151,14 @@ export async function launch(options: LaunchOptions): Promise<void> {
     setTimeout(() => process.exit(code), 7000).unref();
     try {
       server?.stop(true);
+      lifecycle?.close();
       await engine?.shutdown();
     } catch (error) {
       console.error("While stopping:", error);
     }
     // An app engine takes its connection file with it. One started by hand leaves it, so the next
     // start keeps the key and open browser windows reconnect; a stale file is never trusted alone.
-    if (app) removeConnection(home, process.pid);
+    if (app && !process.env.PETRINA_LIFECYCLE_REPLACEMENT) removeConnection(home, process.pid);
     lock.release();
     console.log(`${new Date().toISOString()} Petrina engine stopped`);
     log.close();
@@ -106,13 +179,14 @@ export async function launch(options: LaunchOptions): Promise<void> {
       return;
     }
     draining = true;
-    const limit = Number(process.env.PETRINA_DRAIN_MS) || DRAIN_MS;
+    engine.drainReason = "stop";
+    const limit = Infinity;
     void engine
       .drain(limit, (left) => {
-        if (left) console.log(`${new Date().toISOString()} Petrina is stopping: waiting for ${left} agent${left === 1 ? "" : "s"} to hand back, up to ${Math.max(1, Math.round(limit / 60_000))} minute${limit >= 90_000 ? "s" : ""} (a second Ctrl-C stops now)`);
+        if (left) console.log(`Petrina is stopping: ${left} active work item${left === 1 ? "" : "s"} still finishing (a second Ctrl-C interrupts).`);
       })
       .then((left) => {
-        if (left) console.log(`${new Date().toISOString()} ${left} agent${left === 1 ? "" : "s"} did not hand back in time: stopping anyway`);
+        if (left) return;
         stop();
       });
   };
@@ -124,24 +198,54 @@ export async function launch(options: LaunchOptions): Promise<void> {
       const path = await loginShellPath();
       if (path) process.env.PATH = mergePath(path, process.env.PATH);
     }
-    engine = new Engine(home, options.engine);
+    engine = new Engine(home, { ...options.engine, admissionsClosed: true });
     await engine.waitUntilReady();
-    const token = (!options.newKey && previousToken(home)) || randomBytes(24).toString("base64url");
-    server = serve(engine, { port: app ? 0 : (options.port ?? 4317), token, ...(options.ui ? { ui: options.ui } : {}) });
+    lifecycle = new EngineLifecycle(engine, lifecycleStore, async (restart) => {
+      const reconnectPort = server!.port;
+      lifecycle?.close();
+      server?.stop(true);
+      await engine!.shutdown();
+      // Reserve the replacement before releasing ownership. Desktop recovery follows this
+      // operation during the gap, including when its former child has already exited.
+      if (restart) lifecycleStore.finish("starting", undefined, process.pid);
+      // The old owner is fully settled before a replacement may claim the folder.
+      lock.release();
+      if (restart) {
+        const child = Bun.spawn([process.execPath, ...process.argv.slice(1)], {
+          env: { ...process.env, PETRINA_LIFECYCLE_REPLACEMENT: "1", PETRINA_RECONNECT_PORT: String(reconnectPort) },
+          stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true, windowsHide: true,
+        });
+        lifecycleStore.noteLauncher(child.pid);
+        child.unref();
+      } else lifecycleStore.finish("completed");
+      log.close();
+      process.exit(0);
+    }, app ? signalDesktopHandoff : undefined);
+    const token = ((!options.newKey || process.env.PETRINA_LIFECYCLE_REPLACEMENT) && previousToken(home)) || randomBytes(24).toString("base64url");
+    server = serve(engine, { port: Number(process.env.PETRINA_RECONNECT_PORT) || (app ? 0 : (options.port ?? 4317)), token, lifecycle, ...(options.ui ? { ui: options.ui } : {}) });
     const connection: Connection = { url: `ws://127.0.0.1:${server.port}/ws`, api: `http://127.0.0.1:${server.port}`, token, pid: process.pid };
     // Scripts keep reading engine.json, whoever started the engine.
     writeConnection(home, connection);
+    lifecycle.ready();
     // Which tools are ready, in the background: first run and the squad read the answers as they come.
     void engine.checkTools();
     console.log(`Petrina engine on ${connection.api} (data in ${home})`);
     if (app) {
       tell({ type: "ready", owned: true, url: connection.url, token });
-      process.stdin.on("end", () => stop());
-      process.stdin.on("close", () => stop());
-      process.stdin.on("error", () => stop());
-      process.stdin.resume();
+      if (!process.env.PETRINA_LIFECYCLE_REPLACEMENT) {
+        const closed = () => {
+          const operation = lifecycleStore.current;
+          const handoff = operation && ["stop", "restart"].includes(operation.kind) && !["completed", "failed"].includes(operation.phase);
+          if (!handoff) void stop();
+        };
+        process.stdin.on("end", closed);
+        process.stdin.on("close", closed);
+        process.stdin.on("error", closed);
+        process.stdin.resume();
+      }
     }
   } catch (error) {
+    lifecycleStore.finish("failed", "The replacement engine could not start. Saved work remains available; inspect the engine log and explicitly start again.");
     console.error("Petrina's engine could not start:", error);
     if (app) tell({ type: "error", message: `Petrina's engine could not start: ${error instanceof Error ? error.message : String(error)}` });
     stop(1);

@@ -474,10 +474,10 @@ describe.concurrent("Finished tasks free their working copies", () => {
     try {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "Free space", description: "[quick]", delivery: "local", approveDelivery: false });
-      engine.store.save = (state) => {
+      engine.store.save = (state, ...archive) => {
         const task = taskOf(state, id);
-        if (task.state === "done" && existsSync(task.worktree!)) { failed += 1; throw new Error("disk full"); }
-        save(state);
+        if (task?.state === "done" && existsSync(task.worktree!)) { failed += 1; throw new Error("disk full"); }
+        save(state, ...archive);
       };
       const task = await cleaned(engine, id);
       expect(failed).toBeGreaterThan(0);
@@ -485,6 +485,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(task.error).toBeUndefined();
       gone(w, task);
       engine.commitNow();
+      expect(engine.store.history.get(id)?.cleanup?.removedAt).toBeDefined();
     } finally { engine.store.save = save; engine.shutdown(); }
   });
 

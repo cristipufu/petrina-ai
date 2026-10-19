@@ -6,7 +6,7 @@ import { ago, profileText, type Lookup } from "../lib";
 import { RoleAvatar } from "./bits";
 import { UnsentMessage } from "./EngineState";
 import { Ask } from "./Inbox";
-import { MessageBody } from "./MessageBody";
+import { ImagePreview, MessageBody } from "./MessageBody";
 import type { SheetTab } from "./TaskCard";
 
 interface LogProps {
@@ -20,6 +20,10 @@ interface LogProps {
   /** A journey step to read: the conversation opens at its first line, with its lines marked. */
   step?: { id: string; name: string };
   onStepDone?: () => void;
+}
+
+function messageProduct(id: Id, find: Lookup, repositories?: Task["repositories"]): string {
+  return find.product(id)?.name ?? repositories?.find((work) => work.productId === id)?.source?.product.name ?? id;
 }
 
 /** Consecutive activity lines read as one quiet block between messages. */
@@ -38,29 +42,12 @@ function when(at: number, now: number): string {
   return value === "now" ? "just now" : `${value} ago`;
 }
 
-function ReportPicture({ taskId, image }: { taskId: string; image: ReportImage }) {
-  const [url, setUrl] = useState<string>();
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let active = true;
-    let objectUrl: string | undefined;
-    setUrl(undefined);
-    setFailed(false);
-    void sim.image(taskId, image.id).then((blob) => {
-      if (!active) return;
-      objectUrl = URL.createObjectURL(blob);
-      setUrl(objectUrl);
-    }).catch(() => { if (active) setFailed(true); });
-    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [taskId, image.id]);
-  return <figure className="report-picture">
-    {failed ? <p className="quiet-text">This picture could not be loaded.</p> : url ? <img src={url} alt={image.caption} onError={() => setFailed(true)} /> : <p className="quiet-text">Loading picture…</p>}
-    <figcaption>{image.caption}</figcaption>
-  </figure>;
+function ReportPicture({ taskId, image, finished }: { taskId: string; image: ReportImage; finished: boolean }) {
+  return <span className="message-images"><ImagePreview taskId={taskId} imageId={image.id} label={image.caption} finished={finished} /></span>;
 }
 
 /** Only this run's saved conversation, read in place without changing the task's Session tab. */
-export function StepConversation({ lines, find, now, live = false, taskId, finished = false }: { lines: readonly SessionLine[]; find: Lookup; now: number; live?: boolean; taskId: string; finished?: boolean }) {
+export function StepConversation({ lines, find, now, live = false, taskId, repositories = find.task(taskId)?.repositories, finished = false }: { lines: readonly SessionLine[]; find: Lookup; now: number; live?: boolean; taskId: string; repositories?: Task["repositories"]; finished?: boolean }) {
   const section = useRef<HTMLElement>(null);
   const pinned = useRef(true);
   const textSize = lines.reduce((size, line) => size + line.text.length, 0);
@@ -78,13 +65,13 @@ export function StepConversation({ lines, find, now, live = false, taskId, finis
   return <section ref={section} className="step-conversation" aria-label="This step's conversation">
     <div className="chat">
       {groupLines(lines).map((group) => Array.isArray(group) ? (
-        <details key={group[0]!.id} className="step-activity"><summary>{group.length} agent action{group.length === 1 ? "" : "s"}</summary><ul className="activity">{group.map((line) => <li key={line.id}><ArrowRight size={12} aria-hidden="true" />{line.text}</li>)}</ul></details>
+        <details key={group[0]!.id} className="step-activity"><summary>{group.length} agent action{group.length === 1 ? "" : "s"}</summary><ul className="activity">{group.map((line) => <li key={line.id}><ArrowRight size={12} aria-hidden="true" /><span>{line.productId && `${messageProduct(line.productId, find, repositories)}: `}{line.text}</span></li>)}</ul></details>
       ) : group.from === "system" ? (
         <p key={group.id} className="system">{group.text} · {when(group.at, now)}</p>
       ) : (
         <div key={group.id} className={`msg ${group.from === "you" ? "you" : "agent"}`}>
           {group.from === "you" ? <span className="avatar tone-slate" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span> : <RoleAvatar role={find.role(group.roleId)} size={28} />}
-          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}<time>{when(group.at, now)}</time></div><div className="bubble"><MessageBody text={group.text} taskId={taskId} finished={finished} /></div>{group.images?.map((image) => <ReportPicture key={image.id} taskId={taskId} image={image} />)}</div>
+          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}{group.productId && <> · {messageProduct(group.productId, find, repositories)}</>}<time>{when(group.at, now)}</time></div><div className="bubble"><MessageBody text={group.text} taskId={taskId} productId={group.productId} finished={finished} /></div>{group.images?.map((image) => <ReportPicture key={image.id} taskId={taskId} image={image} finished={finished} />)}</div>
         </div>
       ))}
     </div>
@@ -181,11 +168,11 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
         <div style={{ minWidth: 0 }}>
           <div className="name">
             {stepStart(line)}
-            {you ? "You" : (lineRole?.name ?? "Agent")}
+            {you ? "You" : (lineRole?.name ?? "Agent")}{line.productId && <> · {messageProduct(line.productId, find, task.repositories)}</>}
             <time className="num">{when(line.at, state.now)}</time>
           </div>
-          <div className="bubble"><MessageBody text={line.text} taskId={task.id} finished={task.state === "done" || task.state === "cancelled"} /></div>
-          {line.images?.map((image) => <ReportPicture key={image.id} taskId={task.id} image={image} />)}
+          <div className="bubble"><MessageBody text={line.text} taskId={task.id} productId={line.productId} finished={task.state === "done" || task.state === "cancelled"} /></div>
+          {line.images?.map((image) => <ReportPicture key={image.id} taskId={task.id} image={image} finished={task.state === "done" || task.state === "cancelled"} />)}
         </div>
       </div>
     );
@@ -231,7 +218,7 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
                   <li key={line.id} data-line={line.id} className={inStep(line)}>
                     <ArrowRight size={12} aria-hidden="true" />
                     {stepStart(line)}
-                    {line.text}
+                    <span>{line.productId && `${messageProduct(line.productId, find, task.repositories)}: `}{line.text}</span>
                   </li>
                 ))}
               </ul>

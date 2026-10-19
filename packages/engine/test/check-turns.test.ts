@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { Aborted } from "../src/kernel.js";
+import { WaitingForUsage } from "../src/usage.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
@@ -19,6 +20,8 @@ describe("tasks' checks take turns on one machine", () => {
     try {
       const productId = await engine.addProduct(makeProduct(root));
       const task = engine.task(engine.addTask({ productId, title: "A check waiting its turn" }))!;
+      engine.setHeld(task.id, true);
+      engine.setPoolPaused(false);
       const acquire = () => engine["checks"]["turnToRun"](task, new AbortController().signal);
       for (let i = 0; i < checkRuns; i++) held.push(await acquire());
       const started: string[] = [];
@@ -50,6 +53,8 @@ describe("tasks' checks take turns on one machine", () => {
     try {
       const productId = await engine.addProduct(makeProduct(root));
       const task = engine.task(engine.addTask({ productId, title: "A cancelled check" }))!;
+      engine.setHeld(task.id, true);
+      engine.setPoolPaused(false);
       const acquire = (signal = new AbortController().signal) => engine["checks"]["turnToRun"](task, signal);
       const cancelled = new AbortController();
       cancelled.abort();
@@ -85,6 +90,41 @@ describe("tasks' checks take turns on one machine", () => {
     }
   });
 
+  for (const draining of [false, true]) it(`releases a reserved check place when ${draining ? "draining" : "paused"} during its handoff`, async () => {
+    const root = tempDir("petrina-check-admission-");
+    roots.push(root);
+    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null });
+    engine.setPoolPaused(true);
+    const held: (() => void)[] = [];
+    try {
+      const productId = await engine.addProduct(makeProduct(root));
+      const task = engine.task(engine.addTask({ productId, title: "A check at the drain boundary" }))!;
+      engine.setHeld(task.id, true);
+      engine.setPoolPaused(false);
+      const acquire = () => engine["checks"]["turnToRun"](task, new AbortController().signal);
+      const release = await acquire();
+      held.push(release);
+      const waiting = acquire().then(() => "started", (error) => error);
+      const follower = acquire().then(() => "started", (error) => error);
+      release();
+      // The queue has reserved the released place, but the next check has not been admitted.
+      if (draining) engine.draining = true;
+      else engine.setPoolPaused(true);
+      expect(await waiting).toBeInstanceOf(WaitingForUsage);
+      expect(await follower).toBeInstanceOf(WaitingForUsage);
+      release();
+      engine.draining = false;
+      engine.setPoolPaused(false);
+      held.push(await acquire());
+      expect(engine["checks"]["running"]).toBe(1);
+      held.at(-1)!();
+      expect(engine["checks"]["running"]).toBe(0);
+    } finally {
+      for (const release of held) release();
+      await engine.shutdown();
+    }
+  });
+
   it("runs one task's checks while the other waits its turn, and both get through", async () => {
     const root = tempDir("petrina-check-turns-");
     roots.push(root);
@@ -107,28 +147,34 @@ try {
 `);
     writeFileSync(script, JSON.stringify({ checks: [{ name: "Held check", argv: [process.execPath, check], why: "Waits until the other task is in line" }] }));
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`] });
-    let waited = false;
-    let waitingStep: { taskId: string; stepId: string; startedAt: number } | undefined;
+    // Admission reserves the slot before Git/environment preparation starts the actual command.
+    // Exercise that gap deliberately instead of relying on how quickly this machine starts checks.
+    let startFirst!: () => void;
+    const firstStart = new Promise<void>((resolve) => { startFirst = resolve; });
+    const runAll = engine["checks"]["runAll"].bind(engine["checks"]);
+    let first = true;
+    engine["checks"]["runAll"] = async (...args) => {
+      if (first) { first = false; await firstStart; }
+      return runAll(...args);
+    };
+    let waitedBeforeStart = false;
+    let waitingStep: { taskId: string; stepId: string; startedAt: number; evidence: NonNullable<Task["journey"]>[number]; running: { name: string; startedAt?: number } } | undefined;
     const unsubscribe = engine.subscribe(() => {
-      const task = engine.getState().tasks.find((task) => task.statusLine === "Waiting to run the checks: another task's run comes first");
-      if (task) {
-        waited = true;
-        if (!waitingStep) {
-          // Admission reserves a place before opening the diagnostic log and reporting start.
-          // Wait for that report before comparing a running check with its queued peer.
-          const running = engine.getState().tasks.flatMap((entry) => entry.journey?.at(-1)?.productChecks ?? []).find((check) => check.result === "running");
-          if (!running) return;
-          const step = task.journey!.at(-1)!;
-          expect(step).toMatchObject({ kind: "petrina", work: "checks" });
-          expect(step.endedAt).toBeUndefined();
-          expect(step.productChecks).toEqual([expect.objectContaining({ name: "Held check", result: "pending" })]);
-          expect(running?.name).toBe("Held check");
-          expect(running?.startedAt).toBeNumber();
-          waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt };
-          // The first check is held until the other task is really waiting, then both run.
-          rmSync(hold, { force: true });
-        }
+      const state = engine.activeState();
+      const task = state.tasks.find((task) => task.statusLine === "Waiting to run the checks: another task's run comes first");
+      if (!task || waitingStep) return;
+      // A place is reserved before the diagnostic log opens and start is reported.
+      // Compare the running check with its queued peer only after that report.
+      const running = state.tasks.flatMap((entry) => entry.journey?.at(-1)?.productChecks ?? []).find((check) => check.result === "running");
+      if (!running) {
+        waitedBeforeStart = true;
+        startFirst();
+        return;
       }
+      const step = task.journey!.at(-1)!;
+      // Snapshot the evidence and assert after the run. An assertion thrown by an update listener
+      // would abort the check and replace its pending evidence with "stopped" during cleanup.
+      waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt, evidence: JSON.parse(JSON.stringify(step)) as typeof step, running: { ...running } };
     });
     try {
       const productId = await engine.addProduct(makeProduct(root));
@@ -140,11 +186,20 @@ try {
           else if (item.kind === "permission") engine.allow(item.id, "once");
           else if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
         }
+        // The progress event can precede process startup. Wait for the check's own marker as well
+        // before releasing it, so the lock still proves the two commands never overlap.
+        if (waitingStep && existsSync(runs)) rmSync(hold, { force: true });
         const tasks = ids.map((id) => state.tasks.find((entry) => entry.id === id) as Task | undefined);
         if (tasks.some((task) => task?.state === "failed")) throw new Error("a task failed");
         return ids.every((id) => state.inbox.some((item) => item.taskId === id && item.kind === "delivery"));
       }, "both delivery checks", 90_000);
-      expect(waited).toBe(true);
+      expect(waitedBeforeStart).toBe(true);
+      expect(waitingStep).toBeDefined();
+      expect(waitingStep!.evidence).toMatchObject({ kind: "petrina", work: "checks" });
+      expect(waitingStep!.evidence.endedAt).toBeUndefined();
+      expect(waitingStep!.evidence.productChecks).toEqual([expect.objectContaining({ name: "Held check", result: "pending" })]);
+      expect(waitingStep!.running.name).toBe("Held check");
+      expect(waitingStep!.running.startedAt).toBeNumber();
       const task = engine.getState().tasks.find((task) => task.id === waitingStep!.taskId)!;
       expect(task.journey!.find((step) => step.id === waitingStep!.stepId)).toMatchObject({ startedAt: waitingStep!.startedAt, end: "done", outcome: "The check passes" });
       for (const task of engine.getState().tasks) expect(journeyProblems(task)).toEqual([]);
@@ -153,6 +208,7 @@ try {
       expect(checked).toEqual(copies);
     } finally {
       unsubscribe();
+      startFirst();
       rmSync(hold, { force: true });
       await engine.shutdown();
     }

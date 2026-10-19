@@ -83,6 +83,7 @@ export class Updates {
    * `fresh`: right before shipping, where only main freshly fetched from GitHub counts for a GitHub delivery.
    */
   async upToDate(task: MTask, signal: AbortSignal, fresh = false): Promise<"current" | "moved" | "conflict"> {
+    if (task.repositories && (task.pr || task.release || task.landed)) return "current";
     const worktree = task.worktree;
     const sourceName = task.source?.start.kind === "pull-request" ? `PR #${task.source.start.number}` : task.source?.start.branch ?? "main";
     if (!worktree) return "current";
@@ -106,6 +107,7 @@ export class Updates {
     if (!merged.conflicts.length) {
       await git.moveTo(worktree, await git.commitTree(worktree, merged.tree, latest.sha, this.message(task)));
       if (reviewed) task.reviewedTree = merged.tree;
+      if (task.checks) task.checks.current = task.checks.tree === merged.tree;
       task.baseSha = latest.sha;
       task.base = latest.ref;
       // The version the last round reviewed, carried onto the new base too, so the next round still sees only what changed since.
@@ -130,6 +132,7 @@ export class Updates {
     delete task.approvedFor;
     task.baseSha = latest.sha;
     task.base = latest.ref;
+    if (task.repositories) task.repair = { products: [task.productId], index: 0, returnStage: task.stageIndex, kind: "review" };
     task.stageIndex = builder;
     task.sub = 0;
     task.fixing = false;

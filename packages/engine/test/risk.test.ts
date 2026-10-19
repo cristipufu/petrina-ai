@@ -66,7 +66,9 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
       try {
         expect(f.engine.getState().products[0]!.shipLowRisk).toBe(optedIn);
         if (optedIn) {
-          const task = await f.step((_, found) => found?.state === "done", "the work to ship");
+          const task = await f.step((state, found) => found?.state === "done" || f.delivery(state), "delivery or its check");
+          expect(task.state).toBe("done");
+          expect(f.delivery(f.engine.getState())).toBeUndefined();
           expect(lines(task)).toContain("Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
           expect(lines(task).some((line) => line === "You approved the delivery")).toBe(false);
         } else {

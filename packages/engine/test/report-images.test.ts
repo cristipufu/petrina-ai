@@ -1,5 +1,5 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -9,11 +9,61 @@ import { ToolChecks } from "../src/tool-checks.js";
 import { Sources } from "../src/sources.js";
 import { Connections } from "../src/connection.js";
 import { BuildResult } from "../src/roles.js";
+import { Cleanup } from "../src/cleanup.js";
 import { Fakes, git, makeWorld, removeDir, SLOW, waitFor } from "./support.js";
 
 const world = makeWorld("report-images");
 const root = world.dir;
 afterAll(() => removeDir(root));
+
+it("removes finished and orphaned picture storage without depending on worktree cleanup or loading archive bodies", async () => {
+  const world = makeWorld("report-picture-lifetime");
+  let engine = world.start();
+  try {
+    engine.setPoolPaused(true);
+    const productId = await engine.addProduct(world.clone);
+    const activeId = engine.addTask({ productId, title: "An unfinished check" });
+    const finishedId = engine.addTask({ productId, title: "A finished check" });
+    const imageId = "12345678-1234-1234-1234-123456789abc";
+    for (const id of [activeId, finishedId]) {
+      engine.task(id)!.session.push({ id: `picture-${id}`, at: Date.now(), from: "agent", text: "Page checked", images: [{ id: imageId, caption: "The checked page" }] });
+    }
+    const finished = engine.task(finishedId)!;
+    finished.state = "done";
+    finished.column = "done";
+    // An open pull request keeps its working copy. It must not keep picture bytes.
+    finished.pr = { number: 1, url: "https://github.com/acme/demo/pull/1", state: "open", openedAt: Date.now() };
+    engine.commitNow();
+    for (const id of [activeId, finishedId, "deleted-task"]) {
+      mkdirSync(join(world.data, "captures", id), { recursive: true });
+      writeFileSync(join(world.data, "captures", id, `${imageId}.png`), "picture");
+    }
+    expect(await engine.reportImage(finishedId, imageId)).toBeUndefined();
+    const archived = spyOn(engine.store.history, "get");
+    try {
+      await new Cleanup(engine).sweep();
+      expect(archived).not.toHaveBeenCalled();
+    } finally { archived.mockRestore(); }
+    expect(existsSync(join(world.data, "captures", finishedId))).toBe(false);
+    expect(existsSync(join(world.data, "captures", "deleted-task"))).toBe(false);
+    expect((await engine.reportImage(activeId, imageId))?.size).toBeGreaterThan(0);
+    await engine.shutdown();
+    engine = world.start();
+    await engine.waitUntilReady();
+    expect((await engine.reportImage(activeId, imageId))?.size).toBeGreaterThan(0);
+    engine.cancel(activeId);
+    expect(await engine.reportImage(activeId, imageId)).toBeUndefined();
+    await waitFor(() => !existsSync(join(world.data, "captures", activeId)), "cancelled pictures to be removed");
+    expect(engine.taskDetails(activeId)?.session[0]?.images?.[0]?.caption).toBe("The checked page");
+    // Bytes left by an older version are removed by startup, including cancelled history.
+    mkdirSync(join(world.data, "captures", activeId), { recursive: true });
+    writeFileSync(join(world.data, "captures", activeId, `${imageId}.png`), "leftover");
+    await engine.shutdown();
+    engine = world.start();
+    await engine.waitUntilReady();
+    await waitFor(() => !existsSync(join(world.data, "captures", activeId)), "old terminal pictures to be swept after restart");
+  } finally { await engine.shutdown(); removeDir(world.dir); }
+});
 
 it("builder and read-only reports preserve only chosen images through correction, cleanup, the next stage and restart", async () => {
   const product = world.clone;
@@ -23,6 +73,7 @@ it("builder and read-only reports preserve only chosen images through correction
   await sharp({ create: { width: 8, height: 8, channels: 3, background: "white" } }).png().toFile(join(fakes.dir, "picture.png"));
   const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] };
   let engine = world.start(options);
+  let scheduling: { mockRestore(): void } | undefined;
   try {
     const productId = await engine.addProduct(product);
     engine.setProductDelivery(productId, "local", true);
@@ -43,12 +94,22 @@ it("builder and read-only reports preserve only chosen images through correction
     expect(fakes.prompts().filter((text) => text.includes("Your result block could not be used"))).toHaveLength(2);
     const stateText = JSON.stringify(engine.getState());
     expect(stateText).not.toContain("base64");
-    expect(stateText).not.toContain("chosen.png");
+    // Picture references stay opaque. The exact accepted agent result separately
+    // records its source filename for coordination; that is metadata, not image bytes.
+    expect(JSON.stringify(reports.flatMap((line) => line.images ?? []))).not.toContain("chosen.png");
+    const results = task.journey?.flatMap((step) => step.agentResults ?? []) ?? [];
+    for (const report of reports) {
+      const recorded = results.filter((entry) => entry.roleId === report.roleId && entry.profileId === report.profileId);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]!.value).toEqual(expect.objectContaining({ images: [{ path: "chosen.png", caption: report.images![0]!.caption }] }));
+      expect(recorded[0]!.images).toEqual(report.images);
+    }
     const image = reports[0]!.images![0]!;
     await engine.shutdown();
     engine = world.start(options);
     await engine.waitUntilReady();
     expect(engine.getState().tasks.find((entry) => entry.id === id)!.session.filter((line) => line.images?.length)).toEqual(reports);
+    expect(engine.taskDetails(id)?.journey?.flatMap((step) => step.agentResults ?? [])).toEqual(results);
     expect((await engine.reportImage(id, image.id))?.size).toBeGreaterThan(0);
     expect(await engine.reportImage("another-task", image.id)).toBeUndefined();
     expect(await engine.reportImage(id, "../../outside")).toBeUndefined();
@@ -61,6 +122,11 @@ it("builder and read-only reports preserve only chosen images through correction
       expect(response.headers.get("content-type")).toBe("image/png");
       expect(response.headers.get("access-control-allow-origin")).toBe("tauri://localhost");
       expect((await sharp(await response.bytes()).metadata()).width).toBe(8);
+      const coordinated = await fetch(`http://127.0.0.1:${server.port}/api/coordinate`, {
+        method: "POST", headers: { authorization: "Bearer test-key", "content-type": "application/json" },
+        body: JSON.stringify({ name: "task.inspect", args: { taskId: id } }),
+      });
+      expect(await coordinated.json()).toEqual(expect.objectContaining({ outcome: "completed", task: expect.objectContaining({ id }) }));
     } finally { server.stop(true); }
     const interrupted = join(home, "browser-temp", "interrupted");
     await Bun.write(join(interrupted, "old.png"), "leftover");
@@ -70,7 +136,9 @@ it("builder and read-only reports preserve only chosen images through correction
     expect(existsSync(interrupted)).toBe(false);
     expect((await engine.reportImage(id, image.id))?.size).toBeGreaterThan(0);
     // Other agents can add activity while a report is being checked, after the history fills up.
-    engine.draining = true; // The test drives this turn directly; no new driver should start.
+    // Drive this turn directly without admitting automatic drivers. Draining
+    // intentionally blocks manual turn admissions too.
+    scheduling = spyOn(engine, "schedule").mockImplementation(() => {});
     engine.s.pool.paused = false;
     fakes.scenario({ planner: "short", builder: "plain", pictures: "valid" });
     const long = engine.s.tasks.find((entry) => entry.id === id)!;
@@ -118,8 +186,9 @@ it("builder and read-only reports preserve only chosen images through correction
     delete long.agent;
     await engine.shutdown();
     engine = world.start(options);
+    await engine.waitUntilReady();
     expect(engine.task(id)!.session.find((line) => line.id === pendingId)).toEqual(accepted);
-  } finally { await engine.shutdown(); }
+  } finally { scheduling?.mockRestore(); await engine.shutdown(); }
 }, 90_000 * SLOW);
 
 it("delivers a message arriving during picture saving to every unfinished reviewer and keeps only their final pictures", async () => {
@@ -163,6 +232,10 @@ it("delivers a message arriving during picture saving to every unfinished review
     expect(task().queued).toEqual([]);
     const reports = task().session.filter((line) => line.images?.length);
     expect(reports.map((line) => line.roleId)).toEqual(["builder", "code-reviewer", "code-reviewer"]);
+    const results = task().journey?.flatMap((step) => step.agentResults ?? []).filter((result) => result.roleId === "code-reviewer") ?? [];
+    expect(results).toHaveLength(reviewers.length);
+    for (const report of reports.filter((line) => line.roleId === "code-reviewer"))
+      expect(results.find((result) => result.profileId === report.profileId)?.images).toEqual(report.images);
     expect(readdirSync(history)).toHaveLength(3);
   } finally {
     saving?.mockRestore();

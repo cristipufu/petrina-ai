@@ -5,19 +5,73 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine, recordDisputes } from "../src/engine.js";
 import { BriefResult, ReviewResult } from "../src/roles.js";
+import { addEvidence, checkReviewEvidence } from "../src/review.js";
 import { describeTool, isPlumbing } from "../src/acp-run.js";
 
 const finding = (id: string, extra: Partial<Finding> = {}): Finding => ({ id, text: `Finding ${id}`, severity: "blocking", raisedBy: "sol-xhigh", confirmedBy: [], status: "open", ...extra });
 
 describe("disputed findings", () => {
-  it("keeps who disputed a finding and why, and dismisses it only when nobody else backed it", () => {
+  it("keeps independent evidence once when earlier proofs are repeated, without dropping overlapping new details", () => {
+    const first = "Dispute before confirmation dismisses it.\n\nThe reverse order leaves it open.";
+    const second = "Dismiss then independently confirm: expected open, observed dismissed.";
+    const record = finding("a", { evidence: first });
+    addEvidence(record as never, second);
+    const combined = `${first}\n\n${second}`;
+    expect(record.evidence).toBe(combined);
+    for (const repeated of [first, second, `  ${first}  `]) {
+      addEvidence(record as never, repeated);
+      expect(record.evidence).toBe(combined);
+    }
+    // A phrase shared with an existing proof is not an identical block of evidence.
+    const overlapping = "independently confirm";
+    addEvidence(record as never, overlapping);
+    expect(record.evidence).toBe(`${combined}\n\n${overlapping}`);
+    const extended = `${first} Reloading still leaves it dismissed.`;
+    addEvidence(record as never, extended);
+    const all = `${combined}\n\n${overlapping}\n\n${extended}`;
+    expect(record.evidence).toBe(all);
+    // Once surrounded by other proofs, this one is still retained only once.
+    addEvidence(record as never, second);
+    expect(record.evidence).toBe(all);
+  });
+
+  it("normalizes current evidence while preserving legacy open confirmations", () => {
+    const result = ReviewResult.parse({ verdict: "fail", confirms: ["open", { id: "fixed", evidence: "  A new ordering fails on this version.  " }] });
+    expect(result.confirms).toEqual(["open", "fixed"]);
+    expect(result.confirmationEvidence).toEqual({ fixed: "A new ordering fails on this version." });
+    expect(checkReviewEvidence([finding("open"), finding("fixed", { status: "fixed", answer: { fixed: true, text: "Fixed the previous ordering", at: 1 } })], result)).toBeUndefined();
+    expect(ReviewResult.safeParse({ verdict: "fail", confirms: [{ id: "fixed", evidence: "   " }] }).success).toBe(false);
+  });
+
+  it("asks for current evidence for a claimed fix, including a duplicate report, without changing the finding", () => {
+    const fixed = finding("fixed", { status: "fixed", evidence: "Old case", answer: { fixed: true, text: "Fixed the previous ordering", at: 1 } });
+    const before = JSON.stringify(fixed);
+    expect(checkReviewEvidence([fixed], ReviewResult.parse({ verdict: "fail", confirms: [fixed.id] }))).toContain("Current evidence is required");
+    expect(checkReviewEvidence([fixed], ReviewResult.parse({ verdict: "fail", findings: [{ text: fixed.text, severity: "important" }] }))).toContain("Current evidence is required");
+    expect(checkReviewEvidence([fixed], ReviewResult.parse({ verdict: "fail", findings: [{ text: fixed.text, severity: "important", evidence: "A different current case fails." }] }))).toBeUndefined();
+    expect(JSON.stringify(fixed)).toBe(before);
+    expect(checkReviewEvidence([finding("open")], ReviewResult.parse({ verdict: "fail", confirms: ["open"] }))).toBeUndefined();
+    expect(checkReviewEvidence([finding("native", { raisedBy: "petrina", status: "fixed" })], ReviewResult.parse({ verdict: "fail", confirms: ["native"] }))).toBeUndefined();
+  });
+
+  it("requires fresh proof for dismissed and already reopened reports without reviving a historical id", () => {
+    for (const earlier of [finding("dismissed", { status: "dismissed", evidence: "The original case passed." }), finding("reopened", { reopenedAt: 1, evidence: "A new current case fails." })]) {
+      const before = JSON.stringify(earlier);
+      expect(checkReviewEvidence([earlier], ReviewResult.parse({ verdict: "fail", confirms: [earlier.id] }))).toContain("Current evidence is required");
+      expect(checkReviewEvidence([earlier], ReviewResult.parse({ verdict: "fail", findings: [{ text: earlier.text, severity: "important" }] }))).toContain("Current evidence is required");
+      expect(checkReviewEvidence([earlier], ReviewResult.parse({ verdict: "fail", confirms: [{ id: earlier.id, evidence: "A different current path fails; the original path still passes." }] }))).toBeUndefined();
+      expect(JSON.stringify(earlier)).toBe(before);
+    }
+  });
+
+  it("keeps who disputed a finding and why without settling it before other reviewers report", () => {
     const findings = [finding("a"), finding("b", { confirmedBy: ["opus-high"] }), finding("c", { raisedBy: "petrina" })];
     recordDisputes(findings as never, [
       { id: "a", reason: "The test it names passes on main; the failure was a flaky run." },
       { id: "b", reason: "I could not reproduce this on the branch." },
       { id: "c", reason: "This test was renamed, not deleted." },
     ], "opus-xhigh", 1);
-    expect(findings[0]!.status).toBe("dismissed");
+    expect(findings[0]!.status).toBe("open");
     expect(findings[0]!.disputes).toEqual([{ by: "opus-xhigh", reason: "The test it names passes on main; the failure was a flaky run.", at: 1 }]);
     // Confirmed by another reviewer, and Petrina's own check: both stay open, with the dispute shown.
     expect(findings[1]!.status).toBe("open");

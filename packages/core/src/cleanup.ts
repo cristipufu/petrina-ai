@@ -24,5 +24,7 @@ export function needsPullRequestCheck(task: Task): boolean {
  * open, review fixes may still need the copy, so it stays, even when cancelled.
  */
 export function copyNoLongerNeeded(task: Task): boolean {
+  if (task.repositories) return (task.state === "done" || task.state === "cancelled") && task.repositories.every((work) =>
+    work.nothingToPublish || work.pr?.state !== "open" && !(work.pr?.state === "closed" && !work.landingAccepted) && work.shipping?.step === undefined && !work.shipping?.carriedOver && work.localUpdate?.pushed !== false && !work.cleanup?.foreignPullRequest && !needsPullRequestCheck({ ...task, ...work, repositories: undefined }));
   return (task.state === "done" || task.state === "cancelled") && task.pr?.state !== "open" && !task.cleanup?.foreignPullRequest && !needsPullRequestCheck(task);
 }

@@ -303,6 +303,53 @@ it.each([false, true])("keeps earlier peers ahead of later tasks after a usage r
   } finally { await f.close(); }
 });
 
+it("reopens a saved reviewer once when switching Off during a live grant, keeping its peer's seat and holding its usage replacement", async () => {
+  const f = await fixture("code reviewer", { controlled: true, screenModels: ["opus"], limited: [{ model: "opus", role: "code reviewer", onScreen: true }] }, { toolPath: () => "/bin/true" });
+  let switchedOff = false;
+  const unsubscribe = f.engine.subscribe(() => {
+    if (!switchedOff && f.task().screen?.granted) {
+      switchedOff = true;
+      // The saved member is being admitted by a live group. This update schedules synchronously.
+      f.engine.setScreenUse("off");
+    }
+  });
+  try {
+    f.engine.setPoolPaused(false);
+    const group = await f.group();
+    const holder = group.find((entry) => JSON.parse(readFileSync(join(f.fakes.dir, "conversations", `${entry.session}.json`), "utf8")).model === "opus")!;
+    const peer = group.find((entry) => entry !== holder)!;
+    f.background(holder.session);
+    await waitFor(() => f.waiting() && !f.engine.screenGroups.get(f.id)?.running(f.task().screen!.member!), "the saved reviewer to yield beside its working peer");
+    expect(slotUses(f.engine.getState())).toHaveLength(1);
+
+    f.engine.setScreenUse("on");
+    await waitFor(() => f.engine.getState().pool.limited?.length && f.waiting() && !f.engine.screenGroups.get(f.id)?.running(f.task().screen!.member!), "the reopened reviewer to yield after its usage limit");
+    expect(switchedOff).toBe(true);
+    expect(f.fakes.opens().filter((entry) => entry.session === holder.session).map((entry) => entry.how)).toEqual(["new", "resume"]);
+    expect(f.fakes.received("code reviewer").filter((entry) => entry.session === holder.session)).toHaveLength(2);
+    expect(slotUses(f.engine.getState())).toHaveLength(1);
+    expect(f.task().screen?.granted).not.toBe(true);
+
+    f.background(peer.session);
+    await waitFor(() => !f.engine.settling.has(f.id), "the peer and group cleanup to finish while screen use stays Off");
+    expect(f.waiting()).toBe(true);
+    expect(slotUses(f.engine.getState())).toEqual([]);
+    expect(f.engine.inFlight()).toBe(0);
+    expect(f.task().hunt?.reported).toEqual({ "1": true });
+    const before = f.fakes.received("code reviewer").length;
+    await Bun.sleep(200);
+    expect(f.fakes.received("code reviewer")).toHaveLength(before);
+
+    f.fakes.scenario({ ...f.scenario, controlled: false });
+    f.engine.setScreenUse("on");
+    await f.finish();
+    expect(f.fakes.received("code reviewer").filter((entry) => entry.session === peer.session)).toHaveLength(1);
+    const retries = f.engine.tracking.log.moments({ taskId: f.id, kinds: ["retry"] });
+    expect(retries).toEqual([expect.objectContaining({ roleId: "code-reviewer" })]);
+    expect(f.task().screen).toBeUndefined();
+  } finally { unsubscribe(); await f.close(); }
+});
+
 it("resumes the latest fresh conversation after it yields to a peer and its tool recovers", async () => {
   const f = await fixture("code reviewer", { controlled: true });
   try {

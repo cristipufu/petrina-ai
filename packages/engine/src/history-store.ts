@@ -1,9 +1,9 @@
 // Completed tasks live outside the live snapshot. The board only reads the small current state;
 // history uses an index for its next page and reads a conversation only when it is opened.
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import { combineReviewStats, finishedTask, historyAt, historyCursor, historyItem, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
+import { combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyAt, historyCursor, historyItem, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
 
-interface Rollup { total: number; done: number; cancelled: number; reviews: ReviewStats }
+interface Rollup { total: number; done: number; cancelled: number; shared?: number; blocked?: number; reviews: ReviewStats }
 const emptyRollup = (): Rollup => ({ total: 0, done: 0, cancelled: 0, reviews: reviewStats([]) });
 
 export class TaskHistory {
@@ -31,6 +31,12 @@ export class TaskHistory {
     db.run("CREATE TABLE IF NOT EXISTS task_history_step_kinds (role_id TEXT NOT NULL, repeat INTEGER NOT NULL, PRIMARY KEY(role_id, repeat))");
     db.run("CREATE TABLE IF NOT EXISTS task_history_roles (task_id TEXT NOT NULL, role_id TEXT NOT NULL, PRIMARY KEY(task_id, role_id))");
     db.run("CREATE INDEX IF NOT EXISTS task_history_role ON task_history_roles(role_id)");
+    const indexed = !!db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_history_products'").get();
+    db.transaction(() => {
+      db.run("CREATE TABLE IF NOT EXISTS task_history_products (task_id TEXT NOT NULL, product_id TEXT NOT NULL, finished_at INTEGER NOT NULL, PRIMARY KEY(task_id, product_id))");
+      db.run("CREATE INDEX IF NOT EXISTS task_history_membership_newest ON task_history_products(product_id, finished_at DESC, task_id DESC)");
+      if (!indexed) this.migrateMemberships();
+    }).immediate();
     this.reloadMetadata();
   }
 
@@ -45,6 +51,9 @@ export class TaskHistory {
       const old = this.db.query<{ rowid: number; product_id: string; state: string; title: string; body: string; reviews: string; steps: string; roles: string }, [string]>("SELECT rowid, product_id, state, title, body, reviews, steps, roles FROM task_history WHERE id = ?").get(task.id);
       this.rememberShape(task);
       if (old?.body === body) continue;
+      const priorTask = old ? JSON.parse(old.body) as Task : undefined;
+      const priorProducts = old ? this.memberships(task.id) : [];
+      const products = taskProductIds(task);
       const reviews = reviewStats([task]);
       const steps = JSON.stringify(task.steps ?? []);
       const roles = JSON.stringify([...new Set((task.plan?.stages ?? []).flatMap((stage) => [stage.roleId, stage.reviewerRoleId, ...(stage.roleIds ?? [])]).filter((id): id is string => !!id))]);
@@ -58,17 +67,23 @@ export class TaskHistory {
         if (old) this.db.query("DELETE FROM task_history_search WHERE rowid = ?").run(rowid);
         this.db.query("INSERT INTO task_history_search(rowid, title) VALUES(?, ?)").run(rowid, task.title);
       }
-      if (old) for (const scope of new Set(["", old.product_id])) {
+      this.db.query("DELETE FROM task_history_products WHERE task_id = ?").run(task.id);
+      for (const productId of products) this.db.query("INSERT INTO task_history_products(task_id, product_id, finished_at) VALUES(?, ?, ?)").run(task.id, productId, historyAt(task));
+      if (old) for (const scope of new Set(["", ...priorProducts])) {
         const rollup = this.rollups.get(scope) ?? emptyRollup();
         rollup.total -= 1;
+        rollup.shared = (rollup.shared ?? 0) - Number(priorProducts.length > 1);
+        if (scope) rollup.blocked = (rollup.blocked ?? 0) - productHistory([priorTask!], scope).unfinished;
         if (old.state === "done") rollup.done -= 1; else rollup.cancelled -= 1;
         rollup.reviews = subtractReviewStats(rollup.reviews, JSON.parse(old.reviews) as ReviewStats);
         this.rollups.set(scope, rollup);
         changedScopes.add(scope);
       }
-      for (const scope of new Set(["", task.productId])) {
+      for (const scope of new Set(["", ...products])) {
         const rollup = this.rollups.get(scope) ?? emptyRollup();
         rollup.total += 1;
+        rollup.shared = (rollup.shared ?? 0) + Number(products.length > 1);
+        if (scope) rollup.blocked = (rollup.blocked ?? 0) + productHistory([task], scope).unfinished;
         if (task.state === "done") rollup.done += 1; else rollup.cancelled += 1;
         rollup.reviews = combineReviewStats(rollup.reviews, reviews);
         this.rollups.set(scope, rollup);
@@ -110,7 +125,7 @@ export class TaskHistory {
 
   /** Finished tasks for one product, read before that product's history is removed. */
   taskIds(productId: Id): Id[] {
-    return this.db.query<{ id: string }, [string]>("SELECT id FROM task_history WHERE product_id = ?").all(productId).map((row) => row.id);
+    return this.db.query<{ id: string }, [string]>("SELECT task_id AS id FROM task_history_products WHERE product_id = ?").all(productId).map((row) => row.id);
   }
 
   title(id: Id): string | undefined {
@@ -153,21 +168,50 @@ export class TaskHistory {
 
   /** Product removal already asks before discarding its finished task history. */
   removeProduct(productId: Id): void {
-    const product = this.rollups.get(productId);
-    if (!product) return;
-    const total = this.rollups.get("") ?? emptyRollup();
-    total.total -= product.total;
-    total.done -= product.done;
-    total.cancelled -= product.cancelled;
-    total.reviews = subtractReviewStats(total.reviews, product.reviews);
-    this.rollups.set("", total);
-    this.rollups.delete(productId);
-    this.db.query("DELETE FROM task_history_search WHERE rowid IN (SELECT rowid FROM task_history WHERE product_id = ?)").run(productId);
-    this.db.query("DELETE FROM task_history_roles WHERE task_id IN (SELECT id FROM task_history WHERE product_id = ?)").run(productId);
-    this.db.query("DELETE FROM task_history_steps WHERE task_id IN (SELECT id FROM task_history WHERE product_id = ?)").run(productId);
-    this.db.query("DELETE FROM task_history WHERE product_id = ?").run(productId);
-    this.db.query("DELETE FROM task_history_rollups WHERE scope = ?").run(productId);
-    this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES('', ?) ON CONFLICT(scope) DO UPDATE SET body=excluded.body").run(JSON.stringify(total));
+    type Removal = { task_id: string; finished_at: number; state: string; reviews: string; shared: number };
+    let before: { at: number; id: Id } | undefined;
+    let changed = false;
+    for (;;) {
+      // The membership index bounds each read even for a product with years of history. Shared
+      // tasks need their body to preserve the other products; exclusive tasks need only counters.
+      const rows: Removal[] = this.db.query<Removal, SQLQueryBindings[]>(`SELECT p.task_id, p.finished_at, h.state, h.reviews,
+        EXISTS(SELECT 1 FROM task_history_products other WHERE other.task_id = p.task_id AND other.product_id != p.product_id) AS shared
+        FROM task_history_products p JOIN task_history h ON h.id = p.task_id
+        WHERE p.product_id = ? ${before ? "AND (p.finished_at, p.task_id) < (?, ?)" : ""}
+        ORDER BY p.finished_at DESC, p.task_id DESC LIMIT 100`).all(productId, ...(before ? [before.at, before.id] : []));
+      if (!rows.length) break;
+      const last = rows.at(-1)!;
+      before = { at: last.finished_at, id: last.task_id };
+      const exclusive: Id[] = [];
+      for (const row of rows) {
+        if (row.shared) {
+          const retained = withoutProduct(this.get(row.task_id)!, productId)!;
+          this.put([retained]);
+          continue;
+        }
+        const reviews = JSON.parse(row.reviews) as ReviewStats;
+        // Every exclusive task contributes once globally and once to this product. Its blocked
+        // count is cleared with the removed product below; no task body is needed to work it out.
+        for (const scope of ["", productId]) {
+          const rollup = this.rollups.get(scope)!;
+          rollup.total -= 1;
+          if (row.state === "done") rollup.done -= 1; else rollup.cancelled -= 1;
+          rollup.reviews = subtractReviewStats(rollup.reviews, reviews);
+        }
+        exclusive.push(row.task_id);
+        this.shapes.delete(row.task_id);
+      }
+      if (exclusive.length) {
+        const parameters = exclusive.map(() => "?").join(", ");
+        this.db.query(`DELETE FROM task_history_search WHERE rowid IN (SELECT rowid FROM task_history WHERE id IN (${parameters}))`).run(...exclusive);
+        for (const table of ["task_history_roles", "task_history_steps", "task_history_products"]) this.db.query(`DELETE FROM ${table} WHERE task_id IN (${parameters})`).run(...exclusive);
+        this.db.query(`DELETE FROM task_history WHERE id IN (${parameters})`).run(...exclusive);
+      }
+      changed = true;
+    }
+    if (!changed) return;
+    this.rollups.set(productId, emptyRollup());
+    for (const [scope, rollup] of this.rollups) this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES(?, ?) ON CONFLICT(scope) DO UPDATE SET body=excluded.body").run(scope, JSON.stringify(rollup));
     this.db.run("UPDATE task_history_revision SET revision = revision + 1 WHERE one = 1");
     this.revision += 1;
     this.readSteps();
@@ -178,22 +222,27 @@ export class TaskHistory {
     const size = Math.max(1, Math.min(100, Math.floor(Number.isFinite(request.limit) ? request.limit! : 24)));
     const args: SQLQueryBindings[] = [];
     const where: string[] = [];
-    if (request.productId) { where.push("h.product_id = ?"); args.push(request.productId); }
+    const from = request.productId ? "task_history_products p JOIN task_history h ON h.id = p.task_id" : "task_history h";
+    const order = request.productId ? "p.finished_at, p.task_id" : "h.finished_at, h.id";
+    if (request.productId) { where.push("p.product_id = ?"); args.push(request.productId); }
+    if (request.taskId) { where.push("h.id = ?"); args.push(request.taskId); }
+    if (request.states) { where.push(`h.state IN (${request.states.map(() => "?").join(",")})`); args.push(...request.states); }
+    if (request.held !== undefined) { where.push("json_extract(h.body, '$.held') = ?"); args.push(Number(request.held)); }
     // Quoted prefix terms keep punctuation from becoming FTS syntax and use its inverted index.
     const terms = (request.query ?? "").match(/[\p{L}\p{N}]+/gu) ?? [];
     const search = terms.map((term) => `"${term.replace(/"/g, '""')}"*`).join(" AND ");
     if (search) { where.push("h.rowid IN (SELECT rowid FROM task_history_search WHERE task_history_search MATCH ?)"); args.push(search); }
     const filter = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const total = search
-      ? this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total FROM task_history h ${filter}`).get(...args)!.total
+    const total = search || request.taskId || request.states || request.held !== undefined
+      ? this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total FROM ${from} ${filter}`).get(...args)!.total
       : (this.rollups.get(request.productId ?? "")?.total ?? 0);
     if (request.cursor) {
       const cursor = readHistoryCursor(request.cursor);
-      where.push("(h.finished_at, h.id) < (?, ?)");
+      where.push(`(${order}) < (?, ?)` );
       args.push(cursor.at, cursor.id);
     }
     args.push(size + 1);
-    const rows = this.db.query<{ item: string }, SQLQueryBindings[]>(`SELECT h.item FROM task_history h ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY h.finished_at DESC, h.id DESC LIMIT ?`).all(...args);
+    const rows = this.db.query<{ item: string }, SQLQueryBindings[]>(`SELECT h.item FROM ${from} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${order.split(", ").map((field) => `${field} DESC`).join(", ")} LIMIT ?`).all(...args);
     const items = rows.slice(0, size).map((row) => JSON.parse(row.item) as HistoryPage["items"][number]);
     return { items, total, ...(rows.length > size && items.length ? { nextCursor: historyCursor(items.at(-1)!) } : {}) };
   }
@@ -204,7 +253,7 @@ export class TaskHistory {
     const products = [...this.rollups].filter(([scope, row]) => !!scope && row.total > 0);
     this.metadata = {
       revision: this.revision, total: total.total,
-      products: products.map(([productId, row]) => ({ productId, done: row.done, cancelled: row.cancelled })),
+      products: products.map(([productId, row]) => ({ productId, done: row.done, cancelled: row.cancelled, shared: row.shared ?? 0, blocked: row.blocked ?? 0 })),
       reviews: total.reviews, reviewsByProduct: Object.fromEntries(products.map(([productId, row]) => [productId, row.reviews])),
       steps: this.recentSteps,
     };
@@ -219,6 +268,34 @@ export class TaskHistory {
     this.revision = this.db.query<{ revision: number }, []>("SELECT revision FROM task_history_revision WHERE one = 1").get()!.revision;
     this.readSteps();
     this.metadata = undefined;
+  }
+
+  private memberships(id: Id): string[] {
+    return this.db.query<{ product_id: string }, [string]>("SELECT product_id FROM task_history_products WHERE task_id = ?").all(id).map((row) => row.product_id);
+  }
+
+  /** One-time migration streams old records; live updates and paging still use only the index. */
+  private migrateMemberships(): void {
+    this.db.transaction(() => {
+      this.db.run("DELETE FROM task_history_rollups");
+      for (const row of this.db.query<{ body: string; reviews: string }, []>("SELECT body, reviews FROM task_history").iterate()) {
+        const task = JSON.parse(row.body) as Task;
+        const products = taskProductIds(task);
+        const reviews = JSON.parse(row.reviews) as ReviewStats;
+        for (const productId of products) this.db.query("INSERT INTO task_history_products(task_id, product_id, finished_at) VALUES(?, ?, ?)").run(task.id, productId, historyAt(task));
+        this.db.query("UPDATE task_history SET item = ? WHERE id = ?").run(JSON.stringify(historyItem(task)), task.id);
+        for (const scope of new Set(["", ...products])) {
+          const rollup = this.rollups.get(scope) ?? emptyRollup();
+          rollup.total += 1;
+          if (task.state === "done") rollup.done += 1; else rollup.cancelled += 1;
+          rollup.shared = (rollup.shared ?? 0) + Number(products.length > 1);
+          if (scope) rollup.blocked = (rollup.blocked ?? 0) + productHistory([task], scope).unfinished;
+          rollup.reviews = combineReviewStats(rollup.reviews, reviews);
+          this.rollups.set(scope, rollup);
+        }
+      }
+      for (const [scope, rollup] of this.rollups) this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES(?, ?)").run(scope, JSON.stringify(rollup));
+    }).immediate();
   }
 
   private shape(task: Task): string {

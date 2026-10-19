@@ -1,0 +1,828 @@
+import { createHash } from "node:crypto";
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
+import { resolve, sep } from "node:path";
+import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSteps, taskProductIds, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
+import type { Engine } from "./engine.js";
+import { operation } from "./operations.js";
+import { offeredLessons } from "./learnings.js";
+
+export type Outcome =
+  | "completed"
+  | "pending"
+  | "invalid"
+  | "missing"
+  | "conflict"
+  | "changed"
+  | "handled"
+  | "timed-out"
+  | "failed"
+  | "disconnected"
+  | "continuity-lost"
+  | "superseded"
+  | "unavailable";
+export interface Result {
+  outcome: Outcome;
+  message?: string;
+  [key: string]: unknown;
+}
+// Arguments have already passed the named operation's strict schema at the boundary.
+type Args = Record<string, any>;
+export const fingerprint = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
+const clone = <T>(value: T): T => structuredClone(value);
+const queues = new WeakMap<Engine, Promise<unknown>>();
+/** App actions and new decisions share this queue: inspecting a revision and applying it cannot race an edit. */
+export function serial<T>(engine: Engine, run: () => T | Promise<T>): Promise<T> {
+  const next = (queues.get(engine) ?? Promise.resolve()).then(run);
+  queues.set(
+    engine,
+    next.catch(() => undefined),
+  );
+  return next;
+}
+function cursor(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+function position(raw: string | undefined, key: string): number | undefined {
+  if (!raw) return 0;
+  try {
+    const data = JSON.parse(Buffer.from(raw, "base64url").toString());
+    return data.key === key && Number.isSafeInteger(data.at) && data.at >= 0 ? data.at : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function matchesCheckLogIdentity(expected: { device: string; inode: string }, actual: { dev: bigint; ino: bigint }): boolean {
+  return expected.device === actual.dev.toString() && expected.inode === actual.ino.toString();
+}
+function paginate<T>(items: readonly T[], a: Args, scope: unknown): Result {
+  const key = fingerprint([scope, items]);
+  const at = position(a.cursor, key);
+  if (at === undefined) return { outcome: "changed", message: "This page changed. Read the focused list again." };
+  const limit = a.limit ?? 25;
+  return {
+    outcome: "completed",
+    items: items.slice(at, at + limit),
+    total: items.length,
+    ...(at + limit < items.length ? { next: cursor({ key, at: at + limit }) } : {}),
+  };
+}
+function readText(value: unknown, a: Args, scope: unknown, extra: Record<string, unknown> = {}): Result {
+  if (value === undefined || value === null) return { outcome: "unavailable", message: "This evidence was not recorded or is no longer available.", ...extra };
+  const source = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  const key = fingerprint([scope, source]);
+  const at = position(a.cursor, key);
+  if (at === undefined) return { outcome: "changed", message: "This evidence changed. Read it again from the beginning." };
+  const limit = a.limit ?? 8000;
+  return {
+    outcome: "completed",
+    text: source.slice(at, at + limit),
+    offset: at,
+    total: source.length,
+    shortened: at + limit < source.length,
+    ...(at + limit < source.length ? { next: cursor({ key, at: at + limit }) } : {}),
+    ...extra,
+  };
+}
+
+export function taskSummary(engine: Engine, task: Task) {
+  const state = engine.activeState();
+  return {
+    id: task.id,
+    productId: task.productId,
+    title: task.title,
+    state: task.state,
+    held: task.held,
+    priority: task.priority,
+    after: task.after ?? [],
+    summary: mainLine(task),
+    workers: [task.agent, ...(task.helpers ?? [])].filter(Boolean),
+    next: nextSteps(state, task) ?? null,
+    waitingReason: ["backlog", "waiting", "needs-you", "paused", "queued", "failed"].includes(task.state) ? task.statusLine : null,
+    inbox: state.inbox.filter((item) => item.taskId === task.id).map(({ id, kind }) => ({ id, kind })),
+    landing: landingOf(task),
+    delivery: task.delivery,
+    deliveryConfirmed: ["landed", "awaiting-merge"].includes(landingOf(task)),
+    error: task.error?.slice(0, 1000) ?? null,
+    errorShortened: (task.error?.length ?? 0) > 1000,
+  };
+}
+export function drainStatus(engine: Engine) {
+  const state = engine.activeState();
+  const active = state.tasks.filter((task) => engine.settling.has(task.id) || engine.drivers.has(task.id) || task.holdsSlot);
+  const blockers = state.inbox
+    .filter((item) => active.some((task) => task.id === item.taskId) && (item.blocking || item.kind === "screen"))
+    .map(({ id, taskId, kind, title }) => ({ id, taskId, kind, title }));
+  // A yielded screen conversation has released its admission. It is saved work waiting to
+  // start again, distinct from a screen request still keeping an admitted group open.
+  return {
+    drained: engine.inFlight() === 0 && blockers.length === 0,
+    active: active.slice(0, 100).map((task) => taskSummary(engine, task)),
+    activeCount: active.length,
+    blockers: blockers.slice(0, 100),
+    blockerCount: blockers.length,
+    screenWaiting: state.tasks
+      .filter((task) => task.screen && !active.some((entry) => entry.id === task.id))
+      .slice(0, 100)
+      .map((task) => ({ taskId: task.id, reason: task.screen!.reason })),
+    queued: state.tasks.filter((task) => task.state === "queued").length,
+    waiting: state.tasks.filter((task) => task.state === "waiting").length,
+    checkpoints: state.inbox.filter((item) => !item.blocking && ["plan", "design", "delivery", "disagreement"].includes(item.kind)).length,
+    pendingParticipants: state.tasks
+      .flatMap((task) => {
+        const stage = task.plan?.stages[task.stageIndex];
+        return stage?.kind === "review-chain" && task.hunt
+          ? [
+              {
+                taskId: task.id,
+                stageId: stage.id,
+                finishedReviewers: Object.keys(task.hunt.reported),
+                waitingReviewers: stage.profileIds.flatMap((profileId, index) => (task.hunt!.reported[String(index)] ? [] : [{ index, profileId }])),
+                finishedVoters: Object.keys(task.hunt.voted ?? {}),
+                requiredVoters: task.hunt.voterProfiles ?? [],
+                waitingVoters: (task.hunt.voterProfiles ?? []).filter(
+                  (id) => !Object.keys(task.hunt!.voted ?? {}).some((used) => engine.profile(used)?.toolId === engine.profile(id)?.toolId),
+                ),
+              },
+            ]
+          : [];
+      })
+      .slice(0, 100),
+  };
+}
+export function requestRevision(engine: Engine, item: InboxItem): string {
+  const task = engine.task(item.taskId);
+  // Include exactly what a checkpoint confirms, excluding clocks, unrelated activity and conversations.
+  return fingerprint({
+    item,
+    ...(item.kind === "screen" ? { screen: task?.screen } : {}),
+    ...(item.kind === "shipping" ? { shipping: task?.shipping, source: task?.source, delivery: task?.delivery } : {}),
+    ...(task && ["plan", "design", "delivery", "disagreement"].includes(item.kind)
+      ? {
+          productId: task.productId,
+          plan: task.plan,
+          source: task.source,
+          proposedSource: task.proposedSource,
+          workChoice: task.workChoice,
+          workProposal: task.workProposal,
+          workProduct: task.workProduct,
+          workError: task.workError,
+          confirmWork: task.confirmWork,
+          delivery: task.delivery,
+          approveDelivery: task.approveDelivery,
+          brief: task.brief,
+          objections: task.objections,
+          call: task.call,
+          findings: task.findings,
+          checkedSha: task.checkedSha,
+          checkedPatch: task.checkedPatch,
+          checks: task.checks,
+
+          stageIndex: task.stageIndex,
+        }
+      : {}),
+  });
+}
+const decisions = (kind: string) =>
+  kind === "question"
+    ? ["inbox.answer"]
+    : kind === "permission"
+      ? ["inbox.allow", "inbox.deny"]
+      : kind === "stuck"
+        ? ["inbox.retry"]
+        : kind === "shipping"
+          ? ["inbox.recovery"]
+          : kind === "screen"
+            ? ["screen.allow"]
+            : kind === "learnings"
+              ? ["learning.accept", "learning.decline"]
+              : kind === "guide"
+                ? ["review-guide.accept", "review-guide.decline"]
+                : ["plan", "design", "delivery", "disagreement"].includes(kind)
+                  ? ["inbox.approve", "inbox.changes"]
+                  : [];
+
+export interface LifecycleControl {
+  status(): Result | Promise<Result>;
+  request(name: string, args: Args): Result | Promise<Result>;
+  receipt?(id: string): Result | undefined;
+}
+export class Coordination {
+  constructor(
+    readonly engine: Engine,
+    readonly lifecycle?: LifecycleControl,
+  ) {
+    engine.store.database.run("CREATE TABLE IF NOT EXISTS coordination_receipts (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL)");
+  }
+  async call(name: string, raw: unknown): Promise<Result> {
+    const spec = operation(name);
+    if (!spec) return { outcome: "invalid", message: "Unknown coordination operation. Use help or tools/list." };
+    const parsed = spec.schema.safeParse(raw);
+    if (!parsed.success) return { outcome: "invalid", message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ") };
+    const a: Args = parsed.data;
+    if (name === "watch.wait") return this.watch(a);
+    if (name.startsWith("engine.")) {
+      if (this.lifecycle) return name === "engine.status" ? this.lifecycle.status() : this.lifecycle.request(name.slice(7), a);
+      if (name === "engine.status")
+        return {
+          outcome: "completed",
+          status: this.engine.draining ? "draining" : this.engine.s.pool.paused ? "paused" : "running",
+          scheduling: this.engine.s.pool.paused ? "paused" : "running",
+          boot: this.engine.boot,
+          ...drainStatus(this.engine),
+        };
+    }
+    return serial(this.engine, async () => {
+      if (!spec.changes) return this.query(name, a);
+      if (this.lifecycle?.receipt?.(a.requestId))
+        return { outcome: "conflict", requestId: a.requestId, message: "That reference belongs to a lifecycle request." };
+      const db = this.engine.store.database;
+      const hash = fingerprint([name, a]);
+      const old = db
+        .query<{ fingerprint: string; result: string }, [string]>("SELECT fingerprint, result FROM coordination_receipts WHERE id = ?")
+        .get(a.requestId);
+      if (old)
+        return old.fingerprint === hash
+          ? (JSON.parse(old.result) as Result)
+          : { outcome: "conflict", requestId: a.requestId, message: "That request reference was used with different arguments." };
+      // Sync decisions and their receipts commit with the state in one database transaction. Async
+      // validations are serialized too; the existing commands keep their own saved request identities.
+      let result: Result;
+      const save = (result: Result) => {
+        if (a.itemId && ["completed", "pending"].includes(result.outcome) && !this.engine.s.inbox.some((item) => item.id === a.itemId))
+          this.engine.store.noteHandled([a.itemId]);
+        this.engine.save();
+        db.query("INSERT INTO coordination_receipts VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET result=excluded.result").run(
+          a.requestId,
+          hash,
+          JSON.stringify(result),
+        );
+      };
+      const errorResult = (error: unknown): Result => ({
+        outcome: "invalid",
+        requestId: a.requestId,
+        message: error instanceof Error ? error.message : "The operation could not be applied.",
+      });
+      if (["task.source", "inbox.retry"].includes(name)) {
+        // Save submission before asynchronous validation, so a crash never blindly repeats it.
+        save({
+          outcome: "pending",
+          requestId: a.requestId,
+          message: "Submitted. Inspect the task before making a new request if the engine stops before its outcome is recorded.",
+        });
+        try {
+          result = { ...(await this.mutate(name, a)), requestId: a.requestId };
+        } catch (error) {
+          result = errorResult(error);
+        }
+        db.transaction(() => save(result))();
+      } else {
+        result = db.transaction(() => {
+          let result: Result;
+          try {
+            result = { ...(this.mutate(name, a) as Result), requestId: a.requestId };
+          } catch (error) {
+            result = errorResult(error);
+          }
+          save(result);
+          return result;
+        })();
+      }
+      return clone(result);
+    });
+  }
+  private query(name: string, a: Args): Result | Promise<Result> {
+    const e = this.engine,
+      s = e.activeState();
+    const needsTask = a.taskId && name !== "task.list" && name !== "task.history" && name !== "inbox.list";
+    const task = needsTask ? e.taskDetails(a.taskId) : undefined;
+    if (needsTask && !task) return { outcome: "missing", message: "That task does not exist." };
+    if (name === "inbox.list" && a.taskId && !s.tasks.some((task) => task.id === a.taskId) && !e.store.history.item(a.taskId))
+      return { outcome: "missing", message: "That task does not exist." };
+    const product = s.products.find((product) => product.id === a.productId);
+    if (a.productId && !product) return { outcome: "missing", message: "That product does not exist." };
+    if (name === "task.history" || (name === "task.list" && a.states?.some((state: string) => state === "done" || state === "cancelled"))) {
+      if (a.states?.some((state: string) => state !== "done" && state !== "cancelled"))
+        return { outcome: "invalid", message: "Read current work and finished history separately. Use task.history for done and cancelled tasks." };
+      return this.history(a);
+    }
+    if (name === "task.list")
+      return paginate(
+        s.tasks
+          .filter(
+            (t) =>
+              !finishedTask(t) &&
+              (!a.productId || involvesProduct(t, a.productId)) &&
+              (!a.taskId || t.id === a.taskId) &&
+              (!a.states || a.states.includes(t.state)) &&
+              (a.held === undefined || t.held === a.held) &&
+              (!a.search || t.title.toLowerCase().includes(a.search.toLowerCase())),
+          )
+          .sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+          .map((t) => taskSummary(e, t)),
+        a,
+        name,
+      );
+    if (name === "task.inspect") return { outcome: "completed", task: taskSummary(e, task!) };
+    if (name === "task.read")
+      return readText(
+        (
+          {
+            request: { title: task!.title, description: task!.description },
+            conversation: task!.session,
+            timeline: task!.timeline,
+            findings: task!.findings,
+            design: task!.brief || task!.objections.length || task!.call ? { brief: task!.brief ?? null, objections: task!.objections, call: task!.call ?? null } : undefined,
+            messages: task!.queued,
+            source: { source: task!.source, choice: task!.workChoice, proposed: task!.proposedSource },
+            error: task!.error,
+          } as Record<string, unknown>
+        )[a.section],
+        a,
+        [name, a.taskId, a.section],
+      );
+    if (name === "plan.inspect") return readText(task!.plan, a, [name, a.taskId], { evidence: task!.plan ? "planned" : "unavailable" });
+    if (name === "journey.list" || name === "journey.node") {
+      const view = journeyView(task!, s);
+      if (name === "journey.list")
+        return paginate(
+          view.nodes.map((node) => ({
+            id: node.id,
+            name: node.name,
+            kind: node.kind,
+            state: node.state,
+            evidence: task!.journey?.find((step) => step.id === node.id)?.legacy
+              ? "reconstructed"
+              : task!.journey?.some((step) => step.id === node.id)
+                ? "recorded"
+                : "planned",
+          })),
+          a,
+          [name, a.taskId],
+        );
+      const node = task!.journey?.find((node) => node.id === a.nodeId);
+      const planned = view.nodes.find((node) => node.id === a.nodeId);
+      if (!node && !planned) return { outcome: "missing", message: "That journey node does not exist." };
+      return readText(node ?? planned, a, [name, a.taskId, a.nodeId], {
+        evidence: node ? (node.legacy ? "reconstructed" : "recorded") : "planned",
+        input: node?.agentInputs ? "recorded" : "unavailable",
+        result: node?.agentResults || node?.result ? "recorded" : "unavailable",
+        trigger: node?.trigger ?? null,
+        triggerEvidence: node?.trigger ? "recorded" : "unavailable",
+      });
+    }
+    if (name === "journey.check") return this.check(task!, a);
+    if (name === "inbox.list")
+      return paginate(
+        this.inbox(a).map(({ id, taskId, kind, title, blocking, at }) => ({ id, taskId, kind, title, blocking, at })),
+        a,
+        name,
+      );
+    if (["inbox.inspect", "learning.inspect", "review-guide.inspect"].includes(name)) {
+      const item = s.inbox.find((item) => item.id === a.itemId);
+      if (!item) return { outcome: "missing", message: "That request is no longer in the inbox." };
+      const expected = name === "learning.inspect" ? "learnings" : name === "review-guide.inspect" ? "guide" : item.kind;
+      if (item.kind !== expected) return { outcome: "invalid", message: `That is a ${item.kind} request.` };
+      const revision = requestRevision(e, item);
+      const t = e.taskDetails(item.taskId);
+      return readText(
+        {
+          request: item,
+          ...(item.kind === "learnings"
+            ? {
+                lessons: offeredLessons(item.body).map((text, position) => ({ position, text })),
+              }
+            : {}),
+          ...(t && ["plan", "design", "delivery", "disagreement"].includes(item.kind)
+            ? { plan: t.plan, source: t.source, proposedSource: t.proposedSource, brief: t.brief, objections: t.objections, call: t.call, findings: t.findings, checks: t.checks }
+            : {}),
+        },
+        a,
+        [name, item.id, revision],
+        { itemId: item.id, kind: item.kind, revision, decisions: decisions(item.kind), recommendation: item.options?.[0] ?? null, choices: item.options ?? [] },
+      );
+    }
+    if (name === "product.list")
+      return paginate(
+        s.products
+          .map(({ id, name, repo, delivery, approveDelivery }) => ({ id, name, repo, delivery, approveDelivery }))
+          .sort((a, b) => a.id.localeCompare(b.id)),
+        a,
+        name,
+      );
+    if (name === "product.inspect") return readText(product, a, [name, a.productId]);
+    if (name === "pool.inspect") return { outcome: "completed", pool: s.pool, ...drainStatus(e) };
+    if (name === "tools.inspect")
+      return readText({ tools: s.tools, checks: s.setup?.checks, profiles: s.profiles, caps: s.pool.toolCaps, usage: s.pool.usage }, a, name);
+    if (name === "screen.inspect")
+      return {
+        allowance: s.pool.screen ?? { mode: "off" },
+        ...paginate(
+          s.tasks.filter((t) => t.screen).map((t) => ({ taskId: t.id, screen: t.screen, allowed: t.screenAllowed })),
+          a,
+          [name, s.pool.screen],
+        ),
+      };
+    if (name === "analytics.inspect")
+      return readText(e.usage(a.taskId ? { view: "task", taskId: a.taskId } : { view: "analytics", period: a.period, productId: a.productId }), a, [
+        name,
+        a.taskId,
+        a.productId,
+        a.period,
+      ]);
+    return { outcome: "invalid", message: "This read is not available." };
+  }
+  private history(a: Args): Result {
+    const e = this.engine;
+    const request: HistoryQuery = { productId: a.productId, taskId: a.taskId, states: a.states, held: a.held, query: a.search, limit: a.limit };
+    // The engine flushes newly finished work before this indexed, lightweight read.
+    let page = e.historyPage(request);
+    const key = fingerprint(["task.history", request.productId, request.taskId, request.states, request.held, request.query, e.store.history.info().revision]);
+    if (a.cursor) {
+      let after: string;
+      try {
+        const saved = JSON.parse(Buffer.from(a.cursor, "base64url").toString());
+        if (saved.key !== key || typeof saved.after !== "string") throw new Error();
+        after = saved.after;
+        page = e.historyPage({ ...request, cursor: after });
+      } catch {
+        return { outcome: "changed", message: "This history page changed or expired. Read finished history again from the beginning." };
+      }
+    }
+    return {
+      outcome: "completed",
+      items: page.items.map((item) => ({ ...item, summary: item.statusLine, landing: landingOf(item), deliveryConfirmed: landingOf(item) === "landed" })),
+      total: page.total,
+      ...(page.nextCursor ? { next: cursor({ key, after: page.nextCursor }) } : {}),
+    };
+  }
+  private inbox(a: Args) {
+    const state = this.engine.activeState();
+    return state.inbox
+      .filter((item) => {
+        if (a.productId) {
+          const task = state.tasks.find((task) => task.id === item.taskId);
+          const archived = task ? undefined : this.engine.store.history.item(item.taskId);
+          const products = task ? taskProductIds(task) : archived?.productIds ?? (archived ? [archived.productId] : []);
+          if (!products.includes(a.productId)) return false;
+        }
+        return (
+          (!a.taskId || item.taskId === a.taskId) &&
+          (!a.kinds || a.kinds.includes(item.kind)) &&
+          (a.blocking === undefined || item.blocking === a.blocking) &&
+          (!a.search || item.title.toLowerCase().includes(a.search.toLowerCase()))
+        );
+      })
+      .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+  }
+  private mutate(name: string, a: Args): Result | Promise<Result> {
+    const e = this.engine;
+    if (a.productId && !e.s.products.some((product) => product.id === a.productId)) return { outcome: "missing", message: "That product does not exist." };
+    const t = a.taskId ? e.task(a.taskId) : undefined;
+    if (a.taskId && !t) return { outcome: "missing", message: "That task does not exist." };
+    const done = (more: Record<string, unknown> = {}): Result => ({ outcome: "completed", ...more });
+    const unavailable = (message: string): Result => ({ outcome: "invalid", message });
+    if (a.itemId) {
+      const item = e.s.inbox.find((item) => item.id === a.itemId);
+      if (!item)
+        return {
+          outcome: e.store.handled(a.itemId) ? "handled" : "missing",
+          message: e.store.handled(a.itemId) ? "That request was already handled." : "That request does not exist.",
+        };
+      if (!decisions(item.kind).includes(name)) return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
+      const itemTask = e.task(item.taskId);
+      if (!itemTask || (["learnings", "guide"].includes(item.kind) && !e.productOf(itemTask)))
+        return { outcome: "missing", message: "This request's task or product is no longer available." };
+      if (requestRevision(e, item as InboxItem) !== a.revision)
+        return { outcome: "changed", message: "The request changed. Inspect it again before deciding." };
+      switch (name) {
+        case "inbox.answer":
+          e.answer(a.itemId, a.answer, { clientId: a.requestId });
+          break;
+        case "inbox.allow":
+          e.allow(a.itemId, "once");
+          break;
+        case "inbox.deny":
+          e.deny(a.itemId, a.note, { clientId: a.requestId });
+          break;
+        case "inbox.approve":
+          e.approve(a.itemId);
+          break;
+        case "inbox.changes":
+          e.requestChanges(a.itemId, a.note);
+          break;
+        case "inbox.retry":
+          return e
+            .retry(a.itemId)
+            .then(() =>
+              e.s.inbox.some((item) => item.id === a.itemId) ? { outcome: "pending", message: "Retry checked the tool; the request is still open." } : done(),
+            );
+        case "inbox.recovery":
+          if (a.decision === "check" && itemTask.shipping?.carriedOver)
+            return unavailable("Petrina cannot automatically check this older delivery. Inspect GitHub, then choose ship again or mark done.");
+          if (a.decision === "check") e.checkShipping(a.itemId);
+          else if (a.decision === "ship-again") e.shipAgain(a.itemId);
+          else e.markDone(a.itemId);
+          return {
+            outcome: "pending",
+            message: a.decision === "mark-done" ? "Marked done; delivery remains unconfirmed." : "Recovery decision accepted; inspect the task for its result.",
+          };
+        case "learning.accept": {
+          const count = offeredLessons(item.body).length;
+          if (!a.positions.length || a.positions.some((p: number) => p >= count) || new Set(a.positions).size !== a.positions.length)
+            return unavailable("Select one or more valid zero-based lesson positions from this offer.");
+          e.addLessons(a.itemId, a.positions);
+          break;
+        }
+        case "learning.decline":
+        case "review-guide.decline":
+          e.decline(a.itemId);
+          break;
+        case "review-guide.accept":
+          if (!item.body?.trim()) return unavailable("This proposal has no point to accept.");
+          e.approve(a.itemId);
+          break;
+        case "screen.allow":
+          if (!itemTask.screen || itemTask.screen.allowed || itemTask.screen.granted)
+            return unavailable("This task has no screen request still needing permission.");
+          e.allowScreen(item.taskId);
+          return { outcome: "pending", message: "Screen request allowed; existing screen and pool rules still apply." };
+      }
+      return done({ itemId: a.itemId });
+    }
+    switch (name) {
+      case "engine.pause":
+        e.setPoolPaused(true);
+        return done({ ...drainStatus(e) });
+      case "engine.resume":
+        e.setPoolPaused(false);
+        return done();
+      case "task.add": {
+        const { requestId, ...input } = a;
+        const taskId = e.addTask({ ...input, clientId: requestId } as Parameters<Engine["addTask"]>[0]);
+        return done({ taskId });
+      }
+      case "task.queue":
+        if (t!.state !== "backlog") return unavailable("Only backlog requests can be queued for work.");
+        e.queueTask(a.taskId);
+        break;
+      case "task.backlog":
+        if (t!.state !== "queued" || t!.startedAt !== undefined) return unavailable("Only queued tasks that have never started can return to backlog.");
+        e.moveToBacklog(a.taskId);
+        break;
+      case "task.update-backlog":
+        if (t!.state !== "backlog") return unavailable("Only backlog requests can be edited before work starts.");
+        e.updateBacklog(a.taskId, { title: a.title, description: a.description });
+        break;
+      case "task.hold":
+      case "task.unhold":
+        if (t!.state !== "queued") return unavailable("Only queued tasks can be held or released.");
+        e.setHeld(a.taskId, name === "task.hold");
+        break;
+      case "task.pause":
+        if (!["running", "needs-you", "waiting"].includes(t!.state)) return unavailable("This task cannot be paused in its current state.");
+        e.pause(a.taskId);
+        break;
+      case "task.resume":
+        if (t!.state !== "paused") return unavailable("This task is not paused.");
+        e.resume(a.taskId);
+        break;
+      case "task.cancel":
+        if (["done", "cancelled"].includes(t!.state)) return unavailable("This task has already finished or been cancelled.");
+        e.cancel(a.taskId);
+        break;
+      case "task.dependencies":
+        e.setAfter(a.taskId, a.after);
+        break;
+      case "task.reorder":
+        if (t!.state !== "queued") return unavailable("Only queued tasks can be reordered.");
+        if (a.anchorId && a.side) {
+          if (e.placeInQueue(a.taskId, a.anchorId, a.side) < 0) return unavailable("Choose a different queued task as the reorder anchor.");
+        } else if (a.position !== undefined) e.moveInQueue(a.taskId, a.position);
+        else return unavailable("Supply a position, or an anchor and side.");
+        break;
+      case "task.source":
+        return e.setTaskStart(a.taskId, a.choice).then(() => t!.workError ? { ...unavailable(t!.workError), taskId: a.taskId } : done({ taskId: a.taskId }));
+      case "task.message": {
+        if (["done", "cancelled"].includes(t!.state)) return unavailable("This task has finished.");
+        const messageId = e.sendMessage(a.taskId, a.text, a.mode, a.requestId);
+        if (!messageId) return unavailable("The message was not queued. Supply text and a new request reference.");
+        return done({ taskId: a.taskId, messageId });
+      }
+      case "task.remove-message":
+        if (!t!.queued.some((m) => m.id === a.messageId)) return unavailable("That message is no longer queued.");
+        if (t!.queued.some((m) => m.id === a.messageId && Object.values(m.recipients ?? {}).some(Boolean)))
+          return unavailable("An agent has already received that message. It remains queued for the other agents.");
+        e.removeQueued(a.taskId, a.messageId);
+        break;
+      case "plan.assign":
+      case "plan.add-reviewer": {
+        const at = t!.plan?.stages.findIndex((s) => s.id === a.stageId) ?? -1,
+          stage = t!.plan?.stages[at];
+        if (!stage || at <= t!.stageIndex || !e.profile(a.profileId)) return unavailable("Choose a valid profile and a future stage.");
+        if (name === "plan.assign") {
+          const ids = stage[a.list as "profileIds" | "reviewerProfileIds"];
+          if (!ids || a.index >= ids.length) return unavailable("That assignment does not exist.");
+          e.setStageProfile(a.taskId, a.stageId, a.list, a.index, a.profileId);
+        } else {
+          if (stage.kind !== "review-chain") return unavailable("This stage does not accept extra reviewers.");
+          e.addReviewer(a.taskId, a.stageId, a.profileId);
+        }
+        break;
+      }
+      case "product.settings": {
+        const { productId, requestId, ...settings } = a;
+        e.updateProduct(productId, settings as Parameters<Engine["updateProduct"]>[1]);
+        break;
+      }
+      case "product.checks":
+        e.setProductChecks(a.productId, a.checks);
+        break;
+      case "pool.limit":
+        e.setPoolLimit(a.limit);
+        break;
+      case "tools.cap":
+        e.setToolCap(a.toolId, a.cap);
+        break;
+      case "tools.check":
+        void e.checkTools();
+        return { outcome: "pending", message: "Readiness checks started." };
+      case "screen.set":
+        e.setScreenUse(a.mode);
+        break;
+      case "screen.task":
+        e.setTaskScreen(a.taskId, a.allowed);
+        break;
+      default:
+        return unavailable("This operation requires the running engine's lifecycle host.");
+    }
+    return done(a.taskId ? { taskId: a.taskId } : {});
+  }
+  private async check(task: Task, a: Args): Promise<Result> {
+    const node = a.nodeId ? task.journey?.find((node) => node.id === a.nodeId) : undefined;
+    if (a.nodeId && !node) return { outcome: "missing", message: "That journey node does not exist." };
+    const run = a.nodeId ? node?.productChecks?.[a.index]?.run : task.checks?.results[a.index];
+    const metadata = {
+      commandOutcome: !run ? "unavailable" : run.interrupted || run.cleanupIncomplete || run.timedOut ? "unfinished" : run.ok ? "passed" : "failed",
+      relevance: a.nodeId ? "historical" : task.checks?.sha || task.checks?.tree ? "recorded-version-only" : "unverified",
+      command: run?.command ?? null,
+    };
+    if (!run) return { outcome: "unavailable", ...metadata, completeness: "missing", message: "This older evidence has no original diagnostic link." };
+    const resultScope = [task.id, a.nodeId, a.index, "saved-result"];
+    if (a.section === "result")
+      return readText(run.output, a, resultScope, { ...metadata, source: "saved-result", completeness: "excerpt-only", unit: "characters" });
+    // Engine explanations (startup failures, deadlines and cleanup warnings) can exist only
+    // in the saved result. Show a bounded first page alongside the original process log.
+    const savedResult = { ...readText(run.output, { limit: Math.min(a.limit ?? 8000, 1000) }, resultScope), section: "result" };
+    const details = { ...metadata, savedResult };
+    const path = run.logPath && resolve(run.logPath);
+    if (!path || !path.startsWith(resolve(this.engine.dataDir, "checks", task.id) + sep))
+      return readText(run.output, a, [task.id, a.nodeId, a.index], {
+        ...details,
+        completeness: "excerpt-only",
+        message: "No complete diagnostic log was recorded. This is the saved excerpt.",
+      });
+    if (!run.logFileIdentity)
+      return readText(run.output, a, [task.id, a.nodeId, a.index, "unverified-log"], {
+        ...details,
+        completeness: run.logError || run.logComplete === false ? "incomplete" : "legacy-unverified",
+        message: "This saved run has no record of which file Petrina created. This is the saved excerpt.",
+      });
+    try {
+      const entry = await lstat(path, { bigint: true });
+      const directory = resolve(await realpath(this.engine.dataDir), "checks", task.id);
+      const canonical = await realpath(path);
+      if (!entry.isFile() || entry.nlink !== 1n || !canonical.startsWith(directory + sep)) throw new Error("The diagnostic is not an unshared regular file in this task's check folder.");
+      // Do not follow a substituted link. Use the opened file's identity and size for both
+      // pagination and reading; a replaced file invalidates its previous continuation.
+      // A second hard-link name can alias a private file, so both observations require one link.
+      // The saved file identity also proves this is the file Petrina created for this check;
+      // link counts alone are insufficient after an atomic replacement removes the other name.
+      const file = await open(canonical, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const exact = await file.stat({ bigint: true });
+        const info = await file.stat();
+        if (!exact.isFile() || exact.nlink !== 1n || exact.dev !== entry.dev || exact.ino !== entry.ino || !matchesCheckLogIdentity(run.logFileIdentity, exact) || !info.isFile()) throw new Error("The diagnostic file is not the file Petrina created for this check.");
+        const key = fingerprint([task.id, a.nodeId, a.index, path, exact.dev.toString(), exact.ino.toString(), info.size, info.mtimeMs]);
+        const completeness = run.logError || run.logComplete === false ? "incomplete" : run.logComplete ? "complete" : "legacy-unverified";
+        if (info.size === 0 && run.output)
+          return readText(run.output, a, [resultScope, path, info.dev, info.ino, info.mtimeMs], {
+            ...details, completeness, logError: run.logError ?? null, source: "saved-result", unit: "characters",
+            message: "The process log is empty. This is the saved result, including any failure to start.",
+          });
+        const at = position(a.cursor, key);
+        if (at === undefined) return { outcome: "changed", message: "The diagnostic changed. Read it again from the beginning." };
+        const buffer = Buffer.alloc((a.limit ?? 8000) * 4),
+          { bytesRead } = await file.read(buffer, 0, buffer.length, at);
+        // Limit text by characters while continuations retain exact byte positions. A page
+        // reads at most four bytes per requested character and never splits valid UTF-8.
+        let end = 0;
+        for (let characters = 0; characters < (a.limit ?? 8000) && end < bytesRead; characters++) {
+          const first = buffer[end]!;
+          let width = first >= 0xf0 && first <= 0xf4 ? 4 : first >= 0xe0 ? 3 : first >= 0xc2 ? 2 : 1;
+          if (end + width > bytesRead) {
+            if (at + bytesRead < info.size) break;
+            width = bytesRead - end;
+          }
+          for (let index = 1; index < width; index++)
+            if ((buffer[end + index]! & 0xc0) !== 0x80) {
+              width = 1;
+              break;
+            }
+          end += width;
+        }
+        return {
+          outcome: "completed",
+          ...details,
+          completeness,
+          logError: run.logError ?? null,
+          text: buffer.subarray(0, end).toString("utf8"),
+          offset: at,
+          total: info.size,
+          unit: "bytes",
+          shortened: at + end < info.size,
+          ...(at + end < info.size ? { next: cursor({ key, at: at + end }) } : {}),
+        };
+      } finally {
+        await file.close();
+      }
+    } catch {
+      return readText(run.output, a, [task.id, a.nodeId, a.index], {
+        ...details,
+        completeness: "missing-file",
+        message: "The original diagnostic file could not be verified or is unavailable. This is the saved excerpt.",
+      });
+    }
+  }
+  private async watch(a: Args): Promise<Result> {
+    const e = this.engine,
+      deadline = Date.now() + a.timeoutMs;
+    let selected: ReturnType<typeof taskSummary>[] | undefined;
+    const snapshot = async (): Promise<Result> => {
+      if (a.target === "engine") return this.lifecycle?.status() ?? this.call("engine.status", {});
+      if (a.target === "pool") return { outcome: "completed", pool: e.s.pool, ...drainStatus(e) };
+      if (a.target === "inbox") return this.query("inbox.list", a);
+      const ids: string[] = a.taskIds ?? (a.taskId ? [a.taskId] : []);
+      if (!ids.length) return { outcome: "invalid", message: "Choose taskId or taskIds for a focused task wait." };
+      const tasks = ids.flatMap((id: string) => { const task = e.taskDetails(id); return task ? [task] : []; });
+      if (tasks.length !== ids.length) return { outcome: "missing", message: "A selected task does not exist." };
+      selected = tasks.map((t) => taskSummary(e, t));
+      return paginate(
+        a.condition === "decision" ? selected.filter((task) => task.inbox.length > 0) : selected,
+        a,
+        ["watch", ids],
+      );
+    };
+    // Subscribe before the first read. No change between setup and snapshot can be lost.
+    let wake: (() => void) | undefined;
+    let dirty = false;
+    const off = e.subscribe(() => {
+      dirty = true;
+      wake?.();
+    });
+    try {
+      let baseline = a.marker;
+      for (;;) {
+        dirty = false;
+        const current = await snapshot();
+        if (current.outcome !== "completed") return current;
+        const marker = `${e.boot}.${fingerprint([current, selected])}`;
+        if (baseline && !baseline.startsWith(`${e.boot}.`))
+          return { outcome: "continuity-lost", marker, result: current, message: "The engine restarted. Inspect this focused result and begin a new watch." };
+        baseline ??= marker;
+        // Pagination bounds the reply, never the set whose condition the caller selected.
+        const items = selected ?? current.items as ReturnType<typeof taskSummary>[] | undefined;
+        const matches =
+          a.condition === "change"
+            ? marker !== baseline
+            : a.condition === "drained"
+              ? current.drained === true
+              : a.condition === "decision"
+                ? a.target === "inbox"
+                  ? !!items?.length
+                  : items?.some((t) => t.inbox.length > 0)
+                : a.condition === "state"
+                  ? !!items?.length && items.every((t) => a.states?.includes(t.state))
+                  : a.condition === "landed"
+                    ? !!items?.length && items.every((t) => t.landing === "landed")
+                    : !!items?.length && items.every((t) => ["awaiting-merge", "landed"].includes(t.landing));
+        if (matches) return { outcome: "completed", marker, result: current };
+        if (e.stopped) return { outcome: "disconnected", marker, result: current };
+        if (Date.now() >= deadline) return { outcome: "timed-out", marker, result: current, message: "The deadline ended this wait. Work continues." };
+        if (dirty) continue;
+        await new Promise<void>((resolve) => {
+          let timer: ReturnType<typeof setTimeout>;
+          const done = () => {
+            clearTimeout(timer);
+            wake = undefined;
+            resolve();
+          };
+          wake = done;
+          timer = setTimeout(done, Math.min(1000, Math.max(0, deadline - Date.now())));
+        });
+      }
+    } finally {
+      off();
+    }
+  }
+}

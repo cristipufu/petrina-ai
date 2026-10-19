@@ -1,14 +1,20 @@
 // Finished work is read a page at a time. The live board never needs its conversations or plans.
 import type { Id, State, StepRecord, Task } from "./model.js";
 import type { ReviewStats } from "./reviews.js";
+import { involvesProduct, taskProductIds } from "./repositories.js";
 
-export interface HistoryQuery { productId?: Id; query?: string; cursor?: string; limit?: number }
-export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "state" | "createdAt" | "finishedAt" | "statusLine" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & { state: "done" | "cancelled" };
+export interface HistoryQuery { productId?: Id; query?: string; cursor?: string; limit?: number; states?: readonly ("done" | "cancelled")[]; taskId?: Id; held?: boolean }
+export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "state" | "createdAt" | "finishedAt" | "statusLine" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & {
+  state: "done" | "cancelled";
+  productIds?: readonly Id[];
+  products?: readonly { id: Id; name: string }[];
+  deliveries?: readonly (Pick<Task, "productId" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & { nothingToPublish?: boolean })[];
+};
 export interface HistoryPage { items: readonly HistoryItem[]; nextCursor?: string; total: number }
 export interface HistoryMetadata {
   revision: number;
   total: number;
-  products: readonly { productId: Id; done: number; cancelled: number }[];
+  products: readonly { productId: Id; done: number; cancelled: number; shared?: number; blocked?: number }[];
   reviews: ReviewStats;
   reviewsByProduct: Readonly<Record<Id, ReviewStats>>;
   steps: readonly StepRecord[];
@@ -26,7 +32,10 @@ export function historyMatches(title: string, query: string): boolean {
 }
 export function historyItem(task: Task): HistoryItem {
   const { id, productId, title, kind, state, createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate } = task;
-  return { id, productId, title, kind, state: state as HistoryItem["state"], createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate };
+  const productIds = taskProductIds(task);
+  const products = task.repositories?.map((work) => ({ id: work.productId, name: work.source?.product.name ?? work.workProduct?.name ?? work.productId })) ?? task.workRows?.map((row) => ({ id: row.source?.product.id ?? row.choice.productId, name: row.source?.product.name ?? row.choice.productId })) ?? productIds.map((id) => ({ id, name: id }));
+  const deliveries = task.repositories?.map(({ productId, delivery, pr, release, landed, localUpdate, nothingToPublish }) => ({ productId, delivery, pr, release, landed, localUpdate, nothingToPublish }));
+  return { id, productId, title, kind, state: state as HistoryItem["state"], createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, ...(task.repositories || productIds.length > 1 ? { productIds, products, deliveries } : {}) };
 }
 export function historyCursor(item: Pick<Task, "id" | "finishedAt" | "createdAt">): string {
   return encodeURIComponent(JSON.stringify([historyAt(item), item.id]));
@@ -42,7 +51,7 @@ export function readHistoryCursor(cursor: string): { at: number; id: Id } {
 /** The simulator has its small scripted history in memory; the real engine uses an indexed query. */
 export function demoHistoryPage(state: Pick<State, "tasks" | "products">, request: HistoryQuery): HistoryPage {
   const cursor = request.cursor ? readHistoryCursor(request.cursor) : undefined;
-  const matches = state.tasks.filter((task) => finishedTask(task) && (!request.productId || task.productId === request.productId) && historyMatches(task.title, request.query ?? ""));
+  const matches = state.tasks.filter((task) => finishedTask(task) && (!request.productId || involvesProduct(task, request.productId)) && (!request.taskId || task.id === request.taskId) && (!request.states || request.states.includes(task.state as "done" | "cancelled")) && (request.held === undefined || task.held === request.held) && historyMatches(task.title, request.query ?? ""));
   const after = matches.filter((task) => !cursor || historyAt(task) < cursor.at || (historyAt(task) === cursor.at && task.id < cursor.id));
   after.sort((a, b) => historyAt(b) - historyAt(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   const size = Math.max(1, Math.min(100, Math.floor(request.limit ?? 24)));

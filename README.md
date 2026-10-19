@@ -79,6 +79,8 @@ bun run tauri dev
 
 `bun run open` opens Petrina in a browser connected to the running engine. To try the sample squad without an engine, run `bun run dev` and open [localhost:1430/?demo](http://localhost:1430/?demo).
 
+`bun run petrina --help` lists the named coordination commands. Inspect one task, read original check diagnostics, handle inbox decisions, or gracefully pause and restart the pool from the CLI or matching typed MCP tools. See [the coordination guide](docs/coordination.md) for installation, MCP configuration, safe retries and a complete example. Existing `state` and `do` invocations remain available.
+
 Early, but working: connected agents already take tasks through to pull requests, releases or commits on main, each in a separate working copy. Run from source for now.
 
 Details are in [docs/design.md](docs/design.md). How the screens are meant to feel is in [docs/ux.md](docs/ux.md).

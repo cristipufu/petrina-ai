@@ -1,3 +1,4 @@
+import { involvesProduct, taskProductIds } from "@petrina/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { boardOrder, draftFor, inboxOrder, inboxTab, keyArea, matchesWords, reconcileHighlight, stepHighlight, withDraft, type KeyArea, type Page, type State, type Task, type TaskList } from "@petrina/core";
 import { failureText, sim, mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
@@ -147,7 +148,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
 
 
   const visible = useCallback(
-    (task: Task) => (product === "all" || task.productId === product) && matchesWords(query, task.title, find.product(task.productId)?.name ?? ""),
+    (task: Task) => (product === "all" || involvesProduct(task, product)) && matchesWords(query, task.title, ...taskProductIds(task).map((id) => find.product(id)?.name ?? "")),
     [product, query, find],
   );
   const activeBoardIds = useMemo(() => boardOrder(state.tasks, visible, false), [state.tasks, visible]);

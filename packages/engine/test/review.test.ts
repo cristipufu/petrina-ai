@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { findingCount, reviewStats, type Task } from "@petrina/core";
+import { findingCount, reviewStats, ROLE_STARTS, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
@@ -26,6 +26,7 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
   });
   try {
     if (poolLimit) engine.setPoolLimit(poolLimit);
+    if (scenario.planner === "mixed-review") engine.addRole(ROLE_STARTS.find((entry) => entry.id === "security")!.draft);
     const repo = makeProduct(root);
     const before = git(repo, "rev-parse", "HEAD");
     const productId = await engine.addProduct(repo);
@@ -38,6 +39,7 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
         if (item.kind === "plan") engine.approve(item.id);
         else if (item.kind === "permission") engine.allow(item.id, "once");
         else if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
+        else if (item.kind === "screen") engine.allowScreen(taskId);
       }
       const found = state.tasks.find((entry) => entry.id === taskId) as Task | undefined;
       if (found?.state === "failed") throw new Error(`The task failed: ${found.error}`);
@@ -60,6 +62,130 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("reviews that converge", () => {
+  it("rechecks a dismissed finding against fresh proof without counting its historical raiser as current support", async () => {
+    const run = await untilDelivery({ reviewer: "important", verifier: "not-a-bug", builder: "plain" });
+    const old = run.task.findings.find((finding) => finding.severity === "blocking")!;
+    expect(old.status).toBe("dismissed");
+    expect(old.verification?.verdict).toBe("not-a-bug");
+    const stageIndex = run.task.plan!.stages.findIndex((stage) => stage.kind === "review-chain");
+    const stage = run.task.plan!.stages[stageIndex]!;
+    const data = join(run.root, "data");
+    const store = new Store(join(data, "petrina.db"));
+    try {
+      const state = store.load()!;
+      store.save({ ...state, inbox: [], tasks: state.tasks.map((task) => task.id !== run.task.id ? task : { ...task, state: "waiting", stageIndex, sub: 0, rounds: { ...task.rounds, [stage.id]: 2 }, hunt: undefined }) });
+    } finally { store.close(); }
+    const evidence = "On current code, the guest greeting disappears after signing out; signed-in visitors still see it. Expected both states to retain the greeting.";
+    run.fakes.scenario({ builder: "plain", reviewer: "confirm-dismissed", reopenedEvidence: evidence, verifier: "real" });
+    const engine = new Engine(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), run.fakes.dir] });
+    try {
+      const task = await waitFor(() => {
+        const state = engine.getState();
+        const task = state.tasks.find((entry) => entry.id === run.task.id)!;
+        if (task.state === "failed") throw new Error(task.error);
+        return state.inbox.some((item) => item.taskId === task.id && item.kind === "delivery") && task;
+      }, "new proof of the dismissed finding to receive a fresh ballot");
+      const reopened = task.findings.find((finding) => finding.id === old.id)!;
+      expect(reopened.status).toBe("open");
+      expect(reopened.evidence).toBe(evidence);
+      expect(reopened.confirmedBy).toEqual([stage.profileIds[1]!]);
+      expect(reopened.verification?.verdict).toBe("real");
+      expect(reopened.votes).toHaveLength(run.voters);
+      expect(reopened.earlierReviews).toHaveLength(1);
+      expect(reopened.earlierReviews![0]!.evidence).toBe(old.evidence);
+      expect(reopened.earlierReviews![0]!.verification?.verdict).toBe("not-a-bug");
+      expect(reopened.earlierReviews![0]!.votes).toEqual(old.votes);
+      expect(run.fakes.openings("verifier")).toHaveLength(run.voters * 2);
+      const corrections = run.fakes.received("code reviewer").filter((entry) => entry.text.startsWith("Your result block could not be used: Current evidence is required"));
+      expect(corrections).toHaveLength(1);
+      expect(run.fakes.received("code reviewer").find((entry) => entry.session === corrections[0]!.session)!.text).toContain("(dismissed)");
+      expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(true);
+    } finally { await engine.shutdown(); }
+    const restored = new Engine(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), run.fakes.dir] });
+    try {
+      const saved = restored.task(run.task.id)!.findings.find((finding) => finding.id === old.id)!;
+      expect(saved.status).toBe("open");
+      expect(saved.evidence).toBe(evidence);
+      expect(saved.verification?.verdict).toBe("real");
+      expect(saved.earlierReviews![0]!.verification?.verdict).toBe("not-a-bug");
+      expect(saved.earlierReviews![0]!.votes).toEqual(old.votes?.map((vote) => ({ ...vote })));
+      expect(run.fakes.openings("verifier")).toHaveLength(run.voters * 2);
+    } finally { await restored.shutdown(); }
+  });
+
+  for (const [name, scenario, role, corrections] of [
+    ["single code review", { planner: "short", reviewRounds: 2 }, "code reviewer", 1],
+    ["parallel code review", {}, "code reviewer", 2],
+    ["resumed parallel code review after screen permission", { screenRoles: ["code reviewer"] }, "code reviewer", 2],
+    ["security review", { risk: "high" }, "security reviewer", 1],
+    ["added findings role", { planner: "mixed-review" }, "security specialist", 1],
+  ] as [string, Scenario, string, number][]) {
+    it(`requires current reopening evidence in ${name}, then accepts a correction in the same conversation`, async () => {
+      const { task, fakes } = await untilDelivery({ ...scenario, builder: "plain", reviewer: "important", reviewConfirmation: { role, correction: "omit" } });
+      const findings = task.findings.filter((finding) => finding.severity === "blocking");
+      expect(findings.length).toBeGreaterThan(0);
+      for (const finding of findings) {
+        expect(finding.status).toBe("fixed");
+        expect(finding.answer?.fixed).toBe(true);
+        expect(finding.earlierReviews).toBeUndefined();
+      }
+      const correctionsSent = fakes.received(role).filter((entry) => entry.text.startsWith("Your result block could not be used: Current evidence is required"));
+      expect(correctionsSent).toHaveLength(corrections);
+      for (const correction of correctionsSent) {
+        const opening = fakes.received(role).find((entry) => entry.session === correction.session)!;
+        expect(opening.text).toContain("(fixed)");
+        expect(opening.text).toContain(findings[0]!.id);
+      }
+      expect(fakes.openings("builder")).toHaveLength(2);
+      expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(false);
+    });
+  }
+
+  it("passes a fresh failing reproduction to the next builder and saves the original evidence in history", async () => {
+    const evidence = "On current code, send an explicit dispute before an independent confirmation: the finding stays dismissed. Reverse the order: it stays open. Expected both orders to keep independently confirmed findings open.";
+    const { task, fakes, root } = await untilDelivery({ builder: "plain", reviewer: "confirm-fixed", reviewRounds: 3, reopenedEvidence: evidence });
+    const finding = task.findings.find((entry) => entry.severity === "blocking")!;
+    expect(task.findings.filter((entry) => entry.id === finding.id)).toHaveLength(1);
+    expect(task.findings.filter((entry) => entry.severity === "blocking")).toHaveLength(1);
+    expect(finding.status).toBe("open");
+    expect(finding.evidence).toBe(evidence);
+    expect(finding.earlierReviews).toHaveLength(2);
+    expect(finding.earlierReviews![0]!.evidence).toBe("Opened the welcome page");
+    expect(finding.earlierReviews![1]!.evidence).toBe(evidence);
+    const builders = fakes.openings("builder");
+    expect(builders).toHaveLength(3);
+    expect(builders[1]).toContain("Opened the welcome page");
+    expect(builders[1]).not.toContain(evidence);
+    expect(builders[2]).toContain(evidence);
+    expect(builders[2]).not.toContain("Opened the welcome page");
+    const original = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 1)!.result!.findings!.find((entry) => entry.id === finding.id)!;
+    expect(original.evidence).toBe("Opened the welcome page");
+    const store = new Store(join(root, "data", "petrina.db"));
+    try {
+      const saved = store.load()!.tasks.find((entry) => entry.id === task.id)!.findings.find((entry) => entry.id === finding.id)!;
+      expect(saved.evidence).toBe(evidence);
+      expect(saved.earlierReviews![0]!.evidence).toBe("Opened the welcome page");
+    } finally { store.close(); }
+    expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(true);
+  });
+
+  it("requires current evidence for a duplicate fixed report, preserving its identity and the new proof", async () => {
+    const evidence = "The guest welcome page loses the greeting after signing out on this version; opening it signed in still works.";
+    const { task, fakes } = await untilDelivery({ builder: "plain", reviewer: "important-twice", reviewRounds: 3, reopenedEvidence: evidence, reviewConfirmation: { role: "code reviewer", correction: "evidence", duplicate: true } });
+    expect(task.findings).toHaveLength(1);
+    const finding = task.findings[0]!;
+    expect(finding.status).toBe("open");
+    expect(finding.severity).toBe("blocking");
+    expect(finding.evidence).toBe(evidence);
+    expect(finding.earlierReviews![0]!.evidence).toBe("Opened the welcome page");
+    expect(fakes.received("code reviewer").filter((entry) => entry.text.startsWith("Your result block could not be used: Current evidence is required"))).toHaveLength(4);
+    const builders = fakes.openings("builder");
+    expect(builders).toHaveLength(3);
+    expect(builders[2]).toContain(`[${finding.id}]`);
+    expect(builders[2]).toContain(evidence);
+    expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(true);
+  });
+
   it("keeps an older saved verified fix after a new ballot rejects its reopening", async () => {
     const run = await untilDelivery({ reviewer: "important" });
     const data = join(run.root, "data");

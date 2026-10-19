@@ -59,6 +59,7 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
         </p>
       </section>
 
+      {plan.products && <section className="sheet-section reading"><h2>Product ownership</h2>{plan.products.map((owner) => <p key={owner.productId}>{state.products.find((product) => product.id === owner.productId)?.name ?? task.workRows?.find((row) => row.choice.productId === owner.productId)?.source?.product.name ?? owner.productId} · Builder: {profileText(find.profile(owner.builderProfileId), find, true)}{owner.productId === task.leadProductId || owner.productId === plan.leadProductId ? " · Leads shared repairs" : ""}</p>)}</section>}
       <section className="sheet-section">
         <h2>Stages</h2>
         <ol className="stages">

@@ -221,9 +221,15 @@ export function normalizePlan(input: PlanInput): Plan {
     stages.splice(finalReviewIndex(stages) + 1, 0, { id: `${task.id}:security`, kind: "review-chain", title: "Security review", roleId: "security-reviewer", profileIds: [reviewer], maxRounds: 2 });
   }
   stages.push(...deliveryStages(task, input.releaseManagerProfileId));
+  if ((result.worksOn?.length ?? 0) > 1) stages.at(-1)!.title = `Deliver across ${result.worksOn!.length} products`;
   // Apply the tool checks to every place, including added roles and the fallbacks Petrina supplied.
   const usable = stages.map((stage) => ({ ...stage, profileIds: stage.profileIds.map(onUsable), ...(stage.reviewerProfileIds ? { reviewerProfileIds: stage.reviewerProfileIds.map(onUsable) } : {}) }));
-  return { stages: usable, rationale: changes.length ? `${result.rationale} ${changes.join(" ")}` : result.rationale, plannerProfileId: input.plannerProfileId };
+  // One shared Build step; its product owners work in separate saved conversations.
+  const builds = usable.filter((stage) => input.roles.find((role) => role.id === stage.roleId)?.result === "build");
+  if (builds.length > 1) for (const stage of builds.slice(1)) usable.splice(usable.indexOf(stage), 1);
+  const builder = builds[0]?.profileIds[0] ?? "opus-xhigh";
+  const products = result.worksOn?.map((choice) => ({ productId: choice.productId, builderProfileId: onUsable(profile(choice.builderProfileId, builder)), reviewerProfileIds: usable.filter((stage) => stage.kind === "review-chain").flatMap((stage) => stage.profileIds) }));
+  return { ...(products ? { products, leadProductId: result.leadProductId && products.some((entry) => entry.productId === result.leadProductId) ? result.leadProductId : products[0]?.productId } : {}), stages: usable, rationale: changes.length ? `${result.rationale} ${changes.join(" ")}` : result.rationale, plannerProfileId: input.plannerProfileId };
 }
 
 function reviewersOf(stage: Stage): Reviewer[] {

@@ -11,6 +11,8 @@ import { join, resolve } from "node:path";
 import { readConnection } from "./instance.js";
 import { launch } from "./launch.js";
 import { browserCommand } from "./setup.js";
+import { coordinationCli } from "./coordination-cli.js";
+import { runMcp } from "./mcp.js";
 
 const home = process.env.PETRINA_HOME || join(homedir(), ".petrina");
 const ui = resolve(import.meta.dir, "../../../apps/desktop/dist");
@@ -58,7 +60,8 @@ else if (command === "app") await launch({ home, mode: "app", ...(existsSync(ui)
 else if (command === "open") await open(rest.includes("--dev"));
 else if (command === "state") console.log(JSON.stringify(await call("/api/state"), null, 2));
 else if (command === "do") console.log(JSON.stringify(await call("/api/action", { method: "POST", body: rest.join(" ") }), null, 2));
-else {
-  console.log("Usage: petrina serve [--new-key] | petrina open [--dev] | petrina state | petrina do '<action json>'");
-  process.exit(command ? 1 : 0);
+else if (command === "mcp") {
+  if (rest.includes("--help")) console.log("petrina mcp — connect a coding agent over MCP stdio. Discover named tools with tools/list. Uses the existing local connection; connecting never starts an engine. See docs/coordination.md for client configuration.");
+  else await runMcp();
 }
+else process.exitCode = await coordinationCli(process.argv.slice(2));

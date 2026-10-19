@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { draftOf, journeyProblems, type DeepMutable, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
@@ -570,8 +570,14 @@ describe.concurrent("failed checks are evidence until something changes", () => 
           else {
             expect(again.at).toBeGreaterThan(refreshed.at);
             expect(again.results[0]).toEqual(refreshed.results[0]);
-            expect(again.results.map(({ ms, logPath, ...run }) => run)).toEqual(refreshed.results.map(({ ms, logPath, ...run }) => run));
+            // A rerun keeps the outcome but creates a new diagnostic file with its own identity.
+            expect(again.results.map(({ ms, logPath, logFileIdentity, ...run }) => run)).toEqual(refreshed.results.map(({ ms, logPath, logFileIdentity, ...run }) => run));
             expect(again.results.at(-1)!.logPath).not.toBe(refreshed.results.at(-1)!.logPath);
+            expect(again.results.at(-1)!.logFileIdentity).not.toEqual(refreshed.results.at(-1)!.logFileIdentity);
+            for (const run of [refreshed.results.at(-1)!, again.results.at(-1)!]) {
+              const info = statSync(run.logPath!, { bigint: true });
+              expect(run.logFileIdentity).toEqual({ device: info.dev.toString(), inode: info.ino.toString() });
+            }
             expect(readFileSync(again.results.at(-1)!.logPath!, "utf8")).toBe(readFileSync(refreshed.results.at(-1)!.logPath!, "utf8"));
             expect(again.definition).toBe(refreshed.definition);
             expect(again.tree).toBe(refreshed.tree);

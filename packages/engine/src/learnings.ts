@@ -15,14 +15,30 @@ const INTRO = "What agents learned about working in this repository, added with 
 /** The most lessons one task offers: the bar is high, so a few is plenty. */
 const MAX_LESSONS = 8;
 
+export function offeredLessons(body: string | undefined): string[] {
+  return (body ?? "").split("\n").map(line => cleanPoint(line.replace(/^- /, ""))).filter(Boolean);
+}
+
 export class Learnings {
   constructor(private readonly k: Kernel) {}
 
   /** An agent's lessons, kept on the task until the delivery check. Repeats, and ones AGENTS.md already has, are left out. */
-  async note(task: MTask, lessons: readonly string[], roleId: Id, profileId: Id): Promise<void> {
+  async note(task: MTask, lessons: readonly (string | { productId: string; text: string })[], roleId: Id, profileId: Id): Promise<void> {
     if (!lessons.length) return;
+    const own: string[] = [];
+    for (const lesson of lessons) {
+      const text = typeof lesson === "string" ? lesson : lesson.text;
+      const id = typeof lesson === "string" ? this.k.role(roleId)?.canEdit ? task.productId : undefined : lesson.productId;
+      if (!task.repositories || id === task.productId) { own.push(text); continue; }
+      const work = id ? task.repositories.find((entry) => entry.productId === id) : undefined;
+      if (work) {
+        const view = { ...task, ...work, repositories: undefined };
+        await this.note(view, [text], roleId, profileId);
+        work.lessons = view.lessons;
+      } else if (!task.sharedLessons?.some((entry) => entry.text === text)) task.sharedLessons = [...(task.sharedLessons ?? []), { text, roleId, profileId, at: Date.now() }];
+    }
     const known = await this.known(task);
-    for (const raw of lessons) {
+    for (const raw of own) {
       // The coordinator approves this instruction as written; cutting it can lose a path or a qualification.
       const text = cleanPoint(raw);
       // Changed wording may correct an old instruction. Only repeated text is already covered.
@@ -85,13 +101,10 @@ export class Learnings {
     if (!item) return;
     this.k.takeItem(itemId);
     const task = this.k.task(item.taskId);
-    const product = task && this.k.productOf(task);
+    const product = task && (item.productId ? this.k.s.products.find((entry) => entry.id === item.productId) : this.k.productOf(task));
     if (!task || !product) return;
     // The ones the coordinator ticked, by their place in the offer; all of them when it says nothing.
-    const offered = (item.body ?? "")
-      .split("\n")
-      .map((line) => cleanPoint(line.replace(/^- /, "")))
-      .filter(Boolean);
+    const offered = offeredLessons(item.body);
     const lessons = offered.filter((_, index) => !keep || keep.includes(index));
     this.remember(product, offered.filter((text) => !lessons.includes(text)));
     const added = lessons.filter((text) => !product.learnings?.some((line) => hasPoint(line.text, text)));
@@ -106,7 +119,7 @@ export class Learnings {
     if (!item) return;
     this.k.takeItem(itemId);
     const task = this.k.task(item.taskId);
-    const product = task && this.k.productOf(task);
+    const product = task && (item.productId ? this.k.s.products.find((entry) => entry.id === item.productId) : this.k.productOf(task));
     if (product) this.remember(product, (item.body ?? "").split("\n").map((line) => cleanPoint(line.replace(/^- /, ""))).filter(Boolean));
     if (task) this.k.log(task, "you", `You left ${AGENTS_FILE} as it is`);
     this.k.commit();

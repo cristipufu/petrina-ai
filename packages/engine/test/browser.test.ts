@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { Engine } from "../src/engine.js";
 import { AgentBrowser, recoverBrowserTemps } from "../src/browser.js";
 import { connectionPath } from "../src/instance.js";
+import { LifecycleStore } from "../src/lifecycle.js";
 import { parseDescendants, readProcessList } from "../src/process-tree.js";
 import { engineEnv, Fakes, firstLine, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
@@ -196,7 +197,7 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
   }
 });
 
-it("does not advertise a ready engine or discard browser ownership when startup recovery fails", async () => {
+for (const replacement of [false, true]) it(`does not advertise a ready engine or discard browser ownership when startup recovery fails${replacement ? " during replacement" : ""}`, async () => {
   const work = tempDir("petrina-browser-launch-recovery-fails-");
   const home = join(work, "home");
   const fake = join(work, "fake");
@@ -208,7 +209,10 @@ it("does not advertise a ready engine or discard browser ownership when startup 
   mkdirSync(fake, { recursive: true });
   writeFileSync(join(registry, "interrupted.json"), JSON.stringify(session));
   writeFileSync(join(bin, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-  const proc = Bun.spawn([process.execPath, HARNESS, home, fake], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...engineEnv(home), PATH: `${bin}:${process.env.PATH ?? ""}` } });
+  const lifecycle = replacement ? new LifecycleStore(home) : undefined;
+  lifecycle?.begin("restart", { requestId: "browser-recovery" }, "paused");
+  lifecycle?.finish("starting");
+  const proc = Bun.spawn([process.execPath, HARNESS, home, fake], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...engineEnv(home), PATH: `${bin}:${process.env.PATH ?? ""}`, ...(replacement ? { PETRINA_LIFECYCLE_REPLACEMENT: "1" } : {}) } });
   try {
     const hello = JSON.parse(await firstLine(proc.stdout)) as { type: string; message?: string };
     expect(hello.type).toBe("error");
@@ -217,11 +221,13 @@ it("does not advertise a ready engine or discard browser ownership when startup 
     expect(readdirSync(registry)).toEqual(["interrupted.json"]);
     expect(existsSync(session)).toBe(true);
     expect(await proc.exited).toBe(1);
+    if (lifecycle) expect(lifecycle.receipt("browser-recovery")).toEqual(expect.objectContaining({ outcome: "failed", operation: expect.objectContaining({ phase: "failed" }) }));
     await recoverBrowserTemps(registry);
     expect(existsSync(registry)).toBe(false);
     expect(existsSync(session)).toBe(false);
   } finally {
     proc.kill("SIGKILL");
+    lifecycle?.close();
     removeDir(session);
     removeDir(work);
   }

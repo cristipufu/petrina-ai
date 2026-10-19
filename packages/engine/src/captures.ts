@@ -176,11 +176,13 @@ function writePath(file: unknown): string | undefined {
 }
 
 /** Decode before copying. State carries opaque references, never paths or image bytes. */
-export async function preserveCaptures(root: string, storage: string, images: readonly { path: string; caption: string }[]): Promise<ReportImage[]> {
+export async function preserveCaptures(root: string, storage: string, images: readonly { path: string; caption: string }[], signal?: AbortSignal): Promise<ReportImage[]> {
+  signal?.throwIfAborted();
   if (!images.length) return [];
   const { default: sharp } = await import("sharp");
   const validated: { bytes: Buffer; caption: string }[] = [];
   for (const image of images) {
+    signal?.throwIfAborted();
     if (!image.caption.trim()) throw new Error("Every chosen picture needs a plain-language caption.");
     try {
       const path = await capturePath(root, image.path);
@@ -203,13 +205,23 @@ export async function preserveCaptures(root: string, storage: string, images: re
       throw new Error(`The chosen picture “${image.path}” must be a readable PNG, JPEG or WebP inside this session's capture folder. Take it again there, or leave it out.`);
     }
   }
+  signal?.throwIfAborted();
   await mkdir(storage, { recursive: true, mode: 0o700 });
   const saved: ReportImage[] = [];
   try {
     for (const image of validated) {
+      signal?.throwIfAborted();
       const id = randomUUID();
-      await writeFile(resolve(storage, `${id}.png`), image.bytes, { flag: "wx", mode: 0o600 });
+      // Include an interrupted/partial write in cleanup too.
       saved.push({ id, caption: image.caption });
+      try {
+        await writeFile(resolve(storage, `${id}.png`), image.bytes, { flag: "wx", mode: 0o600, signal });
+      } catch (error) {
+        // An exclusive-write refusal did not create this file, so it is not ours to remove.
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") saved.pop();
+        throw error;
+      }
+      signal?.throwIfAborted();
     }
     return saved;
   } catch (error) {

@@ -114,6 +114,20 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
         </div>
       </section>
 
+      {task.repositories && <section className="sheet-section reading" id="task-deliveries"><h2>Changes and deliveries</h2>
+        {task.repositories.map((work) => <div className="repository-row" key={work.productId}>
+          <h3>{work.source?.product.name ?? work.productId}{work.removed ? " · removed" : ""}</h3><p className="note">{work.source?.product.repo}</p>
+          <p className="prose">{work.report?.summary ?? "No changes reported yet"}</p>
+          <ul>{work.report?.changes.map((change) => <li key={change}>{change}</li>)}</ul>
+          <p className="note">Product checks: {!work.checks?.results.length ? "Not run" : work.checks.current === false ? "Not current" : work.checks.results.some((run) => !run.ok) ? "Failed" : "Passed"}{work.checks?.sha ? ` · version ${work.checks.sha.slice(0, 7)}` : ""}</p>
+          <p className="prose">{work.nothingToPublish ? "Nothing to publish" : work.pr ? <a href={work.pr.url} target="_blank" rel="noreferrer">Pull request #{work.pr.number} · {work.pr.state === "open" ? "waiting for merge" : work.pr.state === "merged" ? "merged" : work.landingAccepted ? "closed without merging · resolved by you" : "closed without merging · your decision needed"}</a> : work.release ? <a href={work.release.url} target="_blank" rel="noreferrer">Release {work.release.tag}</a> : work.localUpdate ? `${work.localUpdate.branch}: committed locally${work.localUpdate.pushed ? " and push confirmed" : " · push unfinished"}` : work.shipping?.step ? "Delivery needs checking before retry" : "Delivery waiting"}</p>
+          {work.source && <p className="note">{work.source.destination.repo} · {work.source.destination.branch}</p>}
+          {work.releasePreview && <div><p>Release {work.releasePreview.tag} includes everything waiting on the default branch since its previous release.</p><p className="prose">{work.releasePreview.notes}</p></div>}
+          {work.companion && <p className="note">{work.companion.state === "done" ? "Companion links finished" : "Companion links need finishing"}</p>}
+        </div>)}
+        <h3>Together</h3>{task.sharedLessons?.map((lesson, index) => <p className="note" key={index}>Lesson needs a product assignment: {lesson.text}</p>)}<p className="note">{task.acceptancePassed === true ? "Shared acceptance passed" : task.acceptancePassed === false ? "Shared acceptance needs attention" : "Shared acceptance not yet verified"}</p>
+        {task.brief?.acceptance.map((item) => <p className="prose" key={item.text}>{item.text}: {item.verification === "passed" ? "Passed" : item.verification === "failed" ? "Failed" : "Not verified"}</p>)}
+      </section>}
       <WhatItUsed task={task} state={state} find={find} onAbout={onAboutNumbers} />
       {task.localUpdate && !task.localUpdate.pushed && <p className="note">{task.localUpdate.branch} was updated in the local copy. Its push to GitHub is unfinished; the work is saved.</p>}
 

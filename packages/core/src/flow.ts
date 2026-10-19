@@ -67,6 +67,7 @@ export function gateStatus(task: Task, gate: GateKind): string {
  */
 export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note: string, now: number): { call: boolean } {
   const stages = task.plan?.stages ?? [];
+  if (task.repositories && (kind === "design" || kind === "disagreement")) task.designRevision = (task.designRevision ?? 0) + 1;
   const call = kind === "disagreement" ? startCall(task as unknown as Task, note, now) : undefined;
   if (call && task.plan) {
     // The call is final: the architect follows it once, then the coordinator checks the brief. No review round.

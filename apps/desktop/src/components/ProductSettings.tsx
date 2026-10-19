@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { DELIVERY_LABEL, productHistory, type DeliveryMode, type Product, type State } from "@petrina/core";
+import { DELIVERY_LABEL, productHistory, involvesProduct, taskProductIds, type DeliveryMode, type Product, type State } from "@petrina/core";
 import { sim, useEngineStatus } from "../engine";
 
 /** Only display names and defaults change here; the repository's identity never does. */
@@ -13,9 +13,12 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
   const [error, setError] = useState<string>();
   const back = useRef<HTMLButtonElement>(null);
   const live = useEngineStatus().link === "live";
-  const { unfinished, finished: loadedFinished } = productHistory(state.tasks, product.id);
+  const { unfinished: liveUnfinished } = productHistory(state.tasks, product.id);
+  const involved = state.tasks.filter((task) => involvesProduct(task, product.id));
   const archived = state.history?.products.find((entry) => entry.productId === product.id);
-  const finished = loadedFinished + (archived?.done ?? 0) + (archived?.cancelled ?? 0);
+  const unfinished = liveUnfinished + (archived?.blocked ?? 0);
+  const finished = involved.filter((task) => taskProductIds(task).length === 1 && ["done", "cancelled"].includes(task.state)).length + (archived?.done ?? 0) + (archived?.cancelled ?? 0) - (archived?.shared ?? 0);
+  const retained = involved.filter((task) => taskProductIds(task).length > 1).length + (archived?.shared ?? 0);
   const close = () => {
     if (!busy) onClose();
   };
@@ -76,10 +79,11 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
           <p className="removal-copy">
             {finished > 0
               ? `This permanently deletes ${finished} finished and cancelled task${finished === 1 ? "" : "s"} from Petrina, including their conversations, timelines, and design and review history. This cannot be undone.`
-              : "This product has no task history."}
+              : retained > 0 ? "No shared task history will be deleted." : "This product has no task history."}
           </p>
           <p>Your repository, its local folder, its branches and GitHub are not touched.</p>
-          {unfinished > 0 && <p className="error-text">{unfinished} task{unfinished === 1 ? " must" : "s must"} finish or be cancelled first.</p>}
+          {retained > 0 && <p className="setting-hint">{retained} shared task{retained === 1 ? " stays" : "s stay"} under the remaining products, with historical names and deliveries kept.</p>}
+          {unfinished > 0 && <p className="error-text">{archived?.blocked ? "Resolve the unfinished shared deliveries before removing this product." : `${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled first.`}</p>}
         </>
       ) : (
         <>
@@ -135,7 +139,7 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
             >
               Remove product
             </button>
-            {unfinished > 0 && <p className="setting-hint">{unfinished} task{unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.</p>}
+            {unfinished > 0 && <p className="setting-hint">{archived?.blocked ? "Resolve the unfinished shared deliveries before removing this product." : `${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`}</p>}
           </section>
         </>
       )}

@@ -49,6 +49,7 @@ interface TurnOptions<T> {
 const NO_SCREEN_HERE = "you cannot ask for the screen in this step. Finish without it, and list any check that needs the screen in your result";
 
 export class Turns {
+  readonly repositoryCopies = new Map<string, Readonly<Record<string, string>>>();
   constructor(
     private readonly k: Kernel,
     private readonly tools: ToolChecks,
@@ -83,6 +84,7 @@ export class Turns {
     if (!this.k.role(roleId) || !this.k.profile(plannedId) || (this.k.role(roleId)?.result !== "plan" && !this.k.productOf(task))) throw new Error(`Unknown role or product: ${roleId} on ${plannedId}`);
     let stopped: { profileId: Id; error: UsageLimited } | undefined;
     for (;;) {
+      if (this.k.admissionsClosed) throw new WaitingForUsage("Waiting for the pool to resume");
       // A screen request keeps the profile whose conversation asked, even if its planned tool is free again.
       const wanted = task.screen?.roleId === roleId ? task.screen.profileId : plannedId;
       const room = options.room ?? ((toolId: Id) => !slotWait(this.k.activeState(), { taskId: task.id, toolId }));
@@ -196,6 +198,7 @@ export class Turns {
     if (!task.worktree) mkdirSync(workingCopy, { recursive: true });
     const taskId = task.id;
     const worktree = options.copy ?? workingCopy;
+    const protectedCopies = task.repositories && !options.copy ? await Promise.all(task.repositories.filter((work) => work.worktree && work.productId !== task.productId).map(async (work) => ({ path: work.worktree!, sha: await git.head(work.worktree!) }))) : [];
     // Paused, cancelled or stopped while getting here: no agent starts, and the task stays as the coordinator left it.
     if (signal.aborted) throw new Aborted();
     this.mustBeReady(profile);
@@ -377,7 +380,7 @@ export class Turns {
     // the old note; a reopened one keeps the open question until the conversation hears the answer.
     const asked = picked ? reopen?.asked : undefined;
     if (roleId !== "release-manager") {
-      task.conversation = { step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && handback ? { handback } : {}) };
+      task.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && handback ? { handback } : {}) };
       const pending = screen?.member && task.hunt?.screenTurns?.[screen.member];
       // Keep the latest reopened or replacement conversation when this member yields to a peer.
       if (pending) pending.conversation = task.conversation;
@@ -455,6 +458,10 @@ export class Turns {
       this.k.syncIdleSleep();
       // Nothing the agent started may still write in the working copy once the step is over.
       await run.stop();
+      for (const copy of protectedCopies) {
+        if (await git.head(copy.path).catch(() => copy.sha) !== copy.sha) await git.resetTo(copy.path, copy.sha);
+        if (!await git.isClean(copy.path).catch(() => true)) await git.discardChanges(copy.path);
+      }
       // A read-only role runs in its tool's automatic mode, so it could change things: leave the
       // working copy exactly as the step first found it, commits and uncommitted changes alike.
       if (headBefore && worktree && (await git.head(worktree).catch(() => headBefore)) !== headBefore) {
@@ -499,6 +506,7 @@ export class Turns {
     // Partners of one step share the read the group just did. A usage replacement is another attempt and reads again.
     let refresh = options.refresh !== false;
     for (;;) {
+      if (!first && this.k.admissionsClosed) throw new WaitingForUsage("Waiting for the pool to resume");
       const accepted = first && options.seat ? this.k.profile(options.seat) : undefined;
       first = false;
       let profile: AgentProfile;
@@ -657,7 +665,7 @@ export class Turns {
         askScreen: (reason) => {
           // Each member keeps its own request. Only the first can be represented by task.screen;
           // the rest follow after it, without overwriting its conversation or permission.
-          const conversation = { step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
+          const conversation = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
           task.hunt!.screenTurns = { ...task.hunt!.screenTurns, [options.member]: { reason, at: Date.now(), copy, conversation } };
           if (task.screen) this.k.log(task, "status", SCREEN_WORDS.asked(reason), roleId, profileId);
           const granted = !task.screen && this.k.askScreen(task, roleId, profileId, reason, options.member);
@@ -791,38 +799,47 @@ export class Turns {
           const storage = join(this.k.dataDir, "captures", task.id);
           let saved: Awaited<ReturnType<typeof preserveCaptures>> | undefined;
           try {
-            saved = await preserveCaptures(run.browser!.directory, storage, images);
+            saved = await preserveCaptures(run.browser!.directory, storage, images, signal);
           } catch (captureError) {
-            if (captureError instanceof Aborted) throw captureError;
+            if (signal.aborted || captureError instanceof Aborted) throw new Aborted();
             error = captureError instanceof Error ? captureError.message : "The chosen pictures could not be saved.";
           }
           if (saved) {
-            if (signal.aborted) throw new Aborted();
-            // Saving pictures also awaits I/O. Discard superseded copies and let this
-            // agent hear any new instruction before attaching pictures or finishing.
-            const whileSaving = options.main || options.member ? takeMessages(current, options.member) : [];
-            if (whileSaving.length) {
-              await Promise.all(saved.map((image) => rm(join(storage, `${image.id}.png`), { force: true })));
-              reply = await sendQueued(current, whileSaving);
-              continue;
-            }
-            if (options.member) this.k.screenGroups.get(task.id)?.finished(options.member);
-            if (saved.length) {
+            let attached = false;
+            try {
               const live = this.k.task(current.id) ?? current;
-              let host = reportLine ? live.session.find((line) => line.id === reportLine.id) : undefined;
-              if (!host) {
-                this.k.say(live, "agent", reportLine?.text ?? (parsed.value as { summary?: string }).summary ?? "Report ready", role.id, profileId);
-                host = live.session.at(-1);
+              if (signal.aborted || live.state === "done" || live.state === "cancelled") throw new Aborted();
+              // Saving pictures also awaits I/O. Discard superseded copies and let this
+              // agent hear any new instruction before attaching pictures or finishing.
+              const whileSaving = options.main || options.member ? takeMessages(current, options.member) : [];
+              if (whileSaving.length) {
+                await Promise.all(saved.map((image) => rm(join(storage, `${image.id}.png`), { force: true })));
+                saved.length = 0;
+                reply = await sendQueued(current, whileSaving);
+                continue;
               }
-              host!.images = saved;
+              if (options.member) this.k.screenGroups.get(task.id)?.finished(options.member);
+              if (saved.length) {
+                let host = reportLine ? live.session.find((line) => line.id === reportLine.id) : undefined;
+                if (!host) {
+                  this.k.say(live, "agent", reportLine?.text ?? (parsed.value as { summary?: string }).summary ?? "Report ready", role.id, profileId);
+                  host = live.session.at(-1);
+                }
+                host!.images = saved;
+              }
+              const step = openStep(live);
+              if (step) step.agentResults = [...(step.agentResults ?? []), { roleId: role.id, profileId, at: finishedAt, value: parsed.value, ...(saved.length ? { images: saved } : {}) }];
+              // The result ends the agent's work. Saving its pictures is Petrina's time.
+              if (options.main) this.k.pauseStep(current, finishedAt);
+              const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
+              if (work?.clock) work.clock = pauseClock(work.clock, finishedAt);
+              // Durable references are saved before the agent stops or its working copy is cleaned.
+              this.k.commitNow();
+              attached = true;
+              return parsed.value;
+            } finally {
+              if (!attached) await Promise.all(saved.map((image) => rm(join(storage, `${image.id}.png`), { force: true })));
             }
-            // The result ends the agent's work. Saving its pictures is Petrina's time.
-            if (options.main) this.k.pauseStep(current, finishedAt);
-            const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
-            if (work?.clock) work.clock = pauseClock(work.clock, finishedAt);
-            // Durable references are saved before the agent stops or its working copy is cleaned.
-            this.k.commitNow();
-            return parsed.value;
           }
         }
       } finally {

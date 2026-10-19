@@ -1,3 +1,4 @@
+import * as library from "@petrina/core";
 // The engine's shared state and the few operations every part of it uses: lookups, the timeline and
 // session, the inbox, and saving. Feature modules get this, never the Engine itself.
 
@@ -71,12 +72,14 @@ export const MAX_SESSION_LINES = 800;
 /** An older line may go once this agent has said something newer. Its latest words stay, so a report is still there when its pictures are saved. */
 function newerWords(session: MTask["session"], index: number, line: MTask["session"][number]): boolean {
   if (line.from !== "agent") return true;
-  return session.some((other, later) => later > index && other.from === "agent" && other.roleId === line.roleId && other.profileId === line.profileId);
+  return session.some((other, later) => later > index && other.from === "agent" && other.roleId === line.roleId && other.profileId === line.profileId && other.productId === line.productId);
 }
 
 export const MAX_TIMELINE = 400;
 
 export interface EngineOptions {
+  /** The launcher opens scheduling only once the local connection is ready. */
+  admissionsClosed?: boolean;
   /** Tests: run a fake agent instead of the tool's adapter. */
   agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
   /** Tests: a fake GitHub instead of `gh`. */
@@ -87,6 +90,7 @@ export interface EngineOptions {
   grokCommand?: readonly string[] | null;
   /** Tests: a folder standing in for every product's copy on GitHub. Never from settings or saved data. */
   remote?: string;
+  remotes?: Readonly<Record<string, string>>;
   /** Tests: separate local remotes for fork working repositories. */
   sourceRemotes?: Record<string, string>;
   /** Tests: how long a tool gets to reopen a conversation. */
@@ -204,6 +208,7 @@ export abstract class Kernel {
     // system sleep assertion; production launches use the default unless they inject an observer.
     const awakeObserver = options.awakeObserver ?? (options.agentCommand ? () => {} : undefined);
     this.idleSleep = new IdleSleepAssertion(awakeObserver ? { observe: awakeObserver } : {});
+    this.draining = options.admissionsClosed ?? false;
     if (loaded) {
       renameRoles(this.s);
       // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
@@ -271,7 +276,7 @@ export abstract class Kernel {
   readonly helperRuns = new Map<Id, Set<AgentRun>>();
 
   /** A live review group can reopen its waiting screen member without stopping its peers. */
-  readonly screenGroups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void }>();
+  readonly screenGroups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void; yield?: (member: string) => void }>();
 
   /** Discarded review copies finish cleaning up before the task can start fresh. */
   readonly copyCleanups = new Map<Id, Promise<void>>();
@@ -298,13 +303,23 @@ export abstract class Kernel {
   stopped = false;
   /** Stopping is under way: no new agent starts, and reviewers and voters in flight hand back first. */
   draining = false;
+  drainReason: "stop" | "restart" = "restart";
+  get drainLine(): string { return this.drainReason === "stop" ? "Waiting: Petrina is stopping" : "Waiting: Petrina is restarting"; }
+  /** Cleanup and delivery lookups outside a task driver still belong to a drain. */
+  readonly backgroundWork = new Set<Promise<unknown>>();
+
+  trackWork<T>(work: Promise<T>): Promise<T> {
+    this.backgroundWork.add(work);
+    void work.finally(() => this.backgroundWork.delete(work)).catch(() => undefined);
+    return work;
+  }
+
+  get admissionsClosed(): boolean { return this.draining || this.s.pool.paused || this.stopped; }
 
   /** Agents whose work is lost by a restart: reviewers and voters working side by side (never reopened) and a Release Manager mid-delivery. */
   inFlight(): number {
-    let count = 0;
-    for (const runs of this.helperRuns.values()) count += runs.size;
-    for (const task of this.s.tasks) if (task.state === "running" && task.agent?.roleId === "release-manager") count += 1;
-    return count;
+    const agents = this.runs.size + [...this.helperRuns.values()].reduce((sum, runs) => sum + runs.size, 0);
+    return agents || this.settling.size + this.copyCleanups.size + this.backgroundWork.size + this.s.tasks.filter(task => task.driving).length;
   }
 
   /** Keep macOS awake only while this engine still owns active work or its cleanup. */
@@ -340,7 +355,7 @@ export abstract class Kernel {
         onWait?.(left);
         last = left;
       }
-      if (left === 0 || Date.now() - started > limitMs) return left;
+      if (left === 0 || Date.now() - started >= limitMs) return left;
       await Bun.sleep(500);
     }
     return 0;
@@ -363,11 +378,38 @@ export abstract class Kernel {
   /** The terminals on this machine, the usual one first. */
   readonly found: FoundTerminal[];
 
+  /** Persist the loaded repository before publishing a state snapshot or changing responsibility. */
+  saveRepository(task: MTask): void {
+    const work = task.repositories?.find((entry) => entry.productId === task.activeProductId);
+    if (!work) return;
+    for (const field of library.REPOSITORY_FIELDS) {
+      if (task[field] === undefined) Reflect.deleteProperty(work, field);
+      else Reflect.set(work, field, task[field]);
+    }
+  }
+
+  selectRepository(task: MTask, productId: string): void {
+    if (!task.repositories || task.activeProductId === productId) return;
+    this.saveRepository(task);
+    const work = task.repositories.find((entry) => entry.productId === productId);
+    if (!work) throw new Error("That product is outside the approved task.");
+    for (const field of library.REPOSITORY_FIELDS) {
+      if (work[field] === undefined) Reflect.deleteProperty(task, field);
+      else Reflect.set(task, field, work[field]);
+    }
+    task.activeProductId = productId;
+  }
+
   /** Current engine work only. Completed bodies are loaded separately when somebody opens one. */
-  activeState = (): State => this.s as unknown as State;
+  activeState = (): State => {
+    for (const task of this.s.tasks) this.saveRepository(task);
+    return this.s as unknown as State;
+  };
 
   /** Explicit compatibility/debug snapshot. Production never loads all archived conversations. */
   getState = (): State => {
+    this.activeState();
+    for (const task of this.archiveCache.values()) this.saveRepository(task);
     const current = new Map<string, Task>([...this.archiveCache.values(), ...this.s.tasks].map((task) => [task.id, task as Task]));
     // Shutdown closes SQLite before detached cleanup finishes. Reads used while waiting for that
     // cleanup keep the last in-memory work; stopping never loads an unbounded history snapshot.
@@ -403,11 +445,12 @@ export abstract class Kernel {
   /** A cleanup result for an already archived task must survive immediately, even after cache eviction. */
   saveArchivedTask(task: MTask): void {
     if (this.stopped || this.s.tasks.includes(task)) return;
+    this.saveRepository(task);
     this.store.save(this.activeState(), this.retiredTasks(), [task as Task]);
   }
 
   forgetProductHistory(productId: Id): void {
-    for (const [id, task] of this.archiveCache) if (task.productId === productId) this.archiveCache.delete(id);
+    for (const [id, task] of this.archiveCache) if (library.involvesProduct(task, productId)) this.archiveCache.delete(id);
   }
 
   private retiredTasks(): Id[] {
@@ -423,7 +466,7 @@ export abstract class Kernel {
 
   /** The tasks this one still waits for. */
   blockers(task: MTask): MTask[] {
-    return (task.after ?? []).map((id) => this.task(id)).filter((other): other is MTask => !!other && other.state !== "done" && other.state !== "cancelled");
+    return (task.after ?? []).map((id) => this.task(id)).filter((other): other is MTask => !!other && library.blocksDependents(other));
   }
 
   /** The step the coordinator drove finished: its review chain runs again from the first reviewer, without using up a round. */
@@ -442,15 +485,18 @@ export abstract class Kernel {
     return true;
   }
 
-  gate(task: MTask, gate: GateKind): void {
+  gate(task: MTask, gate: GateKind, problem?: string): void {
     delete task.agent;
     task.holdsSlot = false;
     beginYouStep(task, gate, Date.now());
     const work = gate === "plan" ? task.proposedSource ?? task.source : task.source;
-    const workLine = work ? workSummary(work) : "";
-    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, deliveryLines(task as unknown as Task) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
-    this.raise(task, gate, gateTitle(task as unknown as Task, gate), false, body ? { body } : {});
-    task.statusLine = gateStatus(task as unknown as Task, gate);
+    const workLine = task.workRows || task.repositories
+      ? (gate === "plan" ? task.workRows?.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error, row.addition ? `Will be added in ${row.addition.path}` : ""].filter(Boolean).join("\n")) : task.repositories?.map((entry) => [entry.source ? workSummary(entry.source) : entry.productId, entry.report?.summary, entry.checks?.results.length ? entry.checks.results.every((run) => run.ok) ? "Product checks passed" : "Product checks failed" : "Product checks: Not run", entry.releasePreview ? `Release ${entry.releasePreview.tag}: ${entry.releasePreview.notes}\nThis includes everything waiting on the default branch since the previous release.` : ""].filter(Boolean).join("\n")))?.join("\n\n") ?? ""
+      : work ? workSummary(work) : "";
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(task as unknown as Task) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
+    const explanation = [problem, body].filter(Boolean).join("\n\n");
+    this.raise(task, gate, gateTitle(task as unknown as Task, gate), false, explanation ? { body: explanation } : {});
+    task.statusLine = problem ? "Delivery preparation needs you" : gateStatus(task as unknown as Task, gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     // On disk before the window shows it: an answer to this check must find it after any restart.
     this.commitNow();
@@ -461,6 +507,7 @@ export abstract class Kernel {
     const id = this.id("inbox");
     task.state = "needs-you";
     this.s.inbox.push({
+      ...(task.repositories && ["guide", "learnings", "shipping", "stuck"].includes(kind) ? { productId: task.productId } : {}),
       id,
       taskId: task.id,
       kind,
@@ -492,9 +539,10 @@ export abstract class Kernel {
     this.releaseScreen(task);
     this.stopStep(task);
     task.holdsSlot = false;
-    task.state = "failed";
+    const published = task.repositories?.filter((work) => library.repositoryPublished(work)).length ?? 0;
+    task.state = published ? "needs-you" : "failed";
     task.error = message;
-    task.statusLine = "Stuck. Needs you";
+    task.statusLine = published ? `Delivery needs you · ${published} of ${task.repositories!.length} delivered` : "Stuck. Needs you";
     this.dropBlockingItems(taskId);
     // What went wrong belongs to the step that got stuck (an agent's, or Petrina's own); then the task waits for the coordinator.
     if (openStep(task)?.kind !== "you") endOpenStep(task, { outcome: W.stuck, reason: W.stuckReason, tone: "stuck", end: "failed" }, Date.now());
@@ -514,7 +562,7 @@ export abstract class Kernel {
       beginYouStep(task, "stuck", Date.now());
       this.raise(task, "stuck", `“${task.title}” is stuck`, false, { body: message.slice(0, 600) });
     }
-    task.state = "failed";
+    task.state = published ? "needs-you" : "failed";
     this.commit();
   }
 
@@ -573,11 +621,11 @@ export abstract class Kernel {
   discardScreenTurns(task: MTask): void {
     if (!Object.keys(task.hunt?.screenTurns ?? {}).length) return;
     delete task.hunt!.screenTurns;
-    const root = this.productOf(task)?.path;
-    if (!root) return;
+    const roots = [...new Set([this.productOf(task)?.path, ...(task.repositories?.map((work) => work.source?.product.path) ?? [])].filter((path): path is string => !!path))];
+    if (!roots.length) return;
     const stopped = this.settling.get(task.id);
     const cleanup = Promise.all([stopped, this.copyCleanups.get(task.id)])
-      .then(() => git.removeCopies(root, join(this.dataDir, "worktrees", task.productId, `${task.id}.copies`)))
+      .then(async () => { for (const root of roots) await git.removeCopies(root, join(this.dataDir, "worktrees", task.productId, `${task.id}.copies`)); })
       .catch((error: unknown) => this.log(task, "warn", `Could not remove the reviewers' working copies: ${error instanceof Error ? error.message : String(error)}`))
       .finally(() => {
         if (this.copyCleanups.get(task.id) === cleanup) this.copyCleanups.delete(task.id);
@@ -618,6 +666,14 @@ export abstract class Kernel {
       task.screen.at = Date.now();
       const pending = task.screen.member ? task.hunt?.screenTurns?.[task.screen.member] : undefined;
       if (pending) pending.at = task.screen.at;
+    }
+    const group = task.screen?.member && this.screenGroups.get(task.id);
+    if (group && group.yield) {
+      // Release just this member's admission. A peer may still be starting or using its copy;
+      // exposing zero slots here would let other work start before that peer has settled.
+      group.yield(task.screen!.member!);
+      this.commitNow();
+      return;
     }
     task.state = "waiting";
     task.holdsSlot = false;
@@ -801,6 +857,7 @@ export abstract class Kernel {
     const role = conversation?.role ?? this.role(roleId);
     if (role && (conversation?.access?.canEdit ?? role.canEdit)) {
       const sha = await git.commitAll(task.worktree!, `${task.title}: ${role.name}`);
+      if (task.checks) task.checks.current = task.checks.tree === await git.treeOf(task.worktree!);
       if (sha) this.log(task, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
     }
   }
@@ -1077,7 +1134,7 @@ export abstract class Kernel {
 
   log(task: MTask, tone: Task["timeline"][number]["tone"], text: string, roleId?: Id, profileId?: Id): void {
     const step = stepTag(task);
-    task.timeline.push({ id: this.id(task.id), at: Date.now(), text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
+    task.timeline.push({ ...(task.repositories ? { productId: task.productId } : {}), id: this.id(task.id), at: Date.now(), text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
     if (task.timeline.length > MAX_TIMELINE) task.timeline.splice(0, task.timeline.length - MAX_TIMELINE);
   }
 
@@ -1085,7 +1142,7 @@ export abstract class Kernel {
     const last = task.session.at(-1);
     if (from === "activity" && last?.from === "activity" && last.text === text) return;
     const step = stepTag(task);
-    task.session.push({ id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
+    task.session.push({ ...(task.repositories ? { productId: task.productId } : {}), id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
     while (task.session.length > MAX_SESSION_LINES) {
       // Keep the newest line, saved pictures, a report whose pictures are still being checked,
       // and the latest words from each agent. Another update must not drop a report before its pictures are attached.
@@ -1113,6 +1170,7 @@ export abstract class Kernel {
     // An activity or other update is about to be shown. The to-do item is written first, so a forced
     // kill once that update is visible still has the item.
     this.savePendingTodo();
+    for (const task of this.s.tasks) this.saveRepository(task);
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
@@ -1137,6 +1195,7 @@ export abstract class Kernel {
   commitNow(): void {
     if (this.stopped) return;
     this.syncIdleSleep();
+    for (const task of this.s.tasks) this.saveRepository(task);
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;

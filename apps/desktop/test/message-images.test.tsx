@@ -12,8 +12,8 @@ const disconnect = vi.fn();
 const createUrl = vi.fn(() => 'blob:screenshot');
 const revokeUrl = vi.fn();
 const image = { mime: 'image/png', data: 'AQID' };
-async function visible(value: boolean) {
-  await act(async () => { observer([{ isIntersecting: value } as IntersectionObserverEntry], {} as IntersectionObserver); });
+async function visible(...values: boolean[]) {
+  await act(async () => { observer(values.map((value) => ({ isIntersecting: value } as IntersectionObserverEntry)), {} as IntersectionObserver); });
 }
 async function render(finished = false) {
   await act(async () => root.render(<MessageBody taskId="task-1" text="Checked both themes. [Light](/task/screenshots/light.png)" finished={finished} />));
@@ -33,6 +33,12 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
 
 describe('local screenshot links in public messages', () => {
+  it('requests a shared message screenshot from the product that supplied it', async () => {
+    await act(async () => root.render(<MessageBody taskId="shared-task" productId="api" text="[Checked](screenshots/checked.png)" />));
+    await visible(true);
+    expect(preview).toHaveBeenCalledWith('shared-task', 'screenshots/checked.png', 'api');
+  });
+
   it('recognizes local Markdown links and leaves websites and unrelated text untouched', () => {
     expect(messageParts('Shots: [Light](/task/light.png) · ![Dark](<screenshots/dark theme.webp>)')).toEqual([
       { kind: 'text', text: 'Shots: ' }, { kind: 'image', label: 'Light', path: '/task/light.png' },
@@ -59,6 +65,39 @@ describe('local screenshot links in public messages', () => {
     expect(preview).toHaveBeenCalledTimes(2);
     await act(async () => root.unmount());
     expect(revokeUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the latest queued visibility when rapid scrolling crosses the viewport twice', async () => {
+    await render();
+    await visible(true, false);
+    expect(preview).not.toHaveBeenCalled();
+    await visible(false, true);
+    expect(preview).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('img')).not.toBeNull();
+    await visible(true, false);
+    expect(host.querySelector('img')).toBeNull();
+    expect(revokeUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a loading preview focusable without opening an empty picture or reading it early', async () => {
+    await render();
+    const open = host.querySelector<HTMLButtonElement>('.message-image-open')!;
+    await act(async () => { open.focus(); open.click(); });
+    expect(document.activeElement).toBe(open);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(preview).not.toHaveBeenCalled();
+    await visible(true);
+    await act(async () => open.click());
+    expect(document.querySelector('[role="dialog"] img')).not.toBeNull();
+    await visible(false);
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+    // Real browsers cannot retain or restore keyboard focus on a native-disabled opener.
+    expect(open.disabled).toBe(false);
+    expect(document.activeElement).toBe(open);
+    expect(revokeUrl).toHaveBeenCalledTimes(1);
+    await act(async () => open.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(preview).toHaveBeenCalledTimes(1);
   });
 
   it('opens the full screenshot inline, closes on Escape and retains it only until closed', async () => {

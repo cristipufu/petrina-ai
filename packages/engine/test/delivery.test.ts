@@ -191,7 +191,9 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
   it("opens a pull request with no agent: the builder's title and description, as text, then Petrina's own part", async () => {
     const w = world("pr");
     const marker = join(w.dir, "pwned");
-    const title = `$(touch ${marker}) --help; rm -rf ~ \`id\``;
+    // Keep the title valid even when the temporary folder has a long name. The
+    // description below still checks that shell-like text cannot write the marker.
+    const title = "--help; $(printf injected) `id`";
     const description = `--base evil\n$(touch ${marker})\n\`touch ${marker}\` && echo done; | cat /etc/passwd`;
     w.setScript((script) => {
       script.title = title;

@@ -136,7 +136,7 @@ describe('the Library role forms', () => {
     ['check-finder', 'Hand back between one and eight checks'],
     ['guide-keeper', 'Do not repeat a point the guide already has'],
     ['verifier', 'real but small, it should not hold the work back'],
-    ['security-reviewer', 'Report a whole class of problem once'],
+    ['security-reviewer', 'report one finding per root cause'],
   ]) {
     it(`shows and saves the ${id}'s full How it works wording`, async () => {
       const role = simulator.getState().roles.find((entry) => entry.id === id)!;

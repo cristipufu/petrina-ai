@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "../src/checks.js";
@@ -19,6 +19,24 @@ const root = (prefix: string) => {
 };
 
 describe("a product's checks", () => {
+  it("captures the created log's descriptor identity even if its pathname is replaced before close", async () => {
+    const dir = root("petrina-check-log-identity-");
+    const logs = join(dir, "logs"), held = join(dir, "original.log");
+    let logPath = "";
+    const [run] = await runChecks(dir, [{ name: "Fail", argv: [process.execPath, "-e", 'process.stdout.write("original diagnostic"); process.exit(1)'] }], process.env, 30_000 * SLOW, undefined, logs, undefined, (event) => {
+      if (event.kind !== "started") return;
+      logPath = join(logs, readdirSync(logs)[0]!);
+      renameSync(logPath, held);
+      writeFileSync(logPath, "replacement file");
+    });
+    expect(run!.logComplete).toBe(true);
+    expect(run!.logFileIdentity).toBeDefined();
+    unlinkSync(logPath);
+    renameSync(held, logPath);
+    const exact = statSync(logPath, { bigint: true });
+    expect(run!.logFileIdentity).toEqual({ device: exact.dev.toString(), inode: exact.ino.toString() });
+  });
+
   it("reports each check's start and result while another check is still running", async () => {
     const dir = root("petrina-check-progress-");
     const release = join(dir, "release");

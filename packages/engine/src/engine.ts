@@ -9,7 +9,7 @@
 // module of its own (driver, planning, design, work, review, shipping, take-over, product checks,
 // review guide, tools check, turns, context), and they share state and bookkeeping through the kernel.
 
-import { realpathSync, rmSync } from "node:fs";
+import { opendirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import { routeMessages } from "./messages.js";
@@ -79,6 +79,7 @@ import { Planning } from "./planning.js";
 import { Work } from "./work.js";
 import { TakeOver } from "./take-over.js";
 import { Sources } from "./sources.js";
+import { beginRepair } from "./repositories.js";
 import { Driver } from "./driver.js";
 import { Cleanup } from "./cleanup.js";
 import { AcceptedPoints } from "./accepted-points.js";
@@ -147,8 +148,8 @@ export class Engine extends Kernel implements Commands {
         void this.shipping.pollPullRequests();
         this.shipping.settleCancelledTasks();
         // Apart from GitHub: a slow lookup never holds up removing copies.
-        void this.cleanup.sweep();
-        void this.acceptedPoints.sweep();
+        void this.trackWork(this.cleanup.sweep());
+        void this.trackWork(this.acceptedPoints.sweep());
       }, options.checkEveryMs ?? 60_000),
       // Codex's usage, every ten minutes while any agent runs (Claude Code reports its own on every turn).
       setInterval(() => {
@@ -166,8 +167,8 @@ export class Engine extends Kernel implements Commands {
     this.schedule();
     this.readUsage();
     // Catch up at start: working copies of tasks that finished before, in every product.
-    void this.cleanup.sweep();
-    void this.acceptedPoints.sweep();
+    void this.trackWork(this.cleanup.sweep());
+    void this.trackWork(this.acceptedPoints.sweep());
   }
 
   schedule(): void {
@@ -183,14 +184,16 @@ export class Engine extends Kernel implements Commands {
   }
 
   tidy(taskId: Id): void {
-    void this.cleanup.removeCopy(taskId);
+    void this.trackWork(this.cleanup.removeCopy(taskId));
   }
 
   private shutdownDone?: Promise<void>;
 
   /** Picture contents are fetched separately, through a saved report's reference. */
   async reportImage(taskId: string, imageId: string): Promise<Blob | undefined> {
-    const task = this.task(taskId);
+    // Finished records retain captions and references, never accessible image bytes.
+    const task = this.s.tasks.find((task) => task.id === taskId);
+    if (!task || task.state === "done" || task.state === "cancelled") return;
     if (!/^[a-zA-Z0-9_-]+$/.test(taskId) || !/^[a-f0-9-]{36}$/.test(imageId) || !task?.session.some((line) => line.images?.some((image) => image.id === imageId))) return;
     const file = Bun.file(join(this.dataDir, "captures", taskId, `${imageId}.png`));
     return await file.exists() ? file : undefined;
@@ -233,10 +236,16 @@ export class Engine extends Kernel implements Commands {
     return this.tracking.usage(request);
   }
 
-  async previewImage(taskId: Id, path: string): Promise<{ mime: string; data: string }> {
+  async previewImage(taskId: Id, path: string, productId?: Id): Promise<{ mime: string; data: string }> {
     const task = this.task(taskId);
     if (!task || task.state === "done" || task.state === "cancelled") throw new Error("Images are available while the task's working copy exists.");
-    return readTaskImage(task.worktree, path);
+    const works = task.repositories?.filter((entry) => !entry.removed) ?? [];
+    const work = works.find((entry) => entry.productId === productId);
+    if (productId && !work && (task.repositories || task.productId !== productId)) throw new Error("This product is outside the task.");
+    const root = work ? work.worktree : task.worktree;
+    const products = new Set([task.productId, ...works.map((entry) => entry.productId)]);
+    const absoluteRoots = [task.worktree, ...works.map((entry) => entry.worktree), ...[...products].map((id) => join(this.dataDir, "worktrees", id, `${task.id}.copies`))].filter((folder): folder is string => !!folder);
+    return readTaskImage(root, path, absoluteRoots);
   }
 
   saveRole(roleId: Id, draft: RoleDraft): void {
@@ -330,6 +339,12 @@ export class Engine extends Kernel implements Commands {
   setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) throw new Error("This product is no longer in Petrina.");
+    for (const task of this.s.tasks) {
+      this.saveRepository(task);
+      const work = task.repositories?.find((entry) => entry.productId === productId);
+      if (work?.checks) work.checks.current = false;
+      if (task.productId === productId && task.checks) task.checks.current = false;
+    }
     if (checks === null) {
       delete product.checks;
       delete product.checksBy;
@@ -360,14 +375,35 @@ export class Engine extends Kernel implements Commands {
     if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) return;
-    const ids = new Set([
-      ...this.s.tasks.filter((task) => task.productId === productId).map((task) => task.id),
-      ...this.store.history.taskIds(productId),
-    ]);
+    this.activeState();
+    const tasks = this.s.tasks.flatMap((task) => {
+      const retained = library.withoutProduct(task, productId);
+      return retained ? [retained as MTask] : [];
+    });
+    const ids = new Set(this.s.tasks.filter((task) => !tasks.some((kept) => kept.id === task.id)).map((task) => task.id));
+    // History may contain millions of finished tasks, while picture folders exist only where
+    // there are actual bytes to remove. Read membership for those folders, never the full archive.
+    try {
+      const captures = opendirSync(join(this.dataDir, "captures"));
+      try {
+        for (let entry = captures.readSync(); entry; entry = captures.readSync()) {
+          if (!entry.isDirectory() || ids.has(entry.name)) continue;
+          const item = this.store.history.item(entry.name);
+          const products = item?.productIds ?? (item ? [item.productId] : []);
+          if (products.length === 1 && products[0] === productId) ids.add(entry.name);
+        }
+      } finally { captures.closeSync(); }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     const next = {
       ...this.activeState(),
-      inbox: this.s.inbox.filter((item) => !ids.has(item.taskId) && this.store.history.item(item.taskId)?.productId !== productId),
-      tasks: this.s.tasks.filter((task) => !ids.has(task.id)),
+      inbox: this.s.inbox.filter((item) => {
+        const archived = this.store.history.item(item.taskId);
+        const products = archived?.productIds ?? (archived ? [archived.productId] : []);
+        return !ids.has(item.taskId) && !(products.length === 1 && products[0] === productId);
+      }),
+      tasks,
       products: this.s.products.filter((entry) => entry.id !== productId),
       ...(this.s.work ? { work: { ...this.s.work, version: this.s.work.version + 1 } } : {}),
     };
@@ -454,7 +490,10 @@ export class Engine extends Kernel implements Commands {
     // Sent again after its reply was lost: the task is already there.
     const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId)?.id ?? this.store.history.byClient(input.clientId) : undefined;
     if (known) return known;
-    const product = this.s.products.find((entry) => entry.id === input.productId);
+    const selected = input.worksOn ?? (input.productId ? [{ productId: input.productId, startFrom: input.startFrom ?? { kind: "default" as const }, delivery: input.delivery ?? this.s.products.find((entry) => entry.id === input.productId)?.delivery ?? "pull-request" }] : []);
+    if (selected.some((choice) => !this.s.products.some((entry) => entry.id === choice.productId))) throw new Error("Choose registered products.");
+    if (new Set(selected.map((entry) => entry.productId)).size !== selected.length) throw new Error("Choose each product once.");
+    const product = this.s.products.find((entry) => entry.id === (selected[0]?.productId ?? input.productId));
     if (!product && input.productId) throw new Error("Unknown product");
     const title = input.title.trim();
     if (!title) throw new Error("A task needs a title");
@@ -464,8 +503,9 @@ export class Engine extends Kernel implements Commands {
     this.s.tasks.push({
       id,
       productId: product?.id ?? "",
-      explicitStart: input.startFrom !== undefined,
-      workChoice: { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" },
+      selectedProducts: [...selected],
+      explicitStart: input.startFrom !== undefined || (selected.length > 0 && input.worksOn !== undefined),
+      workChoice: selected[0] ?? { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" },
       ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
       title,
       description: input.description?.trim() ?? "",
@@ -476,9 +516,9 @@ export class Engine extends Kernel implements Commands {
       state: input.backlog ? "backlog" : "queued",
       column: input.backlog ? "backlog" : "queue",
       holdsSlot: false,
-      approvePlan: input.approvePlan ?? false,
-      delivery: input.delivery ?? product?.delivery ?? "pull-request",
-      approveDelivery: input.approveDelivery ?? product?.approveDelivery ?? true,
+      approvePlan: selected.length !== 1 || (input.approvePlan ?? false),
+      delivery: selected[0]?.delivery ?? input.delivery ?? product?.delivery ?? "pull-request",
+      approveDelivery: input.approveDelivery ?? selected.some((choice) => this.s.products.find((entry) => entry.id === choice.productId)?.approveDelivery !== false),
       stageIndex: -1,
       rounds: {},
       sub: 0,
@@ -538,8 +578,46 @@ export class Engine extends Kernel implements Commands {
 
   async setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
     const task = this.task(taskId);
+    if (task?.workValidating) throw new Error("Wait for validation to finish, then edit the choices.");
+    if (task?.workRows) return this.setTaskProducts(taskId, task.workRows.map((row) => row.choice.productId === choice.productId ? choice : choice.lead ? { ...row.choice, lead: false } : row.choice));
     if (!task || task.worktree || !this.s.inbox.some((item) => item.taskId === taskId && item.kind === "plan")) throw new Error("The starting point can be edited at the plan check before work starts.");
     await this.sources.propose(task, [choice]);
+    this.commitNow();
+  }
+
+  async setTaskProducts(taskId: Id, choices: readonly WorkChoice[]): Promise<void> {
+    const task = this.task(taskId);
+    if (!task || task.repositories?.some((entry) => entry.completedStages.length) || (!task.repositories && task.worktree) || !this.s.inbox.some((item) => item.taskId === taskId && ["plan", "stuck"].includes(item.kind))) throw new Error("Change products at the plan check before work starts.");
+    if (task.workValidating) throw new Error("Wait for validation to finish, then edit the choices.");
+    if (!task.approveDelivery) {
+      const added = choices.find((choice) => !task.workRows?.some((row) => row.choice.productId === choice.productId) && this.s.products.find((product) => product.id === choice.productId)?.approveDelivery !== false);
+      if (added) { task.approveDelivery = true; task.approvalExplanation = "The added product asks before shipping, so shared delivery approval is on. You can change it here."; }
+    }
+    for (const choice of choices) {
+      const prepared = task.repositories?.find((work) => work.productId === choice.productId && (work.worktree || work.preparingCopy));
+      if (prepared?.workChoice && (JSON.stringify(prepared.workChoice.startFrom) !== JSON.stringify(choice.startFrom) || prepared.delivery !== choice.delivery)) throw new Error("Keep the approved source and delivery for a prepared product. You can leave it out while revising this saved plan.");
+    }
+    task.selectedProducts = [...choices];
+    await this.sources.propose(task, choices, true);
+    if (!this.s.inbox.some((item) => item.taskId === taskId && item.kind === "plan")) {
+      this.s.inbox = this.s.inbox.filter((item) => !(item.taskId === taskId && item.kind === "stuck"));
+      task.stageIndex = -1;
+      this.gate(task, "plan");
+    }
+    this.commitNow();
+  }
+
+  async setTaskAddition(taskId: Id, repository: string, name: string, path: string): Promise<void> {
+    const task = this.task(taskId);
+    if (!task) throw new Error("Unknown task.");
+    await this.sources.configureAddition(task, repository, name, path);
+  }
+
+  setTaskApproval(taskId: Id, ask: boolean): void {
+    const task = this.task(taskId);
+    if (!task || !this.s.inbox.some((item) => item.taskId === taskId && item.kind === "plan")) throw new Error("Change this choice at the plan check.");
+    task.approveDelivery = ask;
+    delete task.approvalExplanation;
     this.commitNow();
   }
 
@@ -625,8 +703,9 @@ export class Engine extends Kernel implements Commands {
   }
 
   setPoolPaused(paused: boolean): void {
+    if (!paused && this.draining) throw new Error("Petrina is stopping or restarting. Wait for that operation to finish before resuming.");
     this.s.pool.paused = paused;
-    this.commit();
+    this.commitNow();
     this.schedule();
   }
 
@@ -724,9 +803,11 @@ export class Engine extends Kernel implements Commands {
     endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, Date.now());
     this.log(task, "you", "You cancelled it");
     this.commit();
+    // Pictures need no delivery lookup or agent shutdown before they can be discarded.
+    void this.cleanup.removeCaptures(taskId);
     // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now, then the copy goes.
     // With an agent still stopping, its driver removes the copy once it has let go of it.
-    void this.shipping.settleCancelled(taskId).then(() => this.tidy(taskId));
+    void this.trackWork(this.shipping.settleCancelled(taskId).then(() => this.tidy(taskId)));
     this.schedule();
   }
 
@@ -758,7 +839,7 @@ export class Engine extends Kernel implements Commands {
     this.schedule();
   }
 
-  sendMessage(taskId: Id, text: string, mode: "queue" | "interrupt" = "queue", clientId?: Id): void {
+  sendMessage(taskId: Id, text: string, mode: "queue" | "interrupt" = "queue", clientId?: Id): Id | undefined {
     const task = this.task(taskId);
     const trimmed = text.trim();
     if (!task || !trimmed || !this.firstTime(task, clientId)) return;
@@ -778,6 +859,7 @@ export class Engine extends Kernel implements Commands {
     routeMessages(task, this.screenGroups.get(taskId)?.recipients() ?? Object.keys(task.hunt?.screenTurns ?? {}));
     this.commitNow();
     if (interrupt) for (const active of runs) void active.cancel();
+    return message.id;
   }
 
   /** Take back a message before any agent got it. */
@@ -944,6 +1026,16 @@ export class Engine extends Kernel implements Commands {
         if (task.checkedSha) task.approvedSha = task.checkedSha;
         if (task.checkedPatch) task.approvedPatch = task.checkedPatch;
         task.approvedFor = { by: "coordinator", mode: task.delivery, destination: destination(task, this.productOf(task)) };
+        if (task.repositories) {
+          this.saveRepository(task);
+          for (const work of task.repositories) {
+            work.approvedSha = work.checkedSha;
+            work.approvedPatch = work.checkedPatch;
+            work.approvedFor = { by: "coordinator", mode: work.delivery, destination: destination(work, this.s.products.find((product) => product.id === work.productId)) };
+          }
+          const active = task.repositories.find((work) => work.productId === task.productId)!;
+          task.approvedSha = active.approvedSha; task.approvedPatch = active.approvedPatch; task.approvedFor = active.approvedFor;
+        }
         // After review rounds ran out, the check was raised on the delivery stage itself.
         if (task.plan?.stages[task.stageIndex]?.kind === "gate") task.stageIndex += 1;
         break;
@@ -986,6 +1078,7 @@ export class Engine extends Kernel implements Commands {
     // Nothing was working on a step at a check, so it leaves no record.
     this.clearStep(task);
     if (!call) this.stepNote(task, "changes", note, { id });
+    const fromCheck = task.stageIndex;
     afterChangesAsked(task, item.kind, note, Date.now());
     if (item.kind === "delivery") {
       // A new coordinator request authorizes another bounded attempt at acceptance fixes.
@@ -996,6 +1089,27 @@ export class Engine extends Kernel implements Commands {
       // were open (the rounds ran out), the reviewers had caught it, and nothing was missed.
       if (!task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) task.miss = { note, at: Date.now() };
       this.shipping.clearDelivery(task);
+      if (task.repositories) {
+        this.saveRepository(task);
+        for (const work of task.repositories) if (!library.repositoryPublished(work)) delete work.acceptanceReturns;
+        const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
+        if (open.length) {
+          const review = task.plan!.stages.findIndex((stage, index) => index > task.stageIndex && stage.kind === "review-chain");
+          if (!beginRepair(this, task, "review", review)) {
+            task.stageIndex = fromCheck;
+            this.gate(task, "delivery");
+            return;
+          }
+        } else {
+          const products = task.repositories.filter((work) => !library.repositoryPublished(work)).map((work) => work.productId);
+          const lead = task.leadProductId;
+          if (lead && products.includes(lead)) products.splice(0, 0, ...products.splice(products.indexOf(lead), 1));
+          if (!products.length) { task.stageIndex = fromCheck; this.gate(task, "delivery"); return; }
+          task.repair = { products, index: 0, returnStage: task.stageIndex + 1, kind: "review" };
+          this.selectRepository(task, products[0]!);
+          task.fixing = true;
+        }
+      }
     }
     this.toWaiting(task);
     this.commitNow();

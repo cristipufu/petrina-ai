@@ -14,6 +14,16 @@ export interface Connection {
   pid: number;
 }
 
+/** Only a missing process proves it exited; permission errors do not. */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
 const TOKEN = /^[A-Za-z0-9_-]{16,128}$/;
 const LOCAL = /^(ws|http):\/\/127\.0\.0\.1:\d{1,5}(\/ws)?$/;
 

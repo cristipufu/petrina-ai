@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS } from "@petrina/core";
+import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE } from "@petrina/core";
 import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, formatFindings, formatWhereYouWere, LOGINS, mayAskScreen, parseResult, restartPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
 
@@ -70,6 +70,137 @@ describe("prompts", () => {
     }
   });
 
+  it("keeps current-code confirmations alongside affected products in shared review prompts", () => {
+    const added = addRole(NO_ROLE_CHANGES, ROLE_STARTS.find((entry) => entry.id === "security")!.draft);
+    const roles = libraryRoles(added.changes);
+    const products = DEMO_PRODUCTS.slice(0, 2);
+    const shared = { ...task, repositories: products.map((product, index) => ({ productId: product.id, delivery: "pull-request" as const, completedStages: [], baseSha: `base-${index}`, reviewedSha: `review-${index}` })) };
+    for (const id of ["code-reviewer", "security-reviewer", added.roleId]) {
+      const role = roles.find((entry) => entry.id === id)!;
+      const prompt = buildPrompt({ ...context(role), task: shared, roles });
+      expect(prompt).toContain('"productIds": ["<every affected product id>"]');
+      expect(prompt).toContain('"Confirms" means "still broken now"');
+      expect(prompt).toContain("only if that specific problem is still present in the current code; omit if fixed");
+      expect(prompt).toContain('"confirms": [{"id":');
+      expect(prompt).toContain('"evidence": "The exact current failing case');
+      expect(prompt).not.toContain("<id of an earlier finding you agree with>");
+      expect(prompt).toContain("Review all repositories in the complete approved product map together.");
+      for (let index = 0; index < products.length; index += 1) {
+        if (id !== "security-reviewer") {
+          expect(prompt).toContain(`git diff review-${index}..HEAD`);
+          expect(prompt).not.toContain(`git diff base-${index}...HEAD`);
+        } else {
+          expect(prompt).toContain(`git diff base-${index}...HEAD`);
+          expect(prompt).not.toContain(`git diff review-${index}..HEAD`);
+        }
+        expect(prompt).toContain(`git show base-${index}:REVIEW.md`);
+      }
+    }
+  });
+
+  it("keeps security reviews on full saved-base diffs after a code review baseline advances", () => {
+    const security = BUILT_IN_ROLES.find((entry) => entry.id === "security-reviewer")!;
+    const products = DEMO_PRODUCTS.slice(0, 2);
+    const shared = {
+      ...task,
+      repositories: products.map((product, index) => ({
+        productId: product.id,
+        delivery: "pull-request" as const,
+        completedStages: [],
+        baseSha: `base-${index}`,
+        reviewedSha: `reviewed-${index}`,
+      })),
+    };
+    const sharedPrompt = buildPrompt({ ...context(security), task: shared, base: "lead-base" });
+    for (let index = 0; index < products.length; index += 1) {
+      expect(sharedPrompt).toContain(`git diff base-${index}...HEAD`);
+      expect(sharedPrompt).not.toContain(`git diff reviewed-${index}..HEAD`);
+      expect(sharedPrompt).toContain(`git show base-${index}:REVIEW.md`);
+    }
+
+    const singlePrompt = buildPrompt({
+      ...context(security),
+      task: { ...task, baseSha: "single-base", reviewedSha: "single-reviewed" },
+      base: "single-base",
+    });
+    expect(singlePrompt).toContain("git diff single-base...HEAD");
+    expect(singlePrompt).not.toContain("git diff single-reviewed..HEAD");
+
+    const changes = editRole(NO_ROLE_CHANGES, "security-reviewer", {
+      ...draftOf(security),
+      instructions: "Check the access boundary for each product.",
+    });
+    const roles = libraryRoles(changes);
+    const custom = roles.find((entry) => entry.id === "security-reviewer")!;
+    const customPrompt = buildPrompt({ ...context(custom), task: shared, role: custom, roles, base: "lead-base" });
+    expect(customPrompt).toContain("Check the access boundary for each product.");
+    expect(customPrompt).toContain("git diff base-0...HEAD");
+    expect(customPrompt).not.toContain("git diff reviewed-0..HEAD");
+  });
+
+  it("gives every findings role one canonical evidence rule, including saved wording overrides", () => {
+    const added = addRole(NO_ROLE_CHANGES, ROLE_STARTS.find((entry) => entry.id === "security")!.draft);
+    let changes = added.changes;
+    for (const id of ["code-reviewer", "security-reviewer"]) changes = editRole(changes, id, { ...draftOf(BUILT_IN_ROLES.find((role) => role.id === id)!), instructions: "Review the current welcome page." });
+    const roles = libraryRoles(changes);
+    for (const role of roles.filter((entry) => entry.result === "findings")) {
+      const prompt = buildPrompt({ ...context(role), roles });
+      expect(prompt).toContain(role.instructions);
+      expect(prompt.split(FINDING_CONFIRMATION_RULE)).toHaveLength(2);
+      expect(prompt).toContain('"confirms": [{"id":');
+      expect(prompt).toContain('"evidence": "The exact current failing case');
+    }
+  });
+
+  it("asks for one cause with its affected paths in every findings role, including partial saved rules", () => {
+    const added = addRole(NO_ROLE_CHANGES, ROLE_STARTS.find((entry) => entry.id === "security")!.draft);
+    for (const wording of [undefined, "Review the current welcome page.", `Review our checkout.\n${FINDING_CONFIRMATION_RULE}`, `Review our checkout.\n${FINDING_REVIEW_RULES.join("\n")}`]) {
+      let changes = added.changes;
+      if (wording) for (const id of ["code-reviewer", "security-reviewer", added.roleId]) {
+        const role = libraryRoles(changes).find((entry) => entry.id === id)!;
+        changes = editRole(changes, id, { ...draftOf(role), instructions: wording });
+      }
+      const roles = libraryRoles(changes);
+      for (const role of roles.filter((entry) => entry.result === "findings")) for (const prompt of [buildPrompt, continuePrompt]) {
+        const text = prompt({ ...context(role), roles });
+        expect(text).toContain(role.instructions);
+        for (const rule of FINDING_REVIEW_RULES) expect(text.split(rule)).toHaveLength(2);
+        expect(text).toContain("all observed affected paths together");
+        expect(text).toContain("use that finding's id and include the variant in fresh confirmation evidence");
+        expect(text).toContain("reserve new findings for distinct root causes");
+        expect(text).toContain("representative syntax classes");
+        expect(text).toContain("pre-existing");
+        expect(text).toContain("do not run the full test suite or build again");
+      }
+    }
+  });
+
+  it("gives default and edited Builders whole-cause repair guidance on their first return and later repairs", () => {
+    const builder = BUILT_IN_ROLES.find((role) => role.id === "builder")!;
+    for (const instructions of [builder.instructions, "Keep the checkout simple.", `Keep the checkout simple.\n${REPAIR_RULE}`]) {
+      const changes = editRole(NO_ROLE_CHANGES, builder.id, { ...draftOf(builder), instructions });
+      const roles = libraryRoles(changes);
+      const role = roles.find((entry) => entry.id === builder.id)!;
+      for (const round of [1, 5]) for (const prompt of [buildPrompt, continuePrompt]) {
+        const review = { id: "review", kind: "review-chain" as const, title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"] };
+        const repairing = { ...task, fixing: true, plan: { stages: [review], rationale: "Review the repair.", plannerProfileId: "sol-high" }, stageIndex: 0, rounds: { [review.id]: round } };
+        const text = prompt({ ...context(role), task: repairing, roles });
+        expect(text).toContain(instructions);
+        expect(text.split(REPAIR_RULE)).toHaveLength(2);
+        expect(text).toContain("from the first return, identify the underlying rule");
+        expect(text).toContain("normal, failure and recovery paths");
+        expect(text).toContain("failing variants and nearby passing controls");
+        expect(text).toContain("distinguish cases inspected from cases executed");
+        expect(text).toContain("fast focused static or type check for the changed code and typed tests");
+        expect(text).toContain("Do not assume a passing runtime test proves a separate static or type check will pass.");
+        expect(text).toContain("no focused command was available");
+        expect(text).toContain("Petrina runs them on the finished work before review");
+        expect(text).toContain('Answer every finding by id in "answers"');
+        expect(text).toContain("Do not commit, push or open pull requests");
+      }
+    }
+  });
+
   it("checks nearby cases for regressions on every product without needing a local review guide", () => {
     const roles = libraryRoles({ edits: { "code-reviewer": { purpose: "Review the changed checkout." } }, added: [] });
     const role = roles.find((entry) => entry.id === "code-reviewer")!;
@@ -133,15 +264,15 @@ describe("saved role wording", () => {
       const was = (before as Record<string, string>)[name]!;
       if (context.role.id === "planner") {
         const job = (text: string) => text.slice(text.indexOf("# Your job"), text.indexOf("## Design brief") > 0 ? text.indexOf("## Design brief") : text.length);
-        // The planner works before setup and proposes one source. Everything outside those changes,
+        // The planner works before setup and proposes the product list, reasons and ownership. Everything outside those changes,
         // the richer role list and main's placement rules keeps its earlier wording.
         const expected = was
           .replace(`Your working copy is ${context.worktree}, on branch ${context.branch}. Stay inside it.`, `Your planning folder is ${context.worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.`)
           .replace('Keep a short to-do list as you work, written in plain language: the coordinator watches it live.', 'Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.')
-          .replace('{"rationale":', '{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request"}], "rationale":');
+          .replace('{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request"}], "rationale":', '{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request", "reason": "Why this product is involved", "builderProfileId": "<profile id>"}], "leadProductId": "<product id for shared repairs>", "rationale":');
         expect(now.replace(job(now), "")).toBe(expected.replace(job(expected), ""));
         expect(now).toContain(plannerRoles(context.roles));
-      } else if (context.role.id !== "builder") expect(now).toBe(was.replace('Keep a short to-do list as you work, written in plain language: the coordinator watches it live.', 'Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.'));
+      } else expect(now).toBe(was.replace('Keep a short to-do list as you work, written in plain language: the coordinator watches it live.', 'Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.'));
     }
   });
   it("leaves the product's full check run to Petrina after the Builder finishes", () => {
@@ -165,7 +296,7 @@ describe("saved role wording", () => {
     ["check-finder", "Hand back between one and eight checks, fastest first."],
     ["guide-keeper", "Do not repeat a point the guide already has."],
     ["verifier", '"not-a-bug": it is wrong, and say why;'],
-    ["security-reviewer", "Report a whole class of problem once, listing every place."],
+    ["security-reviewer", "one finding per root cause, with all observed affected paths together"],
   ]) {
     it(`shows and uses the ${id}'s full saved job, preserving context and the result contract`, () => {
       const ctx = contexts[id!]!;

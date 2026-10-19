@@ -798,7 +798,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
       </div>}
 
       {activeTab === "conversation" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-conversation`} aria-labelledby={`journey-tab-${node.id}-conversation`}>
-        {lines.length > 0 ? <StepConversation lines={lines} find={find} now={now} live={node.state === "now" || node.state === "you"} taskId={task.id} finished={task.state === "done" || task.state === "cancelled"} /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
+        {lines.length > 0 ? <StepConversation lines={lines} find={find} now={now} live={node.state === "now" || node.state === "you"} taskId={task.id} repositories={task.repositories} finished={task.state === "done" || task.state === "cancelled"} /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
       </div>}
     </section>
   );

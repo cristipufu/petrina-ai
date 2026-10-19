@@ -20,6 +20,9 @@ import { testGitEnv } from "./test-git-env.js";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
+  affectedProducts?: string[];
+  /** Mix a correctly assigned review finding with one left under Together. */
+  unassignedFinding?: boolean;
   pictures?: "valid" | "repair";
   /** Shutdown tests: never answer the initial handshake. */
   silent?: boolean;
@@ -53,7 +56,11 @@ export interface Scenario {
    * "important-twice": every reviewer raises it, each in its own words. Later rounds pass.
    */
   reviewTodo?: boolean;
-  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed" | "confirm-fixed-one-tool" | "question";
+  reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed" | "confirm-fixed-one-tool" | "confirm-dismissed" | "question";
+  reviewRounds?: number;
+  reopenedEvidence?: string;
+  /** The first claim has only an old id; its correction either accepts the fix or supplies new proof. */
+  reviewConfirmation?: { role: string; correction: "omit" | "evidence"; duplicate?: boolean };
   /** "change of mind": the Guide keeper finds the coordinator's note was not a miss. "broken": it never hands back a usable result. */
   guide?: "change of mind" | "broken";
   /** How the planner rates the task's risk (unrated by default). */
@@ -475,6 +482,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "result", content: { type: "text", text: "The change is ready.\n" } });
   }
   const done = (value: unknown, prose?: string): Reply => {
+    const ids = plan.affectedProducts;
+    if (ids && value && typeof value === "object") {
+      const report = value as { findings?: Record<string, unknown>[]; checks?: Record<string, unknown>[] };
+      if (report.findings) {
+        report.findings = report.findings.map((finding) => ({ ...finding, productIds: ids }));
+        if (plan.unassignedFinding && report.findings.some((finding) => finding.severity === "important")) report.findings.push({ text: "The shared ownership needs a coordinator decision.", severity: "important" });
+      }
+      if (report.checks && session.role === "tester") report.checks = report.checks.map((check) => ({ ...check, productIds: ids, ...(typeof check.pass === "boolean" ? { result: check.pass ? "pass" : "fail", pass: undefined } : {}) }));
+    }
     let result = learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value;
     if (plan.pictures && ["builder", "code reviewer", "security reviewer", "ux designer", "tester"].includes(session.role) && session.captures && dir) {
       writeFileSync(join(session.captures, "chosen.png"), readFileSync(join(dir, "picture.png")));
@@ -537,6 +553,18 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     if (text.includes("handed it back")) {
       const first = session.history.find((update) => update.sessionUpdate === "user_message_chunk");
       if (first?.sessionUpdate === "user_message_chunk" && first.content.type === "text") text = `${first.content.text}\n${text}`;
+    }
+  }
+  if (plan.reviewConfirmation?.role === session.role) {
+    const original = session.history.find((entry) => entry.sessionUpdate === "user_message_chunk" && entry.content.type === "text");
+    const opening = original?.sessionUpdate === "user_message_chunk" && original.content.type === "text" ? original.content.text : text;
+    const earlier = section(opening, "Findings so far (confirm or dispute by id)") ?? "";
+    if (earlier.includes("(fixed)")) {
+      const correction = text.includes("Your result block could not be used");
+      const ids = findingIds(opening, "Findings so far (confirm or dispute by id)");
+      if (plan.reviewConfirmation.duplicate) return done({ verdict: "fail", confirms: [], disputes: [], findings: [{ text: "The GREETING is missing on the welcome page!", severity: "important", ...(correction ? { evidence: plan.reopenedEvidence } : {}) }] });
+      const confirms = !correction ? ids : plan.reviewConfirmation.correction === "omit" ? [] : ids.map((id) => ({ id, evidence: plan.reopenedEvidence ?? "On current code, the guest welcome page still omits the greeting; the signed-in control shows it." }));
+      return done({ verdict: confirms.length ? "fail" : "pass", findings: [], confirms, disputes: [] });
     }
   }
   const earlierAttempt = text.includes("in an earlier attempt at this step");
@@ -702,7 +730,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           ...riskOf(plan),
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"], maxRounds: 1 },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"], maxRounds: plan.reviewRounds ?? 1 },
           ],
         });
       return done({
@@ -713,7 +741,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           ...(text.includes("[no-check]") ? [] : text.includes("[screens]") ? [screens, check] : text.includes("[two-checks]") ? [check, screens, check] : [check]),
           { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
           ...(plan.planner === "tester-with-design" ? [{ kind: "do", title: "Try acceptance", roleId: "tester", profileIds: ["opus-high"] }] : []),
-          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 },
+          { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: plan.reviewRounds ?? 2 },
         ],
       });
     case "architect": {
@@ -919,6 +947,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return done({ ...(title ? { title } : {}), ...(description ? { description } : {}), summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
     }
     case "code reviewer":
+      if (plan.reviewer === "confirm-dismissed") {
+        const original = session.history.find((entry) => entry.sessionUpdate === "user_message_chunk" && entry.content.type === "text");
+        const opening = original?.sessionUpdate === "user_message_chunk" && original.content.type === "text" ? original.content.text : text;
+        const ids = session.model === "opus" ? [] : findingIds(opening, "Findings so far (confirm or dispute by id)");
+        const confirms = text.startsWith("Your result block could not be used") ? ids.map((id) => ({ id, evidence: plan.reopenedEvidence })) : ids;
+        return done({ verdict: ids.length ? "fail" : "pass", findings: [], confirms, disputes: [] });
+      }
       if (plan.reviewer === "confirm") return done({ verdict: text.includes("This is review round") ? "pass" : "fail", findings: [], confirms: text.includes("This is review round") ? [] : findingIds(text, "Findings so far (confirm or dispute by id)"), disputes: [] });
       if (handedBack) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] }, terminal);
       if (plan.reviewer === "question" && session.model === "opus" && (session.turns === 1 || (text.includes("You may now use the screen for") && !text.includes("The coordinator answered")))) return done({ needsInput: { question: "Should the window keep its size?", options: ["Yes", "No"] } });
@@ -940,8 +975,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         const branch = /on branch (\S+?)\./.exec(text)?.[1];
         if (branch) run(session.cwd, "update-ref", `refs/heads/${branch}`, "HEAD~1");
       }
-      if (plan.reviewer === "confirm-fixed" && text.includes("This is review round")) return done({ verdict: "fail", findings: [], confirms: findingIds(text, "Findings so far (confirm or dispute by id)"), disputes: [] });
-      if (plan.reviewer === "confirm-fixed-one-tool" && text.includes("This is review round")) return done({ verdict: session.model === "opus" ? "fail" : "pass", findings: [], confirms: session.model === "opus" ? findingIds(text, "Findings so far (confirm or dispute by id)") : [], disputes: [] });
+      if (plan.reviewer === "confirm-fixed" && text.includes("This is review round")) return done({ verdict: "fail", findings: [], confirms: findingIds(text, "Findings so far (confirm or dispute by id)").map((id) => ({ id, evidence: plan.reopenedEvidence ?? "On current code, the guest welcome page still omits the greeting; the signed-in control shows it." })), disputes: [] });
+      if (plan.reviewer === "confirm-fixed-one-tool" && text.includes("This is review round")) return done({ verdict: session.model === "opus" ? "fail" : "pass", findings: [], confirms: session.model === "opus" ? findingIds(text, "Findings so far (confirm or dispute by id)").map((id) => ({ id, evidence: plan.reopenedEvidence ?? "On current code, the guest welcome page still omits the greeting; the signed-in control shows it." })) : [], disputes: [] });
       if ((plan.reviewer === "important" || plan.reviewer === "important-twice" || plan.reviewer === "confirm-fixed" || plan.reviewer === "confirm-fixed-one-tool") && !text.includes("This is review round") && !(plan.fixes === "change" && existsSync(join(session.cwd, "welcome.txt")))) {
         const opus = session.model === "opus";
         if ((plan.reviewer === "important" || plan.reviewer === "confirm-fixed-one-tool") && !opus) return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
@@ -954,7 +989,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       } else if (tool === "codex") {
         await send(client, sessionId, { sessionUpdate: "notice", severity: "info", title: "Model rerouted", description: "Switched from gpt-6.1 to gpt-6.1-mini (high demand)." } as unknown as acp.SessionNotification["update"]);
       }
-      return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
+      return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit", evidence: "On the current welcome page the greeting is still terse; a warmer greeting would be friendlier." }], confirms: [], disputes: [] });
     case "security reviewer":
       return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
     case "guide keeper":

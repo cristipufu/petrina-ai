@@ -1,6 +1,21 @@
 import { deliveryLabel } from "./source.js";
 import type { AgentProfile, DeliveryMode, Plan, Role, Stage, Task, Tool } from "./model.js";
 
+/** A result rule shared by built-in, edited and added reviewers. */
+export const FINDING_CONFIRMATION_RULE = `For earlier findings, confirm an id only if that specific problem is still present in the current code you reviewed. "Confirms" means "still broken now"; it never means that you agree the earlier report was valid at the time. Use {"id": "<finding id>", "evidence": "<current reproduction, expected and observed result>"} in "confirms". A dismissed finding, claimed fix or previously reopened finding requires current evidence: state the exact failing case on this version, including a nearby passing control when it distinguishes the regression. The earlier report, verdict and builder's answer are history, not evidence that it still fails. Fresh proof reopens the same id for a new check; its earlier dismissal is preserved. If it now works, leave its id out and do not report it again.`;
+
+/** Repair guidance also reaches a Builder whose editable wording has been replaced. */
+export const REPAIR_RULE = `When repairing a reported problem, from the first return, identify the underlying rule before changing code. Select the relevant normal, failure and recovery paths, or state and input variants, and inspect the affected callers or sibling operations. Fix the shared cause, add or update meaningful regressions for the failing variants and nearby passing controls, and run them. Keep this within the task and the observed cause: no exhaustive permutations or unrelated redesign. In your report, name the cause, the affected cases addressed and the checks you actually ran; distinguish cases inspected from cases executed.`;
+
+/** The same review rules apply to built-in, edited and added findings roles. Keep each once. */
+export const FINDING_REVIEW_RULES: readonly string[] = [
+  `When a change fixes or alters one case, check nearby cases affected by the same code or rule: sibling operations or inputs, relevant normal, failure and recovery paths, themes and window sizes, and other ways into and out of the flow. Compare with the starting version. A confirmed regression caused by the change is Important, even when the intended case now works.`,
+  `Each finding says where it is and the evidence; never give a score. Tag it "important" only if the change should not ship with it, "nit" for anything smaller, and "pre-existing" for a problem the change did not cause: that becomes a follow-up and never holds the work back.`,
+  `When you find a bug, look for the whole class of it in the change and report one finding per root cause, with all observed affected paths together. Give a minimal reproduction and a nearby passing control that distinguishes the bug. For a variant of an earlier finding's cause, use that finding's id and include the variant in fresh confirmation evidence; reserve new findings for distinct root causes. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead. Select relevant cases; do not enumerate paraphrases, synonyms, or permutations unless they exercise a distinct code path or reveal a separate regression. For open-ended inputs such as natural language, review the defined behavior and representative syntax classes; do not try to exhaust every possible wording or grow the task.`,
+  FINDING_CONFIRMATION_RULE,
+  `Dispute findings you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.`,
+];
+
 /**
  * The roles every product starts with. They are data: the coordinator can change their wording and,
  * where the squad allows it, their permission, and reset them to these defaults. Their name, icon and
@@ -85,7 +100,8 @@ If nothing blocking is left, return an empty or non-blocking list.`,
     tone: "blue",
     purpose: "Implements the design in its own working copy and keeps the tests green.",
     instructions: `Implement the task in this working copy. Follow the design brief and acceptance checklist below when there is one.
-Keep the code consistent with the codebase and add or update tests.`,
+Keep the code consistent with the codebase and add or update tests.
+${REPAIR_RULE}`,
     canEdit: true,
     sees: "The design brief, the acceptance checklist and review findings.",
     handsBack: "A change ready for review and a plain-language summary of it.",
@@ -122,7 +138,8 @@ You may run a command to confirm it works, but keep it quick, and do not change 
     internal: true,
     result: "findings",
     instructions: `Review the change for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.
-Each finding says where it is and how someone could misuse it. Tag it "important" only if the change should not ship with it, "nit" for hardening that can wait, and "pre-existing" for a problem the change did not cause. Report a whole class of problem once, listing every place. Never repeat a finding listed below: confirm or dispute it by id instead. For each earlier finding, put its id in "confirms" only if that specific problem is still present in the current code you reviewed, supported by current-code evidence. "Confirms" means "still broken now"; it never means that you agree the earlier report was valid at the time. If the builder fixed it, leave its id out of "confirms" and do not report it again.`,
+For each security finding, explain how someone could misuse it.
+${FINDING_REVIEW_RULES.join("\n")}`,
   },
   {
     id: "guide-keeper",
@@ -193,10 +210,7 @@ Be strict both ways: a finding without real evidence is not real, and a real one
     icon: "search",
     tone: "teal",
     purpose: "Tries to prove the change is not done. Pass or fail, never a score.",
-    instructions: `When a change fixes or alters one case, check nearby cases affected by the same code or rule: sibling operations or inputs, relevant themes and window sizes, and other ways into and out of the flow. Compare with the starting version. A confirmed regression caused by the change is Important, even when the intended case now works.
-Each finding says where it is and the evidence; never give a score. Tag it "important" only if the change should not ship with it, "nit" for anything smaller, and "pre-existing" for a problem the change did not cause: that becomes a follow-up and never holds the work back.
-When you find a bug, look for the whole class of it in the change and report one finding per root cause. Give a minimal reproduction and a nearby control that distinguishes the bug. Include other affected places when they share the same cause, but do not enumerate paraphrases, synonyms, or permutations unless they exercise a distinct code path or reveal a separate regression. For open-ended inputs such as natural language, review the defined behavior and representative syntax classes; do not try to exhaust every possible wording. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead.
-If earlier reviewers' findings are listed below, put an id in "confirms" only when that exact problem is still present in the current code you reviewed, supported by current-code evidence. "Confirms" means "still broken now"; it never means that you agree the earlier report was valid at the time. If the builder fixed it, leave its id out of "confirms" and do not report it again. Dispute findings you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.`,
+    instructions: FINDING_REVIEW_RULES.join("\n"),
     canEdit: false,
     sees: "The design, the acceptance checklist, the change and earlier verdicts. Never the builder's transcript.",
     handsBack: "Findings, each pass or fail with where it is and the evidence.",

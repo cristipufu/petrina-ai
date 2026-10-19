@@ -1,3 +1,4 @@
+import { companionPreview, involvesProduct, taskProductIds } from "./repositories.js";
 import { deliveryLabel, workSummary, type WorkChoice, type TaskSource } from "./source.js";
 // A deterministic stand-in for real agents. It drives the same state the real engine
 // will: tasks move through their plan, agents report status lines, ask questions,
@@ -671,6 +672,17 @@ export class Simulator {
     this.resolve(itemId, (d, task, item) => {
       switch (item.kind) {
         case "plan":
+          if (task.workRows && (!task.workRows.length || task.workRows.some((row) => row.error || !row.source))) throw new Error("Correct every product choice first.");
+          if (task.workRows) {
+            task.repositories = task.workRows.map((row) => ({ productId: row.choice.productId, workChoice: row.choice, delivery: row.choice.delivery, source: { ...row.source!, confirmed: true }, completedStages: [], preparation: "ready" }));
+            task.leadProductId = task.workRows.find((row) => row.choice.lead)?.choice.productId ?? task.repositories[0]!.productId;
+            const first = task.repositories[0]!;
+            task.productId = first.productId;
+            task.workChoice = first.workChoice;
+            task.source = first.source;
+            task.delivery = first.delivery;
+            for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = task.repositories.length > 1 ? `Deliver across ${task.repositories.length} products` : deliveryLabel(task);
+          }
           task.confirmWork = false;
           if (task.source) task.source.confirmed = true;
           this.log(d, task, "you", "You approved the plan");
@@ -833,9 +845,14 @@ export class Simulator {
       const product = d.products.find((entry) => entry.id === productId);
       // Its entry stays, marked removed, so its history keeps its name and its id is never reused.
       if (product) this.work.recordProduct({ id: product.id, name: product.name, repo: product.repo, removedAt: d.now });
-      const ids = new Set(d.tasks.filter((task) => task.productId === productId).map((task) => task.id));
+      const ids = new Set(d.tasks.filter((task) => involvesProduct(task, productId) && taskProductIds(task).length === 1).map((task) => task.id));
       d.inbox = d.inbox.filter((item) => !ids.has(item.taskId));
       d.tasks = d.tasks.filter((task) => !ids.has(task.id));
+      for (const task of d.tasks.filter((entry) => involvesProduct(entry, productId))) {
+        const removed = task.repositories?.find((work) => work.productId === productId);
+        if (removed) removed.removed = true;
+        if (task.productId === productId) task.productId = taskProductIds(task)[0] ?? task.productId;
+      }
       d.products = d.products.filter((entry) => entry.id !== productId);
       this.wrote(d);
     });
@@ -1102,6 +1119,8 @@ export class Simulator {
   }
 
   async setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
+    const task = this.state.tasks.find((entry) => entry.id === taskId);
+    if (task?.workRows) return this.setTaskProducts(taskId, task.workRows.map((row) => row.choice.productId === choice.productId ? choice : choice.lead ? { ...row.choice, lead: false } : row.choice));
     this.updateTask(taskId, (d, task) => {
       const product = d.products.find((entry) => entry.id === choice.productId);
       if (!product) throw new Error("Add the product first.");
@@ -1114,6 +1133,27 @@ export class Simulator {
     });
   }
 
+  async setTaskProducts(taskId: Id, choices: readonly WorkChoice[]): Promise<void> {
+    this.updateTask(taskId, (d, task) => {
+      task.selectedProducts = [...choices];
+      task.workRows = choices.map((choice) => {
+        const earlier = task.workRows?.find((row) => row.choice.productId === choice.productId);
+        const product = d.products.find((entry) => entry.id === choice.productId);
+        return { ...earlier, choice: { ...choice, reason: choice.reason ?? earlier?.choice.reason }, error: undefined, ...(product ? { source: demoSource(product, choice) } : { error: "Needs adding" }) };
+      });
+      task.confirmWork = true;
+      task.approvePlan = true;
+    });
+  }
+
+  async setTaskAddition(_taskId: Id, _repository: string, _name: string, _path: string): Promise<void> {
+    throw new Error("The demo does not clone repositories. Choose an existing demo product.");
+  }
+
+  setTaskApproval(taskId: Id, ask: boolean): void {
+    this.updateTask(taskId, (_d, task) => { task.approveDelivery = ask; });
+  }
+
   addTask(input: NewTask): Id {
     let created = "";
     this.update((d) => {
@@ -1121,13 +1161,15 @@ export class Simulator {
       const id = this.id(d, "task");
       created = id;
       const top = input.position === "top";
-      const product = d.products.find((entry) => entry.id === input.productId) ?? d.products[0];
-      const choice: WorkChoice = { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" };
+      const productId = input.worksOn?.[0]?.productId ?? input.productId;
+      const product = d.products.find((entry) => entry.id === productId) ?? d.products[0];
+      const choice: WorkChoice = input.worksOn?.[0] ?? { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" };
       d.tasks.push({
         id,
         productId: product?.id ?? input.productId,
         workChoice: choice,
-        confirmWork: !input.productId || choice.startFrom.kind === "pull-request",
+        ...(input.worksOn ? { selectedProducts: [...input.worksOn], workRows: input.worksOn.map((entry) => ({ choice: entry, source: demoSource(d.products.find((product) => product.id === entry.productId)!, entry) })) } : {}),
+        confirmWork: (input.worksOn ? input.worksOn.length !== 1 : !input.productId) || choice.startFrom.kind === "pull-request",
         ...(product ? { source: demoSource(product, choice) } : {}),
         title: input.title.trim(),
         description: input.description?.trim() ?? "",
@@ -1138,8 +1180,8 @@ export class Simulator {
         state: input.backlog ? "backlog" : "queued",
         column: input.backlog ? "backlog" : "queue",
         holdsSlot: false,
-        approvePlan: input.approvePlan ?? false,
-        delivery: input.delivery ?? product?.delivery ?? "pull-request",
+        approvePlan: (input.worksOn && input.worksOn.length !== 1) || (input.approvePlan ?? false),
+        delivery: choice.delivery,
         approveDelivery: input.approveDelivery ?? product?.approveDelivery ?? true,
         stageIndex: -1,
         rounds: {},
@@ -1505,6 +1547,8 @@ export class Simulator {
     this.finishStep(d, task);
 
     if (task.stageIndex < 0) {
+      // With no coordinator selection, the demo planner proposes its saved demo product.
+      if (task.workRows?.length === 0 && task.workChoice && task.source) task.workRows = [{ choice: { ...task.workChoice, reason: "The demo planner proposes this product for the change." }, source: task.source, change: "added" }];
       task.plan = composePlan(task, library.activeRoles(d.roles)) as DeepMutable<NonNullable<Task["plan"]>>;
       task.risk = DEMO_RISK[task.kind];
       const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
@@ -1547,6 +1591,10 @@ export class Simulator {
           agent.roleId === "builder" ? { outcome: W.built, reason: W.readyForReview } : agent.roleId === "tester" ? { outcome: W.checks(0, task.brief?.acceptance.length ?? 0), reason: W.checksPassed } : { outcome: W.wroteNotes, reason: W.notesReady },
           d.now,
         );
+      }
+      if (task.repositories && d.roles.find((role) => role.id === agent.roleId)?.canEdit) for (const work of task.repositories) {
+        work.report = { summary: `Updated ${d.products.find((product) => product.id === work.productId)?.name ?? "the product"} for ${task.area}.`, changes: [`People can use ${task.area} across products.`] };
+        work.completedStages = [...new Set([...work.completedStages, stage.id])];
       }
       this.endStage(d, task, "done");
       this.advance(d, task);
@@ -1757,7 +1805,8 @@ export class Simulator {
     beginYouStep(task, gate, d.now);
     task.holdsSlot = false;
     task.statusLine = gateStatus(task as unknown as Task, gate);
-    const body = gate === "design" ? callCheckBody(task as unknown as Task) : task.source && (gate === "plan" || gate === "delivery") ? workSummary(task.source) : undefined;
+    let body = gate === "design" ? callCheckBody(task as unknown as Task) : task.source && (gate === "plan" || gate === "delivery") ? workSummary(task.source) : undefined;
+    if (gate === "delivery" && task.repositories) body = [...task.repositories.map((work) => work.source ? workSummary(work.source) : work.productId), companionPreview(task.repositories)].filter(Boolean).join("\n\n");
     this.raise(d, task, gate, gateTitle(task as unknown as Task, gate), false, body ? { body } : {});
     task.column = this.columnFor(d, task);
   }
@@ -1810,6 +1859,27 @@ export class Simulator {
 
   /** Petrina publishes it, the way the task asks: with the builder's text, or the Release Manager's notes. */
   private ship(d: Draft, task: DraftTask): void {
+    if (task.repositories) {
+      for (const [index, work] of task.repositories.entries()) {
+        const product = d.products.find((entry) => entry.id === work.productId)!;
+        if (work.delivery === "pull-request" || work.source?.start.kind === "pull-request") {
+          const number = work.source?.start.kind === "pull-request" ? work.source.start.number : 100 + d.seq + index;
+          work.pr = { number, url: `https://github.com/${product.repo}/pull/${number}`, state: "open", openedAt: d.now };
+        } else if (work.delivery === "release") work.release = { tag: "v1.2.0", url: `https://github.com/${product.repo}/releases/tag/v1.2.0` };
+        else work.landed = { branch: work.source?.destination.branch ?? "main", sha: "1234567" };
+        work.companion = { text: "Companion links confirmed", state: "done" };
+      }
+      task.pr = task.repositories.find((work) => work.pr)?.pr;
+      task.state = task.pr ? "pr-open" : "done";
+      task.column = task.pr ? "ready" : "done";
+      task.statusLine = task.pr ? "Waiting for every pull request to merge" : "All products have landed";
+      task.holdsSlot = false;
+      delete task.agent;
+      task.prAge = 0;
+      if (!task.pr) task.finishedAt = d.now;
+      this.moment(d, task, { kind: "task-end", outcome: "delivered" });
+      return;
+    }
     if (task.agent) {
       this.log(d, task, "done", "Ready to publish", "release-manager", task.agent.profileId);
       endAgentStep(task, { outcome: W.notes, reason: W.releaseNotesReady }, d.now);
@@ -1862,6 +1932,7 @@ export class Simulator {
     task.prAge += 1;
     if (!task.pr || task.prAge < this.prMergeAfter) return;
     task.pr.state = "merged";
+    if (task.repositories) for (const work of task.repositories) if (work.pr) work.pr.state = "merged";
     if (task.state !== "cancelled") {
       task.state = "done";
       task.column = "done";

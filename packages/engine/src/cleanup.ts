@@ -6,9 +6,9 @@
 // after a restart, when Petrina also catches up on tasks that finished before.
 
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { CLEANUP_WORDS, copyNoLongerNeeded, type Id, type Task } from "@petrina/core";
+import { CLEANUP_WORDS, copyNoLongerNeeded, finishedTask, involvesProduct, type Id, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import type { Kernel, MTask } from "./kernel.js";
 
@@ -23,6 +23,12 @@ export class Cleanup {
     if (this.sweeping || this.k.stopped) return;
     this.sweeping = true;
     try {
+      // Pictures belong only to unfinished tasks, independently of whether a working copy
+      // must stay (an open pull request or interrupted delivery may still need its files).
+      // Walk actual storage, without reading any archived conversations; missing tasks are orphans.
+      for (const entry of await readdir(join(this.k.dataDir, "captures"), { withFileTypes: true }).catch(() => [])) {
+        if (entry.isDirectory()) await this.removeCaptures(entry.name);
+      }
       const ids = new Set(this.k.s.tasks.map((task) => task.id));
       // A late detached child can recreate a finished folder. Inspect folders and Git's actual
       // worktree records, then load only the tasks they name; never scan years of archived bodies.
@@ -33,7 +39,7 @@ export class Cleanup {
           if (parts.length < 2 || parts[0] === ".." || !parts[1]) return;
           const id = parts[1].endsWith(".copies") ? parts[1].slice(0, -7) : parts[1];
           const task = this.k.task(id);
-          if (task?.productId === parts[0]) ids.add(id);
+          if (task && involvesProduct(task, parts[0]!)) ids.add(id);
         };
         for (const product of await readdir(root, { withFileTypes: true }).catch(() => [])) {
           if (!product.isDirectory()) continue;
@@ -55,7 +61,9 @@ export class Cleanup {
    * quietly.
    */
   async removeCopy(taskId: Id): Promise<void> {
+    await this.removeCaptures(taskId);
     const task = this.k.task(taskId);
+    if (task?.repositories) return this.removeRepositoryCopies(task);
     const path = task && this.copyOf(task);
     if (!task || !path || !this.finishedWith(task) || this.removing.has(taskId) || this.k.stopped) return;
     const again = task.cleanup?.removedAt !== undefined;
@@ -99,6 +107,43 @@ export class Cleanup {
     }
     this.k.saveArchivedTask(current);
     this.k.commit();
+  }
+
+  private async removeRepositoryCopies(task: MTask): Promise<void> {
+    if (this.k.drivers.has(task.id) || this.k.settling.has(task.id) || task.driving || this.removing.has(task.id) || this.k.stopped || !this.finishedWith(task)) return;
+    this.k.saveRepository(task);
+    this.removing.add(task.id);
+    this.k.cleanupJobs.add(task.id);
+    this.k.syncIdleSleep();
+    try {
+      for (const work of [...task.repositories!, ...(task.excludedRepositories ?? [])]) {
+        const copy = work.worktree ?? work.preparingCopy?.path;
+        if (!copy || work.pr?.state === "open" || work.shipping?.step || work.localUpdate?.pushed === false) continue;
+        const path = resolve(copy);
+        if (!path.startsWith(resolve(this.k.dataDir, "worktrees") + sep)) continue;
+        try {
+          const root = work.source!.product.path!;
+          for (const productId of new Set(task.repositories!.map((entry) => entry.productId))) await git.removeFinishedCopies(root, join(this.k.dataDir, "worktrees", productId, `${task.id}.copies`));
+          await git.removeWorktree(root, path);
+          work.cleanup = { removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
+        } catch (error) { work.cleanup = { error: String(error) }; }
+        if (task.productId === work.productId) task.cleanup = work.cleanup;
+        this.k.commitNow();
+      }
+      this.k.saveArchivedTask(task);
+    } finally {
+      this.removing.delete(task.id);
+      this.k.cleanupJobs.delete(task.id);
+      this.k.syncIdleSleep();
+    }
+  }
+
+  async removeCaptures(taskId: Id): Promise<void> {
+    if (this.k.stopped || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
+    const task = this.k.s.tasks.find((task) => task.id === taskId);
+    if (task && !finishedTask(task as Task)) return;
+    // A failed removal is tried again by the ordinary cleanup sweep.
+    await rm(join(this.k.dataDir, "captures", taskId), { recursive: true, force: true }).catch(() => {});
   }
 
   /**

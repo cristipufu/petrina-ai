@@ -18,6 +18,7 @@ import type { Task } from "./model.js";
 export interface NewTaskInput {
   /** Wait for the coordinator to review the request before it joins the work queue. */
   backlog?: boolean;
+  worksOn?: readonly WorkChoice[];
   startFrom?: StartFrom;
   productId: Id;
   title: string;
@@ -45,7 +46,7 @@ export interface SaidContext {
 export interface Commands {
   historyPage(query: HistoryQuery): HistoryPage;
   taskDetails(taskId: Id): Task | undefined;
-  previewImage(taskId: Id, path: string): Promise<{ mime: string; data: string }>;
+  previewImage(taskId: Id, path: string, productId?: Id): Promise<{ mime: string; data: string }>;
   saveRole(roleId: Id, draft: RoleDraft): void;
   addRole(draft: RoleDraft): Id;
   resetRole(roleId: Id): void;
@@ -77,6 +78,9 @@ export interface Commands {
   moveToBacklog(taskId: Id): void;
   updateBacklog(taskId: Id, changes: { title: string; description: string }): void;
   setTaskStart(taskId: Id, choice: WorkChoice): Promise<void>;
+  setTaskProducts(taskId: Id, choices: readonly WorkChoice[]): Promise<void>;
+  setTaskAddition(taskId: Id, repository: string, name: string, path: string): Promise<void>;
+  setTaskApproval(taskId: Id, ask: boolean): void;
   moveInQueue(taskId: Id, index: number): void;
   moveToTop(taskId: Id): void;
   placeInQueue(taskId: Id, anchorId: Id, side: "before" | "after"): number;
@@ -147,6 +151,9 @@ export const COMMAND_NAMES = [
   "addTask",
   "queueTask", "moveToBacklog", "updateBacklog",
   "setTaskStart",
+  "setTaskProducts",
+  "setTaskAddition",
+  "setTaskApproval",
   "moveInQueue",
   "moveToTop",
   "placeInQueue",
