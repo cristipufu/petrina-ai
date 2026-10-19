@@ -10,6 +10,7 @@ import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckB
 import { AgentRun } from "./acp-run.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { GrokUsage } from "./grok-usage.js";
+import { AntigravityUsage } from "./antigravity-usage.js";
 import { agentEnv } from "./env.js";
 import * as git from "./git.js";
 import type { Which } from "./setup.js";
@@ -88,6 +89,8 @@ export interface EngineOptions {
   codexCommand?: readonly string[] | null;
   /** Tests: a fake Grok ACP server for account usage. Disabled by default with fake agents. */
   grokCommand?: readonly string[] | null;
+  /** Tests: native Antigravity account commands; disabled with fake agents unless supplied. */
+  antigravityCommand?: readonly string[] | null;
   /** Tests: a folder standing in for every product's copy on GitHub. Never from settings or saved data. */
   remote?: string;
   remotes?: Readonly<Record<string, string>>;
@@ -277,6 +280,12 @@ export abstract class Kernel {
       log: (text) => console.warn(`${new Date().toISOString()} ${text}`),
       changed: () => this.commit(),
     }) : undefined;
+    const antigravityCommand = options.antigravityCommand === undefined ? (options.agentCommand ? undefined : ADAPTERS.antigravity!.command) : options.antigravityCommand;
+    this.antigravityUsage = antigravityCommand ? new AntigravityUsage({
+      command: antigravityCommand, cwd: join(this.dataDir, "checks"), env: () => agentEnv(process.env),
+      record: reports => { for (const info of reports) this.recordUsage(info); this.schedule(); },
+      log: text => console.warn(`${new Date().toISOString()} ${text}`), changed: () => this.commit(),
+    }) : undefined;
   }
 
   waitUntilReady(): Promise<void> { return this.startupReady; }
@@ -290,6 +299,7 @@ export abstract class Kernel {
   /** Reads Codex's usage, when Codex's usage can be read here. */
   readonly codexUsage: CodexUsage | undefined;
   readonly grokUsage: GrokUsage | undefined;
+  readonly antigravityUsage: AntigravityUsage | undefined;
 
   private readonly idleSleep: IdleSleepAssertion;
 
@@ -458,7 +468,7 @@ export abstract class Kernel {
     if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
     const tasks = this.s.tasks.filter((task) => !finishedTask(task)) as Task[];
     const usageReads: NonNullable<State["pool"]["usageReads"]> = Object.fromEntries(
-      ([["codex", this.codexUsage], ["grok", this.grokUsage]] as const).flatMap(([toolId, reader]) => reader?.snapshot() ? [[toolId, reader.snapshot()!]] : []),
+      ([["codex", this.codexUsage], ["grok", this.grokUsage], ["antigravity", this.antigravityUsage]] as const).flatMap(([toolId, reader]) => reader?.snapshot() ? [[toolId, reader.snapshot()!]] : []),
     );
     const dependencies = this.stopped ? [] : [...new Set([...this.s.inbox.map((item) => item.taskId), ...tasks.flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])].flatMap((id) => {
       const item = this.store.history.item(id);
@@ -603,7 +613,7 @@ export abstract class Kernel {
 
   /** The agent tools the squad uses now: Ready ones, or if none is, those Petrina couldn't check. */
   usableTools(): CheckId[] {
-    if (!this.s.setup?.checks.some((check) => ["claude-code", "codex", "grok"].includes(check.id))) {
+    if (!this.s.setup?.checks.some((check) => ADAPTERS[check.id] !== undefined)) {
       const installed = this.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id as CheckId);
       if (installed.length) return installed;
     }
@@ -907,7 +917,7 @@ export abstract class Kernel {
   }
 
   empty(): State {
-    return { now: Date.now(), seq: 0, products: [], roles: BUILT_IN_ROLES, tools: [], profiles: ENGINE_PROFILES, tasks: [], inbox: [], pool: { limit: 3, paused: false, toolCaps: { "claude-code": 3, codex: 3, grok: 3 } } };
+    return { now: Date.now(), seq: 0, products: [], roles: BUILT_IN_ROLES, tools: [], profiles: ENGINE_PROFILES, tasks: [], inbox: [], pool: { limit: 3, paused: false, toolCaps: Object.fromEntries(Object.keys(ADAPTERS).map(id => [id, 3])) } };
   }
 
   renumberQueue(): void {
@@ -1023,7 +1033,7 @@ export abstract class Kernel {
       peers.push(...legacy);
     }
     const state = this.activeState();
-    const checked = state.setup?.checks.some((check) => check.id === "claude-code" || check.id === "codex" || check.id === "grok");
+    const checked = state.setup?.checks.some((check) => ADAPTERS[check.id] !== undefined);
     const usable = this.usableTools() as Id[];
     // Usage stand-ins follow the same login checks as the plan: Ready tools first, otherwise the
     // ones we couldn't check. Before checks have run, keep the existing installed-tool selection.
@@ -1112,6 +1122,7 @@ export abstract class Kernel {
    */
   readUsage(toolId?: Id, gap = 5 * 60_000): void {
     if ((toolId === undefined || toolId === "grok") && this.s.tools.some((tool) => tool.id === "grok" && tool.status === "ready")) void this.grokUsage?.refresh(gap);
+    if ((toolId === undefined || toolId === "antigravity") && this.s.tools.some((tool) => tool.id === "antigravity" && tool.status === "ready")) void this.antigravityUsage?.refresh(gap);
     if (toolId !== undefined && toolId !== "codex") return;
     if (!this.s.tools.some((tool) => tool.id === "codex" && tool.status === "ready")) return;
     void this.codexUsage?.refresh();

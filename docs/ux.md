@@ -321,6 +321,8 @@ Products is a searchable multi-select dropdown. It opens on demand, preselects t
 
 ## Analytics
 
+Antigravity appears alongside the other installed tools in Agents and in profile choices. Its Analytics quota card names the model group for each window, keeping a separate Argon allowance visible. Missing or failed readings retain their usual plain-language status and report age. Terminal takeover explains that Antigravity's terminal cannot open the agent's conversation; messages and interruption remain available.
+
 What the whole squad used and how it works, in plain words and simple charts. It follows the product switcher (all products, or one), staying open with the chosen period and details when the product changes and offers **Today**, **7 days** and **30 days**, counted from local midnight. It opens on 7 days. Defaults matter more than options: one chart and three splits are visible, the rest is one click away.
 
 While Analytics stays open, it requests fresh account usage periodically even when the pool is paused. A tool says “Updating usage…” during a read. A failed refresh says “Couldn’t refresh usage. Showing the last report.” The previous percentage and its report time stay unchanged; a failed attempt never makes an old reading look current.

@@ -5,7 +5,7 @@
 <h1 align="center">Petrina</h1>
 
 <p align="center">
-  Run Claude Code, Codex and Grok from one board through the <a href="https://agentclientprotocol.com">Agent Client Protocol</a>.<br />
+  Run Claude Code, Codex, Grok and Antigravity from one board through the <a href="https://agentclientprotocol.com">Agent Client Protocol</a>.<br />
   You set priorities. They plan, design, build and review. You get a pull request.
 </p>
 
@@ -61,12 +61,17 @@ A harness is the coding tool that runs a model and manages its conversation, too
 | Claude Code | `claude-agent-acp` adapter | Opus 5.5, Fable 5.1; Sonnet 5.5 as a stand-in |
 | Codex | `codex-acp` adapter | sol, astra |
 | Grok | Its own ACP server, `grok agent stdio` | Grok 4.7 |
+| Google Antigravity | Google's native ACP server | Gemini 4 Argon, Gemini 3.8 Flash, each at medium or high thinking |
 
 Install and sign into at least one of these tools. Petrina uses your existing installation and login; it needs no separate Petrina account or API-key setup. The Claude Code and Codex adapters are included in the engine's dependencies. Grok connects through its own ACP server.
+
+For Antigravity, install [Google's CLI](https://antigravity.google/docs/cli/install/), then run `bun run petrina antigravity install` and `bun run petrina antigravity login` from Petrina's folder. Google supplies the connector and its sign-in flow. The connector keeps its login separately from `agy`. Petrina confirms the model and thinking level before sending work; a profile unavailable to your account fails with an explanation. Its edit mode approves file edits and forwards command permissions to you. The current connector cannot share a conversation with the terminal CLI, so terminal takeover is unavailable for Antigravity; messaging, interrupting and resuming within Petrina work normally.
 
 For each role, Petrina sets the model and effort, provides the task context and working copy, and brings progress, questions and permission requests into the app. You can follow the conversation, queue a message, interrupt it or take over in your terminal. After a restart, Petrina reopens the conversation when the tool supports it; otherwise it starts fresh with the saved task context.
 
 Each harness keeps its own permission checks. Petrina records token usage and agent time and reads the tools' reported allowance windows for balancing. Missing reports stay unknown rather than being guessed.
+
+Antigravity's built-in `/usage` command supplies quota percentages and UTC reset times without an AI turn. Argon's separate quota stays separate from Flash's. Token totals come from the increase in native session counts, including thinking once in output; cache and new-input breakdowns stay unreported.
 
 ## Run
 

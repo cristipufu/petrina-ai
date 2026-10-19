@@ -120,6 +120,7 @@
   --tool-claude-code: #d97757;
   --tool-codex: #10a37f;
   --tool-grok: #5b6cff;
+  --tool-antigravity: var(--t-teal);
   --tool-gemini: #4285f4;
   --tool-opencode: #6b7079;
   /* Provider colours in charts: the tool's colour where one tool stands for the provider. */

@@ -6,7 +6,7 @@ import { AgentRun } from "../src/acp-run.js";
 import { Engine } from "../src/engine.js";
 import { agentEnv } from "../src/env.js";
 import { claudeSandbox, sandboxFailure } from "../src/sandbox.js";
-import { ENGINE_PROFILES } from "../src/tools.js";
+import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
 import { engineEnv, EngineProcess, Fakes, makeProduct, removeDir, tempDir, traceTaskWait, waitFor, type Open } from "./support.js";
 
@@ -150,6 +150,10 @@ describe("Claude Code's own sandbox", () => {
       it(`group ${voting ? "voters" : "reviewers"} keep each agent's sandbox status, including when the header changes${unavailable ? " without Claude Code's sandbox" : ""}`, async () => {
         const run = await start({ planner: "pair", builder: "plain", controlled: true, ...(voting ? { reviewer: "important" as const, verifier: "not-a-bug" as const } : {}), ...(unavailable ? { sandbox: "unavailable" as const } : {}) });
         const { engine, fakes } = run;
+        if (voting) {
+          await engine.until(state => Object.keys(ADAPTERS).every(id => state.setup?.checks.some(check => check.id === id && check.status === "ready" && !check.checking)), "every voter's tool to be ready");
+          await engine.act("setPoolLimit", Object.keys(ADAPTERS).length);
+        }
         const roleId = voting ? "verifier" : "code-reviewer";
         const promptRole = voting ? "verifier" : "code reviewer";
         const go = (role?: string) => fakes.received(role).forEach((entry) => writeFileSync(join(fakes.dir, `release-${entry.session}`), "go"));
@@ -163,10 +167,11 @@ describe("Claude Code's own sandbox", () => {
           ]);
           // A vote includes the installed third tool too, with its own setup and no sandbox claim.
           if (voting && (await engine.state()).tools.some((tool) => tool.id === "grok" && tool.status === "ready")) expected.set("grok-xhigh", undefined);
+          if (voting && (await engine.state()).tools.some((tool) => tool.id === "antigravity" && tool.status === "ready")) expected.set("argon-high", undefined);
           const group = await traceTaskWait(!voting && unavailable ? "Reviewers without Claude Code's sandbox" : undefined, () => engine.state(), run.taskId, () => engine.until((state) => {
             const task = run.find(state);
             const agents = [task.agent, ...(task.helpers ?? [])];
-            return agents.length === expected.size && agents.every((agent) => agent?.roleId === roleId && (agent.sandbox || agent.profileId === "grok-xhigh")) && fakes.received(promptRole).length === expected.size;
+            return agents.length === expected.size && agents.every((agent) => agent?.roleId === roleId && expected.has(agent.profileId)) && fakes.received(promptRole).length === expected.size;
           }, "all group agents to start"));
           clearInterval(before);
           const task = run.find(group);

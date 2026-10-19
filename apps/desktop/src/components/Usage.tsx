@@ -275,6 +275,7 @@ export function AboutNote({ about, period }: { about: AboutCounts; period: Usage
         <li>The tools count slightly differently, so totals across tools are approximate. The split by tool is the reliable comparison.</li>
         <li>Claude Code's numbers include its helper agents and compaction inside each model's line.</li>
         <li>Grok counts all model calls in a turn, including collected helper work. Thinking is already included in its output.</li>
+        <li>Antigravity tokens come from the increase in its native session totals per turn. It reports no separate cache breakdown.</li>
         <li>
           Codex reports only its main agent. {PERIOD_WORDS[period].charAt(0).toUpperCase() + PERIOD_WORDS[period].slice(1)}, {count(about.codexHelperTurns, "Codex turn")} started helper agents whose use Codex doesn't report.
         </li>
@@ -321,7 +322,7 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
               {state.pool.usageReads?.[tool.id]?.state === "reading" && <div className="muted small" role="status">Updating usage…</div>}
               {state.pool.usageReads?.[tool.id]?.state === "unavailable" && <div className="muted small" role="status">Couldn’t refresh usage.{own.length ? " Showing the last report." : " No current reading is available."}</div>}
               {own.length === 0 && out.length === 0 && (
-                <div className="muted small">Not reported.{tool.id === "claude-code" ? " Claude Code reports its limits while it works." : tool.id === "codex" || tool.id === "grok" ? ` Petrina asks the installed ${tool.name} when this page opens.` : ""}</div>
+                <div className="muted small">Not reported.{tool.id === "claude-code" ? " Claude Code reports its limits while it works." : ["codex", "grok", "antigravity"].includes(tool.id) ? ` Petrina asks the installed ${tool.name} when this page opens.` : ""}</div>
               )}
               {own.map((report) => {
                 const text = limitWords(report, now);

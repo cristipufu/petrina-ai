@@ -12,7 +12,7 @@ import { checkAgentTool, checkGh, checkGit, checkNode, isAuthRequired, type Chec
 import { ADAPTERS, findProgram } from "./tools.js";
 
 /** Everything the tools check looks at, in the order it is shown. */
-export const CHECKS: readonly CheckId[] = ["claude-code", "codex", "grok", "gh", "git", "node"];
+export const CHECKS: readonly CheckId[] = ["claude-code", "codex", "grok", "antigravity", "gh", "git", "node"];
 /** How long a check waits for the last check's copy of a tool to stop: past the forced stop, never longer. */
 const LINGER_MS = 3_000;
 
@@ -116,7 +116,7 @@ export class ToolChecks {
     const which = this.which();
     if (id === "git" || id === "node") return which(id) === null;
     if (id === "gh") return !this.k.options.gh && which("gh") === null;
-    return !this.k.options.agentCommand && which(ADAPTERS[id]!.cli) === null;
+    return !this.k.options.agentCommand && (which(ADAPTERS[id]!.cli) === null || !(ADAPTERS[id]!.installed?.() ?? true));
   }
 
   /** The Library's own lookup, so first run finds what Terminal finds, also when opened from the Dock. */

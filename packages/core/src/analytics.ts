@@ -191,7 +191,7 @@ export type UsageView = TaskUsage | ProductsUsage | TodayUsage | AnalyticsUsage;
 
 export type UsageViewFor<R extends UsageRequest> = R extends { view: "task" } ? TaskUsage : R extends { view: "products" } ? ProductsUsage : R extends { view: "today" } ? TodayUsage : AnalyticsUsage;
 
-const TOOL_NAMES: Record<Id, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok" };
+const TOOL_NAMES: Record<Id, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", antigravity: "Antigravity" };
 
 // ── Periods ────────────────────────────────────────────────────────────────
 

@@ -11,6 +11,12 @@ const all = { git: "ready", node: "ready", gh: "ready" } as const;
 const sentences = (text: string) => text.split(/[.!?](?:\s|$)/).filter((part) => part.trim()).length;
 
 describe("which agent tools the squad uses", () => {
+  it("uses an installed Antigravity alone or as a fourth independent tool, and excludes its logged-out or absent state", () => {
+    expect(usableAgentTools(checks({ "claude-code": "ready", codex: "ready", grok: "ready", antigravity: "ready" }))).toEqual(["claude-code", "codex", "grok", "antigravity"]);
+    expect(usableAgentTools(checks({ "claude-code": "logged-out", codex: "not-installed", grok: "logged-out", antigravity: "ready" }))).toEqual(["antigravity"]);
+    expect(usableAgentTools(checks({ "claude-code": "ready", antigravity: "logged-out" }))).toEqual(["claude-code"]);
+    expect(toolsGate(checks({ ...all, "claude-code": "not-installed", codex: "not-installed", antigravity: "ready" })).ok).toBe(true);
+  });
   it("uses the Ready ones, and only if none is Ready, the ones Petrina couldn't check", () => {
     expect(usableAgentTools(checks({ "claude-code": "ready", codex: "ready" }))).toEqual(["claude-code", "codex"]);
     expect(usableAgentTools(checks({ "claude-code": "unknown", codex: "ready" }))).toEqual(["codex"]);

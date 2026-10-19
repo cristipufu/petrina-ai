@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import type { AgentProfile, Tool } from "@petrina/core";
 import type { ClaudeSandbox } from "./sandbox.js";
+import { antigravityCommand, antigravityInstalled, forgetAntigravityProbe } from "./antigravity-runtime.js";
 
 /** How Petrina drives one tool through ACP. */
 export interface ToolAdapter {
@@ -12,9 +13,13 @@ export interface ToolAdapter {
   command?: readonly string[];
   /** The CLI the tool needs on PATH, for detection and for taking over in a terminal. */
   cli: string;
+  /** Additional native runtime needed alongside the terminal CLI. */
+  installed?: () => boolean;
+  /** Forget a disposable identity/account probe, only after its process has stopped. */
+  forgetProbe?: (sessionId: string, env: NodeJS.ProcessEnv) => Promise<void>;
   /** Session config option ids the adapter exposes. `mode` is unset when the mode is session metadata instead. */
   options: { model: string; effort: string; mode?: string };
-  /** The tool's own automatic safety mode: its checker decides, and only what it flags reaches the coordinator. */
+  /** The tool's own working mode; permission requests still reach the coordinator. */
   mode: string;
   /** Sent on `session/new`, `session/resume` and `session/load`. Grok's auto mode lives here, not in a config option. */
   sessionMeta?: Readonly<Record<string, unknown>>;
@@ -72,6 +77,19 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     login: "open",
     models: ["Grok 4.7"],
   },
+  antigravity: {
+    id: "antigravity",
+    name: "Antigravity",
+    cli: "agy",
+    get command() { return antigravityCommand(); },
+    installed: antigravityInstalled,
+    forgetProbe: forgetAntigravityProbe,
+    options: { model: "model", effort: "thinking_level", mode: "mode" },
+    // Google's ACP server offers edit approval, but no CLI Auto classifier. Commands still ask.
+    mode: "auto_edit",
+    login: "open",
+    models: ["Gemini 4 Argon", "Gemini 3.8 Flash"],
+  },
 };
 
 /**
@@ -85,6 +103,10 @@ export const ENGINE_PROFILES: readonly AgentProfile[] = [
   { id: "sol-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
   { id: "grok-xhigh", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "xhigh" },
   { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" },
+  { id: "argon-high", toolId: "antigravity", model: "Gemini 4 Argon", modelId: "gemini-4-argon", effort: "high" },
+  { id: "argon-medium", toolId: "antigravity", model: "Gemini 4 Argon", modelId: "gemini-4-argon", effort: "medium" },
+  { id: "flash-high", toolId: "antigravity", model: "Gemini 3.8 Flash", modelId: "gemini-3.8-flash", effort: "high" },
+  { id: "flash-medium", toolId: "antigravity", model: "Gemini 3.8 Flash", modelId: "gemini-3.8-flash", effort: "medium" },
   { id: "fable-xhigh", toolId: "claude-code", model: "Fable 5.1", modelId: "fable", effort: "xhigh" },
   { id: "astra-xhigh", toolId: "codex", model: "astra", modelId: "gpt-6-astra", effort: "xhigh" },
   // Works only when Opus is out of usage and Claude Code is not (its weekly Opus limit); never planned.
@@ -119,7 +141,7 @@ export function detectTools(): Tool[] {
         resolved = false;
       }
     }
-    const installed = resolved && findProgram(adapter.cli) !== null;
+    const installed = resolved && findProgram(adapter.cli) !== null && (adapter.installed?.() ?? true);
     return {
       id: adapter.id,
       name: adapter.name,

@@ -3,22 +3,24 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { draftOf, independentVotes, slotUses } from "@petrina/core";
 import { Engine } from "../src/engine.js";
+import { ADAPTERS } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], builderProfile?: string, votingOnly = false) {
+async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], builderProfile?: string, votingOnly = false, antigravity = false) {
   const root = tempDir("petrina-independence-");
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", ...scenario });
-  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true", codexCommand: null };
+  const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(!antigravity && profile.toolId === "antigravity" ? ["--logged-out"] : [])], toolPath: () => "/bin/true", codexCommand: null };
   let engine = new Engine(join(root, "data"), options);
   engine.setPoolPaused(true);
+  await engine.checkTools();
   engine.setPoolLimit(limit);
-  for (const tool of ["claude-code", "codex", "grok"]) engine.setToolCap(tool, 1);
+  for (const tool of Object.keys(ADAPTERS)) engine.setToolCap(tool, 1);
   const repo = makeProduct(root);
   const productId = await engine.addProduct(repo);
   engine.setProductDelivery(productId, "local", true);
@@ -311,6 +313,16 @@ async function voting(scenario: Scenario = {}, limit = 3, limited = ["claude-cod
 const checkedFinding = (f: Awaited<ReturnType<typeof voting>>) => f.task().findings.find((finding) => finding.text === "The greeting is missing on the welcome page.")!;
 
 describe.concurrent("one vote per actual usable tool", () => {
+  it("gives Antigravity one independent vote alongside the three other ready tools", async () => {
+    const f = await fixture({ reviewer: "important" }, 4, undefined, undefined, true, true);
+    try {
+      await f.advance(f.delivery);
+      const finding = checkedFinding(f);
+      expect(new Set(independentVotes(finding.votes).map(vote => vote.toolId))).toEqual(new Set(["claude-code", "codex", "grok", "antigravity"]));
+      expect(f.fakes.openings("verifier")).toHaveLength(4);
+      expect(finding.status).toBe("fixed");
+    } finally { await f.engine.shutdown(); }
+  });
   for (const limit of [1, 3]) it(`does not turn Claude's lost place into a second Codex vote with ${limit} pool slots`, async () => {
     const f = await voting({ verifierByModel: { "gpt-6.1-sol": "not-a-bug", "grok-4.7": "real" } }, limit);
     const violations: unknown[] = [];

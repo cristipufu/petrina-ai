@@ -92,7 +92,7 @@ export function claudeReport(toolId: string, meta: unknown): UsageInfo | undefin
 /** The error for a turn that ended while the tool's latest report said it was out. */
 export function limitFromReport(profile: AgentProfile, info: UsageInfo, now: number): UsageLimited {
   const tool = ADAPTERS[profile.toolId]?.name ?? profile.toolId;
-  return new UsageLimited(profile.toolId, info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS, `${tool}'s ${kindWords(info.kind)} limit`, info.model);
+  return new UsageLimited(profile.toolId, info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS, `${tool}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, info.model);
 }
 
 /** "try again at 5:42 PM", or Claude's "resets 8:10pm": the next time the clock shows that. */

@@ -355,6 +355,8 @@ export function modelLabel(raw: string | undefined): string {
   const name = raw ?? "";
   if (!name.trim()) return "";
   if (GROK_47.has(name)) return "Grok 4.7";
+  if (name === "gemini-4-argon") return "Gemini 4 Argon";
+  if (name === "gemini-3.8-flash") return "Gemini 3.8 Flash";
   if (PLAIN_NAME.test(name)) return name;
   const claude = CLAUDE_ID.exec(name);
   if (claude) {

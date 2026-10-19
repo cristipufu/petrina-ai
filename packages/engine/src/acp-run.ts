@@ -5,7 +5,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
+import { inFamily, type AgentProfile, type TokenCounts, type TurnReport } from "@petrina/core";
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser } from "./browser.js";
@@ -16,6 +16,7 @@ import { grokTurnReport } from "./grok-usage.js";
 import { descendants, descendantsKnown } from "./process-tree.js";
 import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 import { AgentMessages, type AgentMessage } from "./agent-messages.js";
+import { antigravityReading, antigravityTurnReport, type AntigravityReading } from "./antigravity-report.js";
 
 export interface PermissionInfo {
   title: string;
@@ -338,6 +339,8 @@ interface RunState {
   quiet: boolean;
   settings: SessionSettings;
   latest?: UsageInfo;
+  /** Native account command output is never an agent message or part of the task conversation. */
+  accountText?: string;
   turn?: { changed: { model?: string; effort?: string }; rerouted: boolean; helpers: Set<string>; modelSeen?: string; next?: SessionSettings };
 }
 
@@ -406,6 +409,7 @@ async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: bo
 
 export class AgentRun {
   private notes: TurnNotes | undefined;
+  private accountBefore: AntigravityReading | undefined;
 
   private constructor(
     private readonly child: ChildProcess,
@@ -418,6 +422,7 @@ export class AgentRun {
     /** How an earlier conversation was reopened; unset for a new one. */
     readonly reopened?: "resume" | "load",
     readonly browser?: AgentBrowser,
+    private readonly callbacks?: RunCallbacks,
   ) {}
 
   /** What the tool confirmed the session runs on right now. */
@@ -454,6 +459,8 @@ export class AgentRun {
     onProcess?: (child: ChildProcess) => void;
     /** A login check only opens a conversation, never sends work or runs in a product's copy. */
     probe?: boolean;
+    /** Run the tool's native sign-in, only after an explicit coordinator action. */
+    authenticate?: string;
     /** When false, no browser is started. Identity checks do not look at a page. Defaults to true. */
     browser?: boolean;
     sandbox?: ClaudeSandbox;
@@ -493,12 +500,17 @@ export class AgentRun {
     browserReady.catch(() => undefined);
     let stopping: Promise<boolean> | undefined;
     let cleanupNoticeSent = false;
+    let disposableSession: string | undefined;
     const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= Promise.all([
       stopAll(child, graceMs, !options.probe),
       browserReady.then((browser) => browser?.close()).then(() => true, () => false),
-    ]).then((results) => {
+    ]).then(async (results) => {
       signal.removeEventListener("abort", abort);
-      const complete = results.every(Boolean);
+      let complete = results.every(Boolean);
+      if (complete && disposableSession && adapter.forgetProbe) {
+        try { await adapter.forgetProbe(disposableSession, env); }
+        catch { complete = false; }
+      }
       if (!complete && !cleanupNoticeSent) {
         cleanupNoticeSent = true;
         callbacks.onCleanupIncomplete?.();
@@ -570,6 +582,10 @@ export class AgentRun {
           return { outcome: { outcome: "selected", optionId: option.optionId } };
         },
         async sessionUpdate(params) {
+          if (state.accountText !== undefined) {
+            if (params.update.sessionUpdate === "agent_message_chunk" && params.update.content.type === "text") state.accountText = `${state.accountText}${params.update.content.text}`.slice(0, 32_000);
+            return;
+          }
           if (state.quiet) return;
           const update = params.update;
           switch (update.sessionUpdate) {
@@ -646,6 +662,7 @@ export class AgentRun {
         browserReady,
       ]);
       const sessionId = options.reopen;
+      if (options.authenticate) await connection.authenticate({ methodId: options.authenticate });
       // Keep the tool's session mode (Grok's auto mode) and add sandbox settings only for Claude Code.
       // The same metadata goes to new, resumed and loaded conversations.
       const sessionMeta: Record<string, unknown> = { ...adapter.sessionMeta, ...(options.sandbox && adapter.sandboxMeta ? adapter.sandboxMeta(options.sandbox) : {}) };
@@ -655,7 +672,11 @@ export class AgentRun {
       }
       const meta = Object.keys(sessionMeta).length ? { _meta: sessionMeta } : {};
       const mcpServers = browser ? [browser.mcp] : [];
-      if (sessionId === undefined) return connection.newSession({ cwd, mcpServers, ...meta });
+      if (sessionId === undefined) {
+        const opened = await connection.newSession({ cwd, mcpServers, ...meta });
+        if (options.probe) disposableSession = opened.sessionId;
+        return opened;
+      }
       const how = init.agentCapabilities?.sessionCapabilities?.resume ? "resume" : init.agentCapabilities?.loadSession ? "load" : undefined;
       if (!how) throw new ReopenFailed(`${adapter.name} cannot reopen conversations`);
       const limit = options.reopenTimeoutMs ?? REOPEN_TIMEOUT_MS;
@@ -711,14 +732,19 @@ export class AgentRun {
       const automatic = adapter.sessionMeta !== undefined || (adapter.options.mode !== undefined && (await set(adapter.options.mode, adapter.mode)));
       if (!automatic) callbacks.onLog?.(`${adapter.name}'s automatic safety mode is not available here, so it will ask you before acting`);
       readSettings(sessionOptions);
+      if (profile.toolId === "antigravity" && !options.probe && (state.settings.model !== profile.modelId || state.settings.effort !== profile.effort)) {
+        throw new Error(`Antigravity did not confirm ${profile.model} with ${profile.effort} thinking. Check the models available to your Google account.`);
+      }
       return session;
     })();
     ready.catch(() => undefined);
 
     try {
       const session = await Promise.race([ready, killed, deadline, stopped]);
+      const agent = new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how, await browserReady, callbacks);
+      if (profile.toolId === "antigravity" && !options.probe) agent.accountBefore = await Promise.race([agent.readAccountUsage(), killed, deadline, stopped]);
       clearTimeout(whole);
-      return new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how, await browserReady);
+      return agent;
     } catch (error) {
       clearTimeout(whole);
       // No agent left running behind a conversation that did not open, even one that ignores being stopped.
@@ -753,7 +779,11 @@ export class AgentRun {
     });
     exited.catch(() => undefined);
     try {
-      const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch((error: unknown) => { throw this.limitOf(error) ?? providerError(error); });
+      if (this.profile.toolId === "antigravity") { const out = this.rejected(); if (out) throw out; }
+      const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch(async (error: unknown) => {
+        if (this.profile.toolId === "antigravity") await this.readAccountUsage();
+        throw this.limitOf(error) ?? providerError(error);
+      });
       if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
         const out = this.rejected();
         if (out) {
@@ -761,7 +791,7 @@ export class AgentRun {
           throw out;
         }
       }
-      const report = reportOf(response, this.profile.toolId);
+      const report = this.profile.toolId === "antigravity" ? antigravityTurnReport(this.accountBefore, await this.readAccountUsage()) : reportOf(response, this.profile.toolId);
       return { stopReason: response.stopReason, text: this.state.text, ...(this.state.messages.streamed ? { streamed: true } : {}), ...(report ? { report } : {}), ...notes() };
     } finally {
       this.child.removeListener("exit", onExit);
@@ -770,6 +800,34 @@ export class AgentRun {
       this.state.turn = undefined;
       // Later turns run on whatever the tool switched the session to. A Codex reroute is per turn.
       if (turn.next) this.state.settings = turn.next;
+    }
+  }
+
+  /** Google's built-in account command: no AI call, no task message, no context-size estimates. */
+  async readAccountUsage(): Promise<AntigravityReading | undefined> {
+    if (this.profile.toolId !== "antigravity") return undefined;
+    this.state.accountText = "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    try {
+      await Promise.race([
+        this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text: "/usage" }] }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new Error("Antigravity did not report usage in time")); }, 20_000); }),
+      ]);
+      const reading = antigravityReading(this.state.accountText);
+      for (const info of reading.reports) this.callbacks?.onUsage?.(info);
+      this.accountBefore = reading;
+      // The caller compares its saved baseline with this snapshot.
+      return reading;
+    } catch (error) {
+      this.accountBefore = undefined;
+      this.callbacks?.onLog?.(error instanceof Error ? error.message : "Could not read Antigravity usage");
+      // Do not leave an unanswered command racing a later turn.
+      if (timedOut) await this.stop();
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+      delete this.state.accountText;
     }
   }
 
@@ -782,7 +840,7 @@ export class AgentRun {
 
   /** Claude Code said, during this turn, that it is out. */
   private rejected(): UsageLimited | undefined {
-    const info = this.state.latest;
+    const info = this.state.latest ?? this.accountBefore?.reports.find(report => report.status === "rejected" && (report.resetsAt ?? 0) > Date.now() && (!report.model || inFamily(this.profile, report.model)));
     return info?.status === "rejected" ? Object.assign(limitFromReport(this.profile, info, Date.now()), { said: this.state.text }) : undefined;
   }
 

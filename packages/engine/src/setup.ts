@@ -57,6 +57,8 @@ export async function checkAgentTool(options: {
   onGone?: (gone: Promise<void>) => void;
   /** Quitting Petrina also stops probes that have not finished checking yet. */
   signal?: AbortSignal;
+  /** Explicit coordinator sign-in only; ordinary checks never open the browser. */
+  authenticate?: string;
 }): Promise<CheckResult> {
   const { adapter } = options;
   if (!options.command) {
@@ -66,6 +68,7 @@ export async function checkAgentTool(options: {
       return { status: "not-installed", detail: `Petrina's connector for ${adapter.name} is missing. Run bun install in Petrina's folder.` };
     }
     if (!options.which(adapter.cli)) return { status: "not-installed" };
+    if (adapter.installed && !adapter.installed()) return { status: "not-installed", detail: `${adapter.name}'s connector is missing. Run bun run petrina antigravity install.` };
   }
   const limit = options.timeoutMs ?? CHECK_TIMEOUT_MS;
   const controller = new AbortController();
@@ -81,10 +84,12 @@ export async function checkAgentTool(options: {
   try {
     const agent = await AgentRun.start({
       probe: true,
+      ...(options.authenticate ? { authenticate: options.authenticate } : {}),
       profile: options.profile,
       cwd: options.cwd,
       env: options.env,
       signal: controller.signal,
+      startTimeoutMs: limit,
       ...(options.command ? { command: options.command } : {}),
       ...(options.onGone ? { onGone: options.onGone } : {}),
       callbacks: {

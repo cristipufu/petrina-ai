@@ -220,6 +220,7 @@ export class Engine extends Kernel implements Commands {
     clearTimeout(this.limitTimer);
     this.codexUsage?.stop();
     this.grokUsage?.stop();
+    this.antigravityUsage?.stop();
     clearTimeout(this.screenTimer);
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();

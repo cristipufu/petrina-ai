@@ -20,6 +20,7 @@ const PROVIDERS: Readonly<Record<Id, Provider>> = {
   codex: { id: "openai", label: "OpenAI" },
   grok: { id: "xai", label: "xAI" },
   gemini: { id: "google", label: "Google" },
+  antigravity: { id: "google", label: "Google" },
 };
 
 export const OTHER_PROVIDER: Provider = { id: "other", label: "Other" };

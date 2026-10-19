@@ -101,6 +101,7 @@ export function commandHelp(group?: string, verb?: string): string {
     "Use petrina <group> <operation> --help for named arguments.",
     "petrina mcp starts the stdio MCP connection; it never starts the engine by connecting.",
     "Legacy commands: state, do, serve, open.",
+    "Antigravity setup: petrina antigravity install; petrina antigravity login.",
     "Exit codes: 0 completed or accepted; 1 failed/disconnected; 2 invalid; 3 deadline; 4 missing/handled/unavailable; 5 changed/conflicting/superseded/lost continuity.",
   ].join("\n");
 }

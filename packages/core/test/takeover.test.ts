@@ -8,6 +8,7 @@ const state: Pick<State, "profiles" | "tools"> = {
     { id: "sol-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
     { id: "gem", toolId: "gemini", model: "Gemini", effort: "high" },
     { id: "grok-high", toolId: "grok", model: "Grok 4.7", modelId: "grok-4.7", effort: "high" },
+    { id: "flash-medium", toolId: "antigravity", model: "Gemini 3.8 Flash", modelId: "gemini-3.8-flash", effort: "medium" },
   ],
   tools: [
     { id: "claude-code", name: "Claude Code", command: [], status: "ready", models: [] },
@@ -44,6 +45,7 @@ describe("whether the coordinator can take over", () => {
   });
 
   it("says why not, in one line", () => {
+    expect(takeOverBlock(task({ agent: { roleId: "builder", profileId: "flash-medium", since: 0, step: 0 } }), state)).toBe("Antigravity's terminal cannot open this agent's conversation");
     expect(takeOverBlock(task({ agent: undefined }), state)).toBe(TAKE_OVER_WORDS.noAgent);
     expect(takeOverBlock(task({ state: "waiting", holdsSlot: false }), state)).toBe(TAKE_OVER_WORDS.noAgent);
     expect(takeOverBlock(task({ state: "needs-you", holdsSlot: false }), state)).toBe(TAKE_OVER_WORDS.noAgent);

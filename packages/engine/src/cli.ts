@@ -13,6 +13,11 @@ import { launch } from "./launch.js";
 import { browserCommand } from "./setup.js";
 import { coordinationCli } from "./coordination-cli.js";
 import { runMcp } from "./mcp.js";
+import { installAntigravity } from "./antigravity-runtime.js";
+import { checkAgentTool } from "./setup.js";
+import { ADAPTERS, ENGINE_PROFILES, findProgram } from "./tools.js";
+import { agentEnv } from "./env.js";
+import { mkdir } from "node:fs/promises";
 
 const home = process.env.PETRINA_HOME || join(homedir(), ".petrina");
 const ui = resolve(import.meta.dir, "../../../apps/desktop/dist");
@@ -60,6 +65,22 @@ else if (command === "app") await launch({ home, mode: "app", ...(existsSync(ui)
 else if (command === "open") await open(rest.includes("--dev"));
 else if (command === "state") console.log(JSON.stringify(await call("/api/state"), null, 2));
 else if (command === "do") console.log(JSON.stringify(await call("/api/action", { method: "POST", body: rest.join(" ") }), null, 2));
+else if (command === "antigravity") {
+  if (rest[0] === "install") {
+    await installAntigravity();
+    console.log("Google's Antigravity connector is installed. Sign in with: bun run petrina antigravity login");
+  } else if (rest[0] === "login") {
+    if (process.env.PETRINA_AGENT) throw new Error("Antigravity sign-in is for the coordinator.");
+    const cwd = join(home, "checks");
+    await mkdir(cwd, { recursive: true, mode: 0o700 });
+    console.log("Opening Google's sign-in. Finish in your browser, then use Check again in Agents.");
+    let gone: Promise<void> | undefined;
+    const result = await checkAgentTool({ adapter: ADAPTERS.antigravity!, profile: ENGINE_PROFILES.find(profile => profile.toolId === "antigravity")!, cwd, env: agentEnv(process.env), which: findProgram, authenticate: "oauth-personal", timeoutMs: 180_000, onGone: job => { gone = job; } });
+    await gone;
+    console.log(result.status === "ready" ? "Antigravity is signed in." : result.detail ?? `Antigravity is ${result.status}.`);
+    if (result.status !== "ready") process.exitCode = 1;
+  } else console.log("petrina antigravity install — install Google's official ACP connector\npetrina antigravity login — open Google sign-in for that connector");
+}
 else if (command === "mcp") {
   if (rest.includes("--help")) console.log("petrina mcp — connect a coding agent over MCP stdio. Discover named tools with tools/list. Uses the existing local connection; connecting never starts an engine. See docs/coordination.md for client configuration.");
   else await runMcp();

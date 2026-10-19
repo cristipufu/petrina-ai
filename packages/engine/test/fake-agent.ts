@@ -170,7 +170,7 @@ interface ConfigOption {
 // build and one review. With "--hold=<file>", the architect stops halfway through following a call for as long
 // as that file exists.
 const dir = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
-const tool = process.argv.find((arg) => arg.startsWith("--tool="))?.slice("--tool=".length) as "claude-code" | "codex" | "grok" | undefined;
+const tool = process.argv.find((arg) => arg.startsWith("--tool="))?.slice("--tool=".length) as "claude-code" | "codex" | "grok" | "antigravity" | undefined;
 const recordedTool = process.argv.find((arg) => arg.startsWith("--record-tool="))?.slice("--record-tool=".length) ?? tool ?? "";
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
@@ -273,7 +273,8 @@ const select = (id: string, values: string[], names: string[] = values): ConfigO
 const configOptions = (): ConfigOption[] => {
   if (tool === "codex") return [select("mode", ["read-only", "agent"]), select("model", ["gpt-6.1"]), { ...select("reasoning_effort", ["low", "medium", "high"]), currentValue: "medium" }];
   if (tool === "claude-code") return [select("mode", ["default", "auto"]), { ...select("model", ["opus", "sonnet"], ["Opus 5.5", "Sonnet 5.5"]), currentValue: "sonnet" }, { ...select("effort", ["low", "medium", "high", "xhigh"]), currentValue: "medium" }];
-  return [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol", "grok-4.7"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("mode", ["default", "auto", "agent"])];
+  if (tool === "antigravity") return [select("model", ["gemini-4-argon", "gemini-3.8-flash"], ["Gemini 4 Argon", "Gemini 3.8 Flash"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto_edit", "yolo"])];
+  return [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol", "grok-4.7", "gemini-4-argon", "gemini-3.8-flash"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto", "agent", "auto_edit"])];
 };
 
 /** A turn that only ends when the engine cancels it, or the engine goes away. */
@@ -1204,7 +1205,7 @@ acp
   .onRequest("session/set_config_option", (ctx) => {
     const session = sessions.get(ctx.params.sessionId)!;
     if (ctx.params.configId === "model") session.model = String(ctx.params.value);
-    if (ctx.params.configId === "effort" || ctx.params.configId === "reasoning_effort") session.effort = String(ctx.params.value);
+    if (["effort", "reasoning_effort", "thinking_level"].includes(ctx.params.configId)) session.effort = String(ctx.params.value);
     if (dir) appendFileSync(join(dir, "config.jsonl"), `${JSON.stringify({ session: ctx.params.sessionId, configId: ctx.params.configId, value: ctx.params.value })}\n`);
     const option = session.options.find((entry) => entry.id === ctx.params.configId);
     const value = (ctx.params as { value?: unknown }).value;
@@ -1217,6 +1218,16 @@ acp
     if (notLoggedIn) throw acp.RequestError.authRequired();
     const { sessionId } = ctx.params;
     const text = ctx.params.prompt.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+    // Like Google's native slash command: handled locally, never an AI prompt or turn.
+    if (text === "/usage") {
+      if (process.argv.includes("--usage-hang")) await new Promise(() => undefined);
+      const turns = sessions.get(sessionId)!.turns;
+      const argonReset = new Date(Date.now() + 7 * 86_400_000).toUTCString();
+      if (dir) appendFileSync(join(dir, "native-usage.jsonl"), `${JSON.stringify({ sessionId, pid: process.pid })}\n`);
+      const value = `### Session Usage\n- **Session total:** ${turns * 110} tokens (prompt: ${turns * 100}, completion: ${turns * 10})\n\n### Quota Limits\n- **Gemini Models**\n  - **Weekly Limit Remaining:** 81% remaining (resets Oct 26, 2026, 16:50 UTC)\n  - **Five Hour Limit Remaining:** 60% remaining (resets Oct 19, 2026, 21:50 UTC)\n- **Gemini 4 Argon**\n  - **Gemini 4 Argon Weekly Limit:** ${process.argv.includes("--argon-empty") ? 0 : 98}% remaining (resets ${argonReset})`;
+      await ctx.client.notify(acp.methods.client.session.update, { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: value } } });
+      return { stopReason: "end_turn" };
+    }
     sessions.get(sessionId)?.history.push({ sessionUpdate: "user_message_chunk", content: { type: "text", text } });
     const reply = await answer(sessionId, text, ctx.client).catch((error: Error & { stderr?: Buffer }) => {
       // Kept for whoever debugs a test: the engine only sees "Internal error".

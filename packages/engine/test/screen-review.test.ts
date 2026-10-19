@@ -20,9 +20,10 @@ async function fixture(role: "code reviewer" | "verifier", extra: Scenario = {},
   const repo = makeProduct(root);
   git(repo, "config", "branch.autoSetupMerge", "false");
   const data = join(root, "data");
-  const settings: EngineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], ...options };
+  const settings: EngineOptions = { agentCommand: profile => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(profile.toolId === "antigravity" ? ["--logged-out"] : [])], ...options };
   let engine = new Engine(data, settings);
   engine.setPoolPaused(true);
+  await engine.checkTools();
   const productId = await engine.addProduct(repo);
   engine.setProductDelivery(productId, "pull-request", true);
   const id = engine.addTask({ productId, title: "Check the Mac window" });

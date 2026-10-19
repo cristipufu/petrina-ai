@@ -32,7 +32,7 @@ const fresh = (name: string) => join(temp, `${name}-${(made += 1)}`);
  */
 type Behaviour = "ok" | "logged-out" | "not-logged-in" | "silent-login" | "wont-start" | "hang" | "stubborn" | "silent-stubborn";
 const agents = (tools: Partial<Record<CheckId, Behaviour>>, dir?: string): EngineOptions["agentCommand"] => (profile: AgentProfile) => {
-  const behaviour = tools[profile.toolId as CheckId] ?? (profile.toolId === "grok" ? "logged-out" : "ok");
+  const behaviour = tools[profile.toolId as CheckId] ?? (["grok", "antigravity"].includes(profile.toolId) ? "logged-out" : "ok");
   const flags = behaviour === "ok" ? [] : behaviour === "stubborn" ? ["--hang", "--stubborn"] : behaviour === "silent-stubborn" ? ["--silent-login", "--stubborn"] : [`--${behaviour}`];
   // Like the real Grok, which sends no login report: it signs in as a conversation opens, and refuses it logged out.
   if (profile.toolId === "grok" && !flags.includes("--silent-login")) flags.push("--silent-login");

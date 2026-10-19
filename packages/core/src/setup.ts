@@ -6,7 +6,7 @@
 import type { Id, InboxItem, State } from "./model.js";
 
 /** What Petrina checks: the agent tools, the GitHub CLI, and what Petrina itself needs. */
-export type CheckId = "claude-code" | "codex" | "grok" | "gh" | "git" | "node";
+export type CheckId = "claude-code" | "codex" | "grok" | "antigravity" | "gh" | "git" | "node";
 
 /** The two starter tools, in the order the squad prefers them; Grok joins once its check finds it (see agentTools). */
 export const AGENT_TOOLS = ["claude-code", "codex"] as const;
@@ -66,6 +66,7 @@ export const CHECK_NAMES: Record<CheckId, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   grok: "Grok",
+  antigravity: "Antigravity",
   gh: "GitHub CLI",
   git: "Git",
   node: "Node.js",
@@ -94,6 +95,7 @@ const GUIDES: Record<CheckId, { install: string; login?: string }> = {
   "claude-code": { install: "https://code.claude.com/docs/en/setup", login: "https://code.claude.com/docs/en/setup#authentication" },
   codex: { install: "https://developers.openai.com/codex/cli", login: "https://developers.openai.com/codex/auth" },
   grok: { install: "https://docs.x.ai/build/overview", login: "https://docs.x.ai/build/cli/reference" },
+  antigravity: { install: "https://antigravity.google/docs/cli/install/", login: "https://antigravity.google/docs/ide/extensions/zed" },
   gh: { install: "https://github.com/cli/cli#installation", login: "https://cli.github.com/manual/gh_auth_login" },
   git: { install: "https://git-scm.com/downloads" },
   node: { install: "https://nodejs.org/en/download" },
@@ -103,6 +105,7 @@ const INSTALL: Record<CheckId, PerPlatform> = {
   "claude-code": "npm install -g @anthropic-ai/claude-code",
   codex: "npm install -g @openai/codex",
   grok: "npm install -g @xai-official/grok",
+  antigravity: "bun run petrina antigravity install",
   gh: { darwin: "brew install gh", win32: "winget install --id GitHub.cli", linux: "sudo apt install gh" },
   git: { darwin: "xcode-select --install", win32: "winget install --id Git.Git -e", linux: "sudo apt install git" },
   node: { darwin: "brew install node", win32: "winget install OpenJS.NodeJS.LTS", linux: "sudo apt install nodejs npm" },
@@ -112,6 +115,7 @@ const LOGIN: Partial<Record<CheckId, string>> = {
   "claude-code": "claude auth login",
   codex: "codex login",
   grok: "grok login",
+  antigravity: "bun run petrina antigravity login",
   gh: "gh auth login",
 };
 
@@ -140,7 +144,7 @@ export function fixFor(id: CheckId, status: CheckStatus, platform: Platform): Fi
       return undefined;
     case "not-installed":
       return {
-        sentence: NEEDED_FOR[id] ? `${NEEDED_FOR[id]}, so install it by running this in ${terminal}, then come back to Petrina.` : `Install ${name} by running this in ${terminal}, then come back to Petrina.`,
+        sentence: id === "antigravity" ? `Install Antigravity CLI from the official guide, then run this in Petrina's folder to install Google's connector.` : NEEDED_FOR[id] ? `${NEEDED_FOR[id]}, so install it by running this in ${terminal}, then come back to Petrina.` : `Install ${name} by running this in ${terminal}, then come back to Petrina.`,
         command: pick(INSTALL[id], platform),
         guide: guides.install,
       };
@@ -154,7 +158,7 @@ export function fixFor(id: CheckId, status: CheckStatus, platform: Platform): Fi
 }
 
 /** The program behind each check, to see whether it runs at all. */
-const PROGRAM: Record<CheckId, string> = { "claude-code": "claude", codex: "codex", grok: "grok", gh: "gh", git: "git", node: "node" };
+const PROGRAM: Record<CheckId, string> = { "claude-code": "claude", codex: "codex", grok: "grok", antigravity: "agy", gh: "gh", git: "git", node: "node" };
 
 /** The fix shown on a Stuck item for a tool that would not start, when its check found nothing wrong. */
 export function wontStartFix(id: CheckId, platform: Platform): Fix {
@@ -178,8 +182,8 @@ const present = (status: CheckStatus) => status === "ready" || status === "unkno
  * found it installed. The squad can run a whole task on any one of them.
  */
 export function agentTools(checks: readonly ToolCheck[] | undefined): CheckId[] {
-  const grok = checks?.find((check) => check.id === "grok");
-  return [...AGENT_TOOLS, ...(grok && grok.status !== "not-installed" ? ["grok" as const] : [])];
+  const extras = (["grok", "antigravity"] as const).filter(id => checks?.some(check => check.id === id && check.status !== "not-installed"));
+  return [...AGENT_TOOLS, ...extras];
 }
 
 /**

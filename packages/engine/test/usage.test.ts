@@ -315,6 +315,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         engine.s.pool.limited = [
           { toolId: "codex", until: Date.now() + 3_600_000, reason: "Codex's usage limit" },
           { toolId: "grok", until: Date.now() + 3_600_000, reason: "Grok's rate limit" },
+          { toolId: "antigravity", until: Date.now() + 3_600_000, reason: "Antigravity's usage limit" },
         ];
       },
     });
@@ -323,7 +324,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         const task = run.find();
         return task.state === "waiting" && task.statusLine.startsWith("Waiting for usage") && task;
       }, "the task to wait for usage");
-      expect(waiting.statusLine).toMatch(/^Waiting for usage: Claude Code, Codex and Grok are out until \d\d:\d\d$/);
+      expect(waiting.statusLine).toMatch(/^Waiting for usage: Claude Code, Codex, Grok and Antigravity are out until \d\d:\d\d$/);
       expect(waiting.holdsSlot).toBe(false);
       expect(waiting.agent).toBeUndefined();
       const box = waiting.journey!.at(-1)!;
@@ -350,7 +351,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(lines(task).some((line) => line.includes("took over from"))).toBe(false);
       expect(lines(task)).toContain("Picked up where it left off");
       // Claude Code's limit ended and was dropped; Codex's and Grok's, set to last longer, are still there.
-      expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex", "grok"]);
+      expect(run.engine.getState().pool.limited?.map((limit) => limit.toolId)).toEqual(["codex", "grok", "antigravity"]);
       expect(task.journey!.filter((step) => step.roleId === "builder")).toEqual([expect.objectContaining({ id: boxId, startedAt, end: "done" })]);
       // Picking the step up after the wait is a retry, counted once, with nothing left owed.
       const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;

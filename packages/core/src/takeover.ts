@@ -74,6 +74,7 @@ export function takeOverBlock(task: Task, state: Pick<State, "profiles" | "tools
   if (agent.roleId === "release-manager") return TAKE_OVER_WORDS.releaseManager;
   if (task.helpers?.length) return TAKE_OVER_WORDS.several;
   const toolId = state.profiles.find((profile) => profile.id === agent.profileId)?.toolId;
+  if (toolId === "antigravity") return "Antigravity's terminal cannot open this agent's conversation";
   if (!toolId || !TAKE_OVER_TOOLS[toolId]) return TAKE_OVER_WORDS.unsupported;
   if (state.tools.find((tool) => tool.id === toolId)?.status !== "ready") return TAKE_OVER_WORDS.missing(toolName(toolId));
   const conversation = task.conversation;

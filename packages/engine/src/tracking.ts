@@ -76,6 +76,7 @@ export class Tracking {
     if (request.view === "analytics") {
       void this.refreshCodexLimits(CODEX_ON_PAGE_MS);
       this.k.readUsage("grok", CODEX_ON_PAGE_MS);
+      this.k.readUsage("antigravity", CODEX_ON_PAGE_MS);
     }
     return usageView(this.log, request, { now: Date.now(), state: this.k.activeState(), task: (id) => this.k.task(id), taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id) });
   }
@@ -368,6 +369,7 @@ export class Tracking {
     } finally {
       if (profile.toolId === "codex") void this.refreshCodexLimits(CODEX_AFTER_TURN_MS);
       if (profile.toolId === "grok") this.k.readUsage("grok", CODEX_AFTER_TURN_MS);
+      if (profile.toolId === "antigravity") this.k.readUsage("antigravity", CODEX_AFTER_TURN_MS);
     }
   }
 

@@ -146,6 +146,16 @@ So a tool is mostly configuration:
 
 A dedicated adapter is written only when a tool needs something ACP does not expose (for example reading usage limits). Codex's usage (`packages/engine/src/codex-usage.ts`) is one request to its app-server. Grok's account usage (`packages/engine/src/grok-usage.ts`) is an ACP initialization and its read-only billing extension, without opening a session or sending a prompt. Only the allowance percentage, period and reset time are retained. Both scheduling and Analytics share each tool's reader. Things to verify per tool before relying on them: model and effort selection through ACP, use of the user's existing login, and `session/resume` or `session/load` support.
 
+#### Google Antigravity
+
+Antigravity uses Google's native ACP distribution, pinned at 1.4.1 with its sibling harness. `petrina antigravity install` installs it explicitly; ordinary tool checks never download software. `petrina antigravity login` opens Google's personal-account sign-in. The connector keeps its own login, separately from the terminal CLI. Ready requires opening a session, without an AI prompt or browser sign-in during ordinary checks.
+
+Profiles offer Gemini 4 Argon and Gemini 3.8 Flash at medium or high thinking. The session must confirm both `model` and `thinking_level` before receiving work. Its `auto_edit` mode approves edits; command permissions still reach the coordinator. The ACP server does not expose the CLI's Auto classifier. It never receives the all-tools `yolo` mode. Native session resume preserves each participant's conversation. Terminal takeover stays unavailable because the CLI cannot open ACP session identifiers.
+
+The built-in `/usage` command is local, not an AI turn. It supplies quota groups and UTC reset times; Argon's separate quota applies to Argon, and Gemini's shared quota covers Flash (and Argon when no separate Argon bucket is reported). Limits for unavailable third-party models do not block these profiles. One throttled reader serves startup, work and Analytics, with failed reads retaining the last report and its age.
+
+Token accounting reads native session counters before and after each turn, subtracting the previous totals after resume. Thinking is included once in output and also recorded as its subset. The connector does not split cached from new input, so those fields stay unreported. Context-window usage updates are not token bills. Account-command output never enters task messages or agent history in the app. Reads are bounded and stop their harness, including on shutdown.
+
 ### Background browsers
 
 Every conversation opening (new, resume, load or replacement) attaches an engine-owned Playwright MCP browser through ACP. Bundled Chromium runs headlessly with isolated storage in a short temporary folder outside the working copy. Connector controls exclude personal-browser and desktop integrations; personal settings are untouched. A restarted agent is told its pages and browser logins are gone.

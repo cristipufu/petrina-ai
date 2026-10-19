@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { Engine } from "../src/engine.js";
-import { ENGINE_PROFILES } from "../src/tools.js";
+import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
 import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "./support.js";
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -20,14 +20,15 @@ describe("Stopping during startup", () => {
     });
     const pids = () => pidsIn(join(fakes.dir, "pids"));
     const checking = engine.checkTools();
+    const probeCount = Object.keys(ADAPTERS).length;
     try {
-      await waitFor(() => pids().filter(alive).length === 3, "the three startup probes");
+      await waitFor(() => pids().filter(alive).length === probeCount, "every startup probe");
       await engine.shutdown();
       await checking;
       expect(pids().filter(alive)).toEqual([]);
       // Nothing new starts after quitting, even if another check was requested meanwhile.
       await engine.checkTools();
-      expect(pids()).toHaveLength(3);
+      expect(pids()).toHaveLength(probeCount);
     } finally {
       await engine.shutdown();
       await checking;
