@@ -40,14 +40,19 @@ export class Driver {
   ) {}
 
   private testerCheckKey(task: MTask): string {
-    return JSON.stringify([stepKey(task), task.baseSha, task.handChanges, task.checks?.at, task.checks?.current,
-      task.repositories?.map((work) => [work.productId, work.baseSha, work.checks?.at, work.checks?.current]),
+    this.k.saveRepository(task);
+    // A shared task's active product changes while preparing/checking copies. Its
+    // readiness belongs to the complete set, never to that temporary projection.
+    const evidence = task.repositories
+      ? task.repositories.map((work) => [work.productId, work.baseSha, work.checks?.at, work.checks?.current])
+      : [[task.productId, task.baseSha, task.checks?.at, task.checks?.current]];
+    return JSON.stringify([stepKey(task), task.handChanges, evidence,
       this.k.s.products.filter((product) => product.id === task.productId || task.repositories?.some((work) => work.productId === product.id)).map((product) => [product.id, product.checks])]);
   }
 
   private testerNeedsChecks(task: MTask): boolean {
     const stage = task.plan?.stages[task.stageIndex];
-    return stage?.kind === "do" && stage.roleId === "tester" && !task.retest && task.conversation?.roleId !== "tester"
+    return stage?.kind === "do" && this.k.role(stage.roleId)?.result === "checks" && !task.retest && task.conversation?.roleId !== stage.roleId
       && this.preparedTesters.get(task.id) !== this.testerCheckKey(task);
   }
 
@@ -286,7 +291,7 @@ export class Driver {
         if (signal.aborted) throw new Aborted();
         const current = task();
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
-        if (stage?.roleId !== "tester") this.preparedTesters.delete(taskId);
+        if (!stage || this.k.role(stage.roleId)?.result !== "checks") this.preparedTesters.delete(taskId);
         // A restart can find the working copy detached by an interrupted commit hook. Put it back before
         // review or delivery reads that original starting version as the task's work.
         if (current.worktree && current.hooking) await this.recoverHook(current);

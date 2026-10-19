@@ -247,3 +247,26 @@ it("admits bounded check preparation while every model slot is occupied", async 
     task.state = "backlog";
   } finally { await engine.shutdown(); }
 });
+
+it("keeps shared check readiness independent of the active repository and invalidates changed evidence", async () => {
+  const root = tempDir("petrina-shared-check-readiness-");
+  roots.push(root);
+  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null });
+  engine.setPoolPaused(true);
+  try {
+    const productId = await engine.addProduct(makeProduct(root));
+    const task = engine.task(engine.addTask({ productId, title: "Shared readiness", backlog: true }))!;
+    task.repositories = [productId, "peer"].map((id, index) => ({ productId: id, delivery: "local", baseSha: `base-${id}`, checks: { at: 10 + index, current: true, results: [] }, completedStages: [] }));
+    engine.selectRepository(task, productId);
+    const first = engine["driver"]["testerCheckKey"](task);
+    engine.selectRepository(task, "peer");
+    expect(engine["driver"]["testerCheckKey"](task)).toBe(first);
+    task.checks!.at += 1;
+    expect(engine["driver"]["testerCheckKey"](task)).not.toBe(first);
+    const changed = engine["driver"]["testerCheckKey"](task);
+    engine.selectRepository(task, productId);
+    expect(engine["driver"]["testerCheckKey"](task)).toBe(changed);
+    task.handChanges = true;
+    expect(engine["driver"]["testerCheckKey"](task)).not.toBe(changed);
+  } finally { await engine.shutdown(); }
+});
