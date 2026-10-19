@@ -2,7 +2,7 @@ import { TaskStart } from "../TaskStart";
 // The task sheet's Plan tab: why this plan, its risk, and its stages, with who works on each.
 
 import { Check, ShieldCheck } from "lucide-react";
-import { reviewerAt, type RiskLevel, type Stage, type State, type Task } from "@petrina/core";
+import { MAX_REVIEW_ROUNDS, reviewerAt, type RiskLevel, type Stage, type State, type Task } from "@petrina/core";
 import { sim } from "../../engine";
 import { profileText, type Lookup } from "../../lib";
 import { ProfileText, RoleAvatar } from "../bits";
@@ -79,11 +79,12 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
                   <div className="head">
                     <span>{stage.title}</span>
                     {KIND_LABEL[stage.kind] && <span className="kind">{KIND_LABEL[stage.kind]}</span>}
-                    {stage.maxRounds && <span className="kind">Up to {stage.maxRounds} rounds</span>}
+                    {stage.kind === "review-chain" ? <span className="kind">{stage.maxRounds ?? 2} planned rounds</span> : stage.maxRounds && <span className="kind">Up to {stage.maxRounds} rounds</span>}
                     {rounds && rounds > 1 && <span className="kind num">Round {rounds}</span>}
                     {now && <span className="label running">Now</span>}
                     {past && <span className="sr-only">Done</span>}
                   </div>
+                  {stage.kind === "review-chain" && <p className="note">May continue to {MAX_REVIEW_ROUNDS} rounds while earlier Important findings are fixed. Without progress, you decide.</p>}
                   <div className={`who${stage.kind === "converge" || stage.kind === "review-chain" ? " stage-people" : ""}`}>
                     {stage.kind === "gate" ? (
                       <>
