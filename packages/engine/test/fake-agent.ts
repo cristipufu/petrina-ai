@@ -37,6 +37,8 @@ export interface Scenario {
   notes?: "work";
   /** The architect leaves product changes for the engine to save, in rounds and after a call. */
   architect?: "writes";
+  /** The second design brief changes a behavior so a resumed reviewer must receive it. */
+  reviseBrief?: boolean;
   /** Scheduling tests: each fresh agent waits for its own release file before answering. */
   controlled?: boolean;
   /**
@@ -173,7 +175,6 @@ const recordedTool = process.argv.find((arg) => arg.startsWith("--record-tool=")
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
-const brief = { summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [] };
 const scenario = (): Scenario => (dir && existsSync(join(dir, "scenario.json")) ? (JSON.parse(readFileSync(join(dir, "scenario.json"), "utf8")) as Scenario) : {});
 const mark = (name: string) => dir && writeFileSync(join(dir, name), String(Date.now()));
 const marked = (name: string) => !!dir && existsSync(join(dir, name));
@@ -759,6 +760,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         ],
       });
     case "architect": {
+      const revised = plan.reviseBrief && session.history.some((entry) => entry.sessionUpdate === "user_message_chunk" && entry.content.type === "text" && entry.content.text.includes("## Objections so far"));
+      const brief = { summary: "A greeting file.", forUsers: ["People see a greeting"], areas: [revised ? "Greeting, visible to everyone after the review" : "Greeting"], acceptance: ["A greeting file exists"], risks: [] };
       if (handedBack) return done({ ...brief, answers: [] }, terminal);
       // Asked again for objections it left out: answer those in its own name.
       if (text.includes("Your result block could not be used")) {

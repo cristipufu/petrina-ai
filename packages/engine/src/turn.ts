@@ -35,7 +35,9 @@ interface TurnOptions<T> {
   status?: string;
   check?: Check<T>;
   copy?: string;
-  resume?: { sessionId: string; toolId: Id; model: string };
+  resume?: { sessionId: string; toolId: Id; model: string; context?: import("@petrina/core").BuilderContext; knownSections?: readonly string[] };
+  /** Design participants use the same complete context packets as Builders, reducing unchanged background on return. */
+  designContext?: boolean;
   used?: (profileId: Id) => void;
   reviewerKey?: string;
   /** Parallel review work whose summary and clock this conversation is continuing. */
@@ -221,6 +223,7 @@ export class Turns {
     let again = saved && !reopen ? (same ? (same.briefed || roleId === "release-manager" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
     // Back to an earlier step's conversation, unless this step already has one of its own.
     const back = !saved && options.resume?.toolId === profile.toolId && options.resume.model === model ? options.resume : undefined;
+    if (!saved && options.resume && !back) this.k.log(task, "status", "Started a fresh conversation: the tool or model changed", roleId, profileId);
     const startedAt = same?.startedAt ?? Date.now();
     // Handed back by the coordinator: the note of what changed, until the agent hears it.
     const handback = same?.handback;
@@ -406,9 +409,10 @@ export class Turns {
       if (wentBack) {
         // Its job as it stands now and the context, from the same sections a fresh conversation gets.
         const givenSections = await withBackground();
-        const prepared = role.result === "build" ? await builderContext(this.k.dataDir, task as Task, role, run.sessionId, givenSections, task.builderSession?.sessionId === run.sessionId ? task.builderSession.context : undefined) : { sections: givenSections };
+        const previous = back?.context ?? (task.builderSession?.sessionId === run.sessionId ? task.builderSession.context : undefined);
+        const prepared = role.result === "build" || options.designContext ? await builderContext(this.k.dataDir, task as Task, role, run.sessionId, givenSections, previous, { design: options.designContext, knownSections: back?.knownSections }) : { sections: givenSections };
         const sections = prepared.sections;
-        if (task.conversation && role.result === "build") {
+        if (task.conversation && (role.result === "build" || options.designContext)) {
           if ("snapshot" in prepared && prepared.snapshot) task.conversation.context = prepared.snapshot;
           else delete task.conversation.context;
         }
@@ -443,7 +447,7 @@ export class Turns {
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt), refusal) });
         else if (where) sections.push({ title: forScreen ? WHERE_YOU_WERE_SCREEN : WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "", forScreen ? "screen" : "restart") });
-        if (role.result === "build" && task.conversation) {
+        if ((role.result === "build" || options.designContext) && task.conversation) {
           const prepared = await builderContext(this.k.dataDir, task as Task, role, run.sessionId, sections);
           if (prepared.snapshot) task.conversation.context = prepared.snapshot;
           else delete task.conversation.context;

@@ -356,7 +356,7 @@ export interface BuilderContext {
 }
 
 export interface ConversationNote {
-  /** Context actually supplied to this Builder, available if its harness compacts history. */
+  /** Context supplied to this participant, available if its harness compacts history. */
   context?: BuilderContext;
   repositoryCopies?: Readonly<Record<Id, string>>;
   /** The step: its stage (or the plan), the design round and the reviewer position. */
@@ -857,6 +857,8 @@ export interface Task {
   retest?: boolean;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
   builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext };
+  /** Separate completed design conversations per stage, participant and product. Never shared between author and reviewer. */
+  designSessions?: Readonly<Record<string, { scope: string; plannedProfileId: Id; profileId: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; briefDigest?: string }>>;
   /** The coordinator sent the delivery back with this note: the Guide keeper looks for what reviewers missed. */
   miss?: { note: string; at: number };
   /** How many times the coordinator sent a delivery back after every reviewer had passed it. */

@@ -1,4 +1,5 @@
 import { designWorkKey } from "./repositories.js";
+import { createHash } from "node:crypto";
 // Design convergence: the architect writes the brief and a design reviewer objects, round after round,
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
@@ -9,21 +10,49 @@ import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 
+const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+/** A return is valid only for the same role, profiles, request and approved product sources. */
+export function designConversationScope(task: Task, role: unknown, planned: unknown, actual: unknown): string {
+  return digest({ role, planned, actual, productId: task.productId, path: task.worktree, title: task.title, request: task.description, source: task.source, base: task.baseSha, copies: task.repositories?.map((work) => ({ productId: work.productId, path: work.worktree, base: work.baseSha, source: work.source })) });
+}
+
 export class Design {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
+
+  private participant(task: MTask, stage: MStage, side: "author" | "reviewer", roleId: Id, plannedId: Id) {
+    const key = JSON.stringify([stage.id, side, task.productId]);
+    const planned = structuredClone(this.k.profile(plannedId));
+    const prior = task.designSessions?.[key];
+    const valid = prior && prior.plannedProfileId === plannedId && prior.scope === designConversationScope(task as Task, this.k.role(roleId), planned, this.k.profile(prior.profileId));
+    if (prior && !valid && !task.conversation) this.k.log(task, "status", "Started a fresh design conversation: its role, profile, request or starting point changed", roleId, plannedId);
+    const resume = valid ? { ...prior, ...(side === "author" && task.brief && prior.briefDigest === digest(task.brief) ? { knownSections: ["Design brief"] } : {}) } : undefined;
+    let actual = planned;
+    return {
+      resume,
+      used: (id: Id) => { actual = structuredClone(this.k.profile(id)); },
+      remember: () => {
+        const note = task.conversation;
+        if (!note?.briefed || note.roleId !== roleId) return;
+        task.designSessions = { ...task.designSessions, [key]: { scope: designConversationScope(task as Task, note.role ?? this.k.role(roleId), planned, actual), plannedProfileId: plannedId, profileId: note.profileId, toolId: note.toolId, model: note.model, sessionId: note.sessionId, ...(note.context ? { context: note.context } : {}), ...(side === "author" ? { briefDigest: digest(task.brief) } : {}) } };
+      },
+    };
+  }
 
   async runConverge(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     if (followingCall(task as unknown as Task)) return this.followCall(task, stage, signal);
     const round = task.rounds[stage.id] ?? 1;
     if (task.sub === 0) {
       const profileId = stage.profileIds[0] ?? "opus-xhigh";
+      const participant = this.participant(task, stage, "author", stage.roleId, profileId);
       let by = profileId;
       // Every objection the architect is shown gets its answer: none is accepted or rejected by default.
       const due = task.objections.filter((objection) => objection.status === "open").map((objection) => objection.id);
       // Answers add up across repairs, so the architect can hand back just the ones it left out.
       const given = new Map<string, { id: string; status: "accepted" | "rejected"; answer: string }>();
       const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), BriefResult, signal, {
-        used: (id) => (by = id),
+        resume: participant.resume,
+        designContext: true,
+        used: (id) => { by = id; participant.used(id); },
         check: (value) => {
           for (const answer of value.answers) given.set(answer.id, answer);
           const missing = task.objections.filter((objection) => due.includes(objection.id) && !given.has(objection.id));
@@ -39,6 +68,7 @@ export class Design {
           objection.answer = answer.answer;
         }
       }
+      participant.remember();
       this.k.log(task, "done", round === 1 ? "Design brief ready" : "Answered every objection", stage.roleId, by);
       recordStepResult(task, { objections: task.objections.filter((objection) => due.includes(objection.id)) });
       endAgentStep(task, round === 1 ? { outcome: W.wroteBrief, reason: W.briefReady } : { outcome: W.answeredAll, reason: W.objectionsAnswered }, Date.now());
@@ -53,8 +83,10 @@ export class Design {
     }
     const reviewerRole = stage.reviewerRoleId ?? "design-reviewer";
     const reviewerProfile = stage.reviewerProfileIds?.[0] ?? "sol-xhigh";
+    const participant = this.participant(task, stage, "reviewer", reviewerRole, reviewerProfile);
     let reviewer = reviewerProfile;
-    const result = await this.turns.turn(task, reviewerRole, reviewerProfile, () => this.context.sectionsFor(task, reviewerRole), ObjectionsResult, signal, { used: (id) => (reviewer = id) });
+    const result = await this.turns.turn(task, reviewerRole, reviewerProfile, () => this.context.sectionsFor(task, reviewerRole), ObjectionsResult, signal, { resume: participant.resume, designContext: true, used: (id) => { reviewer = id; participant.used(id); } });
+    participant.remember();
     const before = task.objections.length;
     for (const objection of result.objections) {
       task.objections.push({ id: this.k.id(`${task.id}-obj`), round, text: objection.text, blocking: objection.blocking, raisedBy: reviewer, status: "open" });
@@ -110,13 +142,16 @@ export class Design {
   private async followCall(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue"> {
     const call = task.call!;
     const profileId = stage.profileIds[0] ?? "opus-xhigh";
+    const participant = this.participant(task, stage, "author", stage.roleId, profileId);
     let by = profileId;
     const revising = !task.objections.some((objection) => objection.status === "open");
     // Answers add up across repairs, so the architect can hand back just the ones it left out.
     const answers = new Map<Id, CallAnswer>();
     const result = await this.turns.turn(task, stage.roleId, profileId, () => this.context.sectionsFor(task, stage.roleId), BriefResult, signal, {
       status: CALL_WORDS.following,
-      used: (id) => (by = id),
+      resume: participant.resume,
+      designContext: true,
+      used: (id) => { by = id; participant.used(id); },
       check: (value) => {
         for (const answer of value.answers) answers.set(answer.id, answer);
         const missing = unanswered(task.objections as Task["objections"], call as DesignCall, [...answers.values()]);
@@ -126,6 +161,7 @@ export class Design {
     const sourcePointers = result.sourcePointers ?? task.brief?.sourcePointers;
     task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers?.length ? { sourcePointers } : {}) };
     task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as MTask["objections"];
+    participant.remember();
     recordStepResult(task, { objections: task.objections.filter((objection) => answers.has(objection.id) || call.open.includes(objection.id)) });
     this.k.log(task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, by);
     endAgentStep(task, { outcome: W.followed, reason: W.followsCall }, Date.now());
