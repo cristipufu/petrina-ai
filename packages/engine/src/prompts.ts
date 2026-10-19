@@ -47,7 +47,10 @@ export function proseOf(text: string): string {
   return text.replace(/```(?:petrina|json)\s*\n[\s\S]*?```/g, "").trim();
 }
 
+export const PREPARED_REVIEW = "Prepared review material";
+
 export interface PromptContext {
+  preparedReview?: boolean;
   task: Task;
   product: Product;
   role: Role;
@@ -152,6 +155,7 @@ Results that hand back notes, objections, a build, acceptance checks or findings
 }
 
 export function buildPrompt(ctx: PromptContext): string {
+  if (ctx.sections.some((section) => section.title === PREPARED_REVIEW)) ctx = { ...ctx, preparedReview: true };
   const { task, product, role, worktree, branch } = ctx;
   const contract = contractFor(role);
   const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
@@ -184,9 +188,10 @@ ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
  * already knows still holds, so it gets its job as it stands now and the context, without the introduction.
  */
 export function continuePrompt(ctx: PromptContext): string {
+  if (ctx.sections.some((section) => section.title === PREPARED_REVIEW)) ctx = { ...ctx, preparedReview: true };
   const { task } = ctx;
   const contract = contractFor(ctx.role);
-  const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
+  const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility" || section.title === "Current authoritative task context") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
   const sections = [...map, ...ctx.sections].map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
   return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}). What you learned before still holds; here is where things stand now.
 

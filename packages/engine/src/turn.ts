@@ -30,13 +30,19 @@ import { builderContext } from "./builder-context.js";
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
 type Given = () => Section[] | Promise<Section[]>;
+type ResumeConversation = { sessionId: string; toolId: Id; model: string; context?: import("@petrina/core").BuilderContext; knownSections?: readonly string[] };
+type ConversationOptions = {
+  resume?: ResumeConversation | ((profile: AgentProfile, role: Role) => ResumeConversation | undefined | Promise<ResumeConversation | undefined>);
+  reviewContext?: boolean;
+  started?: () => void;
+  completed?: (note: import("@petrina/core").ConversationNote, profile: AgentProfile, role: Role) => void;
+};
 
 /** `used` hears which profile worked each attempt: a stand-in when the planned one was out of usage. */
-interface TurnOptions<T> {
+interface TurnOptions<T> extends ConversationOptions {
   status?: string;
   check?: Check<T>;
   copy?: string;
-  resume?: { sessionId: string; toolId: Id; model: string; context?: import("@petrina/core").BuilderContext; knownSections?: readonly string[] };
   /** Design participants use the same complete context packets as Builders, reducing unchanged background on return. */
   designContext?: boolean;
   used?: (profileId: Id) => void;
@@ -228,8 +234,9 @@ export class Turns {
     const reopen = same && same.briefed && roleId !== "release-manager" && same.toolId === profile.toolId && same.model === model && (role.result !== "build" || !same.plannedProfileId || same.plannedProfileId === plannedId) ? same : undefined;
     let again = saved && !reopen ? (same ? (same.briefed || roleId === "release-manager" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
     // Back to an earlier step's conversation, unless this step already has one of its own.
-    const back = !saved && options.resume?.toolId === profile.toolId && options.resume.model === model ? options.resume : undefined;
-    if (!saved && options.resume && !back) this.k.log(scope, "status", "Started a fresh conversation: the tool or model changed", roleId, profileId);
+    const offered = typeof options.resume === "function" ? await options.resume(profile, role) : options.resume;
+    const back = !saved && offered?.toolId === profile.toolId && offered.model === model ? offered : undefined;
+    if (!saved && offered && !back) this.k.log(scope, "status", "Started a fresh conversation: the tool or model changed", roleId, profileId);
     const startedAt = same?.startedAt ?? Date.now();
     // Handed back by the coordinator: the note of what changed, until the agent hears it.
     const handback = same?.handback;
@@ -360,6 +367,7 @@ export class Turns {
     }
     opened ??= await this.inSandbox(profile, (sandbox) => start(undefined, sandbox));
     const { run } = opened;
+    options.started?.();
     this.k.runs.set(taskId, run);
     this.k.syncIdleSleep();
     this.k.readUsage(profile.toolId);
@@ -416,14 +424,14 @@ export class Turns {
         // Its job as it stands now and the context, from the same sections a fresh conversation gets.
         const givenSections = await withBackground();
         const previous = back?.context ?? (repository.builderSession?.sessionId === run.sessionId ? repository.builderSession.context : undefined);
-        const prepared = role.result === "build" || options.designContext ? await builderContext(this.k.dataDir, repositoryView(scope), role, run.sessionId, givenSections, previous, { design: options.designContext, knownSections: back?.knownSections }) : { sections: givenSections };
+        const prepared = role.result === "build" || options.designContext || options.reviewContext ? await builderContext(this.k.dataDir, repositoryView(scope), role, run.sessionId, givenSections, previous, { design: options.designContext, knownSections: back?.knownSections }) : { sections: givenSections };
         const sections = prepared.sections;
-        if (repository.conversation && (role.result === "build" || options.designContext)) {
+        if (repository.conversation && (role.result === "build" || options.designContext || options.reviewContext)) {
           if ("snapshot" in prepared && prepared.snapshot) repository.conversation.context = prepared.snapshot;
           else delete repository.conversation.context;
         }
         this.recordJourneyInput(scope, roleId, profileId, sections, "continued");
-        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) });
+        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) });
       } else if (picked) {
         // One line about the restart (or the hand back, or that it may now use the screen), then only what the conversation
         // has not heard: the answer to its open question, and messages still in line.
@@ -453,7 +461,7 @@ export class Turns {
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(scope, roleId, tookOver.id, startedAt), refusal) });
         else if (where) sections.push({ title: forScreen ? WHERE_YOU_WERE_SCREEN : WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "", forScreen ? "screen" : "restart") });
-        if ((role.result === "build" || options.designContext) && repository.conversation) {
+        if ((role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
           const prepared = await builderContext(this.k.dataDir, repositoryView(scope), role, run.sessionId, sections);
           if (prepared.snapshot) repository.conversation.context = prepared.snapshot;
           else delete repository.conversation.context;
@@ -480,7 +488,9 @@ export class Turns {
         this.k.commitNow();
         return granted;
       } : undefined;
-      return await this.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: !options.copy, ...(askScreen ? { askScreen } : {}) });
+      const result = await this.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: !options.copy, ...(askScreen ? { askScreen } : {}) });
+      if (repository.conversation) options.completed?.(repository.conversation, profile, role);
+      return result;
     } catch (error) {
       // Logged out in the middle of a step: the same fix as any other login problem.
       if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);
@@ -523,7 +533,7 @@ export class Turns {
     given: Given,
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string; key?: string; member?: string; agent?: ActiveAgent; refresh?: boolean } = {},
+    options: ConversationOptions & { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string; key?: string; member?: string; agent?: ActiveAgent; refresh?: boolean } = {},
   ): Promise<T> {
     const { task } = scope;
     if (!this.k.role(roleId) || !this.k.productOf(scope) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
@@ -604,7 +614,7 @@ export class Turns {
   }
 
   /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
-  private async attemptTogether<T>(scope: RepositoryContext, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { key: string; check?: Check<T>; member: string; plannedId: Id; took?: { from: string; words: string; refusal?: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
+  private async attemptTogether<T>(scope: RepositoryContext, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: ConversationOptions & { key: string; check?: Check<T>; member: string; plannedId: Id; took?: { from: string; words: string; refusal?: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
     const { task, work: repository } = scope;
     const roleId = role.id;
     const product = this.k.repositoryOf(scope);
@@ -636,13 +646,15 @@ export class Turns {
     this.k.commit();
     const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
     const command = this.k.options.agentCommand?.(profile);
-    const { run, off } = await this.inSandbox(profile, (sandbox) =>
+    const offered = typeof options.resume === "function" ? await options.resume(profile, role) : options.resume;
+    const start = (sessionId?: string) => this.inSandbox(profile, (sandbox) =>
       AgentRun.start({
         profile,
         ...(command ? { command } : {}),
         env: this.envFor(),
         ...(sandbox ? { sandbox } : {}),
         cwd: copy,
+        ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         browserRoot: join(this.k.dataDir, "browser-temp"),
         signal,
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
@@ -674,9 +686,22 @@ export class Turns {
         },
       }),
     ).catch(async (error: unknown) => {
-      if (signal.aborted) throw error;
+      if (signal.aborted || sessionId !== undefined) throw error;
       throw await this.tools.problem(profile.toolId, error);
     });
+    let opened: Awaited<ReturnType<typeof start>> | undefined;
+    if (offered) {
+      try { opened = await start(offered.sessionId); }
+      catch (error) {
+        if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
+        this.k.log(scope, "status", `Could not go back to its own review conversation (${error.message}), so it started fresh`, roleId, profileId);
+      }
+    }
+    opened ??= await start();
+    const { run, off } = opened;
+    options.started?.();
+    const wentBack = offered !== undefined && run.reopened !== undefined;
+    if (wentBack) this.k.log(scope, "status", "Went back to its own review conversation from the previous round", roleId, profileId);
     // Its group's record of it, shown in the header or among the helpers, says whether it is sandboxed.
     const sandbox = this.sandboxState(scope, off, roleId, profileId);
     if (options.agent) options.agent.sandbox = sandbox;
@@ -688,19 +713,22 @@ export class Turns {
     const head = await git.head(copy).catch(() => undefined);
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
-      const sections = [...await given(), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
+      const givenSections = [...await given(), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
       if (signal.aborted) throw new Aborted();
-      if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
-      this.recordJourneyInput(scope, roleId, profileId, sections, "fresh");
-      const opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections });
-      return await this.converse(scope, run, agent, opening, "first", role, profileId, schema, signal, {
+      if (options.took) givenSections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
+      const prepared = options.reviewContext ? await builderContext(this.k.dataDir, repositoryView(scope), role, run.sessionId, givenSections, wentBack ? offered?.context : undefined) : { sections: givenSections };
+      const sections = prepared.sections;
+      const note: import("@petrina/core").ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true, ...("snapshot" in prepared && prepared.snapshot ? { context: prepared.snapshot } : {}) };
+      this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh");
+      const opening = (wentBack ? continuePrompt : buildPrompt)({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections });
+      const result = await this.converse(scope, run, agent, opening, "first", role, profileId, schema, signal, {
         ...options,
         main: false,
         reviewKey: options.key,
         askScreen: (reason) => {
           // Each member keeps its own request. Only the first can be represented by task.screen;
           // the rest follow after it, without overwriting its conversation or permission.
-          const conversation = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
+          const conversation = structuredClone(note);
           task.hunt!.screenTurns = { ...task.hunt!.screenTurns, [options.member]: { reason, at: Date.now(), copy, conversation } };
           if (task.screen) this.k.log(scope, "status", SCREEN_WORDS.asked(reason), roleId, profileId);
           const granted = !task.screen && this.k.askScreen(task, roleId, profileId, reason, options.member);
@@ -709,6 +737,8 @@ export class Turns {
           return granted;
         },
       });
+      options.completed?.(note, profile, role);
+      return result;
     } catch (error) {
       if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);
       if (error instanceof UsageLimited && !signal.aborted && task.screen?.granted && task.screen.member === options.member) {

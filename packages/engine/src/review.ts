@@ -3,7 +3,7 @@ import { beginRepair, productsFor } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { assignedProducts, endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { assignedProducts, endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Id, type Role, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -17,6 +17,7 @@ import type { ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
 import { finishMessageGroup, routeMessages } from "./messages.js";
 import type { Updates } from "./update.js";
+import { prepareReviewInput, readReviewInput, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
 
 /**
  * Keep each dispute with who and why. Status is settled after every reviewer reports, so an objection
@@ -175,6 +176,7 @@ export class Reviews {
           delete work.reviewedTree;
         }
         if (this.checks.backToBuilder(scope, "before review")) return "continue";
+        this.forgetSessions(task, stage.id);
         // The same delivery decision used after final checks exhaust their builder returns.
         const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.gate === "delivery");
         task.stageIndex = delivery >= 0 ? delivery : task.plan!.stages.length - 1;
@@ -186,7 +188,11 @@ export class Reviews {
         return "stop";
       }
       if (task.repositories) task.activeProductId = task.leadProductId ?? task.repositories[0]!.productId;
-      task.hunt = { stageId: stage.id, round, reported: {}, findings: task.findings.length };
+      task.statusLine = "Preparing the review";
+      this.k.commit();
+      const input = await prepareReviewInput(this.k.dataDir, executionFor(task), await this.context.captureReview(executionFor(task)), signal);
+      signal.throwIfAborted();
+      task.hunt = { stageId: stage.id, round, reported: {}, findings: task.findings.length, input };
       this.k.commit();
       // Checks use their own bounded lane. Re-enter the driver to admit the first real reviewer.
       return "continue";
@@ -245,13 +251,67 @@ export class Reviews {
     this.k.commitNow();
   }
 
+  private forgetSessions(task: MTask, stageId: Id): void {
+    if (!task.reviewSessions) return;
+    delete task.reviewSessions[stageId];
+    if (!Object.keys(task.reviewSessions).length) delete task.reviewSessions;
+  }
+
+  /** A seat returns only to its own completed conversation, with unchanged role and approved scope. */
+  private participant(scope: RepositoryContext, stage: MStage, seat: Id, plannedId: Id) {
+    const { task } = scope;
+    const round = task.rounds[stage.id] ?? 1;
+    const planned = structuredClone(this.k.profile(plannedId));
+    return {
+      reviewContext: true,
+      resume: async (actual: AgentProfile, role: Role) => {
+        const prior = task.reviewSessions?.[stage.id]?.[seat];
+        if (!prior || prior.round >= round) return;
+        if (prior.plannedProfileId === plannedId && prior.profileId === actual.id && prior.scope === reviewScopeKey(scope, stage.id, seat, role, planned, actual)) {
+          if (await reviewContextIntact(prior.context)) return prior;
+          this.k.log(scope, "status", "Started a fresh review conversation: its saved context is unavailable", role.id, actual.id);
+          return;
+        }
+        this.k.log(scope, "status", "Started a fresh review conversation: its role, profile, request or starting point changed", role.id, actual.id);
+      },
+      started: () => {
+        // An interrupted parallel attempt starts fresh unless it saved a screen conversation.
+        // Never return to an older round's reference after that native session has begun new work.
+        const saved = task.reviewSessions?.[stage.id];
+        if (!saved?.[seat]) return;
+        delete saved[seat];
+        this.k.commitNow();
+      },
+      completed: (note: ConversationNote, actual: AgentProfile, role: Role) => {
+        task.reviewSessions = { ...task.reviewSessions, [stage.id]: {
+          ...task.reviewSessions?.[stage.id],
+          [seat]: { scope: reviewScopeKey(scope, stage.id, seat, role, planned, actual), round, plannedProfileId: plannedId, profileId: actual.id, toolId: note.toolId, model: note.model, sessionId: note.sessionId, ...(note.context ? { context: note.context } : {}) },
+        } };
+        this.k.commitNow();
+      },
+    };
+  }
+
+  private async input(task: MTask, signal: AbortSignal): Promise<ReviewInput> {
+    if (!task.hunt?.input) {
+      if (Object.keys(task.hunt?.reported ?? {}).length) throw new Error("The review's saved inputs are missing. Start this review again before continuing.");
+      const scope = executionFor(task);
+      const input = await prepareReviewInput(this.k.dataDir, scope, await this.context.captureReview(scope), signal);
+      signal.throwIfAborted();
+      task.hunt!.input = input;
+      this.k.commitNow();
+    }
+    return readReviewInput(task.hunt!.input!);
+  }
+
   /**
    * Every reviewer at once, each blind to what the others find this round, so they find things on their own.
    * A stage with one reviewer runs it as usual instead: it can pick up its conversation, or be taken over.
    */
   private async hunt(task: MTask, stage: MStage, reviewers: readonly { key: string; profileId: Id }[], signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
-    const check = (result: z.infer<typeof ReviewResult>) => checkReviewEvidence(task.findings, result, task);
+    const input = await this.input(task, signal);
+    const check = (result: z.infer<typeof ReviewResult>) => checkReviewEvidence(input.findings, result, task);
     const reported = (key: string) => {
       task.hunt = { ...task.hunt!, reported: { ...task.hunt!.reported, [key]: true } };
       this.k.commitNow();
@@ -259,8 +319,9 @@ export class Reviews {
     if (stage.profileIds.length === 1 && !task.repositories) {
       const { key, profileId } = reviewers[0]!;
       const roleId = reviewerAt(stage, Number(key));
+      const participant = this.participant(scope, stage, key, profileId);
       let by = profileId;
-      const result = await this.turns.turn(scope, roleId, profileId, () => this.context.sectionsFor(scope, roleId, undefined, undefined, `review-${key}`), ReviewResult, signal, { check, reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
+      const result = await this.turns.turn(scope, roleId, profileId, () => this.context.sectionsFor(scope, roleId, undefined, undefined, `review-${key}`, input), ReviewResult, signal, { ...participant, check, reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
       await this.applyReview(scope, stage, result, by, roleId, key);
       reported(key);
       return;
@@ -279,11 +340,12 @@ export class Reviews {
         work: async (copy, room, seat, onUsed, agent, continuing, signal) => {
           let by = profileId;
           const roleId = reviewerAt(stage, Number(key));
+          const participant = this.participant(scope, stage, key, profileId);
           const used = (id: Id) => { by = id; onUsed(id); };
-          const given = () => this.context.sectionsFor(scope, roleId, `review-${key}`, this.turns.repositoryCopies.get(copy));
+          const given = () => this.context.sectionsFor(scope, roleId, `review-${key}`, this.turns.repositoryCopies.get(copy), undefined, input);
           const result = continuing
-            ? await this.turns.turn(scope, roleId, profileId, given, ReviewResult, signal, { check, copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key })
-            : await this.turns.parallel(scope, roleId, profileId, copy, given, ReviewResult, signal, { check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, reviewerKey: key, agent, refresh: false });
+            ? await this.turns.turn(scope, roleId, profileId, given, ReviewResult, signal, { ...participant, check, copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key })
+            : await this.turns.parallel(scope, roleId, profileId, copy, given, ReviewResult, signal, { ...participant, check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, reviewerKey: key, agent, refresh: false });
           await this.applyReview(scope, stage, result, by, roleId, key);
           this.k.finishReviewWork(task, `reviewer:${key}`);
           reported(key);
@@ -512,6 +574,7 @@ export class Reviews {
    */
   private async vote(task: MTask, findings: Task["findings"], voters: readonly Id[], signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
+    const input = task.hunt?.input ? await this.input(task, signal) : undefined;
     const ids = new Set(findings.map((finding) => finding.id));
     // Keep each review position stable through model fallbacks and restarts.
     const planned = task.hunt?.voterProfiles ?? this.voters(task.plan!.stages[task.stageIndex]!);
@@ -529,7 +592,7 @@ export class Reviews {
         work: async (copy, room, seat, used, agent, continuing, signal) => {
           let by = seat;
           const missing = () => findings.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
-          const given = async () => [...await this.context.sectionsFor(scope, "verifier", key, this.turns.repositoryCopies.get(copy)), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }];
+          const given = async () => [...await this.context.sectionsFor(scope, "verifier", key, this.turns.repositoryCopies.get(copy), undefined, input), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }];
           const check = (value: z.infer<typeof VerifyResult>) => {
             const toolId = this.k.profile(by)!.toolId;
             for (const verdict of value.verdicts) {
@@ -609,10 +672,10 @@ export class Reviews {
     const signal = AbortSignal.any([parentSignal, stop.signal]);
     const root = this.k.repositoryOf(scope)!.path!;
     const folder = join(this.k.dataDir, "worktrees", scope.work.productId, `${task.id}.copies`);
-    const sha = await git.head(scope.work.worktree!);
+    const sha = task.hunt?.input?.heads[scope.work.productId] ?? await git.head(scope.work.worktree!);
 
     // Pin all repositories before any reviewer starts. Every peer receives its own complete map.
-    const versions = task.repositories ? await Promise.all(task.repositories.map(async (work) => ({ productId: work.productId, root: work.source!.product.path!, path: work.worktree!, sha: await git.head(work.worktree!) }))) : [];
+    const versions = task.repositories ? await Promise.all(task.repositories.map(async (work) => ({ productId: work.productId, root: work.source!.product.path!, path: work.worktree!, sha: task.hunt?.input?.heads[work.productId] ?? await git.head(work.worktree!) }))) : [];
     // Only saved screen conversations keep their copies; interrupted background peers start fresh.
     const keptCopies = () => Object.values(task.hunt?.screenTurns ?? {}).flatMap((entry) => [entry.copy, ...Object.values(entry.copies ?? {})]);
     await git.removeCopies(root, folder, keptCopies());
@@ -865,6 +928,7 @@ export class Reviews {
       task.rounds[stage.id] = round + 1;
       if (task.repositories) {
         if (beginRepair(this.k, task, "review", task.stageIndex)) return "continue";
+        this.forgetSessions(task, stage.id);
         // This decision is a delivery checkpoint. Approval must resume after it, not re-enter review.
         const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
         if (delivery < 0) throw new Error("The plan has no delivery check after review");
@@ -881,6 +945,7 @@ export class Reviews {
       this.k.commit();
       return "continue";
     }
+    this.forgetSessions(task, stage.id);
     task.stageIndex += 1;
     task.sub = 0;
     if (end.kind === "used up") {

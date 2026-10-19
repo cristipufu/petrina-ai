@@ -194,6 +194,17 @@ export interface TaskDesignState {
 /** Review evidence and convergence across the complete reviewer group. */
 export interface TaskReviewState {
   findings: readonly Finding[];
+  /** Completed conversations belong to one stage and reviewer seat, never to voters or peers. */
+  reviewSessions?: Readonly<Record<Id, Readonly<Record<Id, {
+    scope: string;
+    round: number;
+    plannedProfileId: Id;
+    profileId: Id;
+    toolId: Id;
+    model: string;
+    sessionId: string;
+    context?: BuilderContext;
+  }>>>>;
   /** A review round's parallel work so far, so a restart only redoes what had not finished. */
   hunt?: Hunt;
   /** Per review stage, how many Important findings were open at the end of each round: whether it still converges. */

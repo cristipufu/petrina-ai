@@ -22,6 +22,12 @@ Each design stage retains separate author and reviewer conversations, scoped to 
 
 Each participant has a complete current context packet to read after compaction, and each Journey node records the actual fresh or continued input. A restart retains both references and the current turn. Incompatible scopes start fresh with a reason; a tool that cannot reopen uses the existing explicit fresh-start path with full context. Usage replacements keep their own actual conversation when still selected in a later round. Conversations are never copied between participants.
 
+### Continued reviewer conversations
+
+The first code or security review starts fresh. Each reviewer seat saves its own completed conversation within that stage. Fix rounds recreate its detached copies at the same paths and reopen that conversation with current findings, Builder answers, check evidence and prepared comparisons. Unchanged request and brief sections are replaced by an immutable complete context packet, available after compaction. Journey inputs record exactly what was sent.
+
+A changed role, planned or actual profile, request or approved source starts a complete fresh review; an unavailable native session or context packet does too. Usage replacements retain only their own conversation when selected again. Completed references survive an engine restart, are cleared when the stage ends or the task is paused/cancelled, and never belong to another reviewer. Verifiers always start fresh.
+
 ### Continued Builder context
 
 After a supported return to the same Builder conversation, unchanged background sections can be replaced by a reference to an immutable complete context packet. The engine sends changed instructions, every current finding and complete failure-log references, and records exactly that input on the journey. The packet remains readable when a harness compacts its conversation; missing or altered packets, changed roles or sources, and fresh conversations receive full context.

@@ -11,6 +11,7 @@ import type { Kernel } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import { takeMessages } from "./messages.js";
 import { currentSourcePointers } from "./source-pointers.js";
+import type { ReviewInput } from "./review-context.js";
 
 export interface Section {
   title: string;
@@ -39,29 +40,26 @@ export class Context {
     private readonly currentChecks: (scope: RepositoryContext) => Promise<boolean> = async () => false,
   ) {}
 
-  async sectionsFor(scope: RepositoryContext, roleId: Id, member?: string, copies?: Readonly<Record<string, string>>, shownKey?: string): Promise<Section[]> {
+  async sectionsFor(scope: RepositoryContext, roleId: Id, member?: string, copies?: Readonly<Record<string, string>>, shownKey?: string, review?: ReviewInput): Promise<Section[]> {
     const { task, work: repository } = scope;
     const role = this.k.role(roleId);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
-    const points = reads.includes("guide-points") ? await this.guide.pendingPoints(scope) : [];
-    const currentChecks = reads.includes("check-results") && !!repository.checks?.results.length ? await this.currentChecks(scope) : false;
+    const points = !review && reads.includes("guide-points") ? await this.guide.pendingPoints(scope) : [];
+    const currentChecks = !review && reads.includes("check-results") && !!repository.checks?.results.length ? await this.currentChecks(scope) : false;
     const fromPlanning = task.plan?.stages.some((stage) => stage.kind === "converge") ? [] : task.sourcePointers ?? [];
     const references = role?.result === "brief" ? [...(task.brief?.sourcePointers ?? []), ...(task.sourcePointers ?? [])]
       : role?.result === "build" && !task.fixing ? task.brief?.sourcePointers ?? fromPlanning : [];
     const pointers = await currentSourcePointers(repositoryView(scope), references);
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
     takeMessages(task, member, Infinity);
-    const source = repository.source ? [{ title: "Approved starting point and delivery", body: workSummary({ ...repository.source, product: { ...repository.source.product, name: this.k.productOf(scope)?.name ?? repository.source.product.name } }) }] : [];
-    const map = task.repositories ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => [
-      work.source ? workSummary(work.source) : work.productId,
-      `Product id: ${work.productId}; copy: ${copies?.[work.productId] ?? work.worktree ?? "preparing"}; base version: ${work.baseSha ?? "not prepared"}; last completed review: ${work.reviewedSha ?? "none; inspect the full change"}`,
-      `Builder report: ${work.report?.summary ?? "not yet built"}. Checks: ${work.checks?.results.map((run) => `${run.name}: ${run.ok ? "passed" : "failed"}`).join(", ") || "Not run"}`,
-      `Review guide: use this product’s REVIEW.md at its saved base version.`,
-    ].join("\n")).join("\n\n") + `\n\n${role?.canEdit ? `You own only product ${repository.productId}. Read the other copies when needed; change only your own product. Return your own title, report and PR description.` : "Inspect every repository and the behaviour across them together."}\nFor every acceptance result and finding, explicitly return productIds naming every affected product. Unassigned items stay under Together for the coordinator. Passing separate suites cannot prove shared acceptance. For each lesson, return {productId, text} naming its product; unassigned lessons stay under Together and are never added to a repository automatically. Shared repairs require a separate answer from every affected builder and combined verification.` }] : [];
-    const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](scope, roleId, points, currentChecks))];
+    const source = review ? review.source : this.approvedSource(scope);
+    const rows = review ? review.products : this.productRows(scope);
+    const map = rows ? [{ title: "Complete approved product map and responsibility", body: rows.map((row) => `${row.beforeCopy}${copies?.[row.productId] ?? row.copy}${row.afterCopy}`).join("\n\n") + `\n\n${role?.canEdit ? `You own only product ${repository.productId}. Read the other copies when needed; change only your own product. Return your own title, report and PR description.` : "Inspect every repository and the behaviour across them together."}\nFor every acceptance result and finding, explicitly return productIds naming every affected product. Unassigned items stay under Together for the coordinator. Passing separate suites cannot prove shared acceptance. For each lesson, return {productId, text} naming its product; unassigned lessons stay under Together and are never added to a repository automatically. Shared repairs require a separate answer from every affected builder and combined verification.` }] : [];
+    const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => review && part !== "notes" ? review.parts[part] ?? [] : this.parts[part](scope, roleId, points, currentChecks))];
+    if (review?.material) sections.push(review.material);
     if (pointers.length) sections.push({ title: "Previously inspected source locations (verify independently)", body: `Navigation only: this incomplete selection can steer attention. It contains no recommendations or extra requirements. Verify the current code and inspect other areas as needed; the original request and approved brief remain authoritative.\n${pointers.map((pointer) => `- ${pointer.productId}: ${pointer.path} (source version ${pointer.revision})`).join("\n")}` });
     if (role?.result === "findings") {
-      const cards = openFollowUpCards(this.k.s.tasks as Task[], productsOn(task as Task));
+      const cards = review ? review.cards : openFollowUpCards(this.k.s.tasks as Task[], productsOn(task as Task));
       // shownKey records which cards this reviewer was shown. It is not a message seat:
       // using it as one leaves the coordinator's note queued and sends it as a second turn.
       const key = shownKey ?? member ?? roleId;
@@ -71,8 +69,35 @@ export class Context {
       task.shownFollowUps = shown;
       if (cards.length) sections.push({ title: "Open follow-up cards", body: `${cards.map((card) => `- ${card.id}: ${card.title}\n  ${card.problem}`).join("\n")}\nIf this is the same bug as one of these cards, set "sameBug" to that card's id. If it is none of them, set "sameBug" to "none".` });
     }
-    if (task.handedBack?.length) sections.push({ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}${entry.productId ? ` · ${task.repositories?.find((work) => work.productId === entry.productId)?.source?.product.name ?? entry.productId}` : ""}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") });
+    sections.push(...(review ? review.handedBack : this.handedBack(scope)));
     return sections;
+  }
+
+  /** Capture common facts once; messages remain live and are delivered per member. */
+  async captureReview(scope: RepositoryContext): Promise<ReviewInput> {
+    const points = await this.guide.pendingPoints(scope);
+    const currentChecks = !!scope.work.checks?.results.length && await this.currentChecks(scope);
+    const parts: ReviewInput["parts"] = {};
+    for (const part of ["brief", "guide-points", "report", "check-results", "findings"] as const) parts[part] = this.parts[part](scope, "code-reviewer", points, currentChecks);
+    return structuredClone({ parts, source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: scope.task.findings });
+  }
+
+  private approvedSource(scope: RepositoryContext): Section[] {
+    return scope.work.source ? [{ title: "Approved starting point and delivery", body: workSummary({ ...scope.work.source, product: { ...scope.work.source.product, name: this.k.productOf(scope)?.name ?? scope.work.source.product.name } }) }] : [];
+  }
+
+  private productRows(scope: RepositoryContext): ReviewInput["products"] {
+    return scope.task.repositories?.map((work) => ({
+      productId: work.productId,
+      beforeCopy: `${work.source ? workSummary(work.source) : work.productId}\nProduct id: ${work.productId}; copy: `,
+      copy: work.worktree ?? "preparing",
+      afterCopy: `; base version: ${work.baseSha ?? "not prepared"}; last completed review: ${work.reviewedSha ?? "none; inspect the full change"}\nBuilder report: ${work.report?.summary ?? "not yet built"}. Checks: ${work.checks?.results.map((run) => `${run.name}: ${run.ok ? "passed" : "failed"}`).join(", ") || "Not run"}\nReview guide: use this product’s REVIEW.md at its saved base version.`,
+    }));
+  }
+
+  private handedBack(scope: RepositoryContext): Section[] {
+    const { task } = scope;
+    return task.handedBack?.length ? [{ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}${entry.productId ? ` · ${task.repositories?.find((work) => work.productId === entry.productId)?.source?.product.name ?? entry.productId}` : ""}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") }] : [];
   }
 
   /**

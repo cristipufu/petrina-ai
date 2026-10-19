@@ -82,6 +82,10 @@ Reproduction evidence accompanies open findings to Builders and voters.
 
 Every reviewer in a round looks at the change at the same time, blind to what the others find; the same finding from a reviewer on another tool backs it. An Important finding no second tool has backed goes to a vote: one fresh agent per tool (the Verifier) says real, not a bug, a nit or pre-existing, all at once. It stands when at least half the voters say it is real; otherwise the most common other verdict settles it.
 
+Before any reviewer starts, the engine saves the round's brief, Builder reports, check evidence, earlier findings and follow-up cards as one immutable snapshot. Queued reviewers and interrupted rounds read that same snapshot after a restart; a faster peer's current-round report never enters their input or result-validation baseline. Coordinator messages remain live and reach each intended participant.
+
+The same preparation saves each product's base-version review guide and commit-specific full, incremental and port comparisons in private files. Reviewers receive file references rather than repeating Git discovery; Security reviewers and Verifiers retain full-change scope. Raw diffs stay out of task/window state. Detached copies use the snapshot's exact commits.
+
 ### Reviewer working copies
 
 Each reviewer and voter works in a copy of the change of its own (a detached worktree of the task's commit, with nothing installed, deleted when it finishes), so a test one runs or a checkout one makes never disturbs another or the task's copy. Each holds a slot of its own and starts when the pool and its tool allow, so a small pool takes turns; what each hands back is saved as it arrives, so a restart only redoes the rest.

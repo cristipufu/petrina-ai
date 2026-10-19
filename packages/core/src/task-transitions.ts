@@ -129,6 +129,7 @@ export function pauseTaskState(task: MutableTask, execution: Execution, now: num
   if (!["running", "needs-you", "waiting"].includes(task.state)) return false;
   task.state = "paused"; task.holdsSlot = false; task.statusLine = "Paused by you";
   delete task.agent; delete task.helpers; delete execution.conversation;
+  delete task.reviewSessions;
   stopTaskActivity(task); stopCheckProgress(task, now);
   return true;
 }
@@ -144,6 +145,7 @@ export function cancelTaskState(task: MutableTask, execution: Execution, now: nu
   task.state = "cancelled"; task.column = "done"; task.holdsSlot = false;
   task.finishedAt = now; task.statusLine = "Cancelled";
   delete task.agent; delete task.helpers; delete execution.conversation;
+  delete task.reviewSessions;
   stopTaskActivity(task); stopCheckProgress(task, now);
   endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, now);
 }

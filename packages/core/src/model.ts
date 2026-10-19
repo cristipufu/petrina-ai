@@ -613,6 +613,8 @@ export interface Lesson {
 export interface Hunt {
   stageId: Id;
   round: number;
+  /** Immutable round inputs and prepared repository evidence. Bodies stay outside live window state. */
+  input?: { file: string; digest: string; heads: Readonly<Record<Id, string>> };
   /** Per reviewer position in the stage, what it reported. */
   reported: Readonly<Record<Id, true>>;
   /** Each reviewer position’s verdict on repaired shared findings, settled only after everyone reports. */
