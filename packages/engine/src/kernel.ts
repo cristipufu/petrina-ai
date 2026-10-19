@@ -618,7 +618,7 @@ export abstract class Kernel {
     const stage = task.plan?.stages[task.stageIndex];
     const roleId = task.agent?.roleId ?? (stage?.kind === "converge" && task.sub > 0 ? stage.reviewerRoleId : stage?.roleId);
     const roleName = roleId ? this.role(roleId)?.name : undefined;
-    const origin = { stageTitle: stage?.title ?? "Planning", ...(stage ? { stageId: stage.id } : {}), ...(roleName ? { roleName } : {}), ...(kind ? { kind } : {}) };
+    const origin = { stageTitle: stage?.title ?? (task.startedAt === undefined ? "Before work started" : "Planning"), ...(stage ? { stageId: stage.id } : {}), ...(roleName ? { roleName } : {}), ...(kind ? { kind } : {}) };
     task.notes = [...(task.notes ?? []), { at: Date.now(), text, origin, ...(id ? { id } : {}) }];
   }
 

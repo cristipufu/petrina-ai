@@ -232,6 +232,14 @@ export class Turns {
     const forScreen = screen && !screen.heard ? screen : undefined;
     // Only the agent that has the screen is told it may use it.
     const screenWords = screen ? { reason: screen.reason } : mayAskScreen(role) ? ("ask" as const) : undefined;
+    if (!task.holdsSlot || this.k.profile(task.agent?.profileId ?? "")?.toolId !== profile.toolId) {
+      const waiting = this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : slotWait(this.k.activeState(), { taskId, toolId: profile.toolId });
+      if (waiting) {
+        this.k.pendingAgentAdmissions.set(taskId, { step, roleId, profileId });
+        throw new WaitingForUsage(waiting);
+      }
+    }
+    this.k.pendingAgentAdmissions.delete(taskId);
     task.stepAttempts = (task.stepAttempts ?? 0) + 1;
     // A step that starts fresh (a new step, after a pause, Try again) drops the old to-do item and starts its clock again.
     // After a restart, or with a stand-in taking over, both stay: the to-do item shows until the agent names its own.
@@ -244,14 +252,6 @@ export class Turns {
       task.stepClock = reviewWork.clock;
     } else task.stepClock = same && task.stepClock ? resumeClock(task.stepClock, Date.now()) : startClock(task as unknown as Task, roleId, Date.now());
 
-    if (!task.holdsSlot || this.k.profile(task.agent?.profileId ?? "")?.toolId !== profile.toolId) {
-      const waiting = this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : slotWait(this.k.activeState(), { taskId, toolId: profile.toolId });
-      if (waiting) {
-        this.k.pendingAgentAdmissions.set(taskId, { step, roleId, profileId });
-        throw new WaitingForUsage(waiting);
-      }
-    }
-    this.k.pendingAgentAdmissions.delete(taskId);
     task.agent = { roleId, profileId, since: Date.now(), step: 0, ...(options.reviewKey ? { reviewKey: options.reviewKey } : {}) };
     task.state = this.k.s.inbox.some((item) => item.taskId === taskId && item.blocking) ? "needs-you" : "running";
     task.holdsSlot = true;
