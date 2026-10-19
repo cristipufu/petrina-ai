@@ -266,6 +266,7 @@ export abstract class Kernel {
             this.schedule();
           },
           log: (text) => console.warn(`${new Date().toISOString()} ${text}`),
+          changed: () => this.commit(),
         })
       : undefined;
     const grokCommand = options.grokCommand === undefined ? (options.agentCommand ? undefined : ADAPTERS.grok!.command) : options.grokCommand;
@@ -274,6 +275,7 @@ export abstract class Kernel {
       env: () => agentEnv(process.env),
       record: (reports) => { for (const info of reports) this.recordUsage(info); this.schedule(); },
       log: (text) => console.warn(`${new Date().toISOString()} ${text}`),
+      changed: () => this.commit(),
     }) : undefined;
   }
 
@@ -455,11 +457,14 @@ export abstract class Kernel {
     // A terminal result must be in the archive before the window stops seeing its live body.
     if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
     const tasks = this.s.tasks.filter((task) => !finishedTask(task)) as Task[];
+    const usageReads: NonNullable<State["pool"]["usageReads"]> = Object.fromEntries(
+      ([["codex", this.codexUsage], ["grok", this.grokUsage]] as const).flatMap(([toolId, reader]) => reader?.snapshot() ? [[toolId, reader.snapshot()!]] : []),
+    );
     const dependencies = this.stopped ? [] : [...new Set([...this.s.inbox.map((item) => item.taskId), ...tasks.flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])].flatMap((id) => {
       const item = this.store.history.item(id);
       return item ? [item] : [];
     });
-    return { ...this.activeState(), tasks, history: { ...this.store.history.info(), ...(dependencies.length ? { dependencies } : {}) } };
+    return { ...this.activeState(), tasks, ...(Object.keys(usageReads).length ? { pool: { ...this.s.pool, usageReads } } : {}), history: { ...this.store.history.info(), ...(dependencies.length ? { dependencies } : {}) } };
   };
 
   historyPage = (request: HistoryQuery): HistoryPage => {

@@ -120,12 +120,13 @@ export interface CodexUsageOptions {
   record: (reports: UsageInfo[]) => void;
   /** The engine's log. */
   log: (text: string) => void;
+  changed?: () => void;
   timeoutMs?: number;
 }
 
 /** Reads Codex's usage for the engine, one read at a time, and says once per reason when it cannot. */
 export class CodexUsage extends UsageReader {
   constructor(options: CodexUsageOptions) {
-    super({ name: "Codex", record: options.record, log: options.log, read: (onProcess) => readCodexUsage({ command: options.command, env: options.env(), onProcess, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
+    super({ name: "Codex", record: options.record, log: options.log, ...(options.changed ? { changed: options.changed } : {}), read: (onProcess) => readCodexUsage({ command: options.command, env: options.env(), onProcess, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
   }
 }

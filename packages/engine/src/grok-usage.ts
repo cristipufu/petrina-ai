@@ -86,7 +86,7 @@ export async function readGrokUsage(options: ReadOptions): Promise<UsageInfo[]> 
 }
 
 export class GrokUsage extends UsageReader {
-  constructor(options: { command: readonly string[]; env: () => NodeJS.ProcessEnv; record: (reports: UsageInfo[]) => void; log: (text: string) => void; timeoutMs?: number }) {
-    super({ name: "Grok", record: options.record, log: options.log, read: (onProcess) => readGrokUsage({ command: options.command, env: options.env(), onProcess, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
+  constructor(options: { command: readonly string[]; env: () => NodeJS.ProcessEnv; record: (reports: UsageInfo[]) => void; log: (text: string) => void; changed?: () => void; timeoutMs?: number }) {
+    super({ name: "Grok", record: options.record, log: options.log, ...(options.changed ? { changed: options.changed } : {}), read: (onProcess) => readGrokUsage({ command: options.command, env: options.env(), onProcess, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
   }
 }

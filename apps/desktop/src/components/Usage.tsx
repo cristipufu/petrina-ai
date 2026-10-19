@@ -318,6 +318,8 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
                 <i className="tool-dot" style={{ width: 10, height: 10, borderRadius: 3, background: TOOL_COLORS[tool.id] ?? "var(--slate)" }} />
                 <strong>{tool.name}</strong>
               </div>
+              {state.pool.usageReads?.[tool.id]?.state === "reading" && <div className="muted small" role="status">Updating usage…</div>}
+              {state.pool.usageReads?.[tool.id]?.state === "unavailable" && <div className="muted small" role="status">Couldn’t refresh usage.{own.length ? " Showing the last report." : " No current reading is available."}</div>}
               {own.length === 0 && out.length === 0 && (
                 <div className="muted small">Not reported.{tool.id === "claude-code" ? " Claude Code reports its limits while it works." : tool.id === "codex" || tool.id === "grok" ? ` Petrina asks the installed ${tool.name} when this page opens.` : ""}</div>
               )}

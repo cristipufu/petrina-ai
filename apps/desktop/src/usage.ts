@@ -30,6 +30,8 @@ function midnight(): number {
 export function useUsage<R extends UsageRequest>(request: R | undefined, state: State): UsageViewFor<R> | undefined {
   const key = request ? JSON.stringify(request) : "";
   const version = state.work?.version ?? 0;
+  // Analytics stays useful while the squad is paused and no work-log entry changes its version.
+  const refreshMinute = request?.view === "analytics" ? Math.floor(state.now / 60_000) : 0;
   const [day, setDay] = useState(midnight);
   const [view, setView] = useState<{ key: string; value: UsageViewFor<R> }>();
 
@@ -56,7 +58,7 @@ export function useUsage<R extends UsageRequest>(request: R | undefined, state: 
       live = false;
     };
     // The request is identified by its key.
-  }, [key, version, day]);
+  }, [key, version, day, refreshMinute]);
 
   return request && view?.key === key ? view.value : undefined;
 }

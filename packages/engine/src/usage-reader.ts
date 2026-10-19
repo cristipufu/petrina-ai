@@ -1,5 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 import type { UsageInfo } from "./usage.js";
+import type { Pool } from "@petrina/core";
+
+type ReadStatus = NonNullable<Pool["usageReads"]>[string];
 
 /** One account reader shared by scheduling and Analytics. It never starts an AI turn. */
 export class UsageReader {
@@ -8,20 +11,26 @@ export class UsageReader {
   private failure: string | undefined;
   private stopped = false;
   private at = -Infinity;
+  private status: ReadStatus | undefined;
 
   constructor(private readonly options: {
     name: string;
     read: (onProcess: (child: ChildProcess) => void) => Promise<UsageInfo[]>;
     record: (reports: UsageInfo[]) => void;
     log: (text: string) => void;
+    changed?: () => void;
   }) {}
+
+  snapshot(): ReadStatus | undefined { return this.status; }
 
   refresh(gap = 0): Promise<void> {
     if (this.stopped) return Promise.resolve();
     if (this.reading) return this.reading;
     if (Date.now() - this.at < gap) return Promise.resolve();
     this.at = Date.now();
+    this.status = { at: this.at, state: "reading" };
     this.reading = this.read().finally(() => { this.reading = undefined; });
+    this.options.changed?.();
     return this.reading;
   }
 
@@ -30,12 +39,15 @@ export class UsageReader {
       const reports = await this.options.read((child) => { this.child = child; });
       this.failure = undefined;
       if (reports.length && !this.stopped) this.options.record(reports);
+      if (!this.stopped) this.status = { at: this.at, state: reports.length ? "reported" : "unavailable" };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       if (reason !== this.failure && !this.stopped) this.options.log(`Could not read ${this.options.name}'s usage (${reason}). Petrina goes by what ${this.options.name} says when a turn fails instead.`);
       this.failure = reason;
+      if (!this.stopped) this.status = { at: this.at, state: "unavailable" };
     } finally {
       this.child = undefined;
+      if (!this.stopped) this.options.changed?.();
     }
   }
 

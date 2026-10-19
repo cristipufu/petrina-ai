@@ -1111,6 +1111,8 @@ export interface Pool {
   toolCaps: Readonly<Record<Id, number>>;
   /** The latest report per tool and kind of limit. */
   usage?: readonly UsageReport[];
+  /** Account refresh attempts, separate from the age of the last successful usage report. */
+  usageReads?: Readonly<Record<Id, { at: number; state: "reading" | "reported" | "unavailable" }>>;
   /** Who is out of usage right now. Entries are dropped when their time has passed. */
   limited?: readonly UsageLimit[];
   /** "Agents may use the screen". Unset is Off. */

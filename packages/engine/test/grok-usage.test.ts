@@ -122,4 +122,19 @@ describe("Grok account usage", () => {
       await reading;
     } finally { engine.shutdown(); }
   });
+
+  it("shows failed account refreshes to the window without changing the last confirmed percentage or its age", async () => {
+    const fake = server(billing(57));
+    const engine = new Engine(join(fake.dir, "data"), { agentCommand: () => [], grokCommand: fake.command, toolPath: () => "/fake/tool" });
+    try {
+      await waitFor(() => engine.windowState().pool.usageReads?.grok?.state === "reported", "a confirmed account reading");
+      const report = engine.windowState().pool.usage!.find((entry) => entry.toolId === "grok")!;
+      writeFileSync(join(fake.dir, "billing.json"), JSON.stringify({ error: "Meter unavailable" }));
+      await engine.grokUsage!.refresh();
+      const pool = engine.windowState().pool;
+      expect(pool.usageReads?.grok?.state).toBe("unavailable");
+      expect(pool.usage!.find((entry) => entry.toolId === "grok")).toEqual(report);
+      expect(report.utilization).toBe(0.57);
+    } finally { await engine.shutdown(); }
+  });
 });
