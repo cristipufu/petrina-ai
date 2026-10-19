@@ -85,6 +85,11 @@ export const OPERATIONS = [
     task,
   ),
   op(
+    "task.conversation",
+    "Read recent recorded messages, optionally for one Journey node or message. Activity is hidden by default. The character budget bounds message text; up to 100 messages. Items have stable IDs, text offsets, content revisions and mayChange (null if unknown). Poll with ifRevision to skip unchanged text; upsert by message ID and revision. activeMessages identifies each unfinished participant's latest bubble, even outside the page: read a changed one with messageId. Cursor reads older messages, survives appends, and rejects changes to unread text. Full original evidence remains available with task.read.",
+    { ...task, nodeId: id.optional(), messageId: id.optional().describe("Read a specific message, for example an active peer whose text lies outside the recent page."), ...evidence, ifRevision: id.optional(), includeActivity: z.boolean().default(false) },
+  ),
+  op(
     "task.read",
     "Read recorded task detail, conversation, findings, design or queued messages in bounded text pages. Older missing evidence is unavailable.",
     { ...task, section: z.enum(["request", "conversation", "timeline", "findings", "design", "messages", "source", "error"]), ...evidence },

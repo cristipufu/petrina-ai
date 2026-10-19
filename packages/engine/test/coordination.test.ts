@@ -37,6 +37,56 @@ function fixture() {
   return { e, c, home, taskId, offer, inspect };
 }
 describe("focused coordination and durable decisions", () => {
+  it("reads bounded recent node messages and follows streaming peers by stable references", async () => {
+    const { e, c, taskId } = fixture();
+    const task = e.task(taskId)!;
+    task.journey = [
+      { id: "old", kind: "agent", roleId: "architect", profileId: "opus-high", startedAt: 1, endedAt: 2, round: 1, sub: 0 },
+      { id: "current", kind: "agent", roleId: "code-reviewer", profileId: "sol-high", startedAt: 3, round: 1, sub: 1 },
+    ];
+    task.session = [
+      { id: "history", from: "agent", at: 1, step: "old", text: "Old research ".repeat(5000) },
+      { id: "slow", from: "agent", at: 3, step: "current", profileId: "sol-high", text: "Checking" },
+      { id: "action", from: "activity", at: 4, step: "current", text: "Read files" },
+      { id: "peer", from: "agent", at: 5, step: "current", profileId: "grok-high", text: "A peer's longer message" },
+    ];
+    const args = { taskId, nodeId: "current", limit: 10 };
+    const recent = await c.call("task.conversation", args);
+    expect(recent.items).toEqual([expect.objectContaining({ id: "peer", text: "er message", offset: 13, total: 23, mayChange: true })]);
+    expect(JSON.stringify(recent)).not.toContain("Old research");
+    expect(recent.activeMessages).toHaveLength(2);
+    expect((await c.call("task.conversation", { ...args, ifRevision: recent.revision })).items).toEqual([]);
+    // The slow peer updates an earlier bubble while the later peer fills the entire page.
+    task.session[1]!.text = "Checking the nearby cases";
+    const update = await c.call("task.conversation", { ...args, ifRevision: recent.revision });
+    expect(update.unchanged).toBe(false);
+    expect(update.activeMessages).not.toEqual(recent.activeMessages);
+    const slow = await c.call("task.conversation", { taskId, nodeId: "current", messageId: "slow" });
+    expect(slow.items).toEqual([expect.objectContaining({ id: "slow", text: "Checking the nearby cases" })]);
+    task.session.push({ id: "new", from: "agent", at: 6, step: "current", profileId: "grok-high", text: "Finished" });
+    expect((await c.call("task.conversation", { ...args, cursor: recent.next })).outcome).toBe("completed");
+    expect((await c.call("task.conversation", { taskId, nodeId: "old", cursor: recent.next })).outcome).toBe("changed");
+    expect((await c.call("task.conversation", { taskId, nodeId: "missing" })).outcome).toBe("unavailable");
+    expect((await c.call("task.conversation", { taskId, nodeId: "old", messageId: "slow" })).outcome).toBe("unavailable");
+  });
+
+  it("pages every part of a long message despite appends, but rejects an edited unread prefix", async () => {
+    const { e, c, taskId } = fixture();
+    const task = e.task(taskId)!;
+    task.session = [{ id: "long", from: "agent", at: 1, text: "abcdefghijklmnopqrstuvwxyz" }];
+    const args = { taskId, limit: 8 };
+    const first = await c.call("task.conversation", args);
+    expect(first.items).toEqual([expect.objectContaining({ text: "stuvwxyz", offset: 18, mayChange: null })]);
+    task.session[0]!.text += " appended";
+    const second = await c.call("task.conversation", { ...args, cursor: first.next });
+    expect(second.items).toEqual([expect.objectContaining({ text: "klmnopqr", offset: 10 })]);
+    const third = await c.call("task.conversation", { ...args, cursor: second.next });
+    expect(third.items).toEqual([expect.objectContaining({ text: "cdefghij", offset: 2 })]);
+    expect((await c.call("task.conversation", { ...args, cursor: third.next })).items).toEqual([expect.objectContaining({ text: "ab", offset: 0 })]);
+    task.session[0]!.text = "edited prefix";
+    expect((await c.call("task.conversation", { ...args, cursor: first.next })).outcome).toBe("changed");
+  });
+
   it("bounds and filters lists before pagination, rejects changed continuations and keeps task queries small", async () => {
     const { e, c, taskId } = fixture();
     for (let i = 0; i < 130; i++) e.addTask({ productId: "product", title: `Work ${i}`, description: "x".repeat(8000) });

@@ -6,6 +6,7 @@ import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSt
 import type { Engine } from "./engine.js";
 import { operation } from "./operations.js";
 import { offeredLessons } from "./learnings.js";
+import { readConversation } from "./conversation-read.js";
 
 export type Outcome =
   | "completed"
@@ -324,6 +325,7 @@ export class Coordination {
         name,
       );
     if (name === "task.inspect") return { outcome: "completed", task: taskSummary(e, task!) };
+    if (name === "task.conversation") return readConversation(task!, a);
     if (name === "task.read")
       return readText(
         (
