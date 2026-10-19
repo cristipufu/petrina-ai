@@ -73,8 +73,8 @@ export class Context {
    */
   private notes(task: MTask): Section[] {
     const fromEarlier = (task.stepAttempts ?? 0) > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
-    const notes = (task.notes ?? []).filter((note) => !fromEarlier.some((said) => (note.id !== undefined && note.id === said.id) || note.text === said.text)).map((note) => `- ${note.text}`);
-    return notes.length ? [{ title: "The coordinator's notes on this task (follow them; where they conflict with the brief or each other, the latest wins)", body: notes.join("\n\n") }] : [];
+    const notes = (task.notes ?? []).filter((note) => !fromEarlier.some((said) => (note.id !== undefined && note.id === said.id) || note.text === said.text)).map((note) => `- ${note.origin ? `Recorded during “${note.origin.stageTitle}”${note.origin.roleName ? ` (${note.origin.roleName})` : ""}${note.origin.kind === "disagreement" ? ", at the coordinator's design call" : ""}:\n` : "Earlier note (original step not recorded):\n"}${note.text}`);
+    return notes.length ? [{ title: "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)", body: `Product decisions and constraints remain authoritative; the latest wins where they conflict. An instruction about what to revise or check in an earlier step applies to that work, not a smaller scope for your current assignment. Implement the complete approved request and brief; keep later product decisions. Do not infer new requirements from an earlier agent's interpretation.\n\n${notes.join("\n\n")}` }] : [];
   }
 
   private brief(task: MTask): Section[] {

@@ -611,8 +611,12 @@ export abstract class Kernel {
     return (others.find((entry) => entry.effort === profile.effort) ?? others[0])?.id ?? profileId;
   }
 
-  remember(task: MTask, text: string, id?: Id): void {
-    task.notes = [...(task.notes ?? []), { at: Date.now(), text, ...(id ? { id } : {}) }];
+  remember(task: MTask, text: string, id?: Id, kind?: InboxKind): void {
+    const stage = task.plan?.stages[task.stageIndex];
+    const roleId = task.agent?.roleId ?? (stage?.kind === "converge" && task.sub > 0 ? stage.reviewerRoleId : stage?.roleId);
+    const roleName = roleId ? this.role(roleId)?.name : undefined;
+    const origin = { stageTitle: stage?.title ?? "Planning", ...(stage ? { stageId: stage.id } : {}), ...(roleName ? { roleName } : {}), ...(kind ? { kind } : {}) };
+    task.notes = [...(task.notes ?? []), { at: Date.now(), text, origin, ...(id ? { id } : {}) }];
   }
 
   /** Keep what the coordinator said for the current step, until the step finishes. */

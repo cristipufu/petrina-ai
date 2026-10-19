@@ -1077,7 +1077,7 @@ export class Engine extends Kernel implements Commands {
     this.say(task, "you", note);
     endYouStep(task, call ? { outcome: W.madeCall, reason: W.yourCall, tone: "back" } : { outcome: W.changes, reason: W.changesAsked, tone: "back" }, Date.now());
     const id = this.id(task.id);
-    this.remember(task, note, id);
+    this.remember(task, note, id, item.kind);
     // The call reaches the architect in a section of its own; any other note goes to the next agent.
     if (!call) task.queued.push({ id, text: note, at: Date.now() });
     // The change request starts the next step: it is the first thing that step keeps (a call is kept on the task).

@@ -910,7 +910,7 @@ export interface Task {
   /** The destination was advanced locally; its push is a separate, possibly unfinished step. */
   localUpdate?: { branch: string; sha: string; pushed: boolean };
   /** Everything the coordinator said about this task, kept for every later agent (latest wins). */
-  notes?: readonly { at: number; text: string; id?: Id }[];
+  notes?: readonly { at: number; text: string; id?: Id; origin?: { stageId?: Id; stageTitle: string; roleName?: string; kind?: InboxKind } }[];
   /** What the coordinator said during the current step, in order. Cleared when the step finishes. */
   stepNotes?: readonly StepNote[];
   /** How many times the current step has started. */
