@@ -9,6 +9,7 @@ import { App } from '../src/App';
 import { JourneyEdge, JourneyList, spokenStep } from '../src/components/Journey';
 import { layoutJourney } from '../src/journeyLayout';
 import { deliveryText, lookup } from '../src/lib';
+import { repairedReviewFixture } from './reviewRoundFixture';
 
 let simulator: Simulator;
 const live = { link: 'live', desktop: false };
@@ -85,6 +86,27 @@ describe('the journey in the task sheet', () => {
   async function openTask(id: string) {
     await act(async () => host.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${id}"]`)!.click());
   }
+
+  it('shows fixed, reopened and new findings for the selected review round, with an honest total', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const fixture = repairedReviewFixture();
+    task.journey = fixture.steps;
+    task.findings = [...fixture.review.result!.findings!];
+    await mount(state);
+    await openTask(task.id);
+    await act(async () => host.querySelectorAll<HTMLElement>('.journey-list li')[2]!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect([...details.querySelectorAll('.journey-review-counts dt')].map((element) => element.textContent)).toEqual(['Fixed', 'Reopened', 'New']);
+    expect([...details.querySelectorAll('.journey-review-counts dd')].map((element) => element.textContent)).toEqual(['3', '4', '2']);
+    expect(details.querySelector('.journey-facts')?.textContent).toContain('6 important');
+    const groups = [...details.querySelectorAll('.journey-review-group')];
+    expect(groups.map((element) => element.querySelector('summary')?.textContent)).toEqual(['Reopened4', 'New2', 'Fixed3']);
+    expect(groups[0]?.textContent).toContain('A failing variant on the reviewed version');
+    expect(groups[1]?.textContent).toContain('new-1');
+    expect(groups[2]?.textContent).toContain('A focused repair for old-4');
+    expect(host.querySelectorAll('.journey-list li')[2]?.textContent).toContain('6 important');
+  });
 
   it.each(['builder', 'architect', 'code-reviewer', 'tester', 'verifier'])('keeps message and terminal controls in the active %s node across its tabs', async (roleId) => {
     const state = createDemoState(NOW);

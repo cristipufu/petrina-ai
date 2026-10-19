@@ -211,7 +211,8 @@ export class Reviews {
 
   /** What this round's reviewers raised, in plain counts. */
   private raised(task: MTask): string {
-    return findingCount(task.findings.slice(task.hunt?.findings ?? 0));
+    const recorded = openStep(task)?.result?.findings;
+    return findingCount(recorded ? recorded.filter((finding) => finding.status === "open") : task.findings.slice(task.hunt?.findings ?? 0));
   }
 
   /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */

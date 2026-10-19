@@ -256,6 +256,8 @@ Only Right now shows a rough time left, and only while an agent works. It needs 
 
 ### Journey
 
+Completed code and security reviews show the findings fixed, reopened and newly raised in that round, with counts and the individual reports grouped below. Fixed means an earlier Builder fix stayed closed through this review; a Builder's handoff alone is a claim, not an independent review. Earlier findings that simply remain open and findings dismissed as not a bug have their own groups when present. Each result uses that round's recorded evidence, so later reviews do not rewrite it. The canvas total includes new and reopened unresolved findings, matching the handoff to verification. Older incomplete records say when the fixed count was not recorded.
+
 The middle column always shows the task's complete chronological journey: the steps it actually went through, in order, then the steps its plan still has ahead. There is one canvas view, with no grouped overview. A quiet dotted background supports navigation without changing the task and node colours. The wider right panel initially shows the task's Overview; Plan, Design, Review and Session remain accessible there.
 
 Automated checks show every check in that run, with pending, running and completed results, and elapsed time for checks that have started. Several product checks can run at the same time; repository hooks wait their turn. The task’s status names the checks currently running.

@@ -11,6 +11,8 @@ import { TimelineList } from "./Timeline";
 import { StepConversation } from "./Session";
 import { FindingItem } from "./sheet/ReviewTab";
 import { ObjectionItem } from "./sheet/DesignTab";
+import { reviewOutcome, reviewRoundGroups } from "../reviewRound";
+import { ReviewRoundFindings } from "./ReviewRoundFindings";
 
 // ── Words ───────────────────────────────────────────────────────────────────────────────
 
@@ -64,8 +66,9 @@ function toolLine(node: JourneyNode, find: Lookup): string | undefined {
 }
 
 /** The last line of a box: its time and how it ended, or what it is doing now. Your steps say it in two short lines. */
-function footLine(node: JourneyNode, now: number): string {
+function footLine(node: JourneyNode, now: number, find: Lookup): string {
   const time = timeOf(node, now);
+  const outcome = reviewOutcome(node, find.role(node.roleId));
   if (node.kind === "you") {
     if (node.state === "you") return ["Waiting for you", time ? `${time} so far` : undefined].filter(Boolean).join("\n");
     if (node.state === "next" || node.state === "ahead") return node.state === "next" ? "Next" : "";
@@ -80,7 +83,7 @@ function footLine(node: JourneyNode, now: number): string {
     case "you":
       return [elapsed(time), node.live].filter(Boolean).join(" · ");
     default:
-      return [elapsed(time), node.outcome].filter(Boolean).join(" · ");
+      return [elapsed(time), outcome].filter(Boolean).join(" · ");
   }
 }
 
@@ -130,7 +133,8 @@ export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: 
   if (node.kind === "wait" && node.waitsOn?.length) parts.push(`Waits for ${quoteTitles(node.waitsOn.map((entry) => entry.title))}`);
   const time = timeOf(node, now);
   if (time) parts.push(node.kind === "you" ? (node.endedAt === undefined ? `Waiting ${time} so far` : `Waited ${time}`) : node.endedAt === undefined ? `${time} elapsed so far` : `${time} elapsed`);
-  if (node.outcome) parts.push(node.outcome);
+  const outcome = reviewOutcome(node, find.role(node.roleId));
+  if (outcome) parts.push(outcome);
   else if (node.live && node.state !== "ahead") parts.push(node.live);
   if (node.reason) parts.push(`Moved on: ${node.reason}`);
   for (const ask of node.asks) parts.push(`${askKind(ask)}: ${ask.title}. ${askOutcome(ask)}`);
@@ -518,6 +522,8 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
   const handedOn = nextAgent?.agentInputs?.flatMap((input) => input.sections.map((section) => section.body)).join("\n") ?? "";
   const findings = node.result?.findings ?? (role?.result === "findings" && nextAgent
     ? task.findings.filter((finding) => nextAgent.fixing && nextAgent.findingIds?.includes(finding.id) || checkingThisRound && handedOn.includes(`[${finding.id}]`)) : undefined);
+  const reviewGroups = useMemo(() => role?.result === "findings" ? reviewRoundGroups(node, task.journey ?? []) : undefined, [role?.result, node, task.journey]);
+  const outcome = reviewOutcome(node, role);
   const given = node.agentInputs?.flatMap((input) => input.sections.map((section) => section.body)).join("\n") ?? "";
   const objections = node.result?.objections ?? (role?.result === "objections" && ownStep
     ? task.objections.filter((objection) => objection.round === ownStep.round && (node.team ?? [node.profileId]).includes(objection.raisedBy))
@@ -628,10 +634,10 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
               <dd className="num">{node.kind === "you" ? time : `${time}, including any pauses and waiting`}</dd>
             </>
           )}
-          {(node.outcome || node.live) && (
+          {(outcome || node.live) && (
             <>
-              <dt>{node.outcome ? "Outcome" : "Now"}</dt>
-              <dd>{node.outcome ?? node.live}</dd>
+              <dt>{outcome ? "Outcome" : "Now"}</dt>
+              <dd>{outcome ?? node.live}</dd>
             </>
           )}
           {node.reason && (
@@ -708,7 +714,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
         </div>
       )}
 
-      {findings !== undefined && <div className="journey-context">
+      {reviewGroups ? <ReviewRoundFindings groups={reviewGroups} find={find} {...(onOpen ? { onOpen } : {})} /> : findings !== undefined && <div className="journey-context">
         <h4>Findings from this step</h4>
         {findings.length ? <><p className="note">{node.result?.findings ? "As recorded when this step handed back its result." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
       </div>}
@@ -924,7 +930,7 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
           ...(node?.roleId && find.role(node.roleId) ? { role: find.role(node.roleId)! } : {}),
           ...(item.kind === "start" ? { text: start } : item.kind === "end" ? { text: view.end?.text ?? "", endState: view.end?.state ?? "done" } : item.kind === "rest" ? { text: view.rest ?? "" } : {}),
           ...(node && toolLine(node, find) ? { tool: toolLine(node, find)! } : {}),
-          foot: node ? footLine(node, state.now) : "",
+          foot: node ? footLine(node, state.now, find) : "",
           asks: (node?.asks ?? []).map((ask) => ({ id: ask.id, label: `${askKind(ask)} · ${duration(ask.at, ask.endedAt ?? state.now)}`, title: ask.title, outcome: askOutcome(ask), open: ask.endedAt === undefined })),
           width: item.width,
           height: item.height,
