@@ -1,3 +1,4 @@
+import { blockingDependencies, clearTaskStep, finishTaskStep, stopTaskActivity } from "@petrina/core";
 import { executionFor, executionOf, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
 import * as library from "@petrina/core";
 // The engine's shared state and the few operations every part of it uses: lookups, the timeline and
@@ -25,7 +26,7 @@ import { stepBack } from "./roles.js";
 import { recoverBrowserTemps } from "./browser.js";
 
 /** Repository execution fields cannot be read or written on the runtime task. */
-export type MTask = DeepMutable<Omit<Task, Exclude<library.RepositoryField, "productId" | "delivery" | "workChoice">>>;
+export type MTask = DeepMutable<library.TaskState>;
 
 export type MState = Omit<DeepMutable<State>, "tasks"> & { tasks: MTask[] };
 
@@ -491,7 +492,7 @@ export abstract class Kernel {
 
   /** The tasks this one still waits for. */
   blockers(task: MTask): MTask[] {
-    return (task.after ?? []).map((id) => this.task(id)).filter((other): other is MTask => !!other && library.blocksDependents(other));
+    return blockingDependencies(task, (id) => this.task(id));
   }
 
   /** The step the coordinator drove finished: its review chain runs again from the first reviewer, without using up a round. */
@@ -633,17 +634,16 @@ export abstract class Kernel {
   finishStep(target: MTask | RepositoryContext): void {
     const scope = executionOf(target);
     const { task, work: repository } = scope;
-    if (task.stepClock && repository.stepAttempts === 1) task.steps = [...(task.steps ?? []), stepRecord(task.stepClock, Date.now())].slice(-MAX_STEP_RECORDS);
-    this.clearStep(scope);
+    finishTaskStep(task, repository, Date.now());
+    this.pendingAgentAdmissions.delete(task.id);
+    this.releaseScreen(task);
   }
 
   /** The next step starts clean: nothing said in this one, no conversation, no to-do item, no clock. */
   clearStep(target: MTask | RepositoryContext): void {
     const scope = executionOf(target);
     const { task, work: repository } = scope;
-    delete task.stepNotes;
-    delete repository.stepAttempts;
-    delete repository.conversation;
+    clearTaskStep(task, repository);
     this.releaseScreen(task);
     this.stopStep(task);
   }
@@ -783,14 +783,7 @@ export abstract class Kernel {
   /** The step stops before handing back its result: its to-do item and clock go, and it starts fresh next time. */
   stopStep(task: MTask): void {
     this.pendingAgentAdmissions.delete(task.id);
-    delete task.todo;
-    delete task.stepClock;
-    for (const work of Object.values(task.hunt?.work ?? {})) {
-      delete work.todo;
-      delete work.activity;
-      delete work.clock;
-      delete work.waiting;
-    }
+    stopTaskActivity(task);
   }
 
   /** The agent stops working on the step for a while (it waits for the coordinator or for usage): the wait is not working time. */

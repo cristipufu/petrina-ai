@@ -213,7 +213,6 @@ function queuedTask(spec: Spec, priority: number, now: number, products: readonl
     queued: [],
     objections: [],
     findings: [],
-    prAge: 0,
   };
 }
 
@@ -323,6 +322,7 @@ function shiftOpen(open: SimOpenWork, delta: number): SimOpenWork {
     turns: open.turns.map(([taskId, turn]) => [taskId, { ...turn, startedAt: turn.startedAt + delta, ...(turn.waitingSince !== undefined ? { waitingSince: turn.waitingSince + delta } : {}) }]),
     stages: open.stages.map(([taskId, stage]) => [taskId, { ...stage, startedAt: stage.startedAt + delta }]),
     runs: open.runs,
+    pullRequests: open.pullRequests,
   };
 }
 
@@ -349,7 +349,7 @@ class DemoBuilder {
   readonly tasks: Task[] = [];
   readonly inbox: InboxItem[] = [];
   readonly log: MemoryWorkLog;
-  private open: SimOpenWork = { turns: [], stages: [], runs: [] };
+  private open: SimOpenWork = { turns: [], stages: [], runs: [], pullRequests: [] };
 
   constructor(readonly now: number, readonly since: number) {
     this.log = new MemoryWorkLog(since);
@@ -360,7 +360,7 @@ class DemoBuilder {
     this.tasks.push(shifted.task);
     this.inbox.push(...shifted.inbox);
     this.log.absorb(shifted.log);
-    this.open = { turns: [...this.open.turns, ...shifted.open.turns], stages: [...this.open.stages, ...shifted.open.stages], runs: [...this.open.runs, ...shifted.open.runs] };
+    this.open = { turns: [...this.open.turns, ...shifted.open.turns], stages: [...this.open.stages, ...shifted.open.stages], runs: [...this.open.runs, ...shifted.open.runs], pullRequests: [...this.open.pullRequests, ...shifted.open.pullRequests] };
     return shifted.task;
   }
 
@@ -434,7 +434,7 @@ function addHistory(builder: DemoBuilder, products: readonly Product[], quirks: 
         const sim = new Simulator({ ...baseState(placed.task.timeline.at(-1)?.at ?? 0, [placed.task]), products: [...products, REMOVED] }, { log: placed.log, open: placed.open, quirks });
         sim.cancel(id);
         placed.task = sim.getState().tasks[0]!;
-        placed.open = { turns: [], stages: [], runs: [] };
+        placed.open = { turns: [], stages: [], runs: [], pullRequests: [] };
       }
       const endAt = today.getTime() - daysAgo * DAY + (10 + k * 3) * 60 * MINUTE + ((index * 37) % 50) * MINUTE;
       // One task straddles the moment tracking began.
@@ -768,7 +768,7 @@ export function createFirstRunDemo(now: number): Demo {
     },
     triggers: DEMO_TRIGGERS,
     log: new MemoryWorkLog(now),
-    open: { turns: [], stages: [], runs: [] },
+    open: { turns: [], stages: [], runs: [], pullRequests: [] },
     quirks: {},
   };
 }

@@ -30,3 +30,5 @@ export * from "./follow-ups.js";
 export * from "./repositories.js";
 
 export * from "./combine-backlog.js";
+
+export * from "./task-transitions.js";

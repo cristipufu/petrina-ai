@@ -273,7 +273,7 @@ describe("The work log of a real engine", () => {
     const started = (id: string, productId: string): Task => ({
       id, productId, title: id, description: "", area: id, kind: "chore", priority: 0, held: false, state: "done", column: "done", holdsSlot: false, approvePlan: false,
       delivery: "local", approveDelivery: false, stageIndex: 2, rounds: {}, sub: 0, fixing: false, statusLine: "", createdAt: 1, startedAt: 2, finishedAt: 3,
-      timeline: [], session: [], queued: [], objections: [], findings: [], prAge: 0,
+      timeline: [], session: [], queued: [], objections: [], findings: [],
     });
     store.save({
       now: 1, seq: 7, products: [{ id: "alive", name: "Alive", repo: "acme/alive", tone: "blue" }], roles: [], tools: [], profiles: [],

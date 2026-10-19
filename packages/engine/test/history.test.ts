@@ -18,7 +18,7 @@ function task(number: number, changes: Partial<Task> = {}): Task {
     held: false, state: "done", column: "done", holdsSlot: false, approvePlan: false, delivery: "local", approveDelivery: false,
     stageIndex: 1, rounds: {}, sub: 0, fixing: false, statusLine: "Delivered", createdAt: number, finishedAt: 100 + Math.floor(number / 3),
     timeline: [], session: [{ id: `line-${number}`, at: number, from: "agent", text: "A large conversation is only read on demand." }],
-    queued: [], objections: [], findings: [], prAge: 0, ...changes,
+    queued: [], objections: [], findings: [], ...changes,
   };
 }
 

@@ -375,7 +375,6 @@ export class FollowUps {
       queued: [],
       objections: [],
       findings: [],
-      prAge: 0,
       followUp: { reports: create.reports.map(stored) },
     };
     this.k.s.tasks.push(task);

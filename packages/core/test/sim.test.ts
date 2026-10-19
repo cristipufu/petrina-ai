@@ -1121,6 +1121,20 @@ describe("The coordinator's call on a design disagreement", () => {
 describe("Removing the working copies of finished tasks", () => {
   const texts = (entry: Task) => entry.timeline.map((line) => line.text);
 
+  it("keeps simulated GitHub progress outside tasks when handing the demo to another simulator", () => {
+    const sim = new Simulator(emptyState(), { prMergeAfter: 10 });
+    const id = sim.addTask({ productId: "p", title: "Tidy the footer", kind: "chore", delivery: "pull-request" });
+    runUntil(sim, () => task(sim, id).state === "pr-open");
+    sim.tick(); sim.tick();
+    const open = sim.openWork();
+    expect(open.pullRequests.find(([taskId]) => taskId === id)?.[1]).toBeGreaterThanOrEqual(2);
+    expect("prAge" in task(sim, id)).toBe(false);
+    const resumed = new Simulator(sim.getState(), { prMergeAfter: 10, open, log: sim.workLog });
+    for (let tick = open.pullRequests.find(([taskId]) => taskId === id)![1]; tick <= 10; tick++) resumed.tick();
+    expect(task(resumed, id).pr?.state).toBe("merged");
+    expect(resumed.openWork().pullRequests.some(([taskId]) => taskId === id)).toBe(false);
+  });
+
   it("removes a delivered task's copy right after the delivery, and keeps one with an open pull request until it is merged", () => {
     const log = new MemoryWorkLog(0);
     const sim = new Simulator(emptyState(), { prMergeAfter: 3, log });

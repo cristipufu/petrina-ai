@@ -39,6 +39,7 @@ export function detachRepositoryState(task: MTask): void {
 
 /** Convert saved cursor-based tasks once, before any operation can observe them. */
 export function restoreRepositoryState(task: DeepMutable<Task>): void {
+  Reflect.deleteProperty(task, "prAge");
   const work = task.repositories
     ? task.repositories.find((entry) => entry.productId === task.activeProductId)
     : task.repository ??= { productId: task.productId, delivery: task.delivery, ...(task.workChoice ? { workChoice: task.workChoice } : {}) };

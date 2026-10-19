@@ -39,7 +39,6 @@ function task(id: string, productId: string, extra: Partial<Task> = {}): Task {
     queued: [],
     objections: [],
     findings: [],
-    prAge: 0,
     plan: {
       plannerProfileId: "sonnet-medium",
       rationale: "",

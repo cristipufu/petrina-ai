@@ -1,3 +1,4 @@
+import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, validateTaskDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 // The real engine: the same state the UI renders, driven by real agents over ACP.
 // Each task runs as one async driver while it holds a pool slot. Gates and the queue
@@ -19,13 +20,11 @@ import { routeMessages } from "./messages.js";
 import {
   AFTER_WORDS,
   CALL_WORDS,
-  endOpenStep,
   endYouStep,
   fixFor,
   isGuide,
   JOURNEY_WORDS as W,
   legacyJourney,
-  openStep,
   productHistory,
   productName,
   queueNeighbour,
@@ -506,72 +505,28 @@ export class Engine extends Kernel implements Commands {
   }
 
   private createTask(input: NewTaskInput): Id {
-    // Sent again after its reply was lost: the task is already there.
     const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId)?.id ?? this.store.history.byClient(input.clientId) : undefined;
     if (known) return known;
-    const selected = input.worksOn ?? (input.productId ? [{ productId: input.productId, startFrom: input.startFrom ?? { kind: "default" as const }, delivery: input.delivery ?? this.s.products.find((entry) => entry.id === input.productId)?.delivery ?? "pull-request" }] : []);
-    if (selected.some((choice) => !this.s.products.some((entry) => entry.id === choice.productId))) throw new Error("Choose registered products.");
-    if (new Set(selected.map((entry) => entry.productId)).size !== selected.length) throw new Error("Choose each product once.");
-    const product = this.s.products.find((entry) => entry.id === (selected[0]?.productId ?? input.productId));
-    if (!product && input.productId) throw new Error("Unknown product");
-    const title = input.title.trim();
-    if (!title) throw new Error("A task needs a title");
+    // Validate before reserving ids, so a refused request changes no state.
+    const task = createTaskState(input, this.s.products, { id: "", timelineId: "", now: Date.now(), priority: queueOf(this.s.tasks).length });
     let id = this.id("task");
     while (this.tracking.taskIdTaken(id)) id = this.id("task");
-    const queue = queueOf(this.s.tasks as Task[]);
-    this.s.tasks.push({
-      id,
-      productId: product?.id ?? "",
-      selectedProducts: [...selected],
-      explicitStart: input.startFrom !== undefined || (selected.length > 0 && input.worksOn !== undefined),
-      workChoice: selected[0] ?? { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" },
-      repository: {
-        productId: product?.id ?? "",
-        delivery: selected[0]?.delivery ?? input.delivery ?? product?.delivery ?? "pull-request",
-        workChoice: selected[0] ?? { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" },
-        ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
-      },
-      title,
-      description: input.description?.trim() ?? "",
-      area: title.toLowerCase(),
-      kind: input.kind ?? "feature",
-      priority: input.position === "top" ? -1 : queue.length,
-      held: false,
-      state: input.backlog ? "backlog" : "queued",
-      column: input.backlog ? "backlog" : "queue",
-      holdsSlot: false,
-      approvePlan: selected.length !== 1 || (input.approvePlan ?? false),
-      delivery: selected[0]?.delivery ?? input.delivery ?? product?.delivery ?? "pull-request",
-      approveDelivery: input.approveDelivery ?? selected.some((choice) => this.s.products.find((entry) => entry.id === choice.productId)?.approveDelivery !== false),
-      stageIndex: -1,
-      rounds: {},
-      sub: 0,
-      fixing: false,
-      statusLine: input.backlog ? "Review the request before queueing" : "In the queue",
-      createdAt: Date.now(),
-      timeline: [{ id: this.id(id), at: Date.now(), text: input.backlog ? "You added it to the backlog" : "You added it to the queue", tone: "you" }],
-      session: [],
-      queued: [],
-      objections: [],
-      findings: [],
-      prAge: 0,
-      ...(input.clientId ? { clientId: input.clientId } : {}),
-    });
+    task.id = id; task.timeline[0]!.id = this.id(id);
+    const product = this.s.products.find((entry) => entry.id === task.productId);
+    task.repository = {
+      productId: task.productId, delivery: task.delivery, workChoice: structuredClone(task.workChoice),
+      ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
+    };
+    this.s.tasks.push(task);
     this.renumberQueue();
     return id;
   }
 
   queueTask(taskId: Id): void {
     const task = this.task(taskId);
-    if (!task || task.state !== "backlog") return;
-    task.priority = queueOf(this.s.tasks).length;
-    task.state = "queued";
-    task.column = "queue";
-    task.held = false;
-    task.statusLine = "In the queue";
+    if (!task || !queueBacklogTask(task, queueOf(this.s.tasks).length)) return;
     this.log(task, "you", "You reviewed the request and queued it for work");
-    this.commitNow();
-    this.schedule();
+    this.commitNow(); this.schedule();
   }
 
   combineBacklog(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
@@ -608,17 +563,9 @@ export class Engine extends Kernel implements Commands {
       const combined = this.task(id)!;
       try { renameSync(temp, join(captures, id)); }
       catch (error) { this.s.tasks = this.s.tasks.filter((task) => task.id !== id); throw error; }
-      combined.combinedFrom = sources.map((task) => ({ id: task.id, title: task.title }));
-      const reports = sources.flatMap((task) => task.followUp?.reports ?? []);
-      if (reports.length) combined.followUp = { reports };
       if (images.length) combined.session.push({ id: this.id(id), from: "system", at: Date.now(), text: "Pictures from the original requests", images });
-      for (const source of sources) {
-        source.combinedInto = id;
-        source.state = "cancelled"; source.column = "done"; source.holdsSlot = false; source.finishedAt = Date.now();
-        source.statusLine = `Combined into ${combined.title}`;
-        this.log(source, "you", source.statusLine);
-      }
-      combined.state = "queued"; combined.column = "queue"; combined.priority = queueOf(this.s.tasks).length; combined.statusLine = "In the queue";
+      combineBacklogTasks(combined, sources, Date.now(), queueOf(this.s.tasks).length);
+      for (const source of sources) this.log(source, "you", source.statusLine);
       this.log(combined, "you", `You combined ${sources.length} backlog requests and queued them as one task`);
       this.renumberQueue();
       this.commitNow();
@@ -630,11 +577,7 @@ export class Engine extends Kernel implements Commands {
 
   moveToBacklog(taskId: Id): void {
     const task = this.task(taskId);
-    if (!task || task.state !== "queued" || task.startedAt !== undefined) return;
-    task.state = "backlog";
-    task.column = "backlog";
-    task.held = false;
-    task.statusLine = "Review the request before queueing";
+    if (!task || !returnQueuedTaskToBacklog(task)) return;
     this.renumberQueue();
     this.log(task, "you", "You moved it to the backlog for review");
     this.commitNow();
@@ -642,12 +585,8 @@ export class Engine extends Kernel implements Commands {
 
   updateBacklog(taskId: Id, changes: { title: string; description: string }): void {
     const task = this.task(taskId);
-    if (!task || task.state !== "backlog") throw new Error("Only backlog requests can be edited before work starts.");
-    const title = changes.title.trim();
-    if (!title || title.length > 200 || changes.description.length > 8000) throw new Error("Give the task a title and a shorter request.");
-    task.title = title;
-    task.description = changes.description.trim();
-    task.area = title.toLowerCase();
+    if (!task) throw new Error("Only backlog requests can be edited before work starts.");
+    editBacklogRequest(task, changes);
     this.log(task, "you", "You updated the backlog request");
     this.commitNow();
   }
@@ -743,27 +682,12 @@ export class Engine extends Kernel implements Commands {
 
   /** Start this task only after the given tasks have landed. An empty list removes the wait. */
   setAfter(taskId: Id, after: readonly Id[]): void {
-    const task = this.task(taskId);
-    if (!task) throw new Error("Unknown task");
-    const ids = [...new Set(after)];
-    for (const id of ids) {
-      if (id === taskId) throw new Error("A task cannot wait for itself");
-      if (!this.task(id)) throw new Error(`Unknown task: ${id}`);
-    }
-    // No loops: none of the tasks it waits for may (indirectly) wait for it.
-    const reaches = (from: Id, seen = new Set<Id>()): boolean => {
-      if (from === taskId) return true;
-      if (seen.has(from)) return false;
-      seen.add(from);
-      return (this.task(from)?.after ?? []).some((next) => reaches(next, seen));
-    };
-    if (ids.some((id) => reaches(id))) throw new Error("That would make tasks wait for each other");
+    const ids = validateTaskDependencies(taskId, after, (id) => this.task(id));
+    const task = this.task(taskId)!;
     task.after = ids;
-    // The wait is a step of its own on the journey, so what is said about it belongs to it.
     syncWait(task, this.blockers(task), (id) => this.task(id), Date.now());
     this.log(task, "you", ids.length ? AFTER_WORDS.starts(ids.map((id) => this.task(id)!.title)) : AFTER_WORDS.none);
-    this.commit();
-    this.schedule();
+    this.commit(); this.schedule();
   }
 
   setPoolLimit(limit: number): void {
@@ -831,17 +755,10 @@ export class Engine extends Kernel implements Commands {
     this.takeover.notDriving(task);
     if (!task || !["running", "needs-you", "waiting"].includes(task.state)) return;
     this.stopDriver(taskId);
-    task.state = "paused";
-    task.holdsSlot = false;
-    delete task.agent;
-    delete task.helpers;
-    // Resuming starts the step fresh, with everything said in it so far.
-    delete scope!.work.conversation;
+    pauseTaskState(task, scope!.work, Date.now());
     this.discardScreenTurns(task);
     this.releaseScreen(task);
     this.stopStep(task);
-    task.statusLine = "Paused by you";
-    stopCheckProgress(task, Date.now());
     this.dropBlockingItems(taskId);
     this.log(task, "you", "You paused it");
     this.commit();
@@ -850,13 +767,9 @@ export class Engine extends Kernel implements Commands {
 
   resume(taskId: Id): void {
     const task = this.task(taskId);
-    if (!task || task.state !== "paused") return;
-    const gate = this.s.inbox.some((item) => item.taskId === taskId && !item.blocking);
-    task.state = gate ? "needs-you" : "waiting";
-    task.statusLine = gate ? "Waiting for you" : "Waiting for a free slot";
+    if (!task || !resumeTaskState(task, this.s.inbox.some((item) => item.taskId === taskId && !item.blocking))) return;
     this.log(task, "you", "You resumed it");
-    this.commit();
-    this.schedule();
+    this.commit(); this.schedule();
   }
 
   cancel(taskId: Id): void {
@@ -866,21 +779,14 @@ export class Engine extends Kernel implements Commands {
     this.takeover.notDriving(task);
     this.stopDriver(taskId);
     this.tracking.cancelled(task);
-    task.state = "cancelled";
-    task.column = "done";
-    task.holdsSlot = false;
-    delete task.agent;
-    delete task.helpers;
-    delete scope!.work.conversation;
+    cancelTaskState(task, scope!.work, Date.now());
     this.discardScreenTurns(task);
     this.releaseScreen(task);
     this.stopStep(task);
-    task.finishedAt = Date.now();
     // A delivery from before the update keeps its note: what went out is for the coordinator to check.
     task.statusLine = scope!.work.shipping?.carriedOver ? `Cancelled. ${CARRIED_OVER}: check GitHub for what went out` : "Cancelled";
     this.dropBlockingItems(taskId);
     this.s.inbox = this.s.inbox.filter((item) => item.taskId !== taskId);
-    endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, Date.now());
     this.log(task, "you", "You cancelled it");
     this.commit();
     // Pictures need no delivery lookup or agent shutdown before they can be discarded.
@@ -955,24 +861,17 @@ export class Engine extends Kernel implements Commands {
 
   setStageProfile(taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): void {
     const task = this.task(taskId);
-    const at = task?.plan?.stages.findIndex((stage) => stage.id === stageId) ?? -1;
-    const stage = task?.plan?.stages[at];
-    if (!task || !stage || at <= task.stageIndex || !this.profile(profileId)) return;
-    const profiles = stage[list];
-    if (!profiles || index < 0 || index >= profiles.length) return;
-    profiles[index] = profileId;
-    this.log(task, "you", `You changed who works on “${stage.title}”`);
+    const title = task && assignFutureProfile(task, this.s.profiles, stageId, list, index, profileId);
+    if (title === undefined) return;
+    this.log(task!, "you", `You changed who works on “${title}”`);
     this.commit();
   }
 
   addReviewer(taskId: Id, stageId: Id, profileId: Id): void {
     const task = this.task(taskId);
-    const at = task?.plan?.stages.findIndex((stage) => stage.id === stageId) ?? -1;
-    const stage = task?.plan?.stages[at];
-    if (!task || !stage || stage.kind !== "review-chain" || at <= task.stageIndex || !this.profile(profileId)) return;
-    if (stage.roleIds) stage.roleIds.push("code-reviewer");
-    stage.profileIds.push(profileId);
-    this.log(task, "you", `You added a reviewer to “${stage.title}”`);
+    const title = task && appendFutureReviewer(task, this.s.profiles, stageId, profileId);
+    if (title === undefined) return;
+    this.log(task!, "you", `You added a reviewer to “${title}”`);
     this.commit();
   }
 

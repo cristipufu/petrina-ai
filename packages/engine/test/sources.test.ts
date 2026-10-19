@@ -267,12 +267,12 @@ describe.concurrent("one approved product and starting point", () => {
     } finally { engine.shutdown(); }
   });
 
-  it("requires confirmation when the planner chooses the single registered product", async () => {
+  for (const approvePlan of [undefined, false]) it(`requires source confirmation when the planner chooses the product, with optional plan approval ${approvePlan === false ? "off" : "defaulted"}`, async () => {
     const { w, fakes, start } = setup("choose-product"); const engine = start();
     try {
       const productId = await engine.addProduct(w.clone);
       fakes.scenario({ planner: "short", worksOn: [{ productId, startFrom: { kind: "default" }, delivery: "local" }] });
-      const id = engine.addTask({ productId: "", title: "Fix it" });
+      const id = engine.addTask({ productId: "", title: "Fix it", approvePlan });
       const state = await planGate(engine, id);
       expect(taskOf(state, id).productId).toBe(""); expect(taskOf(state, id).worktree).toBeUndefined();
       engine.approve(itemOf(state, id, "plan")!.id);
