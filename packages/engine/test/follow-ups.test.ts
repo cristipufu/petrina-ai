@@ -389,10 +389,13 @@ it("adds a product while the card waits, and only records one named after work h
     await finish(engine, shared);
     expect(cardFor(engine, "shared")[0]!.selectedProducts?.map((choice) => choice.productId)).toEqual([world.shop, world.notes]);
     expect(cardFor(engine, "shared")[0]!.approvePlan).toBe(true);
+    engine.setProductDelivery(world.shop, "local", false);
+    engine.setProductDelivery(world.notes, "local", true);
     const first = taskOf(engine, world.shop, "Shop footer", [older("shop", "bug-wide: The footer opens a retired page.", { productIds: [world.shop] })]);
     await finish(engine, first);
     const card = cardFor(engine, "wide")[0]!;
     expect(card.selectedProducts?.map((choice) => choice.productId)).toEqual([world.shop]);
+    expect(card.approveDelivery).toBe(false);
     const edited = "Coordinator wording for the footer.";
     engine.updateBacklog(card.id, { title: card.title, description: edited });
     const extra = taskOf(engine, world.notes, "Notes footer", [older("notes", "bug-wide: Notes has the same retired footer page.", { productIds: [world.shop, world.notes] })]);
@@ -400,6 +403,7 @@ it("adds a product while the card waits, and only records one named after work h
     expect(card.selectedProducts?.map((choice) => choice.productId)).toEqual([world.shop, world.notes]);
     expect(card.approvePlan).toBe(true);
     expect(card.followUp!.alsoReported).toBeUndefined();
+    expect(card.approveDelivery).toBe(true);
     expect(card.description).toBe(edited);
     expect(cardFor(engine, "wide")).toHaveLength(1);
     expect(cards(engine)).toHaveLength(2);
@@ -414,6 +418,7 @@ it("adds a product while the card waits, and only records one named after work h
     await finish(engine, after);
     expect(queuedCard.selectedProducts?.map((choice) => choice.productId)).toEqual([world.shop]);
     expect(queuedCard.followUp!.alsoReported).toEqual([world.notes]);
+    expect(queuedCard.approveDelivery).toBe(false);
     expect(cardFor(engine, "queued")).toHaveLength(1);
 
     queuedCard.state = "done";

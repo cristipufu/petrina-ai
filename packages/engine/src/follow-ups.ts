@@ -414,6 +414,7 @@ export class FollowUps {
       if (selected.some((choice) => choice.productId === id)) continue;
       const product = this.k.s.products.find((entry) => entry.id === id);
       selected.push({ productId: id, startFrom: { kind: "default" }, delivery: product?.delivery ?? card.delivery });
+      if (product?.approveDelivery !== false) card.approveDelivery = true;
     }
     card.selectedProducts = selected;
     if (selected.length !== 1) card.approvePlan = true;
