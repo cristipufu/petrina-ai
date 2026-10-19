@@ -119,6 +119,10 @@ export const ReviewResult = z.object({
         where: z.string().optional(),
         severity: z.enum(["important", "nit", "pre-existing"]),
         evidence: z.string().optional(),
+        /** How to see a problem the change did not cause. */
+        steps: z.string().optional(),
+        /** An open follow-up card this is, or "none" when it is none of the cards shown. */
+        sameBug: z.string().optional(),
       }),
     )
     .default([]),
@@ -327,7 +331,7 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
   "code-reviewer": {
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
-    shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
+    shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know", "steps": "How to see it again", "sameBug": "<open follow-up card id, or none>"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: ({ task, base, branch }) => {
       const opening = reviewScope(task, base, branch);
       return `${opening} Your job is to try to prove that it is NOT done.${
@@ -350,7 +354,7 @@ Do not change any files.`;
   "security-reviewer": {
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
-    shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
+    shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it", "steps": "How to see it again", "sameBug": "<open follow-up card id, or none>"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     withInstructions: ({ task, base, branch }, wording) => `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(task, base, branch, false)}${task.repositories ? "" : task.portReview ? portClause(task.portReview) : ""}
 ${wording}
 ${task.repositories ? "" : GUIDE_RULE(base)}

@@ -82,6 +82,7 @@ import { Sources } from "./sources.js";
 import { beginRepair } from "./repositories.js";
 import { Driver } from "./driver.js";
 import { Cleanup } from "./cleanup.js";
+import { FollowUps } from "./follow-ups.js";
 import { AcceptedPoints } from "./accepted-points.js";
 import { readTaskImage } from "./image-preview.js";
 
@@ -108,6 +109,7 @@ export class Engine extends Kernel implements Commands {
   private readonly takeover: TakeOver;
   private readonly driver: Driver;
   private readonly cleanup: Cleanup;
+  private readonly followUps: FollowUps;
   private readonly acceptedPoints: AcceptedPoints;
 
   constructor(dataDir: string, options: EngineOptions = {}) {
@@ -129,6 +131,9 @@ export class Engine extends Kernel implements Commands {
     this.takeover = new TakeOver(this);
     this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections, this.sources);
     this.cleanup = new Cleanup(this);
+    this.followUps = new FollowUps(this);
+    this.onTaskDone = (task) => { void this.followUps.noteDone(task); };
+    this.beforeCaptureRemoval = (task) => this.followUps.beforeRemoval(task);
     this.acceptedPoints = new AcceptedPoints(this);
     // Tasks from before journeys were recorded: one step per finished stage, and the step under way, so new steps follow on from there.
     for (const task of this.s.tasks) if (!task.journey && task.startedAt !== undefined) task.journey = legacyJourney(task as unknown as Task, this.s.inbox as InboxItem[]) as MTask["journey"];
@@ -148,7 +153,8 @@ export class Engine extends Kernel implements Commands {
         void this.shipping.pollPullRequests();
         this.shipping.settleCancelledTasks();
         // Apart from GitHub: a slow lookup never holds up removing copies.
-        void this.trackWork(this.cleanup.sweep());
+        // Confirmed older bugs are linked before a finished task's pictures are removed.
+        void this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep()));
         void this.trackWork(this.acceptedPoints.sweep());
       }, options.checkEveryMs ?? 60_000),
       // Codex's usage, every ten minutes while any agent runs (Claude Code reports its own on every turn).
@@ -166,8 +172,8 @@ export class Engine extends Kernel implements Commands {
     void this.shipping.pollPullRequests();
     this.schedule();
     this.readUsage();
-    // Catch up at start: working copies of tasks that finished before, in every product.
-    void this.trackWork(this.cleanup.sweep());
+    // Catch up at start: link any older bug saved only part-way, then remove finished working copies.
+    void this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep()));
     void this.trackWork(this.acceptedPoints.sweep());
   }
 
@@ -215,7 +221,7 @@ export class Engine extends Kernel implements Commands {
     clearTimeout(this.screenTimer);
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
-    this.shutdownDone = Promise.allSettled([this.tools.shutdown(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
+    this.shutdownDone = Promise.allSettled([this.tools.shutdown(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
     // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
     this.s.now = Date.now();
     for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); }

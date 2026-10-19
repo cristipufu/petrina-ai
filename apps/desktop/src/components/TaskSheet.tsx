@@ -37,6 +37,8 @@ interface SheetProps {
   onMessage: () => void;
   /** Open the "About these numbers" note on Analytics. */
   onAboutNumbers: () => void;
+  /** Open a follow-up card, or the finished task a report came from. */
+  onOpenTask?: (taskId: string) => void;
 }
 
 const TABS: readonly { id: SheetTab; label: string }[] = [
@@ -60,7 +62,7 @@ function TaskActivity({ task }: { task: TaskListEntry }) {
   return <span className={`task-list-activity ${task.state}`}><Icon size={13} aria-hidden="true" /><span>{label}</span></span>;
 }
 
-export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, onStep, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, waiting }: SheetProps) {
+export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, onStep, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, onOpenTask, waiting }: SheetProps) {
   const [pane, setPane] = useState(selectedStep || tab !== "overview" ? "details" : "flow");
   const [menu, setMenu] = useState(false);
   const [detailsTarget, setDetailsTarget] = useState<HTMLDivElement | null>(null);
@@ -219,7 +221,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
               ))}
             </div>
           </aside>
-          <Journey key={task.id} task={task} state={state} find={find} onReadSession={readSession} onPlan={() => { onTab("plan"); }} workspace detailsTarget={detailsTarget} selectedStep={selectedStep} onSelectionChange={(id) => {
+          <Journey key={task.id} task={task} state={state} find={find} onReadSession={readSession} onPlan={() => { onTab("plan"); }} {...(onOpenTask ? { onOpenTask } : {})} workspace detailsTarget={detailsTarget} selectedStep={selectedStep} onSelectionChange={(id) => {
             if (id && !selectedStep) globalScroll.current = scroller.current?.scrollTop ?? 0;
             onStep(id);
             if (id) setPane("details");
@@ -258,11 +260,12 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
                 onAboutNumbers={onAboutNumbers}
                 onReadSession={readSession}
                 onPlan={() => onTab("plan")}
+                {...(onOpenTask ? { onOpenTask } : {})}
               />
             )}
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
-            {tab === "review" && <ReviewView task={task} find={find} />}
+            {tab === "review" && <ReviewView task={task} find={find} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />}
             {tab === "session" && <Session.Log key={sessionStep?.id ?? "latest"} active={!selectedStep} task={task} state={state} find={find} scroller={scroller} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
           </div>
           </div></div>

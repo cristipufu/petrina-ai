@@ -15,6 +15,8 @@ They do not read code. Code lives in the pull request on GitHub, one click away 
 
 What success feels like: many pull requests a day, little time spent being the thing everyone waits on.
 
+Confirmed unrelated review bugs appear in Backlog for coordinator review. Their source finding says “Tracked in” with a link to the follow-up; the follow-up links back to the original finding and keeps its reproduction and evidence. A report that cannot yet be matched says why it is not tracked. Opening either link stays within the task view, and nothing queues the follow-up automatically.
+
 ## Principles
 
 1. **Calm by default, loud when it needs you.** While agents work, the app is quiet. Anything waiting on you is impossible to miss: inbox count, an amber card, a system notification.

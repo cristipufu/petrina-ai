@@ -181,6 +181,8 @@ export interface ReportImage {
   /** Opaque reference to a separate file in task history. */
   id: string;
   caption: string;
+  /** The original report this picture was kept from, so a retry does not keep a second copy. */
+  from?: { taskId: Id; imageId: string };
 }
 
 export interface SessionLine {
@@ -550,6 +552,19 @@ export interface Finding {
   /** The builder's answer when the finding came back to it. */
   answer?: { fixed: boolean; text: string; at: number };
   status: "open" | "fixed" | "dismissed" | "unverified";
+  /** How to see this again, in plain language. */
+  steps?: string;
+  /** An open follow-up card this matches, or "none" when it is none of the cards the reviewer was shown. */
+  sameBug?: Id | "none";
+  /** Follow-up cards Petrina listed when this report was saved. Absent when none were shown. */
+  cardsShown?: readonly Id[];
+  /** Each reviewer's tag, kept as they reported it. Matching never changes these. */
+  judgments?: readonly { by: Id; severity: Finding["severity"]; at: number }[];
+  /**
+   * Where a confirmed older bug went once its task was done.
+   * A task id is the Backlog card. A reason means it stayed on this task.
+   */
+  tracking?: { taskId: Id } | { reason: "missing-steps" | "missing-evidence" | "no-choice" | "unmatched" | "unavailable"; retry?: boolean };
 }
 
 export type RiskLevel = "low" | "medium" | "high";
@@ -843,6 +858,31 @@ export interface Task {
   /** The coordinator's call on a disagreement. It stays, so no later design check reopens the design it settled. */
   call?: DesignCall;
   findings: readonly Finding[];
+  /**
+   * Set when this task is the Backlog card for a confirmed older bug.
+   * The reports are the evidence; the description is the request the coordinator can edit.
+   */
+  followUp?: {
+    reports: readonly {
+      taskId: Id;
+      findingId: Id;
+      /** The task the report came from, so the link has a name after that task leaves the board. */
+      sourceTitle: string;
+      text: string;
+      steps: string;
+      evidence: string;
+      raisedBy: Id;
+      roleId?: Id;
+      productIds: readonly Id[];
+      /** Why the checkers called it older, when a vote settled it. */
+      reasons?: readonly string[];
+      at: number;
+    }[];
+    /** Products named only after work had started. They are not part of this card. */
+    alsoReported?: readonly Id[];
+  };
+  /** Cards listed to each reviewer, so a missing choice stays a missing choice after a restart. */
+  shownFollowUps?: Readonly<Record<string, readonly Id[]>>;
   pr?: PullRequest;
   /** Ticks spent with the pull request open (simulator only). */
   prAge: number;
@@ -1093,4 +1133,9 @@ export interface State {
   work?: WorkInfo;
   /** The profile the planner runs on, so a task's journey can name it before it starts. */
   planner?: Id;
+  /**
+   * Follow-up links that are decided but not finished, or waiting because matching could not run.
+   * Kept here so a restart can finish them without reading every finished task.
+   */
+  followUpPending?: readonly { keys: readonly string[]; cardId?: Id; retry?: boolean }[];
 }

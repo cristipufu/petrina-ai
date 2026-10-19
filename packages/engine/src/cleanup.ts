@@ -25,7 +25,8 @@ export class Cleanup {
     try {
       // Pictures belong only to unfinished tasks, independently of whether a working copy
       // must stay (an open pull request or interrupted delivery may still need its files).
-      // Walk actual storage, without reading any archived conversations; missing tasks are orphans.
+      // Walk the capture folders. Only saved unfinished follow-up links can need an
+      // archived body; ordinary finished and orphaned pictures need no archive reads.
       for (const entry of await readdir(join(this.k.dataDir, "captures"), { withFileTypes: true }).catch(() => [])) {
         if (entry.isDirectory()) await this.removeCaptures(entry.name);
       }
@@ -140,8 +141,15 @@ export class Cleanup {
 
   async removeCaptures(taskId: Id): Promise<void> {
     if (this.k.stopped || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
-    const task = this.k.s.tasks.find((task) => task.id === taskId);
+    const pending = this.k.s.followUpPending?.some((group) => group.keys.some((key) => key.startsWith(`${taskId}::`)));
+    const task = this.k.s.tasks.find((entry) => entry.id === taskId) ?? (pending ? this.k.task(taskId) : undefined);
     if (task && !finishedTask(task as Task)) return;
+    // A done task's follow-up card copies the pictures it is keeping before this folder goes.
+    // If that copy fails first, leave the folder so the next sweep can try again.
+    if (task?.state === "done" && this.k.beforeCaptureRemoval) {
+      try { await this.k.beforeCaptureRemoval(task); }
+      catch { return; }
+    }
     // A failed removal is tried again by the ordinary cleanup sweep.
     await rm(join(this.k.dataDir, "captures", taskId), { recursive: true, force: true }).catch(() => {});
   }

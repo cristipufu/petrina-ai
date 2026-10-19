@@ -728,7 +728,14 @@ describe("the demos", () => {
     it(`${name}: every started task has a journey whose times match its timeline`, () => {
       for (const task of state.tasks) {
         if (task.state === "queued" && !task.after) {
-          expect(task.journey).toBeUndefined();
+          expect(task.journey, task.id).toBeUndefined();
+          continue;
+        }
+        // A Backlog card is waiting to be queued, so it has not started and has no recorded journey.
+        // One that was sent back after work began still has its journey, and is checked below.
+        if (task.state === "backlog" && !task.journey) {
+          expect(journeyProblems(task), task.id).toEqual([]);
+          expect(journeyView(task, contextOf(state)).start, task.id).toEqual({ kind: "backlog" });
           continue;
         }
         expect(journeyProblems(task), task.id).toEqual([]);

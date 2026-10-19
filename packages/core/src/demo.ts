@@ -4,7 +4,8 @@
 
 import { AFTER_WORDS, syncWait } from "./journey.js";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
-import type { DeliveryMode, Id, InboxItem, JourneyStep, Product, State, Task, TaskKind, UsageReport } from "./model.js";
+import { followUpDescription, followUpTitle } from "./follow-ups.js";
+import type { DeliveryMode, Finding, Id, InboxItem, JourneyStep, Product, State, Task, TaskKind, UsageReport } from "./model.js";
 import { Simulator, type SimOpenWork, type SimQuirk, type Trigger, type Triggers } from "./sim.js";
 import { askMomentId, MemoryWorkLog } from "./worklog.js";
 import type { Clone } from "./setup.js";
@@ -131,6 +132,62 @@ function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): St
     pool: { limit: 5, paused: false, toolCaps: { "claude-code": 3, codex: 2 }, usage: demoUsage(now) },
     planner: "sonnet-medium",
   };
+}
+
+/** One Backlog card for two differently worded older reports, and one report Petrina could not match. */
+function attachSampleFollowUps(tasks: Task[], products: readonly Product[], now: number): void {
+  const source = tasks.find((task) => task.state === "done");
+  if (!source || tasks.some((task) => task.id === "footer-follow-up")) return;
+  const about = "The About link in the footer opens a retired page.";
+  const other = "Choosing About in the footer still lands on the old about page.";
+  const steps = "Open the site and choose About in the footer.";
+  const evidence = "The same retired page opened on the previous version.";
+  const finding = (id: string, text: string, raisedBy: string, roleId: string, tracking: NonNullable<Finding["tracking"]>): Finding => ({
+    id,
+    text,
+    severity: "pre-existing",
+    status: "open",
+    raisedBy,
+    roleId,
+    confirmedBy: [],
+    steps,
+    evidence,
+    productIds: [source.productId],
+    tracking,
+  });
+  const first = finding(`${source.id}-about`, about, "opus-high", "code-reviewer", { taskId: "footer-follow-up" });
+  const second = finding(`${source.id}-about-again`, other, "codex-xhigh", "security-reviewer", { taskId: "footer-follow-up" });
+  const missed = finding(`${source.id}-year`, "The copyright line is a year behind.", "opus-high", "code-reviewer", { reason: "unmatched" });
+  source.findings = [...source.findings, first, second, missed];
+  const reports = [first, second].map((entry) => ({
+    taskId: source.id,
+    findingId: entry.id,
+    sourceTitle: source.title,
+    text: entry.text,
+    steps: entry.steps!,
+    evidence: entry.evidence!,
+    raisedBy: entry.raisedBy,
+    ...(entry.roleId ? { roleId: entry.roleId } : {}),
+    productIds: [...(entry.productIds ?? [])],
+    at: now,
+  }));
+  const names = [products.find((product) => product.id === source.productId)?.name ?? source.productId];
+  const card = queuedTask({
+    id: "footer-follow-up",
+    productId: source.productId,
+    title: followUpTitle(about),
+    description: followUpDescription(reports.map((report) => ({ ...report, images: [] })), names),
+    area: "footer",
+    kind: "bug",
+  }, tasks.length, now, products);
+  tasks.push({
+    ...card,
+    state: "backlog",
+    column: "backlog",
+    statusLine: "Review the request before queueing",
+    timeline: [{ id: "footer-follow-up-kept", at: now, text: "Kept as future work", tone: "status" }],
+    followUp: { reports },
+  });
 }
 
 function queuedTask(spec: Spec, priority: number, now: number, products: readonly Product[] = DEMO_PRODUCTS): Task {
@@ -495,6 +552,7 @@ function buildDemo(now: number): Demo {
 
   recordProducts(builder.log, DEMO_PRODUCTS, now);
   recordUsageHistory(builder.log, now);
+  attachSampleFollowUps(builder.tasks, DEMO_PRODUCTS, now);
   const state: State = { ...baseState(now, builder.tasks, builder.inbox), seq: 10_000, work: { version: 1, since } };
   return { state, triggers: DEMO_TRIGGERS, log: builder.log, open: builder.openWork(), quirks };
 }
@@ -676,6 +734,7 @@ function buildPortfolioDemo(now: number): Demo {
 
   recordProducts(builder.log, products, now);
   recordUsageHistory(builder.log, now);
+  attachSampleFollowUps(tasks, products, now);
   return {
     state: { ...baseState(now, tasks, builder.inbox), products, seq: 10_000, pool: { limit: 8, paused: false, toolCaps: { "claude-code": 5, codex: 4 }, usage: demoUsage(now) }, work: { version: 1, since } },
     triggers,

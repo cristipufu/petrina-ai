@@ -6,9 +6,11 @@ import { SCREEN_WORDS, mainLine, nextLine, screenWait, timeLeft, workedSoFar, ty
 import { deliveryText, duration, profileText, type Lookup } from "../../lib";
 import { failureText, sim } from "../../engine";
 import { RoleAvatar } from "../bits";
+import { ImagePreview } from "../MessageBody";
 import { WhatItUsed } from "./WhatItUsed";
 import { Journey } from "../Journey";
 import { TimelineList } from "../Timeline";
+import { TaskLink } from "./ReviewTab";
 
 function nowSentence(task: Task, role: Role | undefined, state: State): string {
   if (task.driving) return role ? `You're driving the ${role.name.toLowerCase()} in your terminal` : "You're driving in your terminal";
@@ -58,7 +60,7 @@ function nowLines(task: Task, state: State): { first: string; time?: string; sec
   return { first: task.statusLine, ...(time ? { time } : {}), ...(waitingOnYou && task.todo && task.todo !== task.statusLine ? { second: task.todo } : {}) };
 }
 
-export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, separateFlow = false }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void; separateFlow?: boolean }) {
+export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, onOpenTask, separateFlow = false }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void; onOpenTask?: (taskId: string) => void; separateFlow?: boolean }) {
   const [all, setAll] = useState(false);
   // Waiting for the screen, the agent that asked is still the one this step is about.
   const role = find.role(task.agent?.roleId ?? task.screen?.roleId);
@@ -71,8 +73,9 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
 
   return (
     <>
-      {!separateFlow && <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} />}
+      {!separateFlow && <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} {...(onOpenTask ? { onOpenTask } : {})} />}
 
+      {task.followUp && <FollowUpReports task={task} find={find} {...(onOpenTask ? { onOpenTask } : {})} />}
       {task.state === "backlog" && <BacklogRequest key={task.id} task={task} />}
       {task.description && task.state !== "backlog" && (
         <section className="sheet-section reading">
@@ -142,6 +145,29 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
       </section>
     </>
   );
+}
+
+function FollowUpReports({ task, find, onOpenTask }: { task: Task; find: Lookup; onOpenTask?: (taskId: string) => void }) {
+  const reports = task.followUp?.reports ?? [];
+  const names = (ids: readonly string[]) => ids.map((id) => find.product(id)?.name ?? id).join(", ");
+  const covered = [...new Set((task.selectedProducts?.length ? task.selectedProducts.map((choice) => choice.productId) : reports.flatMap((report) => report.productIds)).filter(Boolean))];
+  const pictures = task.session.flatMap((line) => line.images ?? []);
+  const finished = task.state === "done" || task.state === "cancelled";
+  return <section className="sheet-section reading">
+    <h2>Where this came from</h2>
+    {!!covered.length && <p className="issue-who">Products: {names(covered)}</p>}
+    {!!task.followUp?.alsoReported?.length && <p className="issue-who">Also reported on {names(task.followUp.alsoReported)}. Not part of this work.</p>}
+    {reports.map((report) => <div className="issue" key={`${report.taskId}-${report.findingId}`}>
+      <p className="issue-text">{report.text}</p>
+      <p className="issue-evidence">How to see it again: {report.steps}</p>
+      <p className="issue-evidence">Why the change left it as it was: {report.evidence}</p>
+      {!!report.reasons?.length && <p className="issue-evidence">Checked as older: {report.reasons.join(" ")}</p>}
+      <p className="issue-who">
+        Found by {report.roleId && find.role(report.roleId) ? `${find.role(report.roleId)!.name} on ` : ""}{profileText(find.profile(report.raisedBy), find, true)}. From <TaskLink taskId={report.taskId} find={find} {...(onOpenTask ? { onOpen: onOpenTask } : {})}>{report.sourceTitle}</TaskLink>
+      </p>
+    </div>)}
+    {pictures.map((image) => <ImagePreview key={image.id} taskId={task.id} imageId={image.id} label={image.caption || "Screenshot"} finished={finished} />)}
+  </section>;
 }
 
 function BacklogRequest({ task }: { task: Task }) {

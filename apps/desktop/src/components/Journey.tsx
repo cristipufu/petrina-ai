@@ -500,7 +500,7 @@ export function JourneyList({ view, find, now, onFocusStep, onSelect }: { view: 
 
 // ── A step's details, under the diagram ────────────────────────────────────────────────
 
-function StepDetails({ node, task, find, now, onPlan, onClose }: { node: JourneyNode; task: Task; find: Lookup; now: number; onPlan: () => void; onClose?: () => void }) {
+function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node: JourneyNode; task: Task; find: Lookup; now: number; onPlan: () => void; onClose?: () => void; onOpen?: (taskId: string) => void }) {
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "conversation">("overview");
   useEffect(() => setActiveTab("overview"), [node.id]);
   const role = find.role(node.roleId);
@@ -710,7 +710,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose }: { node: Journey
 
       {findings !== undefined && <div className="journey-context">
         <h4>Findings from this step</h4>
-        {findings.length ? <><p className="note">{node.result?.findings ? "As recorded when this step handed back its result." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
+        {findings.length ? <><p className="note">{node.result?.findings ? "As recorded when this step handed back its result." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
       </div>}
 
       {objections !== undefined && <div className="journey-context">
@@ -812,6 +812,8 @@ interface JourneyProps {
   find: Lookup;
   onReadSession: (stepId: string, name: string) => void;
   onPlan: () => void;
+  /** Open the task a finding links to: a Backlog card, or the finished task it came from. */
+  onOpenTask?: (taskId: string) => void;
   /** A dedicated canvas column, with the selected step rendered in its neighbour. */
   workspace?: boolean;
   detailsTarget?: HTMLElement | null;
@@ -828,7 +830,7 @@ export function Journey(props: JourneyProps) {
   );
 }
 
-function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarget, onSelectionChange, selectedStep }: JourneyProps) {
+function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false, detailsTarget, onSelectionChange, selectedStep }: JourneyProps) {
   const viewKey = journeyViewKey(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) });
   const view = useMemo(
     () => journeyView(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) }),
@@ -989,8 +991,8 @@ function JourneyBody({ task, state, find, onPlan, workspace = false, detailsTarg
       <p className="sr-only" aria-live="polite">
         {chosen ? `${chosen.name}: its details are ${workspace ? "in the right panel" : "below the diagram"}.` : ""}
       </p>
-      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null, detailsTarget) : chosen ? (
-        <StepDetails node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} />
+      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} {...(onOpenTask ? { onOpen: onOpenTask } : {})} /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null, detailsTarget) : chosen ? (
+        <StepDetails node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />
       ) : (
         <p className="note journey-hint">Click a step to see its details here.</p>
       )}

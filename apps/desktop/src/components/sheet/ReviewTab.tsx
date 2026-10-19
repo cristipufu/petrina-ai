@@ -2,15 +2,26 @@
 
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { findingCount, independentVotes, type CheckRun, type Finding, type Task } from "@petrina/core";
+import { findingCount, independentVotes, trackingWords, type CheckRun, type Finding, type Task } from "@petrina/core";
 import { ago, profileText, type Lookup } from "../../lib";
+import { followLink, routeHref } from "../../routes";
 import { openFirst } from "./order";
 
 const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "Important", suggestion: "Nit", "pre-existing": "Pre-existing" };
 
 const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> = { real: "Checked: real", "not-a-bug": "Checked: not a bug", nit: "Checked: only a nit", "pre-existing": "Checked: older than this change" };
 
-export function FindingItem({ finding, find }: { finding: Finding; find: Lookup }) {
+/** A link to the task a follow-up came from, or to the Backlog card that now tracks it. */
+export function TaskLink({ taskId, find, onOpen, children }: { taskId: string; find: Lookup; onOpen?: (taskId: string) => void; children: string }) {
+  const task = find.task(taskId);
+  const finished = !task || task.state === "done" || task.state === "cancelled";
+  const view = finished ? "history" : "board";
+  const product = new URLSearchParams(window.location.search).get("product") || "all";
+  const href = routeHref({ view, product, sheet: { taskId, tab: "overview", list: view } });
+  return <a href={href} className="linkish" onClick={(event) => { if (onOpen) followLink(event, () => onOpen(taskId)); }}>{children}</a>;
+}
+
+export function FindingItem({ finding, find, onOpen }: { finding: Finding; find: Lookup; onOpen?: (taskId: string) => void }) {
   const votes = independentVotes(finding.votes);
   const beforeFix = !!finding.verification && !!finding.answer?.fixed && finding.verification.at < finding.answer.at;
   const followUp = finding.status === "open" && finding.severity === "pre-existing";
@@ -28,6 +39,7 @@ export function FindingItem({ finding, find }: { finding: Finding; find: Lookup 
         Raised by {finding.roleId && find.role(finding.roleId) ? `${find.role(finding.roleId)!.name} on ` : ""}{profileText(find.profile(finding.raisedBy), find, true)}
         {finding.confirmedBy.length > 0 && `. Confirmed by ${finding.confirmedBy.map((profileId) => profileText(find.profile(profileId), find, true)).join(" and ")}`}
       </p>
+      {finding.tracking && <FollowUpLine finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />}
       {(finding.disputes ?? []).map((dispute, index) => (
         <div key={index} className="issue-response">
           <b>{finding.status === "dismissed" ? "Dismissed by" : "Disputed by"} {profileText(find.profile(dispute.by), find, true)}</b>
@@ -74,7 +86,16 @@ export function FindingItem({ finding, find }: { finding: Finding; find: Lookup 
   );
 }
 
-export function ReviewView({ task, find }: { task: Task; find: Lookup }) {
+function FollowUpLine({ finding, find, onOpen }: { finding: Finding; find: Lookup; onOpen?: (taskId: string) => void }) {
+  const tracking = finding.tracking;
+  if (!tracking) return null;
+  const words = trackingWords(tracking);
+  if (!("taskId" in tracking)) return <p className="issue-who">{words.label}. {words.reason}</p>;
+  const title = find.task(tracking.taskId)?.title ?? "Backlog";
+  return <p className="issue-who">{words.label} <TaskLink taskId={tracking.taskId} find={find} {...(onOpen ? { onOpen } : {})}>{title}</TaskLink></p>;
+}
+
+export function ReviewView({ task, find, onOpen }: { task: Task; find: Lookup; onOpen?: (taskId: string) => void }) {
   const reviews = (task.plan?.stages ?? []).flatMap((stage, index) => stage.kind === "review-chain" ? [index] : []);
   const reviewing = reviews.some((index) => index <= task.stageIndex);
   // Reaching review is not completion: all planned review steps must be behind us.
@@ -88,9 +109,9 @@ export function ReviewView({ task, find }: { task: Task; find: Lookup }) {
       {work.checks?.current === false && <p className="note">These checks cover an earlier version. Current checks: Not run</p>}
       {!work.checks?.results.length && <p className="note">Product checks: Not run</p>}
       {!!work.checks?.results.length && <ChecksSection runs={work.checks.results} at={work.checks.at} />}
-      <FindingsSection find={find} findings={task.findings.filter((finding) => finding.productIds?.length === 1 && finding.productIds[0] === work.productId)} empty={together.length ? "No findings assigned only to this product. Shared findings appear under Together." : emptyReview} />
+      <FindingsSection find={find} findings={task.findings.filter((finding) => finding.productIds?.length === 1 && finding.productIds[0] === work.productId)} empty={together.length ? "No findings assigned only to this product. Shared findings appear under Together." : emptyReview} {...(onOpen ? { onOpen } : {})} />
     </section>)}
-    <section className="sheet-section"><h2>Together</h2>{!together.length && <p className="quiet-text">{emptyReview}</p>}<ol className="issues">{openFirst(together.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" }))).map((finding) => <FindingItem key={finding.id} finding={finding} find={find} />)}</ol></section>
+    <section className="sheet-section"><h2>Together</h2>{!together.length && <p className="quiet-text">{emptyReview}</p>}<ol className="issues">{openFirst(together.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" }))).map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></section>
   </>;
 
   const runs = task.checks?.results ?? [];
@@ -108,17 +129,17 @@ export function ReviewView({ task, find }: { task: Task; find: Lookup }) {
           {tampered ? "Tamper check found tests removed, weakened or skipped: see the findings below." : "Tamper check passed: no tests were removed, weakened or skipped."}
         </p>
       )}
-      <FindingsSection find={find} findings={task.findings} empty={emptyReview} />
+      <FindingsSection find={find} findings={task.findings} empty={emptyReview} {...(onOpen ? { onOpen } : {})} />
     </>
   );
 }
 
-function FindingsSection({ findings, find, empty }: { findings: readonly Finding[]; find: Lookup; empty: string }) {
+function FindingsSection({ findings, find, empty, onOpen }: { findings: readonly Finding[]; find: Lookup; empty: string; onOpen?: (taskId: string) => void }) {
   if (!findings.length) return <p className="quiet-text">{empty}</p>;
   const ordered = openFirst(findings.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" })));
   return <section className="sheet-section">
     <h2>Findings <span className="quiet-text num">{findingCount(findings.filter((finding) => finding.status === "open"))}</span></h2>
-    <ol className="issues">{ordered.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} />)}</ol>
+    <ol className="issues">{ordered.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol>
   </section>;
 }
 

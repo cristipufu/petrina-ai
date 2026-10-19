@@ -119,6 +119,11 @@ export interface EngineOptions {
   screenHourMs?: number;
   /** Tests: observe when the engine owns work, without starting the macOS sleep assertion. */
   awakeObserver?: (active: boolean) => void;
+  /**
+   * Tests: answer a follow-up identity check without starting an agent.
+   * The prompt lists the reports and the open cards. Return "unavailable" when the check cannot run.
+   */
+  matchFollowUps?: (prompt: string) => Promise<{ groups: readonly { keys: readonly string[]; cardId?: string }[]; uncertain?: readonly string[] } | "unavailable">;
 }
 
 export class Aborted extends Error {}
@@ -184,6 +189,28 @@ export abstract class Kernel {
   abstract startDriver(taskId: Id, resume?: boolean): void;
   /** Set by the Engine: a task may be finished with its working copy; it goes once nothing uses it. */
   abstract tidy(taskId: Id): void;
+  /** Set by the Engine: a task has just become done, so a confirmed older bug can become a backlog card. */
+  onTaskDone?: (task: MTask) => void;
+  /** Set by the Engine: copy follow-up pictures before a done task's captures are removed. */
+  beforeCaptureRemoval?: (task: MTask) => Promise<void>;
+  private readonly followUpHolds = new Map<Id, number>();
+
+  /** Keep a just-finished task in memory until its follow-up card has copied what it needs. */
+  holdFollowUp(id: Id): () => void {
+    this.followUpHolds.set(id, (this.followUpHolds.get(id) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = (this.followUpHolds.get(id) ?? 1) - 1;
+      if (next <= 0) this.followUpHolds.delete(id);
+      else this.followUpHolds.set(id, next);
+    };
+  }
+
+  followsUpHeld(id: Id): boolean {
+    return (this.followUpHolds.get(id) ?? 0) > 0;
+  }
 
   /** Browser recovery is asynchronous; startup stays gated until its owned processes are gone. */
   protected readonly startupReady: Promise<void>;
@@ -454,7 +481,7 @@ export abstract class Kernel {
   }
 
   private retiredTasks(): Id[] {
-    return this.s.tasks.filter((task) => settledHistoryTask(task as Task) && !this.drivers.has(task.id) && !this.settling.has(task.id) && !this.switching.has(task.id) && !this.copyCleanups.has(task.id)).map((task) => task.id);
+    return this.s.tasks.filter((task) => settledHistoryTask(task as Task) && !this.drivers.has(task.id) && !this.settling.has(task.id) && !this.switching.has(task.id) && !this.copyCleanups.has(task.id) && !this.followsUpHeld(task.id)).map((task) => task.id);
   }
 
   subscribe = (listener: () => void): (() => void) => {

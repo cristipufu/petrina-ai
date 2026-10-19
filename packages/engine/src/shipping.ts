@@ -242,7 +242,9 @@ export class Shipping {
     } else if (landed === "waiting") {
       task.state = "pr-open"; task.column = "ready"; task.statusLine = "Waiting for every pull request to merge";
     } else if (landed === "landed") {
+      const fresh = task.state !== "done";
       task.state = "done"; task.column = "done"; task.statusLine = "All products have landed"; task.finishedAt ??= Date.now();
+      if (fresh) this.k.onTaskDone?.(task);
     }
     this.k.commitNow();
     this.k.schedule();
@@ -1263,6 +1265,7 @@ export class Shipping {
     task.column = "done";
     task.finishedAt = Date.now();
     task.statusLine = statusLine;
+    this.k.onTaskDone?.(task);
   }
 
   // ── Cancelled while publishing ─────────────────────────────────────────
@@ -1457,6 +1460,7 @@ export class Shipping {
     task.statusLine = "Marked as done by you";
     this.k.log(task, "you", "You marked it as done");
     endYouStep(task, { outcome: W.markedDone, reason: W.youMarkedDone }, Date.now());
+    this.k.onTaskDone?.(task);
     this.k.commitNow();
     this.k.schedule();
     void this.checkUnrecordedPullRequest(task);
@@ -1561,6 +1565,7 @@ export class Shipping {
           task.finishedAt = Date.now();
           task.statusLine = words;
           this.k.log(task, "done", words);
+          this.k.onTaskDone?.(task);
         } else {
           this.k.log(task, "done", words);
         }

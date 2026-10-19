@@ -1,7 +1,7 @@
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
 
-import { dueAnswers, followingCall, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
+import { dueAnswers, followingCall, openFollowUpCards, productsOn, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { checksFor, commandText } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
@@ -37,7 +37,7 @@ export class Context {
     private readonly currentChecks: (task: MTask) => Promise<boolean> = async () => false,
   ) {}
 
-  async sectionsFor(task: MTask, roleId: Id, member?: string, copies?: Readonly<Record<string, string>>): Promise<Section[]> {
+  async sectionsFor(task: MTask, roleId: Id, member?: string, copies?: Readonly<Record<string, string>>, shownKey?: string): Promise<Section[]> {
     const role = this.k.role(roleId);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
     const points = reads.includes("guide-points") ? await this.guide.pendingPoints(task) : [];
@@ -52,6 +52,17 @@ export class Context {
       `Review guide: use this product’s REVIEW.md at its saved base version.`,
     ].join("\n")).join("\n\n") + `\n\n${role?.canEdit ? `You own only product ${task.productId}. Read the other copies when needed; change only your own product. Return your own title, report and PR description.` : "Inspect every repository and the behaviour across them together."}\nFor every acceptance result and finding, explicitly return productIds naming every affected product. Unassigned items stay under Together for the coordinator. Passing separate suites cannot prove shared acceptance. For each lesson, return {productId, text} naming its product; unassigned lessons stay under Together and are never added to a repository automatically. Shared repairs require a separate answer from every affected builder and combined verification.` }] : [];
     const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points, currentChecks))];
+    if (role?.result === "findings") {
+      const cards = openFollowUpCards(this.k.s.tasks as Task[], productsOn(task as Task));
+      // shownKey records which cards this reviewer was shown. It is not a message seat:
+      // using it as one leaves the coordinator's note queued and sends it as a second turn.
+      const key = shownKey ?? member ?? roleId;
+      const shown = { ...(task.shownFollowUps ?? {}) };
+      if (cards.length) shown[key] = cards.map((card) => card.id);
+      else delete shown[key];
+      task.shownFollowUps = shown;
+      if (cards.length) sections.push({ title: "Open follow-up cards", body: `${cards.map((card) => `- ${card.id}: ${card.title}\n  ${card.problem}`).join("\n")}\nIf this is the same bug as one of these cards, set "sameBug" to that card's id. If it is none of them, set "sameBug" to "none".` });
+    }
     if (task.handedBack?.length) sections.push({ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}${entry.productId ? ` · ${task.repositories?.find((work) => work.productId === entry.productId)?.source?.product.name ?? entry.productId}` : ""}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") });
     return sections;
   }

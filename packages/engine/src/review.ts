@@ -2,7 +2,7 @@ import { beginRepair, productsFor } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { assignedProducts, endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { assignedProducts, endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -251,7 +251,7 @@ export class Reviews {
       const { key, profileId } = reviewers[0]!;
       const roleId = reviewerAt(stage, Number(key));
       let by = profileId;
-      const result = await this.turns.turn(task, roleId, profileId, () => this.context.sectionsFor(task, roleId), ReviewResult, signal, { check, reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
+      const result = await this.turns.turn(task, roleId, profileId, () => this.context.sectionsFor(task, roleId, undefined, undefined, `review-${key}`), ReviewResult, signal, { check, reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
       await this.applyReview(task, stage, result, by, roleId, key);
       reported(key);
       return;
@@ -305,32 +305,75 @@ export class Reviews {
       task.hunt.fixReviews = { ...task.hunt.fixReviews, [finding.id]: { ...task.hunt.fixReviews?.[finding.id], [reviewerKey]: passed } };
     }
     // A finding is raised once. Another reviewer raising an open one backs it; a repeat of a settled one is dropped.
+    // Each reviewer's tag is saved here, before any later comparison of older bugs.
+    const shown = task.shownFollowUps?.[`review-${reviewerKey}`] ?? task.shownFollowUps?.[reviewerKey];
+    const picked = (value: string | undefined): Finding["sameBug"] | undefined => {
+      const choice = value?.trim();
+      if (!choice || !shown?.length || (choice !== "none" && !shown.includes(choice))) return undefined;
+      return choice === "none" ? "none" : choice;
+    };
+    const rememberTag = (target: DeepMutable<Finding>, incoming: (typeof result.findings)[number], fresh: boolean) => {
+      const prior = target.judgments?.length ? [...target.judgments] : [{ by: target.raisedBy, severity: target.severity, at: Date.now() }];
+      const tagged = noteReviewTag(fresh ? undefined : { severity: target.severity, judgments: prior, verification: target.verification }, SEVERITY[incoming.severity], profileId, Date.now());
+      const relevant = tagged.judgments.some((entry) => entry.severity === "pre-existing") || tagged.judgments.length > 1;
+      if (relevant) target.judgments = tagged.judgments;
+      if (tagged.clearVote) {
+        target.severity = "blocking";
+        delete target.verification;
+        delete target.votes;
+      } else if (fresh) target.severity = tagged.severity;
+      if (incoming.steps?.trim() && !target.steps) target.steps = incoming.steps.trim();
+      if (shown?.length && !target.cardsShown) target.cardsShown = [...shown];
+      const choice = picked(incoming.sameBug);
+      if (choice && !target.sameBug) target.sameBug = choice;
+    };
     const raised: typeof result.findings = [];
     let backed = 0;
     for (const finding of result.findings) {
       const same = task.findings.find((entry) => sameReviewFinding(entry, finding, task));
       if (!same) {
         raised.push(finding);
-        task.findings.push({
+        const choice = picked(finding.sameBug);
+        const tagged = noteReviewTag(undefined, SEVERITY[finding.severity], profileId, Date.now());
+        const relevant = tagged.judgments.some((entry) => entry.severity === "pre-existing");
+        const created: DeepMutable<Finding> = {
           id: this.k.id(task.id),
           text: finding.text,
           ...(task.repositories ? { productIds: productsFor(task, finding.productIds) } : {}),
           ...(finding.where ? { where: finding.where } : {}),
           ...(finding.evidence ? { evidence: finding.evidence } : {}),
-          severity: SEVERITY[finding.severity],
+          ...(finding.steps?.trim() ? { steps: finding.steps.trim() } : {}),
+          ...(shown?.length ? { cardsShown: [...shown] } : {}),
+          ...(choice ? { sameBug: choice } : {}),
+          ...(relevant ? { judgments: tagged.judgments } : {}),
+          severity: tagged.severity,
           raisedBy: profileId,
           roleId,
           confirmedBy: [],
           status: "open",
-        });
+        };
+        task.findings.push(created);
       } else if ((same.status === "open" || closedFinding(same)) && same.raisedBy !== "petrina") {
         if (task.repositories) {
           const incoming = productsFor(task, finding.productIds), prior = productsFor(task, same.productIds);
           same.productIds = [...new Set([...prior, ...incoming])];
         }
-        if (closedFinding(same)) reopenFinding(same, Date.now(), finding.evidence);
+        const closed = closedFinding(same);
+        const before = same.severity;
+        const incomingSeverity = SEVERITY[finding.severity];
+        // Fresh proof reopens a dismissed finding with the classification it already had.
+        // A clash is only two tags on a finding that is still open.
+        if (closed) reopenFinding(same, Date.now(), finding.evidence);
         else addEvidence(same, finding.evidence);
-        if ((same.reopenedAt === undefined && !same.answer?.fixed && same.raisedBy === profileId) || same.confirmedBy.includes(profileId)) continue;
+        if (closed) {
+          if (finding.steps?.trim() && !same.steps) same.steps = finding.steps.trim();
+          if (shown?.length && !same.cardsShown) same.cardsShown = [...shown];
+          const choice = picked(finding.sameBug);
+          if (choice && !same.sameBug) same.sameBug = choice;
+        } else rememberTag(same, finding, false);
+        // Older and Important disagree. That reviewer does not count as backing the Important finding.
+        const disagreed = !closed && ((before === "pre-existing" && incomingSeverity === "blocking") || (before === "blocking" && incomingSeverity === "pre-existing"));
+        if (disagreed || (same.reopenedAt === undefined && !same.answer?.fixed && same.raisedBy === profileId) || same.confirmedBy.includes(profileId)) continue;
         same.confirmedBy.push(profileId);
         backed += 1;
       }
@@ -356,9 +399,18 @@ export class Reviews {
     // so a finding that needs no ballot cannot make the task wait for a voter's usage or slot.
     this.settleReviews(task, stage);
     const toolOf = (profileId: Id) => this.k.profile(profileId)?.toolId;
-    const findings = task.findings.filter(
-      (finding) => finding.status === "open" && finding.severity === "blocking" && (!task.repositories || productsFor(task, finding.productIds).length > 0) && finding.raisedBy !== "petrina" && !finding.verification && new Set([...((finding.reopenedAt !== undefined || finding.answer?.fixed) ? [] : [finding.raisedBy]), ...finding.confirmedBy].map(toolOf).filter(Boolean)).size < 2,
-    );
+    const findings = task.findings.filter((finding) => {
+      if (finding.status !== "open" || finding.severity !== "blocking" || finding.raisedBy === "petrina" || finding.verification) return false;
+      if (task.repositories && !productsFor(task, finding.productIds).length) return false;
+      const judgments = finding.judgments ?? [];
+      const clashed = judgments.some((entry) => entry.severity === "pre-existing") && judgments.some((entry) => entry.severity === "blocking");
+      // A reviewer who says the bug is older is not a second tool agreeing that it is Important.
+      const older = new Set(judgments.filter((entry) => entry.severity === "pre-existing").map((entry) => entry.by));
+      const supporters = clashed
+        ? [...judgments.filter((entry) => entry.severity === "blocking").map((entry) => entry.by), ...finding.confirmedBy.filter((id) => !older.has(id))]
+        : [...((finding.reopenedAt !== undefined || finding.answer?.fixed) ? [] : [finding.raisedBy]), ...finding.confirmedBy];
+      return new Set(supporters.map(toolOf).filter(Boolean)).size < 2;
+    });
     if (!findings.length) return undefined;
     // Resolve usage and model fallbacks before choosing the electorate. A capped tool is still
     // usable and waits for its seat. Older votes remain history; their nominal names do not prove

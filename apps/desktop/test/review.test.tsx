@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { createDemoState, type Finding, type Task, type Vote } from "@petrina/core";
 import { DesignView } from "../src/components/sheet/DesignTab";
+import { Overview } from "../src/components/sheet/Overview";
 import { ReviewView } from "../src/components/sheet/ReviewTab";
 import { lookup } from "../src/lib";
 
@@ -99,6 +100,26 @@ describe("actual voting tools", () => {
     expect(html).not.toContain("1 of 1 voter");
     expect(html).toContain("The page already shows the greeting.");
   });
+});
+
+it("shows a tracked follow-up and one Petrina could not match", () => {
+  const state = createDemoState(1_000_000_000);
+  const card = state.tasks.find((task) => task.id === "footer-follow-up")!;
+  const source = state.tasks.find((task) => task.id === card.followUp!.reports[0]!.taskId)!;
+  const review = renderToStaticMarkup(<ReviewView task={source} find={lookup(state)} />);
+  expect(review).toContain("Tracked in");
+  expect(review).toContain(`/tasks/${card.id}`);
+  expect(review).toContain("Not tracked. Petrina could not match it");
+  expect(review).not.toContain("Tracked in Backlog");
+  const overview = renderToStaticMarkup(<Overview separateFlow task={card} state={state} find={lookup(state)} onAboutNumbers={() => undefined} onReadSession={() => undefined} onPlan={() => undefined} />);
+  for (const report of card.followUp!.reports) {
+    expect(overview).toContain(report.text);
+    expect(overview).toContain(report.steps);
+    expect(overview).toContain(report.evidence);
+    expect(overview).toContain(`/tasks/${report.taskId}`);
+  }
+  expect(overview).toContain("Queue for work");
+  expect(overview).toContain("Products:");
 });
 
 it("labels an acceptance result that could not be checked without calling it a defect", () => {

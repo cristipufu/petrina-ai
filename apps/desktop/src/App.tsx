@@ -242,6 +242,15 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     setMessageFocus(undefined); setOwner("board");
   };
   const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, view === "history" ? "history" : "board"); if (tab === "session") setMessageFocus(id); };
+  const openLinked = useCallback((taskId: string) => {
+    const known = find.task(taskId);
+    const finished = !known || known.state === "done" || known.state === "cancelled";
+    const nextView = finished ? "history" : "board";
+    setOwner("board");
+    setBoardId(taskId);
+    setMessageFocus(undefined);
+    navigate((previous) => ({ ...previous, view: nextView, sheet: { taskId, tab: "overview", list: nextView } }));
+  }, [find, navigate]);
   const openItem = (id: string, tab?: SheetTab) => {
     const item = items.find((entry) => entry.id === id);
     if (!item) return;
@@ -417,7 +426,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       {sheet && !sheetTask && (loadingDetails || detailsError) && <TaskLoading error={detailsError} onRetry={() => { setFetchedTask(undefined); setDetailsRetry((value) => value + 1); }} onClose={close} />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} tasks={sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
+        <TaskSheet task={sheetTask} tasks={sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} onOpenTask={openLinked} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
       )}
 
       {!missing && rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}

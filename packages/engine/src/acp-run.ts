@@ -400,6 +400,8 @@ export class AgentRun {
     onGone?: (gone: Promise<void>) => void;
     /** A login check only opens a conversation, never sends work or runs in a product's copy. */
     probe?: boolean;
+    /** When false, no browser is started. Identity checks do not look at a page. Defaults to true. */
+    browser?: boolean;
     sandbox?: ClaudeSandbox;
     browserRoot?: string;
   }): Promise<AgentRun> {
@@ -430,12 +432,14 @@ export class AgentRun {
     killed.catch(() => undefined);
     // Login probes send no work. Every coding agent, including a parallel reviewer or a
     // reopened builder, gets a new engine-owned browser within the opening deadline.
-    const browserReady = options.probe ? Promise.resolve(undefined) : AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog);
+    // An identity check never opens a page, so it starts no browser.
+    const showBrowser = !options.probe && options.browser !== false;
+    const browserReady = showBrowser ? AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog) : Promise.resolve(undefined);
     browserReady.catch(() => undefined);
     let stopping: Promise<boolean> | undefined;
     let cleanupNoticeSent = false;
     const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= Promise.all([
-      stopAll(child, graceMs, !options.probe),
+      stopAll(child, graceMs, showBrowser),
       browserReady.then((browser) => browser?.close()).then(() => true, () => false),
     ]).then((results) => {
       const complete = results.every(Boolean);

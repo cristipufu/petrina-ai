@@ -67,6 +67,8 @@ export interface Scenario {
   risk?: "low" | "high";
   /** The verifier's verdict (default "real"). "split": the first voter says real, later voters not-a-bug. "hold": wait until released. */
   verifier?: "real" | "not-a-bug" | "hold" | "split" | "after-fix-not-a-bug";
+  /** The follow-up identity check. "same": one bug. "unsure": cannot tell. Anything else, including omitting it, cannot be used. */
+  followUpMatch?: "same" | "unsure" | "down";
   /** Voting regressions: independent tools can disagree, or stop after a partial report. */
   verifierByModel?: Record<string, "real" | "not-a-bug" | "nit" | "pre-existing">;
   partialVerification?: boolean;
@@ -500,6 +502,12 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     }
     return { text: block(result, prose) };
   };
+  if (text.includes("Which older reports are the same bug")) {
+    const keys = [...text.matchAll(/^- Report \[([^\]]+)\]/gm)].map((match) => match[1]!);
+    if (plan.followUpMatch === "same") return done({ groups: [{ keys }], uncertain: [] });
+    if (plan.followUpMatch === "unsure") return done({ groups: [], uncertain: keys });
+    return { text: "could not tell" };
+  }
   for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage));
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);
