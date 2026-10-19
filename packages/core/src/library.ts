@@ -4,6 +4,9 @@ import type { AgentProfile, DeliveryMode, Plan, Role, Stage, Task, Tool } from "
 /** Acceptance evidence is the same requirement in the role library and the engine contract. */
 export const ACCEPTANCE_EVIDENCE_RULE = `For every pass or failure, include short "evidence": the specific scenario, expected and observed result, with the relevant failure/recovery variant and a nearby passing control when needed. Distinguish what you executed from what you only inspected. A passing suite, test name or demo picture does not prove an untried concurrency, interruption or restart condition. Reuse Petrina's current checks when they cover the item; several items may cite one applicable result or focused probe, without rerunning a full suite or repeating logs.`;
 
+/** Applied to built-in, edited and added design reviewers, across products. */
+export const DESIGN_OBJECTION_RULE = `Before calling a rule missing, read the complete current brief, including its product behavior and acceptance list. For each blocking objection, identify the governing request or brief rule (or say precisely which decision is absent), the unresolved gap or contradiction, and why building it as written would fail. A workable rule already written in another section is not missing; a wording preference or a restatement of that rule is not a blocker. A genuinely absent decision or conflicting rules may still block: explain the concrete consequence. Keep independent judgment and investigate the code needed to establish the issue.`;
+
 /** A result rule shared by built-in, edited and added reviewers. */
 export const FINDING_CONFIRMATION_RULE = `For earlier findings, confirm an id only if that specific problem is still present in the current code you reviewed. "Confirms" means "still broken now"; it never means that you agree the earlier report was valid at the time. Use {"id": "<finding id>", "evidence": "<current reproduction, expected and observed result>"} in "confirms". A dismissed finding, claimed fix or previously reopened finding requires current evidence: state the exact failing case on this version, including a nearby passing control when it distinguishes the regression. The earlier report, verdict and builder's answer are history, not evidence that it still fails. Fresh proof reopens the same id for a new check; its earlier dismissal is preserved. If it now works, leave its id out and do not report it again.`;
 
@@ -77,7 +80,8 @@ Keep the design as small as the task allows. Do not add mechanisms the task did 
     purpose: "Challenges the design until nothing blocking is left.",
     instructions: `Challenge the design brief below. Look for gaps, contradictions, missing edge cases, and things that will not work in this codebase. Do not change any files.
 Mark an objection blocking only if building the design as written would be a mistake. Rare, recoverable edge cases and ideas that would grow the task beyond what was asked (new security layers, sandboxes, settings) are non-blocking: list them for follow-up. Prefer objections that make the design simpler.
-If nothing blocking is left, return an empty or non-blocking list.`,
+If nothing blocking is left, return an empty or non-blocking list.
+${DESIGN_OBJECTION_RULE}`,
     canEdit: false,
     sees: "The design brief and the product. Never the architect's transcript.",
     handsBack: "Objections, each blocking or not.",

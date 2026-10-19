@@ -4,7 +4,7 @@
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { ACCEPTANCE_EVIDENCE_RULE, activeRoles, BUILT_IN_ROLES, FINDING_REVIEW_RULES, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
+import { ACCEPTANCE_EVIDENCE_RULE, activeRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
@@ -305,9 +305,10 @@ If objections are listed below, answer every one by its id: accept it and change
     reads: ["notes", "brief", "objections"],
     shape: `{"objections": [{"text": "A concrete gap in the design", "blocking": true}]}`,
     instructions: ({ task }) => {
-      return `Challenge the design brief below. Look for gaps, contradictions, missing edge cases, and things that will not work in this codebase. Do not change any files.
-Mark an objection blocking only if building the design as written would be a mistake. Rare, recoverable edge cases and ideas that would grow the task beyond what was asked (new security layers, sandboxes, settings) are non-blocking: list them for follow-up. Prefer objections that make the design simpler.
-If nothing blocking is left, return an empty or non-blocking list.${task.objections.some((objection) => objection.call !== undefined) ? "\nObjections settled by the coordinator's call are final: do not raise them again." : ""}`;
+      const stage = task.plan?.stages[task.stageIndex];
+      const round = stage ? task.rounds[stage.id] ?? 1 : 1;
+      const revision = round > 1 ? `\nDesign review round ${round}${stage?.maxRounds ? ` of ${stage.maxRounds}` : ""}: first check the Architect's answers to your prior objections and the revised rules. Reuse established facts about unchanged code; do not repeat broad discovery without a concrete reason. Inspect beyond those changes when needed to find a new contradiction or failure. Do not reopen a resolved objection unless current evidence shows why its answer still fails.` : "";
+      return `${BUILT_IN_ROLES.find((role) => role.id === "design-reviewer")!.instructions}${revision}${task.objections.some((objection) => objection.call !== undefined) ? "\nObjections settled by the coordinator's call are final: do not raise them again." : ""}`;
     },
   },
   "ux-designer": {
@@ -471,7 +472,7 @@ export function contractFor(role: Role): RoleContract {
   };
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx);
-    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [DESIGN_RESEARCH_RULE] : [];
+    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [DESIGN_RESEARCH_RULE] : role.result === "objections" ? [DESIGN_OBJECTION_RULE] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
     return missing.length ? `${text}\n${missing.join("\n")}` : text;
   } };

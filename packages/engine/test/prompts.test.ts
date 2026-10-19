@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE } from "@petrina/core";
+import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, DESIGN_OBJECTION_RULE, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE } from "@petrina/core";
 import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, LOGINS, mayAskScreen, parseResult, restartPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
 
@@ -266,7 +266,7 @@ describe("saved role wording", () => {
   const contexts = promptContexts();
   it("keeps main's default instructions apart from confirmed-source planning and screen instructions, and the Release Manager unchanged", () => {
     for (const [name, context] of Object.entries(contexts)) {
-      const now = buildPrompt(context).replace(roleCard(context), "").replace(ASK_FOR_SCREEN, "If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.");
+      const now = buildPrompt(context).replace(roleCard(context), "").replace(`\n${DESIGN_OBJECTION_RULE}`, "").replace(ASK_FOR_SCREEN, "If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.");
       const was = (before as Record<string, string>)[name]!;
       if (context.role.id === "planner") {
         const job = (text: string) => text.slice(text.indexOf("# Your job"), text.indexOf("## Design brief") > 0 ? text.indexOf("## Design brief") : text.length);

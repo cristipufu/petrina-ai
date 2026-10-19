@@ -1,18 +1,52 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, createDemoState, type State } from "@petrina/core";
+import { BUILT_IN_ROLES, createDemoState, DESIGN_OBJECTION_RULE, type State } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { type MState, renameRoles } from "../src/kernel.js";
 import type { PromptContext } from "../src/prompts.js";
 import { contractFor, ROLE_CONTRACTS, shapeFor } from "../src/roles.js";
 import { Store } from "../src/store.js";
 import { makeProduct, removeDir, tempDir } from "./support.js";
+import { Context } from "../src/context.js";
+import type { GuideKeeper } from "../src/guide-keeper.js";
+import { designReviewCases } from "./design-review-cases.js";
 
 const state = createDemoState(1_000_000_000);
 const task = state.tasks[0]!;
 const ctx = (overrides: Partial<PromptContext["task"]> = {}): PromptContext => ({ task: { ...task, ...overrides }, product: state.products[0]!, role: BUILT_IN_ROLES[0]!, roles: BUILT_IN_ROLES, profiles: state.profiles, worktree: "/w", branch: "b", base: "origin/main", defaultBranch: "main", sections: [] });
 
 describe("every role's contract", () => {
+  it("hands every brief rule to downstream roles, including covered, missing and contradictory calendar cases", async () => {
+    const root = tempDir("petrina-design-context-");
+    const engine = new Engine(root, { agentCommand: () => [], codexCommand: null, grokCommand: null, toolPath: () => undefined });
+    engine.setPoolPaused(true);
+    try {
+      const context = new Context(engine, { pendingPoints: async () => [] } as unknown as GuideKeeper);
+      const current = structuredClone(task) as import("../src/kernel.js").MTask;
+      current.queued = [];
+      current.sourcePointers = [];
+      for (const test of designReviewCases) {
+        current.brief = { summary: test.name, forUsers: ["Run maintenance"], areas: [...test.areas], acceptance: test.acceptance.map((text) => ({ text })), risks: ["Keep missed runs bounded"] };
+        for (const roleId of ["architect", "design-reviewer", "builder", "tester", "code-reviewer"]) {
+          const brief = (await context.sectionsFor(current, roleId)).find((section) => section.title === "Design brief")!.body;
+          for (const rule of [...test.areas, ...test.acceptance]) expect(brief).toContain(rule);
+        }
+      }
+    } finally { await engine.shutdown(); removeDir(root); }
+  });
+
+  it("grounds design blockers for built-in and edited roles, with revision-focused later rounds", () => {
+    const reviewer = BUILT_IN_ROLES.find((role) => role.id === "design-reviewer")!;
+    const stage = { id: "design", kind: "converge" as const, title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], maxRounds: 3 };
+    const later = ctx({ plan: { stages: [stage], rationale: "Design", plannerProfileId: "opus-high" }, stageIndex: 0, rounds: { design: 2 } });
+    for (const role of [reviewer, { ...reviewer, instructions: "Review the scheduling behavior." }]) {
+      expect(contractFor(role).instructions(later)).toContain(DESIGN_OBJECTION_RULE);
+      expect(contractFor(role).instructions(later)).toContain("first check the Architect's answers");
+    }
+    expect(contractFor(reviewer).instructions(later)).toContain("Design review round 2 of 3");
+    expect(contractFor(reviewer).instructions(ctx())).not.toContain("Design review round 2");
+  });
+
   it("covers every built-in role, and its example result passes its own schema", () => {
     for (const role of BUILT_IN_ROLES) expect(ROLE_CONTRACTS[role.id]).toBeDefined();
     for (const [id, contract] of Object.entries(ROLE_CONTRACTS)) {
