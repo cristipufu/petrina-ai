@@ -299,6 +299,8 @@ This is the "open in terminal" experience, made friendly.
 
 ## New task
 
+The dialog has a clear header and close control, a scrolling form and a fixed action footer. The request comes first, then Products & delivery, Work & review, and When to start. Product choices are compact selectable items; each selected product has a disclosure showing its starting point and delivery summary, with the editable fields inside. Approval choices sit with review settings. Queue position appears only when adding directly to the queue. Backlog remains the default. The same structure wraps on narrow windows and enlarged text, using the app’s existing light and dark palette.
+
 Products is a searchable checklist. It preselects the current product and permits several products or none. Each selected product has its own starting point and delivery choice; kind of work, queue position and Ask me before shipping are shared. Several products always require plan approval. Works on retains coordinator choices omitted by the planner, identifies proposed changes and additions, and confirms a permanent folder before Petrina clones anything. The task sheet groups changes, evidence and deliveries by repository, with shared and unassigned results under Together. Partial delivery keeps confirmed links and offers a retry for unfinished work.
 
 
