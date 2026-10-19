@@ -361,7 +361,11 @@ function Diagram({ nodes, edges, items, contentHeight, height, target, focused, 
     const left = item.x * zoom + x;
     const top = item.y * zoom + y;
     const inView = left >= 0 && top >= 0 && left + item.width * zoom <= el.clientWidth && top + item.height * zoom <= el.clientHeight;
-    if (inView) return;
+    if (inView) {
+      // A previous pan may still be headed elsewhere. Keep this step in view when focus moves quickly.
+      void flow.setViewport({ x, y, zoom });
+      return;
+    }
     void flow.setCenter(item.x + item.width / 2, item.y + item.height / 2, { zoom, duration: glide });
   }, [flow, focused, items, glide]);
 
