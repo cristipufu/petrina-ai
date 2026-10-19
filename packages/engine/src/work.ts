@@ -85,7 +85,7 @@ export class Work {
       if (task.checks) task.checks.current = task.checks.tree === await git.treeOf(task.worktree!);
       // The next fix round or update goes back to the conversation that really completed this build.
       const conversation = task.conversation;
-      if (conversation?.briefed && conversation.roleId === roleId) task.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId };
+      if (conversation?.briefed && conversation.roleId === roleId) task.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId, ...(conversation.context ? { context: conversation.context } : {}) };
       const fixing = task.fixing;
       let fixed = 0;
       if (fixing) {

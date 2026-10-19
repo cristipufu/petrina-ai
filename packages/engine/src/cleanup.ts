@@ -23,6 +23,9 @@ export class Cleanup {
     if (this.sweeping || this.k.stopped) return;
     this.sweeping = true;
     try {
+      for (const entry of await readdir(join(this.k.dataDir, "contexts"), { withFileTypes: true }).catch(() => [])) {
+        if (entry.isDirectory()) await this.removeContext(entry.name);
+      }
       // Pictures belong only to unfinished tasks, independently of whether a working copy
       // must stay (an open pull request or interrupted delivery may still need its files).
       // Walk the capture folders. Only saved unfinished follow-up links can need an
@@ -62,6 +65,7 @@ export class Cleanup {
    * quietly.
    */
   async removeCopy(taskId: Id): Promise<void> {
+    await this.removeContext(taskId);
     await this.removeCaptures(taskId);
     const task = this.k.task(taskId);
     if (task?.repositories) return this.removeRepositoryCopies(task);
@@ -137,6 +141,13 @@ export class Cleanup {
       this.k.cleanupJobs.delete(task.id);
       this.k.syncIdleSleep();
     }
+  }
+
+  private async removeContext(taskId: Id): Promise<void> {
+    if (this.k.stopped || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
+    const task = this.k.s.tasks.find((entry) => entry.id === taskId);
+    if (task && !finishedTask(task as Task)) return;
+    await rm(join(this.k.dataDir, "contexts", taskId), { recursive: true, force: true }).catch(() => {});
   }
 
   async removeCaptures(taskId: Id): Promise<void> {

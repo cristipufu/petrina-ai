@@ -348,7 +348,16 @@ export interface StepNote {
  * agent picks up its own conversation. Removed when the step finishes or fails, or the coordinator
  * pauses, cancels or asks for changes; Petrina stopping keeps it. The Release Manager never has one.
  */
+export interface BuilderContext {
+  scope: string;
+  file: string;
+  digest: string;
+  hashes: Readonly<Record<string, string>>;
+}
+
 export interface ConversationNote {
+  /** Context actually supplied to this Builder, available if its harness compacts history. */
+  context?: BuilderContext;
   repositoryCopies?: Readonly<Record<Id, string>>;
   /** The step: its stage (or the plan), the design round and the reviewer position. */
   step: string;
@@ -844,7 +853,7 @@ export interface Task {
   /** The tester is trying the final code right before the delivery check; the check follows, or the builder if it fails. */
   retest?: boolean;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
-  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string };
+  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext };
   /** The coordinator sent the delivery back with this note: the Guide keeper looks for what reviewers missed. */
   miss?: { note: string; at: number };
   /** How many times the coordinator sent a delivery back after every reviewer had passed it. */

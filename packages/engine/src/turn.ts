@@ -24,6 +24,7 @@ import type { ToolChecks } from "./tool-checks.js";
 import type { Section } from "./context.js";
 import { takeMessages } from "./messages.js";
 import { preserveCaptures } from "./captures.js";
+import { builderContext } from "./builder-context.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
@@ -380,7 +381,7 @@ export class Turns {
     // the old note; a reopened one keeps the open question until the conversation hears the answer.
     const asked = picked ? reopen?.asked : undefined;
     if (roleId !== "release-manager") {
-      task.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && handback ? { handback } : {}) };
+      task.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && same?.context ? { context: same.context } : {}), ...(picked && handback ? { handback } : {}) };
       const pending = screen?.member && task.hunt?.screenTurns?.[screen.member];
       // Keep the latest reopened or replacement conversation when this member yields to a peer.
       if (pending) pending.conversation = task.conversation;
@@ -394,7 +395,13 @@ export class Turns {
       let opening: string;
       if (wentBack) {
         // Its job as it stands now and the context, from the same sections a fresh conversation gets.
-        const sections = await withBackground();
+        const givenSections = await withBackground();
+        const prepared = role.result === "build" ? await builderContext(this.k.dataDir, task as Task, role, run.sessionId, givenSections, task.builderSession?.sessionId === run.sessionId ? task.builderSession.context : undefined) : { sections: givenSections };
+        const sections = prepared.sections;
+        if (task.conversation && role.result === "build") {
+          if ("snapshot" in prepared && prepared.snapshot) task.conversation.context = prepared.snapshot;
+          else delete task.conversation.context;
+        }
         this.recordJourneyInput(task, roleId, profileId, sections, "continued");
         opening = continuePrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: task.branch ?? "planning", base: task.baseSha ?? task.base ?? "", defaultBranch: task.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) });
       } else if (picked) {
@@ -426,6 +433,11 @@ export class Turns {
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt)) });
         else if (where) sections.push({ title: forScreen ? WHERE_YOU_WERE_SCREEN : WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "", forScreen ? "screen" : "restart") });
+        if (role.result === "build" && task.conversation) {
+          const prepared = await builderContext(this.k.dataDir, task as Task, role, run.sessionId, sections);
+          if (prepared.snapshot) task.conversation.context = prepared.snapshot;
+          else delete task.conversation.context;
+        }
         this.recordJourneyInput(task, roleId, profileId, sections, "fresh");
         opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: task.branch ?? "planning", base: task.baseSha ?? task.base ?? "", defaultBranch: task.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) });
       }
