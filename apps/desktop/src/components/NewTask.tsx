@@ -104,7 +104,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
     <div ref={box} className="dialog new-task-dialog" role="dialog" aria-modal="true" aria-label="New task" tabIndex={-1}>
       <header className="new-task-head">
         <div><h2>New task</h2><p>Describe the outcome. Choose where and when to work.</p></div>
-        <button className="icon" aria-label="Close new task" onClick={onClose} disabled={saving}><X size={20} /></button>
+        <button className="btn quiet small icon" aria-label="Close new task" onClick={onClose} disabled={saving}><X size={20} /></button>
       </header>
       <div className="new-task-body">
         <WaitingLine text={waiting} />
@@ -139,7 +139,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
 
         <section className="new-task-section" aria-labelledby="new-task-work-heading">
           <h3 id="new-task-work-heading">Work & review</h3>
-          <TaskOptions kind={kind} delivery={choices[0]?.delivery ?? "pull-request"} position={position} onKind={setKind} onDelivery={() => {}} onPosition={setPosition} hideDelivery hidePosition={backlog} disabled={saving} />
+          <TaskOptions kind={kind} delivery={choices[0]?.delivery ?? "pull-request"} position={position} onKind={setKind} onDelivery={() => {}} onPosition={setPosition} hideDelivery hidePosition disabled={saving} />
           <div className="new-task-approvals">
             <label className="toggle"><input type="checkbox" checked={approvePlan || choices.length !== 1} disabled={saving || choices.length !== 1} onChange={(event) => setApprovePlan(event.target.checked)} />Show me the plan first</label>
             <label className="toggle"><input type="checkbox" checked={approveDelivery} disabled={saving} onChange={(event) => setApproveDelivery(event.target.checked)} />Ask me before shipping</label>
@@ -151,6 +151,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
             <button role="radio" aria-checked={backlog} className={backlog ? "on" : ""} disabled={saving} onClick={() => setBacklog(true)}>Review in backlog</button>
             <button role="radio" aria-checked={!backlog} className={!backlog ? "on" : ""} disabled={saving} onClick={() => setBacklog(false)}>Ready for the queue</button>
           </div>
+          {!backlog && <div className="opt"><span id="new-task-queue-position">Place in the queue</span><div className="segmented" role="radiogroup" aria-labelledby="new-task-queue-position"><button role="radio" aria-checked={position === "bottom"} className={position === "bottom" ? "on" : ""} disabled={saving} onClick={() => setPosition("bottom")}>Bottom</button><button role="radio" aria-checked={position === "top"} className={position === "top" ? "on" : ""} disabled={saving} onClick={() => setPosition("top")}>Top</button></div></div>}
           <p className="quiet-text">{backlog ? "Saved for review. No agent starts until you queue it." : "Starts when the pool is running and a place is free."}</p>
           {backlog && !supportsBacklog && <p className="note">Backlog will be available after the engine is updated.</p>}
         </section>
