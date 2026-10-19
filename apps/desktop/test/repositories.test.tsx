@@ -64,6 +64,7 @@ describe("shared product controls", () => {
 
   it("preselects the current product and saves several independently chosen starting points", async () => {
     await render(<NewTaskDialog state={state} defaultProduct={state.products[0]!.id} initialTitle="A shared change" onClose={() => {}} onCreated={() => {}} />);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Choose products"]')!);
     const products = host.querySelector("fieldset")!;
     const checkboxes = products.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
     expect(checkboxes[0]!.checked).toBe(true);

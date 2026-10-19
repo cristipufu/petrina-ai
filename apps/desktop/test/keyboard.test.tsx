@@ -548,6 +548,7 @@ describe('the app keyboard', () => {
     await click('[aria-label="Clear the board filter"]');
     expect(host.querySelectorAll('.card').length).toBeGreaterThan(1);
     await palette('Build this new thing'); await key('Enter');
+    await click('[aria-label="Choose products"]');
     expect(el('[role=dialog] input[type=checkbox]:checked').closest('label')?.textContent).toContain('Notes');
   });
   it('offers no task actions on other pages and cannot confirm an action while reconnecting', async () => {

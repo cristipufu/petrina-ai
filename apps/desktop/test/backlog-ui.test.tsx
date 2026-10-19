@@ -36,6 +36,33 @@ async function type(selector: string, value: string) {
 }
 
 describe("reviewing a backlog task", () => {
+  it("searches and selects several products without losing choices, and dismisses the picker before the dialog", async () => {
+    await mount();
+    await click('.topbar button[title^="New task"]');
+    const [first, second] = simulator.getState().products;
+    expect(host!.querySelector('[aria-label="Find products"]')).toBeNull();
+    await click('[aria-label="Choose products"]');
+    await type('[aria-label="Find products"]', first!.name);
+    expect(host!.querySelectorAll('.new-task-product-choice')).toHaveLength(1);
+    await click('.new-task-product-choice input');
+    await type('[aria-label="Find products"]', second!.name);
+    await click('.new-task-product-choice input');
+    expect(host!.querySelector('.new-task-product-menu-foot')?.textContent).toContain('2 selected');
+    await act(async () => host!.querySelector<HTMLInputElement>('[aria-label="Find products"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+    expect(host!.querySelector('.new-task-product-menu')).toBeNull();
+    expect(host!.querySelector('[aria-label="New task"]')).not.toBeNull();
+    expect(document.activeElement).toBe(host!.querySelector('[aria-label="Choose products"]'));
+    expect(host!.querySelectorAll('.new-task-product-settings')).toHaveLength(2);
+    await click('[aria-label="Choose products"]');
+    expect(host!.querySelectorAll('.new-task-product-choice input:checked')).toHaveLength(2);
+    await click('.new-task-product-choice input:checked');
+    await button('Done');
+    expect(host!.querySelectorAll('.new-task-product-settings')).toHaveLength(1);
+    await type('[aria-label="What do you want done?"]', 'Only the remaining product');
+    const add = [...host!.querySelectorAll<HTMLButtonElement>('button')].find((node) => node.textContent?.startsWith('Add to backlog'))!;
+    await act(async () => add.click());
+    expect(simulator.getState().tasks[0]!.workChoice).toEqual(expect.objectContaining({ productId: second!.id }));
+  });
   it("keeps an empty Backlog visible directly below Queue and offers to add a request", async () => {
     await mount();
     const queue = host!.querySelector("#section-queue")!.closest("section")!;
