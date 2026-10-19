@@ -93,6 +93,9 @@ Check what you build without windows:
 - Web UIs, including Tauri and Electron front ends: in a headless browser (Playwright with headless: true, or headless Chrome) on a free port.
 - Native Mac app screens (SwiftUI, AppKit): render views offscreen to images in snapshot tests, never by launching the app.`;
 
+/** Harness-owned command deadlines also work when a tested process starves its own timers. */
+export const FOCUSED_VERIFICATION = `For focused verification commands, choose a short execution deadline (normally two minutes), enforced by your tool or a parent process outside the tested program. A yield time or block_until_ms only controls when a tool replies; it is not a runtime deadline. Do not rely only on a test-runner timer for a possibly nonterminating case. If a command runs in the background, retain its handle, inspect progress and stop that owned command at the deadline; confirm its children stopped before trying changed work. Keep the first failure and last progress. Report a stopped or timed-out probe as incomplete, not an assertion failure. Never kill another task's processes, retry an unchanged hang, lower test parallelism or shorten a legitimate full-suite budget.`;
+
 /** How a step's agent asks for the screen. Petrina decides; only the agent that has the screen is told it may use it. */
 export const ASK_FOR_SCREEN = `If a check truly needs the running app on screen (clicking through it, menus, the Dock, real window behaviour), ask for the screen. First do everything else you can in the background, then end your turn with this block instead of your usual result, giving the reason in plain language:
 
@@ -162,6 +165,8 @@ ${background(ctx.screen ?? (mayAskScreen(role) ? "ask" : undefined))}
 
 ${LOGINS}
 
+${FOCUSED_VERIFICATION}
+
 # The task: ${task.title}
 ${task.description || "(no further description)"}
 
@@ -187,6 +192,8 @@ export function continuePrompt(ctx: PromptContext): string {
 
 # Your job now
 ${contract.instructions(ctx)}${roleCard(ctx)}
+
+${FOCUSED_VERIFICATION}
 
 ${sections}
 

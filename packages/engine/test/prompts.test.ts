@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE } from "@petrina/core";
-import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, formatFindings, formatWhereYouWere, LOGINS, mayAskScreen, parseResult, restartPrompt, screenRules } from "../src/prompts.js";
+import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, LOGINS, mayAskScreen, parseResult, restartPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
 
 const task = createDemoState(1_000_000_000).tasks[0]!;
@@ -20,6 +20,12 @@ const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reaso
 const promptFor = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => buildPrompt(context(role, screen));
 
 describe("prompts", () => {
+  it("requires an external execution deadline for focused probes on fresh and continued turns", () => {
+    for (const role of BUILT_IN_ROLES) {
+      expect(promptFor(role)).toContain(FOCUSED_VERIFICATION);
+      expect(continuePrompt(context(role))).toContain(FOCUSED_VERIFICATION);
+    }
+  });
   it("explains fresh browser storage after restart and failed reopening, including a screen continuation", () => {
     const where = { stage: "Build", role: "Builder", done: ["Checked the page"] };
     const reopened = restartPrompt(where, { messages: [] });

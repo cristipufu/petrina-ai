@@ -57,6 +57,8 @@ Mechanics borrowed and credited:
 
 Each new acceptance pass or failure records a short account of the actual scenario and observed result, or names the applicable current automated evidence. The node's details show that evidence beside the item. Missing evidence remains unverified rather than passing or creating a product defect. Previously finished records keep their original evidence without invented detail. One probe may support several items; this adds no duplicate full-suite run or workflow gate.
 
+Agent verification instructions require a real execution deadline through the harness or an external parent process, with owned background handles retained and stopped. A tool's output wait is not a command deadline, and a program can starve its own test timers. This uses the tools' existing command controls; it adds no process scanner or memory sandbox. Engine-run product checks keep their separate external deadline, complete logs and process cleanup, and legitimate full-suite budgets are unchanged.
+
 ### Task lifecycle
 
 ```
