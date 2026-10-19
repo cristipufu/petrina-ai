@@ -24,6 +24,8 @@ export interface PermissionInfo {
   command?: string;
   /** Paths the tool call touches. */
   paths: string[];
+  /** A plain description of a browser target, when the tool actually names it. */
+  target?: string;
 }
 
 export interface RunCallbacks {
@@ -187,6 +189,46 @@ function grokTool(update: ToolActivity): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+function browserAction(update: ToolActivity): { action: string; input: Record<string, unknown> } | undefined {
+  const metadata = grokTool(update);
+  let name = typeof metadata?.name === "string" ? metadata.name : update.title ?? "";
+  let input = update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput) ? update.rawInput as Record<string, unknown> : {};
+  if (/^(?:use_tool|call_tool)$/i.test(name)) {
+    const wrapped = input.tool_name ?? input.name;
+    if (typeof wrapped !== "string") return undefined;
+    name = wrapped;
+    const args = input.arguments ?? input.args ?? input.parameters;
+    input = args && typeof args === "object" && !Array.isArray(args) ? args as Record<string, unknown> : {};
+  }
+  const action = /(?:^|__)browser_([a-z_]+)$/i.exec(name)?.[1]?.toLowerCase();
+  return action ? { action, input } : undefined;
+}
+
+const BROWSER_ACTIONS: Record<string, string> = {
+  navigate: "Opening a page", navigate_back: "Going back a page", snapshot: "Reading the page",
+  find: "Finding text on the page", take_screenshot: "Taking a picture", click: "Clicking on the page",
+  type: "Typing on the page", fill_form: "Filling in a form", select_option: "Choosing an option",
+  press_key: "Using the keyboard", hover: "Pointing at the page", drag: "Dragging on the page",
+  wait_for: "Waiting for the page", console_messages: "Checking page messages",
+  network_requests: "Checking page requests", tabs: "Checking browser tabs", close: "Closing the page",
+  resize: "Resizing the page", evaluate: "Checking the page", run_code: "Checking the page",
+};
+
+/** Permission targets come only from named fields, never from executable browser payloads. */
+export function browserTarget(update: ToolActivity): string | undefined {
+  const browser = browserAction(update);
+  if (!browser) return undefined;
+  const input = browser.input;
+  if (typeof input.url === "string") {
+    try {
+      const url = new URL(input.url);
+      if (url.protocol === "http:" || url.protocol === "https:") return `Page: ${url.origin}${url.pathname}`.slice(0, 240);
+    } catch { /* Missing or malformed metadata gives no target. */ }
+  }
+  if (typeof input.element === "string" && input.element.trim()) return `On the page: ${input.element.trim().replace(/\s+/g, " ")}`.slice(0, 240);
+  return undefined;
+}
+
 // Grok puts the kind in its metadata, and older tools sometimes send only their name.
 // All of them use the same descriptions below once the action is identified.
 const TOOL_NAMES: Record<string, string> = {
@@ -221,6 +263,8 @@ function fileOf(update: ToolActivity): string | undefined {
 }
 
 export function describeTool(update: ToolActivity): string {
+  const browser = browserAction(update);
+  if (browser) return BROWSER_ACTIONS[browser.action] ?? "Using the browser";
   const kind = kindOf(update);
   const command = commandOf(update.rawInput);
   const file = fileOf(update);
@@ -245,7 +289,7 @@ export function describeTool(update: ToolActivity): string {
     case "fetch":
       return "Looking something up";
     default:
-      return update.title ? update.title.slice(0, 80) : "Working";
+      return update.title ? (!/\s/.test(update.title) && /[_]|^(?:mcp|functions)[.:]/i.test(update.title) ? "Using a tool" : update.title.slice(0, 80)) : "Working";
   }
 }
 
@@ -499,6 +543,7 @@ export class AgentRun {
             kind: kindOf(merged),
             ...(commandOf(merged.rawInput) ? { command: commandOf(merged.rawInput)! } : {}),
             paths: (merged.locations ?? []).map((location) => location.path),
+            ...(browserTarget(merged) ? { target: browserTarget(merged)! } : {}),
           };
           const decision = await callbacks.onPermission(info);
           // One-time answers only: a tool's "always" options write settings into the working copy

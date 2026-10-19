@@ -1,10 +1,30 @@
 import { describe, expect, it } from "bun:test";
-import { describeTool, isPlumbing } from "../src/acp-run.js";
+import { browserTarget, describeTool, isPlumbing } from "../src/acp-run.js";
 
 // Grok's saved ACP calls put the kind here instead of in ACP's top-level field.
 const grok = (name: string, kind: string, rawInput: unknown = {}) => ({ title: name, rawInput, _meta: { "x.ai/tool": { version: 1, name, kind, namespace: "grok_build" } } });
 
 describe("plain agent activity across tools", () => {
+  it("describes direct and wrapped browser actions without exposing runtime tool names", () => {
+    for (const call of [
+      { title: "petrina-browser-a09ab187__browser_find", kind: "search" },
+      grok("use_tool", "other", { tool_name: "petrina-browser-a09ab187__browser_find", arguments: { text: "Backlog" } }),
+      { title: "call_tool", rawInput: { name: "browser_find", args: {} } },
+    ]) expect(describeTool(call)).toBe("Finding text on the page");
+    expect(describeTool({ title: "use_tool", rawInput: { tool_name: "browser_take_screenshot", arguments: {} } })).toBe("Taking a picture");
+    expect(describeTool({ title: "mcp__page__browser_snapshot" })).toBe("Reading the page");
+    expect(describeTool({ title: "use_tool" })).toBe("Using a tool");
+    expect(describeTool({ title: "unknown_raw_tool", rawInput: { code: "private executable payload" } })).toBe("Using a tool");
+    expect(describeTool({ title: "browser_future_action" })).toBe("Using the browser");
+  });
+
+  it("names browser permission targets only when supplied, without code, credentials or query strings", () => {
+    expect(browserTarget({ title: "browser_navigate", rawInput: { url: "https://user:secret@example.com/page?token=secret#private" } })).toBe("Page: https://example.com/page");
+    expect(browserTarget({ title: "use_tool", rawInput: { tool_name: "browser_click", arguments: { element: "Backlog task" } } })).toBe("On the page: Backlog task");
+    expect(browserTarget({ title: "browser_evaluate", rawInput: { code: "secret code" } })).toBeUndefined();
+    expect(browserTarget({ title: "browser_navigate", rawInput: { url: "bad url" } })).toBeUndefined();
+  });
+
   it("describes Grok searches just like other tools, even without metadata", () => {
     for (const call of [
       { title: "Search", kind: "search" },

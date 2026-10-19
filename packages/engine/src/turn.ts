@@ -910,7 +910,7 @@ export class Turns {
     const task = this.k.task(taskId);
     if (!task) return "deny";
     const tool = ADAPTERS[this.k.profile(by.profileId)?.toolId ?? ""]?.name ?? "The agent's tool";
-    const detail = info.command ?? info.paths.join("\n");
+    const detail = info.command ?? (info.target ? info.target : info.paths.join("\n"));
     const main = !reviewKey && task.agent?.profileId === by.profileId && task.agent.roleId === by.roleId;
     // Waiting for the coordinator is not agent work: the wait is left out of the turn's working time.
     waits.start(taskId);
