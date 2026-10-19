@@ -324,7 +324,7 @@ function answersTo(text: string) {
   return findingIds(text, "Review findings (answer every one by id; fix every Important one)").map((id) => ({ id, fixed: true, text: "Fixed it." }));
 }
 
-const NOTES = "The coordinator's notes on this task (follow them; where they conflict with the brief or each other, the latest wins)";
+const NOTES = "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)";
 const check = { kind: "gate", title: "Your design check", roleId: "architect", gate: "design" };
 const screens = { kind: "do", title: "Screens", roleId: "ux-designer", profileIds: ["opus-high"] };
 const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
@@ -766,7 +766,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         // "Your call" tag and the others get it. Every note is rewritten to match the updated brief.
         const ids = objectionIds(settled);
         const answers = ids.map((id, index) => (index === 0 ? { id, status: "accepted", byCall: false, answer: "Kept it in the brief after your note." } : { id, status: "accepted", byCall: true, answer: "Added it to the brief, as the call says." }));
-        return done({ ...brief, answers }, `Revising: ${ids.join(", ")}. Latest note: ${section(text, NOTES)?.split("\n").at(-1) ?? "none"}`);
+        return done({ ...brief, answers }, `Revising: ${ids.join(", ")}. Latest note: - ${section(text, NOTES)?.split("\n").at(-1) ?? "none"}`);
       }
       if (call !== undefined) {
         await say("Reading your call");
