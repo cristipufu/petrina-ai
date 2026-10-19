@@ -35,8 +35,19 @@ it("carries only bounded current source locations to design or a first builder, 
     }
     task.fixing = true;
     expect((await new Context(engine, guide).sectionsFor(task, "builder")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
+    task.fixing = false;
+    task.plan = { stages: [{ id: "design", kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-high"] }], rationale: "Design first", plannerProfileId: "opus-high" };
+    task.brief = { summary: "Choose independently", forUsers: [], areas: [], risks: [], acceptance: [] };
+    expect((await new Context(engine, guide).sectionsFor(task, "builder")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
+    task.brief.sourcePointers = [pointer];
+    task.sourcePointers = [];
+    for (const role of ["architect", "builder"]) {
+      expect((await new Context(engine, guide).sectionsFor(task, role)).find((entry) => entry.title.startsWith("Previously inspected"))?.body).toContain("README.md");
+    }
+    expect((await new Context(engine, guide).sectionsFor(task, "design-reviewer")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
     engine.commitNow();
     expect(engine.store.loadActive()!.tasks.find((entry) => entry.id === id)!.sourcePointers).toEqual(task.sourcePointers);
+    expect(engine.store.loadActive()!.tasks.find((entry) => entry.id === id)!.brief!.sourcePointers).toEqual([pointer]);
     writeFileSync(join(copy, "VERSION"), "2.0.0\n");
     git(copy, "add", "VERSION");
     git(copy, "commit", "-q", "-m", "A different source version");

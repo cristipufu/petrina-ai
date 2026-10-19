@@ -43,8 +43,10 @@ export class Context {
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
     const points = reads.includes("guide-points") ? await this.guide.pendingPoints(task) : [];
     const currentChecks = reads.includes("check-results") && !!task.checks?.results.length ? await this.currentChecks(task) : false;
-    const mayUsePointers = role?.result === "brief" || (role?.result === "build" && !task.fixing && !task.plan?.stages.some((stage) => stage.kind === "converge"));
-    const pointers = mayUsePointers ? await currentSourcePointers(task as Task, task.sourcePointers ?? []) : [];
+    const fromPlanning = task.plan?.stages.some((stage) => stage.kind === "converge") ? [] : task.sourcePointers ?? [];
+    const references = role?.result === "brief" ? [...(task.brief?.sourcePointers ?? []), ...(task.sourcePointers ?? [])]
+      : role?.result === "build" && !task.fixing ? task.brief?.sourcePointers ?? fromPlanning : [];
+    const pointers = await currentSourcePointers(task as Task, references);
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
     takeMessages(task, member, Infinity);
     const source = task.source ? [{ title: "Approved starting point and delivery", body: workSummary({ ...task.source, product: { ...task.source.product, name: this.k.productOf(task)?.name ?? task.source.product.name } }) }] : [];

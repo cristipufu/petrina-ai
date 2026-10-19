@@ -15,6 +15,9 @@ export const SourcePointers = z.array(z.object({
   path: z.string().trim().min(1).max(180).refine((path) => !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes(".."), "Use a repository-relative location"),
 }).strict()).max(8);
 
+const SOURCE_POINTER_RULE = `If you already inspected useful source locations, optionally return up to eight sourcePointers: {productId, revision: the full commit SHA you actually inspected, path: a repository-relative location}. Do no extra research to fill this field. Return locations only, never recommendations, a proposed architecture, inferred requirements or a research transcript. Omit it or return [] when there is nothing useful to carry forward.`;
+const DESIGN_RESEARCH_RULE = `${SOURCE_POINTER_RULE} When revising a design, start with the current objections and reconsider assumptions they contradict. Use verified source pointers to revisit relevant code; do not repeat broad discovery solely because this is a fresh conversation. These references are incomplete, not an endorsement of the earlier design. Investigate freely when they do not answer the objection.`;
+
 export const PlanResult = z.object({
   sourcePointers: SourcePointers.optional(),
   worksOn: z.array(WorkChoiceSchema).max(20).optional(),
@@ -40,6 +43,7 @@ export const PlanResult = z.object({
 });
 
 export const BriefResult = z.object({
+  sourcePointers: SourcePointers.optional(),
   summary: z.string().min(3),
   forUsers: z.array(z.string()).default([]),
   areas: z.array(z.string()).default([]),
@@ -262,7 +266,7 @@ Stage kinds:
 - "gate": the coordinator checks. Use gate "design" after a converge stage when the change affects what users see.
 
 Rules:
-- If you already inspected useful source locations, optionally return up to eight sourcePointers: {productId, revision: the full commit SHA you actually inspected, path: a repository-relative location}. Do no extra research to fill this field. Return locations only, never recommendations, a proposed architecture, inferred requirements or a research transcript. Omit it or return [] when there is nothing useful to carry forward.
+- ${SOURCE_POINTER_RULE}
 - Size the plan to the task. A small fix can be a builder and two reviewers. Something new deserves research, a converge design, a design gate, a builder, maybe a tester, and a review chain.
 - Always include exactly one builder stage before the review chain.
 - Use findings roles only in review-chain stages. For a mix of roles, list roleIds in the same order as profileIds. Notes and checks roles work in do stages; only the Architect and Design reviewer work in converge stages.
@@ -287,7 +291,7 @@ Rules:
   "architect": {
     result: BriefResult,
     reads: ["notes", "brief", "objections"],
-    shape: (ctx) => (followingCall(ctx.task) ? `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "answers": [{"id": "<objection id the call decides>", "status": "accepted", "byCall": true, "answer": "What you changed in the brief to follow the call"}, {"id": "<objection id the call does not speak to>", "status": "rejected", "byCall": false, "answer": "What you changed, or why not"}]}` : `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "answers": [{"id": "<objection id>", "status": "accepted", "answer": "What you changed, or why not"}]}`),
+    shape: (ctx) => (followingCall(ctx.task) ? `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "sourcePointers": [], "answers": [{"id": "<objection id the call decides>", "status": "accepted", "byCall": true, "answer": "What you changed in the brief to follow the call"}, {"id": "<objection id the call does not speak to>", "status": "rejected", "byCall": false, "answer": "What you changed, or why not"}]}` : `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "sourcePointers": [], "answers": [{"id": "<objection id>", "status": "accepted", "answer": "What you changed, or why not"}]}`),
     instructions: ({ task }) => {
       if (followingCall(task)) return CALL_INSTRUCTIONS;
       return `Design how this should work, for users and in the product. Read the code you need. Do not change any files: your output is the design brief.
@@ -467,7 +471,7 @@ export function contractFor(role: Role): RoleContract {
   };
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx);
-    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : [];
+    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [DESIGN_RESEARCH_RULE] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
     return missing.length ? `${text}\n${missing.join("\n")}` : text;
   } };

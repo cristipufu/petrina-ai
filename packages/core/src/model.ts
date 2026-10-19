@@ -483,6 +483,7 @@ export interface SourcePointer {
 }
 
 export interface DesignBrief {
+  sourcePointers?: readonly SourcePointer[];
   summary: string;
   forUsers: readonly string[];
   areas: readonly string[];

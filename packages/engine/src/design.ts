@@ -30,7 +30,8 @@ export class Design {
           return missing.length ? `every objection you were shown needs an answer by id, accepted or rejected with your reason, and these have none:\n${formatObjections(missing as Task["objections"])}` : undefined;
         },
       });
-      task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks };
+      const sourcePointers = result.sourcePointers ?? task.brief?.sourcePointers;
+      task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers?.length ? { sourcePointers } : {}) };
       for (const answer of given.size ? given.values() : result.answers) {
         const objection = task.objections.find((entry) => entry.id === answer.id);
         if (objection && objection.status === "open") {
@@ -122,7 +123,8 @@ export class Design {
         return missing.length ? `every objection listed for an answer needs one by id, and these have none:\n${formatObjections(missing)}` : undefined;
       },
     });
-    task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks };
+    const sourcePointers = result.sourcePointers ?? task.brief?.sourcePointers;
+    task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers?.length ? { sourcePointers } : {}) };
     task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as MTask["objections"];
     recordStepResult(task, { objections: task.objections.filter((objection) => answers.has(objection.id) || call.open.includes(objection.id)) });
     this.k.log(task, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, by);
