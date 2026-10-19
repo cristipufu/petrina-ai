@@ -565,7 +565,11 @@ export class Engine extends Kernel implements Commands {
     this.schedule();
   }
 
-  async combineBacklog(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
+  combineBacklog(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
+    return this.trackWork(this.combineBacklogRequests(taskIds, title, clientId));
+  }
+
+  private async combineBacklogRequests(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
     const known = this.s.tasks.find((task) => task.clientId === clientId) ?? (() => { const id = this.store.history.byClient(clientId); return id ? this.task(id) : undefined; })();
     if (known) {
       if (JSON.stringify(known.combinedFrom?.map((entry) => entry.id)) !== JSON.stringify(taskIds)) throw new Error("This request reference was already used for a different selection.");
@@ -612,7 +616,7 @@ export class Engine extends Kernel implements Commands {
       for (const source of sources) void this.cleanup.removeCaptures(source.id);
       this.schedule();
       return id;
-    } finally { release(); await rm(temp, { recursive: true, force: true }); }
+    } finally { release(); await rm(temp, { recursive: true, force: true }).catch(() => undefined); }
   }
 
   moveToBacklog(taskId: Id): void {
