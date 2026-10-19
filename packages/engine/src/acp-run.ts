@@ -483,7 +483,7 @@ export class AgentRun {
     let stopping: Promise<boolean> | undefined;
     let cleanupNoticeSent = false;
     const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= Promise.all([
-      stopAll(child, graceMs, showBrowser),
+      stopAll(child, graceMs, !options.probe),
       browserReady.then((browser) => browser?.close()).then(() => true, () => false),
     ]).then((results) => {
       const complete = results.every(Boolean);

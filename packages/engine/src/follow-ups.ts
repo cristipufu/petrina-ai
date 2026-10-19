@@ -12,6 +12,7 @@ import type { Kernel, MTask } from "./kernel.js";
 import { parseResult } from "./prompts.js";
 import { extraSlot, limitOf } from "@petrina/core";
 import { agentEnv } from "./env.js";
+import { claudeSandbox } from "./sandbox.js";
 
 const MatchBody = z.object({
   groups: z.array(z.object({ keys: z.array(z.string()).min(1), cardId: z.string().optional() })).default([]),
@@ -73,7 +74,7 @@ export class FollowUps {
     if (task.state !== "done") return Promise.resolve();
     const release = this.k.holdFollowUp(task.id);
     const job = this.enqueue(() => this.apply());
-    void job.finally(release);
+    void job.then(release, release);
     return job;
   }
 
@@ -306,6 +307,7 @@ export class FollowUps {
         profile,
         cwd,
         env: agentEnv(process.env),
+        ...(profile.toolId === "claude-code" ? { sandbox: claudeSandbox() } : {}),
         ...(command ? { command } : {}),
         callbacks: { onActivity() {}, onPlanStep() {}, async onPermission() { return "deny"; } },
         signal: AbortSignal.any([this.stopped.signal, AbortSignal.timeout(this.k.options.startTimeoutMs ?? 30_000)]),
