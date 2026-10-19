@@ -732,6 +732,9 @@ export type TaskRepository = Pick<Task, RepositoryField> & {
 };
 
 export interface Task {
+  /** Original requests combined into this task, or the replacement for a combined source. */
+  combinedFrom?: readonly { id: Id; title: string }[];
+  combinedInto?: Id;
   /** Retained coordinator choices and the complete validated scope, before any fetching. */
   selectedProducts?: readonly WorkChoice[];
   workRows?: readonly WorkRow[];

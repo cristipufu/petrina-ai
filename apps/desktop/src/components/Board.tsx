@@ -1,3 +1,4 @@
+import { CombineBacklog } from "./CombineBacklog";
 import { useState, type DragEvent } from "react";
 import { ArrowRight, Hand, Lightbulb, X } from "lucide-react";
 import { boardSections, firstTaskTip, queueOf, startsNextCount, type State, type Task } from "@petrina/core";
@@ -33,6 +34,9 @@ const SECTIONS = [
  * reorder), and work awaiting review in the backlog. Finished tasks live in History.
  */
 export function Board({ state, find, visible, selectedId, onOpen, onFocus, drafts, onPlace, onNewTask, onShowInbox, onAddProduct }: BoardProps) {
+  const [selecting, setSelecting] = useState(false);
+  const [included, setIncluded] = useState<string[]>([]);
+  const [combining, setCombining] = useState(false);
   const [dragId, setDragId] = useState<string>();
   const [dropIndex, setDropIndex] = useState<number>();
   const sections = boardSections(state.tasks, visible);
@@ -171,8 +175,14 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, draft
         </section>
 
       <section className="board-section" aria-labelledby="section-backlog">
-        <h2 className="section-head" id="section-backlog">Backlog<span className="n">{sections.backlog.length}</span><span className="hint">Review these before queuing them.</span></h2>
-        {sections.backlog.length ? <div className="card-grid">{sections.backlog.map((task) => <TaskCard key={task.id} task={task} state={state} find={find} selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)} onOpen={onOpen} />)}</div> : <div className="board-section-empty"><span>{state.tasks.some((task) => task.state === "backlog") ? "No backlog requests match this view." : "No requests awaiting review."}</span><button className="btn small outline" onClick={onNewTask} disabled={!state.products.length} title={state.products.length ? undefined : "Add a product first"}>Add a request</button></div>}
+        <div className="backlog-head"><h2 className="section-head" id="section-backlog">Backlog<span className="n">{sections.backlog.length}</span><span className="hint">Review these before queuing them.</span></h2>{sections.backlog.length > 0 && <button className="btn small quiet" onClick={() => { setSelecting(!selecting); setIncluded([]); }}>{selecting ? "Cancel selection" : "Select tasks"}</button>}</div>
+        {selecting && <div className="backlog-selection-bar"><span>{included.filter((id) => sections.backlog.some((task) => task.id === id)).length} selected</span><button className="btn small lead" disabled={included.filter((id) => sections.backlog.some((task) => task.id === id)).length < 2} onClick={() => setCombining(true)}>Combine and queue…</button><span className="quiet-text">Choose small fixes that belong together.</span></div>}
+        {sections.backlog.length ? <div className="card-grid">{sections.backlog.map((task) => <div key={task.id} className={`backlog-choice ${selecting && included.includes(task.id) ? "included" : ""}`}>
+          {selecting && <label className="backlog-select"><input type="checkbox" aria-label={`Include ${task.title}`} checked={included.includes(task.id)} onChange={(event) => setIncluded(event.target.checked ? [...included, task.id] : included.filter((id) => id !== task.id))} />Include in combined task</label>}
+          <TaskCard task={task} state={state} find={find} selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)} onOpen={onOpen} />
+        </div>)}</div> : <div className="board-section-empty"><span>{state.tasks.some((task) => task.state === "backlog") ? "No backlog requests match this view." : "No requests awaiting review."}</span><button className="btn small outline" onClick={onNewTask} disabled={!state.products.length} title={state.products.length ? undefined : "Add a product first"}>Add a request</button></div>}
+        {combining && <CombineBacklog state={state} tasks={sections.backlog.filter((task) => included.includes(task.id))} onClose={() => setCombining(false)} onCreated={(id) => { setCombining(false); setSelecting(false); setIncluded([]); onOpen(id); }} />}
+
       </section>
 
 

@@ -144,14 +144,14 @@ export class Cleanup {
   }
 
   private async removeContext(taskId: Id): Promise<void> {
-    if (this.k.stopped || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
+    if (this.k.stopped || this.k.followsUpHeld(taskId) || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
     const task = this.k.s.tasks.find((entry) => entry.id === taskId);
     if (task && !finishedTask(task as Task)) return;
     await rm(join(this.k.dataDir, "contexts", taskId), { recursive: true, force: true }).catch(() => {});
   }
 
   async removeCaptures(taskId: Id): Promise<void> {
-    if (this.k.stopped || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
+    if (this.k.stopped || this.k.followsUpHeld(taskId) || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
     const pending = this.k.s.followUpPending?.some((group) => group.keys.some((key) => key.startsWith(`${taskId}::`)));
     const task = this.k.s.tasks.find((entry) => entry.id === taskId) ?? (pending ? this.k.task(taskId) : undefined);
     if (task && !finishedTask(task as Task)) return;

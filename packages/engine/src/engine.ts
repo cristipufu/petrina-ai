@@ -9,9 +9,11 @@
 // module of its own (driver, planning, design, work, review, shipping, take-over, product checks,
 // review guide, tools check, turns, context), and they share state and bookkeeping through the kernel.
 
-import { opendirSync, realpathSync, rmSync } from "node:fs";
+import { opendirSync, realpathSync, rmSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { stat } from "node:fs/promises";
+import { stat, mkdir, copyFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { combinedBacklogInput } from "@petrina/core";
 import { routeMessages } from "./messages.js";
 import {
   AFTER_WORDS,
@@ -493,6 +495,13 @@ export class Engine extends Kernel implements Commands {
   // ── The queue and the pool ─────────────────────────────────────────────
 
   addTask(input: NewTaskInput): Id {
+    const id = this.createTask(input);
+    this.commit();
+    this.schedule();
+    return id;
+  }
+
+  private createTask(input: NewTaskInput): Id {
     // Sent again after its reply was lost: the task is already there.
     const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId)?.id ?? this.store.history.byClient(input.clientId) : undefined;
     if (known) return known;
@@ -540,8 +549,6 @@ export class Engine extends Kernel implements Commands {
       ...(input.clientId ? { clientId: input.clientId } : {}),
     });
     this.renumberQueue();
-    this.commit();
-    this.schedule();
     return id;
   }
 
@@ -556,6 +563,56 @@ export class Engine extends Kernel implements Commands {
     this.log(task, "you", "You reviewed the request and queued it for work");
     this.commitNow();
     this.schedule();
+  }
+
+  async combineBacklog(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
+    const known = this.s.tasks.find((task) => task.clientId === clientId) ?? (() => { const id = this.store.history.byClient(clientId); return id ? this.task(id) : undefined; })();
+    if (known) {
+      if (JSON.stringify(known.combinedFrom?.map((entry) => entry.id)) !== JSON.stringify(taskIds)) throw new Error("This request reference was already used for a different selection.");
+      return known.id;
+    }
+    const input = combinedBacklogInput(this.s.tasks as Task[], taskIds, title);
+    const sources = taskIds.map((id) => this.task(id)!);
+    const before = JSON.stringify(sources);
+    const captures = join(this.dataDir, "captures");
+    await mkdir(captures, { recursive: true });
+    const tempName = `combine-${randomUUID()}`;
+    const release = this.holdFollowUp(tempName);
+    const temp = join(captures, tempName);
+    try {
+      await mkdir(temp);
+      const images = [] as { id: string; caption: string }[];
+      for (const source of sources) for (const line of source.session) for (const image of line.images ?? []) {
+        if (!/^[a-f0-9-]{36}$/.test(image.id)) continue;
+        const id = randomUUID();
+        await copyFile(join(captures, source.id, `${image.id}.png`), join(temp, `${id}.png`));
+        images.push({ id, caption: `${source.title}: ${image.caption}` });
+      }
+      // Other commands may have edited or queued a request while the pictures were copied.
+      if (this.stopped || JSON.stringify(taskIds.map((id) => this.task(id))) !== before) throw new Error("A selected task changed. Review the selection and try again.");
+      combinedBacklogInput(this.s.tasks as Task[], taskIds, title);
+      const id = this.createTask({ ...input, clientId });
+      const combined = this.task(id)!;
+      try { renameSync(temp, join(captures, id)); }
+      catch (error) { this.s.tasks = this.s.tasks.filter((task) => task.id !== id); throw error; }
+      combined.combinedFrom = sources.map((task) => ({ id: task.id, title: task.title }));
+      const reports = sources.flatMap((task) => task.followUp?.reports ?? []);
+      if (reports.length) combined.followUp = { reports };
+      if (images.length) combined.session.push({ id: this.id(id), from: "system", at: Date.now(), text: "Pictures from the original requests", images });
+      for (const source of sources) {
+        source.combinedInto = id;
+        source.state = "cancelled"; source.column = "done"; source.holdsSlot = false; source.finishedAt = Date.now();
+        source.statusLine = `Combined into ${combined.title}`;
+        this.log(source, "you", source.statusLine);
+      }
+      combined.state = "queued"; combined.column = "queue"; combined.priority = queueOf(this.s.tasks).length; combined.statusLine = "In the queue";
+      this.log(combined, "you", `You combined ${sources.length} backlog requests and queued them as one task`);
+      this.renumberQueue();
+      this.commitNow();
+      for (const source of sources) void this.cleanup.removeCaptures(source.id);
+      this.schedule();
+      return id;
+    } finally { release(); await rm(temp, { recursive: true, force: true }); }
   }
 
   moveToBacklog(taskId: Id): void {

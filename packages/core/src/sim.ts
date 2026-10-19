@@ -1,3 +1,4 @@
+import { combinedBacklogInput } from "./combine-backlog.js";
 import { companionPreview, involvesProduct, taskProductIds } from "./repositories.js";
 import { deliveryLabel, workSummary, type WorkChoice, type TaskSource } from "./source.js";
 // A deterministic stand-in for real agents. It drives the same state the real engine
@@ -1216,6 +1217,27 @@ export class Simulator {
       this.log(d, task, "you", "You reviewed the request and queued it for work");
       this.schedule(d);
     });
+  }
+
+  async combineBacklog(taskIds: Id[], title: string, clientId: Id): Promise<Id> {
+    const known = this.state.tasks.find((task) => task.clientId === clientId);
+    if (known) {
+      if (JSON.stringify(known.combinedFrom?.map((entry) => entry.id)) !== JSON.stringify(taskIds)) throw new Error("This request reference was already used for a different selection.");
+      return known.id;
+    }
+    const input = combinedBacklogInput(this.state.tasks, taskIds, title);
+    const id = this.addTask(input);
+    this.update((d) => {
+      const combined = d.tasks.find((task) => task.id === id)!;
+      combined.clientId = clientId;
+      combined.combinedFrom = taskIds.map((sourceId) => { const source = d.tasks.find((task) => task.id === sourceId)!; source.combinedInto = id; source.state = "cancelled"; source.column = "done"; source.finishedAt = d.now; source.statusLine = `Combined into ${title.trim()}`; return { id: source.id, title: source.title }; });
+      const reports = d.tasks.filter((task) => taskIds.includes(task.id)).flatMap((task) => task.followUp?.reports ?? []);
+      if (reports.length) combined.followUp = { reports };
+      combined.state = "queued"; combined.column = "queue"; combined.priority = queueOf(d.tasks).length; combined.statusLine = "In the queue";
+      this.log(d, combined, "you", `You combined ${taskIds.length} backlog requests and queued them as one task`);
+      this.schedule(d);
+    });
+    return id;
   }
 
   moveToBacklog(taskId: Id): void {

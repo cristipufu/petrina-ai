@@ -77,3 +77,29 @@ describe("reviewing a backlog task", () => {
     expect(host!.querySelector(`.card.queued[data-task-id="${id}"]`)?.textContent).toContain("Ready request title");
   });
 });
+
+it("selects backlog requests without opening them and queues one combined request", async () => {
+  await mount();
+  const productId = simulator.getState().products[0]!.id;
+  let first = "", second = "";
+  await act(async () => {
+    first = simulator.addTask({ productId, title: "Fix one label", description: "First requirement", backlog: true });
+    second = simulator.addTask({ productId, title: "Fix one gap", description: "Second requirement", backlog: true });
+  });
+  await button("Select tasks");
+  await click('[aria-label="Include Fix one label"]');
+  expect(host!.querySelector('.sheet')).toBeNull();
+  await click('[aria-label="Include Fix one gap"]');
+  await button("Combine and queue…");
+  expect(host!.querySelector('[aria-label="Combine backlog tasks"]')?.textContent).toContain("2 original requests");
+  await type('#combined-title', "Two small fixes");
+  await button("Combine and queue");
+  const queued = simulator.getState().tasks.find((task) => task.title === "Two small fixes")!;
+  expect(queued.state).toBe("queued");
+  expect(queued.description).toContain("First requirement");
+  expect(queued.description).toContain("Second requirement");
+  expect(simulator.taskDetails(first)!.combinedInto).toBe(queued.id);
+  expect(simulator.taskDetails(second)!.combinedInto).toBe(queued.id);
+  expect(host!.querySelector('[aria-label="Combine backlog tasks"]')).toBeNull();
+  expect(host!.querySelector('.sheet')?.textContent).toContain("Original requests");
+});

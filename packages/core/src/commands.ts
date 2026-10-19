@@ -75,6 +75,7 @@ export interface Commands {
   // The queue and the pool
   addTask(input: NewTaskInput): Id;
   queueTask(taskId: Id): void;
+  combineBacklog(taskIds: Id[], title: string, clientId: Id): Promise<Id>;
   moveToBacklog(taskId: Id): void;
   updateBacklog(taskId: Id, changes: { title: string; description: string }): void;
   setTaskStart(taskId: Id, choice: WorkChoice): Promise<void>;
@@ -149,7 +150,7 @@ export const COMMAND_NAMES = [
   "dismissTip",
   "openGuide",
   "addTask",
-  "queueTask", "moveToBacklog", "updateBacklog",
+  "queueTask", "moveToBacklog", "updateBacklog", "combineBacklog",
   "setTaskStart",
   "setTaskProducts",
   "setTaskAddition",

@@ -39,6 +39,7 @@ export function useHistoryPage(state: State, enabled: boolean, product: string, 
 }
 
 function outcome(item: HistoryItem): string {
+  if (item.combinedInto) return "Combined into another task";
   if (item.deliveries?.length) return item.deliveries.map((work) => `${item.products?.find((product) => product.id === work.productId)?.name ?? work.productId}: ${work.nothingToPublish ? "Nothing to publish" : outcome({ ...item, ...work, deliveries: undefined })}`).join(" · ");
   if (item.release) return `Released ${item.release.tag}`;
   if (item.landed) return item.localUpdate?.pushed ? `Committed to ${item.landed.branch} · pushed to GitHub` : `Delivered locally to ${item.landed.branch}`;

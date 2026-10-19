@@ -33,7 +33,7 @@ function nowSentence(task: Task, role: Role | undefined, state: State): string {
     case "done":
       return deliveryText(task)?.text ?? "Completed";
     case "cancelled":
-      return "Cancelled";
+      return task.combinedInto ? "Combined into another task" : "Cancelled";
     default:
       return "Between stages";
   }
@@ -73,6 +73,8 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
 
   return (
     <>
+      {task.combinedInto && <section className="sheet-section reading"><h2>Combined request</h2><p>This request is part of <TaskLink taskId={task.combinedInto} find={find} onOpen={onOpenTask}>the combined task</TaskLink>.</p></section>}
+      {task.combinedFrom?.length && <section className="sheet-section reading"><h2>Original requests</h2><ul>{task.combinedFrom.map((source) => <li key={source.id}><TaskLink taskId={source.id} find={find} onOpen={onOpenTask}>{source.title}</TaskLink></li>)}</ul></section>}
       {!separateFlow && <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} {...(onOpenTask ? { onOpenTask } : {})} />}
 
       {task.followUp && <FollowUpReports task={task} find={find} {...(onOpenTask ? { onOpenTask } : {})} />}

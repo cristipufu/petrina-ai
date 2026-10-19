@@ -67,6 +67,7 @@ const ARGS = {
   setTaskApproval: z.tuple([z.string(), z.boolean()]),
   addTask: z.tuple([NewTask]),
   queueTask: z.tuple([TaskId]),
+  combineBacklog: z.tuple([z.array(TaskId).min(2).max(20), z.string().trim().min(1).max(200), ClientId]),
   moveToBacklog: z.tuple([TaskId]),
   updateBacklog: z.tuple([TaskId, z.object({ title: z.string().trim().min(1).max(200), description: z.string().max(8000) })]),
   checkTools: z.tuple([]),

@@ -4,7 +4,7 @@ import type { ReviewStats } from "./reviews.js";
 import { involvesProduct, taskProductIds } from "./repositories.js";
 
 export interface HistoryQuery { productId?: Id; query?: string; cursor?: string; limit?: number; states?: readonly ("done" | "cancelled")[]; taskId?: Id; held?: boolean }
-export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "state" | "createdAt" | "finishedAt" | "statusLine" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & {
+export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "state" | "createdAt" | "finishedAt" | "statusLine" | "delivery" | "pr" | "release" | "landed" | "localUpdate" | "combinedInto"> & {
   state: "done" | "cancelled";
   productIds?: readonly Id[];
   products?: readonly { id: Id; name: string }[];
@@ -31,11 +31,11 @@ export function historyMatches(title: string, query: string): boolean {
   return words(query).every((term) => tokens.some((token) => token.startsWith(term)));
 }
 export function historyItem(task: Task): HistoryItem {
-  const { id, productId, title, kind, state, createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate } = task;
+  const { id, productId, title, kind, state, createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, combinedInto } = task;
   const productIds = taskProductIds(task);
   const products = task.repositories?.map((work) => ({ id: work.productId, name: work.source?.product.name ?? work.workProduct?.name ?? work.productId })) ?? task.workRows?.map((row) => ({ id: row.source?.product.id ?? row.choice.productId, name: row.source?.product.name ?? row.choice.productId })) ?? productIds.map((id) => ({ id, name: id }));
   const deliveries = task.repositories?.map(({ productId, delivery, pr, release, landed, localUpdate, nothingToPublish }) => ({ productId, delivery, pr, release, landed, localUpdate, nothingToPublish }));
-  return { id, productId, title, kind, state: state as HistoryItem["state"], createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, ...(task.repositories || productIds.length > 1 ? { productIds, products, deliveries } : {}) };
+  return { id, productId, title, kind, state: state as HistoryItem["state"], createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, ...(combinedInto ? { combinedInto } : {}), ...(task.repositories || productIds.length > 1 ? { productIds, products, deliveries } : {}) };
 }
 export function historyCursor(item: Pick<Task, "id" | "finishedAt" | "createdAt">): string {
   return encodeURIComponent(JSON.stringify([historyAt(item), item.id]));

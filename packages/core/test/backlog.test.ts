@@ -35,3 +35,25 @@ describe("requests awaiting a coordinator's review", () => {
     expect(() => sim.updateBacklog(id, { title: "Too late", description: "" })).toThrow("Only backlog requests");
   });
 });
+
+it("combines compatible unstarted requests once, preserving requirements and the stricter approvals", async () => {
+  const state = createDemoState(1_000_000_000);
+  const sim = new Simulator({ ...state, tasks: [], inbox: [], pool: { ...state.pool, paused: true } });
+  const first = sim.addTask({ productId: state.products[0]!.id, title: "Fix the label", description: "Use plain words.", kind: "chore", approveDelivery: false, backlog: true });
+  const second = sim.addTask({ productId: state.products[0]!.id, title: "Fix the space", description: "Keep the focus outline.", kind: "chore", approvePlan: true, approveDelivery: true, backlog: true });
+  const id = await sim.combineBacklog([first, second], "Polish the form", "combine-once");
+  expect(await sim.combineBacklog([first, second], "Polish the form", "combine-once")).toBe(id);
+  expect(queueOf(sim.getState().tasks).map((task) => task.id)).toEqual([id]);
+  expect(sim.taskDetails(id)).toMatchObject({ state: "queued", approvePlan: true, approveDelivery: true, kind: "chore", combinedFrom: [{ id: first, title: "Fix the label" }, { id: second, title: "Fix the space" }] });
+  expect(sim.taskDetails(id)!.description).toContain("Use plain words.");
+  expect(sim.taskDetails(id)!.description).toContain("Keep the focus outline.");
+  expect(sim.taskDetails(first)).toMatchObject({ state: "cancelled", combinedInto: id });
+  const other = sim.addTask({ productId: state.products[1]!.id, title: "Other product", backlog: true });
+  const same = sim.addTask({ productId: state.products[0]!.id, title: "Same product", backlog: true });
+  await expect(sim.combineBacklog([other, same], "Incompatible", "no")).rejects.toThrow("same products");
+  expect(sim.taskDetails(other)!.state).toBe("backlog");
+  expect(sim.taskDetails(same)!.state).toBe("backlog");
+  await expect(sim.combineBacklog([same, same], "Duplicate", "no")).rejects.toThrow("different backlog");
+  sim.setAfter(same, [other]);
+  await expect(sim.combineBacklog([other, same], "Dependency", "no")).rejects.toThrow("dependencies");
+});
