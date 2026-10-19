@@ -399,17 +399,20 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
     const world = makeWorld("history-removal-rollback");
     worlds.push(world);
     const engine = world.start();
+    let release = () => {};
     try {
       engine.setPoolPaused(true);
       const productId = await engine.addProduct(world.clone);
       const id = engine.addTask({ productId, title: "Keep on a failed removal" });
+      // Hold terminal cleanup while this test exercises product-removal rollback.
+      // Cancelling starts asynchronous deletion even without yielding JavaScript.
+      release = engine.holdFollowUp(id);
       engine.cancel(id);
       engine.windowState();
       engine.taskDetails(id); // A cached finished task must not resurrect after successful removal.
       const captures = join(world.data, "captures", id);
       mkdirSync(captures, { recursive: true });
-      // Simulate an older leftover without yielding to terminal-task picture cleanup.
-      // This assertion covers product-removal rollback, independently of that cleanup.
+      // Simulate older storage protected by that hold, independent of normal terminal cleanup.
       writeFileSync(join(captures, "kept.png"), "picture");
       engine.store.database.run("CREATE TRIGGER fail_remove BEFORE DELETE ON task_history BEGIN SELECT RAISE(ABORT, 'storage failure'); END");
       expect(() => engine.removeProduct(productId)).toThrow("storage failure");
@@ -427,7 +430,7 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
       expect(engine.store.history.info().total).toBe(0);
       expect(engine.taskDetails(id)).toBeUndefined();
       expect(engine.tracking.log.products().find((product) => product.id === productId)?.removedAt).toEqual(expect.any(Number));
-    } finally { await engine.shutdown(); }
+    } finally { release(); await engine.shutdown(); }
   });
 
   it("removes product pictures from actual storage without listing all history, preserving shared membership and rollback", async () => {
