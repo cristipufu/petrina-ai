@@ -174,6 +174,12 @@ export interface TimelineEntry {
   step?: Id;
 }
 
+export interface ReportImage {
+  /** Opaque reference to a separate file in task history. */
+  id: string;
+  caption: string;
+}
+
 export interface SessionLine {
   id: Id;
   at: number;
@@ -183,6 +189,7 @@ export interface SessionLine {
   text: string;
   /** The journey step it belongs to. */
   step?: Id;
+  images?: readonly ReportImage[];
 }
 
 /** How an arrow out of a step reads: the work moved on, went back (a send-back, changes asked), or got stuck. */

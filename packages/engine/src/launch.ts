@@ -125,6 +125,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
       if (path) process.env.PATH = mergePath(path, process.env.PATH);
     }
     engine = new Engine(home, options.engine);
+    await engine.waitUntilReady();
     const token = (!options.newKey && previousToken(home)) || randomBytes(24).toString("base64url");
     server = serve(engine, { port: app ? 0 : (options.port ?? 4317), token, ...(options.ui ? { ui: options.ui } : {}) });
     const connection: Connection = { url: `ws://127.0.0.1:${server.port}/ws`, api: `http://127.0.0.1:${server.port}`, token, pid: process.pid };

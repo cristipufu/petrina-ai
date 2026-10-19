@@ -1200,6 +1200,9 @@ kbd {
 .msg .name { display: flex; align-items: baseline; gap: 8px; font-weight: 600; font-size: var(--fs-control); line-height: var(--lh-control); }
 .msg .name time { color: var(--text-3); font-weight: 400; font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .msg .bubble { margin-top: 4px; padding: 12px 16px; border-radius: var(--radius); background: var(--sunken); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-reading); line-height: var(--lh-reading); }
+.report-picture { margin: 16px 0 0; }
+.report-picture img { display: block; max-width: 100%; height: auto; border-radius: var(--radius); }
+.report-picture figcaption { margin-top: 8px; color: var(--text-2); font-size: var(--fs-body); line-height: 1.5; overflow-wrap: anywhere; }
 .msg.you .bubble { background: var(--accent-soft); }
 /* Your messages waiting for the agent: in the conversation, outlined until they are delivered. */
 .msg.queued .name { flex-wrap: wrap; align-items: center; }

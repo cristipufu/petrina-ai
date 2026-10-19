@@ -9,7 +9,8 @@
 // module of its own (driver, planning, design, work, review, shipping, take-over, product checks,
 // review guide, tools check, turns, context), and they share state and bookkeeping through the kernel.
 
-import { realpathSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import { routeMessages } from "./messages.js";
 import {
@@ -170,6 +171,10 @@ export class Engine extends Kernel implements Commands {
   }
 
   schedule(): void {
+    if (!this.startupComplete) {
+      this.startupSchedulePending = true;
+      return;
+    }
     this.driver.schedule();
   }
 
@@ -182,6 +187,14 @@ export class Engine extends Kernel implements Commands {
   }
 
   private shutdownDone?: Promise<void>;
+
+  /** Picture contents are fetched separately, through a saved report's reference. */
+  async reportImage(taskId: string, imageId: string): Promise<Blob | undefined> {
+    const task = this.task(taskId);
+    if (!/^[a-zA-Z0-9_-]+$/.test(taskId) || !/^[a-f0-9-]{36}$/.test(imageId) || !task?.session.some((line) => line.images?.some((image) => image.id === imageId))) return;
+    const file = Bun.file(join(this.dataDir, "captures", taskId, `${imageId}.png`));
+    return await file.exists() ? file : undefined;
+  }
 
   /** Save and close immediately; resolves once agents and their remaining file handling have stopped. */
   shutdown(): Promise<void> {
@@ -347,7 +360,10 @@ export class Engine extends Kernel implements Commands {
     if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) return;
-    const ids = new Set(this.s.tasks.filter((task) => task.productId === productId).map((task) => task.id));
+    const ids = new Set([
+      ...this.s.tasks.filter((task) => task.productId === productId).map((task) => task.id),
+      ...this.store.history.taskIds(productId),
+    ]);
     const next = {
       ...this.activeState(),
       inbox: this.s.inbox.filter((item) => !ids.has(item.taskId) && this.store.history.item(item.taskId)?.productId !== productId),
@@ -363,6 +379,7 @@ export class Engine extends Kernel implements Commands {
     this.s.products = next.products;
     this.s.work = next.work;
     this.forgetProductHistory(productId);
+    for (const id of ids) rmSync(join(this.dataDir, "captures", id), { recursive: true, force: true });
     this.commit();
   }
 

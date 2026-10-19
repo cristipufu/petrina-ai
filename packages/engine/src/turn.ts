@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Sources } from "./sources.js";
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
@@ -10,7 +11,7 @@ import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
 import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox.js";
-import { buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere, mayAskScreen, screenPrompt, WHERE_YOU_WERE_SCREEN } from "./prompts.js";
+import { browserPrompt, buildPrompt, continuePrompt, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere, mayAskScreen, screenPrompt, WHERE_YOU_WERE_SCREEN } from "./prompts.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
 import type { AgentMessage } from "./agent-messages.js";
 import { ADAPTERS } from "./tools.js";
@@ -22,6 +23,7 @@ import { isAuthRequired } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
 import type { Section } from "./context.js";
 import { takeMessages } from "./messages.js";
+import { preserveCaptures } from "./captures.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
@@ -276,6 +278,7 @@ export class Turns {
         ...(env ? { env } : {}),
         ...(sandbox ? { sandbox } : {}),
         cwd: worktree,
+        browserRoot: join(this.k.dataDir, "browser-temp"),
         signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
@@ -597,6 +600,7 @@ export class Turns {
         env: this.envFor(),
         ...(sandbox ? { sandbox } : {}),
         cwd: copy,
+        browserRoot: join(this.k.dataDir, "browser-temp"),
         signal,
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
         callbacks: {
@@ -694,8 +698,8 @@ export class Turns {
 
   /**
    * Turns until the agent hands back a valid result: its words go to the session, its questions to the
-   * coordinator, and an unusable result back to it twice at most. Only the step's main agent hears the
-   * coordinator's messages as they come. An open question is kept for the conversation that asked it.
+   * coordinator, and an unusable result back to it twice at most. Each parallel conversation hears
+   * its own share of the coordinator's messages. An open question stays with the conversation that asked it.
    */
   private async converse<T>(task: MTask, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string }): Promise<T> {
     const by = { roleId: role.id, profileId };
@@ -711,7 +715,7 @@ export class Turns {
       return send(`Messages from the coordinator, in order:\n${messages}\n\nTake all of them into account. When you are done, end with the result block again.`, "message");
     };
     const mayAsk = mayAskScreen(role);
-    let reply = await send(opening, reason);
+    let reply = await send(`${opening}\n\n${browserPrompt(run.browser!.directory)}`, reason);
     if (options.main) this.briefed(task);
     for (let repairs = 0; ; ) {
       if (signal.aborted) throw new Aborted();
@@ -719,6 +723,12 @@ export class Turns {
       if (!current) throw new Aborted();
       const prose = proseOf(reply.text);
       if (prose && !reply.streamed) this.k.say(current, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, role.id, profileId);
+      // A streamed reply is already in the conversation. Pictures stay on that report, not on later activity.
+      const reportLine = prose
+        ? reply.streamed
+          ? [...current.session].reverse().find((line) => line.from === "agent" && line.roleId === role.id && line.profileId === profileId)
+          : current.session.at(-1)
+        : undefined;
       const parsed = parseResult(reply.text, schema);
       // A screen request goes before messages in line: they reach the agent with the screen, now or when it continues.
       if (parsed.ok === "screen" && mayAsk && reply.stopReason !== "cancelled") {
@@ -765,20 +775,58 @@ export class Turns {
         reply = await send(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`, "answer");
         continue;
       }
-      const error = parsed.ok === true ? await options.check?.(parsed.value) : parsed.ok === "screen" ? NO_SCREEN_HERE : parsed.error;
-      if (parsed.ok === true && !error) {
-        // Validation may await I/O. Notes arriving during it still reach this agent before its result is accepted.
-        const late = options.main || options.member ? takeMessages(current, options.member) : [];
-        if (late.length) {
-          reply = await sendQueued(current, late);
-          continue;
+      let error: string | undefined;
+      if (reportLine) this.k.pendingReportIds.add(reportLine.id);
+      try {
+        error = parsed.ok === true ? await options.check?.(parsed.value) : parsed.ok === "screen" ? NO_SCREEN_HERE : parsed.error;
+        if (parsed.ok === true && !error) {
+          // Validation may await I/O. Notes arriving during it still reach this agent before its result is accepted.
+          const late = options.main || options.member ? takeMessages(current, options.member) : [];
+          if (late.length) {
+            reply = await sendQueued(current, late);
+            continue;
+          }
+          const images = (parsed.value as { images?: { path: string; caption: string }[] }).images ?? [];
+          const finishedAt = Date.now();
+          const storage = join(this.k.dataDir, "captures", task.id);
+          let saved: Awaited<ReturnType<typeof preserveCaptures>> | undefined;
+          try {
+            saved = await preserveCaptures(run.browser!.directory, storage, images);
+          } catch (captureError) {
+            if (captureError instanceof Aborted) throw captureError;
+            error = captureError instanceof Error ? captureError.message : "The chosen pictures could not be saved.";
+          }
+          if (saved) {
+            if (signal.aborted) throw new Aborted();
+            // Saving pictures also awaits I/O. Discard superseded copies and let this
+            // agent hear any new instruction before attaching pictures or finishing.
+            const whileSaving = options.main || options.member ? takeMessages(current, options.member) : [];
+            if (whileSaving.length) {
+              await Promise.all(saved.map((image) => rm(join(storage, `${image.id}.png`), { force: true })));
+              reply = await sendQueued(current, whileSaving);
+              continue;
+            }
+            if (options.member) this.k.screenGroups.get(task.id)?.finished(options.member);
+            if (saved.length) {
+              const live = this.k.task(current.id) ?? current;
+              let host = reportLine ? live.session.find((line) => line.id === reportLine.id) : undefined;
+              if (!host) {
+                this.k.say(live, "agent", reportLine?.text ?? (parsed.value as { summary?: string }).summary ?? "Report ready", role.id, profileId);
+                host = live.session.at(-1);
+              }
+              host!.images = saved;
+            }
+            // The result ends the agent's work. Saving its pictures is Petrina's time.
+            if (options.main) this.k.pauseStep(current, finishedAt);
+            const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
+            if (work?.clock) work.clock = pauseClock(work.clock, finishedAt);
+            // Durable references are saved before the agent stops or its working copy is cleaned.
+            this.k.commitNow();
+            return parsed.value;
+          }
         }
-        if (options.member) this.k.screenGroups.get(task.id)?.finished(options.member);
-        // The result ends the agent's work. Repository cleanup and saving the result are Petrina's time.
-        if (options.main) this.k.pauseStep(current);
-        const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
-        if (work?.clock) work.clock = pauseClock(work.clock, Date.now());
-        return parsed.value;
+      } finally {
+        if (reportLine) this.k.pendingReportIds.delete(reportLine.id);
       }
       repairs += 1;
       if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${error}`);

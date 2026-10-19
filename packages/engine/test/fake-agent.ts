@@ -20,6 +20,7 @@ import { testGitEnv } from "./test-git-env.js";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
+  pictures?: "valid" | "repair";
   /** Shutdown tests: never answer the initial handshake. */
   silent?: boolean;
   /** "short": build and one reviewer. "parallel": two reviewers at once. "pair": build, then two reviewers at once, one on each tool. "tester-after": build, one reviewer, then a tester. */
@@ -117,6 +118,7 @@ export interface Scenario {
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
 interface Conversation {
+  captures?: string;
   cwd: string;
   role: string;
   turns: number;
@@ -450,6 +452,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const session = sessions.get(sessionId)!;
   session.turns += 1;
   if (roleOf(text)) session.role = roleOf(text);
+  const captures = /Browser output belongs only in (.+), outside product files\./.exec(text)?.[1];
+  if (captures) session.captures = captures;
   // The restart line of a reopened conversation, or the summary a fresh one starts with.
   const restarted = text.includes("Petrina restarted");
   if (restarted) session.restarts += 1;
@@ -460,7 +464,6 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const learned = scenario().learnings === "tester"
     ? (session.role === "tester" ? ["Check the welcome page from the guest view."] : [])
     : scenario().learnings ? (session.role === "builder" ? ["Run the tests with bun test: they take a second.", "Greetings live at the repository root."] : session.role === "code reviewer" ? [scenario().reviewTodo ? "Check the greeting from the guest view." : "Greetings live at the repository root!"] : []) : [];
-  const done = (value: unknown, prose?: string): Reply => ({ text: block(learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value, prose) });
   const plan = scenario();
   if (plan.liveMessageRoles?.includes(session.role) && dir) {
     await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "opening", content: { type: "text", text: "I'm checking " } });
@@ -471,6 +474,16 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     while (!existsSync(join(dir, "public-update-release"))) await Bun.sleep(20);
     await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "result", content: { type: "text", text: "The change is ready.\n" } });
   }
+  const done = (value: unknown, prose?: string): Reply => {
+    let result = learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value;
+    if (plan.pictures && ["builder", "code reviewer", "security reviewer", "ux designer", "tester"].includes(session.role) && session.captures && dir) {
+      writeFileSync(join(session.captures, "chosen.png"), readFileSync(join(dir, "picture.png")));
+      writeFileSync(join(session.captures, "unchosen.png"), readFileSync(join(dir, "picture.png")));
+      const path = plan.pictures === "repair" && session.turns === 1 ? join(dir, "picture.png") : "chosen.png";
+      result = { ...result as object, images: [{ path, caption: `${session.role} checked the page` }] };
+    }
+    return { text: block(result, prose) };
+  };
   for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage));
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);

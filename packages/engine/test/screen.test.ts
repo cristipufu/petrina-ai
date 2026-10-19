@@ -59,13 +59,13 @@ async function fixture(scenario: Scenario, count = 1, options: EngineOptions = {
     release: (session: string) => writeFileSync(join(fakes.dir, `screen-release-${session}`), "go"),
     /** A screenLate builder asks for the screen now. */
     ask: (session: string) => writeFileSync(join(fakes.dir, `screen-ask-${session}`), "go"),
-    restart: () => {
-      engine.shutdown();
+    restart: async () => {
+      await engine.shutdown();
       engine = new Engine(data, engineOptions);
+      await engine.waitUntilReady();
     },
     close: async () => {
-      engine.shutdown();
-      await Bun.sleep(100);
+      await engine.shutdown();
     },
   };
   return f;
@@ -137,7 +137,7 @@ describe("an agent that needs the screen", () => {
       const [item] = f.screenItems(id);
       const session = f.task(id).conversation!.sessionId;
 
-      f.restart();
+      await f.restart();
       await Bun.sleep(400);
       const task = f.task(id);
       expect(task.state).toBe("waiting");
@@ -378,7 +378,7 @@ describe("an agent that needs the screen", () => {
       f.engine.setScreenUse("on");
       f.engine.setPoolPaused(false);
       const session = await waitFor(() => f.onScreen()[0], "the agent on the screen");
-      f.restart();
+      await f.restart();
       expect(f.task(id).screen).toMatchObject({ granted: true, heard: true });
       await f.until((state) => f.built(state, id), "the build to pick up and finish");
       const builder = f.fakes.received("builder");
@@ -517,7 +517,7 @@ describe("internal roles and reviewers asking for the screen", () => {
       const sessions = f.fakes.received("code reviewer").map((entry) => entry.session);
       expect(new Set(sessions).size).toBe(2);
       const first = f.task(id).conversation!.sessionId;
-      f.restart();
+      await f.restart();
       expect(f.asking(id)).toBe(true);
       expect(Object.keys(f.task(id).hunt!.screenTurns!)).toHaveLength(2);
       f.engine.sendMessage(id, "Check the Dock too");
@@ -594,7 +594,7 @@ describe("internal roles and reviewers asking for the screen", () => {
       expect(f.fakes.received("code reviewer").filter((entry) => entry.session === second)).toHaveLength(1);
       expect(slotUses(f.state())).toEqual([]);
 
-      f.restart();
+      await f.restart();
       await waitFor(() => f.onScreen().includes(second), "the waiting reviewer to get the screen after restarting");
       f.release(second);
       await f.until((state) => f.built(state, id), "the review round to finish");

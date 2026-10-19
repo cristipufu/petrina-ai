@@ -6,12 +6,15 @@ import { Engine } from "../src/engine.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
-import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, tempDir, taskOf, until, waitFor } from "./support.js";
+import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, tempDir, taskOf, traceTaskWait, until, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-async function fixture(approveDelivery = true, scenario: Scenario = { planner: "short" }, builderOptions: { builderInstructions?: string; checkArgs?: string[] } = {}) {
+async function fixture(approveDelivery = true, scenario: Scenario = { planner: "short" }, extra?: { builderInstructions?: string; checkArgs?: string[] } | string) {
+  // Edited builder options, or a trace label when a wait needs one.
+  const builderOptions = typeof extra === "string" || extra == null ? {} : extra;
+  const trace = typeof extra === "string" ? extra : undefined;
   const root = tempDir("petrina-check-failure-");
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
@@ -40,11 +43,13 @@ process.exit(ok ? 0 : 1);
   setCheck(...(builderOptions.checkArgs ?? []));
   if (builderOptions.builderInstructions) engine.saveRole("builder", { ...draftOf(engine.role("builder")!), instructions: builderOptions.builderInstructions });
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+  let deliveryWaits = 0;
   return {
     fakes, repo, taskId, productId, root, log, command, setCheck,
     get engine() { return engine; },
     runs: () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [],
-    delivery: () => until(engine, (state) => !!itemOf(state, taskId, "delivery"), coordinator(["plan"])).then((state) => taskOf(state, taskId)),
+    delivery: () => traceTaskWait(trace ? `${trace}: delivery ${++deliveryWaits}` : undefined, () => engine.getState(), taskId,
+      () => until(engine, (state) => !!itemOf(state, taskId, "delivery"), coordinator(["plan"])).then((state) => taskOf(state, taskId))),
     async restart(edit?: (state: DeepMutable<State>) => void) {
       await engine.shutdown();
       if (edit) {
@@ -254,7 +259,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
   });
 
   it("does not consume more rounds when reviews were already exhausted, including a saved run from before the update", async () => {
-    const f = await fixture();
+    const f = await fixture(true, { planner: "short" }, "Exhausted review rounds");
     try {
       // Start with passing checks and a real review that uses up its sole round.
       f.setCheck("--pass");
@@ -537,7 +542,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
 
     for (const originallyPassed of [false, true]) {
       it.skipIf(process.platform === "win32")(`refreshes an older saved ${hookName} ${originallyPassed ? "pass" : "failure"} without retrying unchanged product checks`, async () => {
-        const f = await fixture();
+        const f = await fixture(true, { planner: "short" }, originallyPassed ? undefined : `Legacy ${hookName} failure`);
         try {
           f.setCheck("--pass");
           const hook = join(f.repo, ".git", "hooks", hookName);

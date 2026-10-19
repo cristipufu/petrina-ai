@@ -50,6 +50,7 @@ async function fixture(scenario: Scenario = {}) {
     nextGrokCheck = flag;
     options.toolCheckTimeoutMs = (flag === "--hang" ? 200 : 8000) * SLOW;
     engine = new Engine(join(root, "data"), options);
+    await engine.waitUntilReady();
   };
   return { get engine() { return engine; }, fakes, task, model, advance, delivery, restart, repo, root };
 }

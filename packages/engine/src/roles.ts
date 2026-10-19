@@ -41,11 +41,15 @@ export const BriefResult = z.object({
   answers: z.array(z.object({ id: z.string(), status: z.enum(["accepted", "rejected"]), answer: z.string().trim().min(1), byCall: z.boolean().default(false) })).default([]),
 });
 
+const ReportImages = z.array(z.object({ path: z.string().trim().min(1), caption: z.string().trim().min(1) })).max(12).optional();
+
 export const ObjectionsResult = z.object({
+  images: ReportImages,
   objections: z.array(z.object({ text: z.string().min(3), blocking: z.boolean() })).default([]),
 });
 
 export const NotesResult = z.object({
+  images: ReportImages,
   summary: z.string().min(3),
   notes: z.array(z.string()).default([]),
 });
@@ -54,6 +58,7 @@ export const NotesResult = z.object({
 const LEARNED = z.array(z.string()).max(5).default([]);
 
 export const BuildResult = z.object({
+  images: ReportImages,
   summary: z.string().min(3),
   // One line for the commit that carries the whole change, in the repository's own style.
   title: z.string().trim().min(3).max(120).optional(),
@@ -96,12 +101,14 @@ const AcceptanceCheckResult = z.union([
 ]).refine((check) => check.result !== "blocked" || Boolean(check.reason?.trim()), "A blocked acceptance check needs a reason");
 
 export const TestResult = z.object({
+  images: ReportImages,
   summary: z.string().min(3),
   checks: z.array(AcceptanceCheckResult).default([]),
   learnings: LEARNED,
 });
 
 export const ReviewResult = z.object({
+  images: ReportImages,
   verdict: z.enum(["pass", "fail"]),
   findings: z
     .array(
@@ -426,5 +433,8 @@ export function contractFor(role: Role): RoleContract {
 }
 
 export function shapeFor(contract: RoleContract, ctx: PromptContext): string {
-  return typeof contract.shape === "function" ? contract.shape(ctx) : contract.shape;
+  const shape = typeof contract.shape === "function" ? contract.shape(ctx) : contract.shape;
+  return ["notes", "objections", "build", "checks", "findings"].includes(ctx.role.result)
+    ? shape.replace(/}\s*$/, ', "images": [{"path": "A chosen browser capture", "caption": "What the picture demonstrates, in plain language"}]}')
+    : shape;
 }

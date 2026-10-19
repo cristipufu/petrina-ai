@@ -19,6 +19,7 @@ import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import type { UsageInfo, UsageLimited } from "./usage.js";
 import { Tracking } from "./tracking.js";
 import { stepBack } from "./roles.js";
+import { recoverBrowserTemps } from "./browser.js";
 
 export type MState = DeepMutable<State>;
 
@@ -66,6 +67,12 @@ export function renameRoles(state: MState): void {
 export const TONES: readonly Tone[] = ["blue", "green", "orange", "violet", "pink", "teal", "indigo", "purple", "amber", "slate"];
 
 export const MAX_SESSION_LINES = 800;
+
+/** An older line may go once this agent has said something newer. Its latest words stay, so a report is still there when its pictures are saved. */
+function newerWords(session: MTask["session"], index: number, line: MTask["session"][number]): boolean {
+  if (line.from !== "agent") return true;
+  return session.some((other, later) => later > index && other.from === "agent" && other.roleId === line.roleId && other.profileId === line.profileId);
+}
 
 export const MAX_TIMELINE = 400;
 
@@ -174,10 +181,22 @@ export abstract class Kernel {
   /** Set by the Engine: a task may be finished with its working copy; it goes once nothing uses it. */
   abstract tidy(taskId: Id): void;
 
+  /** Browser recovery is asynchronous; startup stays gated until its owned processes are gone. */
+  protected readonly startupReady: Promise<void>;
+  protected startupComplete = false;
+  protected startupSchedulePending = false;
+
   constructor(
     readonly dataDir: string,
     readonly options: EngineOptions = {},
   ) {
+    this.startupReady = recoverBrowserTemps(join(dataDir, "browser-temp")).then(() => {
+      this.startupComplete = true;
+      if (this.startupSchedulePending && !this.stopped) this.schedule();
+    });
+    // Launch awaits startupReady to report recovery failures. Consume an otherwise
+    // unobserved rejection for direct Engine users while leaving the original promise rejectable.
+    void this.startupReady.catch(() => undefined);
     this.store = new Store(join(dataDir, "petrina.db"));
     const loaded = this.store.loadActive((state) => renameRoles(state as MState));
     this.s = (loaded ?? this.empty()) as MState;
@@ -225,6 +244,8 @@ export abstract class Kernel {
     }) : undefined;
   }
 
+  waitUntilReady(): Promise<void> { return this.startupReady; }
+
   readonly s: MState;
 
   readonly store: Store;
@@ -238,6 +259,9 @@ export abstract class Kernel {
   private readonly idleSleep: IdleSleepAssertion;
 
   readonly listeners = new Set<() => void>();
+
+  /** Reports whose chosen captures are being checked, by line id. Kept outside saved task state. */
+  readonly pendingReportIds = new Set<string>();
 
   readonly drivers = new Map<Id, AbortController>();
 
@@ -1062,7 +1086,13 @@ export abstract class Kernel {
     if (from === "activity" && last?.from === "activity" && last.text === text) return;
     const step = stepTag(task);
     task.session.push({ id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
-    if (task.session.length > MAX_SESSION_LINES) task.session.splice(0, task.session.length - MAX_SESSION_LINES);
+    while (task.session.length > MAX_SESSION_LINES) {
+      // Keep the newest line, saved pictures, a report whose pictures are still being checked,
+      // and the latest words from each agent. Another update must not drop a report before its pictures are attached.
+      const index = task.session.findIndex((line, index) => index < task.session.length - 1 && !line.images?.length && !this.pendingReportIds.has(line.id) && newerWords(task.session, index, line));
+      if (index < 0) break;
+      task.session.splice(index, 1);
+    }
   }
 
   async emptyGhConfig(): Promise<string> {

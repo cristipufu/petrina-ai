@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ArrowRight, ChevronDown, Send, ShieldCheck, ShieldOff, User } from "lucide-react";
-import type { ActiveAgent, Id, MessageMode, SessionLine, State, Task } from "@petrina/core";
+import type { ActiveAgent, Id, MessageMode, ReportImage, SessionLine, State, Task } from "@petrina/core";
 import { sim, useEngineStatus, useUnsent } from "../engine";
 import { ago, profileText, type Lookup } from "../lib";
 import { RoleAvatar } from "./bits";
@@ -38,6 +38,27 @@ function when(at: number, now: number): string {
   return value === "now" ? "just now" : `${value} ago`;
 }
 
+function ReportPicture({ taskId, image }: { taskId: string; image: ReportImage }) {
+  const [url, setUrl] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | undefined;
+    setUrl(undefined);
+    setFailed(false);
+    void sim.image(taskId, image.id).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    }).catch(() => { if (active) setFailed(true); });
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [taskId, image.id]);
+  return <figure className="report-picture">
+    {failed ? <p className="quiet-text">This picture could not be loaded.</p> : url ? <img src={url} alt={image.caption} onError={() => setFailed(true)} /> : <p className="quiet-text">Loading picture…</p>}
+    <figcaption>{image.caption}</figcaption>
+  </figure>;
+}
+
 /** Only this run's saved conversation, read in place without changing the task's Session tab. */
 export function StepConversation({ lines, find, now, live = false, taskId, finished = false }: { lines: readonly SessionLine[]; find: Lookup; now: number; live?: boolean; taskId: string; finished?: boolean }) {
   const section = useRef<HTMLElement>(null);
@@ -63,7 +84,7 @@ export function StepConversation({ lines, find, now, live = false, taskId, finis
       ) : (
         <div key={group.id} className={`msg ${group.from === "you" ? "you" : "agent"}`}>
           {group.from === "you" ? <span className="avatar tone-slate" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span> : <RoleAvatar role={find.role(group.roleId)} size={28} />}
-          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}<time>{when(group.at, now)}</time></div><div className="bubble"><MessageBody text={group.text} taskId={taskId} finished={finished} /></div></div>
+          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}<time>{when(group.at, now)}</time></div><div className="bubble"><MessageBody text={group.text} taskId={taskId} finished={finished} /></div>{group.images?.map((image) => <ReportPicture key={image.id} taskId={taskId} image={image} />)}</div>
         </div>
       ))}
     </div>
@@ -164,6 +185,7 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
             <time className="num">{when(line.at, state.now)}</time>
           </div>
           <div className="bubble"><MessageBody text={line.text} taskId={task.id} finished={task.state === "done" || task.state === "cancelled"} /></div>
+          {line.images?.map((image) => <ReportPicture key={image.id} taskId={task.id} image={image} />)}
         </div>
       </div>
     );

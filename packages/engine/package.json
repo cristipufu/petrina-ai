@@ -20,7 +20,10 @@
     "@agentclientprotocol/claude-agent-acp": "0.89.1",
     "@agentclientprotocol/codex-acp": "2.2.2",
     "@agentclientprotocol/sdk": "1.8.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@petrina/core": "workspace:*",
+    "@playwright/mcp": "0.0.83",
+    "sharp": "0.35.5",
     "zod": "4.6.7"
   },
   "devDependencies": {

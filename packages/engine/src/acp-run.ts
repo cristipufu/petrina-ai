@@ -8,6 +8,10 @@ import * as acp from "@agentclientprotocol/sdk";
 import type { AgentProfile, TokenCounts, TurnReport } from "@petrina/core";
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
+import { AgentBrowser } from "./browser.js";
+import { claudeBackground } from "./claude-background.js";
+import { BACKGROUND_FEATURES } from "./codex-background.js";
+import { join } from "node:path";
 import { grokTurnReport } from "./grok-usage.js";
 import { descendants, descendantsKnown } from "./process-tree.js";
 import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
@@ -360,6 +364,7 @@ export class AgentRun {
     private readonly stopper: (graceMs?: number) => Promise<boolean>,
     /** How an earlier conversation was reopened; unset for a new one. */
     readonly reopened?: "resume" | "load",
+    readonly browser?: AgentBrowser,
   ) {}
 
   /** What the tool confirmed the session runs on right now. */
@@ -396,6 +401,7 @@ export class AgentRun {
     /** A login check only opens a conversation, never sends work or runs in a product's copy. */
     probe?: boolean;
     sandbox?: ClaudeSandbox;
+    browserRoot?: string;
   }): Promise<AgentRun> {
     const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
@@ -404,17 +410,35 @@ export class AgentRun {
     if (signal.aborted) throw new Error("Stopped before the agent started");
 
     const [program, ...args] = options.command ?? adapter.command ?? ["node", adapterEntry(adapter)];
+    const env = { ...(options.env ?? process.env) };
+    if (profile.toolId === "codex") {
+      env.CODEX_CONFIG = JSON.stringify({
+        ...JSON.parse(env.CODEX_CONFIG ?? "{}"),
+        ...Object.fromEntries(BACKGROUND_FEATURES.map((feature) => [`features.${feature}`, false])),
+      });
+      env.DISABLE_MCP_CONFIG_FILTERING = "true";
+      if (env.CODEX_PATH) env.PETRINA_CODEX_EXECUTABLE = env.CODEX_PATH;
+      env.CODEX_PATH = join(import.meta.dir, "codex-background.ts");
+    }
     // windowsHide: no console window flashes up on Windows when an agent starts.
-    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: options.env ?? process.env, detached: process.platform !== "win32", windowsHide: true });
+    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env, detached: process.platform !== "win32", windowsHide: true });
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
     const killed = new Promise<never>((_, reject) => {
       child.once("exit", (code) => reject(new Error(`${adapter.name} stopped (exit ${code ?? "signal"})`)));
       child.once("error", (error) => reject(error));
     });
     killed.catch(() => undefined);
+    // Login probes send no work. Every coding agent, including a parallel reviewer or a
+    // reopened builder, gets a new engine-owned browser within the opening deadline.
+    const browserReady = options.probe ? Promise.resolve(undefined) : AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog);
+    browserReady.catch(() => undefined);
     let stopping: Promise<boolean> | undefined;
     let cleanupNoticeSent = false;
-    const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= stopAll(child, graceMs, !options.probe).then((complete) => {
+    const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= Promise.all([
+      stopAll(child, graceMs, !options.probe),
+      browserReady.then((browser) => browser?.close()).then(() => true, () => false),
+    ]).then((results) => {
+      const complete = results.every(Boolean);
       if (!complete && !cleanupNoticeSent) {
         cleanupNoticeSent = true;
         callbacks.onCleanupIncomplete?.();
@@ -552,19 +576,27 @@ export class AgentRun {
 
     const open = async (): Promise<{ sessionId: string; configOptions?: unknown; how?: "resume" | "load" }> => {
       // Notices let Codex announce a reroute as a typed update instead of text in the reply.
-      const init = await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} } } });
+      const [init, browser] = await Promise.all([
+        connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} } } }),
+        browserReady,
+      ]);
       const sessionId = options.reopen;
       // Keep the tool's session mode (Grok's auto mode) and add sandbox settings only for Claude Code.
       // The same metadata goes to new, resumed and loaded conversations.
-      const sessionMeta = { ...adapter.sessionMeta, ...(options.sandbox && adapter.sandboxMeta ? adapter.sandboxMeta(options.sandbox) : {}) };
+      const sessionMeta: Record<string, unknown> = { ...adapter.sessionMeta, ...(options.sandbox && adapter.sandboxMeta ? adapter.sandboxMeta(options.sandbox) : {}) };
+      if (browser && profile.toolId === "claude-code") {
+        const claude = sessionMeta.claudeCode as { options?: Record<string, unknown> } | undefined;
+        sessionMeta.claudeCode = { ...claude, options: { ...claude?.options, ...await claudeBackground(cwd) } };
+      }
       const meta = Object.keys(sessionMeta).length ? { _meta: sessionMeta } : {};
-      if (sessionId === undefined) return connection.newSession({ cwd, mcpServers: [], ...meta });
+      const mcpServers = browser ? [browser.mcp] : [];
+      if (sessionId === undefined) return connection.newSession({ cwd, mcpServers, ...meta });
       const how = init.agentCapabilities?.sessionCapabilities?.resume ? "resume" : init.agentCapabilities?.loadSession ? "load" : undefined;
       if (!how) throw new ReopenFailed(`${adapter.name} cannot reopen conversations`);
       const limit = options.reopenTimeoutMs ?? REOPEN_TIMEOUT_MS;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new ReopenFailed(`${adapter.name} did not reopen the conversation within ${duration(limit)}`)), limit)));
-      const params = { sessionId, cwd, mcpServers: [], ...meta };
+      const params = { sessionId, cwd, mcpServers, ...meta };
       try {
         const opened = await Promise.race([how === "resume" ? connection.resumeSession(params) : connection.loadSession(params), late]);
         return { ...opened, sessionId, how };
@@ -621,7 +653,7 @@ export class AgentRun {
     try {
       const session = await Promise.race([ready, killed, deadline, stopped]);
       clearTimeout(whole);
-      return new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how);
+      return new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how, await browserReady);
     } catch (error) {
       clearTimeout(whole);
       // No agent left running behind a conversation that did not open, even one that ignores being stopped.

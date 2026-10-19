@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS } from "@petrina/core";
-import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, formatFindings, LOGINS, mayAskScreen, parseResult, screenRules } from "../src/prompts.js";
+import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, formatFindings, formatWhereYouWere, LOGINS, mayAskScreen, parseResult, restartPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
 
 const task = createDemoState(1_000_000_000).tasks[0]!;
@@ -20,6 +20,18 @@ const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reaso
 const promptFor = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => buildPrompt(context(role, screen));
 
 describe("prompts", () => {
+  it("explains fresh browser storage after restart and failed reopening, including a screen continuation", () => {
+    const where = { stage: "Build", role: "Builder", done: ["Checked the page"] };
+    const reopened = restartPrompt(where, { messages: [] });
+    const fresh = formatWhereYouWere(where, "the tool could not reopen it");
+    const screen = formatWhereYouWere(where, "the tool could not reopen it", "screen");
+    for (const text of [reopened, fresh, screen]) {
+      expect(text).toContain("Earlier pages and browser logins are gone");
+      expect(text).toContain("starts with empty storage");
+    }
+    expect(screen).toStartWith("You asked for the screen");
+    expect(screen).not.toContain("Petrina restarted");
+  });
   it("hands a reviewer's reproduction to builders and voters, while keeping settled history concise", () => {
     const finding = { id: "finding-1", text: "The greeting disappears", where: "greeting.txt:1", evidence: "Open the welcome page with an empty name; the heading disappears.", severity: "blocking" as const, raisedBy: "sol-high", confirmedBy: [], status: "open" as const };
     expect(formatFindings([finding])).toContain(finding.evidence);

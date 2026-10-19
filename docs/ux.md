@@ -291,6 +291,7 @@ This is the "open in terminal" experience, made friendly.
   - You choose the terminal in the Library, under Your terminal: Terminal on macOS by default (iTerm2 and other installed ones selectable), Windows Terminal or else a PowerShell window on Windows, and on Linux the system default, then the desktop's own, then common ones.
 - Anything the task is waiting on (a question, a permission, a checkpoint) shows at the end of the conversation with the same wording and buttons as the inbox, so you can unblock without leaving the session. It scrolls with the conversation; the composer stays compact at the bottom.
 - Earlier agents of the task (previous stages) can be read the same way.
+- Chosen page captures sit beside their agent's report, fitted to the conversation width, with a plain-language caption below each picture. They remain after the agent leaves and after restarting Petrina. Reports without pictures keep their usual appearance.
 
 ## New task
 

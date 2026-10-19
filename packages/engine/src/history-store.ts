@@ -108,6 +108,11 @@ export class TaskHistory {
     return row ? JSON.parse(row.item) as HistoryPage["items"][number] : undefined;
   }
 
+  /** Finished tasks for one product, read before that product's history is removed. */
+  taskIds(productId: Id): Id[] {
+    return this.db.query<{ id: string }, [string]>("SELECT id FROM task_history WHERE product_id = ?").all(productId).map((row) => row.id);
+  }
+
   title(id: Id): string | undefined {
     return this.db.query<{ title: string }, [string]>("SELECT title FROM task_history WHERE id = ?").get(id)?.title;
   }

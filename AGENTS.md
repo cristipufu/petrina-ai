@@ -68,6 +68,8 @@ What agents learned about working in this repository, added with the coordinator
 - Use `bun run --cwd packages/engine test test/name.test.ts` for focused engine tests. The runner keeps tests parallel and removes their temporary files, including after failures.
 - A launcher script can be run with /bin/sh and a stand-in script given as the tool's arguments, without any freshly written file being executed directly, which avoids macOS holding back new programs on their first run.
 - In happy-dom screen tests, explicitly move focus away from a field when imitating an outside click; the click helper does not reproduce that browser behavior.
+- Use the fake GitHub’s shared update helper when changing its answers during a running test; several checks can read them at once.
+- A passing full test run does not execute the engine checks that stay skipped unless PETRINA_BROWSER_CHECK is set.
 
 ## Review guide
 

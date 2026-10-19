@@ -8,7 +8,7 @@ import { agentEnv } from "../src/env.js";
 import { claudeSandbox, sandboxFailure } from "../src/sandbox.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
-import { engineEnv, EngineProcess, Fakes, makeProduct, removeDir, tempDir, waitFor, type Open } from "./support.js";
+import { engineEnv, EngineProcess, Fakes, makeProduct, removeDir, tempDir, traceTaskWait, waitFor, type Open } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -163,11 +163,11 @@ describe("Claude Code's own sandbox", () => {
           ]);
           // A vote includes the installed third tool too, with its own setup and no sandbox claim.
           if (voting && (await engine.state()).tools.some((tool) => tool.id === "grok" && tool.status === "ready")) expected.set("grok-xhigh", undefined);
-          const group = await engine.until((state) => {
+          const group = await traceTaskWait(!voting && unavailable ? "Reviewers without Claude Code's sandbox" : undefined, () => engine.state(), run.taskId, () => engine.until((state) => {
             const task = run.find(state);
             const agents = [task.agent, ...(task.helpers ?? [])];
             return agents.length === expected.size && agents.every((agent) => agent?.roleId === roleId && (agent.sandbox || agent.profileId === "grok-xhigh")) && fakes.received(promptRole).length === expected.size;
-          }, "all group agents to start");
+          }, "all group agents to start"));
           clearInterval(before);
           const task = run.find(group);
           expect(new Map([task.agent, ...(task.helpers ?? [])].map((agent) => [agent!.profileId, agent!.sandbox]))).toEqual(expected);

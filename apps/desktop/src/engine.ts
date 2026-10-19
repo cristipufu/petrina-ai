@@ -27,6 +27,7 @@ export interface Unsent {
 }
 
 interface Store extends Actions {
+  image(taskId: Id, imageId: Id): Promise<Blob>;
   getState(): State;
   subscribe(listener: () => void): () => void;
   /** The state is the squad's own: the engine has sent it at least once (the demo always has it). */
@@ -145,6 +146,22 @@ export function newClientId(): string {
 
 /** The connection to the real engine, and the outbox for what the coordinator says until the engine saves it. */
 export class EngineClient {
+  image = async (taskId: Id, imageId: Id): Promise<Blob> => {
+    if (this.disposed) throw new Lost("Petrina's connection was refreshed");
+    if (!this.address) throw new Error("Waiting for Petrina to reconnect.");
+    const url = new URL(this.address.url);
+    url.protocol = "http:";
+    url.pathname = `/api/images/${encodeURIComponent(taskId)}/${encodeURIComponent(imageId)}`;
+    const request = new AbortController();
+    this.images.add(request);
+    try {
+      const response = await fetch(url, { headers: { authorization: `Bearer ${this.address.token}` }, signal: request.signal });
+      if (!response.ok) throw new Error("This picture could not be loaded.");
+      return await response.blob();
+    } finally {
+      this.images.delete(request);
+    }
+  };
   private state: State = EMPTY;
   private status: EngineStatus;
   private outbox: readonly Unsent[] = NOTHING_UNSENT;
@@ -163,6 +180,7 @@ export class EngineClient {
   private connecting = false;
   private next = 0;
   private readonly calls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private readonly images = new Set<AbortController>();
   private disposed = false;
   private readonly clock: ReturnType<typeof setInterval>;
   private readonly onVisibility = () => {
@@ -200,6 +218,8 @@ export class EngineClient {
     }
     for (const call of this.calls.values()) call.reject(new Lost("Petrina's connection was refreshed"));
     this.calls.clear();
+    for (const request of this.images) request.abort(new Lost("Petrina's connection was refreshed"));
+    this.images.clear();
     this.listeners.clear();
     this.state = EMPTY;
     this.outbox = NOTHING_UNSENT;
@@ -511,6 +531,7 @@ function engineStore(client: EngineClient): Store {
   const commands = Object.fromEntries(COMMAND_NAMES.map((name) => [name, (...args: unknown[]) => client.send(name, args)])) as unknown as WindowCommands;
   return {
     ...commands,
+    image: client.image,
     answer: client.answer,
     decideForMe: client.decideForMe,
     deny: client.deny,
@@ -571,6 +592,7 @@ function demoStore(simulator: Simulator): Store {
   ) as unknown as WindowCommands;
   return {
     ...commands,
+    image: async (): Promise<Blob> => { throw new Error("This demo has no saved picture."); },
     getState: () => simulator.getState(),
     subscribe: (listener) => simulator.subscribe(listener),
     synced: () => true,

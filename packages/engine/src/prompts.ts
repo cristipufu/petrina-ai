@@ -142,6 +142,12 @@ export function roleCard(ctx: PromptContext): string {
   return `\n\nYour role: ${ctx.role.purpose}\n${ctx.access?.afterReview ? MAY_CHANGE.afterReview : (ctx.access?.canEdit ?? ctx.role.canEdit) ? MAY_CHANGE.canEdit : MAY_CHANGE.readOnly}\nWhat you hand back: ${ctx.role.handsBack || ctx.role.result}`;
 }
 
+export function browserPrompt(directory: string): string {
+  return `Petrina supplies Playwright browser tools. Use this headless browser for relevant web page checks, click-throughs, console checks and screenshots. It has a fresh isolated profile; earlier pages and browser logins are gone. Use offscreen checks for native Mac screens while working in the background. If the browser cannot run, report the check as incomplete.
+Browser output belongs only in ${directory}, outside product files. Named captures are relative to that folder; leave the filename unset to save there automatically. Never move browser output into the product working copy.
+Results that hand back notes, objections, a build, acceptance checks or findings may include an optional "images" array: [{"path":"a capture filename or its absolute path in that folder","caption":"What the picture demonstrates, in plain language"}]. Choose only pictures you want the coordinator to see; each needs a nonempty caption. Tool images are not automatically attached. Petrina preserves validated chosen captures with your report, then removes temporary browser files.`;
+}
+
 export function buildPrompt(ctx: PromptContext): string {
   const { task, product, role, worktree, branch } = ctx;
   const contract = contractFor(role);
@@ -234,7 +240,7 @@ export const MAX_FILES = 30;
 export function restartPrompt(where: WhereYouWere, unheard: { answer?: { question: string; text: string }; messages: readonly string[] }): string {
   const last = where.done.at(-1);
   const parts = [
-    `Petrina restarted while you were on “${where.stage}” as the ${where.role}. ${last ? `The last thing you were doing: ${last}.` : "You had just started this step."} Your last action may not have finished, so check the working copy, then continue where you left off.`,
+    `Petrina restarted while you were on “${where.stage}” as the ${where.role}. ${last ? `The last thing you were doing: ${last}.` : "You had just started this step."} Your last action may not have finished, so check the working copy, then continue where you left off. Earlier pages and browser logins are gone; the supplied headless browser starts with empty storage.`,
   ];
   if (unheard.answer) parts.push(`The coordinator answered your question “${unheard.answer.question}”: ${unheard.answer.text}`);
   if (unheard.messages.length) parts.push(`Messages from the coordinator you have not seen yet, in order:\n${unheard.messages.map((text) => `- ${text}`).join("\n")}`);
@@ -255,7 +261,7 @@ export const WHERE_YOU_WERE_SCREEN = "Where you were when you asked for the scre
 
 /** For a fresh conversation on a step whose conversation could not be reopened. */
 export function formatWhereYouWere(where: WhereYouWere, reason: string, cause: "restart" | "screen" = "restart"): string {
-  return [cause === "screen" ? `You asked for the screen while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did in the background: build on it instead of redoing it, and check it first.` : `Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`, ...whereDetails(where, "you")].join("\n\n");
+  return [cause === "screen" ? `You asked for the screen while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did in the background: build on it instead of redoing it, and check it first.` : `Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`, `Earlier pages and browser logins are gone; the supplied headless browser starts with empty storage.`, ...whereDetails(where, "you")].join("\n\n");
 }
 
 /** What was done in the step so far and which files changed: the same in a restart's summary and a take-over's. */

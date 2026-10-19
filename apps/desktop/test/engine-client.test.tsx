@@ -66,6 +66,53 @@ async function advance(ms: number) { await act(async () => { await vi.advanceTim
 const current = () => Socket.instances.at(-1)!;
 
 describe('the real browser connection', () => {
+  it('loads saved report pictures separately with the connection key, and explains a missing picture', async () => {
+    const picture = new Blob(['checked page'], { type: 'image/png' });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => picture });
+    vi.stubGlobal('fetch', fetch);
+    await mount();
+    const { EngineClient } = await import('../src/engine');
+    const client = new EngineClient({ desktop: false, address });
+    try {
+      await expect(client.image('task/1', 'picture 1')).resolves.toBe(picture);
+      expect(fetch).toHaveBeenCalledWith(new URL('http://127.0.0.1:43210/api/images/task%2F1/picture%201'), {
+        headers: { authorization: `Bearer ${address.token}` },
+        signal: expect.any(AbortSignal),
+      });
+      fetch.mockResolvedValue({ ok: false });
+      await expect(client.image('task-1', 'missing')).rejects.toThrow('This picture could not be loaded.');
+    } finally { client.dispose(); }
+  });
+
+  it('stops unfinished picture downloads on refresh and lets the replacement connection load them', async () => {
+    let downloading!: AbortSignal;
+    const fetch = vi.fn((_url: URL, { signal }: RequestInit) => {
+      downloading = signal!;
+      return Promise.resolve({ ok: true, blob: () => new Promise<Blob>((_resolve, reject) => {
+        signal!.addEventListener('abort', () => reject(signal!.reason), { once: true });
+      }) });
+    });
+    vi.stubGlobal('fetch', fetch);
+    await mount();
+    const { EngineClient } = await import('../src/engine');
+    const client = new EngineClient({ desktop: false, address });
+    const pending = client.image('task-1', 'picture-1');
+    await Promise.resolve(); // The response arrived; its image contents are still downloading.
+    const rejected = expect(pending).rejects.toThrow('connection was refreshed');
+    client.dispose();
+    await rejected;
+    expect(downloading.aborted).toBe(true);
+    await expect(client.image('task-1', 'picture-1')).rejects.toThrow('connection was refreshed');
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    const picture = new Blob(['checked page'], { type: 'image/png' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => picture }));
+    const replacement = new EngineClient({ desktop: false, address });
+    try {
+      await expect(replacement.image('task-1', 'picture-1')).resolves.toBe(picture);
+    } finally { replacement.dispose(); }
+  });
+
   it('releases a refreshed client, rejects pending calls and never reconnects or emits again', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }));
     await mount();

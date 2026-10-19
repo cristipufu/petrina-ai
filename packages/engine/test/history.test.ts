@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, historyAt, reviewStats, type Finding, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
@@ -208,8 +209,12 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
       engine.cancel(id);
       engine.windowState();
       engine.taskDetails(id); // A cached finished task must not resurrect after successful removal.
+      const captures = join(world.data, "captures", id);
+      mkdirSync(captures, { recursive: true });
+      await Bun.write(join(captures, "kept.png"), "picture");
       engine.store.database.run("CREATE TRIGGER fail_remove BEFORE DELETE ON task_history BEGIN SELECT RAISE(ABORT, 'storage failure'); END");
       expect(() => engine.removeProduct(productId)).toThrow("storage failure");
+      expect(existsSync(join(captures, "kept.png"))).toBe(true);
       expect(engine.activeState().products.some((product) => product.id === productId)).toBe(true);
       expect(engine.store.history.info().total).toBe(1);
       expect(engine.taskDetails(id)?.productId).toBe(productId);
@@ -218,6 +223,7 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
       expect(engine.store.loadActive()!.products.some((product) => product.id === productId)).toBe(true);
       engine.store.database.run("DROP TRIGGER fail_remove");
       engine.removeProduct(productId);
+      expect(existsSync(captures)).toBe(false);
       engine.save();
       expect(engine.store.history.info().total).toBe(0);
       expect(engine.taskDetails(id)).toBeUndefined();

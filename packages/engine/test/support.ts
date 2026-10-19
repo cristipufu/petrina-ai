@@ -148,6 +148,32 @@ export async function waitFor<T>(check: () => T | undefined | false | Promise<T 
   }
 }
 
+/** Leave context before a test's own timeout, without changing what it waits for or its deadline. */
+export async function traceTaskWait<T>(label: string | undefined, state: () => State | Promise<State>, taskId: string, wait: () => Promise<T>): Promise<T> {
+  if (!label) return wait();
+  const started = Date.now();
+  let finished = false;
+  const report = async () => {
+    try {
+      const current = await state();
+      if (finished) return;
+      const task = current.tasks.find((entry) => entry.id === taskId);
+      console.warn(`Still waiting: ${label}`, JSON.stringify({
+        elapsedMs: Date.now() - started, taskId, state: task?.state, status: task?.statusLine, error: task?.error,
+        stage: task?.plan?.stages[task.stageIndex]?.title, rounds: task?.rounds,
+        agents: [task?.agent, ...(task?.helpers ?? [])].filter(Boolean),
+        inbox: current.inbox.filter((item) => item.taskId === taskId).map((item) => ({ kind: item.kind, title: item.title })),
+        tools: current.setup?.checks,
+      }));
+    } catch { /* Diagnostics must not replace the test's result. */ }
+  };
+  // This only reports progress; it is not a hang deadline and never ends or retries the wait.
+  const timer = setInterval(() => void report(), 15_000);
+  timer.unref();
+  try { return await wait(); }
+  finally { finished = true; clearInterval(timer); }
+}
+
 /** The first line a process writes to stdout. */
 export async function firstLine(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();

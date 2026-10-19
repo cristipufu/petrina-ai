@@ -169,7 +169,7 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
 
       // A browser on the dev server can distinguish an engine that is down from one with a new
       // key. Only the health check allows cross-origin reads, and only from Petrina's own pages.
-      const healthHeaders = url.pathname === "/api/health" && origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : undefined;
+      const healthHeaders = (url.pathname === "/api/health" || url.pathname.startsWith("/api/images/")) && origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : undefined;
       if (healthHeaders && request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...healthHeaders, "Access-Control-Allow-Methods": "GET", "Access-Control-Allow-Headers": "Authorization" } });
 
       if (url.pathname === "/ws") {
@@ -187,6 +187,11 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
         if (!tokenOk(bearer)) return new Response("Unauthorized", { status: 401, headers: healthHeaders });
         if (url.pathname === "/api/health" && request.method === "GET") return Response.json({ ok: true, pid: process.pid }, { headers: healthHeaders });
         if (url.pathname === "/api/state" && request.method === "GET") return Response.json(engine.windowState());
+        const imagePath = /^\/api\/images\/([A-Za-z0-9_-]+)\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if (imagePath && request.method === "GET") {
+          const image = await engine.reportImage(imagePath[1]!, imagePath[2]!);
+          return image ? new Response(image, { headers: { ...healthHeaders, "content-type": "image/png", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } }) : new Response("Not found", { status: 404 });
+        }
         if (url.pathname === "/api/action" && request.method === "POST") {
           try {
             const result = await dispatch(engine, await request.json());
