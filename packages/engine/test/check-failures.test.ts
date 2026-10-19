@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { journeyProblems, type DeepMutable, type State, type Task } from "@petrina/core";
+import { draftOf, journeyProblems, type DeepMutable, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "../src/store.js";
@@ -11,7 +11,7 @@ import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, tempDir, taskO
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-async function fixture(approveDelivery = true, scenario: Scenario = { planner: "short" }) {
+async function fixture(approveDelivery = true, scenario: Scenario = { planner: "short" }, builderOptions: { builderInstructions?: string; checkArgs?: string[] } = {}) {
   const root = tempDir("petrina-check-failure-");
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
@@ -37,7 +37,8 @@ process.exit(ok ? 0 : 1);
   engine.setProductDelivery(productId, "local", approveDelivery);
   const command = (...args: string[]) => commandText([process.execPath, file, log, ...args]);
   const setCheck = (...args: string[]) => engine.setProductChecks(productId, [{ name: "Welcome", command: command(...args) }]);
-  setCheck();
+  setCheck(...(builderOptions.checkArgs ?? []));
+  if (builderOptions.builderInstructions) engine.saveRole("builder", { ...draftOf(engine.role("builder")!), instructions: builderOptions.builderInstructions });
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
   return {
     fakes, repo, taskId, productId, root, log, command, setCheck,
@@ -62,6 +63,23 @@ const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 const checkSteps = (task: Task) => task.journey!.filter((step) => step.kind === "petrina" && step.work === "checks");
 
 describe.concurrent("failed checks are evidence until something changes", () => {
+  it("gives built-in and edited builders the check commands without telling them to rerun the full suite", async () => {
+    for (const builderInstructions of [undefined, "Use a focused test for the changed behavior."]) {
+      const f = await fixture(true, { planner: "short", builder: "plain" }, { builderInstructions, checkArgs: ["--pass"] });
+      try {
+        await f.delivery();
+        const opening = f.fakes.openings("builder")[0]!;
+        expect(opening).toContain("## Product checks\n");
+        expect(opening).toContain(f.command("--pass"));
+        expect(opening).not.toContain("run every one in full before you finish");
+        expect(opening).not.toContain("Run every check in full");
+        expect(opening).toContain("Run focused tests that cover the behavior you changed while you work.");
+        expect(opening).toContain("Before handoff, do not rerun the full product checks or test suite");
+        if (builderInstructions) expect(opening).toContain(builderInstructions);
+      } finally { await f.engine.shutdown(); }
+    }
+  });
+
   it("finishes the current reviewer but starts no delivery preparation while the pool is paused", async () => {
     const f = await fixture(true, { planner: "short", builder: "plain", controlled: true });
     const release = (session: string) => writeFileSync(join(f.fakes.dir, `release-${session}`), "go");
