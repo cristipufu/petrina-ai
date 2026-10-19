@@ -647,7 +647,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
           )}
           {node.reason && (
             <>
-              <dt>Moved on</dt>
+              <dt>{node.state === "failed" ? "Stopped because" : "Moved on"}</dt>
               <dd className={node.tone === "back" ? "warn-text" : node.tone === "stuck" ? "bad-text" : ""}>{node.reason}</dd>
             </>
           )}

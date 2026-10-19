@@ -580,7 +580,7 @@ export abstract class Kernel {
     task.statusLine = published ? `Delivery needs you · ${published} of ${task.repositories!.length} delivered` : "Stuck. Needs you";
     this.dropBlockingItems(taskId);
     // What went wrong belongs to the step that got stuck (an agent's, or Petrina's own); then the task waits for the coordinator.
-    if (openStep(task)?.kind !== "you") endOpenStep(task, { outcome: W.stuck, reason: W.stuckReason, tone: "stuck", end: "failed" }, Date.now());
+    if (openStep(task)?.kind !== "you") endOpenStep(task, { outcome: W.stuck, reason: message, tone: "stuck", end: "failed" }, Date.now());
     if (error instanceof ToolProblem) {
       // Named, with its fix in one sentence; what the tool said stays behind Details.
       const name = CHECK_NAMES[error.toolId];

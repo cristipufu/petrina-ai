@@ -46,6 +46,22 @@ async function start(scenario: Scenario, options: { description?: string; before
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("an agent that runs out of usage", () => {
+  it("records a non-quota provider failure on the failed node and in the inbox instead of Internal error", async () => {
+    const message = "API error (status 503 Service Unavailable): Please try again later";
+    const run = await start({ planner: "short", builder: "plain", failure: { role: "builder", message, httpStatus: 503 } });
+    try {
+      const task = await waitFor(() => {
+        run.answer();
+        return run.find().state === "failed" && run.find();
+      }, "the provider failure");
+      expect(task.error).toBe(message);
+      expect(task.journey!.find((node) => node.roleId === "builder" && node.end === "failed")!.reason).toBe(message);
+      expect(run.engine.getState().inbox.find((item) => item.taskId === task.id && item.kind === "stuck")!.body).toBe(message);
+      expect(run.engine.getState().pool.limited).toBeUndefined();
+      expect(run.fakes.received("builder")).toHaveLength(1);
+    } finally { await run.engine.shutdown(); }
+  });
+
   it("hands off a native Grok 402 without retrying its request or changing the weekly reading", async () => {
     const report = { toolId: "grok", kind: "seven_day", status: "allowed" as const, utilization: 0.42, at: Date.now() - 7_200_000, resetsAt: Date.now() + 86_400_000 };
     const run = await start({ builder: "plain", limited: [{ model: "grok-4.7", role: "builder" }] }, {

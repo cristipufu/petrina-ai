@@ -696,7 +696,7 @@ describe("The squad uses tools that are ready", () => {
       const task = taskOf(state, taskId);
       expect(task.timeline.some((entry) => entry.text === "Planner started" && entry.profileId === "sol-high")).toBe(true);
       const planner = task.journey!.find((step) => step.roleId === "planner")!;
-      expect(planner).toMatchObject({ profileId: "sol-high", end: "failed", outcome: "Stuck", reason: "stuck" });
+      expect(planner).toMatchObject({ profileId: "sol-high", end: "failed", outcome: "Stuck", reason: task.error });
       expect(task.timeline.find((entry) => entry.text === "Stuck: Codex wouldn't start")?.step).toBe(planner.id);
       expect(task.journey!.at(-1)).toMatchObject({ kind: "you", waitsFor: "stuck" });
       // Never on the tool that is not logged in.

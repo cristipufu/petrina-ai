@@ -26,6 +26,8 @@ export interface Scenario {
   pictures?: "valid" | "repair";
   /** Shutdown tests: never answer the initial handshake. */
   silent?: boolean;
+  /** A real ACP internal-error wrapper with a provider diagnostic for one role. */
+  failure?: { role: string; message: string; httpStatus: number };
   /** "short": build and one reviewer. "parallel": two reviewers at once. "pair": build, then two reviewers at once, one on each tool. "tester-after": build, one reviewer, then a tester. */
   worksOn?: WorkChoice[];
   /** An added Security specialist passes instead of blocking once. */
@@ -477,6 +479,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     ? (session.role === "tester" ? ["Check the welcome page from the guest view."] : [])
     : scenario().learnings ? (session.role === "builder" ? ["Run the tests with bun test: they take a second.", "Greetings live at the repository root."] : session.role === "code reviewer" ? [scenario().reviewTodo ? "Check the greeting from the guest view." : "Greetings live at the repository root!"] : []) : [];
   const plan = scenario();
+  if (plan.failure?.role === session.role) throw acp.RequestError.internalError({ message: plan.failure.message, http_status: plan.failure.httpStatus });
   if (plan.liveMessageRoles?.includes(session.role) && dir) {
     await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "opening", content: { type: "text", text: "I'm checking " } });
     await send(client, sessionId, { sessionUpdate: "agent_message_chunk", messageId: "opening", content: { type: "text", text: "the nearby cases." } });

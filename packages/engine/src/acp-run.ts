@@ -322,6 +322,15 @@ function commandOf(rawInput: unknown): string | undefined {
   return undefined;
 }
 
+/** ACP's generic wrapper can carry the useful provider diagnostic in data.message. Keep its code and data. */
+function providerError(error: unknown): unknown {
+  if (!(error instanceof Error) || error.message !== "Internal error") return error;
+  const data = (error as Error & { data?: unknown }).data;
+  const detail = data && typeof data === "object" ? (data as { message?: unknown }).message : undefined;
+  if (typeof detail === "string" && detail.trim()) error.message = detail;
+  return error;
+}
+
 interface RunState {
   text: string;
   messages: AgentMessages;
@@ -714,7 +723,7 @@ export class AgentRun {
       const unsandboxed = options.sandbox && !signal.aborted ? sandboxFailure(error) : undefined;
       if (unsandboxed !== undefined) throw new SandboxUnavailable(unsandboxed);
       if (options.reopen !== undefined && !(error instanceof ReopenFailed) && !signal.aborted) throw new ReopenFailed(`${adapter.name} could not reopen the conversation`);
-      throw error;
+      throw providerError(error);
     }
   }
 
@@ -731,7 +740,7 @@ export class AgentRun {
     const exited = new Promise<never>((_, reject) => this.child.once("exit", (code) => reject(new Error(`The agent stopped (exit ${code ?? "signal"})`))));
     exited.catch(() => undefined);
     try {
-      const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch((error: unknown) => { throw this.limitOf(error) ?? error; });
+      const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch((error: unknown) => { throw this.limitOf(error) ?? providerError(error); });
       if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
         const out = this.rejected();
         if (out) {

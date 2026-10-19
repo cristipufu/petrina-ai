@@ -174,7 +174,7 @@ describe("the engine records each task's journey", () => {
     await until(engine, (state) => state.tasks.find((task) => task.id === id)!.state === "failed", () => true);
     let view = viewOf(engine, id);
     expect(view.nodes.map((node) => `${node.name}: ${node.state}`).slice(0, 4)).toEqual(["Planner: done", "Builder: failed", "Stuck: you", "Builder (again): next"]);
-    expect(view.nodes[1]).toMatchObject({ outcome: "Stuck", reason: "stuck", tone: "stuck" });
+    expect(view.nodes[1]).toMatchObject({ outcome: "Stuck", reason: taskOf(engine, id).error, tone: "stuck" });
     const failed = taskOf(engine, id).journey![1]!;
     expect(taskOf(engine, id).timeline.find((entry) => entry.text.startsWith("Stuck:"))?.step).toBe(failed.id);
     expect(fakes.marked("builder-failed")).toBe(true);
