@@ -67,7 +67,7 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
         </div>
       </div>
 
-      <section className="analytics-section" aria-labelledby="analytics-limits">
+      <section className="analytics-section usage-limits-section" aria-labelledby="analytics-limits">
       <header className="analytics-section-heading">
         <h2 id="analytics-limits">Usage limits</h2>
         <p className="muted small">These account limits are shared across products and sessions, including work outside Petrina.</p>

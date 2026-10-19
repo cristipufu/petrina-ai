@@ -309,7 +309,7 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
   if (expanded) {
     const tools = state.tools.filter((tool) => tool.status === "ready" || reports.some((report) => report.toolId === tool.id) || tool.id === "claude-code" || tool.id === "codex");
     return (
-      <div className="limits">
+      <div className="usage-limits">
         {tools.map((tool) => {
           const own = reports.filter((report) => report.toolId === tool.id);
           const out = (state.pool.limited ?? []).filter((limit) => limit.toolId === tool.id && limit.until > now);
