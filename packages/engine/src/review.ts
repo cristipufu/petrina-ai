@@ -1,7 +1,7 @@
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { endAgentStep, findingCount, independentVotes, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
+import { endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type DeepMutable, type Finding, type Id, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -403,7 +403,7 @@ export class Reviews {
       const verdict = yes.length * 2 >= votes.length ? "real" : outcome.verdict;
       finding.verification = { by: outcome.by, verdict, reason: outcome.reason, at };
       if (verdict === "real") real += 1;
-      else if (verdict === "not-a-bug") finding.status = "dismissed";
+      else if (verdict === "not-a-bug") finding.status = isRejectedReopenOfVerifiedFix(finding) ? "fixed" : "dismissed";
       else if (verdict === "nit") finding.severity = "suggestion";
       else finding.severity = "pre-existing";
     }

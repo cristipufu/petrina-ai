@@ -8,6 +8,12 @@ export function independentVotes(votes: readonly Vote[] = []): Vote[] {
   return [...new Map(votes.filter((vote) => vote.toolId).map((vote) => [vote.toolId, vote])).values()];
 }
 
+/** A not-a-bug vote on a reopened finding rejects the new confirmation, not the earlier verified bug. */
+export function isRejectedReopenOfVerifiedFix(finding: Pick<Finding, "reopenedAt" | "verification" | "earlierReviews">): boolean {
+  return finding.reopenedAt !== undefined && finding.verification?.verdict === "not-a-bug" &&
+    (finding.earlierReviews ?? []).some((round) => round.verification?.verdict === "real" && round.answer?.fixed === true);
+}
+
 export interface ReviewStats {
   /** Tasks whose review is over: passed, or handed to the coordinator with rounds used up. */
   reviewed: number;

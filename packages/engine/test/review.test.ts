@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { findingCount, type Task } from "@petrina/core";
+import { findingCount, reviewStats, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
@@ -60,7 +60,7 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("reviews that converge", () => {
-  it("rechecks an older saved reopened finding instead of reusing its pre-fix ballot", async () => {
+  it("keeps an older saved verified fix after a new ballot rejects its reopening", async () => {
     const run = await untilDelivery({ reviewer: "important" });
     const data = join(run.root, "data");
     const store = new Store(join(data, "petrina.db"));
@@ -82,9 +82,10 @@ describe.concurrent("reviews that converge", () => {
         return state.inbox.some((item) => item.taskId === run.task.id && item.kind === "delivery") && state.tasks.find((task) => task.id === run.task.id);
       }, "the reopened saved finding to be verified again");
       const finding = task.findings.find((entry) => entry.severity === "blocking")!;
-      expect(finding.status).toBe("dismissed");
+      expect(finding.status).toBe("fixed");
       expect(finding.verification?.verdict).toBe("not-a-bug");
       expect(finding.earlierReviews?.[0]?.verification?.verdict).toBe("real");
+      expect(reviewStats([task]).findings).toMatchObject({ fixed: 1, notABug: 0 });
       expect(run.fakes.openings("builder")).toHaveLength(2);
     } finally { await engine.shutdown(); }
     const saved = new Store(join(data, "petrina.db"));
@@ -92,16 +93,17 @@ describe.concurrent("reviews that converge", () => {
     finally { saved.close(); }
   });
 
-  it("requires fresh votes when one tool reopens a reported fix, retaining the earlier evidence", async () => {
+  it("keeps a previously real, builder-fixed finding fixed when fresh voters reject a false reopening", async () => {
     const { task, fakes, voters } = await untilDelivery({ reviewer: "confirm-fixed-one-tool", verifier: "after-fix-not-a-bug" });
     const finding = task.findings.find((entry) => entry.severity === "blocking")!;
     expect(finding.answer?.fixed).toBe(true);
-    expect(finding.status).toBe("dismissed");
+    expect(finding.status).toBe("fixed");
     expect(finding.verification?.verdict).toBe("not-a-bug");
     expect(finding.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("not-a-bug"));
     expect(finding.earlierReviews).toHaveLength(1);
     expect(finding.earlierReviews![0]!.verification?.verdict).toBe("real");
     expect(finding.earlierReviews![0]!.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("real"));
+    expect(reviewStats([task]).findings).toMatchObject({ fixed: 1, notABug: 0 });
     expect(fakes.openings("verifier")).toHaveLength(voters * 2);
     expect(fakes.openings("builder")).toHaveLength(2);
   });
