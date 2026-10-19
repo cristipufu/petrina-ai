@@ -5,6 +5,7 @@ import { createDemoState, Simulator } from "@petrina/core";
 import { App } from "../src/App";
 
 let simulator: Simulator;
+let loseCombineReply = false;
 const live = { link: "live", desktop: false };
 const empty: never[] = [];
 vi.mock("../src/engine", () => ({
@@ -12,11 +13,11 @@ vi.mock("../src/engine", () => ({
   useEngineStatus: () => live, useUnsent: () => empty,
   failureText: (error: unknown) => error instanceof Error ? error.message : String(error),
   useSim: () => useSyncExternalStore((fn) => simulator.subscribe(fn), () => simulator.getState()),
-  sim: new Proxy({}, { get: (_, name) => name === "synced" ? () => true : (...args: unknown[]) => (simulator[name as keyof Simulator] as Function).apply(simulator, args) }),
+  sim: new Proxy({}, { get: (_, name) => name === "synced" ? () => true : (...args: unknown[]) => { const result = (simulator[name as keyof Simulator] as Function).apply(simulator, args); return name === "combineBacklog" && loseCombineReply ? Promise.resolve(result).then(() => { throw new Error("Confirmation was lost"); }) : result; } }),
 }));
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
-afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined; host = undefined; });
+afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined; host = undefined; loseCombineReply = false; });
 async function mount() {
   history.replaceState(null, "", "/?demo");
   const state = createDemoState(1_000_000_000_000);
@@ -102,4 +103,21 @@ it("selects backlog requests without opening them and queues one combined reques
   expect(simulator.taskDetails(second)!.combinedInto).toBe(queued.id);
   expect(host!.querySelector('[aria-label="Combine backlog tasks"]')).toBeNull();
   expect(host!.querySelector('.sheet')?.textContent).toContain("Original requests");
+});
+
+
+it("recognises a saved combination from the state update when the command confirmation is lost", async () => {
+  await mount();
+  const productId = simulator.getState().products[0]!.id;
+  await act(async () => { simulator.addTask({ productId, title: "First small fix", backlog: true }); simulator.addTask({ productId, title: "Second small fix", backlog: true }); });
+  await button("Select tasks");
+  await click('[aria-label="Include First small fix"]');
+  await click('[aria-label="Include Second small fix"]');
+  await button("Combine and queue…");
+  await type('#combined-title', "Saved despite lost reply");
+  loseCombineReply = true;
+  await button("Combine and queue");
+  expect(host!.querySelector('[aria-label="Combine backlog tasks"]')).toBeNull();
+  expect(simulator.getState().tasks.filter((task) => task.title === "Saved despite lost reply")).toHaveLength(1);
+  expect(host!.querySelector('.sheet')?.textContent).toContain("Saved despite lost reply");
 });
