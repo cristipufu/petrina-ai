@@ -2021,11 +2021,11 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 
 /* A step's details, under the diagram. */
 .journey-hint { margin-top: -4px; }
-.journey-details { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); }
+.journey-details { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); }
 .journey-details-head { display: flex; align-items: center; gap: 8px; }
 .journey-details-head h3 { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: var(--fs-reading); line-height: var(--lh-reading); font-weight: 600; }
 .journey-details-head .label { font-size: var(--fs-control); line-height: var(--lh-control); }
-.journey-detail-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.journey-detail-tabs { display: flex; flex-wrap: wrap; min-width: 0; gap: 4px; border-bottom: 1px solid var(--line); }
 .journey-detail-tabs button { min-height: 36px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-control); cursor: pointer; }
 .journey-detail-tabs button:hover { color: var(--text); background: var(--hover); }
 .journey-detail-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
@@ -2036,7 +2036,7 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 .journey-waits { display: block; }
 .journey-asked h4, .journey-part h4 { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
-.journey-context { display: grid; gap: 8px; }
+.journey-context { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 8px; }
 .journey-context h4 { margin-top: 4px; font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
 .journey-context p { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
 .journey-review-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
