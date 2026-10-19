@@ -136,7 +136,7 @@ export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: 
   const outcome = reviewOutcome(node, find.role(node.roleId));
   if (outcome) parts.push(outcome);
   else if (node.live && node.state !== "ahead") parts.push(node.live);
-  if (node.reason) parts.push(`Moved on: ${node.reason}`);
+  if (node.reason) parts.push(`${node.state === "failed" ? "Stopped because" : "Moved on"}: ${node.reason}`);
   for (const ask of node.asks) parts.push(`${askKind(ask)}: ${ask.title}. ${askOutcome(ask)}`);
   return `${parts.join(". ")}.`;
 }

@@ -96,7 +96,7 @@ export class Context {
 
   /** The design's objections; for the architect following the coordinator's call, the call and what it must answer. */
   private objections(task: MTask, roleId: Id): Section[] {
-    const call = roleId === "architect" ? followingCall(task as unknown as Task) : undefined;
+    const call = this.k.role(roleId)?.result === "brief" ? followingCall(task as unknown as Task) : undefined;
     if (!call) return task.objections.length ? [{ title: "Objections so far", body: formatObjections(task.objections as Task["objections"]) }] : [];
     const due = dueAnswers(task.objections as Task["objections"], call);
     const open = due.filter((objection) => objection.status === "open");

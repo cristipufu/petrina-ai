@@ -39,9 +39,10 @@ describe("every role's contract", () => {
     const reviewer = BUILT_IN_ROLES.find((role) => role.id === "design-reviewer")!;
     const stage = { id: "design", kind: "converge" as const, title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], maxRounds: 3 };
     const later = ctx({ plan: { stages: [stage], rationale: "Design", plannerProfileId: "opus-high" }, stageIndex: 0, rounds: { design: 2 } });
-    for (const role of [reviewer, { ...reviewer, instructions: "Review the scheduling behavior." }]) {
+    for (const role of [reviewer, { ...reviewer, instructions: "Review the scheduling behavior." }, { ...reviewer, id: "added-design-reviewer", added: true, instructions: "Review the scheduling behavior." }]) {
       expect(contractFor(role).instructions(later)).toContain(DESIGN_OBJECTION_RULE);
       expect(contractFor(role).instructions(later)).toContain("first check the Architect's answers");
+      expect(contractFor(role).reads).toEqual(["notes", "brief", "objections"]);
     }
     expect(contractFor(reviewer).instructions(later)).toContain("Design review round 2 of 3");
     expect(contractFor(reviewer).instructions(ctx())).not.toContain("Design review round 2");

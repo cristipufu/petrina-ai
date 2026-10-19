@@ -367,9 +367,9 @@ export class Turns {
     const where = saved ? this.whereYouWere(task, role, startedAt) : undefined;
     if (wentBack) {
       this.k.say(task, "system", `${role.name} went back to its own conversation from the last step · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-      this.k.log(task, "milestone", "Went back to its own conversation from the last step", roleId, profileId);
+      this.k.log(task, "status", "Went back to its own conversation from the last step", roleId, profileId);
     } else if (back) {
-      this.k.log(task, "milestone", `Could not go back to its own conversation (${notBack ?? "the tool did not reopen it"}), so it started a fresh one with what it reported`, roleId, profileId);
+      this.k.log(task, "status", `Could not go back to its own conversation (${notBack ?? "the tool did not reopen it"}), so it started a fresh one with what it reported`, roleId, profileId);
     }
     if (wentBack) {
       // Said above.

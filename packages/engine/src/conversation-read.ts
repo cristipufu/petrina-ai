@@ -35,7 +35,9 @@ export function readConversation(task: Task, args: { nodeId?: string; messageId?
   let anchor: { id: string; end: number; prefix: string } | undefined;
   while (index >= 0 && remaining > 0 && items.length < 100) {
     const line = lines[index]!;
-    const start = Math.max(0, end - remaining);
+    let start = Math.max(0, end - remaining);
+    // Keep a Unicode character together, including when the budget is one character.
+    if (start > 0 && /[\uD800-\uDBFF]/.test(line.text[start - 1]!) && /[\uDC00-\uDFFF]/.test(line.text[start]!)) start--;
     const step = line.step ? steps.get(line.step) : undefined;
     items.unshift({ ...line, text: line.text.slice(start, end), offset: start, total: line.text.length, revision: hash(line.text), mayChange: step ? step.endedAt === undefined : null });
     anchor = { id: line.id, end: start, prefix: hash(line.text.slice(0, start)) };

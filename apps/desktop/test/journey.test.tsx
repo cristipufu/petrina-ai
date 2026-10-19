@@ -39,6 +39,18 @@ describe('the journey as a list, for screen readers and the keyboard', () => {
   const view = journeyView(taskOf(state, 'pricing-refresh'), contextOf(state));
   const find = lookup(state);
 
+  it('keeps long failure diagnostics in details without expanding the diagram arrows', () => {
+    const failed = { ...view.nodes[2]!, state: 'failed' as const, reason: 'The provider refused this request. '.repeat(100) };
+    const long = { ...view, nodes: [failed, view.nodes[3]!] };
+    const short = { ...long, nodes: [{ ...failed, reason: 'stuck' }, view.nodes[3]!] };
+    const geometry = (view: JourneyView) => {
+      const { items, ...layout } = layoutJourney(view, 820, 16, 'Started');
+      return { ...layout, items: items.map(({ node: _node, ...item }) => item) };
+    };
+    expect(geometry(long)).toEqual(geometry(short));
+    expect(spokenStep(failed, 2, find, state.now)).toContain(`Stopped because: ${failed.reason}`);
+  });
+
   it('reads each step: number, name, state, tool and model, time, outcome and why it moved on', async () => {
     const selected: string[] = [];
     await render(<JourneyList view={view} find={find} now={state.now} onFocusStep={() => {}} onSelect={(id) => selected.push(id)} />);

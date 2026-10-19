@@ -235,6 +235,13 @@ function buildShape(task: Task): string {
   return `{"summary": "What you built, in plain language", "title": "One line for the commit, in the repository's own style"${text}, "changes": ["What changed for users, one per line"], "tests": "What you ran and the result", "answers": [{"id": "<finding id, in a fix round>", "fixed": true, "text": "What you changed, or why you did not"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`;
 }
 
+function designReviewRuntime(task: Task): string {
+  const stage = task.plan?.stages[task.stageIndex];
+  const round = stage ? task.rounds[stage.id] ?? 1 : 1;
+  const revision = round > 1 ? `Design review round ${round}${stage?.maxRounds ? ` of ${stage.maxRounds}` : ""}: first check the Architect's answers to your prior objections and the revised rules. Reuse established facts about unchanged code; do not repeat broad discovery without a concrete reason. Inspect beyond those changes when needed to find a new contradiction or failure. Do not reopen a resolved objection unless current evidence shows why its answer still fails.` : "";
+  return [revision, task.objections.some((objection) => objection.call !== undefined) ? "Objections settled by the coordinator's call are final: do not raise them again." : ""].filter(Boolean).join("\n");
+}
+
 export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
   "planner": {
     result: PlanResult,
@@ -305,10 +312,8 @@ If objections are listed below, answer every one by its id: accept it and change
     reads: ["notes", "brief", "objections"],
     shape: `{"objections": [{"text": "A concrete gap in the design", "blocking": true}]}`,
     instructions: ({ task }) => {
-      const stage = task.plan?.stages[task.stageIndex];
-      const round = stage ? task.rounds[stage.id] ?? 1 : 1;
-      const revision = round > 1 ? `\nDesign review round ${round}${stage?.maxRounds ? ` of ${stage.maxRounds}` : ""}: first check the Architect's answers to your prior objections and the revised rules. Reuse established facts about unchanged code; do not repeat broad discovery without a concrete reason. Inspect beyond those changes when needed to find a new contradiction or failure. Do not reopen a resolved objection unless current evidence shows why its answer still fails.` : "";
-      return `${BUILT_IN_ROLES.find((role) => role.id === "design-reviewer")!.instructions}${revision}${task.objections.some((objection) => objection.call !== undefined) ? "\nObjections settled by the coordinator's call are final: do not raise them again." : ""}`;
+      const runtime = designReviewRuntime(task);
+      return `${BUILT_IN_ROLES.find((role) => role.id === "design-reviewer")!.instructions}${runtime ? `\n${runtime}` : ""}`;
     },
   },
   "ux-designer": {
@@ -444,7 +449,7 @@ export function plannerRoles(roles: readonly Role[]): string {
 /** The contract follows the result, so a coordinator's added reviewer works like a built-in reviewer. */
 export function contractFor(role: Role): RoleContract {
   const builtIn = BUILT_IN_ROLES.find((entry) => entry.id === role.id);
-  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "findings" ? "code-reviewer" : "researcher"]!;
+  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "findings" ? "code-reviewer" : role.result === "brief" ? "architect" : role.result === "objections" ? "design-reviewer" : "researcher"]!;
   if (role.id === "release-manager") return contract;
   const instructions = (ctx: PromptContext): string => {
     const original = contract.instructions(ctx);
@@ -472,7 +477,8 @@ export function contractFor(role: Role): RoleContract {
   };
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx);
-    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [DESIGN_RESEARCH_RULE] : role.result === "objections" ? [DESIGN_OBJECTION_RULE] : [];
+    const designRuntime = role.result === "objections" ? designReviewRuntime(ctx.task) : "";
+    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [DESIGN_RESEARCH_RULE] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
     return missing.length ? `${text}\n${missing.join("\n")}` : text;
   } };

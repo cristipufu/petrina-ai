@@ -87,6 +87,19 @@ describe("focused coordination and durable decisions", () => {
     expect((await c.call("task.conversation", { ...args, cursor: first.next })).outcome).toBe("changed");
   });
 
+  it("keeps Unicode characters intact across recent-message page boundaries", async () => {
+    const { e, c, taskId } = fixture();
+    e.task(taskId)!.session = [{ id: "unicode", from: "agent", at: 1, text: "A😀B" }];
+    let cursor: unknown;
+    const pages: string[] = [];
+    do {
+      const page = await c.call("task.conversation", { taskId, limit: 1, ...(cursor ? { cursor } : {}) });
+      pages.unshift((page.items as { text: string }[])[0]!.text);
+      cursor = page.next;
+    } while (cursor);
+    expect(pages).toEqual(["A", "😀", "B"]);
+  });
+
   it("bounds and filters lists before pagination, rejects changed continuations and keeps task queries small", async () => {
     const { e, c, taskId } = fixture();
     for (let i = 0; i < 130; i++) e.addTask({ productId: "product", title: `Work ${i}`, description: "x".repeat(8000) });

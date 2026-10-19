@@ -4,6 +4,9 @@
 
 import type { JourneyNode, JourneyView } from "@petrina/core";
 
+/** Full failure diagnostics belong in the details; keep the connecting arrow compact. */
+const reasonLabel = (node?: JourneyNode) => node?.state === "failed" ? "stuck" : node?.reason;
+
 /** Sizes in rem. Boxes are the same height so a row's arrows run straight. */
 export const SIZES = {
   box: { w: 12, h: 8.25 },
@@ -138,7 +141,7 @@ export function layoutJourney(view: JourneyView, width: number, rem: number, sta
   let x = left;
   entries.forEach((entry, index) => {
     const w = px(size(entry).w);
-    const label = entries[index - 1]?.node?.reason;
+    const label = reasonLabel(entries[index - 1]?.node);
     const gap = label ? Math.max(px(SIZES.gap), Math.ceil(measure(label, px(12)).width) + px(0.5)) : px(SIZES.gapQuiet);
     if (index === 0) {
       rows.push({ start: 0, end: 0 });
@@ -165,7 +168,7 @@ export function layoutJourney(view: JourneyView, width: number, rem: number, sta
     const b = placed[index + 1]!;
     const x1 = a.x + px(size(from).w);
     const x2 = b.x;
-    const label = from.node?.reason;
+    const label = reasonLabel(from.node);
     const wraps = a.row !== b.row;
     const back = x2 - px(1);
     const out = wraps ? Math.max(x1 + px(1), back + (label ? measure(label, right - left).width : 0) + px(2)) : x2;
@@ -218,7 +221,7 @@ export function layoutJourney(view: JourneyView, width: number, rem: number, sta
     const y2 = to.y + to.spine;
     const kind: EdgeKind = to.kind === "end" ? (fromNode?.tone === "back" ? "back" : "done") : to.kind === "rest" ? "ahead" : edgeKind(fromNode, toNode);
     const live = toNode?.state === "now" && toNode.run === "working";
-    const label = fromNode?.reason;
+    const label = reasonLabel(fromNode);
     const labelTone = fromNode?.tone === "back" || fromNode?.tone === "stuck" ? fromNode.tone : kind === "you" ? "you" : "on";
     const tip = px(0.5);
     const { labelWidth, labelHeight, out, back } = connections[index - 1]!;
