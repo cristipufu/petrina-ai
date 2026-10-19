@@ -341,7 +341,7 @@ describe("roles the coordinator edits and adds", () => {
     expect(reviews[0]).toContain("## What the builder reports");
     expect(reviews[1]).toContain("## Findings so far (confirm or dispute by id)");
     // It follows the rule that a dispute always gives its reason: it is told so, and Petrina refused its dispute without one.
-    expect(reviews[0]).toContain("Dispute the ones you think are wrong by id, always with the reason and your evidence");
+    expect(reviews[0]).toContain("Dispute findings you think are wrong by id, always with the reason and your evidence");
     expect(reviews[0]).toContain('"disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}]');
     expect(fakes.received("security specialist").some((entry) => entry.text.startsWith("Your result block could not be used: disputes.0"))).toBe(true);
 
