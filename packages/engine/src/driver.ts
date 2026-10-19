@@ -73,6 +73,10 @@ export class Driver {
 
   schedule(): void {
     if (this.k.stopped) return;
+    for (const id of this.preparedTesters.keys()) {
+      const task = this.k.s.tasks.find((task) => task.id === id);
+      if (!task || !["running", "waiting"].includes(task.state)) this.preparedTesters.delete(id);
+    }
     if (this.k.draining) {
       // Settings and permission answers still update the app while admissions are closed.
       this.k.syncScreen();

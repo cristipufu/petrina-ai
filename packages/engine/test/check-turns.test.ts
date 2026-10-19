@@ -244,7 +244,10 @@ it("admits bounded check preparation while every model slot is occupied", async 
     engine.setPoolPaused(true);
     expect(engine["checks"].claimPreparation(task.id)).toBe(false);
     engine.s.backgroundAgents = [];
-    task.state = "backlog";
+    task.state = "waiting";
+    engine["driver"]["preparedTesters"].set(task.id, "already checked");
+    engine.cancel(task.id);
+    expect(engine["driver"]["preparedTesters"].has(task.id)).toBe(false);
   } finally { await engine.shutdown(); }
 });
 
