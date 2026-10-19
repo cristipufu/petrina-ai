@@ -451,6 +451,7 @@ export class AgentRun {
     reopenTimeoutMs?: number;
     startTimeoutMs?: number;
     onGone?: (gone: Promise<void>) => void;
+    onProcess?: (child: ChildProcess) => void;
     /** A login check only opens a conversation, never sends work or runs in a product's copy. */
     probe?: boolean;
     /** When false, no browser is started. Identity checks do not look at a page. Defaults to true. */
@@ -477,6 +478,7 @@ export class AgentRun {
     }
     // windowsHide: no console window flashes up on Windows when an agent starts.
     const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env, detached: process.platform !== "win32", windowsHide: true });
+    options.onProcess?.(child);
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
     const killed = new Promise<never>((_, reject) => {
       child.once("exit", (code) => reject(new Error(`${adapter.name} stopped (exit ${code ?? "signal"})`)));
@@ -495,6 +497,7 @@ export class AgentRun {
       stopAll(child, graceMs, !options.probe),
       browserReady.then((browser) => browser?.close()).then(() => true, () => false),
     ]).then((results) => {
+      signal.removeEventListener("abort", abort);
       const complete = results.every(Boolean);
       if (!complete && !cleanupNoticeSent) {
         cleanupNoticeSent = true;
@@ -509,7 +512,11 @@ export class AgentRun {
     const abort = () => void stop();
     signal.addEventListener("abort", abort, { once: true });
     // Stopped while starting: give up at once, without waiting for a tool that ignores being stopped.
-    const stopped = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("Stopped before the agent started")), { once: true }));
+    let openingAborted!: () => void;
+    const stopped = new Promise<never>((_, reject) => {
+      openingAborted = () => reject(new Error("Stopped before the agent started"));
+      signal.addEventListener("abort", openingAborted, { once: true });
+    });
     stopped.catch(() => undefined);
 
     // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
@@ -724,6 +731,8 @@ export class AgentRun {
       if (unsandboxed !== undefined) throw new SandboxUnavailable(unsandboxed);
       if (options.reopen !== undefined && !(error instanceof ReopenFailed) && !signal.aborted) throw new ReopenFailed(`${adapter.name} could not reopen the conversation`);
       throw providerError(error);
+    } finally {
+      signal.removeEventListener("abort", openingAborted);
     }
   }
 
@@ -737,7 +746,11 @@ export class AgentRun {
     this.state.turn = turn;
     this.notes = undefined;
     const notes = (): TurnNotes => ({ changed: { ...turn.changed }, rerouted: turn.rerouted, helpers: turn.helpers.size, ...(turn.modelSeen ? { modelSeen: turn.modelSeen } : {}) });
-    const exited = new Promise<never>((_, reject) => this.child.once("exit", (code) => reject(new Error(`The agent stopped (exit ${code ?? "signal"})`))));
+    let onExit!: (code: number | null) => void;
+    const exited = new Promise<never>((_, reject) => {
+      onExit = code => reject(new Error(`The agent stopped (exit ${code ?? "signal"})`));
+      this.child.once("exit", onExit);
+    });
     exited.catch(() => undefined);
     try {
       const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch((error: unknown) => { throw this.limitOf(error) ?? providerError(error); });
@@ -751,6 +764,7 @@ export class AgentRun {
       const report = reportOf(response, this.profile.toolId);
       return { stopReason: response.stopReason, text: this.state.text, ...(this.state.messages.streamed ? { streamed: true } : {}), ...(report ? { report } : {}), ...notes() };
     } finally {
+      this.child.removeListener("exit", onExit);
       this.state.messages.boundary();
       this.notes = notes();
       this.state.turn = undefined;
