@@ -371,6 +371,15 @@ export async function isClean(path: string): Promise<boolean> {
   return (await run(["git", "status", "--porcelain"], path)).stdout === "";
 }
 
+/** One status process supplies both the checked-out commit and tracked/untracked cleanliness. */
+export async function worktreeStatus(path: string): Promise<{ head?: string; clean: boolean; trackedChanged: boolean }> {
+  const text = await must(["git", "status", "--porcelain=v2", "--branch", "--untracked-files=normal"], path);
+  const lines = text.split("\n").filter(Boolean);
+  const head = lines.find((line) => line.startsWith("# branch.oid "))?.slice(13);
+  const changes = lines.filter((line) => !line.startsWith("#"));
+  return { ...(head && SHA.test(head) ? { head } : {}), clean: !changes.length, trackedChanged: changes.some((line) => !line.startsWith("? ")) };
+}
+
 /** Uncommitted work, one line per file. `tracked`: leave out files git does not track. */
 export async function changes(path: string, tracked = false): Promise<string[]> {
   const result = await run(["git", "status", "--porcelain", ...(tracked ? ["--untracked-files=no"] : [])], path);

@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun, DeepMutable, JourneyProductCheck } from "@petrina/core";
-import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, type CheckProgress } from "./checks.js";
+import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, expectedCheckCommands, orderedChecks, staticCheck, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait } from "./kernel.js";
@@ -272,7 +272,14 @@ export class ProductChecks {
     let results: CheckRun[];
     try {
       const ran = kept ?? await runChecks(repository.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress(`check-${event.index}`, event));
-      if (kept) kept.forEach((run, index) => progress(`check-${index}`, { kind: "finished", index, at: Date.now(), run }));
+      if (kept) {
+        const shown = new Set<number>();
+        kept.forEach((run) => {
+          const index = checks.findIndex((check, i) => !shown.has(i) && check.name === run.name && commandText(check.argv) === run.command);
+          shown.add(index);
+          progress(`check-${index}`, { kind: "finished", index, at: Date.now(), run });
+        });
+      }
       if (signal.aborted) {
         this.noteStopped(scope, ran, entries);
         throw new Aborted();
@@ -284,7 +291,8 @@ export class ProductChecks {
         await git.restoreTracked(repository.worktree);
         this.k.log(scope, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
       }
-      const hooksRan = await this.runHooks(scope, hooks, env, signal, progress);
+      const staticFailed = checks.some((check) => staticCheck(check) && ran.some((run) => !run.ok && run.command === commandText(check.argv)));
+      const hooksRan = staticFailed ? [] : await this.runHooks(scope, hooks, env, signal, progress);
       if (signal.aborted) {
         this.noteStopped(scope, [...ran, ...hooksRan], entries);
         throw new Aborted();
@@ -336,9 +344,15 @@ export class ProductChecks {
   private settleFindings(scope: RepositoryContext, results: readonly CheckRun[]): readonly CheckRun[] {
     const { task, work: repository } = scope;
     const failed = results.filter((run) => !run.ok);
+    const product = this.k.productOf(scope);
+    const declared = new Set([
+      ...(product && repository.worktree ? checksFor(product, repository.worktree) : []).map((check) => `Check failed: ${check.name} (${commandText(check.argv)})`),
+      ...(product?.hooks?.includes("pre-commit") ? ["Check failed: Pre-commit hook (git hook run --ignore-missing pre-commit)"] : []),
+      ...(product?.hooks?.includes("commit-msg") ? ["Check failed: Commit message hook (git hook run commit-msg)"] : []),
+    ]);
     // An earlier failure settles on this run, whatever anyone answered about it.
     for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(repository.productId)) && !failed.some((run) => finding.text === `Check failed: ${run.name} (${run.command})`)) finding.status = "fixed";
+      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(repository.productId)) && (!declared.has(finding.text) || results.some((run) => run.ok && finding.text === `Check failed: ${run.name} (${run.command})`))) finding.status = "fixed";
     }
     for (const run of failed) {
       const text = `Check failed: ${run.name} (${run.command})`;
@@ -370,10 +384,12 @@ export class ProductChecks {
     if (!repository.checks || !repository.worktree) return false;
     if (await git.trackedChanged(repository.worktree)) return false;
     const hooks = await this.noteHooks(scope);
+    const productCommands = expectedCheckCommands(checks, repository.checks.results);
+    const staticFailed = checks.some((check) => staticCheck(check) && repository.checks!.results.some((run) => !run.ok && run.command === commandText(check.argv)));
     const expected = [
-      ...checks.filter((check) => check.argv.length).map((check) => commandText(check.argv)),
-      ...(hooks.includes("pre-commit") ? ["git hook run --ignore-missing pre-commit"] : []),
-      ...(hooks.includes("commit-msg") ? ["git hook run commit-msg"] : []),
+      ...productCommands,
+      ...(!staticFailed && hooks.includes("pre-commit") ? ["git hook run --ignore-missing pre-commit"] : []),
+      ...(!staticFailed && hooks.includes("commit-msg") ? ["git hook run commit-msg"] : []),
     ];
     if (JSON.stringify(expected) !== JSON.stringify(repository.checks.results.map((run) => run.command))) return false;
     const definition = await this.definition(scope, checks);
@@ -408,7 +424,7 @@ export class ProductChecks {
     if (repository.checks.definition && (repository.checks.definition !== await this.definition(scope, checks) || !(await this.noteHooks(scope)).length)) return undefined;
     const [sha, tree] = await Promise.all([git.head(repository.worktree).catch(() => undefined), git.treeOf(repository.worktree)]);
     if (!(tree && repository.checks.tree === tree) && !(sha && repository.checks.sha === sha)) return undefined;
-    const commands = checks.filter((check) => check.argv.length).map((check) => commandText(check.argv));
+    const commands = orderedChecks(checks).map((check) => commandText(check.argv));
     const results = repository.checks.results.slice(0, commands.length);
     if (JSON.stringify(commands) !== JSON.stringify(results.map((run) => run.command))) return undefined;
     const hooks = repository.checks.results.slice(commands.length);

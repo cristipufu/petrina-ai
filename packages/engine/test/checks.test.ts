@@ -49,7 +49,19 @@ describe("a product's checks", () => {
     } finally { writeFileSync(release, "go"); }
     const results = await running;
     expect(results.every((run) => run.ok)).toBe(true);
-    expect(updates.map((event) => `${event.index}:${event.kind}`)).toEqual(["0:started", "1:started", "0:finished", "1:finished"]);
+    expect(updates.map((event) => `${event.index}:${event.kind}`)).toEqual(["0:started", "0:finished", "1:started", "1:finished"]);
+  });
+
+  it("runs static checks first and skips heavy commands after a static failure", async () => {
+    const dir = root("petrina-check-stages-");
+    const heavy = join(dir, "heavy-started");
+    const results = await runChecks(dir, [
+      { name: "Tests", argv: [process.execPath, "-e", 'require("node:fs").writeFileSync(process.argv[1], "yes")', heavy] },
+      { name: "Type check", argv: [process.execPath, "-e", "process.exit(1)"] },
+      { name: "Lint", argv: ["git", "--version"] },
+    ], process.env, 30_000 * SLOW);
+    expect(results.map((run) => [run.name, run.ok])).toEqual([["Type check", false]]);
+    expect(existsSync(heavy)).toBe(false);
   });
   it("suggests the checks a repository declares, whatever its stack", () => {
     const js = root("petrina-checks-js-");
@@ -321,25 +333,26 @@ setInterval(() => {}, 1000);`);
     expect(Date.now() - started).toBeLessThan(4000);
   });
 
-  it("stops every check when the task is stopped", async () => {
+  it("stops the current check and never starts pending commands when the task is stopped", async () => {
     const stop = new AbortController();
     setTimeout(() => stop.abort(), 300);
     const started = Date.now();
     const dir = root("petrina-checks-abort-");
     const results = await runChecks(dir, [{ name: "Slow", argv: ["sleep", "30"] }, { name: "Slower", argv: ["sleep", "40"] }], process.env, 60_000, stop.signal, join(dir, "logs"));
     expect(Date.now() - started).toBeLessThan(4000);
-    expect(results.map((run) => [run.name, run.ok])).toEqual([["Slow", false], ["Slower", false]]);
+    expect(results.map((run) => [run.name, run.ok])).toEqual([["Slow", false]]);
     for (const run of results) {
       expect(existsSync(run.logPath!)).toBe(true);
       expect(run.logError).toBeUndefined();
     }
   });
 
-  it("runs the checks side by side: the wait is the slowest one, not the sum", async () => {
-    const started = Date.now();
-    const results = await runChecks(root("petrina-checks-side-"), [1, 2, 3].map((n) => ({ name: `Check ${n}`, argv: ["sleep", "1"] })), process.env);
+  it("serializes commands that share a build directory", async () => {
+    const dir = root("petrina-checks-shared-output-");
+    const command = 'const fs = require("node:fs"); fs.writeFileSync("build.lock", "held", {flag:"wx"}); await Bun.sleep(40); fs.unlinkSync("build.lock");';
+    const results = await runChecks(dir, [1, 2, 3].map((n) => ({ name: `Check ${n}`, argv: [process.execPath, "-e", command] })), process.env);
     expect(results.map((run) => [run.name, run.ok])).toEqual([["Check 1", true], ["Check 2", true], ["Check 3", true]]);
-    expect(Date.now() - started).toBeLessThan(2500);
+    expect(existsSync(join(dir, "build.lock"))).toBe(false);
   });
 });
 

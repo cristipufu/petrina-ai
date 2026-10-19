@@ -26,7 +26,7 @@ backlog → queued → planning → designing → building → reviewing → rea
 
 The stage column (planning, designing, building…) is derived from the role of the current stage; the Products page counts tasks by it. The board itself is one grid of cards grouped by what each task needs (needs you, working, waiting, queue, backlog), and every card shows its own pipeline from its plan: done steps checked, the current one named, stages the plan does not have left out (`packages/core/src/board.ts`).
 
-Static check preparation and queued/running commands hold no agent slot. Preparation is bounded by the pool size, check commands keep their separate concurrency limit (one task at a time by default), and a backlog at that bound holds new task starts. Check finder, reviewer and Tester conversations acquire their actual model slots before starting. A pause or drain admits neither new checks nor new conversations.
+Static check preparation and queued/running commands hold no agent slot. Preparation is bounded by the pool size, check commands keep their separate concurrency limit (one task at a time by default), while queued planners can still use free agent slots. Check finder, reviewer and Tester conversations acquire their actual model slots before starting. A pause or drain admits neither new checks nor new conversations.
 
 ## Backlog and finished work
 
@@ -54,9 +54,11 @@ A Tester must report each item in a saved acceptance checklist; missing items ar
 
 ### Product checks
 
-The Check finder (an internal role) works out once per product, from its CI first, which commands prove it works; it looks again when the CI or build files change. The coordinator can set them by hand. Petrina runs them itself, side by side, as argument arrays without a shell, before the first reviewer of every round and again right before the delivery check when the code changed (`packages/engine/src/checks.ts`, `product-checks.ts`).
+The Check finder (an internal role) works out once per product, from its CI first, which commands prove it works; it looks again when the CI or build files change. The coordinator can set them by hand. Petrina runs them itself as argument arrays without a shell, before the first reviewer of every round and again right before the delivery check when the code changed (`packages/engine/src/checks.ts`, `product-checks.ts`).
 
 A failing check is an Important finding with the real output, and the work goes straight back to the builder. The builder runs focused tests for changed behavior while working, then hands the change back without rerunning the full product checks or test suite; Petrina runs the configured checks and reviewers read those results. A check only looks: whatever one changes in files git tracks is put back, so no formatter slips unreviewed changes into the work.
+
+Conventional type checks and lint run first. A static failure skips the remaining commands and hooks, without settling their older failures or treating skipped work as passing evidence. Other commands run serially within the working copy to avoid shared build-output races.
 
 Tasks’ checks use a separate bounded queue (see [Scheduling](engine-runtime.md#scheduling)); full suites and builds compete for the same machine.
 

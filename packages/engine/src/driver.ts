@@ -141,7 +141,6 @@ export class Driver {
     }
     // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
     const candidates = balanced(continuing, this.k.s.pool, now);
-    const checkBacklog = this.k.s.tasks.filter((task) => task.startedAt !== undefined && ["running", "waiting"].includes(task.state) && this.needsCheckPreparation(task)).length;
     for (const task of queueOf(this.k.s.tasks as Task[])) {
       if (this.k.drivers.has(task.id) || this.k.settling.has(task.id)) continue;
       // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
@@ -149,10 +148,6 @@ export class Driver {
       // What it waited for landed or was cancelled: back to plain queue words.
       if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) (task as MTask).statusLine = "In the queue";
       if (task.held) continue;
-      if (checkBacklog >= Math.max(1, this.k.s.pool.limit)) {
-        (task as MTask).statusLine = "Waiting for room in the check queue";
-        continue;
-      }
       const seat = this.seatOf({ roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) });
       if (seat.waiting) {
         (task as MTask).statusLine = seat.waiting;

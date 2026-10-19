@@ -308,6 +308,7 @@ export class Turns {
         ...(env ? { env } : {}),
         ...(sandbox ? { sandbox } : {}),
         cwd: worktree,
+        browser: mayAskScreen(role),
         browserRoot: join(this.k.dataDir, "browser-temp"),
         signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
@@ -501,16 +502,18 @@ export class Turns {
       // Nothing the agent started may still write in the working copy once the step is over.
       await run.stop();
       for (const copy of protectedCopies) {
-        if (await git.head(copy.path).catch(() => copy.sha) !== copy.sha) await git.resetTo(copy.path, copy.sha);
-        if (!await git.isClean(copy.path).catch(() => true)) await git.discardChanges(copy.path);
+        const state = await git.worktreeStatus(copy.path);
+        if (state.head !== copy.sha) await git.resetTo(copy.path, copy.sha);
+        if (!state.clean) await git.discardChanges(copy.path);
       }
       // A read-only role runs in its tool's automatic mode, so it could change things: leave the
       // working copy exactly as the step first found it, commits and uncommitted changes alike.
-      if (headBefore && worktree && (await git.head(worktree).catch(() => headBefore)) !== headBefore) {
+      const state = !role.canEdit && headBefore ? await git.worktreeStatus(worktree) : undefined;
+      if (headBefore && state?.head !== headBefore) {
         await git.resetTo(worktree, headBefore);
         this.k.log(scope, "warn", `Undid commits from ${role.name}, which is read-only`);
       }
-      if (!role.canEdit && worktree && !(await git.isClean(worktree).catch(() => true))) {
+      if (state && !state.clean) {
         await git.discardChanges(worktree);
         this.k.log(scope, "warn", `Undid changes from ${role.name}, which is read-only`);
       }
@@ -654,6 +657,7 @@ export class Turns {
         env: this.envFor(),
         ...(sandbox ? { sandbox } : {}),
         cwd: copy,
+        browser: mayAskScreen(role),
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         browserRoot: join(this.k.dataDir, "browser-temp"),
         signal,
@@ -789,7 +793,7 @@ export class Turns {
       return send(`Messages from the coordinator, in order:\n${messages}\n\nTake all of them into account. When you are done, end with the result block again.`, "message");
     };
     const mayAsk = mayAskScreen(role);
-    let reply = await send(`${opening}\n\n${browserPrompt(run.browser!.directory)}`, reason);
+    let reply = await send(run.browser ? `${opening}\n\n${browserPrompt(run.browser.directory)}` : opening, reason);
     if (options.main) this.briefed(scope);
     for (let repairs = 0; ; ) {
       if (signal.aborted) throw new Aborted();
@@ -865,7 +869,8 @@ export class Turns {
           const storage = join(this.k.dataDir, "captures", task.id);
           let saved: Awaited<ReturnType<typeof preserveCaptures>> | undefined;
           try {
-            saved = await preserveCaptures(run.browser!.directory, storage, images, signal);
+            if (images.length && !run.browser) throw new Error("This role has no browser capture folder. Omit pictures from this result.");
+            saved = run.browser ? await preserveCaptures(run.browser.directory, storage, images, signal) : [];
           } catch (captureError) {
             if (signal.aborted || captureError instanceof Aborted) throw new Aborted();
             error = captureError instanceof Error ? captureError.message : "The chosen pictures could not be saved.";

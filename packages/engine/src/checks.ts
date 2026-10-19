@@ -99,6 +99,25 @@ export function parseCommand(text: string): string[] {
  */
 export type CheckProgress = { index: number; at: number } & ({ kind: "started" } | { kind: "finished"; run: CheckRun });
 
+/** Recognise conventional static commands; opaque commands keep their declared order. */
+export function staticCheck(check: ProductCheck): boolean {
+  return /^(?:type[ -]?check|lint)(?:\s|$)/i.test(check.name)
+    || check.argv.some((arg) => /^(?:typecheck|type-check|lint|eslint|biome|clippy|mypy|pyright)$/.test(arg))
+    || (check.argv.some((arg) => /(?:^|[\\/])tsc(?:\.cmd)?$/.test(arg)) && check.argv.includes("--noEmit"));
+}
+
+export function orderedChecks(checks: readonly ProductCheck[]): ProductCheck[] {
+  const commands = checks.filter((check) => check.argv.length);
+  return [...commands.filter(staticCheck), ...commands.filter((check) => !staticCheck(check))];
+}
+
+/** An early static failure is complete failing evidence; skipped work never counts as a pass. */
+export function expectedCheckCommands(checks: readonly ProductCheck[], results: readonly CheckRun[]): string[] {
+  const ordered = orderedChecks(checks);
+  const failed = ordered.findIndex((check) => staticCheck(check) && results.some((run) => !run.ok && run.command === commandText(check.argv)));
+  return (failed < 0 ? ordered : ordered.slice(0, failed + 1)).map((check) => commandText(check.argv));
+}
+
 export async function runChecks(
   cwd: string,
   checks: readonly ProductCheck[],
@@ -111,9 +130,12 @@ export async function runChecks(
   onProgress?: (event: CheckProgress) => void,
 ): Promise<CheckRun[]> {
   if (signal?.aborted) return [];
-  const runs = checks
-    .filter((check) => check.argv.length)
-    .map(async (check, index): Promise<CheckRun> => {
+  const ordered = checks.map((check, index) => ({ check, index })).filter(({ check }) => check.argv.length);
+  const runs: CheckRun[] = [];
+  // Commands share one working copy. Serial execution avoids output/cache races; static
+  // failures return immediately without starting tests or builds that cannot prove a pass.
+  for (const { check, index } of [...ordered.filter(({ check }) => staticCheck(check)), ...ordered.filter(({ check }) => !staticCheck(check))]) {
+      if (signal?.aborted) break;
       const log = logDirectory ? await checkLog(logDirectory) : undefined;
       const started = Date.now();
       onProgress?.({ kind: "started", index, at: started });
@@ -133,9 +155,10 @@ export async function runChecks(
         output: tidyOutput(output),
       };
       onProgress?.({ kind: "finished", index, at: Date.now(), run: finished });
-      return finished;
-    });
-  return Promise.all(runs);
+      runs.push(finished);
+      if (!finished.ok && staticCheck(check)) break;
+  }
+  return runs;
 }
 
 interface CheckLog {

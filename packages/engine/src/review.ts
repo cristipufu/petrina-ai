@@ -854,17 +854,22 @@ export class Reviews {
       await git.removeCopies(root, folder, keptCopies());
       for (const work of versions) if (work.root !== root) await git.removeCopies(work.root, folder, keptCopies());
       for (const work of versions) {
-        if (await git.head(work.path).catch(() => work.sha) !== work.sha) await git.resetTo(work.path, work.sha);
-        if (!await git.isClean(work.path).catch(() => true)) await git.discardChanges(work.path);
+        const state = await git.worktreeStatus(work.path);
+        if (state.head !== work.sha) await git.resetTo(work.path, work.sha);
+        if (!state.clean) await git.discardChanges(work.path);
       }
       // Copies share the repository's branches, so a read-only agent could still have moved the task's
       // branch or written into its copy by path: the task's copy goes back to how the group found it.
       if (scope.work.worktree && members.every((member) => !this.k.role(member.roleId)?.canEdit)) {
-        if ((await git.head(scope.work.worktree).catch(() => sha)) !== sha) {
+        const state = await git.worktreeStatus(scope.work.worktree);
+        if (state.head !== sha) {
           await git.resetTo(scope.work.worktree, sha);
           this.k.log(task, "warn", `Undid commits from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
         }
-        await this.k.undoReadOnly(task, members[0]!.roleId);
+        if (!state.clean) {
+          await git.discardChanges(scope.work.worktree);
+          this.k.log(task, "warn", `Undid changes from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
+        }
       }
     }
   }

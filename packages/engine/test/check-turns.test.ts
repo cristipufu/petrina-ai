@@ -252,6 +252,24 @@ it("admits bounded check preparation while every model slot is occupied", async 
   } finally { await engine.shutdown(); }
 });
 
+it("admits a queued planner while the check-preparation lane is full", async () => {
+  const root = tempDir("petrina-planner-beside-checks-"); roots.push(root);
+  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null });
+  engine.setPoolPaused(true);
+  try {
+    const productId = await engine.addProduct(makeProduct(root));
+    const check = engine.task(engine.addTask({ productId, title: "Waiting for checks", backlog: true }))!;
+    Object.assign(check, { state: "waiting", startedAt: Date.now(), stageIndex: 0, plan: { rationale: "Review", plannerProfileId: "sol-high", stages: [{ id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 2 }] } });
+    const queued = engine.addTask({ productId, title: "Plan while checks wait" });
+    engine.s.pool.limit = 1;
+    const started: string[] = [];
+    engine["driver"]["startDriver"] = (id) => { started.push(id); };
+    engine.setPoolPaused(false);
+    expect(started).toContain(queued);
+    expect(engine["checks"].preparingCount).toBe(1);
+  } finally { await engine.shutdown(); }
+});
+
 it("keeps shared check readiness independent of the active repository and invalidates changed evidence", async () => {
   const root = tempDir("petrina-shared-check-readiness-");
   roots.push(root);

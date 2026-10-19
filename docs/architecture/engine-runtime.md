@@ -69,7 +69,7 @@ A replacement agent gets a new step, keeping the first agent's tool, elapsed tim
 - Lowering a limit never stops a running agent. Each finishes, and its successor waits if the other tasks still fill the new limit. Pausing the pool also holds tasks between agents.
 - On macOS, active engine work holds an idle-sleep assertion and, on AC power, a system-sleep assertion so maintenance sleep does not suspend agents or checks. The display can still sleep. The assertion follows this engine process and is released when work and cleanup drain, including after a pause, or when the engine stops. Other platforms need no helper.
 
-Product check runs use a separate queue, admitting one task’s run at a time by default. Several commands within that run may work in parallel; check preparation is bounded by the agent pool. The check queue owns no model slots.
+Product check runs use a separate queue, admitting one task’s run at a time by default. Commands within that run execute serially, static checks first; check preparation is bounded by the agent pool and does not block planners from using free slots. The check queue owns no model slots.
 
 The scheduler is a pure function in `@petrina/core` (`pickStarts`), tested without any I/O.
 
