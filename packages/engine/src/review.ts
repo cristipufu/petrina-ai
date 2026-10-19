@@ -184,6 +184,8 @@ export class Reviews {
       if (task.repositories) this.k.selectRepository(task, task.leadProductId ?? task.repositories[0]!.productId);
       task.hunt = { stageId: stage.id, round, reported: {}, findings: task.findings.length };
       this.k.commit();
+      // Checks use their own bounded lane. Re-enter the driver to admit the first real reviewer.
+      return "continue";
     }
     const reviewers = this.pendingReviewers(task, stage);
     if (reviewers.length) {

@@ -8,6 +8,7 @@ export interface SlotUse {
   toolId: Id;
   roleId?: Id;
   profileId?: Id;
+  label?: string;
 }
 
 /** A task that could start (or continue) if a slot were free. */
@@ -63,12 +64,12 @@ export function balanced(candidates: readonly Candidate[], pool: Pool, now: numb
 /** The slots in use: one per task holding a slot, and one more for each agent working beside its main one. */
 export function slotUses(state: State): SlotUse[] {
   const toolOf = new Map(state.profiles.map((profile) => [profile.id, profile.toolId]));
-  return state.tasks
+  return [...state.tasks
     .filter((task) => task.holdsSlot)
     .flatMap((task) => [
       { taskId: task.id, toolId: (task.agent && toolOf.get(task.agent.profileId)) ?? "unknown", ...(task.agent ? { roleId: task.agent.roleId, profileId: task.agent.profileId } : {}) },
       ...(task.helpers ?? []).map((helper) => ({ taskId: task.id, toolId: toolOf.get(helper.profileId) ?? "unknown", roleId: helper.roleId, profileId: helper.profileId })),
-    ]);
+    ]), ...(state.backgroundAgents ?? []).map((agent) => ({ taskId: agent.id, toolId: toolOf.get(agent.profileId) ?? "unknown", roleId: agent.roleId, profileId: agent.profileId, label: agent.label }))];
 }
 
 /** Whether a task that already holds its slot may start one more agent on this tool now: every slot in use counts. */

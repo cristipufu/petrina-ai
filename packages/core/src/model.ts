@@ -1130,6 +1130,8 @@ export interface Terminal {
 }
 
 export interface State {
+  /** Short engine-owned conversations, counted in the same pool as task agents. Cleared on restart. */
+  backgroundAgents?: readonly { id: Id; roleId: Id; profileId: Id; label: string; since: number }[];
   /** Compact totals and recent durations for finished work, fetched separately from the board. */
   history?: import("./history.js").HistoryMetadata;
   now: number;

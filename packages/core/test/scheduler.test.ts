@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Pool, State, UsageReport } from "../src/model.js";
-import { balanced, extraSlot, FEWER_START, pickStarts, slotWait } from "../src/scheduler.js";
+import { balanced, extraSlot, FEWER_START, pickStarts, slotWait, slotUses } from "../src/scheduler.js";
 
 const pool = (limit: number, toolCaps: Record<string, number> = {}, paused = false): Pool => ({ limit, toolCaps, paused });
 const now = new Date(2026, 9, 16, 12, 0, 0).getTime();
@@ -114,4 +114,16 @@ describe("balanced", () => {
     // Nothing reported: the order stands.
     expect(balanced(candidates, pool(4), now)).toEqual(candidates);
   });
+});
+
+
+it("counts engine-owned matching conversations against global and tool admission", () => {
+  const state = withSlots(pool(2, { codex: 1 }), []);
+  state.backgroundAgents = [{ id: "match", roleId: "verifier", profileId: "sol-high", label: "Matching older bugs", since: now }];
+  expect(slotUses(state)).toEqual([expect.objectContaining({ taskId: "match", toolId: "codex" })]);
+  expect(extraSlot(state, "codex")).toBe(false);
+  expect(extraSlot(state, "claude-code")).toBe(true);
+  state.pool.limit = 1;
+  expect(extraSlot(state, "claude-code")).toBe(false);
+  expect(slotWait(state, { taskId: "next", toolId: "claude-code" })).toBe("Waiting for a free slot");
 });

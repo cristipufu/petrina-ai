@@ -24,10 +24,10 @@ export function LimitStepper({ limit }: { limit: number }) {
 }
 
 /** Who is in each slot in use: the task, and the agent in that slot (several reviewers at once each have one). */
-function holdersOf(state: State, find: Lookup): { task: Task; roleId?: string; key: string }[] {
+function holdersOf(state: State, find: Lookup): { task?: Task; label?: string; roleId?: string; key: string }[] {
   return slotUses(state).flatMap((use, index) => {
     const task = find.task(use.taskId);
-    return task ? [{ task, ...(use.roleId ? { roleId: use.roleId } : {}), key: `${use.taskId}:${use.profileId ?? index}` }] : [];
+    return task || use.label ? [{ task, label: use.label, roleId: use.roleId, key: `${use.taskId}:${use.profileId ?? index}` }] : [];
   });
 }
 
@@ -115,7 +115,8 @@ export function PoolPanel({ state, find, onOpen, onDone, onAnalytics }: { state:
               </div>
             );
           const { task } = holder;
-          const role = find.role(holder.roleId ?? task.agent?.roleId);
+          const role = find.role(holder.roleId ?? task?.agent?.roleId);
+          if (!task) return <div key={holder.key} className="slot-row"><RoleAvatar role={role} size={20} /><span className="t">{holder.label}</span></div>;
           return (
             <button
               key={holder.key}
@@ -171,8 +172,8 @@ export function PoolButton({ state, find, onOpen, onAnalytics, compact }: { stat
         {!compact && (
           <span className="slots" aria-hidden="true">
             {slots.map((holder, index) => {
-              const role = find.role(holder?.roleId ?? holder?.task.agent?.roleId);
-              const waiting = holder?.task.state === "needs-you";
+              const role = find.role(holder?.roleId ?? holder?.task?.agent?.roleId);
+              const waiting = holder?.task?.state === "needs-you";
               return <span key={index} className={`slot ${holder ? (waiting ? "waiting" : `used tone-${role?.tone ?? "slate"}`) : ""}`} />;
             })}
           </span>

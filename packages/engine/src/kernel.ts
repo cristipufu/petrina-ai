@@ -231,6 +231,7 @@ export abstract class Kernel {
     this.store = new Store(join(dataDir, "petrina.db"));
     const loaded = this.store.loadActive((state) => renameRoles(state as MState));
     this.s = (loaded ?? this.empty()) as MState;
+    this.s.backgroundAgents = [];
     // An injected agent command is the engine test seam. Never let fake-agent tests spawn a real
     // system sleep assertion; production launches use the default unless they inject an observer.
     const awakeObserver = options.awakeObserver ?? (options.agentCommand ? () => {} : undefined);
@@ -296,6 +297,8 @@ export abstract class Kernel {
   readonly pendingReportIds = new Set<string>();
 
   readonly drivers = new Map<Id, AbortController>();
+  /** An internal preparation role that still needs ordinary tool and pool admission. */
+  readonly pendingAgentAdmissions = new Map<Id, { step: string; roleId: Id; profileId: Id }>();
 
   readonly runs = new Map<Id, AgentRun>();
 
@@ -774,6 +777,7 @@ export abstract class Kernel {
 
   /** The step stops before handing back its result: its to-do item and clock go, and it starts fresh next time. */
   stopStep(task: MTask): void {
+    this.pendingAgentAdmissions.delete(task.id);
     delete task.todo;
     delete task.stepClock;
     for (const work of Object.values(task.hunt?.work ?? {})) {

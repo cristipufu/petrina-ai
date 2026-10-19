@@ -521,6 +521,8 @@ it("asks the reviewer's tool once when two wordings need a match", async () => {
   fakes.scenario({ followUpMatch: "same" });
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
   engine.setPoolPaused(true);
+  let counted = false;
+  const unsubscribe = engine.subscribe(() => { if (engine.s.backgroundAgents?.length) counted = true; });
   try {
     await engine["followUps"].catchUp();
     const shop = await engine.addProduct(makeProduct(root), "Shop");
@@ -534,7 +536,10 @@ it("asks the reviewer's tool once when two wordings need a match", async () => {
     expect(cards(engine)[0]!.followUp!.reports.map((report) => report.findingId).sort()).toEqual(["one", "two"]);
     expect(task.findings.every((finding) => finding.tracking && "taskId" in finding.tracking && finding.tracking.taskId === cards(engine)[0]!.id)).toBe(true);
     expect(fakes.prompts().some((prompt) => prompt.includes("Which older reports are the same bug"))).toBe(true);
-  } finally { await engine.shutdown(); }
+    expect(counted).toBe(true);
+    expect(engine.s.backgroundAgents).toEqual([]);
+    expect(readdirSync(join(engine.dataDir, "matching"))).toEqual([]);
+  } finally { unsubscribe(); await engine.shutdown(); }
 });
 
 it("stays in the backlog until the coordinator queues it, then starts", async () => {
@@ -846,4 +851,27 @@ it("takes back the product, the picture and the request when a later review says
     expect(existsSync(join(engine.dataDir, "captures", notes.id))).toBe(false);
     expect(existsSync(join(engine.dataDir, "captures", card.id, `${kept[0]!.id}.png`))).toBe(true);
   } finally { await engine.shutdown(); }
+});
+
+
+it("leaves matching retryable when all model slots are occupied", async () => {
+  const world = await open();
+  try {
+    await reopen(world, false);
+    const engine = world.engine;
+    const source = taskOf(engine, world.shop, "Matching at capacity", [
+      older("one", "bug-capacity: The old page is broken."),
+      older("two", "bug-capacity: The same old page is broken.", { raisedBy: "sol-high" }),
+    ]);
+    engine.s.pool.limit = 1;
+    engine.s.backgroundAgents = [{ id: "other", roleId: "verifier", profileId: "sol-high", label: "Already comparing", since: Date.now() }];
+    engine.setPoolPaused(false);
+    await finish(engine, source);
+    expect(cards(engine)).toHaveLength(0);
+    expect(source.findings[0]!.tracking).toEqual({ reason: "unavailable", retry: true });
+    expect(new Fakes(join(world.root, "agents")).prompts()).toEqual([]);
+    engine.s.backgroundAgents = [];
+    await engine["followUps"].catchUp();
+    expect(engine.s.backgroundAgents).toEqual([]);
+  } finally { await world.engine.shutdown(); }
 });

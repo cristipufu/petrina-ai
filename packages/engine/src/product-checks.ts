@@ -36,8 +36,23 @@ export class ProductChecks {
    */
   private running = 0;
   private readonly line: (() => void)[] = [];
+  private readonly preparations = new Set<Id>();
 
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
+
+  get preparingCount(): number { return this.preparations.size; }
+
+  canPrepare(taskId: Id): boolean {
+    return this.preparations.has(taskId) || this.preparations.size < Math.max(1, this.k.s.pool.limit);
+  }
+
+  claimPreparation(taskId: Id): boolean {
+    if (this.k.admissionsClosed || !this.canPrepare(taskId)) return false;
+    this.preparations.add(taskId);
+    return true;
+  }
+
+  releasePreparation(taskId: Id): void { this.preparations.delete(taskId); }
 
   private async turnToRun(task: MTask, signal: AbortSignal): Promise<() => void> {
     if (signal.aborted || this.k.stopped) throw new Aborted();
@@ -84,7 +99,7 @@ export class ProductChecks {
   /**
    * The product's checks. The Check finder works them out once per product, and again only when the
    * CI, build or hook files it read have changed or a check could not even start. Checks the coordinator set
-   * by hand are never replaced. Runs inside a step that already holds an agent slot.
+   * by hand are never replaced. Discovery acquires a real agent slot; commands use their own queue.
    */
   async ensureChecks(task: MTask, signal: AbortSignal): Promise<readonly ProductCheck[]> {
     const product = this.k.productOf(task);
@@ -166,6 +181,19 @@ export class ProductChecks {
    * only looks: whatever one changes in files git tracks is undone, so nothing unreviewed joins the work.
    */
   async runProductChecks(task: MTask, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
+    if (!task.worktree) return 0;
+    // A check queue entry is not a model conversation. No agent still runs on this copy.
+    if (!this.k.runs.has(task.id) && !this.k.helperRuns.get(task.id)?.size) {
+      task.holdsSlot = false;
+      delete task.agent;
+    }
+    if (!this.claimPreparation(task.id)) throw new WaitingForUsage("Waiting for room to prepare the product checks");
+    this.k.schedule();
+    try { return await this.runPreparedChecks(task, checks, signal, kept); }
+    finally { this.releasePreparation(task.id); }
+  }
+
+  private async runPreparedChecks(task: MTask, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
     if (!task.worktree) return 0;
     const hooks = await this.noteHooks(task);
     if (!checks.length && !hooks.length && !task.checks) return 0;

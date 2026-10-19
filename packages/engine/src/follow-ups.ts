@@ -2,7 +2,7 @@
 // Reviewers have already recorded their own judgments. This only links those saved reports.
 
 import { existsSync, unlinkSync } from "node:fs";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
@@ -10,6 +10,8 @@ import { findingImages, followUpBlock, followUpDescription, followUpKey, followU
 import { AgentRun } from "./acp-run.js";
 import type { Kernel, MTask } from "./kernel.js";
 import { parseResult } from "./prompts.js";
+import { extraSlot, limitOf } from "@petrina/core";
+import { agentEnv } from "./env.js";
 
 const MatchBody = z.object({
   groups: z.array(z.object({ keys: z.array(z.string()).min(1), cardId: z.string().optional() })).default([]),
@@ -25,6 +27,7 @@ export function matchPrompt(ask: MatchAsk): string {
   return `Which older reports are the same bug?
 
 Group the reports that describe one bug, even when the words differ. Put a report on an open card only when it is that bug. A report you cannot place goes under uncertain, and not in a group. Do not invent a card id.
+Compare only the supplied text. Do not use tools, read files, run commands, change anything or contact services. If the text is insufficient, say uncertain.
 
 Open follow-up cards:
 ${cards}
@@ -282,27 +285,42 @@ export class FollowUps {
 
   private profile(): AgentProfile | undefined {
     const ready = new Set(this.k.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id));
-    const open = this.k.s.profiles.filter((profile) => !profile.standby);
+    const open = this.k.s.profiles.filter((profile) => !profile.standby && extraSlot(this.k.activeState(), profile.toolId) && !limitOf(this.k.s.pool, profile, Date.now()));
     return open.find((profile) => ready.has(profile.toolId)) ?? (this.k.options.agentCommand ? open[0] : undefined);
   }
 
   private async askAgent(profile: AgentProfile, prompt: string): Promise<MatchAnswer> {
-    const command = this.k.options.agentCommand?.(profile);
-    const run = await AgentRun.start({
-      profile,
-      cwd: this.k.dataDir,
-      ...(command ? { command } : {}),
-      callbacks: { onActivity() {}, onPlanStep() {}, async onPermission() { return "deny"; } },
-      signal: AbortSignal.any([this.stopped.signal, AbortSignal.timeout(this.k.options.startTimeoutMs ?? 30_000)]),
-      browser: false,
-    });
+    if (this.k.admissionsClosed || !extraSlot(this.k.activeState(), profile.toolId)) return "unavailable";
+    const id = `follow-up-${randomUUID()}`;
+    this.k.s.backgroundAgents ??= [];
+    this.k.s.backgroundAgents.push({ id, roleId: "verifier", profileId: profile.id, label: "Matching older bugs", since: Date.now() });
+    this.k.commit();
+    let cwd: string | undefined;
+    let run: AgentRun | undefined;
     try {
+      const parent = join(this.k.dataDir, "matching");
+      await mkdir(parent, { recursive: true });
+      cwd = await mkdtemp(join(parent, "follow-up-"));
+      const command = this.k.options.agentCommand?.(profile);
+      run = await AgentRun.start({
+        profile,
+        cwd,
+        env: agentEnv(process.env),
+        ...(command ? { command } : {}),
+        callbacks: { onActivity() {}, onPlanStep() {}, async onPermission() { return "deny"; } },
+        signal: AbortSignal.any([this.stopped.signal, AbortSignal.timeout(this.k.options.startTimeoutMs ?? 30_000)]),
+        browser: false,
+      });
       const turn = await run.prompt(prompt);
       const parsed = parseResult(turn.text, MatchBody);
       if (parsed.ok !== true) return "unavailable";
       return { groups: parsed.value.groups, ...(parsed.value.uncertain ? { uncertain: parsed.value.uncertain } : {}) };
     } finally {
-      await run.stop().catch(() => undefined);
+      await run?.stop().catch(() => undefined);
+      if (cwd) await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+      this.k.s.backgroundAgents = this.k.s.backgroundAgents.filter((agent) => agent.id !== id);
+      this.k.commit();
+      if (!this.k.stopped) this.k.schedule();
     }
   }
 

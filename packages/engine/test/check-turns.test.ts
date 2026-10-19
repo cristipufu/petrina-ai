@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { journeyProblems, type Task } from "@petrina/core";
+import { journeyProblems, slotUses, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { Aborted } from "../src/kernel.js";
 import { WaitingForUsage } from "../src/usage.js";
@@ -158,6 +158,7 @@ try {
       return runAll(...args);
     };
     let waitedBeforeStart = false;
+    let occupiedDuringChecks: number | undefined;
     let waitingStep: { taskId: string; stepId: string; startedAt: number; evidence: NonNullable<Task["journey"]>[number]; running: { name: string; startedAt?: number } } | undefined;
     const unsubscribe = engine.subscribe(() => {
       const state = engine.activeState();
@@ -174,6 +175,7 @@ try {
       const step = task.journey!.at(-1)!;
       // Snapshot the evidence and assert after the run. An assertion thrown by an update listener
       // would abort the check and replace its pending evidence with "stopped" during cleanup.
+      occupiedDuringChecks = slotUses(state).length;
       waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt, evidence: JSON.parse(JSON.stringify(step)) as typeof step, running: { ...running } };
     });
     try {
@@ -194,6 +196,7 @@ try {
         return ids.every((id) => state.inbox.some((item) => item.taskId === id && item.kind === "delivery"));
       }, "both delivery checks", 90_000);
       expect(waitedBeforeStart).toBe(true);
+      expect(occupiedDuringChecks).toBe(0);
       expect(waitingStep).toBeDefined();
       expect(waitingStep!.evidence).toMatchObject({ kind: "petrina", work: "checks" });
       expect(waitingStep!.evidence.endedAt).toBeUndefined();
@@ -213,4 +216,34 @@ try {
       await engine.shutdown();
     }
   });
+});
+
+it("admits bounded check preparation while every model slot is occupied", async () => {
+  const root = tempDir("petrina-check-separate-capacity-");
+  roots.push(root);
+  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null });
+  engine.setPoolPaused(true);
+  try {
+    const productId = await engine.addProduct(makeProduct(root));
+    const task = engine.task(engine.addTask({ productId, title: "Prepare checks without reserving a reviewer", backlog: true }))!;
+    task.plan = { rationale: "Review", plannerProfileId: "sol-high", stages: [{ id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 2 }] };
+    task.stageIndex = 0;
+    task.rounds = { review: 1 };
+    engine.s.pool.limit = 1;
+    engine.s.backgroundAgents = [{ id: "occupied", roleId: "verifier", profileId: "sol-high", label: "Comparing older bugs", since: Date.now() }];
+    engine.setPoolPaused(false);
+    // Admission only: the driver has not started I/O or asked a reviewer anything yet.
+    expect(engine["driver"]["reserveAgent"](task)).toBe(true);
+    expect(task.holdsSlot).toBe(false);
+    expect(task.agent).toBeUndefined();
+    expect(engine["checks"].preparingCount).toBe(1);
+    expect(engine["checks"].claimPreparation("another-task")).toBe(false);
+    engine["checks"].releasePreparation(task.id);
+    expect(engine["checks"].claimPreparation("another-task")).toBe(true);
+    engine["checks"].releasePreparation("another-task");
+    engine.setPoolPaused(true);
+    expect(engine["checks"].claimPreparation(task.id)).toBe(false);
+    engine.s.backgroundAgents = [];
+    task.state = "backlog";
+  } finally { await engine.shutdown(); }
 });

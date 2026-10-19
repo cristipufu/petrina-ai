@@ -15,7 +15,9 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
     const task = find.task(use.taskId);
     return task ? [{ task, roleId: use.roleId ?? task.agent?.roleId, profileId: use.profileId ?? task.agent?.profileId, key: `${use.taskId}:${use.profileId ?? index}` }] : [];
   });
-  const free = Math.max(0, state.pool.limit - holders.length);
+  const background = state.backgroundAgents ?? [];
+  const filled = holders.length + background.length;
+  const free = Math.max(0, state.pool.limit - filled);
   const upNext = queueOf(state.tasks).filter((task) => !task.held);
 
   return (
@@ -24,7 +26,7 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
         <div>
           <h1>Agents</h1>
           <p className="num">
-            {holders.length} of {state.pool.limit} slots in use
+            {filled} of {state.pool.limit} slots in use
             {state.pool.paused ? ". The pool is paused, so nothing new starts." : "."}
           </p>
         </div>
@@ -76,6 +78,13 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
             </div>
           );
         })}
+        {background.map((agent) => (
+          <div key={agent.id} className="tile">
+            <div className="row"><RoleAvatar role={find.role(agent.roleId)} size={32} /><strong>{agent.label}</strong></div>
+            <p className="quiet-text">{profileText(find.profile(agent.profileId), find, true)}</p>
+            <div className="grow" /><span className="num">{duration(agent.since, state.now)}</span>
+          </div>
+        ))}
         {Array.from({ length: free }, (_, index) => (
           <div key={`free-${index}`} className="tile free">
             <div style={{ fontWeight: 600 }}>Free slot</div>

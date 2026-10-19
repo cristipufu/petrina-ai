@@ -5,7 +5,7 @@ import { designWorkKey, invalidateAcceptance } from "./repositories.js";
 import { join } from "node:path";
 import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
-import { Kernel, Aborted, type MTask, PLANNER_PROFILE, ScreenWait } from "./kernel.js";
+import { Kernel, Aborted, type MTask, PLANNER_PROFILE, ScreenWait, stepKey } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Sources } from "./sources.js";
 import type { Planning } from "./planning.js";
@@ -23,6 +23,7 @@ import { destination, needsReleaseManager, type Shipping } from "./shipping.js";
 const USAGE_WAIT = "Waiting for usage";
 
 export class Driver {
+  private readonly preparedTesters = new Map<Id, string>();
   constructor(
     private readonly k: Kernel,
     private readonly planning: Planning,
@@ -37,6 +38,33 @@ export class Driver {
     private readonly connections: Connections,
     private readonly sources: Sources,
   ) {}
+
+  private testerCheckKey(task: MTask): string {
+    return JSON.stringify([stepKey(task), task.baseSha, task.handChanges, task.checks?.at, task.checks?.current,
+      task.repositories?.map((work) => [work.productId, work.baseSha, work.checks?.at, work.checks?.current]),
+      this.k.s.products.filter((product) => product.id === task.productId || task.repositories?.some((work) => work.productId === product.id)).map((product) => [product.id, product.checks])]);
+  }
+
+  private testerNeedsChecks(task: MTask): boolean {
+    const stage = task.plan?.stages[task.stageIndex];
+    return stage?.kind === "do" && stage.roleId === "tester" && !task.retest && task.conversation?.roleId !== "tester"
+      && this.preparedTesters.get(task.id) !== this.testerCheckKey(task);
+  }
+
+  private pendingAgent(task: MTask) {
+    const pending = this.k.pendingAgentAdmissions.get(task.id);
+    if (pending?.step === stepKey(task)) return pending;
+    const conversation = task.conversation;
+    return conversation?.step === stepKey(task) && ["check-finder", "guide-keeper"].includes(conversation.roleId)
+      ? { roleId: conversation.roleId, profileId: conversation.profileId } : undefined;
+  }
+
+  private needsCheckPreparation(task: MTask): boolean {
+    if (this.pendingAgent(task) || task.screen) return false;
+    const stage = task.plan?.stages[task.stageIndex];
+    return this.testerNeedsChecks(task) || stage?.gate === "delivery"
+      || (stage?.kind === "review-chain" && (task.hunt?.stageId !== stage.id || task.hunt.round !== (task.rounds[stage.id] ?? 1)));
+  }
 
   schedule(): void {
     if (this.k.stopped) return;
@@ -100,6 +128,7 @@ export class Driver {
     }
     // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
     const candidates = balanced(continuing, this.k.s.pool, now);
+    const checkBacklog = this.k.s.tasks.filter((task) => task.startedAt !== undefined && ["running", "waiting"].includes(task.state) && this.needsCheckPreparation(task)).length;
     for (const task of queueOf(this.k.s.tasks as Task[])) {
       if (this.k.drivers.has(task.id) || this.k.settling.has(task.id)) continue;
       // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
@@ -107,6 +136,10 @@ export class Driver {
       // What it waited for landed or was cancelled: back to plain queue words.
       if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) (task as MTask).statusLine = "In the queue";
       if (task.held) continue;
+      if (checkBacklog >= Math.max(1, this.k.s.pool.limit)) {
+        (task as MTask).statusLine = "Waiting for room in the check queue";
+        continue;
+      }
       const seat = this.seatOf({ roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) });
       if (seat.waiting) {
         (task as MTask).statusLine = seat.waiting;
@@ -164,7 +197,10 @@ export class Driver {
   /** Take the slot and name its agent together, or start work needing no agent, before any I/O. */
   private reserveAgent(task: MTask): boolean {
     const { agent: next, toolId, waiting: noOne } = this.seatFor(task);
-    const waiting = noOne ?? (this.k.s.pool.paused ? "Waiting for the pool to resume" : next ? slotWait(this.k.activeState(), { taskId: task.id, toolId }) : undefined);
+    const preparing = this.needsCheckPreparation(task);
+    let waiting = noOne ?? (this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : next ? slotWait(this.k.activeState(), { taskId: task.id, toolId }) : undefined);
+    if (!waiting && preparing && !this.checks.claimPreparation(task.id)) waiting = "Waiting for room to prepare the product checks";
+    if (!preparing) this.checks.releasePreparation(task.id);
     if (waiting) {
       task.state = "waiting";
       task.holdsSlot = false;
@@ -182,7 +218,7 @@ export class Driver {
     if (next) task.agent = { ...next, since: Date.now(), step: 0 };
     else delete task.agent;
     task.column = this.k.columnFor(task);
-    task.statusLine = next ? `${this.k.role(next.roleId)?.name ?? next.roleId} is starting` : "Getting ready";
+    task.statusLine = preparing ? "Preparing the product's checks" : next ? `${this.k.role(next.roleId)?.name ?? next.roleId} is starting` : "Getting ready";
     return true;
   }
 
@@ -191,6 +227,9 @@ export class Driver {
       const reviewerKey = task.screen.member?.startsWith("review-") ? task.screen.member.slice(7) : task.plan?.stages[task.stageIndex]?.profileIds.length === 1 ? "0" : undefined;
       return { roleId: task.screen.roleId, profileId: task.screen.profileId, reviewerKey };
     }
+    const pending = this.pendingAgent(task);
+    if (pending) return pending;
+    if (this.needsCheckPreparation(task)) return undefined;
     if (task.stageIndex < 0) return { roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) };
     const stage = task.plan?.stages[task.stageIndex];
     if (!stage) return undefined;
@@ -247,6 +286,7 @@ export class Driver {
         if (signal.aborted) throw new Aborted();
         const current = task();
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
+        if (stage?.roleId !== "tester") this.preparedTesters.delete(taskId);
         // A restart can find the working copy detached by an interrupted commit hook. Put it back before
         // review or delivery reads that original starting version as the task's work.
         if (current.worktree && current.hooking) await this.recoverHook(current);
@@ -404,7 +444,7 @@ export class Driver {
         this.k.tracking.beginStage(current);
         // Give acceptance testing verified automated evidence first, so it can focus on the user cases.
         // Read-only review reuses this same run; changing code still requires fresh evidence.
-        if (stage?.kind === "do" && stage.roleId === "tester" && !current.retest) {
+        if (this.testerNeedsChecks(current)) {
           // Resolve an already-known stale base before spending checks or acceptance on it.
           // A saved Tester or Check finder first finishes the version it was already examining.
           if (!current.conversation && (await this.updates.upToDate(current, signal)) === "conflict") continue;
@@ -429,6 +469,9 @@ export class Driver {
             this.k.commit();
             continue;
           }
+          this.preparedTesters.set(taskId, this.testerCheckKey(current));
+          this.checks.releasePreparation(taskId);
+          continue;
         }
         if (current.stageIndex < 0) {
           // Pausing while the copy is made already has a plan. Planning again would start a second one.
@@ -479,6 +522,8 @@ export class Driver {
       }
       this.k.fail(taskId, error);
     } finally {
+      this.checks.releasePreparation(taskId);
+      if (this.k.task(taskId)?.state !== "waiting") this.preparedTesters.delete(taskId);
       if (this.k.drivers.get(taskId) === controller) this.k.drivers.delete(taskId);
       // Cancelled during a publishing step: what went out is looked up and kept.
       if (signal.aborted && !this.k.stopped) await this.shipping.settleCancelled(taskId, true);
