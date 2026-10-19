@@ -66,6 +66,72 @@ async function advance(ms: number) { await act(async () => { await vi.advanceTim
 const current = () => Socket.instances.at(-1)!;
 
 describe('the real browser connection', () => {
+  it('acknowledges after processing state and keeps background inbox updates moving without a paint', async () => {
+    await mount();
+    const { EngineClient } = await import('../src/engine');
+    const client = new EngineClient({ desktop: false, address });
+    const socket = current(); socket.connect();
+    const send = vi.spyOn(socket, 'send');
+    expect(socket.protocols).toEqual(['petrina.v1', `petrina.token.${address.token}`]);
+    socket.onmessage?.({ data: JSON.stringify({ type: 'state', stateId: 1, state: createDemoState(1000) }) });
+    expect(client.getState().now).toBe(1000);
+    expect(send).not.toHaveBeenCalled();
+    await advance(0);
+    expect(send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ type: 'state-ack', stateId: 1 }));
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    socket.onmessage?.({ data: JSON.stringify({ type: 'state', stateId: 2, state: createDemoState(2000) }) });
+    await advance(0);
+    expect(send).toHaveBeenLastCalledWith(JSON.stringify({ type: 'state-ack', stateId: 2 }));
+    expect(client.getState().now).toBe(2000);
+    // Hiding immediately after receipt must not block later notifications.
+    visibility.mockReturnValue('visible');
+    socket.onmessage?.({ data: JSON.stringify({ type: 'state', stateId: 3, state: createDemoState(3000) }) });
+    visibility.mockReturnValue('hidden');
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    await advance(20);
+    expect(send).toHaveBeenLastCalledWith(JSON.stringify({ type: 'state-ack', stateId: 3 }));
+    expect(send).toHaveBeenCalledTimes(3);
+    client.dispose();
+  });
+
+  it('keeps command replies independent of the state receipt while the window is hidden', async () => {
+    await mount();
+    const { EngineClient } = await import('../src/engine');
+    const client = new EngineClient({ desktop: false, address });
+    const socket = current(); socket.connect();
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    socket.onmessage?.({ data: JSON.stringify({ type: 'state', stateId: 1, state: createDemoState(1000) }) });
+    const send = vi.spyOn(socket, 'send');
+    const result = client.send('setPoolPaused', [true]);
+    const request = JSON.parse(send.mock.calls[0]![0]);
+    socket.onmessage?.({ data: JSON.stringify({ type: 'result', id: request.id, ok: true, result: 'saved' }) });
+    await expect(result).resolves.toBe('saved');
+    client.dispose();
+  });
+
+  it('cancels old receipts on disconnect and refresh without affecting the replacement connection', async () => {
+    await mount();
+    const { EngineClient } = await import('../src/engine');
+    const client = new EngineClient({ desktop: false, address });
+    const first = current(); first.connect();
+    const firstSend = vi.spyOn(first, 'send');
+    await advance(0);
+    first.onmessage?.({ data: JSON.stringify({ type: 'state', stateId: 1, state: createDemoState(1000) }) });
+    await act(async () => first.close());
+    const next = current(); next.connect();
+    expect(next).not.toBe(first);
+    const nextSend = vi.spyOn(next, 'send');
+    next.onmessage?.({ data: JSON.stringify({ type: 'state', stateId: 2, state: createDemoState(2000) }) });
+    await advance(20);
+    expect(firstSend).not.toHaveBeenCalled();
+    expect(nextSend).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ type: 'state-ack', stateId: 2 }));
+    expect(client.getState().now).toBe(2000);
+    nextSend.mockClear();
+    next.onmessage?.({ data: JSON.stringify({ type: 'state', stateId: 3, state: createDemoState(3000) }) });
+    client.dispose();
+    await advance(20);
+    expect(nextSend).not.toHaveBeenCalled();
+  });
   it('loads saved report pictures separately with the connection key, and explains a missing picture', async () => {
     const picture = new Blob(['checked page'], { type: 'image/png' });
     const fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => picture });

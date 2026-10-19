@@ -181,6 +181,7 @@ export class EngineClient {
   private next = 0;
   private readonly calls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private readonly images = new Set<AbortController>();
+  private pendingStateAck: { socket: WebSocket; stateId: number } | undefined;
   private disposed = false;
   private readonly clock: ReturnType<typeof setInterval>;
   private readonly onVisibility = () => {
@@ -206,6 +207,7 @@ export class EngineClient {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.clearStateAck();
     clearInterval(this.clock);
     clearTimeout(this.hintTimer);
     clearTimeout(this.retryTimer);
@@ -257,6 +259,7 @@ export class EngineClient {
 
   private open(address: Address): void {
     if (this.disposed) return;
+    this.clearStateAck();
     const socket = new WebSocket(address.url, ["petrina.v1", `petrina.token.${address.token}`]);
     this.socket = socket;
     let opened = false;
@@ -272,11 +275,14 @@ export class EngineClient {
     };
     socket.onmessage = (event) => {
       if (this.disposed || this.socket !== socket) return;
-      const message = JSON.parse(String(event.data)) as { type: string; state?: State; id?: number; ok?: boolean; result?: unknown; error?: string };
+      const message = JSON.parse(String(event.data)) as { type: string; state?: State; stateId?: number; id?: number; ok?: boolean; result?: unknown; error?: string };
       if (message.type === "state" && message.state) {
         this.state = message.state;
         if (!this.status.synced) this.status = { ...this.status, synced: true };
         this.emit();
+        if (typeof message.stateId === "number" && Number.isSafeInteger(message.stateId) && message.stateId > 0) {
+          this.acknowledgeState(socket, message.stateId);
+        }
       } else if (message.type === "result" && typeof message.id === "number") {
         const call = this.calls.get(message.id);
         this.calls.delete(message.id);
@@ -289,6 +295,7 @@ export class EngineClient {
     };
     socket.onclose = () => {
       if (this.socket !== socket) return;
+      this.clearStateAck();
       this.socket = undefined;
       for (const call of this.calls.values()) call.reject(new Lost("Petrina lost its connection to the engine"));
       this.calls.clear();
@@ -299,6 +306,23 @@ export class EngineClient {
       this.setStatus({ ...this.status, link: "reconnecting", desktop: this.source.desktop });
       void this.attempt(false);
     };
+  }
+
+  /** Acknowledge after applying state, without relying on paints in a hidden desktop window. */
+  private acknowledgeState(socket: WebSocket, stateId: number): void {
+    const receipt = { socket, stateId };
+    this.pendingStateAck = receipt;
+    queueMicrotask(() => {
+      if (this.pendingStateAck !== receipt) return;
+      this.pendingStateAck = undefined;
+      if (!this.disposed && receipt.socket === this.socket && receipt.socket.readyState === WebSocket.OPEN) {
+        receipt.socket.send(JSON.stringify({ type: "state-ack", stateId: receipt.stateId }));
+      }
+    });
+  }
+
+  private clearStateAck(): void {
+    this.pendingStateAck = undefined;
   }
 
   private failed(problem: string): void {

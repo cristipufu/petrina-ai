@@ -140,6 +140,8 @@ export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
 
 interface Socket {
   authed: boolean;
+  dirty: boolean;
+  awaitingState?: number;
 }
 
 /** `port` 0 picks a free one: read it back from the returned server. */
@@ -151,13 +153,32 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
   const sockets = new Set<ServerWebSocket<Socket>>();
 
   let pending: ReturnType<typeof setTimeout> | undefined;
-  const broadcast = () => {
-    if (pending) return;
+  let stateId = 0;
+  const send = (socket: ServerWebSocket<Socket>, message: string) => {
+    // Bun can drop a message when its buffer is full. Reconnect rather than silently lose a reply.
+    if (socket.send(message) === 0) socket.close(1013, "The window fell behind. Reconnecting.");
+  };
+  const sendState = (ready: ServerWebSocket<Socket>[]) => {
+    if (!ready.length) return;
+    const id = ++stateId;
+    const message = JSON.stringify({ type: "state", stateId: id, state: engine.windowState() });
+    for (const socket of ready) {
+      socket.data.dirty = false;
+      socket.data.awaitingState = id;
+      send(socket, message);
+    }
+  };
+  const schedule = () => {
+    if (pending || !sockets.size) return;
     pending = setTimeout(() => {
       pending = undefined;
-      const message = JSON.stringify({ type: "state", state: engine.windowState() });
-      for (const socket of sockets) socket.send(message);
+      // A slow window keeps only a dirty flag, not a queue of snapshots or serialized bodies.
+      sendState([...sockets].filter((socket) => socket.readyState === 1 && socket.data.dirty && socket.data.awaitingState === undefined));
     }, 120);
+  };
+  const broadcast = () => {
+    for (const socket of sockets) socket.data.dirty = true;
+    schedule();
   };
   engine.subscribe(broadcast);
 
@@ -191,7 +212,7 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
         const offered = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((entry) => entry.trim());
         const presented = offered.find((entry) => entry.startsWith("petrina.token."))?.slice("petrina.token.".length);
         if (!offered.includes("petrina.v1") || !tokenOk(presented)) return new Response("Unauthorized", { status: 401 });
-        return server.upgrade(request, { data: { authed: true }, headers: { "Sec-WebSocket-Protocol": "petrina.v1" } }) ? undefined : new Response("Upgrade failed", { status: 400 });
+        return server.upgrade(request, { data: { authed: true, dirty: true }, headers: { "Sec-WebSocket-Protocol": "petrina.v1" } }) ? undefined : new Response("Upgrade failed", { status: 400 });
       }
 
       if (url.pathname.startsWith("/api/")) {
@@ -230,21 +251,29 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
       maxPayloadLength: 1 << 20,
       open(socket) {
         sockets.add(socket);
-        socket.send(JSON.stringify({ type: "state", state: engine.windowState() }));
+        sendState([socket]);
       },
       async message(socket, data) {
         let id: unknown;
         try {
-          const message = JSON.parse(String(data)) as { id?: unknown; action?: unknown };
+          const message = JSON.parse(String(data)) as { type?: unknown; stateId?: unknown; id?: unknown; action?: unknown };
+          if (message.type === "state-ack") {
+            if (message.stateId === socket.data.awaitingState && typeof message.stateId === "number") {
+              socket.data.awaitingState = undefined;
+              if (socket.data.dirty) schedule();
+            }
+            return;
+          }
           id = message.id;
           const result = await dispatch(engine, message.action);
-          socket.send(JSON.stringify({ type: "result", id, ok: true, result: result ?? null }));
+          send(socket, JSON.stringify({ type: "result", id, ok: true, result: result ?? null }));
         } catch (error) {
-          socket.send(JSON.stringify({ type: "result", id, ok: false, error: error instanceof Error ? error.message : String(error) }));
+          send(socket, JSON.stringify({ type: "result", id, ok: false, error: error instanceof Error ? error.message : String(error) }));
         }
       },
       close(socket) {
         sockets.delete(socket);
+        if (!sockets.size) { clearTimeout(pending); pending = undefined; }
       },
     },
   });
