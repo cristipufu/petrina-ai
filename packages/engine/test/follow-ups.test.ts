@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -467,7 +468,7 @@ it("keeps an older tag and a caused tag on the task until the check settles, the
   try {
     const review = async (task: ReturnType<typeof taskOf>, severity: "pre-existing" | "important", by: string, key: string) => {
       const result = ReviewResult.parse({ verdict: "fail", findings: [{ text: "bug-clash: The footer opens a retired page.", severity, evidence: EVIDENCE, steps: STEPS }] });
-      await engine["reviews"]["applyReview"](task, STAGE, result, by, "code-reviewer", key);
+      await engine["reviews"]["applyReview"](executionFor(task), STAGE, result, by, "code-reviewer", key);
     };
     const olderFirst = taskOf(engine, world.shop, "Older first", []);
     await review(olderFirst, "pre-existing", "opus-high", "0");
@@ -571,7 +572,7 @@ it("waits until every reviewer has answered before tracking an older bug, and dr
   try {
     const review = async (task: ReturnType<typeof taskOf>, text: string, severity: "pre-existing" | "important", by: string, key: string) => {
       const result = ReviewResult.parse({ verdict: "fail", findings: [{ text, severity, evidence: EVIDENCE, steps: STEPS }] });
-      await engine["reviews"]["applyReview"](task, STAGE, result, by, "code-reviewer", key);
+      await engine["reviews"]["applyReview"](executionFor(task), STAGE, result, by, "code-reviewer", key);
     };
     const plan = { stages: [STAGE], rationale: "Review it", plannerProfileId: "opus-high" };
     const still = taskOf(engine, world.shop, "Still reviewing", []);

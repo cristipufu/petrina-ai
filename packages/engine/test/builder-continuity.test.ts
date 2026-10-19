@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -131,7 +132,7 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
           && task.timeline.some((entry) => entry.text === "Drafting the greeting" && entry.at >= conversation.startedAt);
       });
       const saved = f.engine.s.tasks.find((task) => task.id === f.task().id)!;
-      const original = saved.conversation!;
+      const original = executionFor(saved).work.conversation!;
       expect(original.toolId).toBe("grok");
       expect(original.briefed).toBe(true);
       const startingRole = structuredClone(original.role!);
@@ -187,7 +188,7 @@ describe("Builder continuity boundaries", () => {
       { id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high", "grok-high"] },
     ] };
     task.fixing = true;
-    task.builderSession = { stageId: "build", profileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "saved" };
+    executionFor(task).work.builderSession = { stageId: "build", profileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "saved" };
     engine.s.setup!.checks = ["claude-code", "codex", "grok"].map((id) => ({ id: id as "codex", status: "ready" }));
     engine.s.pool.paused = false;
     engine.s.pool.limit = 3;
@@ -196,7 +197,7 @@ describe("Builder continuity boundaries", () => {
     const snapshot = structuredClone({ task, pool: engine.s.pool, profiles: engine.s.profiles, checks: engine.s.setup!.checks });
     const reset = () => {
       Object.assign(task, structuredClone(snapshot.task));
-      delete task.conversation;
+      delete executionFor(task).work.conversation;
       engine.s.tasks = [task];
       engine.s.pool = structuredClone(snapshot.pool);
       engine.s.profiles = structuredClone(snapshot.profiles);
@@ -218,9 +219,9 @@ describe("Builder continuity boundaries", () => {
         ["not installed", () => { engine.s.setup!.checks[1]!.status = "not-installed"; }],
         ["unverified with Ready alternatives", () => { engine.s.setup!.checks[1]!.status = "unknown"; }],
         ["removed profiles", () => { engine.s.profiles = engine.s.profiles.filter((profile) => profile.toolId !== "codex"); }],
-        ["different stage", () => { task.builderSession!.stageId = "other"; }],
-        ["changed plan effort", () => { task.builderSession!.profileId = "opus-xhigh"; }],
-        ["removed saved model", () => { task.builderSession!.model = "removed-model"; }],
+        ["different stage", () => { executionFor(task).work.builderSession!.stageId = "other"; }],
+        ["changed plan effort", () => { executionFor(task).work.builderSession!.profileId = "opus-xhigh"; }],
+        ["removed saved model", () => { executionFor(task).work.builderSession!.model = "removed-model"; }],
         ["fresh step-back round", () => { task.rounds["review"] = 4; }],
         ["new build", () => { task.fixing = false; }],
         ["no saved-tool capacity", () => { engine.s.pool.toolCaps["codex"] = 0; }],
@@ -230,19 +231,19 @@ describe("Builder continuity boundaries", () => {
       }
       reset();
       // A fallback build records who finished it, and still resumes for the profile the plan asked for.
-      task.builderSession = { stageId: "build", profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "saved" };
+      executionFor(task).work.builderSession = { stageId: "build", profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "saved" };
       expect(tool()).toBe("codex");
-      task.builderSession.plannedProfileId = "opus-xhigh";
+      executionFor(task).work.builderSession!.plannedProfileId = "opus-xhigh";
       expect(tool()).toBe("grok");
       reset();
       expect(choose("grok-high")).toEqual(expect.objectContaining({ kind: "planned", profile: expect.objectContaining({ id: "grok-high" }) }));
       reset();
-      task.conversation = { step: stepKey(task), roleId: "builder", profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "active", startedAt: Date.now(), briefed: true };
+      executionFor(task).work.conversation = { step: stepKey(task), roleId: "builder", profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "active", startedAt: Date.now(), briefed: true };
       expect(tool()).toBe("codex");
-      task.conversation.plannedProfileId = "opus-xhigh";
+      executionFor(task).work.conversation!.plannedProfileId = "opus-xhigh";
       expect(tool()).toBe("grok");
-      task.conversation.plannedProfileId = "opus-high";
-      task.conversation.briefed = false;
+      executionFor(task).work.conversation!.plannedProfileId = "opus-high";
+      executionFor(task).work.conversation!.briefed = false;
       expect(tool()).toBe("grok");
       reset();
       engine.s.pool.usage![0]!.utilization = 0.8;

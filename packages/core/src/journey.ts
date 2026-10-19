@@ -4,7 +4,7 @@
 // The screen only draws what they recorded, and what the plan says comes next.
 
 import { callOn, followingCall } from "./call.js";
-import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, Role, Stage, Task } from "./model.js";
+import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, RepositoryState, Role, Stage, Task } from "./model.js";
 import { queueOf } from "./scheduler.js";
 import { reviewerAt } from "./roles.js";
 
@@ -166,13 +166,15 @@ export function stepTag(task: { journey?: readonly JourneyStep[] }): Id | undefi
   return task.journey?.at(-1)?.id;
 }
 
+type JourneyExecution = Pick<RepositoryState, "portReview" | "updating">;
+
 type StepKey = Pick<JourneyStep, "stageId" | "round" | "sub" | "fixing" | "update" | "port" | "call" | "roleId" | "work">;
 
 /**
  * Where the task is: its stage (none while planning) and round, and the design position. A review round's reviewers
  * share one step; a review of the builder's port is a round of its own.
  */
-function placeOf(task: Omit<JourneyTask, "journey">): Pick<StepKey, "stageId" | "round" | "sub" | "port"> {
+function placeOf(task: Omit<JourneyTask, "journey">, execution: JourneyExecution = task): Pick<StepKey, "stageId" | "round" | "sub" | "port"> {
   if (task.stageIndex < 0) return { round: 1, sub: 0 };
   const stage = task.plan?.stages[task.stageIndex];
   const rounds = stage && (stage.kind === "converge" || stage.kind === "review-chain");
@@ -180,7 +182,7 @@ function placeOf(task: Omit<JourneyTask, "journey">): Pick<StepKey, "stageId" | 
     ...(stage ? { stageId: stage.id } : {}),
     round: rounds ? (task.rounds[stage.id] ?? 1) : 1,
     sub: stage?.kind === "converge" ? task.sub : 0,
-    ...(task.portReview && stage?.kind === "review-chain" ? { port: true } : {}),
+    ...(execution.portReview && stage?.kind === "review-chain" ? { port: true } : {}),
   };
 }
 
@@ -194,11 +196,11 @@ export function portReviewerIndex(task: Pick<Task, "plan" | "builderSession">, p
 }
 
 /** Which step the task is on for a role: where it is, and whether the builder fixes or brings the work up to date, or the architect follows the call. */
-function agentKey(task: Omit<JourneyTask, "journey">, roleId: Id): StepKey {
+function agentKey(task: Omit<JourneyTask, "journey">, roleId: Id, execution: JourneyExecution = task): StepKey {
   const stage = task.stageIndex < 0 ? undefined : task.plan?.stages[task.stageIndex];
   return {
-    ...placeOf(task),
-    ...(task.updating && stage?.kind === "do" ? { update: true } : task.fixing && stage?.kind === "do" ? { fixing: true } : {}),
+    ...placeOf(task, execution),
+    ...(execution.updating && stage?.kind === "do" ? { update: true } : task.fixing && stage?.kind === "do" ? { fixing: true } : {}),
     ...(task.sub === 0 && followingCall(task) ? { call: true } : {}),
     roleId,
   };
@@ -255,8 +257,8 @@ export function stopCheckProgress(task: Pick<JourneyTask, "journey">, at: number
  * continues the same step; a new round, a send-back or a retry after getting stuck is a new one.
  * `team`: every agent on the step when several work at once (a review round's reviewers, its voters).
  */
-export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at: number, team?: readonly Id[]): JourneyStep {
-  const key = agentKey(task, roleId);
+export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at: number, team?: readonly Id[], execution: JourneyExecution = task): JourneyStep {
+  const key = agentKey(task, roleId, execution);
   const many = team ? { team: [...team] } : {};
   const open = openStep(task);
   if (open && sameStep(open, { kind: "agent", ...key })) {
@@ -278,8 +280,8 @@ export function recordStepResult(task: Pick<JourneyTask, "journey">, result: Non
 }
 
 /** Petrina starts on work of its own, with no agent: running the product's checks, or publishing the delivery. */
-export function beginPetrinaStep(task: JourneyTask, work: JourneyWork, at: number): JourneyStep {
-  const key: StepKey = { ...placeOf(task), work };
+export function beginPetrinaStep(task: JourneyTask, work: JourneyWork, at: number, execution: JourneyExecution = task): JourneyStep {
+  const key: StepKey = { ...placeOf(task, execution), work };
   const open = openStep(task);
   if (open && sameStep(open, { kind: "petrina", ...key })) return open;
   if (open) close(open, at);

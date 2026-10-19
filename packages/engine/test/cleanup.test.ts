@@ -1,3 +1,5 @@
+import { displayTask } from "@petrina/core";
+import { executionFor } from "../src/repository-context.js";
 // Real worktrees and fake agents/GitHub: no network, no windows, and branches/history survive removal.
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -50,20 +52,20 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const id = engine.addTask({ productId, title: "Update existing pull request", delivery: "pull-request" });
       const task = engine.task(id)!;
       const product = engine.activeState().products.find((entry) => entry.id === productId)!;
-      task.source = {
+      executionFor(task).work.source = {
         product: { id: product.id, name: product.name, repo: product.repo, path: product.path },
         start: { kind: "pull-request", number: 77, url: "https://github.com/acme/demo/pull/77", headRepo: product.repo, branch: "existing-feature" },
         destination: { mode: "pull-request", kind: "update-pr", repo: product.repo, branch: "existing-feature" }, confirmed: true,
       };
-      task.shipping = { moves: 0, failures: 0, prepared: { tested: w.initial, summary: "Update existing work" } };
-      task.cleanup = { checkedDelivery: { tested: w.initial, base: "stale-base" } };
+      executionFor(task).work.shipping = { moves: 0, failures: 0, prepared: { tested: w.initial, summary: "Update existing work" } };
+      executionFor(task).work.cleanup = { checkedDelivery: { tested: w.initial, base: "stale-base" } };
       const item = engine.raise(task, "shipping", "Interrupted update", false);
       engine.markDone(item);
       expect(task.state).toBe("done");
-      expect(task.cleanup.checkedDelivery).toBeUndefined();
-      expect(task.cleanup.foreignPullRequest).toBeUndefined();
-      expect(task.cleanup.pullRequest).toBe("unconfirmed");
-      expect(task.shipping).toBeUndefined();
+      expect(executionFor(task).work.cleanup!.checkedDelivery).toBeUndefined();
+      expect(executionFor(task).work.cleanup!.foreignPullRequest).toBeUndefined();
+      expect(executionFor(task).work.cleanup!.pullRequest).toBe("unconfirmed");
+      expect(executionFor(task).work.shipping).toBeUndefined();
     } finally { await engine.shutdown(); }
   });
 
@@ -475,7 +477,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "Free space", description: "[quick]", delivery: "local", approveDelivery: false });
       engine.store.save = (state, ...archive) => {
-        const task = taskOf(state, id);
+        const task = displayTask(taskOf(state, id));
         if (task?.state === "done" && existsSync(task.worktree!)) { failed += 1; throw new Error("disk full"); }
         save(state, ...archive);
       };
@@ -485,7 +487,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(task.error).toBeUndefined();
       gone(w, task);
       engine.commitNow();
-      expect(engine.store.history.get(id)?.cleanup?.removedAt).toBeDefined();
+      expect(displayTask(engine.store.history.get(id)!).cleanup?.removedAt).toBeDefined();
     } finally { engine.store.save = save; engine.shutdown(); }
   });
 

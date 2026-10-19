@@ -1,3 +1,5 @@
+import { displayTask } from "@petrina/core";
+import { executionFor } from "./repository-context.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
@@ -87,6 +89,7 @@ function readText(value: unknown, a: Args, scope: unknown, extra: Record<string,
 }
 
 export function taskSummary(engine: Engine, task: Task) {
+  task = displayTask(task);
   const state = engine.activeState();
   return {
     id: task.id,
@@ -152,7 +155,7 @@ export function drainStatus(engine: Engine) {
   };
 }
 export function requestRevision(engine: Engine, item: InboxItem): string {
-  const task = engine.task(item.taskId);
+  const task = engine.taskDetails(item.taskId);
   // Include exactly what a checkpoint confirms, excluding clocks, unrelated activity and conversations.
   return fingerprint({
     item,
@@ -175,6 +178,7 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
           objections: task.objections,
           call: task.call,
           findings: task.findings,
+          repositories: task.repositories?.map((work) => ({ productId: work.productId, source: work.source, delivery: work.delivery, checkedSha: work.checkedSha, checkedPatch: work.checkedPatch, checks: work.checks })),
           checkedSha: task.checkedSha,
           checkedPatch: task.checkedPatch,
           checks: task.checks,
@@ -520,7 +524,7 @@ export class Coordination {
               e.s.inbox.some((item) => item.id === a.itemId) ? { outcome: "pending", message: "Retry checked the tool; the request is still open." } : done(),
             );
         case "inbox.recovery":
-          if (a.decision === "check" && itemTask.shipping?.carriedOver)
+          if (a.decision === "check" && executionFor(itemTask).work.shipping?.carriedOver)
             return unavailable("Petrina cannot automatically check this older delivery. Inspect GitHub, then choose ship again or mark done.");
           if (a.decision === "check") e.checkShipping(a.itemId);
           else if (a.decision === "ship-again") e.shipAgain(a.itemId);

@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ describe("tasks' checks take turns on one machine", () => {
       const task = engine.task(engine.addTask({ productId, title: "A check waiting its turn" }))!;
       engine.setHeld(task.id, true);
       engine.setPoolPaused(false);
-      const acquire = () => engine["checks"]["turnToRun"](task, new AbortController().signal);
+      const acquire = () => engine["checks"]["turnToRun"](executionFor(task), new AbortController().signal);
       for (let i = 0; i < checkRuns; i++) held.push(await acquire());
       const started: string[] = [];
       const queued = acquire().then((release) => { started.push("waiting task"); held.push(release); return release; });
@@ -55,7 +56,7 @@ describe("tasks' checks take turns on one machine", () => {
       const task = engine.task(engine.addTask({ productId, title: "A cancelled check" }))!;
       engine.setHeld(task.id, true);
       engine.setPoolPaused(false);
-      const acquire = (signal = new AbortController().signal) => engine["checks"]["turnToRun"](task, signal);
+      const acquire = (signal = new AbortController().signal) => engine["checks"]["turnToRun"](executionFor(task), signal);
       const cancelled = new AbortController();
       cancelled.abort();
       expect(await acquire(cancelled.signal).then(() => "started", (error) => error)).toBeInstanceOf(Aborted);
@@ -101,7 +102,7 @@ describe("tasks' checks take turns on one machine", () => {
       const task = engine.task(engine.addTask({ productId, title: "A check at the drain boundary" }))!;
       engine.setHeld(task.id, true);
       engine.setPoolPaused(false);
-      const acquire = () => engine["checks"]["turnToRun"](task, new AbortController().signal);
+      const acquire = () => engine["checks"]["turnToRun"](executionFor(task), new AbortController().signal);
       const release = await acquire();
       held.push(release);
       const waiting = acquire().then(() => "started", (error) => error);
@@ -260,14 +261,14 @@ it("keeps shared check readiness independent of the active repository and invali
     const productId = await engine.addProduct(makeProduct(root));
     const task = engine.task(engine.addTask({ productId, title: "Shared readiness", backlog: true }))!;
     task.repositories = [productId, "peer"].map((id, index) => ({ productId: id, delivery: "local", baseSha: `base-${id}`, checks: { at: 10 + index, current: true, results: [] }, completedStages: [] }));
-    engine.selectRepository(task, productId);
+    task.activeProductId = productId;
     const first = engine["driver"]["testerCheckKey"](task);
-    engine.selectRepository(task, "peer");
+    task.activeProductId = "peer";
     expect(engine["driver"]["testerCheckKey"](task)).toBe(first);
-    task.checks!.at += 1;
+    task.repositories[1]!.checks!.at += 1;
     expect(engine["driver"]["testerCheckKey"](task)).not.toBe(first);
     const changed = engine["driver"]["testerCheckKey"](task);
-    engine.selectRepository(task, productId);
+    task.activeProductId = productId;
     expect(engine["driver"]["testerCheckKey"](task)).toBe(changed);
     task.handChanges = true;
     expect(engine["driver"]["testerCheckKey"](task)).not.toBe(changed);

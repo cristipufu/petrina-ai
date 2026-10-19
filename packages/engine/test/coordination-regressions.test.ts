@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it } from "bun:test";
 import { z } from "zod";
 import type { AgentRun } from "../src/acp-run.js";
@@ -33,7 +34,7 @@ for (const count of [2, 26, 100]) it(`checks all ${count} selected tasks for com
   const { e, c, taskId } = fixture();
   const ids = [taskId, ...Array.from({ length: count - 1 }, (_, index) => e.addTask({ productId: "product", title: `Selected ${index}` }))];
   const tasks = ids.map((id) => e.task(id)!);
-  for (const task of tasks.slice(0, -1)) { task.state = "done"; task.landed = { branch: "main", sha: "saved" }; }
+  for (const task of tasks.slice(0, -1)) { task.state = "done"; executionFor(task).work.landed = { branch: "main", sha: "saved" }; }
   const limit = count === 2 ? 1 : 25;
   for (const condition of ["state", "delivered", "landed"]) {
     const args = { target: "task", taskIds: ids, condition, states: ["done"], limit, timeoutMs: 0 };
@@ -52,7 +53,7 @@ for (const count of [2, 26, 100]) it(`checks all ${count} selected tasks for com
   expect(decision.outcome).toBe("completed");
   expect((decision.result as { items: { id: string }[] }).items.map((item) => item.id)).toEqual([last.id]);
   last.state = "done";
-  last.landed = { branch: "main", sha: "saved" };
+  executionFor(last).work.landed = { branch: "main", sha: "saved" };
   for (const condition of ["state", "delivered", "landed"]) expect((await c.call("watch.wait", { target: "task", taskIds: ids, condition, states: ["done"], limit, timeoutMs: 0 })).outcome).toBe("completed");
 });
 
@@ -96,18 +97,18 @@ it("returns the new interrupting message's identity even when identical wording 
 it("cancels an awaiting-merge task using the existing cancellation behavior", async () => {
   const { e, c, taskId, task } = fixture();
   task.state = "pr-open";
-  task.pr = { number: 1, state: "open", url: "https://github.com/example/product/pull/1", openedAt: 1 };
+  executionFor(task).work.pr = { number: 1, state: "open", url: "https://github.com/example/product/pull/1", openedAt: 1 };
   const args = { taskId, requestId: "cancel-awaiting-merge" };
   expect((await c.call("task.cancel", args)).outcome).toBe("completed");
   expect(e.task(taskId)!.state as string).toBe("cancelled");
-  expect(task.pr.state).toBe("open");
+  expect(executionFor(task).work.pr!.state).toBe("open");
   expect((await c.call("task.cancel", args)).outcome).toBe("completed");
 });
 
 it("keeps closed, unmerged pull requests unconfirmed in inspection, history and waits", async () => {
   const { e, c, taskId, task } = fixture();
   task.state = "done";
-  task.pr = { number: 1, state: "closed", url: "https://github.com/example/product/pull/1", openedAt: 1 };
+  executionFor(task).work.pr = { number: 1, state: "closed", url: "https://github.com/example/product/pull/1", openedAt: 1 };
   expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("deliveryConfirmed", false);
   e.save();
   expect((await c.call("task.history", { taskId })).items).toEqual([expect.objectContaining({ landing: "closed", deliveryConfirmed: false })]);
@@ -175,7 +176,7 @@ for (const step of ["delivery", "checks", "agent"]) it(`releases a ${step} reser
   e.schedule = () => e["driver"].schedule();
   e["driver"]["prepare"] = async () => {};
   e.tidy = () => {};
-  task.worktree = home;
+  executionFor(task).work.worktree = home;
   task.plan = { stages: [{ id: "step", title: "Work", kind: "do", roleId: step === "delivery" ? "release-manager" : "builder", profileIds: ["opus-high"] }], rationale: "Do the work", plannerProfileId: "opus-high" };
   task.stageIndex = 0;
   task.state = "running";

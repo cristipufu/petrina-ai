@@ -1,3 +1,4 @@
+import { executionFor, repositoryView } from "../src/repository-context.js";
 import { expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,41 +18,41 @@ it("carries only bounded current source locations to design or a first builder, 
     const productId = await engine.addProduct(copy);
     const id = engine.addTask({ productId, title: "Choose the design independently", backlog: true });
     const task = engine.task(id)!;
-    task.worktree = copy;
+    executionFor(task).work.worktree = copy;
     const revision = git(copy, "rev-parse", "HEAD");
     const pointer = { productId, revision, path: "README.md" };
     task.sourcePointers = [pointer, pointer, { ...pointer, revision: "f".repeat(40) }, { ...pointer, path: "absent.md" }, { ...pointer, productId: "another-product" }];
-    expect(await currentSourcePointers(task, task.sourcePointers)).toEqual([pointer]);
+    expect(await currentSourcePointers(repositoryView(executionFor(task)), task.sourcePointers)).toEqual([pointer]);
     const guide = { pendingPoints: async () => [] } as unknown as GuideKeeper;
     for (const role of ["architect", "builder"]) {
-      const section = (await new Context(engine, guide).sectionsFor(task, role)).find((entry) => entry.title.startsWith("Previously inspected"))!;
+      const section = (await new Context(engine, guide).sectionsFor(executionFor(task), role)).find((entry) => entry.title.startsWith("Previously inspected"))!;
       expect(section.body).toContain(`${productId}: README.md (source version ${revision})`);
       expect(section.body).toContain("selection can steer attention");
       expect(section.body).toContain("no recommendations or extra requirements");
       expect(section.body.length).toBeLessThan(700);
     }
     for (const role of ["code-reviewer", "security-reviewer", "design-reviewer", "verifier"]) {
-      expect((await new Context(engine, guide).sectionsFor(task, role)).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
+      expect((await new Context(engine, guide).sectionsFor(executionFor(task), role)).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
     }
     task.fixing = true;
-    expect((await new Context(engine, guide).sectionsFor(task, "builder")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
+    expect((await new Context(engine, guide).sectionsFor(executionFor(task), "builder")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
     task.fixing = false;
     task.plan = { stages: [{ id: "design", kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-high"] }], rationale: "Design first", plannerProfileId: "opus-high" };
     task.brief = { summary: "Choose independently", forUsers: [], areas: [], risks: [], acceptance: [] };
-    expect((await new Context(engine, guide).sectionsFor(task, "builder")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
+    expect((await new Context(engine, guide).sectionsFor(executionFor(task), "builder")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
     task.brief.sourcePointers = [pointer];
     task.sourcePointers = [];
     for (const role of ["architect", "builder"]) {
-      expect((await new Context(engine, guide).sectionsFor(task, role)).find((entry) => entry.title.startsWith("Previously inspected"))?.body).toContain("README.md");
+      expect((await new Context(engine, guide).sectionsFor(executionFor(task), role)).find((entry) => entry.title.startsWith("Previously inspected"))?.body).toContain("README.md");
     }
-    expect((await new Context(engine, guide).sectionsFor(task, "design-reviewer")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
+    expect((await new Context(engine, guide).sectionsFor(executionFor(task), "design-reviewer")).some((entry) => entry.title.startsWith("Previously inspected"))).toBe(false);
     engine.commitNow();
     expect(engine.store.loadActive()!.tasks.find((entry) => entry.id === id)!.sourcePointers).toEqual(task.sourcePointers);
     expect(engine.store.loadActive()!.tasks.find((entry) => entry.id === id)!.brief!.sourcePointers).toEqual([pointer]);
     writeFileSync(join(copy, "VERSION"), "2.0.0\n");
     git(copy, "add", "VERSION");
     git(copy, "commit", "-q", "-m", "A different source version");
-    expect(await currentSourcePointers(task, [pointer])).toEqual([]);
+    expect(await currentSourcePointers(repositoryView(executionFor(task)), [pointer])).toEqual([]);
   } finally { await engine.shutdown(); removeDir(root); }
 });
 

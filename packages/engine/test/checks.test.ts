@@ -397,7 +397,7 @@ describe("Petrina runs the checks itself during a task", () => {
         engine.shutdown();
         const store = new Store(join(dir, "data", "petrina.db"));
         try {
-          expect(store.load()!.tasks.find((entry) => entry.id === taskId)!.checks!.results[0]!.logPath).toBe(savedLog);
+          expect(store.load()!.tasks.find((entry) => entry.id === taskId)!.repository!.checks!.results[0]!.logPath).toBe(savedLog);
           expect(readFileSync(savedLog, "utf8")).toBe(contents);
         } finally { store.close(); }
       } finally {
@@ -480,9 +480,9 @@ describe("a stopped check keeps an incomplete cleanup warning", () => {
         const store = new Store(join(home, "petrina.db"));
         try {
           const saved = store.load()!.tasks.find((entry) => entry.id === id)!;
-          expect(saved.checks?.sha).toBeUndefined();
-          expect(saved.checks?.tree).toBeUndefined();
-          expect(saved.checks?.results.some((entry) => entry.cleanupIncomplete)).toBe(true);
+          expect(saved.repository!.checks?.sha).toBeUndefined();
+          expect(saved.repository!.checks?.tree).toBeUndefined();
+          expect(saved.repository!.checks?.results.some((entry) => entry.cleanupIncomplete)).toBe(true);
           expect(saved.timeline.some((entry) => entry.text === CLEANUP_INCOMPLETE)).toBe(true);
         } finally { store.close(); }
       } finally {

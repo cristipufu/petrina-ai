@@ -165,7 +165,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
       if (stop === "kill") {
         await engine.kill();
         const store = new Store(join(run.home, "petrina.db"));
-        expect(store.load()!.tasks.find((task) => task.id === run.taskId)!.conversation).toMatchObject(note);
+        expect(store.load()!.tasks.find((task) => task.id === run.taskId)!.repository!.conversation).toMatchObject(note);
         store.close();
         engine = await harness(run.home, run.fakes.dir);
       } else {
@@ -252,7 +252,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     await run.engine.kill();
     const store = new Store(join(run.home, "petrina.db"));
     const saved = store.load()!;
-    store.save({ ...saved, tasks: saved.tasks.map((task) => (task.conversation ? { ...task, conversation: { ...task.conversation, model: "an-older-model" } } : task)) });
+    store.save({ ...saved, tasks: saved.tasks.map((task) => (task.repository?.conversation ? { ...task, repository: { ...task.repository, conversation: { ...task.repository.conversation, model: "an-older-model" } } } : task)) });
     store.close();
 
     const engine = await harness(run.home, run.fakes.dir);
@@ -269,9 +269,9 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     await run.engine.kill();
     const store = new Store(join(run.home, "petrina.db"));
     const saved = store.load()!;
-    expect(saved.tasks.find((task) => task.id === run.taskId)?.conversation?.briefed).toBe(true);
+    expect(saved.tasks.find((task) => task.id === run.taskId)?.repository?.conversation?.briefed).toBe(true);
     // As if Petrina had stopped between noting the conversation and the agent hearing its instructions.
-    store.save({ ...saved, tasks: saved.tasks.map((task) => (task.conversation ? { ...task, conversation: { ...task.conversation, briefed: false } } : task)) });
+    store.save({ ...saved, tasks: saved.tasks.map((task) => (task.repository?.conversation ? { ...task, repository: { ...task.repository, conversation: { ...task.repository.conversation, briefed: false } } } : task)) });
     store.close();
 
     const engine = await harness(run.home, run.fakes.dir);
@@ -289,7 +289,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     await run.engine.kill();
     const store = new Store(join(run.home, "petrina.db"));
     const saved = store.load()!;
-    store.save({ ...saved, tasks: saved.tasks.map(({ conversation: _, ...task }) => task as Task) });
+    store.save({ ...saved, tasks: saved.tasks.map((task) => { const { conversation: _, ...repository } = task.repository!; return { ...task, repository } as Task; }) });
     store.close();
 
     const engine = await harness(run.home, run.fakes.dir);

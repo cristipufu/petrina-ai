@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -116,7 +117,7 @@ describe("the tester tries the change once, and the final code once more", () =>
       const gate = engine.getState().inbox.find((item) => item.taskId === id && item.kind === "delivery")!;
       expect(gate).toBeDefined();
       engine.requestChanges(gate.id, "Try another approach to make the greeting visible");
-      expect(engine.task(id)?.acceptanceReturns).toBeUndefined();
+      expect((engine.task(id) ? executionFor(engine.task(id)!).work.acceptanceReturns : undefined)).toBeUndefined();
     } finally { await engine.shutdown(); }
   });
 
@@ -176,9 +177,9 @@ describe("the tester tries the change once, and the final code once more", () =>
       unsubscribe = engine.subscribe(() => {
         const current = engine.task(taskId);
         const reviewStage = current?.plan?.stages.find((stage) => stage.kind === "review-chain");
-        if (!roundTwoReviewHead && current?.worktree && reviewStage && current.stageIndex > current.plan!.stages.indexOf(reviewStage)
+        if (!roundTwoReviewHead && current && executionFor(current).work.worktree && reviewStage && current.stageIndex > current.plan!.stages.indexOf(reviewStage)
           && current.journey?.some((step) => step.roleId === "code-reviewer" && step.round === 2 && step.reason === "review passed")) {
-          roundTwoReviewHead = git(current.worktree, "rev-parse", "HEAD");
+          roundTwoReviewHead = git(executionFor(current).work.worktree!, "rev-parse", "HEAD");
         }
       });
       const task = await waitFor(() => {

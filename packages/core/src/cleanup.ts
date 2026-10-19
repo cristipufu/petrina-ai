@@ -3,6 +3,7 @@
 // The engine and the simulator share these rules and words so the demo cannot drift from the real thing.
 
 import type { Task } from "./model.js";
+import { displayTask } from "./repositories.js";
 
 export const CLEANUP_WORDS = {
   removed: "Removed the working copy to free disk space. The branch is kept",
@@ -15,6 +16,7 @@ export const CLEANUP_WORDS = {
 
 /** Marking work done is not evidence that its pull request ended, including work saved by older versions. */
 export function needsPullRequestCheck(task: Task): boolean {
+  task = displayTask(task);
   if (task.cleanup?.removedAt !== undefined) return false;
   return task.cleanup?.foreignPullRequest !== undefined || task.cleanup?.pullRequest === "unconfirmed" || (task.state === "done" && task.delivery === "pull-request" && !task.pr && task.cleanup?.pullRequest !== "none");
 }
@@ -24,6 +26,7 @@ export function needsPullRequestCheck(task: Task): boolean {
  * open, review fixes may still need the copy, so it stays, even when cancelled.
  */
 export function copyNoLongerNeeded(task: Task): boolean {
+  task = displayTask(task);
   if (task.repositories) return (task.state === "done" || task.state === "cancelled") && task.repositories.every((work) =>
     work.nothingToPublish || work.pr?.state !== "open" && !(work.pr?.state === "closed" && !work.landingAccepted) && work.shipping?.step === undefined && !work.shipping?.carriedOver && work.localUpdate?.pushed !== false && !work.cleanup?.foreignPullRequest && !needsPullRequestCheck({ ...task, ...work, repositories: undefined }));
   return (task.state === "done" || task.state === "cancelled") && task.pr?.state !== "open" && !task.cleanup?.foreignPullRequest && !needsPullRequestCheck(task);

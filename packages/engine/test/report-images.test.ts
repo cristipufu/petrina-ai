@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
@@ -32,7 +33,7 @@ it("removes finished and orphaned picture storage without depending on worktree 
     finished.state = "done";
     finished.column = "done";
     // An open pull request keeps its working copy. It must not keep picture bytes.
-    finished.pr = { number: 1, url: "https://github.com/acme/demo/pull/1", state: "open", openedAt: Date.now() };
+    executionFor(finished).work.pr = { number: 1, url: "https://github.com/acme/demo/pull/1", state: "open", openedAt: Date.now() };
     engine.commitNow();
     for (const id of [activeId, finishedId, "deleted-task"]) {
       mkdirSync(join(world.data, "captures", id), { recursive: true });
@@ -144,7 +145,7 @@ it("builder and read-only reports preserve only chosen images through correction
     const long = engine.s.tasks.find((entry) => entry.id === id)!;
     long.session = Array.from({ length: 800 }, (_, index) => ({ ...reports[0]!, id: `picture-report-${index}`, images: [{ ...image }] }));
     long.stageIndex = 0;
-    delete long.conversation;
+    delete executionFor(long).work.conversation;
     let pendingId: string | undefined;
     let checks = 0;
     let superseded: string | undefined;
@@ -159,7 +160,7 @@ it("builder and read-only reports preserve only chosen images through correction
     });
     const heardBefore = fakes.received("builder").length;
     try {
-      await new Turns(engine, new ToolChecks(engine), new Sources(engine, new Connections(engine))).turn(long, "builder", "sol-high", () => [], BuildResult, new AbortController().signal, {
+      await new Turns(engine, new ToolChecks(engine), new Sources(engine, new Connections(engine))).turn(executionFor(long), "builder", "sol-high", () => [], BuildResult, new AbortController().signal, {
         check: async () => {
           pendingId = long.session.at(-1)!.id;
           engine.say(long, "activity", "Another reviewer is checking", "code-reviewer", "opus-high");

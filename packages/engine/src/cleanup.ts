@@ -1,3 +1,4 @@
+import { executionFor } from "./repository-context.js";
 // Removing finished tasks' working copies to free disk space. A task delivered, released, merged, closed or
 // cancelled no longer needs its copy (a full copy of the product, with installed packages and build output);
 // its branch and its history stay. A copy goes only once nothing uses it any more, never while a pull request
@@ -71,9 +72,10 @@ export class Cleanup {
     if (task?.repositories) return this.removeRepositoryCopies(task);
     const path = task && this.copyOf(task);
     if (!task || !path || !this.finishedWith(task) || this.removing.has(taskId) || this.k.stopped) return;
-    const again = task.cleanup?.removedAt !== undefined;
+    const initial = executionFor(task).work;
+    const again = initial.cleanup?.removedAt !== undefined;
     const copies = join(this.k.dataDir, "worktrees", task.productId, `${task.id}.copies`);
-    if (again && task.cleanup?.reviewCopiesRemovedAt !== undefined && !existsSync(path) && !existsSync(copies)) return;
+    if (again && initial.cleanup?.reviewCopiesRemovedAt !== undefined && !existsSync(path) && !existsSync(copies)) return;
     this.removing.add(taskId);
     this.k.cleanupJobs.add(taskId);
     this.k.syncIdleSleep();
@@ -98,25 +100,27 @@ export class Cleanup {
     }
     const current = this.k.task(taskId);
     if (!current) return;
+    const repository = executionFor(current).work;
     if ("error" in outcome) {
       // Said once: trying again every minute never crowds out the task's history.
-      if (current.cleanup?.error === undefined) this.k.log(current, "warn", CLEANUP_WORDS.failed(outcome.error));
-      current.cleanup = { ...current.cleanup, error: outcome.error };
-      delete current.cleanup.removedAt;
-      delete current.cleanup.reviewCopiesRemovedAt;
+      if (repository.cleanup?.error === undefined) this.k.log(current, "warn", CLEANUP_WORDS.failed(outcome.error));
+      repository.cleanup = { ...repository.cleanup, error: outcome.error };
+      delete repository.cleanup.removedAt;
+      delete repository.cleanup.reviewCopiesRemovedAt;
     } else {
       // Quiet when there was nothing (new) to remove, unless an earlier try said it failed.
-      if ((outcome.removed && !again) || current.cleanup?.error !== undefined) this.k.log(current, "done", CLEANUP_WORDS.removed);
-      current.cleanup = { ...current.cleanup, removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
-      delete current.cleanup.error;
+      if ((outcome.removed && !again) || repository.cleanup?.error !== undefined) this.k.log(current, "done", CLEANUP_WORDS.removed);
+      repository.cleanup = { ...repository.cleanup, removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
+      delete repository.cleanup.error;
     }
     this.k.saveArchivedTask(current);
     this.k.commit();
   }
 
   private async removeRepositoryCopies(task: MTask): Promise<void> {
+
     if (this.k.drivers.has(task.id) || this.k.settling.has(task.id) || task.driving || this.removing.has(task.id) || this.k.stopped || !this.finishedWith(task)) return;
-    this.k.saveRepository(task);
+
     this.removing.add(task.id);
     this.k.cleanupJobs.add(task.id);
     this.k.syncIdleSleep();
@@ -132,7 +136,6 @@ export class Cleanup {
           await git.removeWorktree(root, path);
           work.cleanup = { removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
         } catch (error) { work.cleanup = { error: String(error) }; }
-        if (task.productId === work.productId) task.cleanup = work.cleanup;
         this.k.commitNow();
       }
       this.k.saveArchivedTask(task);
@@ -171,16 +174,18 @@ export class Cleanup {
    * and one from before Petrina published deliveries itself keeps it for the coordinator to check.
    */
   private finishedWith(task: MTask): boolean {
+    const scope = executionFor(task);
     if (this.k.drivers.has(task.id) || this.k.settling.has(task.id) || task.driving || this.k.switching.has(task.id)) return false;
-    if (task.shipping?.step !== undefined || task.shipping?.carriedOver) return false;
+    if (scope.work.shipping?.step !== undefined || scope.work.shipping?.carriedOver) return false;
     return copyNoLongerNeeded(task as unknown as Task);
   }
 
   /** The task's working copy, when it is one Petrina made in its own folder. Nothing else is ever removed. */
   copyOf(task: MTask): string | undefined {
+    const scope = executionFor(task);
     // Checkout may finish after quitting saved the task, before its usable copy was recorded.
     // Its saved identity still names the same folder prepare() uses; never search other folders.
-    const copy = task.worktree ?? (task.state === "cancelled" && task.startedAt !== undefined ? join(this.k.dataDir, "worktrees", task.productId, task.id) : undefined);
+    const copy = scope.work.worktree ?? (task.state === "cancelled" && task.startedAt !== undefined ? join(this.k.dataDir, "worktrees", scope.work.productId, task.id) : undefined);
     if (!copy) return undefined;
     const path = resolve(copy);
     return path.startsWith(resolve(this.k.dataDir, "worktrees") + sep) ? path : undefined;

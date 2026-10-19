@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { copyNoLongerNeeded, finishedTask, type Id, type State, type Task } from "@petrina/core";
+import { copyNoLongerNeeded, displayTask, finishedTask, type Id, type State, type Task } from "@petrina/core";
 import { TaskHistory } from "./history-store.js";
 
 /** A stopped/finished task still involved in delivery or removing its copy stays in runtime state. */
 export function settledHistoryTask(task: Task): boolean {
+  task = displayTask(task);
   if (!copyNoLongerNeeded(task) || task.driving || task.shipping?.step !== undefined || task.shipping?.carriedOver) return false;
   if (task.repositories) return [...task.repositories, ...(task.excludedRepositories ?? [])].every((work) => {
     if (work.shipping?.step !== undefined || work.shipping?.carriedOver || work.localUpdate?.pushed === false || work.cleanup?.foreignPullRequest) return false;

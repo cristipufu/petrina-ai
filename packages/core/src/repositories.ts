@@ -1,4 +1,18 @@
-import { REPOSITORY_FIELDS, type Finding, type Id, type Task, type TaskRepository } from "./model.js";
+import { REPOSITORY_FIELDS, type Finding, type Id, type RepositoryState, type Task, type TaskRepository } from "./model.js";
+
+/** A task's public view uses one repository's fields without making another writable execution record. */
+export function repositoryTaskView(task: Task, work: RepositoryState): Task {
+  const view = { ...task };
+  Reflect.deleteProperty(view, "repository");
+  for (const field of REPOSITORY_FIELDS) Reflect.deleteProperty(view, field);
+  return Object.assign(view, work, { workChoice: task.workChoice });
+}
+
+/** Present stored records or an already displayed task through the same read-only surface. */
+export function displayTask(task: Task): Task {
+  const work = task.repositories?.find((entry) => entry.productId === (task.activeProductId ?? task.productId)) ?? task.repository;
+  return work ? repositoryTaskView(task, work) : task;
+}
 
 /** One task appears under each retained product, and only once in portfolio totals. */
 export function taskProductIds(task: Pick<Task, "productId" | "repositories" | "selectedProducts" | "workRows">): Id[] {
@@ -25,10 +39,10 @@ export function withoutProduct(task: Task, productId: Id): Task | undefined {
     Reflect.set(next, "repositories", next.repositories.map((work) => work.productId === productId ? { ...work, removed: true } : work));
     if (next.productId === productId || next.activeProductId === productId) {
       const work = next.repositories.find((entry) => !entry.removed)!;
-      for (const field of REPOSITORY_FIELDS) {
-        if (work[field] === undefined) Reflect.deleteProperty(next, field);
-        else Reflect.set(next, field, work[field]);
-      }
+      Reflect.set(next, "productId", work.productId);
+      Reflect.set(next, "delivery", work.delivery);
+      Reflect.set(next, "workChoice", work.workChoice);
+      for (const field of REPOSITORY_FIELDS) if (field !== "productId" && field !== "delivery" && field !== "workChoice") Reflect.deleteProperty(next, field);
       Reflect.set(next, "activeProductId", work.productId);
     }
   } else if (next.productId === productId) {

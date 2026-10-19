@@ -1,3 +1,4 @@
+import { executionFor, executionOf, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
 import * as library from "@petrina/core";
 // The engine's shared state and the few operations every part of it uses: lookups, the timeline and
 // session, the inbox, and saving. Feature modules get this, never the Engine itself.
@@ -23,9 +24,10 @@ import { Tracking } from "./tracking.js";
 import { stepBack } from "./roles.js";
 import { recoverBrowserTemps } from "./browser.js";
 
-export type MState = DeepMutable<State>;
+/** Repository execution fields cannot be read or written on the runtime task. */
+export type MTask = DeepMutable<Omit<Task, Exclude<library.RepositoryField, "productId" | "delivery" | "workChoice">>>;
 
-export type MTask = DeepMutable<Task>;
+export type MState = Omit<DeepMutable<State>, "tasks"> & { tasks: MTask[] };
 
 export type MStage = DeepMutable<Stage>;
 
@@ -57,9 +59,11 @@ export function renameRoles(state: MState): void {
     }
     move(task.agent);
     for (const helper of task.helpers ?? []) move(helper);
-    move(task.conversation);
+    for (const work of task.repositories ?? [task.repository!]) {
+      move(work.conversation);
+      for (const lesson of work.lessons ?? []) move(lesson);
+    }
     move(task.driving);
-    for (const lesson of task.lessons ?? []) move(lesson);
     for (const entry of task.timeline) move(entry);
     for (const line of task.session) move(line);
   }
@@ -232,7 +236,7 @@ export abstract class Kernel {
     // unobserved rejection for direct Engine users while leaving the original promise rejectable.
     void this.startupReady.catch(() => undefined);
     this.store = new Store(join(dataDir, "petrina.db"));
-    const loaded = this.store.loadActive((state) => renameRoles(state as MState));
+    const loaded = this.store.loadActive((state) => { for (const task of state.tasks) restoreRepositoryState(task as MTask); renameRoles(state as MState); });
     this.s = (loaded ?? this.empty()) as MState;
     this.s.backgroundAgents = [];
     // An injected agent command is the engine test seam. Never let fake-agent tests spawn a real
@@ -420,42 +424,18 @@ export abstract class Kernel {
   /** The terminals on this machine, the usual one first. */
   readonly found: FoundTerminal[];
 
-  /** Persist the loaded repository before publishing a state snapshot or changing responsibility. */
-  saveRepository(task: MTask): void {
-    const work = task.repositories?.find((entry) => entry.productId === task.activeProductId);
-    if (!work) return;
-    for (const field of library.REPOSITORY_FIELDS) {
-      if (task[field] === undefined) Reflect.deleteProperty(work, field);
-      else Reflect.set(work, field, task[field]);
-    }
-  }
-
-  selectRepository(task: MTask, productId: string): void {
-    if (!task.repositories || task.activeProductId === productId) return;
-    this.saveRepository(task);
-    const work = task.repositories.find((entry) => entry.productId === productId);
-    if (!work) throw new Error("That product is outside the approved task.");
-    for (const field of library.REPOSITORY_FIELDS) {
-      if (work[field] === undefined) Reflect.deleteProperty(task, field);
-      else Reflect.set(task, field, work[field]);
-    }
-    task.activeProductId = productId;
-  }
-
   /** Current engine work only. Completed bodies are loaded separately when somebody opens one. */
   activeState = (): State => {
-    for (const task of this.s.tasks) this.saveRepository(task);
     return this.s as unknown as State;
   };
 
   /** Explicit compatibility/debug snapshot. Production never loads all archived conversations. */
   getState = (): State => {
     this.activeState();
-    for (const task of this.archiveCache.values()) this.saveRepository(task);
-    const current = new Map<string, Task>([...this.archiveCache.values(), ...this.s.tasks].map((task) => [task.id, task as Task]));
+    const current = new Map<string, Task>([...this.archiveCache.values(), ...this.s.tasks].map((task) => [task.id, taskView(task) as Task]));
     // Shutdown closes SQLite before detached cleanup finishes. Reads used while waiting for that
     // cleanup keep the last in-memory work; stopping never loads an unbounded history snapshot.
-    const tasks = this.stopped ? [] : this.store.history.all().map((task) => current.get(task.id) ?? task);
+    const tasks = this.stopped ? [] : this.store.history.all().map((task) => { const known = current.get(task.id); if (known) return known; restoreRepositoryState(task as MTask); return taskView(task as MTask); });
     const ids = new Set(tasks.map((task) => task.id));
     tasks.push(...[...current.values()].filter((task) => !ids.has(task.id)));
     const { history: _history, ...state } = this.activeState();
@@ -466,7 +446,7 @@ export abstract class Kernel {
   windowState = (): State => {
     // A terminal result must be in the archive before the window stops seeing its live body.
     if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
-    const tasks = this.s.tasks.filter((task) => !finishedTask(task)) as Task[];
+    const tasks = this.s.tasks.filter((task) => !finishedTask(task)).map(taskView) as Task[];
     const usageReads: NonNullable<State["pool"]["usageReads"]> = Object.fromEntries(
       ([["codex", this.codexUsage], ["grok", this.grokUsage], ["antigravity", this.antigravityUsage]] as const).flatMap(([toolId, reader]) => reader?.snapshot() ? [[toolId, reader.snapshot()!]] : []),
     );
@@ -483,14 +463,14 @@ export abstract class Kernel {
     return this.store.history.page(request);
   };
 
-  taskDetails = (id: Id): Task | undefined => this.task(id) as Task | undefined;
+  taskDetails = (id: Id): Task | undefined => { const task = this.task(id); return task ? taskView(task) : undefined; };
 
   private readonly archiveCache = new Map<Id, MTask>();
 
   /** A cleanup result for an already archived task must survive immediately, even after cache eviction. */
   saveArchivedTask(task: MTask): void {
     if (this.stopped || this.s.tasks.includes(task)) return;
-    this.saveRepository(task);
+
     this.store.save(this.activeState(), this.retiredTasks(), [task as Task]);
   }
 
@@ -534,25 +514,28 @@ export abstract class Kernel {
     delete task.agent;
     task.holdsSlot = false;
     beginYouStep(task, gate, Date.now());
-    const work = gate === "plan" ? task.proposedSource ?? task.source : task.source;
+    const work = gate === "plan" ? task.proposedSource ?? executionFor(task).work.source : executionFor(task).work.source;
     const workLine = task.workRows || task.repositories
       ? (gate === "plan" ? task.workRows?.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error, row.addition ? `Will be added in ${row.addition.path}` : ""].filter(Boolean).join("\n")) : task.repositories?.map((entry) => [entry.source ? workSummary(entry.source) : entry.productId, entry.report?.summary, entry.checks?.results.length ? entry.checks.results.every((run) => run.ok) ? "Product checks passed" : "Product checks failed" : "Product checks: Not run", entry.releasePreview ? `Release ${entry.releasePreview.tag}: ${entry.releasePreview.notes}\nThis includes everything waiting on the default branch since the previous release.` : ""].filter(Boolean).join("\n")))?.join("\n\n") ?? ""
       : work ? workSummary(work) : "";
-    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(task as unknown as Task) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(taskView(task)) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
     const explanation = [problem, body].filter(Boolean).join("\n\n");
-    this.raise(task, gate, gateTitle(task as unknown as Task, gate), false, explanation ? { body: explanation } : {});
-    task.statusLine = problem ? "Delivery preparation needs you" : gateStatus(task as unknown as Task, gate);
+    this.raise(task, gate, gateTitle(taskView(task), gate), false, explanation ? { body: explanation } : {});
+    task.statusLine = problem ? "Delivery preparation needs you" : gateStatus(taskView(task), gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     // On disk before the window shows it: an answer to this check must find it after any restart.
     this.commitNow();
   }
 
   /** `by`: the agent asking, when it is not the task's main one (a reviewer working beside others). */
-  raise(task: MTask, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string; toolId?: CheckId; toolProblem?: InboxItem["toolProblem"]; reviewKey?: string } = {}, by: { roleId: Id; profileId: Id } | undefined = task.agent): Id {
+  raise(target: MTask | RepositoryContext, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string; toolId?: CheckId; toolProblem?: InboxItem["toolProblem"]; reviewKey?: string } = {}, by: { roleId: Id; profileId: Id } | undefined = undefined): Id {
+    const scope = executionOf(target);
+    const { task, work: repository } = scope;
+    by ??= task.agent;
     const id = this.id("inbox");
     task.state = "needs-you";
     this.s.inbox.push({
-      ...(task.repositories && ["guide", "learnings", "shipping", "stuck"].includes(kind) ? { productId: task.productId } : {}),
+      ...(task.repositories && ["guide", "learnings", "shipping", "stuck"].includes(kind) ? { productId: repository.productId } : {}),
       id,
       taskId: task.id,
       kind,
@@ -567,19 +550,20 @@ export abstract class Kernel {
       ...(extra.toolProblem ? { toolProblem: extra.toolProblem } : {}),
       ...(extra.reviewKey ? { reviewKey: extra.reviewKey } : {}),
     });
-    this.tracking.asked(task, this.s.inbox.at(-1)!);
+    this.tracking.asked(scope, this.s.inbox.at(-1)!);
     return id;
   }
 
   fail(taskId: Id, error: unknown): void {
     const task = this.task(taskId);
+    const scope = task ? executionFor(task) : undefined;
     if (!task) return;
     this.stopHelpers(taskId);
     delete task.helpers;
     const message = error instanceof Error ? error.message : String(error);
     this.tracking.failed(task, error);
     delete task.agent;
-    delete task.conversation;
+    delete scope!.work.conversation;
     this.discardScreenTurns(task);
     this.releaseScreen(task);
     this.stopStep(task);
@@ -646,24 +630,30 @@ export abstract class Kernel {
    * The step handed back its result: a short record of it is kept for estimates, unless it was started again
    * (a restart, a pause, Try again, a stand-in), and the next step starts clean, in a new conversation.
    */
-  finishStep(task: MTask): void {
-    if (task.stepClock && task.stepAttempts === 1) task.steps = [...(task.steps ?? []), stepRecord(task.stepClock, Date.now())].slice(-MAX_STEP_RECORDS);
-    this.clearStep(task);
+  finishStep(target: MTask | RepositoryContext): void {
+    const scope = executionOf(target);
+    const { task, work: repository } = scope;
+    if (task.stepClock && repository.stepAttempts === 1) task.steps = [...(task.steps ?? []), stepRecord(task.stepClock, Date.now())].slice(-MAX_STEP_RECORDS);
+    this.clearStep(scope);
   }
 
   /** The next step starts clean: nothing said in this one, no conversation, no to-do item, no clock. */
-  clearStep(task: MTask): void {
+  clearStep(target: MTask | RepositoryContext): void {
+    const scope = executionOf(target);
+    const { task, work: repository } = scope;
     delete task.stepNotes;
-    delete task.stepAttempts;
-    delete task.conversation;
+    delete repository.stepAttempts;
+    delete repository.conversation;
     this.releaseScreen(task);
     this.stopStep(task);
   }
 
   /** A reopened reviewer or voter still works in its own copy, including during terminal take-over. */
-  agentWorktree(task: MTask): string {
+  agentWorktree(target: MTask | RepositoryContext): string {
+    const scope = executionOf(target);
+    const { task, work: repository } = scope;
     const member = task.screen?.member;
-    return (member && task.hunt?.screenTurns?.[member]?.copy) || task.worktree!;
+    return (member && task.hunt?.screenTurns?.[member]?.copy) || repository.worktree!;
   }
 
   /** Pause, cancel or failure discards saved screen conversations and their separate working copies. */
@@ -767,7 +757,7 @@ export abstract class Kernel {
     if (!next || next[0] === task.screen?.member) return;
     const [member, request] = next;
     task.screen = { member, reason: request.reason, at: request.at, roleId: request.conversation.roleId, profileId: request.conversation.profileId, ...(request.allowed ? { allowed: true } : {}) };
-    task.conversation = request.conversation;
+    executionFor(task).work.conversation = request.conversation;
   }
 
   /** The step's screen request ends with the step (or a pause, a cancel, a failure): the next request may have the screen. */
@@ -892,23 +882,28 @@ export abstract class Kernel {
     this.syncIdleSleep();
   }
 
-  async undoReadOnly(task: MTask, roleId: Id, worktree = task.worktree): Promise<void> {
-    const conversation = task.conversation?.roleId === roleId ? task.conversation : undefined;
+  async undoReadOnly(target: MTask | RepositoryContext, roleId: Id, worktree?: string): Promise<void> {
+    const scope = executionOf(target);
+    const { work: repository } = scope;
+    worktree ??= repository.worktree;
+    const conversation = repository.conversation?.roleId === roleId ? repository.conversation : undefined;
     const role = conversation?.role ?? this.role(roleId);
     if (role && !(conversation?.access?.canEdit ?? role.canEdit) && worktree && !(await git.isClean(worktree))) {
       await git.discardChanges(worktree);
-      this.log(task, "warn", `Undid changes from ${role.name}, which is read-only`);
+      this.log(scope, "warn", `Undid changes from ${role.name}, which is read-only`);
     }
   }
 
   /** Keep an editing role's work before another role's read-only clean-up can undo it. */
-  async saveRoleEdits(task: MTask, roleId: Id, profileId: Id): Promise<void> {
-    const conversation = task.conversation?.roleId === roleId ? task.conversation : undefined;
+  async saveRoleEdits(target: MTask | RepositoryContext, roleId: Id, profileId: Id): Promise<void> {
+    const scope = executionOf(target);
+    const { task, work: repository } = scope;
+    const conversation = repository.conversation?.roleId === roleId ? repository.conversation : undefined;
     const role = conversation?.role ?? this.role(roleId);
     if (role && (conversation?.access?.canEdit ?? role.canEdit)) {
-      const sha = await git.commitAll(task.worktree!, `${task.title}: ${role.name}`);
-      if (task.checks) task.checks.current = task.checks.tree === await git.treeOf(task.worktree!);
-      if (sha) this.log(task, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
+      const sha = await git.commitAll(repository.worktree!, `${task.title}: ${role.name}`);
+      if (repository.checks) repository.checks.current = repository.checks.tree === await git.treeOf(repository.worktree!);
+      if (sha) this.log(scope, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
     }
   }
 
@@ -939,6 +934,7 @@ export abstract class Kernel {
     if (this.stopped) return undefined;
     const saved = this.store.history.get(id) as MTask | undefined;
     if (!saved) return undefined;
+    restoreRepositoryState(saved);
     renameRoles({ ...this.s, tasks: [saved], inbox: [] });
     // On-demand reads stay bounded even when walking through years of finished work.
     if (this.archiveCache.size >= 16) {
@@ -949,13 +945,17 @@ export abstract class Kernel {
     return saved;
   }
 
-  repositoryOf(task: MTask) {
-    const product = this.productOf(task);
-    return product && task.source ? { ...product, ...task.source.product, name: product.name } : product;
+  repositoryOf(target: MTask | RepositoryContext) {
+    const scope = executionOf(target);
+    const { work: repository } = scope;
+    const product = this.productOf(scope);
+    return product && repository.source ? { ...product, ...repository.source.product, name: product.name } : product;
   }
 
-  productOf(task: MTask) {
-    return this.s.products.find((product) => product.id === task.productId);
+  productOf(target: MTask | RepositoryContext) {
+    const scope = executionOf(target);
+    const { work: repository } = scope;
+    return this.s.products.find((product) => product.id === repository.productId);
   }
 
   role(id: Id): Role | undefined {
@@ -967,16 +967,18 @@ export abstract class Kernel {
   }
 
   /** Only Builders return to an earlier step's conversation; an interrupted Builder keeps its current one. */
-  builderConversation(task: MTask, plannedId: Id) {
+  builderConversation(target: MTask | RepositoryContext, plannedId: Id) {
+    const scope = executionOf(target);
+    const { task, work: repository } = scope;
     const stage = task.plan?.stages[task.stageIndex];
     if (stage?.kind !== "do") return undefined;
-    const current = task.conversation;
+    const current = repository.conversation;
     const role = current?.roleId === stage.roleId && current.role ? current.role : this.role(stage.roleId);
     if (role?.result !== "build") return undefined;
-    const own = task.builderSession;
+    const own = repository.builderSession;
     const saved = current
       ? current.roleId === stage.roleId && current.briefed && current.step === stepKey(task) && (!current.plannedProfileId || current.plannedProfileId === plannedId) ? current : undefined
-      : (task.fixing || task.updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === plannedId && !(task.fixing && stepBack(task as Task)) ? own : undefined;
+      : (task.fixing || repository.updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === plannedId && !(task.fixing && stepBack(task as Task)) ? own : undefined;
     const planned = this.profile(plannedId);
     if (!saved || !planned) return undefined;
     // The saved tool/model must still be offered. Prefer the planned effort for an earlier
@@ -992,7 +994,10 @@ export abstract class Kernel {
    * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
    * yields to another tool that has one, so a cap kept for a tool that is out does not idle a pool slot.
    */
-  choose(plannedId: Id, task?: MTask, roleId?: Id, room?: (toolId: Id) => boolean, reviewerKey?: string): Choice | undefined {
+  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id) => boolean, reviewerKey?: string): Choice | undefined {
+    const scope = target ? executionOf(target) : undefined;
+    const task = scope?.task;
+    const repository = scope?.work;
     // A saved screen conversation is not swapped just for being near a limit. Other members of the
     // same review group still choose from their own planned profiles.
     const screen = task?.screen?.roleId === roleId && task?.screen?.profileId === plannedId
@@ -1004,8 +1009,8 @@ export abstract class Kernel {
     const findings = roleId !== undefined && this.role(roleId)?.result === "findings";
     // Security and port reviews follow the latest builder, including a replacement that did the port.
     const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
-    let made: { toolId: Id; modelId?: string } | undefined = roleId === "security-reviewer" || (task?.portReview && stage?.kind === "review-chain" && findings)
-      ? (task?.builderSession ? { toolId: task.builderSession.toolId, modelId: task.builderSession.model } : builder ? this.profile(builder) : undefined)
+    let made: { toolId: Id; modelId?: string } | undefined = roleId === "security-reviewer" || (repository?.portReview && stage?.kind === "review-chain" && findings)
+      ? (repository?.builderSession ? { toolId: repository!.builderSession.toolId, modelId: repository!.builderSession.model } : builder ? this.profile(builder) : undefined)
       : undefined;
     if (task && stage?.kind === "converge" && task.sub === 1 && roleId === (stage.reviewerRoleId ?? "design-reviewer")) {
       const author = this.tracking.log.turns({ taskId: task.id }).filter((turn) => turn.stageId === stage.id && turn.round === round && turn.roleId === stage.roleId && turn.end === "finished").at(-1);
@@ -1013,7 +1018,7 @@ export abstract class Kernel {
       made = author ? { toolId: author.toolId, modelId: author.modelRan ?? author.modelAsked } : this.profile(legacy ?? stage.profileIds[0] ?? "");
     }
     let peers: Id[] = [];
-    if (task && stage?.kind === "review-chain" && findings && !task.portReview) {
+    if (task && stage?.kind === "review-chain" && findings && !repository?.portReview) {
       const hunt = task.hunt?.stageId === stage.id && task.hunt.round === round ? task.hunt : undefined;
       const key = reviewerKey ?? String(stage.profileIds.indexOf(plannedId));
       // Older rounds saved reports without the profiles at their positions. Their latest verdicts
@@ -1059,7 +1064,7 @@ export abstract class Kernel {
       const saved = chooseWithRoom(candidates, planned, now, { keep: true }, room);
       if (saved.kind === "planned") return saved;
     }
-    const own = task && roleId !== undefined && roleId === stage?.roleId ? this.builderConversation(task, plannedId) : undefined;
+    const own = task && roleId !== undefined && roleId === stage?.roleId ? this.builderConversation(scope!, plannedId) : undefined;
     if (own && !limitOf(state.pool, own.profile, now) && !nearLimit(state.pool, own.profile, now) && headroom(state.pool, own.profile, now) !== 0 && (!room || room(own.toolId))) {
       const check = state.setup?.checks.find((check) => check.id === own.toolId);
       // Recovery checks are bounded by the normal tool-check timeout. Checking is temporary;
@@ -1184,17 +1189,21 @@ export abstract class Kernel {
     return `${prefix}-${this.s.seq}`;
   }
 
-  log(task: MTask, tone: Task["timeline"][number]["tone"], text: string, roleId?: Id, profileId?: Id): void {
+  log(target: MTask | RepositoryContext, tone: Task["timeline"][number]["tone"], text: string, roleId?: Id, profileId?: Id): void {
+    const scope = executionOf(target);
+    const { task, work: repository } = scope;
     const step = stepTag(task);
-    task.timeline.push({ ...(task.repositories ? { productId: task.productId } : {}), id: this.id(task.id), at: Date.now(), text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
+    task.timeline.push({ ...(task.repositories ? { productId: repository.productId } : {}), id: this.id(task.id), at: Date.now(), text, tone, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
     if (task.timeline.length > MAX_TIMELINE) task.timeline.splice(0, task.timeline.length - MAX_TIMELINE);
   }
 
-  say(task: MTask, from: Task["session"][number]["from"], text: string, roleId?: Id, profileId?: Id): void {
+  say(target: MTask | RepositoryContext, from: Task["session"][number]["from"], text: string, roleId?: Id, profileId?: Id): void {
+    const scope = executionOf(target);
+    const { task, work: repository } = scope;
     const last = task.session.at(-1);
     if (from === "activity" && last?.from === "activity" && last.text === text) return;
     const step = stepTag(task);
-    task.session.push({ ...(task.repositories ? { productId: task.productId } : {}), id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
+    task.session.push({ ...(task.repositories ? { productId: repository.productId } : {}), id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
     while (task.session.length > MAX_SESSION_LINES) {
       // Keep the newest line, saved pictures, a report whose pictures are still being checked,
       // and the latest words from each agent. Another update must not drop a report before its pictures are attached.
@@ -1222,7 +1231,6 @@ export abstract class Kernel {
     // An activity or other update is about to be shown. The to-do item is written first, so a forced
     // kill once that update is visible still has the item.
     this.savePendingTodo();
-    for (const task of this.s.tasks) this.saveRepository(task);
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     this.s.now = Date.now();
     for (const listener of this.listeners) listener();
@@ -1247,7 +1255,6 @@ export abstract class Kernel {
   commitNow(): void {
     if (this.stopped) return;
     this.syncIdleSleep();
-    for (const task of this.s.tasks) this.saveRepository(task);
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;

@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -21,11 +22,11 @@ describe("screenshots read directly from a task's working copy", () => {
       const productId = await engine.addProduct(world.clone);
       const id = engine.addTask({ productId, title: "Reviewer screenshots", backlog: true });
       const task = engine.task(id)!;
-      task.worktree = join(world.data, "worktrees", productId, id);
+      executionFor(task).work.worktree = join(world.data, "worktrees", productId, id);
       const copy = join(world.data, "worktrees", productId, `${id}.copies`, "review-0");
       await mkdir(copy, { recursive: true });
-      await mkdir(task.worktree, { recursive: true });
-      await writeFile(join(task.worktree, "local.png"), png);
+      await mkdir(executionFor(task).work.worktree!, { recursive: true });
+      await writeFile(join(executionFor(task).work.worktree!, "local.png"), png);
       expect(await engine.previewImage(id, "local.png", productId)).toEqual({ mime: "image/png", data: png.toString("base64") });
       const image = join(copy, "review.png");
       await writeFile(image, png);
@@ -62,7 +63,7 @@ describe("screenshots read directly from a task's working copy", () => {
       const first = await folder(), second = await folder();
       await writeFile(join(second, "checked.png"), png);
       const task = engine.task(id)!;
-      task.worktree = first;
+      executionFor(task).work.worktree = first;
       task.activeProductId = productId;
       task.repositories = [{ productId, delivery: "local", completedStages: [], worktree: first }, { productId: "api", delivery: "local", completedStages: [], worktree: second }];
       expect(await dispatch(engine, { name: "previewImage", args: [id, "checked.png", "api"] })).toEqual({ mime: "image/png", data: png.toString("base64") });
@@ -103,11 +104,11 @@ describe("screenshots read directly from a task's working copy", () => {
       await writeFile(join(first, "checked.png"), png);
       await writeFile(join(second, "checked.png"), otherPng);
       const task = engine.task(id)!;
-      task.worktree = first;
+      executionFor(task).work.worktree = first;
       task.activeProductId = productId;
       task.repositories = [{ productId, delivery: "local", completedStages: [], worktree: first }, { productId: "api", delivery: "local", completedStages: [], worktree: second }];
-      engine.selectRepository(task, "api");
-      expect(task.worktree).toBe(second);
+      task.activeProductId = "api";
+      expect(engine.taskDetails(id)!.worktree).toBe(second);
       expect(await engine.previewImage(id, "checked.png", productId)).toEqual({ mime: "image/png", data: png.toString("base64") });
       expect(await engine.previewImage(id, "checked.png", "api")).toEqual({ mime: "image/png", data: otherPng.toString("base64") });
       expect(await engine.previewImage(id, "checked.png")).toEqual({ mime: "image/png", data: otherPng.toString("base64") });

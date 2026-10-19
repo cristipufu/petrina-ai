@@ -1,3 +1,4 @@
+import { type RepositoryContext } from "./repository-context.js";
 // The review guide that learns from misses: the Guide keeper's proposals, the coordinator's yes or no,
 // and accepted points reaching REVIEW.md. Reading and writing the file is in points.ts.
 
@@ -10,7 +11,7 @@ import { addToSection, AGENTS_FILE, appendPoints, cleanPoint, GUIDE, GUIDE_FILE,
 /** What AGENTS.md says about the review guide, so every agent reads it, in Petrina or not. */
 const GUIDE_SECTION = "## Review guide";
 const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.`;
-import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, type MTask, ScreenWait } from "./kernel.js";
+import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, ScreenWait } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 
@@ -51,18 +52,19 @@ export class GuideKeeper {
    * the product's review guide, offered in the inbox without holding the task up. A side errand inside
    * the builder's step: it leaves the step's own restart bookkeeping as it found it.
    */
-  async proposeGuideLine(task: MTask, signal: AbortSignal): Promise<void> {
-    const product = this.k.productOf(task);
+  async proposeGuideLine(scope: RepositoryContext, signal: AbortSignal): Promise<void> {
+    const { task, work: repository } = scope;
+    const product = this.k.productOf(scope);
     const miss = task.miss;
-    if (!product || !miss || !task.worktree) return;
-    const attempts = task.stepAttempts;
-    const conversation = task.conversation?.roleId === "guide-keeper" ? undefined : task.conversation;
+    if (!product || !miss || !repository.worktree) return;
+    const attempts = repository.stepAttempts;
+    const conversation = repository.conversation?.roleId === "guide-keeper" ? undefined : repository.conversation;
     const { todo, stepClock } = task;
     const restore = () => {
-      if (attempts === undefined) delete task.stepAttempts;
-      else task.stepAttempts = attempts;
-      if (conversation === undefined) delete task.conversation;
-      else task.conversation = conversation;
+      if (attempts === undefined) delete repository.stepAttempts;
+      else repository.stepAttempts = attempts;
+      if (conversation === undefined) delete repository.conversation;
+      else repository.conversation = conversation;
       // The errand's own to-do item and working time are not the step's.
       if (todo === undefined) delete task.todo;
       else task.todo = todo;
@@ -73,9 +75,9 @@ export class GuideKeeper {
     const keeper = this.k.onUsable(GUIDE_KEEPER_PROFILE);
     let ran: Id = keeper;
     try {
-      const guide = await this.reviewGuide(task);
+      const guide = await this.reviewGuide(scope);
       const result = await this.turns.turn(
-        task,
+        scope,
         "guide-keeper",
         keeper,
         () => [
@@ -91,14 +93,14 @@ export class GuideKeeper {
       restore();
       const proposed = !!result.missed && !!result.line && !hasPoint(guide, result.line);
       endAgentStep(task, { outcome: proposed ? W.guidePoint : W.noGuidePoint, reason: W.backToBuilder }, Date.now());
-      if (!result.missed || !result.line) this.k.log(task, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", ran);
-      else if (hasPoint(guide, result.line)) this.k.log(task, "done", "The review guide already has that point", "guide-keeper", ran);
+      if (!result.missed || !result.line) this.k.log(scope, "done", `Nothing for the review guide: ${result.why}`, "guide-keeper", ran);
+      else if (hasPoint(guide, result.line)) this.k.log(scope, "done", "The review guide already has that point", "guide-keeper", ran);
       else {
         // An offer, not a stop: the task carries on while the coordinator decides.
         const state = task.state;
-        this.k.raise(task, "guide", `Add a point to ${product.name}'s review guide?`, false, { body: result.line, detail: `${result.why} It goes into ${GUIDE_FILE}, which AGENTS.md points every agent to, in Petrina or in your own sessions.` });
+        this.k.raise(scope, "guide", `Add a point to ${product.name}'s review guide?`, false, { body: result.line, detail: `${result.why} It goes into ${GUIDE_FILE}, which AGENTS.md points every agent to, in Petrina or in your own sessions.` });
         task.state = state;
-        this.k.log(task, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", ran);
+        this.k.log(scope, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", ran);
       }
     } catch (error) {
       if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) throw error;
@@ -106,9 +108,9 @@ export class GuideKeeper {
       restore();
       if (error instanceof WaitingForUsage) throw error;
       // Petrina carries on without it, but it is still a failure in Analytics.
-      this.k.tracking.failed(task, error, { roleId: "guide-keeper", profileId: ran });
+      this.k.tracking.failed(scope, error, { roleId: "guide-keeper", profileId: ran });
       endAgentStep(task, { outcome: W.couldNotFinish, reason: W.backToBuilder }, Date.now());
-      this.k.log(task, "warn", "The Guide keeper could not finish, so nothing was proposed for the review guide");
+      this.k.log(scope, "warn", "The Guide keeper could not finish, so nothing was proposed for the review guide");
     }
     delete task.miss;
     this.k.commit();
@@ -119,47 +121,51 @@ export class GuideKeeper {
    * reach its delivery check. AGENTS.md gets a short section pointing to the guide when it has none. Nothing is
    * running in the working copy at this point.
    */
-  async writeGuide(task: MTask): Promise<void> {
-    const product = this.k.productOf(task);
-    if (!product?.reviewGuide?.length || !task.worktree) return;
+  async writeGuide(scope: RepositoryContext): Promise<void> {
+    const { task, work: repository } = scope;
+    const product = this.k.productOf(scope);
+    if (!product?.reviewGuide?.length || !repository.worktree) return;
     const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || ["cancelled", "failed"].includes(this.k.task(line.writtenOn)?.state ?? "cancelled");
     let due: DeepMutable<GuideLine>[];
     try {
-      const file = localPoints(task.worktree, GUIDE_FILE);
+      const file = localPoints(repository.worktree, GUIDE_FILE);
       due = product.reviewGuide.filter((line) => !line.incorporatedOn && !hasPoint(file, line.text) && free(line));
       if (!due.length) return;
-      appendPoints(task.worktree, GUIDE, due.map((line) => line.text));
-      if (!localPoints(task.worktree, AGENTS_FILE).includes(GUIDE_FILE)) addToSection(task.worktree, GUIDE_SECTION, GUIDE_POINTER, []);
+      appendPoints(repository.worktree, GUIDE, due.map((line) => line.text));
+      if (!localPoints(repository.worktree, AGENTS_FILE).includes(GUIDE_FILE)) addToSection(repository.worktree, GUIDE_SECTION, GUIDE_POINTER, []);
     } catch (error) {
-      this.k.log(task, "warn", `The review guide was not updated: ${error instanceof Error ? error.message : String(error)}`);
+      this.k.log(scope, "warn", `The review guide was not updated: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    await git.commitAll(task.worktree, `Review guide: ${due.length === 1 ? "one more point" : `${due.length} more points`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina: the coordinator accepted ${due.length === 1 ? "it" : "them"} after reviewers missed something.`);
+    await git.commitAll(repository.worktree, `Review guide: ${due.length === 1 ? "one more point" : `${due.length} more points`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina: the coordinator accepted ${due.length === 1 ? "it" : "them"} after reviewers missed something.`);
     for (const line of due) line.writtenOn = task.id;
-    this.k.log(task, "done", `Added to ${GUIDE_FILE}: ${due.map((line) => line.text).join("; ")}`);
+    this.k.log(scope, "done", `Added to ${GUIDE_FILE}: ${due.map((line) => line.text).join("; ")}`);
     this.k.commit();
   }
 
   /** Points the coordinator accepted that the base branch's REVIEW.md does not have yet: reviewers get them with the task. */
-  async pendingPoints(task: MTask): Promise<string[]> {
-    if (!this.k.productOf(task)?.reviewGuide?.length) return [];
-    return (await this.guidance(task)).pending.map((line) => line.text);
+  async pendingPoints(scope: RepositoryContext): Promise<string[]> {
+
+    if (!this.k.productOf(scope)?.reviewGuide?.length) return [];
+    return (await this.guidance(scope)).pending.map((line) => line.text);
   }
 
   /** The guide as the base branch has it, plus the points the coordinator accepted: what the Guide keeper weighs a new point against. */
-  async reviewGuide(task: MTask): Promise<string> {
-    const { base, pending } = await this.guidance(task);
+  async reviewGuide(scope: RepositoryContext): Promise<string> {
+
+    const { base, pending } = await this.guidance(scope);
     return pointsText(GUIDE, base, pending);
   }
 
-  private async guidance(task: MTask): Promise<{ base: string; pending: GuideLine[] }> {
-    const product = this.k.productOf(task);
-    const root = product?.path ?? task.worktree;
-    const ref = task.baseSha ?? task.base;
+  private async guidance(scope: RepositoryContext): Promise<{ base: string; pending: GuideLine[] }> {
+    const { work: repository } = scope;
+    const product = this.k.productOf(scope);
+    const root = product?.path ?? repository.worktree;
+    const ref = repository.baseSha ?? repository.base;
     const base = root && ref ? ((await git.fileAt(root, ref, GUIDE_FILE)) ?? "") : "";
     const candidates = (product?.reviewGuide ?? []).filter((line) => !hasPoint(base, line.text));
     if (!root || !ref || !candidates.some((line) => line.incorporatedOn)) return { base, pending: candidates };
-    const sha = task.baseSha ?? await git.revParse(root, ref);
+    const sha = repository.baseSha ?? await git.revParse(root, ref);
     const contained = new Map<string, boolean>();
     const pending: GuideLine[] = [];
     for (const line of candidates) {

@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -219,7 +220,7 @@ describe.concurrent("one approved product and starting point", () => {
       let state = await planGate(engine, id);
       engine.setPoolPaused(true);
       engine.approve(itemOf(state, id, "plan")!.id);
-      const approved = structuredClone(engine.task(id)!.source);
+      const approved = structuredClone(executionFor(engine.task(id)!).work.source);
       expect(approved?.confirmed).toBe(true);
       // Reopen a saved plan before preparation, as after a planning interruption.
       engine.shutdown(); await Promise.all(engine.settling.values());
@@ -724,9 +725,9 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(taskOf(state, id).source).toMatchObject({ confirmed: true, start: { kind: "default", branch: "main" } });
       await engine.setTaskStart(id, { productId, startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const proposed = engine.task(id)!;
-      expect(proposed.worktree).toBeUndefined();
+      expect(executionFor(proposed).work.worktree).toBeUndefined();
       expect(proposed.proposedSource?.start).toMatchObject({ kind: "branch", branch: "release-2.x" });
-      expect(proposed.source?.start).toMatchObject({ kind: "default", branch: "main" });
+      expect(executionFor(proposed).work.source?.start).toMatchObject({ kind: "default", branch: "main" });
       expect(proposed.confirmWork).toBe(true);
       engine.approve(itemOf(engine.getState(), id, "plan")!.id);
       const done = taskOf(await finish(engine, id), id);
@@ -745,15 +746,15 @@ describe.concurrent("review findings for a confirmed start", () => {
       const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", delivery: "local", approvePlan: false });
       await deliveryGate(engine, id);
       const live = engine.task(id)!;
-      const work = git(live.worktree!, "rev-parse", "HEAD");
-      const base = live.baseSha!;
+      const work = git(executionFor(live).work.worktree!, "rev-parse", "HEAD");
+      const base = executionFor(live).work.baseSha!;
       expect(work).not.toBe(base);
-      expect(git(live.worktree!, "show", "HEAD:greeting.txt")).toContain("Hello");
+      expect(git(executionFor(live).work.worktree!, "show", "HEAD:greeting.txt")).toContain("Hello");
       const seen = fakes.received("code reviewer").length;
       expect(seen).toBeGreaterThan(0);
       engine.shutdown();
       await Promise.all(engine.settling.values());
-      git(live.worktree!, "update-ref", "--no-deref", "HEAD", base);
+      git(executionFor(live).work.worktree!, "update-ref", "--no-deref", "HEAD", base);
       w.editSaved((saved) => {
         const task = taskOf(saved, id) as DeepMutable<Task>;
         task.hooking = true;
@@ -771,10 +772,10 @@ describe.concurrent("review findings for a confirmed start", () => {
       engine = start();
       await until(engine, () => {
         const task = engine.task(id);
-        return !!task?.worktree && task.hooking === undefined && git(task.worktree, "rev-parse", "HEAD") === work && fakes.received("code reviewer").length > seen;
+        return !!task && !!executionFor(task).work.worktree && executionFor(task).work.hooking === undefined && git(executionFor(task).work.worktree!, "rev-parse", "HEAD") === work && fakes.received("code reviewer").length > seen;
       }, coordinator(["plan", "design"]));
-      expect(git(engine.task(id)!.worktree!, "rev-parse", "HEAD")).toBe(work);
-      expect(engine.task(id)!.hooking).toBeUndefined();
+      expect(git(executionFor(engine.task(id)!).work.worktree!, "rev-parse", "HEAD")).toBe(work);
+      expect(executionFor(engine.task(id)!).work.hooking).toBeUndefined();
       expect(fakes.prompts("code reviewer").at(-1)).toContain(`git diff ${base}...HEAD`);
       const done = taskOf(await finish(engine, id), id);
       expect(done.error).toBeUndefined();
@@ -846,12 +847,12 @@ describe.concurrent("review findings for a confirmed start", () => {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const state = await deliveryGate(engine, id);
-      const worktree = engine.task(id)!.worktree!;
-      expect(engine.task(id)!.baseSha).toBe(initial);
+      const worktree = executionFor(engine.task(id)!).work.worktree!;
+      expect(executionFor(engine.task(id)!).work.baseSha).toBe(initial);
       const moved = advance(w, w.remote, "release-2.x", "KEPT.md", "Kept source work\n");
       git(w.clone, "fetch", "-q", w.remote, "refs/heads/release-2.x:refs/petrina/kept-source");
       git(worktree, "-c", "core.editor=true", "rebase", "--onto", moved, initial);
-      engine.task(id)!.baseSha = moved;
+      executionFor(engine.task(id)!).work.baseSha = moved;
       const copy = join(w.dir, "rewrite");
       git(w.dir, "clone", "-q", w.remote, copy);
       git(copy, "config", "user.name", "Someone else");

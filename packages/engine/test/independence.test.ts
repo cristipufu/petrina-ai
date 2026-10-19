@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -220,7 +221,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       // Older releases saved this mark even for an unreviewed feature. A restart must not trust it.
       f.engine.setPoolPaused(true);
       const saved = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
-      delete saved.reviewedTree;
+      delete executionFor(saved).work.reviewedTree;
       // Even a report already saved under that narrower scope cannot replace an ordinary review.
       const key = Object.keys(saved.hunt!.profiles!)[0]!;
       saved.hunt!.reported[key] = true;
@@ -255,8 +256,8 @@ describe.concurrent("reviews after a usage handoff", () => {
         expect(f.task().plan!.stages.find((stage) => stage.kind === "review-chain")!.profileIds).toHaveLength(1);
         f.engine.setPoolPaused(true);
         const saved = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
-        expect(saved.conversation?.sessionId).toBe(port.session);
-        if (legacy) delete saved.reviewedTree;
+        expect(executionFor(saved).work.conversation?.sessionId).toBe(port.session);
+        if (legacy) delete executionFor(saved).work.reviewedTree;
         f.engine.sendMessage(f.task().id, "Check the welcome page too.");
         await f.restart();
         f.engine.setPoolPaused(false);

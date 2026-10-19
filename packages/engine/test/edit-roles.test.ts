@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -246,8 +247,8 @@ describe("roles the coordinator edits and adds", () => {
         engine.tracking.verdict(task, task.plan.stages[0]!.roleIds![peer]!, "sol-high", 1, "pass", 0, 0);
         expect(engine.choose("sol-high", task, roleId, undefined, String(position))).toEqual(expect.objectContaining({ profile: expect.objectContaining({ toolId: "grok" }) }));
       }
-      task.builderSession = { stageId: "build", profileId: "sol-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "latest-port" };
-      task.portReview = { from: "a", onto: "b", head: "c", files: ["greeting.txt"] };
+      executionFor(task).work.builderSession = { stageId: "build", profileId: "sol-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "latest-port" };
+      executionFor(task).work.portReview = { from: "a", onto: "b", head: "c", files: ["greeting.txt"] };
       expect(engine.choose("sol-high", task, added, undefined, "1")).toEqual(expect.objectContaining({ profile: expect.objectContaining({ toolId: "grok" }) }));
     } finally {
       engine.shutdown();

@@ -1,3 +1,4 @@
+import { displayTask } from "./repositories.js";
 // Finished work is read a page at a time. The live board never needs its conversations or plans.
 import type { Id, State, StepRecord, Task } from "./model.js";
 import type { ReviewStats } from "./reviews.js";
@@ -31,6 +32,7 @@ export function historyMatches(title: string, query: string): boolean {
   return words(query).every((term) => tokens.some((token) => token.startsWith(term)));
 }
 export function historyItem(task: Task): HistoryItem {
+  task = displayTask(task);
   const { id, productId, title, kind, state, createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, combinedInto } = task;
   const productIds = taskProductIds(task);
   const products = task.repositories?.map((work) => ({ id: work.productId, name: work.source?.product.name ?? work.workProduct?.name ?? work.productId })) ?? task.workRows?.map((row) => ({ id: row.source?.product.id ?? row.choice.productId, name: row.source?.product.name ?? row.choice.productId })) ?? productIds.map((id) => ({ id, name: id }));

@@ -1,3 +1,5 @@
+import { executionFor } from "./repository-context.js";
+import { detachRepositoryState, type RepositoryContext } from "./repository-context.js";
 import { productName, deliveryLabel, workSummary, type TaskSource, type WorkChoice } from "@petrina/core";
 import * as git from "./git.js";
 import { background, branchExists, prNumber, sourcePr } from "./source-github.js";
@@ -11,12 +13,13 @@ export class Sources {
   constructor(private readonly k: Kernel, private readonly connections: Connections) {}
 
   async resolve(task: MTask, choice: WorkChoice, candidate?: TaskSource["product"]): Promise<TaskSource> {
+    const scope = executionFor(task);
     const row = task.workRows?.find((entry) => entry.choice === choice || (entry.choice.productId === choice.productId && entry.choice.repo === choice.repo));
     const addition = row?.addition;
     const registered = this.k.s.products.find((entry) => entry.id === choice.productId) ?? this.k.s.products.find((entry) => entry.repo.toLowerCase() === (choice.repo ?? choice.productId).toLowerCase())
       ?? (addition && row?.source ? { ...row.source.product, id: addition.productId, name: addition.name, path: addition.path } : candidate);
     if (!registered) throw new Error(`Needs adding: ${choice.productId || "a product"}. Add it through Products, then choose it here, or replace it with a registered product.`);
-    const product = task.workProduct?.id === choice.productId ? { ...task.workProduct, name: registered.name } : { id: registered.id, name: registered.name, repo: registered.repo, path: registered.path, remote: registered.remote, defaultBranch: registered.defaultBranch ?? "main" };
+    const product = scope.work.workProduct?.id === choice.productId ? { ...scope.work.workProduct, name: registered.name } : { id: registered.id, name: registered.name, repo: registered.repo, path: registered.path, remote: registered.remote, defaultBranch: registered.defaultBranch ?? "main" };
     const { startFrom, delivery } = choice;
     if (delivery === "release" && startFrom.kind !== "default") throw new Error("Releases start from the default branch. Correct the starting point or choose another delivery mode.");
     let start: TaskSource["start"];
@@ -38,6 +41,7 @@ export class Sources {
   }
 
   async propose(task: MTask, proposal: readonly WorkChoice[] | undefined, coordinator = false): Promise<void> {
+    const scope = executionFor(task);
     const selected = task.selectedProducts ?? (task.workChoice?.productId ? [task.workChoice] : []);
     if (task.workRows || (proposal && selected.some((choice) => !proposal.some((entry) => entry.productId === choice.productId))) || selected.length > 1 || (proposal?.length ?? 0) > 1 || proposal?.some((choice) => choice.repo && !this.k.s.products.some((product) => product.id === choice.productId || product.repo.toLowerCase() === choice.repo?.toLowerCase()))) {
       return this.proposeMany(task, proposal ?? selected, coordinator);
@@ -65,9 +69,9 @@ export class Sources {
         // A rejected old link must not prevent the coordinator from correcting it.
         try { unchanged = prNumber(original.startFrom.value, resolved.product.repo) === prNumber(choice.startFrom.value, resolved.product.repo); } catch { unchanged = false; }
       }
-      if (task.source?.confirmed && (JSON.stringify(task.source.start) !== JSON.stringify(resolved.start) || JSON.stringify(task.source.destination) !== JSON.stringify(resolved.destination))) unchanged = false;
-      if (unchanged && task.productId && (resolved.start.kind !== "pull-request" || task.source?.confirmed)) {
-        task.source = { ...resolved, confirmed: true, ...(task.source?.initialSha ? { initialSha: task.source.initialSha } : {}) };
+      if (scope.work.source?.confirmed && (JSON.stringify(scope.work.source.start) !== JSON.stringify(resolved.start) || JSON.stringify(scope.work.source.destination) !== JSON.stringify(resolved.destination))) unchanged = false;
+      if (unchanged && task.productId && (resolved.start.kind !== "pull-request" || scope.work.source?.confirmed)) {
+        scope.work.source = { ...resolved, confirmed: true, ...(scope.work.source?.initialSha ? { initialSha: scope.work.source.initialSha } : {}) };
         task.confirmWork = false;
       } else {
         task.proposedSource = resolved;
@@ -77,10 +81,10 @@ export class Sources {
       task.workError = error instanceof Error ? error.message : String(error);
       task.confirmWork = true;
     }
-    const source = task.proposedSource ?? task.source;
+    const source = task.proposedSource ?? scope.work.source;
     if (source) for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = deliveryLabel({ source, delivery: source.destination.mode });
     const item = this.k.s.inbox.find((entry) => entry.taskId === task.id && entry.kind === "plan");
-    if (item) item.body = [task.proposedSource ?? task.source ? workSummary((task.proposedSource ?? task.source)!) : "", task.workError ?? ""].filter(Boolean).join("\n");
+    if (item) item.body = [task.proposedSource ?? scope.work.source ? workSummary((task.proposedSource ?? scope.work.source)!) : "", task.workError ?? ""].filter(Boolean).join("\n");
     this.k.commitNow();
   }
 
@@ -157,7 +161,6 @@ export class Sources {
     if (work && !work.worktree) {
       work.source = { ...row.source, confirmed: true };
       work.workProduct = work.source.product;
-      if (task.productId === id) { task.source = work.source; task.workProduct = work.workProduct; }
     }
     try { row.source = await this.resolve(task, row.choice); delete row.error; }
     catch (error) { row.error = String(error); }
@@ -208,6 +211,7 @@ export class Sources {
   }
 
   confirm(task: MTask): void {
+    const scope = executionFor(task);
     if (task.workValidating) throw new Error("Wait for every product choice to finish validation.");
     if (task.workRows) {
       const invalid = task.workRows.some((row) => {
@@ -218,7 +222,7 @@ export class Sources {
       });
       if (!task.workRows.length || invalid) throw new Error("Correct every product and starting point, and confirm folders for additions before approval.");
       if (new Set(task.workRows.map((row) => row.source!.product.repo.toLowerCase())).size !== task.workRows.length) throw new Error("Choose each repository once.");
-      this.k.saveRepository(task);
+
       const prepared = task.repositories;
       task.repositories = task.workRows.map((row) => {
         const prior = prepared?.find((work) => work.productId === row.source!.product.id && JSON.stringify(work.source?.start) === JSON.stringify(row.source!.start) && JSON.stringify(work.source?.destination) === JSON.stringify(row.source!.destination));
@@ -236,64 +240,74 @@ export class Sources {
         task.plan.leadProductId = task.leadProductId;
         for (const stage of task.plan.stages) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = task.repositories.length > 1 ? `Deliver across ${task.repositories.length} products` : deliveryLabel({ source: task.repositories[0]!.source, delivery: task.repositories[0]!.delivery });
       }
-      delete task.activeProductId;
-      this.k.selectRepository(task, task.repositories[0]!.productId);
+      task.productId = task.leadProductId;
+      const lead = task.repositories.find((work) => work.productId === task.leadProductId)!;
+      task.delivery = lead.delivery;
+      task.workChoice = lead.workChoice;
+      task.activeProductId = task.repositories[0]!.productId;
+      detachRepositoryState(task);
       task.confirmWork = false;
       delete task.workError;
       this.k.log(task, "you", task.workRows.map((row) => workSummary(row.source!)).join("\n\n"));
       return;
     }
     // An older task may already have its working copy and an ordinary plan check.
-    if (task.worktree && !task.source && !task.workProposal) return;
-    if (task.workError || (!task.source && !task.proposedSource)) throw new Error(task.workError ?? "Choose a valid product and starting point first.");
+    if (scope.work.worktree && !scope.work.source && !task.workProposal) return;
+    if (task.workError || (!scope.work.source && !task.proposedSource)) throw new Error(task.workError ?? "Choose a valid product and starting point first.");
     if (task.proposedSource) {
-      if (task.worktree) throw new Error("This task already has a working copy. Keep its approved starting point, or start a new task for the new destination.");
-      task.source = { ...task.proposedSource, confirmed: true };
-      task.productId = task.source.product.id;
-      task.delivery = task.source.destination.mode;
+      if (scope.work.worktree) throw new Error("This task already has a working copy. Keep its approved starting point, or start a new task for the new destination.");
+      scope.work.source = { ...task.proposedSource, confirmed: true };
+      scope.work.productId = scope.work.source.product.id;
+      scope.work.delivery = scope.work.source.destination.mode;
+      task.productId = scope.work.productId;
+      task.delivery = scope.work.source.destination.mode;
       task.workChoice = task.workProposal?.[0];
-      task.workProduct = task.source.product;
+      scope.work.workChoice = task.workChoice;
+      scope.work.workProduct = scope.work.source.product;
       delete task.proposedSource;
     }
     task.confirmWork = false;
-    this.k.log(task, "you", workSummary(task.source!));
+    this.k.log(task, "you", workSummary(scope.work.source!));
   }
 
-  async refresh(task: MTask): Promise<void> {
-    if (task.repositories && (task.pr || task.release || task.landed)) return;
-    if (task.source?.start.kind !== "pull-request") return;
-    return this.connections.serial(task.productId, () => this.readBackground(task));
+  async refresh(scope: RepositoryContext): Promise<void> {
+    const { task, work: repository } = scope;
+    if (task.repositories && (repository.pr || repository.release || repository.landed)) return;
+    if (repository.source?.start.kind !== "pull-request") return;
+    return this.connections.serial(repository.productId, () => this.readBackground(scope));
   }
 
-  private async readBackground(task: MTask): Promise<void> {
-    const source = task.source;
+  private async readBackground(scope: RepositoryContext): Promise<void> {
+    const { work: repository } = scope;
+    const source = repository.source;
     if (source?.start.kind !== "pull-request") return;
     const pr = await sourcePr(source.product.repo, source.start.number, this.k.options.gh);
     if (pr.headRepo.toLowerCase() !== source.start.headRepo.toLowerCase() || pr.branch !== source.start.branch) throw new Error("The pull request's working repository or branch changed. Publishing is stopped; the approved destination stays unchanged.");
     if (pr.state !== "open") throw new Error(`PR #${pr.number} is ${pr.state}. Publishing is stopped and the task's work is preserved.`);
     const text = await background(source.product.repo, pr, this.k.options.gh);
-    task.prBackground = { readAt: Date.now(), head: pr.head, text };
+    repository.prBackground = { readAt: Date.now(), head: pr.head, text };
     this.k.commitNow();
   }
 
-  async fetch(task: MTask, signal: AbortSignal): Promise<{ sha: string; ref: string }> {
-    const source = task.source!;
-    const product = this.k.repositoryOf(task)!;
-    const remote = await this.connections.requireConnection(task, signal);
-    if (source.start.kind === "pull-request") await this.refresh(task);
+  async fetch(scope: RepositoryContext, signal: AbortSignal): Promise<{ sha: string; ref: string }> {
+    const { task, work: repository } = scope;
+    const source = repository.source!;
+    const product = this.k.repositoryOf(scope)!;
+    const remote = await this.connections.requireConnection(scope, signal);
+    if (source.start.kind === "pull-request") await this.refresh(scope);
     const ref = source.start.kind === "pull-request" ? `refs/petrina/sources/${task.id}` : `refs/remotes/origin/${source.start.branch}`;
     const from = source.start.kind === "pull-request" ? `refs/pull/${source.start.number}/head` : `refs/heads/${source.start.branch}`;
     // The last tip this task actually fetched. Read before the fetch replaces it.
     const remembered = await git.revParse(product.path!, ref);
     const result = await this.connections.serial(product.id, () => git.fetchRef(product.path!, remote, from, ref));
-    if (!result.ok) throw new Error(`Could not fetch the approved starting point (${this.connections.why(task, result)}). Retry; no other branch or older copy was substituted.`);
+    if (!result.ok) throw new Error(`Could not fetch the approved starting point (${this.connections.why(scope, result)}). Retry; no other branch or older copy was substituted.`);
     const replaced = "The starting branch's history was replaced or diverged. The task's work is preserved; it cannot be published safely without a decision.";
     if (source.initialSha && !(await git.contains(product.path!, result.sha, source.initialSha))) throw new Error(replaced);
     // A commit already brought in must still be in the new tip. A tip that is only behind commits on this
     // computer is not a rewrite: GitHub has not moved, and those commits were never on it. Dropping a tip
     // already fetched (a reset or a force-push) still stops, so a removed change is not put back.
-    if (task.baseSha && task.baseSha !== result.sha && !(await git.contains(product.path!, result.sha, task.baseSha))) {
-      const behindLocal = await git.contains(product.path!, task.baseSha, result.sha);
+    if (repository.baseSha && repository.baseSha !== result.sha && !(await git.contains(product.path!, result.sha, repository.baseSha))) {
+      const behindLocal = await git.contains(product.path!, repository.baseSha, result.sha);
       const dropped = remembered !== undefined && remembered !== result.sha && !(await git.contains(product.path!, result.sha, remembered));
       if (!behindLocal || dropped) throw new Error(replaced);
     }

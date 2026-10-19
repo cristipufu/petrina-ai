@@ -217,7 +217,7 @@ it.each([false, true])("gives an earlier waiting peer the screen before a later 
   const lessons = (f.engine as unknown as { learnings: Learnings }).learnings;
   const note = lessons.note.bind(lessons);
   lessons.note = async (task, words, roleId, profileId) => {
-    if (task.id === f.id && roleId === "code-reviewer" && !saving) { saving = true; await held; }
+    if (task.task.id === f.id && roleId === "code-reviewer" && !saving) { saving = true; await held; }
     return note(task, words, roleId, profileId);
   };
   try {

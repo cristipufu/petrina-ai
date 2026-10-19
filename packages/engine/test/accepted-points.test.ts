@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -52,19 +53,19 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
     git(repo, "add", ".");
     git(repo, "commit", "-q", "-m", "Coordinator removes obsolete instructions");
     const next = engine.task(engine.addTask({ productId, title: "A later delivery" }))!;
-    next.worktree = repo;
-    next.baseSha = git(repo, "rev-parse", "HEAD");
-    const older = { ...next, baseSha: beforeRule };
-    const incorporatedBase = { ...next, baseSha: incorporatedCommit };
+    executionFor(next).work.worktree = repo;
+    executionFor(next).work.baseSha = git(repo, "rev-parse", "HEAD");
+    const older = { ...next, repository: { ...next.repository!, baseSha: beforeRule } };
+    const incorporatedBase = { ...next, repository: { ...next.repository!, baseSha: incorporatedCommit } };
     const keeper = engine["guide"];
-    expect(await keeper.pendingPoints(older)).toEqual([incorporatedRule, pendingRule]);
-    expect(await keeper.pendingPoints(incorporatedBase)).toEqual([pendingRule]);
-    expect(await keeper.pendingPoints(next)).toEqual([pendingRule]);
-    expect(await keeper.reviewGuide(older)).toContain(incorporatedRule);
-    expect(await keeper.reviewGuide(next)).not.toContain(incorporatedRule);
-    expect(await keeper.pendingPoints({ ...next, baseSha: "f".repeat(40) })).toEqual([incorporatedRule, pendingRule]);
-    await new Learnings(engine).write(next);
-    await keeper.writeGuide(next);
+    expect(await keeper.pendingPoints(executionFor(older))).toEqual([incorporatedRule, pendingRule]);
+    expect(await keeper.pendingPoints(executionFor(incorporatedBase))).toEqual([pendingRule]);
+    expect(await keeper.pendingPoints(executionFor(next))).toEqual([pendingRule]);
+    expect(await keeper.reviewGuide(executionFor(older))).toContain(incorporatedRule);
+    expect(await keeper.reviewGuide(executionFor(next))).not.toContain(incorporatedRule);
+    expect(await keeper.pendingPoints({ task: next, work: { ...executionFor(next).work, baseSha: "f".repeat(40) } })).toEqual([incorporatedRule, pendingRule]);
+    await new Learnings(engine).write(executionFor(next));
+    await keeper.writeGuide(executionFor(next));
     const file = readFileSync(join(repo, "AGENTS.md"), "utf8");
     expect(file).toContain(pending);
     expect(file).not.toContain(incorporated);
@@ -82,8 +83,8 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
     expect(restored.incorporatedOn).toBeUndefined();
     expect(restored.writtenOn).toBeUndefined();
     expect(restored.fromTask).toBe(next.id);
-    expect(await engine["guide"].pendingPoints(currentTask)).toContain(incorporatedRule);
-    await engine["guide"].writeGuide(currentTask);
+    expect(await engine["guide"].pendingPoints(executionFor(currentTask))).toContain(incorporatedRule);
+    await engine["guide"].writeGuide(executionFor(currentTask));
     expect(readFileSync(join(repo, "REVIEW.md"), "utf8")).toContain(incorporatedRule);
   } finally { await engine.shutdown(); }
 });

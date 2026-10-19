@@ -1,3 +1,4 @@
+import { executionFor, restoreRepositoryState } from "../src/repository-context.js";
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, createDemoState, DESIGN_OBJECTION_RULE, type State } from "@petrina/core";
@@ -23,12 +24,13 @@ describe("every role's contract", () => {
     try {
       const context = new Context(engine, { pendingPoints: async () => [] } as unknown as GuideKeeper);
       const current = structuredClone(task) as import("../src/kernel.js").MTask;
+      restoreRepositoryState(current);
       current.queued = [];
       current.sourcePointers = [];
       for (const test of designReviewCases) {
         current.brief = { summary: test.name, forUsers: ["Run maintenance"], areas: [...test.areas], acceptance: test.acceptance.map((text) => ({ text })), risks: ["Keep missed runs bounded"] };
         for (const roleId of ["architect", "design-reviewer", "builder", "tester", "code-reviewer"]) {
-          const brief = (await context.sectionsFor(current, roleId)).find((section) => section.title === "Design brief")!.body;
+          const brief = (await context.sectionsFor(executionFor(current), roleId)).find((section) => section.title === "Design brief")!.body;
           for (const rule of [...test.areas, ...test.acceptance]) expect(brief).toContain(rule);
         }
       }
@@ -113,9 +115,10 @@ describe("a role renamed after the state was saved", () => {
       expect(engine.getState().inbox.find((item) => item.id === "old-question")?.roleId).toBe("release-manager");
       // The working agents and the conversation note, as far as Petrina keeps them on a paused task, and as they were saved.
       for (const kept of [task.agent, ...(task.helpers ?? []), task.conversation]) if (kept) expect(kept.roleId).toBe("release-manager");
+      restoreRepositoryState(saved.tasks[0]! as import("../src/kernel.js").MTask);
       renameRoles(saved as unknown as MState);
       const moved = saved.tasks[0]!;
-      expect([moved.agent?.roleId, moved.helpers?.[0]?.roleId, moved.conversation?.roleId]).toEqual(["release-manager", "release-manager", "release-manager"]);
+      expect([moved.agent?.roleId, moved.helpers?.[0]?.roleId, moved.repository?.conversation?.roleId]).toEqual(["release-manager", "release-manager", "release-manager"]);
       expect(JSON.stringify(engine.getState())).not.toContain('"shipper"');
       // Saved under the new id: the next load has nothing to move.
       engine.shutdown();

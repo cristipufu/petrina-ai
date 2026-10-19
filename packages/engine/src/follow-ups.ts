@@ -346,7 +346,12 @@ export class FollowUps {
       selectedProducts: choices,
       explicitStart: false,
       workChoice: choices[0] ?? { productId: product?.id ?? "", startFrom: { kind: "default" }, delivery: product?.delivery ?? "pull-request" },
-      ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
+      repository: {
+        productId: product?.id ?? choices[0]?.productId ?? "",
+        delivery: choices[0]?.delivery ?? product?.delivery ?? "pull-request",
+        workChoice: choices[0] ?? { productId: product?.id ?? "", startFrom: { kind: "default" }, delivery: product?.delivery ?? "pull-request" },
+        ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
+      },
       title: create.title,
       description: followUpDescription(create.reports, names),
       area: create.title.toLowerCase(),

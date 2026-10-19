@@ -20,7 +20,7 @@ function fixture() {
   const id = engine.addTask({ productId: "first", worksOn: products.map((product) => ({ productId: product.id, startFrom: { kind: "default" }, delivery: "local" })), title: "Keep completed review evidence", backlog: true });
   const task = engine.task(id)!;
   task.repositories = products.map((product) => ({ productId: product.id, source: { product, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true }, worktree: product.path, delivery: "local", completedStages: [], reviewedSha: `earlier-${product.id}`, reviewedTree: `earlier-tree-${product.id}` }));
-  engine.selectRepository(task, "first");
+  task.activeProductId = "first";
   const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 2 };
   task.plan = { rationale: "Review both", plannerProfileId: "sol-high", stages: [stage, { id: "delivery", title: "Delivery", kind: "gate", roleId: "release-manager", profileIds: [], gate: "delivery" }] };
   task.stageIndex = 0;
@@ -32,7 +32,7 @@ function fixture() {
 describe("shared review settlement interleavings", () => {
   for (const active of ["first", "second"]) for (const security of [false, true]) it(`keeps repository anchors through state reads while a ${security ? "security" : "code"} round closes with ${active} active`, async () => {
     const { first, second, engine, task, stage } = fixture();
-    engine.selectRepository(task, active);
+    task.activeProductId = active;
     stage.roleId = security ? "security-reviewer" : "code-reviewer";
     const readHead = steps.head, readTree = steps.treeOf;
     const heads = [first, second].map((world) => git(world.clone, "rev-parse", "HEAD"));
@@ -46,13 +46,13 @@ describe("shared review settlement interleavings", () => {
       expect(task.repositories!.map((work) => work.reviewedSha)).toEqual(security ? ["earlier-first", "earlier-second"] : heads);
       expect(task.repositories!.map((work) => work.reviewedTree)).toEqual(trees);
       const activeIndex = active === "first" ? 0 : 1;
-      expect(task.reviewedSha).toBe(security ? `earlier-${active}` : heads[activeIndex]);
-      expect(task.reviewedTree).toBe(trees[activeIndex]);
+      expect(engine.taskDetails(task.id)!.reviewedSha).toBe(security ? `earlier-${active}` : heads[activeIndex]);
+      expect(engine.taskDetails(task.id)!.reviewedTree).toBe(trees[activeIndex]);
       engine.save();
       const saved = engine.store.load()!.tasks.find((entry) => entry.id === task.id)!;
       expect(saved.repositories!.map((work) => work.reviewedSha)).toEqual(security ? ["earlier-first", "earlier-second"] : heads);
       expect(saved.repositories!.map((work) => work.reviewedTree)).toEqual(trees);
-      expect(saved.reviewedTree).toBe(trees[activeIndex]);
+      expect(saved.reviewedTree).toBeUndefined();
     } finally { head.mockRestore(); tree.mockRestore(); await engine.shutdown(); }
   });
 

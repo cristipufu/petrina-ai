@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -78,7 +79,7 @@ describe("reading a product's committed files", () => {
       const task = engine.task(taskId)!;
       if (pullRequest) {
         const product = engine.getState().products.find((entry) => entry.id === productId)!;
-        task.source = {
+        executionFor(task).work.source = {
           product,
           start: { kind: "pull-request", number: 7, url: "https://github.com/acme/demo/pull/7", headRepo: "contributor/demo", branch: "review-work" },
           destination: { mode: "pull-request", kind: "update-pr", repo: "contributor/demo", branch: "review-work" },
@@ -88,7 +89,7 @@ describe("reading a product's committed files", () => {
       let finish!: (points: string[]) => void;
       const pending = new Promise<string[]>((resolve) => { finish = resolve; });
       const guide = { pendingPoints: () => pending } as unknown as GuideKeeper;
-      const reading = new Context(engine, guide).sectionsFor(task, "code-reviewer");
+      const reading = new Context(engine, guide).sectionsFor(executionFor(task), "code-reviewer");
       engine.sendMessage(taskId, "Keep the existing welcome page.");
       expect(task.queued).toHaveLength(1);
       finish(["Every greeting also shows on the welcome page."]);
@@ -99,7 +100,7 @@ describe("reading a product's committed files", () => {
         const source = sections.find((section) => section.title === "Approved starting point and delivery")?.body;
         expect(source).toContain("from PR #7");
         expect(source).toContain("Update PR #7 contributor/demo · review-work");
-        expect(task.source?.confirmed).toBe(true);
+        expect(executionFor(task).work.source?.confirmed).toBe(true);
       }
       expect(task.queued).toEqual([]);
     } finally {
@@ -116,7 +117,7 @@ describe("reading a product's committed files", () => {
       const productId = await engine.addProduct(makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Keep every role's notes" });
       const task = engine.task(taskId)!;
-      if (pullRequest) task.source = {
+      if (pullRequest) executionFor(task).work.source = {
         product: engine.getState().products.find((product) => product.id === productId)!,
         start: { kind: "pull-request", number: 7, url: "https://github.com/acme/demo/pull/7", headRepo: "contributor/demo", branch: "review-work" },
         destination: { mode: "pull-request", kind: "update-pr", repo: "contributor/demo", branch: "review-work" },
@@ -126,7 +127,7 @@ describe("reading a product's committed files", () => {
       let finish!: (points: string[]) => void;
       const pending = new Promise<string[]>((resolve) => { finish = resolve; });
       const guide = { pendingPoints: () => pending } as unknown as GuideKeeper;
-      const reading = new Context(engine, guide).sectionsFor(task, reviewer);
+      const reading = new Context(engine, guide).sectionsFor(executionFor(task), reviewer);
       engine.sendMessage(taskId, "Check the welcome page too.");
       expect(task.queued).toHaveLength(1);
       finish(["The welcome page must show who can see each greeting."]);

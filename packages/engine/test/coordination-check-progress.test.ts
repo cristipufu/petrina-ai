@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ function fixture() {
   const product = makeProduct(root);
   engine.s.products.push({ id: "product", name: "Example", repo: "local/example", path: product, tone: "blue", delivery: "local" });
   const task = engine.task(engine.addTask({ productId: "product", title: "Check evidence" }))!;
-  task.worktree = product;
+  executionFor(task).work.worktree = product;
   task.plan = { stages: [{ id: "release", title: "Release", kind: "do", roleId: "release-manager", profileIds: ["opus-high"] }], rationale: "Release", plannerProfileId: "opus-high" };
   task.stageIndex = 0;
   task.journey = [{ id: "notes", kind: "agent", roleId: "release-manager", stageId: "release", startedAt: 1, round: 1, sub: 0 }];
@@ -40,7 +41,7 @@ it("retains live check progress and every original diagnostic through repeated p
     { name: "Quick", argv: [process.execPath, "-e", 'console.log("First preparation diagnostic")'] },
     { name: "Held", argv: [process.execPath, "-e", 'while (!(await Bun.file(process.argv[1]).exists())) await Bun.sleep(20);', release] },
   ];
-  const running = engine["checks"].runProductChecks(task, checks, new AbortController().signal);
+  const running = engine["checks"].runProductChecks(executionFor(task), checks, new AbortController().signal);
   try {
     await waitFor(() => task.journey![0]!.productChecks?.[0]?.result === "pass" && task.journey![0]!.productChecks?.[1]?.result === "running", "a completed check beside a running check");
     const node = await coordination.call("journey.node", { taskId: task.id, nodeId: "notes" });
@@ -55,14 +56,14 @@ it("retains live check progress and every original diagnostic through repeated p
   expect(await running).toBe(0);
   const firstLog = task.journey![0]!.productChecks![0]!.run!.logPath;
   const failure = "Original failure near the beginning\n" + "Later diagnostic line\n".repeat(9000);
-  expect(await engine["checks"].runProductChecks(task, [{ name: "Quick", argv: [process.execPath, "-e", 'await Bun.write(Bun.stderr, "Original failure near the beginning\\n" + "Later diagnostic line\\n".repeat(9000)); process.exit(1);'] }], new AbortController().signal)).toBe(1);
+  expect(await engine["checks"].runProductChecks(executionFor(task), [{ name: "Quick", argv: [process.execPath, "-e", 'await Bun.write(Bun.stderr, "Original failure near the beginning\\n" + "Later diagnostic line\\n".repeat(9000)); process.exit(1);'] }], new AbortController().signal)).toBe(1);
   const evidence = task.journey![0]!.productChecks!;
   expect(evidence).toHaveLength(3);
   expect(new Set(evidence.map((check) => check.id)).size).toBe(3);
   expect(evidence[0]!.run!.logPath).toBe(firstLog);
   expect(evidence[2]!.run!.logPath).not.toBe(firstLog);
   // A newer successful run cannot replace the earlier failed run's diagnostics.
-  expect(await engine["checks"].runProductChecks(task, checks.slice(0, 1), new AbortController().signal)).toBe(0);
+  expect(await engine["checks"].runProductChecks(executionFor(task), checks.slice(0, 1), new AbortController().signal)).toBe(0);
   task.state = "paused";
   engine.setPoolPaused(true);
   await engine.shutdown();
@@ -84,7 +85,7 @@ it("retains live check progress and every original diagnostic through repeated p
 it("keeps stopped check diagnostics beside completed peers without duplicating progress entries", async () => {
   const { engine, task, coordination } = fixture();
   const stop = new AbortController();
-  const running = engine["checks"].runProductChecks(task, [
+  const running = engine["checks"].runProductChecks(executionFor(task), [
     { name: "Quick", argv: [process.execPath, "-e", 'console.log("Completed peer")'] },
     { name: "Held", argv: [process.execPath, "-e", 'console.log("Before interruption"); await Bun.sleep(60000);'] },
   ], stop.signal).then(() => "finished", () => "stopped");

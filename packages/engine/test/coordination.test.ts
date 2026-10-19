@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -141,7 +142,7 @@ describe("focused coordination and durable decisions", () => {
       const choice = { productId: product.id, startFrom: { kind: "default" as const }, delivery: "local" as const };
       e.s.tasks.push({
         ...structuredClone(template), id: `history-${String(index).padStart(3, "0")}`, title: `Archived request ${index}`, description: "long request ".repeat(1000),
-        productId: product.id, selectedProducts: [choice], workChoice: choice, workProduct: { id: product.id, name: product.name, repo: product.repo },
+        productId: product.id, selectedProducts: [choice], workChoice: choice, repository: { productId: product.id, delivery: choice.delivery, workChoice: choice, workProduct: { id: product.id, name: product.name, repo: product.repo } },
         held: index % 3 === 0, state: index % 4 ? "done" : "cancelled", column: "done", finishedAt: index + 1,
       });
     }
@@ -193,7 +194,7 @@ describe("focused coordination and durable decisions", () => {
     // Once planning records ownership, the selected repository still does not narrow membership.
     shared.repositories = ["product", "other"].map((productId) => ({ productId, delivery: "local", completedStages: [] }));
     shared.activeProductId = "product";
-    e.selectRepository(shared, "other");
+    shared.activeProductId = "other";
     expect(await ids("task.list", { productId: "product", taskId: sharedId, states: ["queued"], held: true, search: "SHARED" })).toEqual([sharedId]);
     expect(await ids("task.list", { productId: "other", held: false })).toEqual([otherId]);
     expect(await ids("task.list", { productId: "other", taskId })).toEqual([]);
@@ -274,7 +275,7 @@ describe("focused coordination and durable decisions", () => {
   it("binds checkpoint approval to source and all assignments, while unrelated activity stays valid", async () => {
     const { e, c, taskId, offer, inspect } = fixture();
     const t = e.task(taskId)!;
-    t.source = {
+    executionFor(t).work.source = {
       product: { id: "product", name: "Example", repo: "local/example" },
       start: { kind: "default", branch: "main" },
       destination: { mode: "local", repo: "local/example", branch: "main", kind: "branch" },
@@ -379,7 +380,7 @@ describe("focused coordination and durable decisions", () => {
         reason: "Back to builder",
       },
     ];
-    t.checks = { at: 3, sha: "newer", results: [{ name: "Tests", command: "test stand-in", ok: true, ms: 1, output: "pass" }] };
+    executionFor(t).work.checks = { at: 3, sha: "newer", results: [{ name: "Tests", command: "test stand-in", ok: true, ms: 1, output: "pass" }] };
     let page = await c.call("journey.check", { taskId, nodeId: "checks", index: 0 });
     expect(page.text).toStartWith("Original failure");
     expect(page.commandOutcome).toBe("failed");
@@ -412,7 +413,7 @@ describe("focused coordination and durable decisions", () => {
     const [run] = await runChecks(home, [{ name: "Check", argv: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(original)}); process.exit(1)`] }], process.env, 10_000 * SLOW, undefined, directory);
     run!.logComplete = false;
     run!.interrupted = true;
-    e.task(taskId)!.checks = {
+    executionFor(e.task(taskId)!).work.checks = {
       at: 1,
       results: [run!],
     };
@@ -425,7 +426,7 @@ describe("focused coordination and durable decisions", () => {
       all += page.text;
     }
     expect(all).toBe(original);
-    e.task(taskId)!.checks!.results[0]!.logPath = join(directory, "missing.log");
+    executionFor(e.task(taskId)!).work.checks!.results[0]!.logPath = join(directory, "missing.log");
     expect((await c.call("journey.check", { taskId, index: 0 })).completeness).toBe("missing-file");
   });
   it("uses one drain definition for admitted steps, questions, permissions and cleanup, while saved screen work waits separately", async () => {
@@ -490,12 +491,12 @@ describe("focused coordination and durable decisions", () => {
     expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("deliveryConfirmed", false);
     expect((await c.call("watch.wait", { target: "task", taskId, condition: "delivered", timeoutMs: 0 })).outcome).toBe("timed-out");
     task.state = "pr-open";
-    task.pr = { number: 1, url: "https://github.com/example/product/pull/1", state: "open", openedAt: 1 };
+    executionFor(task).work.pr = { number: 1, url: "https://github.com/example/product/pull/1", state: "open", openedAt: 1 };
     expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("deliveryConfirmed", true);
     expect((await c.call("watch.wait", { target: "task", taskId, condition: "delivered", timeoutMs: 0 })).outcome).toBe("completed");
     expect((await c.call("watch.wait", { target: "task", taskId, condition: "landed", timeoutMs: 0 })).outcome).toBe("timed-out");
     task.state = "done";
-    task.pr.state = "merged";
+    executionFor(task).work.pr!.state = "merged";
     expect((await c.call("watch.wait", { target: "task", taskId, condition: "landed", timeoutMs: 0 })).outcome).toBe("completed");
     task.state = "cancelled";
     expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("landing", "cancelled");

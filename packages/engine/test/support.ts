@@ -1,3 +1,4 @@
+import { displayTask } from "@petrina/core";
 // Shared by the tests: engines run as separate processes, and the delivery tests' world, a product
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
 // stand-ins only through the Engine's constructor.
@@ -445,7 +446,8 @@ export function makeWorld(name: string, options: { version?: string; address?: s
     },
     editSaved: (change) => {
       const store = new Store(join(data, "petrina.db"));
-      const state = store.load()!;
+      const loaded = store.load()!;
+      const state = { ...loaded, tasks: loaded.tasks.map(displayTask) };
       change(state);
       store.save(state);
       store.close();

@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it } from "bun:test";
 import { linkSync, mkdirSync, renameSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -94,7 +95,7 @@ for (const kind of ["cli", "mcp"] as const) {
     const run = await createdFailure(home, task.id, saved);
     run.output = saved;
     const logPath = run.logPath!;
-    task.checks = { at: 1, results: [run] };
+    executionFor(task).work.checks = { at: 1, results: [run] };
     task.journey = [{ id: "recorded-check", kind: "petrina", work: "checks", startedAt: 1, endedAt: 2, round: 1, sub: 0, productChecks: [{ name: run.name, result: "fail", run }] }];
     const token = "hard-link-test-connection-key-123";
     const server = serve(engine, { port: 0, token });
@@ -171,7 +172,7 @@ for (const kind of ["cli", "mcp"] as const) {
     const logPath = join(directory, "empty.log");
     writeFileSync(logPath, "");
     const run: CheckRun = { name: "Check", command: "stand-in", ok: false, ms: 1, output: "", logComplete: false };
-    task.checks = { at: 1, results: [run] };
+    executionFor(task).work.checks = { at: 1, results: [run] };
     const token = "stale-explanation-key-12345678901";
     const server = serve(engine, { port: 0, token });
     writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token });
@@ -211,7 +212,7 @@ for (const kind of ["cli", "mcp"] as const) {
     const logPath = run.logPath!;
     const timestamp = new Date("2020-01-01T00:00:00Z");
     utimesSync(logPath, timestamp, timestamp);
-    task.checks = { at: 1, results: [run] };
+    executionFor(task).work.checks = { at: 1, results: [run] };
     const token = "private-test-connection-key-12345";
     const server = serve(engine, { port: 0, token });
     writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token });
@@ -261,14 +262,14 @@ for (const kind of ["cli", "mcp"] as const) {
     const choice = { productId: "product", startFrom: { kind: "default" }, delivery: "local" };
     try {
       expect((await call("task.source", { taskId: task.id, choice, requestId: "valid-source" })).outcome).toBe("completed");
-      const source = structuredClone(task.source);
+      const source = structuredClone(executionFor(task).work.source);
       const inspected = await coordination.call("inbox.inspect", { itemId: "plan" });
       const invalid = { taskId: task.id, choice: { ...choice, startFrom: { kind: "branch", name: "bad..branch" } }, requestId: "invalid-source" };
       const rejected = await call("task.source", invalid, 2);
       expect(rejected.outcome).toBe("invalid");
       expect(rejected.message).toBe(task.workError!);
       expect(rejected.message).toContain("valid branch name");
-      expect(task.source).toEqual(source);
+      expect(executionFor(task).work.source).toEqual(source);
       expect(task.proposedSource).toBeUndefined();
       expect(engine.s.inbox.map((item) => item.id)).toContain("plan");
       expect((await coordination.call("inbox.approve", { itemId: "plan", revision: inspected.revision, requestId: "stale-approval" })).outcome).toBe("changed");
@@ -277,7 +278,7 @@ for (const kind of ["cli", "mcp"] as const) {
       expect(await call("task.source", invalid, 2)).toEqual(rejected);
       expect(task.workError).toBeUndefined();
       expect((await call("task.source", { ...invalid, choice }, 5)).outcome).toBe("conflict");
-      expect(task.source).toEqual(source);
+      expect(executionFor(task).work.source).toEqual(source);
       for (const [index, other] of [
         { ...choice, productId: "unregistered-product" },
         { ...choice, startFrom: { kind: "branch", name: "main" }, delivery: "release" },
@@ -285,7 +286,7 @@ for (const kind of ["cli", "mcp"] as const) {
         const rejected = await call("task.source", { taskId: task.id, choice: other, requestId: `other-rejection-${index}` }, 2);
         expect(rejected.outcome).toBe("invalid");
         expect(rejected.message).toBe(task.workError!);
-        expect(task.source).toEqual(source);
+        expect(executionFor(task).work.source).toEqual(source);
       }
       if (kind === "cli") {
         const child = Bun.spawn([process.execPath, CLI, "task", "source", task.id, "--choice", JSON.stringify(invalid.choice), "--request-id", "human-rejection"], { env: engineEnv(home), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -309,7 +310,7 @@ for (const kind of ["cli", "mcp"] as const) {
     expect(typeof runs[0]!.logFileIdentity?.device).toBe("string");
     expect(typeof runs[0]!.logFileIdentity?.inode).toBe("string");
     expect(runs[0]!.output).toContain("Could not start:");
-    task.checks = { at: 1, sha: "original", results: runs };
+    executionFor(task).work.checks = { at: 1, sha: "original", results: runs };
     task.journey = [{ id: "original-checks", kind: "petrina", work: "checks", startedAt: 1, endedAt: 2, round: 1, sub: 0, productChecks: runs.map((run) => ({ name: run.name, result: run.ok ? "pass" : "fail", run })) }];
     const token = "check-outcome-key-123456789012345";
     let server = serve(engine, { port: 0, token });
@@ -334,7 +335,7 @@ for (const kind of ["cli", "mcp"] as const) {
         expect(quiet.commandOutcome).toBe("passed");
         expect(quiet.completeness).toBe("complete");
       }
-      task.checks = { at: 3, sha: "later", results: [runs[2]!] };
+      executionFor(task).work.checks = { at: 3, sha: "later", results: [runs[2]!] };
       task.state = "paused";
       server.stop(true);
       await engine.shutdown();
@@ -357,7 +358,7 @@ it("labels older check logs without creation identity as unverified and uses onl
   const logPath = join(directory, "older.log");
   const saved = "The failure excerpt saved with this older run.";
   writeFileSync(logPath, "Unverified raw file content");
-  task.checks = { at: 1, results: [{ name: "Check", command: "stand-in", ok: false, ms: 1, output: saved, logPath, logComplete: true }] };
+  executionFor(task).work.checks = { at: 1, results: [{ name: "Check", command: "stand-in", ok: false, ms: 1, output: saved, logPath, logComplete: true }] };
   const result = await coordination.call("journey.check", { taskId: task.id, index: 0 });
   expect(result.completeness).toBe("legacy-unverified");
   expect(result.text).toBe(saved);
@@ -372,7 +373,7 @@ it("paginates legacy saved failure details independently of a long or empty proc
   const logPath = join(directory, "recorded.log");
   const saved = "Could not finish: saved explanation\n" + "Additional recorded details\n".repeat(1000);
   const run: CheckRun = { name: "Check", command: "stand-in", ok: false, ms: 1, output: saved, logPath, logComplete: false };
-  task.checks = { at: 1, results: [run] };
+  executionFor(task).work.checks = { at: 1, results: [run] };
   for (const log of ["", "Original process output\n".repeat(2000)]) {
     writeFileSync(logPath, log);
     let page = await coordination.call("journey.check", { taskId: task.id, index: 0, limit: 100 });

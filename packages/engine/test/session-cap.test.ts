@@ -17,7 +17,7 @@ function kernel(): Quiet {
 
 function task(id: string, images: boolean): MTask {
   return {
-    id, title: "Check a page", productId: "product-1", state: "running", column: "build", priority: 0, queued: [], timeline: [],
+    id, title: "Check a page", productId: "product-1", repository: { productId: "product-1", delivery: "local" }, state: "running", column: "build", priority: 0, queued: [], timeline: [],
     session: Array.from({ length: MAX_SESSION_LINES }, (_, index) => ({
       id: `earlier-${id}-${index}`, at: 1, from: "agent" as const, text: "An earlier report", roleId: "code-reviewer", profileId: "opus-high",
       ...(images ? { images: [{ id: "old-picture", caption: "An earlier page" }] } : {}),

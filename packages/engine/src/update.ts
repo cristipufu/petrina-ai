@@ -1,3 +1,4 @@
+import { type RepositoryContext } from "./repository-context.js";
 // Keeping a task's work one commit on top of the latest default branch. Petrina folds the branch into one
 // commit after every build, and right before the delivery check, and again right before shipping, puts it
 // on top of the latest main itself, with git plumbing that never leaves a working copy halfway through a
@@ -7,7 +8,7 @@ import { JOURNEY_WORDS as W, lastIndexWhere, petrinaMoment } from "@petrina/core
 import * as git from "./git.js";
 import type { Sources } from "./sources.js";
 import type { Connections } from "./connection.js";
-import type { Kernel, MTask } from "./kernel.js";
+import type { Kernel } from "./kernel.js";
 
 export class Updates {
   constructor(
@@ -17,20 +18,22 @@ export class Updates {
   ) {}
 
   /** The task's one commit message: the builder's title in the repository's style, what changed for users, who built it. */
-  message(task: MTask): string {
+  message(scope: RepositoryContext): string {
+    const { task, work: repository } = scope;
     const builder = task.plan?.stages.find((stage) => stage.roleId === "builder");
-    const by = task.builderSession?.profileId ?? builder?.profileIds[0];
-    const changes = (task.report?.changes ?? []).map((change) => `- ${change}`).join("\n");
-    return [task.report?.title ?? task.title, task.report?.summary ?? "", changes, `Built by Petrina${by ? `: ${this.k.describe("builder", by)}` : ""}`].filter(Boolean).join("\n\n");
+    const by = repository.builderSession?.profileId ?? builder?.profileIds[0];
+    const changes = (repository.report?.changes ?? []).map((change) => `- ${change}`).join("\n");
+    return [repository.report?.title ?? task.title, repository.report?.summary ?? "", changes, `Built by Petrina${by ? `: ${this.k.describe("builder", by)}` : ""}`].filter(Boolean).join("\n\n");
   }
 
   /** The branch as one commit on top of where it forked, with the same code and the task's message. */
-  async fold(task: MTask): Promise<void> {
+  async fold(scope: RepositoryContext): Promise<void> {
+    const { work: repository } = scope;
     // While the builder brings the work up to date, the branch sits on main with the change not committed yet.
-    if (!task.worktree || task.updating) return;
-    const base = (await this.settleBase(task)) ?? task.base;
+    if (!repository.worktree || repository.updating) return;
+    const base = (await this.settleBase(scope)) ?? repository.base;
     if (!base) return;
-    await git.squash(task.worktree, base, this.message(task));
+    await git.squash(repository.worktree, base, this.message(scope));
   }
 
   /**
@@ -40,15 +43,16 @@ export class Updates {
    * would be folded into the task's commit. The base follows the branch's latest meeting with main, read from
    * the product's own clone with no network. The same when the noted base is not in the branch at all.
    */
-  private async settleBase(task: MTask): Promise<string | undefined> {
-    const worktree = task.worktree!;
-    const base = task.baseSha;
-    const product = this.k.repositoryOf(task);
+  private async settleBase(scope: RepositoryContext): Promise<string | undefined> {
+    const { task, work: repository } = scope;
+    const worktree = repository.worktree!;
+    const base = repository.baseSha;
+    const product = this.k.repositoryOf(scope);
     if (!base || !product?.path) return base;
-    const branch = task.source?.start.branch ?? product.defaultBranch ?? "main";
-    const main = task.source?.start.kind === "pull-request"
+    const branch = repository.source?.start.branch ?? product.defaultBranch ?? "main";
+    const main = repository.source?.start.kind === "pull-request"
       ? await git.revParse(product.path, `refs/petrina/sources/${task.id}`)
-      : (task.delivery !== "local" || task.localUpdate?.pushed === false ? await git.revParse(product.path, `refs/remotes/origin/${branch}`) : undefined) ?? (await git.revParse(product.path, `refs/heads/${branch}`));
+      : (repository.delivery !== "local" || repository.localUpdate?.pushed === false ? await git.revParse(product.path, `refs/remotes/origin/${branch}`) : undefined) ?? (await git.revParse(product.path, `refs/heads/${branch}`));
     if (!main) return base;
     const met = await git.mergeBase(worktree, "HEAD", main);
     if (!met || met === base) return base;
@@ -56,9 +60,9 @@ export class Updates {
     const baseInBranch = await git.contains(worktree, await git.head(worktree), base);
     // The usual case: the branch forked at the base and main moved on since. Nothing to settle.
     if (!forward && baseInBranch) return base;
-    task.baseSha = met;
+    repository.baseSha = met;
     this.k.log(
-      task,
+      scope,
       "warn",
       forward
         ? `The builder brought ${branch} into the branch itself, so the work now counts from ${met.slice(0, 7)} and reviews see only its own changes. Petrina brings work up to date; builders need not.`
@@ -69,11 +73,12 @@ export class Updates {
   }
 
   /** The change itself (git's patch-id), from where the branch forked to `ref`. */
-  async patch(task: MTask, ref = "HEAD"): Promise<string | undefined> {
-    const base = task.baseSha ?? task.base;
-    if (!task.worktree || !base) return undefined;
-    const fork = (await git.mergeBase(task.worktree, ref, base)) ?? base;
-    return git.patchId(task.worktree, fork, ref);
+  async patch(scope: RepositoryContext, ref = "HEAD"): Promise<string | undefined> {
+    const { work: repository } = scope;
+    const base = repository.baseSha ?? repository.base;
+    if (!repository.worktree || !base) return undefined;
+    const fork = (await git.mergeBase(repository.worktree, ref, base)) ?? base;
+    return git.patchId(repository.worktree, fork, ref);
   }
 
   /**
@@ -82,17 +87,18 @@ export class Updates {
    * builder step, with the working copy on main and the change applied, conflict markers and all.
    * `fresh`: right before shipping, where only main freshly fetched from GitHub counts for a GitHub delivery.
    */
-  async upToDate(task: MTask, signal: AbortSignal, fresh = false): Promise<"current" | "moved" | "conflict"> {
-    if (task.repositories && (task.pr || task.release || task.landed)) return "current";
-    const worktree = task.worktree;
-    const sourceName = task.source?.start.kind === "pull-request" ? `PR #${task.source.start.number}` : task.source?.start.branch ?? "main";
+  async upToDate(scope: RepositoryContext, signal: AbortSignal, fresh = false): Promise<"current" | "moved" | "conflict"> {
+    const { task, work: repository } = scope;
+    if (task.repositories && (repository.pr || repository.release || repository.landed)) return "current";
+    const worktree = repository.worktree;
+    const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? "main";
     if (!worktree) return "current";
-    await this.fold(task);
-    const latest = await this.latestMain(task, signal, fresh);
+    await this.fold(scope);
+    const latest = await this.latestMain(scope, signal, fresh);
     if (!latest) return "current";
     // Checked before treating an older tip as already current. A rewrite can keep the first starting commit
     // and still drop a source commit this task already brought in.
-    if (task.baseSha && task.baseSha !== latest.sha && !(await git.contains(worktree, latest.sha, task.baseSha))) {
+    if (repository.baseSha && repository.baseSha !== latest.sha && !(await git.contains(worktree, latest.sha, repository.baseSha))) {
       throw new Error("The starting branch's history was replaced or diverged. The task's work is preserved; it cannot be published safely without a decision.");
     }
     const fork = await git.mergeBase(worktree, "HEAD", latest.sha);
@@ -103,20 +109,20 @@ export class Updates {
     if (!merged) throw new Error(`Petrina could not bring the work up to date with ${sourceName}`);
     const gained = await git.commitsSince(worktree, fork, latest.sha);
     const commits = `${gained} new commit${gained === 1 ? "" : "s"}`;
-    const reviewed = !!task.reviewedTree && task.reviewedTree === await git.treeOf(worktree);
+    const reviewed = !!repository.reviewedTree && repository.reviewedTree === await git.treeOf(worktree);
     if (!merged.conflicts.length) {
-      await git.moveTo(worktree, await git.commitTree(worktree, merged.tree, latest.sha, this.message(task)));
-      if (reviewed) task.reviewedTree = merged.tree;
-      if (task.checks) task.checks.current = task.checks.tree === merged.tree;
-      task.baseSha = latest.sha;
-      task.base = latest.ref;
+      await git.moveTo(worktree, await git.commitTree(worktree, merged.tree, latest.sha, this.message(scope)));
+      if (reviewed) repository.reviewedTree = merged.tree;
+      if (repository.checks) repository.checks.current = repository.checks.tree === merged.tree;
+      repository.baseSha = latest.sha;
+      repository.base = latest.ref;
       // The version the last round reviewed, carried onto the new base too, so the next round still sees only what changed since.
-      if (task.reviewedSha) {
-        const carried = await this.carry(task, task.reviewedSha);
-        if (carried) task.reviewedSha = carried;
-        else delete task.reviewedSha;
+      if (repository.reviewedSha) {
+        const carried = await this.carry(scope, repository.reviewedSha);
+        if (carried) repository.reviewedSha = carried;
+        else delete repository.reviewedSha;
       }
-      this.k.log(task, "done", `Brought up to date with ${sourceName} (${commits} there), with no conflicts`);
+      this.k.log(scope, "done", `Brought up to date with ${sourceName} (${commits} there), with no conflicts`);
       this.k.commit();
       return "moved";
     }
@@ -125,14 +131,14 @@ export class Updates {
     // On disk before the working copy moves: a restart in between finds the update and opens it again.
     // Only a completed review of this exact code permits the later review to cover the port alone.
     const head = reviewed ? await git.head(worktree) : undefined;
-    task.updating = { from: fork, onto: latest.sha, ...(head ? { head } : {}), files: merged.conflicts, ...(merged.notes.length ? { notes: merged.notes } : {}) };
+    repository.updating = { from: fork, onto: latest.sha, ...(head ? { head } : {}), files: merged.conflicts, ...(merged.notes.length ? { notes: merged.notes } : {}) };
     // The builder ports the change by hand: whatever was approved before, the coordinator checks it again.
-    delete task.approvedSha;
-    delete task.approvedPatch;
-    delete task.approvedFor;
-    task.baseSha = latest.sha;
-    task.base = latest.ref;
-    if (task.repositories) task.repair = { products: [task.productId], index: 0, returnStage: task.stageIndex, kind: "review" };
+    delete repository.approvedSha;
+    delete repository.approvedPatch;
+    delete repository.approvedFor;
+    repository.baseSha = latest.sha;
+    repository.base = latest.ref;
+    if (task.repositories) task.repair = { products: [repository.productId], index: 0, returnStage: task.stageIndex, kind: "review" };
     task.stageIndex = builder;
     task.sub = 0;
     task.fixing = false;
@@ -141,7 +147,7 @@ export class Updates {
     const files = merged.conflicts.length === 1 ? "1 file conflicts" : `${merged.conflicts.length} files conflict`;
     // A moment of Petrina's own on the journey: why the builder gets the work back.
     petrinaMoment(task, "update", { outcome: W.mainMoved(merged.conflicts.length, sourceName), reason: W.conflicts(sourceName), tone: "back" }, Date.now());
-    this.k.log(task, "warn", `${sourceName === "main" ? "Main" : sourceName} moved on (${commits}) and ${files} with this work, so the builder brings it up to date`);
+    this.k.log(scope, "warn", `${sourceName === "main" ? "Main" : sourceName} moved on (${commits}) and ${files} with this work, so the builder brings it up to date`);
     this.k.commit();
     return "conflict";
   }
@@ -150,9 +156,10 @@ export class Updates {
    * A reviewed version of the change carried onto the current base unchanged: a commit of its merge with the
    * base, on no branch, kept only as a reference for "what changed since". Undefined when the two overlap.
    */
-  private async carry(task: MTask, sha: string): Promise<string | undefined> {
-    const worktree = task.worktree;
-    const base = task.baseSha;
+  private async carry(scope: RepositoryContext, sha: string): Promise<string | undefined> {
+    const { work: repository } = scope;
+    const worktree = repository.worktree;
+    const base = repository.baseSha;
     if (!worktree || !base) return undefined;
     const merged = await git.mergeTree(worktree, base, sha);
     if (!merged || merged.conflicts.length) return undefined;
@@ -160,14 +167,15 @@ export class Updates {
   }
 
   /** Before the builder starts on an update: the working copy as `upToDate` left it, even after a restart in between. */
-  async reopen(task: MTask): Promise<void> {
-    const updating = task.updating;
-    if (!updating || !task.worktree) return;
-    if ((await git.head(task.worktree).catch(() => undefined)) === updating.onto) return;
-    const merged = await git.mergeTree(task.worktree, updating.onto);
-    const sourceName = task.source?.start.kind === "pull-request" ? `PR #${task.source.start.number}` : task.source?.start.branch ?? "main";
+  async reopen(scope: RepositoryContext): Promise<void> {
+    const { work: repository } = scope;
+    const updating = repository.updating;
+    if (!updating || !repository.worktree) return;
+    if ((await git.head(repository.worktree).catch(() => undefined)) === updating.onto) return;
+    const merged = await git.mergeTree(repository.worktree, updating.onto);
+    const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? "main";
     if (!merged) throw new Error(`Petrina could not bring the work up to date with ${sourceName}`);
-    await git.openOn(task.worktree, updating.onto, merged.tree);
+    await git.openOn(repository.worktree, updating.onto, merged.tree);
   }
 
   /**
@@ -175,20 +183,21 @@ export class Updates {
    * local destination commits. Explicit sources never fall back to an old copy. Ordinary default-branch
    * tasks keep their existing fallback before delivery; publishing always needs a fresh GitHub read.
    */
-  private async latestMain(task: MTask, signal: AbortSignal, fresh: boolean): Promise<{ ref: string; sha: string } | undefined> {
-    const product = this.k.repositoryOf(task);
+  private async latestMain(scope: RepositoryContext, signal: AbortSignal, fresh: boolean): Promise<{ ref: string; sha: string } | undefined> {
+    const { work: repository } = scope;
+    const product = this.k.repositoryOf(scope);
     if (!product?.path) return undefined;
-    const branch = task.source?.start.branch ?? product.defaultBranch ?? "main";
+    const branch = repository.source?.start.branch ?? product.defaultBranch ?? "main";
     let remote: { ref: string; sha: string } | undefined;
-    if (task.source && task.source.start.kind !== "default") {
-      remote = await this.sources.fetch(task, signal);
-    } else if (!(task.delivery === "local" && !product.remote && product.remoteRefused)) {
-      const fetched = await this.connections.fetchDefault(task, signal);
+    if (repository.source && repository.source.start.kind !== "default") {
+      remote = await this.sources.fetch(scope, signal);
+    } else if (!(repository.delivery === "local" && !product.remote && product.remoteRefused)) {
+      const fetched = await this.connections.fetchDefault(scope, signal);
       if (fetched.ok) remote = { ref: `origin/${branch}`, sha: fetched.sha };
-      else if (fresh && !fetched.missing) throw new Error(`Petrina could not get the latest ${branch} from GitHub (${this.connections.why(task, fetched)}), so it published nothing. Retry when that is sorted.`);
-      else if (!fetched.missing) this.k.log(task, "warn", `Did not update from GitHub: ${this.connections.why(task, fetched)}, so Petrina compared the work with the local copy of ${branch}`);
+      else if (fresh && !fetched.missing) throw new Error(`Petrina could not get the latest ${branch} from GitHub (${this.connections.why(scope, fetched)}), so it published nothing. Retry when that is sorted.`);
+      else if (!fetched.missing) this.k.log(scope, "warn", `Did not update from GitHub: ${this.connections.why(scope, fetched)}, so Petrina compared the work with the local copy of ${branch}`);
     }
-    if (task.delivery !== "local" || task.source?.start.kind === "pull-request") {
+    if (repository.delivery !== "local" || repository.source?.start.kind === "pull-request") {
       if (remote) return remote;
       const sha = await git.revParse(product.path, `refs/remotes/origin/${branch}`) ?? await git.revParse(product.path, `refs/heads/${branch}`);
       return sha ? { ref: branch, sha } : undefined;
@@ -196,7 +205,7 @@ export class Updates {
     const local = await git.revParse(product.path, `refs/heads/${branch}`);
     if (!local) return remote;
     // Our own unpushed placement is work to carry forward, not an independent source commit.
-    if (remote && task.localUpdate?.pushed === false && task.localUpdate.branch === branch && task.localUpdate.sha === local) return remote;
+    if (remote && repository.localUpdate?.pushed === false && repository.localUpdate.branch === branch && repository.localUpdate.sha === local) return remote;
     if (!remote || await git.contains(product.path, local, remote.sha)) return { ref: branch, sha: local };
     if (await git.contains(product.path, remote.sha, local)) return remote;
     throw new Error(`${branch} in the local copy and on GitHub have divergent history. The task's work is preserved. Bring the destination copies into agreement before retrying.`);

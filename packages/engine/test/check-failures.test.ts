@@ -1,7 +1,8 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { draftOf, journeyProblems, type DeepMutable, type State, type Task } from "@petrina/core";
+import { displayTask, draftOf, journeyProblems, type DeepMutable, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "../src/store.js";
@@ -54,7 +55,8 @@ process.exit(ok ? 0 : 1);
       await engine.shutdown();
       if (edit) {
         const store = new Store(join(root, "data", "petrina.db"));
-        const state = store.load()!;
+        const loaded = store.load()!;
+        const state = { ...loaded, tasks: loaded.tasks.map(displayTask) };
         edit(state as DeepMutable<State>);
         store.save(state);
         store.close();
@@ -171,10 +173,10 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       // A later fix changes the patch after acceptance has already passed. The earlier
       // automatic check fixes have used their allowance, as on a long-running task.
       const live = f.engine.task(f.taskId)!;
-      live.checkReturns = 2;
-      writeFileSync(join(live.worktree!, "later-fix.txt"), "A later change\n");
-      git(live.worktree!, "add", "later-fix.txt");
-      git(live.worktree!, "commit", "-q", "-m", "A later change");
+      executionFor(live).work.checkReturns = 2;
+      writeFileSync(join(executionFor(live).work.worktree!, "later-fix.txt"), "A later change\n");
+      git(executionFor(live).work.worktree!, "add", "later-fix.txt");
+      git(executionFor(live).work.worktree!, "commit", "-q", "-m", "A later change");
       f.setCheck();
       f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Check the later change");
 
@@ -211,27 +213,27 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       f.setCheck("--pass");
       await f.delivery();
       const task = f.engine.task(f.taskId)!;
-      const saved = structuredClone(task.checks!);
-      const evidence = async () => (await f.engine["context"].sectionsFor(task, "tester")).find((section) => section.title.includes("product checks"));
+      const saved = structuredClone(executionFor(task).work.checks!);
+      const evidence = async () => (await f.engine["context"].sectionsFor(executionFor(task), "tester")).find((section) => section.title.includes("product checks"));
       expect(await evidence()).toEqual(expect.objectContaining({ title: "Current product checks, run by Petrina itself", body: expect.stringContaining("do not rerun the full checks") }));
 
-      writeFileSync(join(task.worktree!, "greeting.txt"), "Uncommitted change\n");
+      writeFileSync(join(executionFor(task).work.worktree!, "greeting.txt"), "Uncommitted change\n");
       expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-      git(task.worktree!, "add", "greeting.txt");
-      git(task.worktree!, "commit", "-q", "-m", "A real change");
+      git(executionFor(task).work.worktree!, "add", "greeting.txt");
+      git(executionFor(task).work.worktree!, "commit", "-q", "-m", "A real change");
       expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-      git(task.worktree!, "reset", "--hard", saved.sha!);
+      git(executionFor(task).work.worktree!, "reset", "--hard", saved.sha!);
       expect((await evidence())?.title).toBe("Current product checks, run by Petrina itself");
 
       f.setCheck("--pass", "--changed");
       expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
       f.setCheck("--pass");
-      task.checks!.results = [{ ...saved.results[0]!, ok: false, timedOut: true }];
+      executionFor(task).work.checks!.results = [{ ...saved.results[0]!, ok: false, timedOut: true }];
       expect((await evidence())?.body).toContain("not passing acceptance evidence");
       expect((await evidence())?.body).not.toContain("Use them for automated acceptance");
-      task.checks!.results = [];
+      executionFor(task).work.checks!.results = [];
       expect(await evidence()).toBeUndefined();
-      task.checks = structuredClone(saved);
+      executionFor(task).work.checks = structuredClone(saved);
       f.engine.setProductChecks(f.productId, [
         { name: "Welcome", command: f.command("--pass") },
         { name: "Extra", command: f.command("--pass", "--extra") },

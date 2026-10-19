@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -43,11 +44,11 @@ describe.concurrent("approved clone recovery", () => {
       new Sources(engine, new Connections(engine)).confirm(task);
       expect(task.delivery).toBe("local");
       if (saved) task.repositories![0]!.preparingCopy = { path: join(world.data, "worktrees", "addition", id), branch: "petrina/saved-approved-local", base: "main" };
-      await engine["driver"]["prepare"](task, new AbortController().signal);
-      expect(task.source!.initialSha).toBe(world.initial);
-      expect(task.baseSha).toBe(world.initial);
-      expect(git(task.worktree!, "ls-tree", "--name-only", "HEAD", "TRUNK_ONLY.md")).toBe("");
-      expect(git(task.worktree!, "branch", "--show-current")).toBe(task.branch!);
+      await engine["driver"]["prepare"](executionFor(task), new AbortController().signal);
+      expect(executionFor(task).work.source!.initialSha).toBe(world.initial);
+      expect(executionFor(task).work.baseSha).toBe(world.initial);
+      expect(git(executionFor(task).work.worktree!, "ls-tree", "--name-only", "HEAD", "TRUNK_ONLY.md")).toBe("");
+      expect(git(executionFor(task).work.worktree!, "branch", "--show-current")).toBe(executionFor(task).work.branch!);
       expect(git(path, "branch", "--list", "main")).toBe("");
     } finally { await engine.shutdown(); }
   });
@@ -135,9 +136,9 @@ describe.concurrent("approved clone recovery", () => {
         expect(current.task(id)!.workRows![0]!.source!.start).toEqual({ kind: "default", branch: "main" });
         const task = current.task(id)!;
         new Sources(current, new Connections(current)).confirm(task);
-        await current["driver"]["prepare"](task, new AbortController().signal);
-        expect(task.baseSha).toBe(world.initial);
-        expect(git(task.worktree!, "rev-parse", "HEAD")).toBe(world.initial);
+        await current["driver"]["prepare"](executionFor(task), new AbortController().signal);
+        expect(executionFor(task).work.baseSha).toBe(world.initial);
+        expect(git(executionFor(task).work.worktree!, "rev-parse", "HEAD")).toBe(world.initial);
         expect(git(path, "branch", "--show-current")).toBe("trunk");
       }
       if (recovery !== "new") expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Do not reclone over completed work\n");

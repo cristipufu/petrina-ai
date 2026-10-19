@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -47,18 +48,18 @@ describe("lessons agents pass on", () => {
       const repo = makeProduct(root);
       const productId = await engine.addProduct(repo);
       const task = engine.task(engine.addTask({ productId, title: "Keep a complete instruction" }))!;
-      task.worktree = repo;
+      executionFor(task).work.worktree = repo;
       const learnings = new Learnings(engine);
       const lesson = "The Claude Code connector and SDK sources can be read without installing anything, in ~/.bun/install/cache (@agentclientprotocol/claude-agent-acp dist/acp-agent.js, and @anthropic-ai/claude-agent-sdk sdk.d.ts for the full settings and sandbox options); check both sources before changing how sessions start.";
-      await learnings.note(task, [lesson], "builder", "sol-xhigh");
-      await learnings.offer(task);
+      await learnings.note(executionFor(task), [lesson], "builder", "sol-xhigh");
+      await learnings.offer(executionFor(task));
       const offer = engine.getState().inbox.find((item) => item.kind === "learnings")!;
       expect(offer.body).toBe(`- ${lesson}`);
       engine.addLessons(offer.id, [0]);
-      await learnings.write(task);
+      await learnings.write(executionFor(task));
       expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(`- ${lesson}`);
-      await learnings.note(task, [lesson], "builder", "sol-xhigh");
-      await learnings.offer(task);
+      await learnings.note(executionFor(task), [lesson], "builder", "sol-xhigh");
+      await learnings.offer(executionFor(task));
       expect(engine.getState().inbox.filter((item) => item.kind === "learnings")).toEqual([]);
     } finally {
       engine.shutdown();
@@ -185,7 +186,7 @@ describe("repeated lessons", () => {
       git(repo, "add", "AGENTS.md");
       git(repo, "commit", "-q", "-m", "Existing guidance");
       const task = engine.task(engine.addTask({ productId, title: "Keep distinct instructions" }))!;
-      task.worktree = repo;
+      executionFor(task).work.worktree = repo;
       const product = engine.productOf(task)!;
       product.learnings = [{ text: "Use scripts/check-one.sh for focused checks.", fromTask: task.id, at: 0 }];
       product.learningsDeclined = ["Run integration tests without installing dependencies."];
@@ -197,13 +198,13 @@ describe("repeated lessons", () => {
         "A check with no evidence is verified.",
       ];
       const learnings = new Learnings(engine);
-      await learnings.note(task, instructions, "builder", "sol-xhigh");
-      await learnings.note(task, instructions.map((line) => `  ${line}  `), "code-reviewer", "grok-xhigh");
-      await learnings.offer(task);
+      await learnings.note(executionFor(task), instructions, "builder", "sol-xhigh");
+      await learnings.note(executionFor(task), instructions.map((line) => `  ${line}  `), "code-reviewer", "grok-xhigh");
+      await learnings.offer(executionFor(task));
       const offer = engine.getState().inbox.find((item) => item.kind === "learnings")!;
       expect(offer.body).toBe(instructions.map((line) => `- ${line}`).join("\n"));
       engine.addLessons(offer.id, [0, 1, 2, 3]);
-      await learnings.write(task);
+      await learnings.write(executionFor(task));
       expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[0]!);
       expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[1]!);
       expect(git(repo, "show", "HEAD:AGENTS.md")).not.toContain(`- ${instructions[4]}`);

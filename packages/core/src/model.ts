@@ -712,94 +712,16 @@ export interface WorkRow {
   addition?: { name: string; path: string; productId: Id; created?: boolean; ready?: boolean };
 }
 
-/** These fields belong to one repository, never to a whole shared task. */
-export const REPOSITORY_FIELDS = [
-  "productId", "workChoice", "workProduct", "source", "prBackground", "delivery",
-  "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
-  "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
-  "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
-  "cleanup", "conversation", "stepAttempts", "acceptanceReturns", "releasePreview"
-] as const;
-export type RepositoryField = typeof REPOSITORY_FIELDS[number];
-export type TaskRepository = Pick<Task, RepositoryField> & {
-  completedStages: readonly Id[];
-  preparation?: "waiting" | "ready";
-  preparingCopy?: { path: string; branch: string; base: string };
-  nothingToPublish?: boolean;
-  landingAccepted?: { at: number };
-  companion?: { text: string; state: "pending" | "checking" | "done" };
-  removed?: boolean;
-};
-
-export interface Task {
-  /** Original requests combined into this task, or the replacement for a combined source. */
-  combinedFrom?: readonly { id: Id; title: string }[];
-  combinedInto?: Id;
-  /** Retained coordinator choices and the complete validated scope, before any fetching. */
-  selectedProducts?: readonly WorkChoice[];
-  workRows?: readonly WorkRow[];
-  repositories?: readonly TaskRepository[];
-  excludedRepositories?: readonly TaskRepository[];
-  leadProductId?: Id;
-  /** The repository whose saved fields are currently loaded for an editing conversation. */
-  activeProductId?: Id;
-  repair?: { products: readonly Id[]; index: number; returnStage: number; kind: "checks" | "acceptance" | "review" };
-  testedVersions?: Readonly<Record<Id, string>>;
-  designRevision?: number;
-  approvalExplanation?: string;
-  deliveryRecorded?: boolean;
-  sharedLessons?: readonly Lesson[];
-
+/** Execution state owned by exactly one product repository. */
+export interface RepositoryState {
   workChoice?: WorkChoice;
   workProduct?: TaskSource["product"];
-  /** Explicit New task choices stay authoritative until the coordinator approves a change. */
-  explicitStart?: boolean;
   source?: TaskSource;
-  proposedSource?: TaskSource;
-  workProposal?: readonly WorkChoice[];
-  workError?: string;
-  confirmWork?: boolean;
-  workValidating?: boolean;
   prBackground?: PullRequestBackground;
   tamper?: { at: number; sha: string; problems: readonly string[] };
-  id: Id;
   productId: Id;
-  title: string;
-  description: string;
-  /** A short noun for the part of the product the task touches, used in plain-language lines. */
-  area: string;
-  kind: TaskKind;
-  /** Position in the queue. Lower starts first. */
-  priority: number;
-  held: boolean;
-  /** Tasks that must land first; until then this one waits quietly (a cancelled one no longer blocks). */
-  after?: readonly Id[];
-  state: RunState;
-  column: Column;
-  /** Whether the task currently occupies a pool slot. */
-  holdsSlot: boolean;
-  approvePlan: boolean;
   /** What happens once the work is ready. Defaults to the product's setting. */
   delivery: DeliveryMode;
-  /** Ask the coordinator before Petrina delivers. */
-  approveDelivery: boolean;
-  plan?: Plan;
-  /** Optional locations actually inspected during planning, verified again before handoff. */
-  sourcePointers?: readonly SourcePointer[];
-  /** -1 while the planner runs, then the index into `plan.stages`. */
-  stageIndex: number;
-  /** Rounds per stage id. */
-  rounds: Readonly<Record<Id, number>>;
-  /** Per review stage, how many Important findings were open at the end of each round: whether it still converges. */
-  blockingAfter?: Readonly<Record<Id, readonly number[]>>;
-  /** The blocking findings still open after each review round, to tell fixes from newly discovered issues. */
-  blockingFindingsAfter?: Readonly<Record<Id, readonly (readonly Id[])[]>>;
-  /** `converge`: 0 author, 1 reviewer. `review-chain`: reviewer index. */
-  sub: number;
-  /** The builder is fixing review findings. */
-  fixing: boolean;
-  /** Changes were asked at this design check: earlier checks of the same design pass by themselves on the way back to it. */
-  returnToCheck?: number;
   /** The last time Petrina ran the product's checks on this task, and on which commit. */
   /** The tree is the code itself: a squash keeps it, so the checks still count. */
   /** The definition covers commands and hook inputs, separately from the code. */
@@ -812,8 +734,6 @@ export interface Task {
   reviewedSha?: string;
   /** The exact code that completed code review, including any later reviewed port. Missing on older tasks: they receive ordinary review. */
   reviewedTree?: string;
-  /** How much could go wrong, as the planner rated it from what the task touches. Sets review depth and the delivery check. */
-  risk?: { level: RiskLevel; why: string };
   /** The commit the delivery check showed the coordinator, and the one they approved. */
   checkedSha?: string;
   approvedSha?: string;
@@ -843,20 +763,130 @@ export interface Task {
   lessons?: readonly Lesson[];
   /** Petrina is running the repository's pre-commit hook, with the working copy's HEAD detached at the base: a restart puts it back. */
   hooking?: boolean;
+  /** Final acceptance failures return to the builder twice, then wait for the coordinator. */
+  acceptanceReturns?: number;
+  /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
+  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext };
+  pr?: PullRequest;
+  /** The task's own branch and working copy. */
+  branch?: string;
+  worktree?: string;
+  base?: string;
+  /** Set once the task is finished and Petrina has removed (or is trying to remove) its working copy. */
+  cleanup?: Cleanup;
+  /**
+   * What the builder reported, in plain language: its one-line commit title, and a pull request's description,
+   * which Petrina publishes as the builder wrote it.
+   */
+  report?: { summary: string; changes: readonly string[]; tests?: string; title?: string; description?: string };
+  /** Set when a `release` product published this task. */
+  release?: { tag: string; url: string };
+  /** Set when commit delivery advanced the approved branch and confirmed its push, if it has GitHub. */
+  landed?: { branch: string; sha: string };
+  /** The destination was advanced locally; its push is a separate, possibly unfinished step. */
+  localUpdate?: { branch: string; sha: string; pushed: boolean };
+  /** How many times the current step has started. */
+  stepAttempts?: number;
+  /** The conversation the current step's agent has open, so it can pick it up after a restart. */
+  conversation?: ConversationNote;
+  /** Set while the task is being shipped. */
+  shipping?: ShippingRecord;
+  releasePreview?: { start: string; base?: string; version: string; tag: string; after: string; notes: string; summary: string };
+}
+
+/** These fields belong to one repository, never to a whole shared task. */
+export const REPOSITORY_FIELDS = [
+  "productId", "workChoice", "workProduct", "source", "prBackground", "delivery",
+  "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
+  "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
+  "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
+  "cleanup", "conversation", "stepAttempts", "acceptanceReturns", "releasePreview"
+] as const;
+export type RepositoryField = typeof REPOSITORY_FIELDS[number];
+export type TaskRepository = RepositoryState & {
+  completedStages: readonly Id[];
+  preparation?: "waiting" | "ready";
+  preparingCopy?: { path: string; branch: string; base: string };
+  nothingToPublish?: boolean;
+  landingAccepted?: { at: number };
+  companion?: { text: string; state: "pending" | "checking" | "done" };
+  removed?: boolean;
+};
+
+export interface Task extends RepositoryState {
+  /** Canonical execution record for a single-product task; top-level repository fields are a display view. */
+  repository?: RepositoryState;
+  /** Original requests combined into this task, or the replacement for a combined source. */
+  combinedFrom?: readonly { id: Id; title: string }[];
+  combinedInto?: Id;
+  /** Retained coordinator choices and the complete validated scope, before any fetching. */
+  selectedProducts?: readonly WorkChoice[];
+  workRows?: readonly WorkRow[];
+  repositories?: readonly TaskRepository[];
+  excludedRepositories?: readonly TaskRepository[];
+  leadProductId?: Id;
+  /** Product assigned to the current step. Operations retain their own repository context across waits. */
+  activeProductId?: Id;
+  repair?: { products: readonly Id[]; index: number; returnStage: number; kind: "checks" | "acceptance" | "review" };
+  testedVersions?: Readonly<Record<Id, string>>;
+  designRevision?: number;
+  approvalExplanation?: string;
+  deliveryRecorded?: boolean;
+  sharedLessons?: readonly Lesson[];
+  /** Explicit New task choices stay authoritative until the coordinator approves a change. */
+  explicitStart?: boolean;
+  proposedSource?: TaskSource;
+  workProposal?: readonly WorkChoice[];
+  workError?: string;
+  confirmWork?: boolean;
+  workValidating?: boolean;
+  id: Id;
+  title: string;
+  description: string;
+  /** A short noun for the part of the product the task touches, used in plain-language lines. */
+  area: string;
+  kind: TaskKind;
+  /** Position in the queue. Lower starts first. */
+  priority: number;
+  held: boolean;
+  /** Tasks that must land first; until then this one waits quietly (a cancelled one no longer blocks). */
+  after?: readonly Id[];
+  state: RunState;
+  column: Column;
+  /** Whether the task currently occupies a pool slot. */
+  holdsSlot: boolean;
+  approvePlan: boolean;
+  /** Ask the coordinator before Petrina delivers. */
+  approveDelivery: boolean;
+  plan?: Plan;
+  /** Optional locations actually inspected during planning, verified again before handoff. */
+  sourcePointers?: readonly SourcePointer[];
+  /** -1 while the planner runs, then the index into `plan.stages`. */
+  stageIndex: number;
+  /** Rounds per stage id. */
+  rounds: Readonly<Record<Id, number>>;
+  /** Per review stage, how many Important findings were open at the end of each round: whether it still converges. */
+  blockingAfter?: Readonly<Record<Id, readonly number[]>>;
+  /** The blocking findings still open after each review round, to tell fixes from newly discovered issues. */
+  blockingFindingsAfter?: Readonly<Record<Id, readonly (readonly Id[])[]>>;
+  /** `converge`: 0 author, 1 reviewer. `review-chain`: reviewer index. */
+  sub: number;
+  /** The builder is fixing review findings. */
+  fixing: boolean;
+  /** Changes were asked at this design check: earlier checks of the same design pass by themselves on the way back to it. */
+  returnToCheck?: number;
+  /** How much could go wrong, as the planner rated it from what the task touches. Sets review depth and the delivery check. */
+  risk?: { level: RiskLevel; why: string };
   /** The change (its fingerprint) the tester last tried: fix rounds are reviewed, and the tester tries the final code once more before the delivery check. */
   testedPatch?: string;
   /** Whether that acceptance run passed; a failed run can never satisfy the final acceptance check. */
   acceptancePassed?: boolean;
-  /** Final acceptance failures return to the builder twice, then wait for the coordinator. */
-  acceptanceReturns?: number;
   /** Acceptance still failed after those returns: wait for a coordinator decision, including after restart. */
   acceptanceBlocked?: boolean;
   /** At least one acceptance item could not be checked; never send the same unavailable probe back unchanged. */
   acceptanceUnverified?: boolean;
   /** The tester is trying the final code right before the delivery check; the check follows, or the builder if it fails. */
   retest?: boolean;
-  /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
-  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext };
   /** Separate completed design conversations per stage, participant and product. Never shared between author and reviewer. */
   designSessions?: Readonly<Record<string, { scope: string; plannedProfileId: Id; profileId: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; briefDigest?: string }>>;
   /** The coordinator sent the delivery back with this note: the Guide keeper looks for what reviewers missed. */
@@ -909,41 +939,16 @@ export interface Task {
   };
   /** Cards listed to each reviewer, so a missing choice stays a missing choice after a restart. */
   shownFollowUps?: Readonly<Record<string, readonly Id[]>>;
-  pr?: PullRequest;
   /** Ticks spent with the pull request open (simulator only). */
   prAge: number;
-  /** The task's own branch and working copy. */
-  branch?: string;
-  worktree?: string;
-  base?: string;
   /** Notes handed back by earlier steps, for every later agent on the task. */
   handedBack?: readonly HandedBack[];
-  /** Set once the task is finished and Petrina has removed (or is trying to remove) its working copy. */
-  cleanup?: Cleanup;
-  /**
-   * What the builder reported, in plain language: its one-line commit title, and a pull request's description,
-   * which Petrina publishes as the builder wrote it.
-   */
-  report?: { summary: string; changes: readonly string[]; tests?: string; title?: string; description?: string };
   /** Why the task failed, when it did. */
   error?: string;
-  /** Set when a `release` product published this task. */
-  release?: { tag: string; url: string };
-  /** Set when commit delivery advanced the approved branch and confirmed its push, if it has GitHub. */
-  landed?: { branch: string; sha: string };
-  /** The destination was advanced locally; its push is a separate, possibly unfinished step. */
-  localUpdate?: { branch: string; sha: string; pushed: boolean };
   /** Everything the coordinator said about this task, kept for every later agent (latest wins). */
   notes?: readonly { at: number; text: string; id?: Id; origin?: { stageId?: Id; stageTitle: string; roleName?: string; kind?: InboxKind } }[];
   /** What the coordinator said during the current step, in order. Cleared when the step finishes. */
   stepNotes?: readonly StepNote[];
-  /** How many times the current step has started. */
-  stepAttempts?: number;
-  /** The conversation the current step's agent has open, so it can pick it up after a restart. */
-  conversation?: ConversationNote;
-  /** Set while the task is being shipped. */
-  shipping?: ShippingRecord;
-  releasePreview?: { start: string; base?: string; version: string; tag: string; after: string; notes: string; summary: string };
   /** Set while the coordinator drives the current step in their own terminal. */
   driving?: Driving;
   /** Files changed by hand that no review chain has looked at from its first reviewer yet. Nothing ships while set. */

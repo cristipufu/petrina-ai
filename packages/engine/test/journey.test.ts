@@ -211,7 +211,7 @@ describe("the engine records each task's journey", () => {
     engine.setPoolPaused(true);
     const id = engine.addTask({ productId, title: "From before" });
     // As if it ran before journeys were recorded: planned, designed and waiting for its build.
-    const task = engine.getState().tasks.find((entry) => entry.id === id) as unknown as Record<string, unknown>;
+    const task = engine.task(id)! as unknown as Record<string, unknown>;
     Object.assign(task, {
       state: "waiting",
       startedAt: Date.now() - 60_000,
@@ -242,7 +242,7 @@ describe("the engine records each task's journey", () => {
     const question = () => engine.getState().inbox.find((item) => item.taskId === id && item.kind === "question");
     await until(engine, () => !!question(), () => true, "the architect's question");
     // As if it ran before journeys were recorded, and Petrina restarted before the question was answered.
-    const before = taskOf(engine, id) as unknown as { journey?: unknown; timeline: { step?: string }[]; session: { step?: string }[] };
+    const before = engine.task(id)! as unknown as { journey?: unknown; timeline: { step?: string }[]; session: { step?: string }[] };
     delete before.journey;
     for (const line of [...before.timeline, ...before.session]) delete line.step;
     engine.shutdown();

@@ -1,3 +1,5 @@
+import { executionFor } from "../src/repository-context.js";
+import type { RepositoryContext } from "../src/repository-context.js";
 import { createDemoState, draftOf, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -50,7 +52,7 @@ describe.concurrent("one task across products", () => {
       const ordered = reverse ? [...reports].reverse() : reports;
       for (const [index, productIds] of ordered.entries()) {
         const result = ReviewResult.parse({ verdict: "fail", findings: [{ text: index ? "The GREETING is missing!" : "The greeting is missing.", productIds: productIds?.map((id) => ids[id]), severity: "important", evidence: `Current reproduction from reviewer ${index}.` }] });
-        await engine["reviews"]["applyReview"](task, stage, result, index ? "sol-high" : "opus-high", "code-reviewer", String(index));
+        await engine["reviews"]["applyReview"](executionFor(task), stage, result, index ? "sol-high" : "opus-high", "code-reviewer", String(index));
       }
       expect(task.findings).toHaveLength(1);
       expect(task.findings[0]!.productIds?.slice().sort()).toEqual(owners.map((id) => ids[id]).sort());
@@ -71,7 +73,7 @@ describe.concurrent("one task across products", () => {
       const stage = task.plan!.stages.find((stage) => stage.kind === "review-chain")!;
       const report = { text: "The API drops the greeting after signing out.", severity: "important", evidence: "The current API guest request omits the greeting; a signed-in request includes it." };
       for (const [index, productIds] of [[second], undefined].entries()) {
-        await engine["reviews"]["applyReview"](task, stage, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds }] }), index ? "sol-high" : "opus-high", "code-reviewer", String(index));
+        await engine["reviews"]["applyReview"](executionFor(task), stage, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds }] }), index ? "sol-high" : "opus-high", "code-reviewer", String(index));
       }
       const findingId = task.findings.find((finding) => finding.text === report.text)!.id;
       task.findings.push({ id: "unknown-owner", text: "A separate finding has no known owner.", productIds: [], severity: "blocking", raisedBy: "sol-high", confirmedBy: [], status: "open" });
@@ -200,7 +202,7 @@ describe.concurrent("one task across products", () => {
         const before = JSON.parse(JSON.stringify(task.findings[0]!));
         const result = ReviewResult.parse({ verdict: "fail", ...(channel === "confirmation" ? { confirms: [{ id: "dismissed", evidence: proof }] } : { findings: [{ text: "The GREETING is missing!", productIds: [second, first], severity: "important", evidence: proof }] }) });
         expect(checkReviewEvidence(task.findings, result, task)).toBeUndefined();
-        await engine["reviews"]["applyReview"](task, stage, result, by, "code-reviewer", "0");
+        await engine["reviews"]["applyReview"](executionFor(task), stage, result, by, "code-reviewer", "0");
         expect(task.findings).toHaveLength(1);
         const current = task.findings[0]!;
         expect(current.status).toBe("open");
@@ -227,7 +229,7 @@ describe.concurrent("one task across products", () => {
       task.findings = [{ id: "dismissed-api", text: "The greeting is missing.", productIds: [second], severity: "blocking", raisedBy: "opus-high", status: "dismissed", confirmedBy: [], evidence: "API's old case passed." }];
       const independent = ReviewResult.parse({ verdict: "fail", findings: [{ text: "The GREETING is missing!", productIds: [first], severity: "important" }] });
       expect(checkReviewEvidence(task.findings, independent, task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](task, stage, independent, "sol-high", "code-reviewer", "0");
+      await engine["reviews"]["applyReview"](executionFor(task), stage, independent, "sol-high", "code-reviewer", "0");
       expect(task.findings).toHaveLength(2);
       expect(task.findings[0]!.status).toBe("dismissed");
       expect(task.findings[0]!.evidence).toBe("API's old case passed.");
@@ -235,7 +237,7 @@ describe.concurrent("one task across products", () => {
       // Native checks remain closed until their actual commands say otherwise.
       task.findings = [{ id: "native", text: "A product check failed.", productIds: [first], severity: "blocking", raisedBy: "petrina", status: "fixed", confirmedBy: [], evidence: "The actual check now passes." }];
       const native = ReviewResult.parse({ verdict: "fail", confirms: [{ id: "native", evidence: proof }] });
-      await engine["reviews"]["applyReview"](task, stage, native, "sol-high", "code-reviewer", "0");
+      await engine["reviews"]["applyReview"](executionFor(task), stage, native, "sol-high", "code-reviewer", "0");
       expect(task.findings[0]!).toMatchObject({ status: "fixed", evidence: "The actual check now passes." });
       expect(task.findings[0]!.earlierReviews).toBeUndefined();
     } finally { await engine.shutdown(); }
@@ -255,7 +257,7 @@ describe.concurrent("one task across products", () => {
       const report = { text: "The GREETING is missing!", productIds: [first], severity: "important", evidence: "The shop guest case fails on current code." };
       const result = ReviewResult.parse({ verdict: "fail", findings: [report] });
       expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, evidence: undefined }] }), task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](task, stage, result, "opus-high", "code-reviewer", "0");
+      await engine["reviews"]["applyReview"](executionFor(task), stage, result, "opus-high", "code-reviewer", "0");
       expect(task.findings).toHaveLength(2);
       expect(task.findings.find((finding) => finding.id === "fixed-api")).toMatchObject({ status: "fixed", productIds: [second], evidence: "The old API guest case failed." });
       const shopFinding = task.findings.find((finding) => finding.id !== "fixed-api")!;
@@ -268,7 +270,7 @@ describe.concurrent("one task across products", () => {
       // Ordinary open reports still union owners, even when initially assigned to different products.
       task.findings = [{ id: "open-api", text: "The greeting is missing.", productIds: [second], evidence: "The API guest case fails.", severity: "blocking", raisedBy: "earlier-reviewer", status: "open", confirmedBy: [] }];
       expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, evidence: undefined }] }), task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](task, stage, result, "opus-high", "code-reviewer", "0");
+      await engine["reviews"]["applyReview"](executionFor(task), stage, result, "opus-high", "code-reviewer", "0");
       expect(task.findings).toHaveLength(1);
       expect(task.findings[0]!.productIds).toEqual([second, first]);
       expect(task.findings[0]!.evidence).toContain("The API guest case fails.");
@@ -278,7 +280,7 @@ describe.concurrent("one task across products", () => {
       task.findings = [{ id: "shared-fixed", text: "The greeting is missing.", productIds: [second, first], evidence: "The original shared case.", severity: "blocking", raisedBy: "earlier-reviewer", status: "fixed", confirmedBy: [], answer: { fixed: true, at: 1, text: "Both owners repaired it." } }];
       expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, evidence: undefined }] }), task)).toContain("shared-fixed");
       expect(checkReviewEvidence(task.findings, result, task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](task, stage, result, "opus-high", "code-reviewer", "0");
+      await engine["reviews"]["applyReview"](executionFor(task), stage, result, "opus-high", "code-reviewer", "0");
       expect(task.findings).toHaveLength(1);
       expect(task.findings[0]!).toMatchObject({ id: "shared-fixed", status: "open", productIds: [second, first], evidence: report.evidence });
       expect(task.findings[0]!.earlierReviews![0]!.evidence).toBe("The original shared case.");
@@ -288,7 +290,7 @@ describe.concurrent("one task across products", () => {
         task.findings = [{ id: "ownership-unknown", text: "The greeting is missing.", productIds: prior, severity: "blocking", raisedBy: "earlier-reviewer", status: "fixed", confirmedBy: [], answer: { fixed: true, at: 1, text: "Claimed repaired." } }];
         const unknown = ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds: incoming }] });
         expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds: incoming, evidence: undefined }] }), task)).toContain("ownership-unknown");
-        await engine["reviews"]["applyReview"](task, stage, unknown, "opus-high", "code-reviewer", "0");
+        await engine["reviews"]["applyReview"](executionFor(task), stage, unknown, "opus-high", "code-reviewer", "0");
         expect(task.findings).toHaveLength(1);
         expect(task.findings[0]!).toMatchObject({ id: "ownership-unknown", status: "open", productIds: expected, evidence: report.evidence });
       }
@@ -314,9 +316,9 @@ describe.concurrent("one task across products", () => {
         paths.push(worktree);
         task.repositories.push({ productId, worktree, branch, delivery: "local", completedStages: [], source: { product: { ...product, path: product.path! }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true } });
       }
-      engine.selectRepository(task, first);
+      task.activeProductId = first;
       task.state = "cancelled";
-      task.report = { summary: "Saved before cleanup", changes: [], tests: "Not run" };
+      task.repositories[0]!.report = { summary: "Saved before cleanup", changes: [], tests: "Not run" };
       engine.commitNow();
       expect(task.repositories[0]!.report?.summary).toBe("Saved before cleanup");
       expect(activity).toEqual([]);
@@ -657,7 +659,7 @@ describe.concurrent("one task across products", () => {
       task.stageIndex = 2;
       task.repositories = [first, second].map((productId) => ({ productId, delivery: "pull-request", completedStages: [] }));
       task.leadProductId = first;
-      engine.selectRepository(task, first);
+      task.activeProductId = first;
       task.findings = [{ id: "check", text: "Check failed: API", productIds: [second], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" }];
       expect(beginRepair(engine, task, "checks", 2)).toBe(true);
       expect(task.repair!.products).toEqual([second]);
@@ -694,18 +696,18 @@ describe.concurrent("one task across products", () => {
       const field = kind === "checks" ? "checkReturns" : "acceptanceReturns";
       task.repositories = [{ productId: first, delivery: "pull-request", completedStages: [], [field]: 2 }, { productId: second, delivery: "pull-request", completedStages: [] }];
       task.leadProductId = first;
-      engine.selectRepository(task, first);
+      task.activeProductId = first;
       const text = kind === "checks" ? "Check failed: " : "Failed acceptance check: ";
       task.findings = (shared ? [[first, second]] : [[first], [second]]).map((productIds, index) => ({ id: `failure-${index}`, text: `${text}${index}`, productIds, severity: "blocking", raisedBy: kind === "checks" ? "petrina" : "tester", confirmedBy: [], status: "open" }));
       for (const tries of [1, 2]) {
         expect(beginRepair(engine, task, kind, 1)).toBe(true);
         expect(task.repair).toEqual({ products: [second], index: 0, returnStage: 1, kind });
-        expect(task.productId).toBe(second);
+        expect(task.activeProductId).toBe(second);
         expect(task.repositories!.map((work) => work[field] ?? 0)).toEqual([2, tries]);
         expect(task.findings.every((finding) => finding.status === "open")).toBe(true);
-        // The first product remains exhausted regardless of which projection was saved last.
+        // The first product remains exhausted regardless of which product the next step addresses.
         delete task.repair;
-        engine.selectRepository(task, first);
+        task.activeProductId = first;
         engine.commitNow();
         await engine.shutdown(); engine = start(); task = engine.task(id)!;
       }
@@ -975,7 +977,6 @@ describe.concurrent("one task across products", () => {
 
 });
 
-
 describe.concurrent("shared-task repair regressions", () => {
   it("stops at exhausted acceptance allowances, keeps them after restart and renews every product on send-back", async () => {
     const { shop, api, start, fakes } = setup("acceptance-exhausted");
@@ -1063,7 +1064,7 @@ describe.concurrent("shared-task repair regressions", () => {
           disputes: disputes ? [{ id: "shared-fix", reason: "I could not reproduce this problem on the changed code." }] : [],
           learnings: [],
         });
-        await engine["reviews"]["applyReview"](task, stage, result, stage.profileIds[Number(key)]!, "code-reviewer", key);
+        await engine["reviews"]["applyReview"](executionFor(task), stage, result, stage.profileIds[Number(key)]!, "code-reviewer", key);
         task.hunt!.reported[key] = true;
         if (key === "0") {
           engine["reviews"]["settleReviews"](task, stage);
@@ -1100,11 +1101,11 @@ describe.concurrent("shared-task repair regressions", () => {
         { id: "unassigned", text: "Ownership not yet resolved" },
       ].map((finding) => ({ severity: "blocking", raisedBy: "earlier-reviewer", confirmedBy: [], status: "open", ...finding }));
       const result = ReviewResult.parse({ verdict: "pass", findings: [], confirms: [], disputes: task.findings.map((finding) => ({ id: finding.id, reason: "I disagree with this finding." })), learnings: [] });
-      await engine["reviews"]["applyReview"](task, stage, result, "opus-high", "code-reviewer", "0");
+      await engine["reviews"]["applyReview"](executionFor(task), stage, result, "opus-high", "code-reviewer", "0");
       task.hunt.reported = { "0": true };
       engine["reviews"]["settleReviews"](task, stage);
       expect(task.findings.every((finding) => finding.status === "open")).toBe(true);
-      await engine["reviews"]["applyReview"](task, stage, ReviewResult.parse({ ...result, verdict: "fail", disputes: [], confirms: ["single"] }), "sol-high", "code-reviewer", "1");
+      await engine["reviews"]["applyReview"](executionFor(task), stage, ReviewResult.parse({ ...result, verdict: "fail", disputes: [], confirms: ["single"] }), "sol-high", "code-reviewer", "1");
       task.hunt.reported = { "0": true, "1": true };
       engine["reviews"]["settleReviews"](task, stage);
       expect(task.findings.map((finding) => [finding.id, finding.status])).toEqual([["single", "open"], ["unopposed", "dismissed"], ["native", "open"], ["acceptance", "open"], ["unassigned", "open"]]);
@@ -1132,7 +1133,6 @@ describe.concurrent("shared-task repair regressions", () => {
     } finally { await engine.shutdown(); }
   });
 });
-
 
 describe.concurrent("shared delivery and hand-back regressions", () => {
   for (const decision of ["approve-again", "send-back"] as const) it(`cleans earlier unpublished release versions before shared ${decision} after a later preview mismatch`, async () => {
@@ -1168,7 +1168,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       const prepare = shipping.prepare.bind(shipping);
       shipping.prepare = async (...args: unknown[]) => {
         const result = await prepare(...args);
-        if ((args[0] as MTask).activeProductId === second && result === "continue") engine.setPoolPaused(true);
+        if ((args[0] as RepositoryContext).work.productId === second && result === "continue") engine.setPoolPaused(true);
         return result;
       };
       engine.approve(itemOf(ready, id, "delivery")!.id);
@@ -1291,7 +1291,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Preserve hand-back ownership" });
       // Screen requests are scripted stand-ins: this exercises saved review conversations without a window.
       await until(engine, (state) => !!taskOf(state, id).screen && !engine.drivers.has(id), coordinator(["plan", "design"]));
-      const session = engine.task(id)!.conversation!.sessionId;
+      const session = engine.taskDetails(id)!.conversation!.sessionId;
       engine.allowScreen(id);
       await until(engine, () => fakes.marked(`on-screen-${session}`), coordinator([]));
       await engine.takeOver(id, "copy");

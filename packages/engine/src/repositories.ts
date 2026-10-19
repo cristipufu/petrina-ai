@@ -1,9 +1,11 @@
+import { executionFor } from "./repository-context.js";
 import { assignedProducts, repairOrder, repositoryPublished, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import type { Kernel, MTask } from "./kernel.js";
 
 export async function versionsOf(task: MTask): Promise<Record<string, string>> {
-  if (!task.repositories) return task.worktree ? { [task.productId]: await git.treeOf(task.worktree) ?? "unavailable" } : {};
+    const scope = executionFor(task);
+  if (!task.repositories) return scope.work.worktree ? { [task.productId]: await git.treeOf(scope.work.worktree) ?? "unavailable" } : {};
   return Object.fromEntries(await Promise.all(task.repositories.map(async (work) => [work.productId, work.worktree ? await git.treeOf(work.worktree) ?? "unavailable" : "unavailable"])));
 }
 
@@ -15,7 +17,7 @@ export async function acceptanceVersion(task: MTask): Promise<string | undefined
 /** A pass visits only named owners. Each owner's applicable allowance is charged once before work starts. */
 export function beginRepair(k: Kernel, task: MTask, kind: "checks" | "acceptance" | "review", returnStage: number): boolean {
   if (!task.repositories) return false;
-  k.saveRepository(task);
+
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
   const affected = repairOrder(task as Task, open.filter((finding) => kind === "checks" ? finding.raisedBy === "petrina" : kind === "acceptance" ? finding.text.startsWith("Failed acceptance check:") : true));
   const field = kind === "checks" ? "checkReturns" : kind === "acceptance" ? "acceptanceReturns" : undefined;
@@ -31,14 +33,12 @@ export function beginRepair(k: Kernel, task: MTask, kind: "checks" | "acceptance
     const work = task.repositories.find((entry) => entry.productId === id)!;
     if (field) work[field] = (work[field] ?? 0) + 1;
   }
-  // Reload the charged record; otherwise the active projection would overwrite its budget.
-  if (field) task[field] = task.repositories.find((work) => work.productId === task.productId)![field];
   task.repair = { products, index: 0, returnStage, kind };
-  k.selectRepository(task, products[0]!);
+  task.activeProductId = products[0]!;
   task.stageIndex = builder;
   task.sub = 0;
   task.fixing = true;
-  delete task.conversation;
+  delete executionFor(task, products[0]!).work.conversation;
   k.commitNow();
   return true;
 }

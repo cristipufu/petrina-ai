@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -74,7 +75,7 @@ describe.concurrent("design participants' own conversations", () => {
   it("retains both participant identities across an engine restart during the first review", async () => {
     const run = await fixture("resume");
     try {
-      await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && run.task().conversation?.briefed; }, "the first reviewer to start");
+      await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && executionFor(run.task()).work.conversation?.briefed; }, "the first reviewer to start");
       const authorId = run.fakes.received("architect")[0]!.session;
       const reviewerId = run.fakes.received("design reviewer")[0]!.session;
       await run.restart();

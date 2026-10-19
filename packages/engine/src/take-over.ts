@@ -1,3 +1,4 @@
+import { executionFor, repositoryView } from "./repository-context.js";
 // Take over in the terminal: the coordinator drives a step's agent by hand, then hands it back. The
 // launcher scripts and terminals are in terminal.ts.
 
@@ -22,12 +23,13 @@ export class TakeOver {
    */
   async takeOver(taskId: Id, how: "open" | "copy" = "open"): Promise<Launched> {
     const task = this.k.task(taskId);
+    const scope = task ? executionFor(task) : undefined;
     if (!task) throw new Error("Unknown task");
     this.notSwitching(taskId);
-    const blocked = takeOverBlock(task as unknown as Task, this.k.activeState());
+    const blocked = takeOverBlock(repositoryView(scope!) as Task, this.k.activeState());
     if (blocked) throw new Error(blocked);
     const agent = { ...task.agent! };
-    const conversation = task.conversation!;
+    const conversation = scope!.work.conversation!;
     const profile = this.k.profile(agent.profileId)!;
     const role = conversation.role ?? this.k.role(agent.roleId)!;
     const terminal = how === "open" ? pickTerminal(this.k.found, this.k.s.terminal) : undefined;
@@ -49,7 +51,7 @@ export class TakeOver {
 
       const current = this.k.task(taskId);
       if (!current) throw new Error("The task is gone");
-      if (current.conversation?.step !== conversation.step || current.conversation.sessionId !== conversation.sessionId) {
+      if (scope!.work.conversation?.step !== conversation.step || scope!.work.conversation.sessionId !== conversation.sessionId) {
         // The step handed back its result just as the coordinator took over: the next one starts as usual.
         this.backToWork(current);
         throw new Error("The agent finished its step just as you took over. Take over again on its next step if you want to.");
@@ -74,8 +76,8 @@ export class TakeOver {
         this.backToWork(current);
         throw new Error(`Petrina couldn't save the ${role.name}'s work before you took over, so the ${role.name} carries on. ${error instanceof Error ? error.message : String(error)}`);
       }
-      delete current.conversation.asked;
-      current.conversation.handbackBoot = this.k.boot;
+      delete scope!.work.conversation.asked;
+      scope!.work.conversation.handbackBoot = this.k.boot;
       current.agent = agent as MTask["agent"];
       current.holdsSlot = true;
       current.statusLine = TAKE_OVER_WORDS.status;
@@ -160,6 +162,7 @@ export class TakeOver {
    */
   async handBack(taskId: Id, note = "", anyway = false): Promise<void> {
     const task = this.k.task(taskId);
+    const scope = task ? executionFor(task) : undefined;
     if (!task?.driving) throw new Error("You're not driving this task");
     this.notSwitching(taskId);
     this.k.switching.set(taskId, "handing back");
@@ -181,7 +184,7 @@ export class TakeOver {
       const text = handBackNote({ role: role.name, tool, took: Date.now() - driving.since, ...(driving.saved ? { saved: driving.saved.files } : {}), commits, files, leftovers: leftovers !== undefined, note });
       const head = await git.head(worktree);
 
-      const changedProducts = new Set<Id>(files.length ? [task.productId] : []);
+      const changedProducts = new Set<Id>(files.length ? [scope!.work.productId] : []);
       if (task.repositories && driving.repositoryCopies) {
         const prepared: { work: NonNullable<MTask["repositories"]>[number]; sha: string; snapshot: string; head: string }[] = [];
         for (const [id, copy] of Object.entries(driving.repositoryCopies)) {
@@ -204,19 +207,19 @@ export class TakeOver {
           kept.work.reviewedTree = undefined;
           kept.work.checkedSha = undefined;
           kept.work.checkedPatch = undefined;
-          if (kept.work.productId === task.productId) { task.reviewedTree = undefined; task.checkedSha = undefined; task.checkedPatch = undefined; }
+
           driving.repositoryCopies[kept.work.productId]!.head = kept.head;
         }
         if (prepared.length) task.handChanges = true;
       }
       // A reviewer works detached from the task's branch. Keep the coordinator's edits in both:
       // its conversation continues in its own copy, and the task's later checks and reviews see them.
-      if (files.length && worktree !== task.worktree && (!task.repositories || !driving.repositoryCopies)) {
-        const parent = await git.head(task.worktree!);
-        const merged = await git.mergeTree(task.worktree!, parent, head);
+      if (files.length && worktree !== scope!.work.worktree && (!task.repositories || !driving.repositoryCopies)) {
+        const parent = await git.head(scope!.work.worktree!);
+        const merged = await git.mergeTree(scope!.work.worktree!, parent, head);
         if (!merged || merged.conflicts.length) throw new Error("Your changes overlap with the task's working copy. Resolve them in the reviewer's copy, then hand back again.");
-        const kept = await git.commitTree(task.worktree!, merged.tree, parent, `${task.title} (changes made by hand)\n\n${text}`);
-        await git.moveTo(task.worktree!, kept);
+        const kept = await git.commitTree(scope!.work.worktree!, merged.tree, parent, `${task.title} (changes made by hand)\n\n${text}`);
+        await git.moveTo(scope!.work.worktree!, kept);
       }
 
       this.k.say(task, "system", `You handed back to the ${role.name}`, role.id, driving.profileId);
@@ -225,9 +228,9 @@ export class TakeOver {
       this.k.log(task, "you", `You handed back to the ${role.name}: ${changed}${note.trim() ? `. Your note: ${note.trim()}` : ""}`, role.id, driving.profileId);
       this.k.remember(task, text);
       // The conversation carries on from here, and a read-only role's clean-up keeps everything done by hand.
-      if (task.conversation) {
-        task.conversation.head = head;
-        task.conversation.handback = text;
+      if (scope!.work.conversation) {
+        scope!.work.conversation.head = head;
+        scope!.work.conversation.handback = text;
       }
       if (changedProducts.size) await this.reviewHandChanges(task, [...changedProducts]);
       delete task.driving;
@@ -251,20 +254,18 @@ export class TakeOver {
    * they drove finishes, without using up a review round.
    */
   private async reviewHandChanges(task: MTask, changedProducts: readonly Id[]): Promise<void> {
-    const active = task.productId;
     for (const productId of changedProducts) {
-      if (task.repositories) this.k.selectRepository(task, productId);
-      const problems = await git.tamperCheck(task.worktree!, task.baseSha ?? task.base!);
-      task.tamper = { at: Date.now(), sha: await git.head(task.worktree!), problems };
+      const scope = executionFor(task, productId);
+      const problems = await git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!);
+      scope.work.tamper = { at: Date.now(), sha: await git.head(scope.work.worktree!), problems };
       for (const problem of problems) {
         if (!task.findings.some((finding) => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(productId)))) {
           task.findings.push({ ...(task.repositories ? { productIds: [productId] } : {}), id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
         }
       }
-      this.k.log(task, problems.length ? "warn" : "done", problems.length ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tests check on your changes passed: no tests removed or skipped");
-      this.k.saveRepository(task);
+      this.k.log(scope, problems.length ? "warn" : "done", problems.length ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tests check on your changes passed: no tests removed or skipped");
+
     }
-    if (task.repositories) this.k.selectRepository(task, active);
     task.handChanges = true;
     const stages = task.plan?.stages ?? [];
     if (stages.some((stage, index) => index > task.stageIndex && stage.kind === "review-chain")) return;
@@ -308,8 +309,9 @@ export class TakeOver {
 
   /** Write the launcher and open it in the terminal, or only write it for the coordinator to run. */
   private async launch(task: MTask, terminal: FoundTerminal | undefined, fresh: boolean, tool?: LaunchInput["tool"]): Promise<Launched> {
+    const scope = executionFor(task);
     const driving = task.driving!;
-    const conversation = task.conversation!;
+    const conversation = scope.work.conversation!;
     const effort = this.k.profile(driving.profileId)?.effort ?? "high";
     const dir = this.takeOverDir(task.id);
     const plan = launchPlan(this.launchInput(task, tool ?? (await this.takeOverTool(driving.toolId)), conversation.sessionId, conversation.model, effort));
@@ -336,10 +338,11 @@ export class TakeOver {
 
   /** Why hand back cannot go on with the working copy as it is, in plain words. */
   private branchProblem(task: MTask, where: { branch?: string; busy?: string }): string | undefined {
+    const scope = executionFor(task);
     if (where.busy) return `The working copy is in the middle of ${where.busy}. Finish it or abort it in your terminal, then hand back.`;
-    const separate = this.k.agentWorktree(task) !== task.worktree;
+    const separate = this.k.agentWorktree(task) !== scope.work.worktree;
     if (separate && where.branch) return "The reviewer's working copy switched to a branch. Return it to where the reviewer was working, then hand back.";
-    if (!separate && where.branch !== task.branch) return "The working copy is no longer on the task's branch. Switch back to it in your terminal, then hand back.";
+    if (!separate && where.branch !== scope.work.branch) return "The working copy is no longer on the task's branch. Switch back to it in your terminal, then hand back.";
     return undefined;
   }
 }

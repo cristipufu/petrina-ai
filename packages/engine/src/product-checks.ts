@@ -1,3 +1,4 @@
+import { type RepositoryContext } from "./repository-context.js";
 import { beginRepair, acceptanceVersion } from "./repositories.js";
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
@@ -13,7 +14,7 @@ import type { CheckRun, DeepMutable, JourneyProductCheck } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
-import { Kernel, Aborted, CHECK_FINDER_PROFILE, type MTask, ScreenWait } from "./kernel.js";
+import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
@@ -54,7 +55,8 @@ export class ProductChecks {
 
   releasePreparation(taskId: Id): void { this.preparations.delete(taskId); }
 
-  private async turnToRun(task: MTask, signal: AbortSignal): Promise<() => void> {
+  private async turnToRun(scope: RepositoryContext, signal: AbortSignal): Promise<() => void> {
+    const { task } = scope;
     if (signal.aborted || this.k.stopped) throw new Aborted();
     const most = this.k.options.checkRuns ?? 1;
     if (this.running >= most) {
@@ -101,29 +103,30 @@ export class ProductChecks {
    * CI, build or hook files it read have changed or a check could not even start. Checks the coordinator set
    * by hand are never replaced. Discovery acquires a real agent slot; commands use their own queue.
    */
-  async ensureChecks(task: MTask, signal: AbortSignal): Promise<readonly ProductCheck[]> {
-    const product = this.k.productOf(task);
-    if (!product || !task.worktree) return [];
+  async ensureChecks(scope: RepositoryContext, signal: AbortSignal): Promise<readonly ProductCheck[]> {
+    const { task, work: repository } = scope;
+    const product = this.k.productOf(scope);
+    if (!product || !repository.worktree) return [];
     // Another task may have found (or the coordinator set) the checks while this agent waited.
     // Its saved conversation still finishes its own request before the cached checks can be reused.
-    const continuing = task.conversation?.roleId === "check-finder";
+    const continuing = repository.conversation?.roleId === "check-finder";
     if (product.checksBy === "coordinator" && !continuing) return product.checks ?? [];
-    const fingerprint = checksFingerprint(task.worktree);
-    const unstartable = task.checks?.results.some((run) => run.output.startsWith("Could not start")) ?? false;
+    const fingerprint = checksFingerprint(repository.worktree);
+    const unstartable = repository.checks?.results.some((run) => run.output.startsWith("Could not start")) ?? false;
     if (!continuing && product.checks && product.checksFingerprint === fingerprint && !unstartable) return product.checks;
     // Tasks on different bases have different CI and build files: each reuses what was found for its own.
     const seen = product.checksSeen?.find((entry) => entry.fingerprint === fingerprint);
     if (!continuing && seen && !unstartable) return seen.checks;
-    const declared = detectChecks(task.worktree);
+    const declared = detectChecks(repository.worktree);
     // A side errand inside the step: it leaves the step's own restart bookkeeping as it found it.
-    const attempts = task.stepAttempts;
-    const conversation = task.conversation?.roleId === "check-finder" ? undefined : task.conversation;
+    const attempts = repository.stepAttempts;
+    const conversation = repository.conversation?.roleId === "check-finder" ? undefined : repository.conversation;
     const { todo, stepClock } = task;
     const restore = () => {
-      if (attempts === undefined) delete task.stepAttempts;
-      else task.stepAttempts = attempts;
-      if (conversation === undefined) delete task.conversation;
-      else task.conversation = conversation;
+      if (attempts === undefined) delete repository.stepAttempts;
+      else repository.stepAttempts = attempts;
+      if (conversation === undefined) delete repository.conversation;
+      else repository.conversation = conversation;
       // The errand's own to-do item and working time are not the step's.
       if (todo === undefined) delete task.todo;
       else task.todo = todo;
@@ -136,11 +139,11 @@ export class ProductChecks {
     let ran: Id = finder;
     try {
       const result = await this.turns.turn(
-        task,
+        scope,
         "check-finder",
         finder,
         async () => [
-          ...await this.context.sectionsFor(task, "check-finder"),
+          ...await this.context.sectionsFor(scope, "check-finder"),
           ...(product.checks ? [{ title: "The checks used until now", body: product.checks.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") }] : []),
           ...(declared.length ? [{ title: "Commands the repository declares (a starting point, not the answer)", body: declared.map((check) => `- ${check.name}: ${commandText(check.argv)}`).join("\n") }] : []),
         ],
@@ -153,7 +156,7 @@ export class ProductChecks {
       if (product.checksBy === "coordinator") return product.checks ?? [];
       product.checks = result.checks.map((check) => ({ name: check.name, argv: check.argv, why: check.why }));
       endAgentStep(task, { outcome: W.foundChecks(product.checks.length), reason: W.checksFound }, Date.now());
-      this.k.log(task, "done", `Found how to check ${product.name} (${why}): ${product.checks.map((check) => check.name).join(", ")}`, "check-finder", ran);
+      this.k.log(scope, "done", `Found how to check ${product.name} (${why}): ${product.checks.map((check) => check.name).join(", ")}`, "check-finder", ran);
     } catch (error) {
       if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) throw error;
       this.k.releaseScreen(task);
@@ -161,12 +164,12 @@ export class ProductChecks {
       // Everyone who could work it is out of usage: the task waits, and the finder runs when one is back.
       if (error instanceof WaitingForUsage) throw error;
       // Petrina carries on without it, but it is still a failure in Analytics.
-      this.k.tracking.failed(task, error, { roleId: "check-finder", profileId: ran });
+      this.k.tracking.failed(scope, error, { roleId: "check-finder", profileId: ran });
       endAgentStep(task, { outcome: W.couldNotFinish, reason: W.checksAsBefore }, Date.now());
       if (product.checksBy === "coordinator") return product.checks ?? [];
       const fallback: ProductCheck[] = product.checks ? [...product.checks] : declared;
       product.checks = fallback.map((check) => ({ name: check.name, argv: [...check.argv], ...(check.why ? { why: check.why } : {}) }));
-      this.k.log(task, "warn", `The Check finder could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`);
+      this.k.log(scope, "warn", `The Check finder could not finish, so Petrina uses ${fallback.length ? "the checks it had" : "no checks"} for now`);
     }
     product.checksBy = "finder";
     product.checksFingerprint = fingerprint;
@@ -180,8 +183,9 @@ export class ProductChecks {
    * hooks on the task's whole change. Failures become blocking findings, with the output as evidence. A check
    * only looks: whatever one changes in files git tracks is undone, so nothing unreviewed joins the work.
    */
-  async runProductChecks(task: MTask, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
-    if (!task.worktree) return 0;
+  async runProductChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
+    const { task, work: repository } = scope;
+    if (!repository.worktree) return 0;
     // A check queue entry is not a model conversation. No agent still runs on this copy.
     if (!this.k.runs.has(task.id) && !this.k.helperRuns.get(task.id)?.size) {
       task.holdsSlot = false;
@@ -189,21 +193,22 @@ export class ProductChecks {
     }
     if (!this.claimPreparation(task.id)) throw new WaitingForUsage("Waiting for room to prepare the product checks");
     this.k.schedule();
-    try { return await this.runPreparedChecks(task, checks, signal, kept); }
+    try { return await this.runPreparedChecks(scope, checks, signal, kept); }
     finally { this.releasePreparation(task.id); }
   }
 
-  private async runPreparedChecks(task: MTask, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
-    if (!task.worktree) return 0;
-    const hooks = await this.noteHooks(task);
-    if (!checks.length && !hooks.length && !task.checks) return 0;
-    const definition = await this.definition(task, checks);
+  private async runPreparedChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
+    const { task, work: repository } = scope;
+    if (!repository.worktree) return 0;
+    const hooks = await this.noteHooks(scope);
+    if (!checks.length && !hooks.length && !repository.checks) return 0;
+    const definition = await this.definition(scope, checks);
     // Resuming unfinished release notes revalidates the preparation first. Those repeated checks belong
     // to the same step's timeline: they do not complete the notes or start another agent step.
     const open = openStep(task);
     const resumingNotes = open?.kind === "agent" && open.roleId === "release-manager" && open.stageId === task.plan?.stages[task.stageIndex]?.id;
     // A checks step's elapsed time includes waiting for another task's run.
-    if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now());
+    if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now(), repository);
     const step = openStep(task);
     const prefix = step?.productChecks?.length ? `run-${step.productChecks.length}:` : "";
     const entries: CheckEntries = new Map<string, DeepMutable<JourneyProductCheck>>([
@@ -223,8 +228,8 @@ export class ProductChecks {
     let finished: (() => void) | undefined;
     let complete = false;
     try {
-      finished = await this.turnToRun(task, signal);
-      const failures = await this.runAll(task, checks, hooks, definition, signal, entries, kept);
+      finished = await this.turnToRun(scope, signal);
+      const failures = await this.runAll(scope, checks, hooks, definition, signal, entries, kept);
       complete = true;
       return failures;
     } finally {
@@ -239,13 +244,14 @@ export class ProductChecks {
     }
   }
 
-  private async runAll(task: MTask, checks: readonly ProductCheck[], hooks: string[], definition: string, signal: AbortSignal, entries: CheckEntries, kept?: readonly CheckRun[]): Promise<number> {
+  private async runAll(scope: RepositoryContext, checks: readonly ProductCheck[], hooks: string[], definition: string, signal: AbortSignal, entries: CheckEntries, kept?: readonly CheckRun[]): Promise<number> {
+    const { task, work: repository } = scope;
     if (signal.aborted || this.k.stopped) throw new Aborted();
-    if (!task.worktree) return 0;
+    if (!repository.worktree) return 0;
     task.statusLine = "Running the product's checks";
     this.k.commit();
     // Checks and hooks are the repository's own code: whatever they commit or change, the work stays as it was.
-    const before = await git.head(task.worktree);
+    const before = await git.head(repository.worktree);
     const env = { ...withoutCredentials(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
     const step = openStep(task);
     const progress = (id: string, event: CheckProgress) => {
@@ -265,38 +271,38 @@ export class ProductChecks {
     };
     let results: CheckRun[];
     try {
-      const ran = kept ?? await runChecks(task.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress(`check-${event.index}`, event));
+      const ran = kept ?? await runChecks(repository.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress(`check-${event.index}`, event));
       if (kept) kept.forEach((run, index) => progress(`check-${index}`, { kind: "finished", index, at: Date.now(), run }));
       if (signal.aborted) {
-        this.noteStopped(task, ran, entries);
+        this.noteStopped(scope, ran, entries);
         throw new Aborted();
       }
-      if ((await git.head(task.worktree).catch(() => "")) !== before) {
-        await git.resetTo(task.worktree, before);
-        this.k.log(task, "warn", "A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
-      } else if (await git.trackedChanged(task.worktree)) {
-        await git.restoreTracked(task.worktree);
-        this.k.log(task, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
+      if ((await git.head(repository.worktree).catch(() => "")) !== before) {
+        await git.resetTo(repository.worktree, before);
+        this.k.log(scope, "warn", "A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
+      } else if (await git.trackedChanged(repository.worktree)) {
+        await git.restoreTracked(repository.worktree);
+        this.k.log(scope, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
       }
-      const hooksRan = await this.runHooks(task, hooks, env, signal, progress);
+      const hooksRan = await this.runHooks(scope, hooks, env, signal, progress);
       if (signal.aborted) {
-        this.noteStopped(task, [...ran, ...hooksRan], entries);
+        this.noteStopped(scope, [...ran, ...hooksRan], entries);
         throw new Aborted();
       }
       results = [...ran, ...hooksRan];
     } finally {
       // The hooks too: whatever they committed or changed in files git tracks is put back.
-      if (!task.hooking) {
-        if ((await git.head(task.worktree).catch(() => "")) !== before) await git.resetTo(task.worktree, before);
-        else if (await git.trackedChanged(task.worktree)) await git.restoreTracked(task.worktree);
+      if (!repository.hooking) {
+        if ((await git.head(repository.worktree).catch(() => "")) !== before) await git.resetTo(repository.worktree, before);
+        else if (await git.trackedChanged(repository.worktree)) await git.restoreTracked(repository.worktree);
       }
     }
-    const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
-    task.checks = { current: true, at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), definition, results };
+    const [sha, tree] = await Promise.all([git.head(repository.worktree).catch(() => undefined), git.treeOf(repository.worktree)]);
+    repository.checks = { current: true, at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), definition, results };
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
-    const failed = this.settleFindings(task, results);
-    this.k.log(task, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
+    const failed = this.settleFindings(scope, results);
+    this.k.log(scope, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
     if (failed.length && openStep(task)?.roleId === "release-manager") {
       endAgentStep(task, { outcome: W.interrupted, reason: W.checksFailed(failed.length), tone: "back", end: "failed" }, Date.now());
     } else {
@@ -310,10 +316,11 @@ export class ProductChecks {
    * A pause or cancel stopped the run before every program it started could be listed. Keep the warning
    * and the runs, without a commit or tree, so this does not count as a finished check of the work.
    */
-  private noteStopped(task: MTask, runs: readonly CheckRun[], entries: CheckEntries): void {
+  private noteStopped(scope: RepositoryContext, runs: readonly CheckRun[], entries: CheckEntries): void {
+    const { work: repository } = scope;
     if (!runs.length) return;
-    if (runs.some((run) => run.cleanupIncomplete)) this.k.log(task, "warn", CLEANUP_INCOMPLETE);
-    task.checks = { at: Date.now(), results: runs.map((run) => ({ ...run })) };
+    if (runs.some((run) => run.cleanupIncomplete)) this.k.log(scope, "warn", CLEANUP_INCOMPLETE);
+    repository.checks = { at: Date.now(), results: runs.map((run) => ({ ...run })) };
     const remaining = [...entries.values()];
     for (const run of runs) {
       const index = remaining.findIndex((check) => check.name === run.name);
@@ -326,80 +333,85 @@ export class ProductChecks {
   }
 
   /** A builder's answer cannot settle a failed check; only a fresh passing run can. */
-  private settleFindings(task: MTask, results: readonly CheckRun[]): readonly CheckRun[] {
+  private settleFindings(scope: RepositoryContext, results: readonly CheckRun[]): readonly CheckRun[] {
+    const { task, work: repository } = scope;
     const failed = results.filter((run) => !run.ok);
     // An earlier failure settles on this run, whatever anyone answered about it.
     for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(task.productId)) && !failed.some((run) => finding.text === `Check failed: ${run.name} (${run.command})`)) finding.status = "fixed";
+      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(repository.productId)) && !failed.some((run) => finding.text === `Check failed: ${run.name} (${run.command})`)) finding.status = "fixed";
     }
     for (const run of failed) {
       const text = `Check failed: ${run.name} (${run.command})`;
-      const finding = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === text && (!task.repositories || finding.productIds?.includes(task.productId)));
+      const finding = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === text && (!task.repositories || finding.productIds?.includes(repository.productId)));
       if (finding) {
         finding.status = "open";
         finding.severity = "blocking";
         finding.evidence = run.output.slice(-1500);
-      } else task.findings.push({ ...(task.repositories ? { productIds: [task.productId] } : {}), id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+      } else task.findings.push({ ...(task.repositories ? { productIds: [repository.productId] } : {}), id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
     }
     return failed;
   }
 
   /** The commands and hook inputs: a new definition needs a fresh run, even on the same tree. */
-  private async definition(task: MTask, checks: readonly ProductCheck[]): Promise<string> {
+  private async definition(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<string> {
+    const { work: repository } = scope;
     const hash = createHash("sha256").update(JSON.stringify(checks.filter((check) => check.argv.length).map((check) => check.argv)));
-    for (const hook of await git.commitHookFiles(task.worktree!)) {
+    for (const hook of await git.commitHookFiles(repository.worktree!)) {
       hash.update(JSON.stringify([hook.name, hook.path])).update(await readFile(hook.path));
-      if (hook.name === "commit-msg") hash.update(await git.message(task.worktree!));
-      if (hook.name === "pre-commit") hash.update(task.baseSha ?? "");
+      if (hook.name === "commit-msg") hash.update(await git.message(repository.worktree!));
+      if (hook.name === "pre-commit") hash.update(repository.baseSha ?? "");
     }
     return hash.digest("hex");
   }
 
   /** Whether the last run used the same code and definitions. A squash keeps its evidence, pass or fail. */
-  private async ranOn(task: MTask, checks: readonly ProductCheck[]): Promise<boolean> {
-    if (!task.checks || !task.worktree) return false;
-    if (await git.trackedChanged(task.worktree)) return false;
-    const hooks = await this.noteHooks(task);
+  private async ranOn(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<boolean> {
+    const { work: repository } = scope;
+    if (!repository.checks || !repository.worktree) return false;
+    if (await git.trackedChanged(repository.worktree)) return false;
+    const hooks = await this.noteHooks(scope);
     const expected = [
       ...checks.filter((check) => check.argv.length).map((check) => commandText(check.argv)),
       ...(hooks.includes("pre-commit") ? ["git hook run --ignore-missing pre-commit"] : []),
       ...(hooks.includes("commit-msg") ? ["git hook run commit-msg"] : []),
     ];
-    if (JSON.stringify(expected) !== JSON.stringify(task.checks.results.map((run) => run.command))) return false;
-    const definition = await this.definition(task, checks);
-    if (task.checks.definition) {
-      if (task.checks.definition !== definition) return false;
+    if (JSON.stringify(expected) !== JSON.stringify(repository.checks.results.map((run) => run.command))) return false;
+    const definition = await this.definition(scope, checks);
+    if (repository.checks.definition) {
+      if (repository.checks.definition !== definition) return false;
     } else {
       // Older runs identify product commands, but cannot establish which hook file or contents ran.
       // Verify hooks once, then save their complete definition instead of guessing from command text.
       if (hooks.length) return false;
     }
-    const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
-    const matched = (!!tree && task.checks.tree === tree) || (!!sha && task.checks.sha === sha);
-    if (matched) task.checks.definition = definition;
+    const [sha, tree] = await Promise.all([git.head(repository.worktree).catch(() => undefined), git.treeOf(repository.worktree)]);
+    const matched = (!!tree && repository.checks.tree === tree) || (!!sha && repository.checks.sha === sha);
+    if (matched) repository.checks.definition = definition;
     // A hook may launch checks outside the committed tree: unchanged launcher bytes cannot prove
     // their inputs stayed unchanged. Revalidate passes; a captured failure still blocks without retrying.
-    if (matched && task.checks.results.every((run) => run.ok) && hooks.length) return false;
+    if (matched && repository.checks.results.every((run) => run.ok) && hooks.length) return false;
     return matched;
   }
 
   /** The same freshness rule for agent evidence as for the review and delivery gates. */
-  async current(task: MTask): Promise<boolean> {
-    const product = this.k.productOf(task);
-    return this.ranOn(task, product && task.worktree ? checksFor(product, task.worktree) : []);
+  async current(scope: RepositoryContext): Promise<boolean> {
+    const { work: repository } = scope;
+    const product = this.k.productOf(scope);
+    return this.ranOn(scope, product && repository.worktree ? checksFor(product, repository.worktree) : []);
   }
 
   /** Revalidating opaque or older hooks must not retry product checks with unchanged code and commands. */
-  private async savedProductResults(task: MTask, checks: readonly ProductCheck[]): Promise<readonly CheckRun[] | undefined> {
-    if (!task.checks || !task.worktree) return undefined;
-    if (await git.trackedChanged(task.worktree)) return undefined;
-    if (task.checks.definition && (task.checks.definition !== await this.definition(task, checks) || !(await this.noteHooks(task)).length)) return undefined;
-    const [sha, tree] = await Promise.all([git.head(task.worktree).catch(() => undefined), git.treeOf(task.worktree)]);
-    if (!(tree && task.checks.tree === tree) && !(sha && task.checks.sha === sha)) return undefined;
+  private async savedProductResults(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<readonly CheckRun[] | undefined> {
+    const { work: repository } = scope;
+    if (!repository.checks || !repository.worktree) return undefined;
+    if (await git.trackedChanged(repository.worktree)) return undefined;
+    if (repository.checks.definition && (repository.checks.definition !== await this.definition(scope, checks) || !(await this.noteHooks(scope)).length)) return undefined;
+    const [sha, tree] = await Promise.all([git.head(repository.worktree).catch(() => undefined), git.treeOf(repository.worktree)]);
+    if (!(tree && repository.checks.tree === tree) && !(sha && repository.checks.sha === sha)) return undefined;
     const commands = checks.filter((check) => check.argv.length).map((check) => commandText(check.argv));
-    const results = task.checks.results.slice(0, commands.length);
+    const results = repository.checks.results.slice(0, commands.length);
     if (JSON.stringify(commands) !== JSON.stringify(results.map((run) => run.command))) return undefined;
-    const hooks = task.checks.results.slice(commands.length);
+    const hooks = repository.checks.results.slice(commands.length);
     if (!hooks.every((run) => run.command === "git hook run commit-msg" || run.command === "git hook run --ignore-missing pre-commit")) return undefined;
     return results;
   }
@@ -409,48 +421,52 @@ export class ProductChecks {
    * A failure sends the work back to the builder, twice at most; after that the coordinator sees it.
    * Exhausted returns are a failure, never permission to start final acceptance.
    */
-  async checksBeforeDelivery(task: MTask, signal: AbortSignal): Promise<"passed" | "returned" | "exhausted"> {
-    if (!(await this.failing(task, signal))) return "passed";
-    return this.backToBuilder(task, "right before your delivery check") ? "returned" : "exhausted";
+  async checksBeforeDelivery(scope: RepositoryContext, signal: AbortSignal): Promise<"passed" | "returned" | "exhausted"> {
+
+    if (!(await this.failing(scope, signal))) return "passed";
+    return this.backToBuilder(scope, "right before your delivery check") ? "returned" : "exhausted";
   }
 
   /**
    * Right before shipping: the checks pass on exactly what ships. Failing, the work goes back to the builder,
    * twice at most, and then to the coordinator's delivery check.
    */
-  async checksBeforeShipping(task: MTask, signal: AbortSignal): Promise<boolean> {
-    if (!(await this.failing(task, signal))) return false;
-    if (this.backToBuilder(task, "on what was about to ship")) return true;
+  async checksBeforeShipping(scope: RepositoryContext, signal: AbortSignal): Promise<boolean> {
+    const { task, work: repository } = scope;
+    if (!(await this.failing(scope, signal))) return false;
+    if (this.backToBuilder(scope, "on what was about to ship")) return true;
     const check = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.gate === "delivery");
     if (check < 0) throw new Error("The product's checks fail on the work about to ship");
-    delete task.approvedSha;
-    delete task.approvedPatch;
-    delete task.approvedFor;
+    delete repository.approvedSha;
+    delete repository.approvedPatch;
+    delete repository.approvedFor;
     task.stageIndex = check;
     task.sub = 0;
-    this.k.log(task, "warn", "The checks fail on what was about to ship, so Petrina asks you again");
+    this.k.log(scope, "warn", "The checks fail on what was about to ship, so Petrina asks you again");
     this.k.commit();
     return true;
   }
 
   /** Reuse a completed run, including failures, until the code or check definition changes. */
-  async failing(task: MTask, signal: AbortSignal, checks?: readonly ProductCheck[]): Promise<boolean> {
-    if (!task.worktree) return false;
-    const product = this.k.productOf(task);
-    checks ??= product ? checksFor(product, task.worktree) : [];
-    if (await this.ranOn(task, checks)) {
-      if (task.checks) task.checks.current = true;
-      const failed = this.settleFindings(task, task.checks!.results);
+  async failing(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[]): Promise<boolean> {
+    const { work: repository } = scope;
+    if (!repository.worktree) return false;
+    const product = this.k.productOf(scope);
+    checks ??= product ? checksFor(product, repository.worktree) : [];
+    if (await this.ranOn(scope, checks)) {
+      if (repository.checks) repository.checks.current = true;
+      const failed = this.settleFindings(scope, repository.checks!.results);
       this.k.commit();
       return failed.length > 0;
     }
-    return (await this.runProductChecks(task, checks, signal, await this.savedProductResults(task, checks))) > 0;
+    return (await this.runProductChecks(scope, checks, signal, await this.savedProductResults(scope, checks))) > 0;
   }
 
   /** The repository's commit hooks, as git would run them now, noted on the product for the builder's instructions. */
-  async noteHooks(task: MTask): Promise<string[]> {
-    const hooks: string[] = await git.commitHooks(task.worktree!);
-    const product = this.k.productOf(task);
+  async noteHooks(scope: RepositoryContext): Promise<string[]> {
+    const { work: repository } = scope;
+    const hooks: string[] = await git.commitHooks(repository.worktree!);
+    const product = this.k.productOf(scope);
     if (product && (product.hooks ?? []).join() !== hooks.join()) {
       if (hooks.length) product.hooks = hooks;
       else delete product.hooks;
@@ -463,22 +479,23 @@ export class ProductChecks {
    * change: pre-commit with the change staged on top of where the task started, and commit-msg on the task's
    * commit message. Petrina's own git steps never run hooks; these run like the product's checks, with no logins.
    */
-  private async runHooks(task: MTask, hooks: readonly string[], env: NodeJS.ProcessEnv, signal: AbortSignal, progress: (id: string, event: CheckProgress) => void): Promise<CheckRun[]> {
-    const worktree = task.worktree!;
-    const base = task.baseSha;
-    const branch = task.branch;
+  private async runHooks(scope: RepositoryContext, hooks: readonly string[], env: NodeJS.ProcessEnv, signal: AbortSignal, progress: (id: string, event: CheckProgress) => void): Promise<CheckRun[]> {
+    const { task, work: repository } = scope;
+    const worktree = repository.worktree!;
+    const base = repository.baseSha;
+    const branch = repository.branch;
     if (!hooks.length || !base || !branch || (await git.head(worktree).catch(() => base)) === base) return [];
     const runs: CheckRun[] = [];
     if (hooks.includes("pre-commit")) {
       // On disk before HEAD moves: a restart while it is detached puts it back on the branch.
-      task.hooking = true;
+      repository.hooking = true;
       this.k.commitNow();
       await git.detachAt(worktree, base);
       try {
         runs.push(...(await runChecks(worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress("hook-pre-commit", event))));
       } finally {
         await git.reattach(worktree, branch);
-        delete task.hooking;
+        delete repository.hooking;
         this.k.commit();
       }
     }
@@ -498,22 +515,24 @@ export class ProductChecks {
     return runs;
   }
 
-  async acceptanceVersion(task: MTask): Promise<string | undefined> {
+  async acceptanceVersion(scope: RepositoryContext): Promise<string | undefined> {
+    const { task, work: repository } = scope;
     if (task.repositories) return acceptanceVersion(task);
-    const base = task.baseSha ?? task.base;
-    return task.worktree && base ? git.patchId(task.worktree, (await git.mergeBase(task.worktree, "HEAD", base)) ?? base, "HEAD") : undefined;
+    const base = repository.baseSha ?? repository.base;
+    return repository.worktree && base ? git.patchId(repository.worktree, (await git.mergeBase(repository.worktree, "HEAD", base)) ?? base, "HEAD") : undefined;
   }
 
   /** Failing checks send the work back to the builder, twice at most. */
-  backToBuilder(task: MTask, when: string): boolean {
+  backToBuilder(scope: RepositoryContext, when: string): boolean {
+    const { task, work: repository } = scope;
     if (task.repositories) return beginRepair(this.k, task, "checks", task.stageIndex);
     const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
-    if (builder < 0 || (task.checkReturns ?? 0) >= 2) return false;
-    task.checkReturns = (task.checkReturns ?? 0) + 1;
+    if (builder < 0 || (repository.checkReturns ?? 0) >= 2) return false;
+    repository.checkReturns = (repository.checkReturns ?? 0) + 1;
     task.stageIndex = builder;
     task.sub = 0;
     task.fixing = true;
-    this.k.log(task, "warn", `Sent back to the builder: the checks failed ${when}`);
+    this.k.log(scope, "warn", `Sent back to the builder: the checks failed ${when}`);
     this.k.commit();
     return true;
   }

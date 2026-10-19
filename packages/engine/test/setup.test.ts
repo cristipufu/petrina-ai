@@ -1,3 +1,4 @@
+import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
@@ -448,8 +449,8 @@ describe("Adding a product", () => {
         const task = engine.task(taskId)!;
         const connections = new Connections(engine);
         const remote = { url: `https://github.com/${product.repo}.git` };
-        expect(await connections.connection(task, new AbortController().signal)).toEqual({ ok: true, remote });
-        expect(connections.savedRemote(task)).toEqual(remote);
+        expect(await connections.connection(executionFor(task), new AbortController().signal)).toEqual({ ok: true, remote });
+        expect(connections.savedRemote(executionFor(task))).toEqual(remote);
         expect(product.remote).toBe(git(path, "config", "--get", "remote.origin.url"));
       }
       const localId = await engine.addProduct(elsewhere);
