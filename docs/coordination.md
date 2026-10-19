@@ -18,6 +18,8 @@ Help comes from the same operation catalogue as the MCP tool descriptions and ar
 
 Existing `state`, `do`, `serve` and `open` invocations remain available. `state` returns the current board snapshot with compact history totals; use the focused commands for ordinary coordination. Agents should use the named operations, which add revisions and durable receipts, rather than the older generic `do` command.
 
+Structured options show their JSON shape and a valid example derived from the operation schema. For example, `--start-from '{"kind":"branch","name":"main"}'` selects a branch. Malformed or invalid values name their option and expected shape before any request reaches the engine.
+
 `task list` reads current work, including backlog. `task history` reads finished and cancelled work newest first in pages of 25 (maximum 100), without loading its conversations or plans. History search matches title word prefixes, as in the app. A finished-only `task list --states '["done"]'` also reads history; current and finished state filters must be read separately. Changed history invalidates continuation references. Inspect any returned task ID with `task inspect`, then read its plan, journey or evidence separately.
 
 To review a request before agents start, use `task add --backlog --title "Review this request"`, then `task update-backlog TASK --title "Reviewed request" --description "Clear requirements"` and `task queue TASK`. Queueing is explicit. An unstarted queued task can return to review with `task backlog TASK`. These operations have matching typed MCP tools and durable request references.
