@@ -234,11 +234,17 @@ export function untilWords(time: number, now: number): string {
   return `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][at.getDay()]} ${clock}`;
 }
 
-/** What a task waiting for usage says: who is out, and until when the first of them is back. */
+/** A reported outage or a cooldown, without presenting our retry time as a provider's reset. */
+export function usagePauseWords(limit: UsageLimit, now: number): string {
+  return `${limit.model ? `${modelWords(limit.model)} ` : ""}${limit.retry ? "request refused; retry after" : "out until"} ${untilWords(limit.until, now)}`;
+}
+
+/** What a task waiting for usage says: who is out, and when work can be tried again. */
 export function waitingWords(state: Pick<State, "tools" | "pool">, now: number): string {
   const limits = liveLimits(state.pool, now);
   if (!limits.length) return "Waiting for usage";
   const order = (toolId: Id) => state.tools.findIndex((tool) => tool.id === toolId);
+  if (limits.some((limit) => limit.retry)) return `Waiting for usage: ${[...limits].sort((a, b) => order(a.toolId) - order(b.toolId)).map((limit) => `${toolName(state, limit.toolId)} ${usagePauseWords(limit, now)}`).join(" · ")}`;
   const names = [...new Set([...limits].sort((a, b) => order(a.toolId) - order(b.toolId)).map((limit) => `${toolName(state, limit.toolId)}${limit.model ? ` (${modelWords(limit.model)})` : ""}`))];
   const who = names.length === 1 ? `${names[0]} is` : `${names.slice(0, -1).join(", ")} and ${names.at(-1)} are`;
   return `Waiting for usage: ${who} out until ${untilWords(Math.min(...limits.map((limit) => limit.until)), now)}`;
@@ -274,7 +280,7 @@ export function usageLines(state: Pick<State, "tools" | "pool">, now: number): U
       .map((report) => `${kindWords(report.kind, report.windowMinutes, report.name)} ${words(report)}${report.resetsAt !== undefined ? `, resets ${untilWords(report.resetsAt, now)}` : ""}`);
     const out = liveLimits(state.pool, now)
       .filter((limit) => limit.toolId === tool.id)
-      .map((limit) => `${limit.model ? `${modelWords(limit.model)} ` : ""}out until ${untilWords(limit.until, now)}`);
+      .map((limit) => usagePauseWords(limit, now));
     const holding = !out.length && slowingDown(state.pool, tool.id, now);
     const parts = [...used, ...out, ...(holding ? [HOLDING_BACK] : [])];
     return { line: { toolId: tool.id, name: tool.name, text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || report.utilization !== undefined) ? "fine" : "not reported", tone: (out.length ? "out" : holding ? "near" : "fine") as UsageLine["tone"] }, shown: tool.status === "ready" || parts.length > 0 };

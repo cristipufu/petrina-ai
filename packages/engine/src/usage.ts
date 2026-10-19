@@ -8,7 +8,7 @@ import { ADAPTERS } from "./tools.js";
 /** One report from a tool, before the engine stamps it with the time. */
 export type UsageInfo = Omit<UsageReport, "at">;
 
-/** A turn ended because its tool (or one model family of it) is out of usage until `until`. */
+/** A turn ended on a usage refusal. `until` is a reset, or a cooldown before retrying. */
 export class UsageLimited extends Error {
   constructor(
     readonly toolId: string,
@@ -18,8 +18,10 @@ export class UsageLimited extends Error {
     readonly reason: string,
     /** Set when only this model family is out ("opus"). */
     readonly model?: string,
+    /** The provider refused a request without reporting a reset; `until` is our retry time. */
+    readonly retry?: boolean,
   ) {
-    super(`${reason} is used up`);
+    super(retry ? reason : `${reason} is used up`);
   }
 
   /** What the agent had said in the turn before it stopped, when its tool lets that through. */
@@ -114,6 +116,9 @@ const CODEX_OUT = new Set(["usageLimitExceeded", "rateLimitExceeded", "sessionBu
 /** Grok's StopFailure class for a rate limit, and the sentence `format_rate_limited_user_message` shows when that class has no field. */
 const GROK_RATE = "rate_limit";
 const GROK_RATE_MESSAGE = "You've hit the rate limit for your plan.";
+const GROK_BALANCE_MESSAGE = "Grok Build usage balance exhausted";
+/** A request refusal does not establish that the whole account is out, or when it resets. */
+const GROK_REFUSAL_COOLDOWN_MS = 5 * 60_000;
 /**
  * Grok classifies a capacity error (503, 529) as `rate_limit` too. Those show one of these sentences,
  * and they are a busy service, not the plan's rate limit. Matched on the error text only.
@@ -152,11 +157,6 @@ const payload = (error: unknown): Record<string, unknown> => {
   return { ...record, ...data };
 };
 
-const textOf = (error: unknown, said: string): string => {
-  const message = (error as { message?: unknown } | undefined)?.message;
-  return `${typeof message === "string" ? message : ""}\n${said}`;
-};
-
 /**
  * A failed turn that carried no rate-limit report. The decision is the tool's code:
  * Codex `codexErrorInfo`, Claude `errorKind`, Grok's `rate_limit`, or a session-failure kind.
@@ -170,15 +170,22 @@ export function limitFromFailure(profile: AgentProfile, error: unknown, said: st
   const errorKind = typeof data.errorKind === "string" ? data.errorKind : undefined;
   const category = typeof data.category === "string" ? data.category : undefined;
   const kind = typeof data.kind === "string" ? data.kind : undefined;
-  const message = typeof (error as { message?: unknown } | undefined)?.message === "string" ? (error as { message: string }).message : "";
+  const outerMessage = (error as { message?: unknown } | undefined)?.message;
+  const message = [outerMessage, data.message].filter((value): value is string => typeof value === "string").join("\n");
   // The prefix list and Grok's sentence are for the error text only. An agent's own words are not a limit.
   const grok = profile.toolId === "grok";
-  const grokBusy = grok && GROK_BUSY.some((line) => message.includes(line));
+  // Native Grok puts the HTTP failure in ACP error.data, underneath "Internal error".
+  // Keep it separate from the account allowance: a later small request can still succeed.
+  if (grok && data.http_status === 402 && message.includes(GROK_BALANCE_MESSAGE)) {
+    return new UsageLimited(profile.toolId, now + GROK_REFUSAL_COOLDOWN_MS, `Grok refused the request: ${GROK_BALANCE_MESSAGE}`, undefined, true);
+  }
+  const grokBusy = grok && (data.http_status === 503 || data.http_status === 529 || GROK_BUSY.some((line) => message.includes(line)));
+  if (grokBusy) return undefined;
   const grokError = grok && data.error === GROK_RATE && !grokBusy;
   const grokSentence = grok && !grokBusy && message.includes(GROK_RATE_MESSAGE);
   const coded = (code !== undefined && CODEX_OUT.has(code)) || (errorKind !== undefined && CLAUDE_OUT.has(errorKind)) || (category !== undefined && LIMIT_KIND.has(category)) || (kind !== undefined && LIMIT_KIND.has(kind)) || grokError;
   if (!coded && !grokSentence && !CLAUDE_USAGE_PREFIXES.some((prefix) => message.includes(prefix))) return undefined;
-  const text = textOf(error, said);
+  const text = `${message}\n${said}`;
   const tool = ADAPTERS[profile.toolId]?.name ?? profile.toolId;
   const rate = errorKind === "rate_limit" || code === "rateLimitExceeded" || grokError || grokSentence;
   const reason = errorKind === "billing_error" ? `${tool}'s spend limit` : rate ? `${tool}'s rate limit` : `${tool}'s usage limit`;

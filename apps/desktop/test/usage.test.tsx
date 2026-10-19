@@ -17,6 +17,18 @@ afterEach(() => { act(() => root.unmount()); host.remove(); });
 const MINUTE = 60_000;
 
 describe('usage by tool', () => {
+  it('keeps the weekly meter separate from a refused request and labels its retry time', async () => {
+    const state = createDemoState(1_000_000_000);
+    const reason = 'Grok refused the request: Grok Build usage balance exhausted';
+    await show({ ...state, tools: [...state.tools, { id: 'grok', name: 'Grok', command: ['grok'], models: [], status: 'ready' }], pool: { ...state.pool, usage: [{ toolId: 'grok', kind: 'seven_day', utilization: 0.42, status: 'allowed', at: state.now - 2 * 60 * MINUTE, resetsAt: state.now + 24 * 60 * MINUTE }], limited: [{ toolId: 'grok', retry: true, until: state.now + 5 * MINUTE, at: state.now, reason }] } }, true);
+    const card = [...host.querySelectorAll('.limit-card')].find((node) => node.textContent?.includes('Grok'))!;
+    expect(card.textContent).toContain('42% used');
+    expect(card.querySelector('[role="meter"]')?.getAttribute('aria-valuenow')).toBe('42');
+    expect(card.textContent).toContain('request refused; retry after');
+    expect(card.textContent).toContain(reason);
+    expect(card.textContent).not.toContain('out until');
+  });
+
   it('explains a failed refresh while keeping the last confirmed Grok allowance and report age', async () => {
     const state = createDemoState(1_000_000_000);
     await show({ ...state, tools: [...state.tools, { id: 'grok', name: 'Grok', command: ['grok'], models: ['Grok 4.7'], status: 'ready' }], pool: { ...state.pool, usage: [{ toolId: 'grok', kind: 'seven_day', utilization: 0.57, status: 'allowed', at: state.now - 2 * 60 * MINUTE, resetsAt: state.now + 24 * 60 * MINUTE }], usageReads: { grok: { at: state.now, state: 'unavailable' } } } }, true);

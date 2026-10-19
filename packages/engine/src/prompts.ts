@@ -310,17 +310,17 @@ export function lastWords(lines: readonly string[]): string {
 }
 
 /** For a fresh conversation that takes a step over from an agent that ran out of usage. */
-export function formatTakeOver(where: WhereYouWere, from: string, words: string): string {
+export function formatTakeOver(where: WhereYouWere, from: string, words: string, refusal?: string): string {
   return [
-    `${from} was doing this step${where.stage ? ` (“${where.stage}”, as the ${where.role})` : ""} and ran out of usage. Its unfinished work is in this working copy, not committed: continue from it, don't start over.`,
+    `${from} was doing this step${where.stage ? ` (“${where.stage}”, as the ${where.role})` : ""} and ${refusal ? `could not continue (${refusal})` : "ran out of usage"}. Its unfinished work is in this working copy, not committed: continue from it, don't start over.`,
     ...whereDetails(where, "it"),
     words ? `What it last said in this step, most recent first:\n\n${words}` : "It had not said anything yet in this step.",
   ].join("\n\n");
 }
 
 /** For an agent working beside others that takes over from one that ran out of usage: the copy is fresh, so only its words carry over. */
-export function formatReviewTakeOver(from: string, words: string): string {
-  return [`${from} was doing this part of the review and ran out of usage. Carry on from what it had found instead of starting over.`, words ? `What it said so far, most recent first:\n\n${words}` : "It had not said anything yet."].join("\n\n");
+export function formatReviewTakeOver(from: string, words: string, refusal?: string): string {
+  return [`${from} was doing this part of the review and ${refusal ? `could not continue (${refusal})` : "ran out of usage"}. Carry on from what it had found instead of starting over.`, words ? `What it said so far, most recent first:\n\n${words}` : "It had not said anything yet."].join("\n\n");
 }
 
 export const OWN_COPY = "Your working copy";

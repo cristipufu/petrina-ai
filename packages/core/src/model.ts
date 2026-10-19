@@ -1101,6 +1101,8 @@ export interface UsageLimit {
   until: number;
   /** Plain words, for example "Claude Code's weekly Opus limit". */
   reason: string;
+  /** A request was refused without a reset time. `until` is Petrina's retry time, not a reported reset. */
+  retry?: boolean;
   /** When the tool reported that it was out. Missing in older saved state. */
   at?: number;
 }

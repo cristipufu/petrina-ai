@@ -1120,8 +1120,9 @@ export abstract class Kernel {
   /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */
   recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void {
     this.tracking.limitHit(task, roleId, profileId, error);
-    this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: error.toolId, ...(error.model ? { model: error.model } : {}), until: error.until, reason: error.reason, at: Date.now() }) as MState["pool"]["limited"];
-    this.log(task, "warn", `${this.role(roleId)?.name ?? roleId} on ${this.named(profileId)} ran out of usage (${error.reason}), until ${untilWords(error.until, Date.now())}`, roleId, profileId);
+    this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: error.toolId, ...(error.model ? { model: error.model } : {}), ...(error.retry ? { retry: true } : {}), until: error.until, reason: error.reason, at: Date.now() }) as MState["pool"]["limited"];
+    const outcome = error.retry ? `could not continue (${error.reason}); retry after ${untilWords(error.until, Date.now())}` : `ran out of usage (${error.reason}), until ${untilWords(error.until, Date.now())}`;
+    this.log(task, "warn", `${this.role(roleId)?.name ?? roleId} on ${this.named(profileId)} ${outcome}`, roleId, profileId);
     this.armLimitTimer();
     this.commitNow();
   }

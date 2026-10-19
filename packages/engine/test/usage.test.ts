@@ -46,6 +46,71 @@ async function start(scenario: Scenario, options: { description?: string; before
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 
 describe.concurrent("an agent that runs out of usage", () => {
+  it("hands off a native Grok 402 without retrying its request or changing the weekly reading", async () => {
+    const report = { toolId: "grok", kind: "seven_day", status: "allowed" as const, utilization: 0.42, at: Date.now() - 7_200_000, resetsAt: Date.now() + 86_400_000 };
+    const run = await start({ builder: "plain", limited: [{ model: "grok-4.7", role: "builder" }] }, {
+      before: (engine) => { engine.s.pool.usage = [report]; },
+    });
+    try {
+      const planned = await waitFor(() => run.find().plan, "the plan check");
+      const build = planned.stages.find((stage) => stage.roleId === "builder")!;
+      run.engine.setStageProfile(run.taskId, build.id, "profileIds", 0, "grok-xhigh");
+      const task = await run.done();
+      expect(task.builderSession!.toolId).not.toBe("grok");
+      const attempts = run.fakes.received("builder");
+      expect(attempts.filter((entry) => run.modelOf(entry.session) === "grok-4.7")).toHaveLength(1);
+      expect(attempts[1]!.text).toContain("Grok refused the request: Grok Build usage balance exhausted");
+      expect(attempts[1]!.text).toContain("Its unfinished work is in this working copy");
+      expect(attempts[1]!.text).not.toContain("ran out of usage");
+      expect(lines(task).some((line) => line.includes("could not continue (Grok refused the request"))).toBe(true);
+      const pool = run.engine.getState().pool;
+      expect(pool.usage!.find((entry) => entry.toolId === "grok")).toEqual(report);
+      expect(pool.limited!.find((entry) => entry.toolId === "grok")).toEqual(expect.objectContaining({ retry: true, reason: "Grok refused the request: Grok Build usage balance exhausted" }));
+      expect(usageLines(run.engine.getState(), Date.now()).find((line) => line.toolId === "grok")!.text).toContain("request refused; retry after");
+    } finally { await run.engine.shutdown(); }
+  });
+
+  it("waits without a slot after a Grok request refusal, then resumes its conversation after the cooldown", async () => {
+    const run = await start({ planner: "short", builder: "plain", reopen: "resume", limited: [{ model: "grok-4.7", role: "builder" }] }, {
+      before: (engine) => {
+        engine.s.setup!.checks = [
+          { id: "claude-code", status: "logged-out" },
+          { id: "codex", status: "logged-out" },
+          { id: "grok", status: "ready" },
+        ];
+      },
+    });
+    try {
+      const waiting = await waitFor(() => {
+        run.answer();
+        const task = run.find();
+        if (task.state === "failed") throw new Error(task.error);
+        return task.state === "waiting" && task.statusLine.includes("request refused; retry after") && task;
+      }, "Grok's cooldown wait");
+      expect(waiting.holdsSlot).toBe(false);
+      expect(waiting.agent).toBeUndefined();
+      expect(waiting.statusLine).not.toContain("out until");
+      expect(run.fakes.received("builder")).toHaveLength(1);
+      const limit = run.engine.s.pool.limited!.find((entry) => entry.toolId === "grok")!;
+      expect(limit.until - limit.at!).toBeGreaterThan(4 * 60_000);
+      expect(limit.until - limit.at!).toBeLessThanOrEqual(5 * 60_000);
+      const resetAt = Date.now() + 1500;
+      writeFileSync(join(run.fakes.dir, "limit-grok-4.7"), String(resetAt));
+      limit.until = resetAt;
+      run.engine.schedule();
+      await waitFor(() => {
+        run.answer();
+        return lines(run.find()).some((line) => line.startsWith("Build done"));
+      }, "the builder to resume after its cooldown");
+      const builders = run.fakes.received("builder");
+      expect(builders).toHaveLength(2);
+      expect(new Set(builders.map((entry) => entry.session)).size).toBe(1);
+      expect(run.fakes.opens().filter((entry) => entry.session === builders[0]!.session).map((entry) => entry.how)).toEqual(["new", "resume"]);
+      expect(run.find().fixing).toBe(false);
+      expect(run.find().findings).toEqual([]);
+    } finally { await run.engine.shutdown(); }
+  });
+
   it("credits the planner's replacement after readiness checks already moved planning to another tool", async () => {
     const run = await start({ planner: "research-first", builder: "plain", limited: [{ model: "gpt-6.1-sol", role: "planner" }] }, {
       before: (engine) => {
@@ -639,6 +704,28 @@ describe("what the tools say about usage", () => {
     expect(limitFromFailure(grok, { message: "Internal error", data: { error: "server_error" } }, "", now)).toBeUndefined();
     // The same sentence in what the agent said is not a limit. Only the error text is.
     expect(limitFromFailure(grok, new Error("Internal error"), "You've hit the rate limit for your plan.", now)).toBeUndefined();
+  });
+
+  it("reads Grok's nested HTTP 402 as a request refusal, without inventing a weekly reset", () => {
+    const grok: AgentProfile = { ...codex, toolId: "grok" };
+    const data = { http_status: 402, message: "API error (status 402 Payment Required): Grok Build usage balance exhausted" };
+    const failure = { code: -32603, message: "Internal error", data };
+    const error = limitFromFailure(grok, failure, "Weekly usage resets Friday. Try again at 5:42 PM.", now)!;
+    expect(error).toEqual(expect.objectContaining({ toolId: "grok", retry: true, until: now + 5 * 60_000, reason: "Grok refused the request: Grok Build usage balance exhausted" }));
+    expect(error.message).toBe(error.reason);
+    expect(error.model).toBeUndefined();
+    // A provider's structured refusal is not a sentence found in the agent's conversation.
+    expect(limitFromFailure(grok, new Error("Internal error"), data.message, now)).toBeUndefined();
+    expect(limitFromFailure(codex, failure, "", now)).toBeUndefined();
+    expect(limitFromFailure(grok, { message: "Internal error", data: { http_status: 402, message: "Payment setup required" } }, "", now)).toBeUndefined();
+    for (const http_status of [401, 403, 500, 503, 529]) {
+      expect(limitFromFailure(grok, { message: "Internal error", data: { ...data, http_status } }, "", now)).toBeUndefined();
+    }
+    // Native service-busy errors can also carry rate_limit, beneath the generic ACP message.
+    expect(limitFromFailure(grok, { message: "Internal error", data: { http_status: 503, error: "rate_limit", message: "Service unavailable" } }, "", now)).toBeUndefined();
+    expect(limitFromFailure(grok, { message: "Internal error", data: { error: "rate_limit", message: "You've hit the rate limit for your plan." } }, "", now)?.reason).toBe("Grok's rate limit");
+    expect(limitFromFailure(grok, { message: "Internal error", data: { error: "rate_limit", message: "You've hit the rate limit for your plan. Try again at 4:10 PM." } }, "", now)?.until).toBe(new Date(2026, 9, 17, 16, 10).getTime());
+    expect(limitFromFailure(grok, { message: "Internal error", data: { http_status: 529, category: "rate_limited" } }, "", now)).toBeUndefined();
   });
 
   it("reads every limit code both tools send, with the kind of limit in words", () => {

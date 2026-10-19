@@ -226,7 +226,9 @@ export class Turns {
     const handback = same?.handback;
     // An agent that ran out of usage in this step is who this one takes over from.
     const before = same && !reopen && !back ? this.k.profile(same.profileId) : undefined;
-    const tookOver = before && limitOf(this.k.activeState().pool as Pool, before, Date.now()) ? before : undefined;
+    const previousLimit = before ? limitOf(this.k.activeState().pool as Pool, before, Date.now()) : undefined;
+    const tookOver = previousLimit ? before : undefined;
+    const refusal = previousLimit?.retry ? previousLimit.reason : undefined;
     // The agent has the screen for this step. Coming back from waiting for it, it has not heard yet that it may use it.
     const screen = task.screen?.granted && task.screen.roleId === roleId && task.screen.profileId === profileId && (!options.member || task.screen.member === options.member) ? task.screen : undefined;
     const forScreen = screen && !screen.heard ? screen : undefined;
@@ -378,7 +380,7 @@ export class Turns {
       this.k.say(task, "system", `${role.name} picked up where it left off · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
       this.k.log(task, "milestone", forScreen ? SCREEN_WORDS.pickedUp : "Picked up where it left off", roleId, profileId);
     } else if (tookOver) {
-      const words = `${role.name} on ${this.k.named(profileId)} took over from ${this.k.named(tookOver.id)}, which ran out of usage`;
+      const words = `${role.name} on ${this.k.named(profileId)} took over from ${this.k.named(tookOver.id)}, which ${refusal ? `could not continue (${refusal})` : "ran out of usage"}`;
       this.k.say(task, "system", words, roleId, profileId);
       this.k.log(task, "milestone", words, roleId, profileId);
     } else if (saved) {
@@ -439,7 +441,7 @@ export class Turns {
         if (options.copy) sections.push({ title: OWN_COPY, body: ownCopy(head ?? "") });
         if (earlier.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
-        else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt)) });
+        else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(task, roleId, tookOver.id, startedAt), refusal) });
         else if (where) sections.push({ title: forScreen ? WHERE_YOU_WERE_SCREEN : WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "", forScreen ? "screen" : "restart") });
         if (role.result === "build" && task.conversation) {
           const prepared = await builderContext(this.k.dataDir, task as Task, role, run.sessionId, sections);
@@ -571,7 +573,7 @@ export class Turns {
       this.k.commitNow();
       const since = Date.now();
       try {
-        return await this.attemptTogether(task, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at) } } : {}) });
+        return await this.attemptTogether(task, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(task, roleId, stopped.profileId, stopped.at), ...(stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
       } catch (error) {
         if (!(error instanceof UsageLimited) || signal.aborted) throw error;
         refresh = true;
@@ -590,7 +592,7 @@ export class Turns {
   }
 
   /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
-  private async attemptTogether<T>(task: MTask, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { key: string; check?: Check<T>; member: string; plannedId: Id; took?: { from: string; words: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
+  private async attemptTogether<T>(task: MTask, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: { key: string; check?: Check<T>; member: string; plannedId: Id; took?: { from: string; words: string; refusal?: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
     const roleId = role.id;
     const product = this.k.repositoryOf(task);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
@@ -611,7 +613,7 @@ export class Turns {
     const team = group?.kind === "agent" && group.roleId === journeyRole ? group.team ?? (group.profileId ? [group.profileId] : []) : [];
     beginAgentStep(task, journeyRole, profileId, Date.now(), [...new Set([...team, profileId])]);
     if (options.took) {
-      const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ran out of usage`;
+      const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ${options.took.refusal ? `could not continue (${options.took.refusal})` : "ran out of usage"}`;
       this.k.say(task, "system", words, roleId, profileId);
       this.k.log(task, "milestone", words, roleId, profileId);
     } else {
@@ -675,7 +677,7 @@ export class Turns {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
       const sections = [...await given(), ...(task.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(task.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
       if (signal.aborted) throw new Aborted();
-      if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words) });
+      if (options.took) sections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
       this.recordJourneyInput(task, roleId, profileId, sections, "fresh");
       const opening = buildPrompt({ task: task as unknown as Task, product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: task.branch ?? "planning", base: task.baseSha ?? task.base ?? "", defaultBranch: task.source?.start.branch ?? product.defaultBranch ?? "main", sections });
       return await this.converse(task, run, agent, opening, "first", role, profileId, schema, signal, {

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useLimitClock } from "../usage";
 import { TOOL_COLORS } from "../lib";
-import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, usageLines, agoText, limitWords, untilWords, count, figureText, tokenNumber, type AboutCounts, type Detail, type Figure, type WorkUsageLine, type State, type UsagePeriod } from "@petrina/core";
+import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, usageLines, usagePauseWords, agoText, limitWords, count, figureText, tokenNumber, type AboutCounts, type Detail, type Figure, type WorkUsageLine, type State, type UsagePeriod } from "@petrina/core";
 
 /** Chart colours per tool: the app's tool colours, with their own step in dark mode. */
 export const toolColor = (toolId: string | undefined) => (toolId ? `var(--tool-${toolId}, var(--slate))` : "var(--slate)");
@@ -343,7 +343,8 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
               })}
               {out.map((limit) => (
                 <div className="limit" key={limit.model ?? "all"}>
-                  <div className="bad small">{limit.model ? `${limit.model} ` : ""}out until {untilWords(limit.until, now)}</div>
+                  <div className="bad small">{usagePauseWords(limit, now)}</div>
+                  {limit.retry && <div className="muted small">{limit.reason}</div>}
                   <div className="muted small">{limit.at === undefined ? "Report time not reported" : `Reported ${agoText(limit.at, now)}`}</div>
                 </div>
               ))}

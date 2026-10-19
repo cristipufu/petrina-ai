@@ -97,6 +97,18 @@ describe("who works a step", () => {
 });
 
 describe("limits and reports", () => {
+  it("shows a refused request's cooldown separately from the account's weekly allowance", () => {
+    const toolList = [...tools, { id: "grok", name: "Grok", command: [], status: "ready" as const, models: [] }];
+    const refused = { toolId: "grok", until: now + 5 * 60_000, retry: true, reason: "Grok refused the request: Grok Build usage balance exhausted" };
+    const allowance = report({ toolId: "grok", utilization: 0.42, resetsAt: now + 24 * HOUR });
+    const state = { tools: toolList, pool: pool({ usage: [allowance], limited: [refused] }) };
+    expect(waitingWords(state, now)).toBe("Waiting for usage: Grok request refused; retry after 12:05");
+    expect(usageLines(state, now).find((line) => line.toolId === "grok")!.text).toBe("weekly 42%, resets Sat 12:00 · request refused; retry after 12:05");
+    expect(state.pool.usage).toEqual([allowance]);
+    expect(waitingWords({ ...state, pool: pool({ limited: [out("codex", now + HOUR), refused] }) }, now)).toBe("Waiting for usage: Codex out until 13:00 · Grok request refused; retry after 12:05");
+    expect(liveLimits(state.pool, refused.until)).toEqual([]);
+  });
+
   it("keep the latest per tool and model, and drop what ended", () => {
     const first = withLimit(undefined, out("claude-code", now + HOUR));
     expect(withLimit(first, out("claude-code", now + 2 * HOUR))).toEqual([out("claude-code", now + 2 * HOUR)]);

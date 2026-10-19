@@ -447,6 +447,9 @@ async function runOut(limit: NonNullable<Scenario["limited"]>[number], until: nu
     await send(client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `You've hit your usage limit. Try again at ${at.getHours() % 12 || 12}:${String(at.getMinutes()).padStart(2, "0")} ${at.getHours() < 12 ? "AM" : "PM"}.` } });
     throw acp.RequestError.internalError({ codexErrorInfo: "usageLimitExceeded", category: "quota_exhausted" }, "Internal error");
   }
+  if (limit.model.startsWith("grok")) {
+    throw acp.RequestError.internalError({ message: "API error (status 402 Payment Required): Grok Build usage balance exhausted", http_status: 402 });
+  }
   await send(client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "I drafted notes.txt and started on the greeting file before running out." } });
   if (limit.spendCap) {
     // The session window is open, but the separate spend cap is exhausted in the same update.
