@@ -1,0 +1,137 @@
+# Products, Agents, Analytics and preferences
+
+Owns page placement, product editing, analytics presentation, Library and first run. Back to [UX overview](../ux.md).
+
+## Many products
+
+A coordinator may run twenty products or more, so nothing assumes a handful.
+
+### Product switcher
+
+(⌘P) in the top bar: a search field, then products grouped as *Needs you*, *Active* and *Quiet*, each saying in quiet text what waits on you, how many agents work and how many tasks are queued. The board keeps its full width.
+
+### Products page
+
+The portfolio on one screen. One row per product with its pipeline (queue, plan, design, build, review, ready), what shipped, and what waits on you, as aligned numbers rather than badges. Products that need you sort first; clicking one filters the board to it. In a small window the table scrolls sideways.
+
+### Adding and editing products
+
+#### Add a product
+
+Has a folder path and a Name field below it. The folder suggests the name (`petrina-ai` becomes Petrina AI); common abbreviations AI, API, UI, UX, CLI and SDK stay in capitals, and words already containing capitals keep their spelling. Correct the name before adding. Both fields are required; adding an existing repository opens its product without renaming it.
+
+#### Product settings
+
+Product settings live in the existing Products table. Each row's **Settings** button opens its editor directly below that row, one product at a time, with Name focused. There is no second product list. The editor fits the visible area even when the table scrolls sideways. Escape or Cancel closes it and returns focus to that row's Settings button.
+
+- A product's settings show Name, the same three delivery choices as New task, **Ask me before shipping**, and **Remove product**. Name, delivery defaults, automated checks and removal are separate sections, with aligned controls and Save/Cancel together at the bottom. They contain no permission controls. Save applies name and delivery defaults together; Cancel or Escape discards the edits. Names are trimmed, one line, at most 60 characters, and unique ignoring capitals, enforced by the engine as well as in the demo. A rejected save changes nothing.
+- Delivery choices apply to new tasks; tasks already on the board keep theirs. A saved name appears everywhere immediately and in the next agent's instructions. Running agents keep the instructions they already received. Working copies, branches and the GitHub repository keep their identities.
+- Removal is unavailable until all tasks are done or cancelled, and says how many must finish or be cancelled first. An open pull request, failed task, paused task or queued task still counts as unfinished. The engine checks this again.
+- Confirmation names the number of finished and cancelled tasks being permanently deleted, including their conversations, timelines, and design and review history, and says this cannot be undone. A separate line says: "Your repository, its local folder, its branches and GitHub are not touched." With no tasks, it says "This product has no task history." The confirm button names the loss: **Remove and delete 12 tasks**. Removal clears those tasks and their inbox entries, closes the product's settings, and returns a board filtered to that product to All products. Petrina's working copies remain on disk.
+- While disconnected, Add product, Save and Remove are disabled and say they are waiting for the engine. The same settings and removal flow work on simulated products in the demo.
+
+A task taking a slot leaves the queue immediately, before its working copy is ready or its planner speaks: no queue number, drag handle, queue count or next-up entry remains. The card's Plan step is current, its planner is named, and the Products page counts it under Plan. Resumed tasks show their own current step immediately too.
+
+- The queue and the pool stay global: priority is across products, because the pool of agents is shared.
+- Cards always carry their product, so an all-products board stays readable.
+
+## Agents
+
+Shows occupied slots, agent summaries and the queue. Tools and terminal preferences live here, without duplicate usage-limit or review-analytics panels.
+
+### Tools on this machine
+
+Claude Code, Codex, Grok and Antigravity use the same readiness states and fixes as first run. GitHub CLI names its signed-in account; Git and Node.js appear when required. Entering Tools checks once. Only Check again starts another page-driven check; focus and visibility changes never do. An uncertain result offers details without claiming the login has expired.
+
+### Your terminal
+
+Choose where Take over in terminal opens, using the machine’s usual terminal by default. If no terminal is available, the same launcher can be copied. Antigravity explains that its terminal cannot open the agent’s ACP conversation.
+
+## Analytics
+
+Antigravity appears alongside the other installed tools in Agents and in profile choices. Its Analytics quota card names the model group for each window, keeping a separate Argon allowance visible. Missing or failed readings retain their usual plain-language status and report age. Terminal takeover explains that Antigravity's terminal cannot open the agent's conversation; messages and interruption remain available.
+
+What the whole squad used and how it works, in plain words and simple charts. It follows the product switcher (all products, or one), staying open with the chosen period and details when the product changes and offers **Today**, **7 days** and **30 days**, counted from local midnight. It opens on 7 days. Defaults matter more than options: one chart and three splits are visible, the rest is one click away.
+
+While Analytics stays open, it requests fresh account usage periodically even when the pool is paused. A tool says “Updating usage…” during a read. A failed refresh says “Couldn’t refresh usage. Showing the last report.” The previous percentage and its report time stay unchanged; a failed attempt never makes an old reading look current.
+
+A request refused by Grok without an account reset says “request refused; retry after …”, with the provider's explanation below. This cooldown stays separate from the weekly meter and never claims the weekly allowance is used up.
+
+1. **Usage limits**, per tool, first, with a note that these account limits also include sessions outside Petrina: how much of each limit is used (a thin meter that turns amber close to the limit and red when it is reached), when it resets, and when that was reported. All usage cards stretch to the same height within the grid, regardless of the number of reported windows. Claude Code reports its limits while it works. Codex and Grok don't send account limits with their turns, so Petrina asks the installed tools directly, without starting an agent or spending anything (after a turn, at most every 5 minutes, and when this page opens, at most once a minute). Grok's allowance is shown with the percentage and reset time its account reports. A limit whose reset time has passed says so instead of showing the old percentage. Nothing reported reads "Not reported". Under the cards, **how fast each limit is used**: one small chart per tool for the chosen period, a line per limit (5-hour, weekly, weekly Opus or Sonnet, extra usage; Codex's windows when it reports them) with its latest percentage in the legend, each reset marked with a tick on the line (a hollow one for the next reset still ahead), the readings at any moment on hover or with the arrow keys, and a **Table** view of the same readings. A reset breaks the line, and an old reading never carries into the next window. Nothing read yet says so in a line.
+2. **Tokens and agent time.** Four headline numbers: tokens, agent time, agent turns and tasks worked on. Turns include finished and stopped work; tokens and time are counted when a turn ends. Partial totals use a compact `>` marker. One stacked column chart per day (per hour for Today), with the **running total** in a strip under it on its own scale: split **by tool**, **by model** or **by provider** (Anthropic, OpenAI, xAI and Google: who runs the models behind each tool), measuring all tokens, new input, reused input or output where the tools reported them, or agent time. A legend names the series and a fixed colour follows each tool, model and provider whatever else is shown; every column is labelled on a week and only the largest on a month; the numbers show on hover and on keyboard focus; and a **Table** view shows the same numbers, day by day, with exact token counts in the table and tooltip. Missing reports say so instead of showing zero; partial amounts and running totals use `>`. Under it three splits: **by role**, **by tool** and **by model**, each line with its tokens, agent time and a bar, largest first. **Show details** adds new input, reused from the cache, written to the cache and output ("not reported" where missing; no figure ever shows as a dash). **By product** (only with all products) and **By task** are one click away; the task split shows the ten largest, a way to see all, and opens each task's sheet.
+   - The model split shows tokens per model exactly as each tool reported them. Agent time sits with the model the agent ran on; a model that only appeared inside a turn shows its tokens, and its time reads "not reported". Model names Petrina recognises read plainly ("Opus 5.5"); any other name, a bracketed ending included, is shown exactly as reported and never merged into another model. Time from turns whose model wasn't confirmed sits on "Model not confirmed"; time from turns that changed model partway, and the tokens of a Codex turn that rerouted, sit on "Changed model during a turn". Token lines never show an effort.
+   - A removed product keeps its history here under its old name, marked "removed".
+3. **How the squad works.** Stages run, turns run, tasks delivered and cancelled; a column chart of tasks delivered and cancelled per day (Today is one column, never hourly); how long each kind of stage usually takes and how much of that was agent work; and one plain line each on send-backs, design rounds, questions to you (how often, and how long you took) and failures and retries. **Details per reviewer and per profile** are one click away: blocking findings and send-backs per reviewer, design rounds per architect and design reviewer and how often designs came to you, failures by reason, retries, redone results and interrupted turns. A profile is only credited with stages that ran on its own model and effort in every round, including rounds before the chosen period; other stages are listed under what actually ran, or under "Settings not confirmed", and one line says how many. Code and Security reviewers are both included. A profile’s unknown agent time reads “not known”; recorded time mixed with a lost turn uses `>`. Questions count from when agents ask, even if the task is later cancelled, and unanswered requests are listed without adding zero-length answers to the average.
+
+4. **How reviews are going.** First-round passes, rounds to pass, unsettled reviews, coordinator send-backs, finding outcomes in separate numeric columns with an All reviewers total, a role breakdown separating Code reviewer, Security reviewer and custom review roles, and the reviewer comparison table. Verifier impact keeps each completed verification round, including earlier rounds on reopened findings: confirmed Important, not a bug, to nit, or pre-existing. It shows how many completed checks removed an Important finding as a blocker. The per-verifier table counts only the latest vote per proven actual tool within a round, shows each verdict, and compares votes with the final group decision as agreement, not accuracy. Older votes without a proven tool stay out of that comparison. Each table has its own heading and a clear gap before the next. Analytics uses consistent section dividers, 16px card padding, tabular numbers and the shared type scale in light and dark. These totals follow the selected product and are explicitly labelled as all recorded reviews across all dates. They are separate from the usage period above. Agents shows occupied slots, the queue, installed tools with Check again, and the terminal choice; it has no duplicate usage or review panels.
+
+**About these numbers** is one small note, opened from a link beside the tokens section (and from the task sheet).
+
+It says, for the chosen period: input reused from the cache is each tool's own count, not an exact measure of what agents re-read; the tools count slightly differently, so totals across tools are approximate; Claude Code's numbers include its helper agents and compaction inside each model's line; Grok's whole-turn totals include the subagent work its CLI has collected, with cache reads separated from new input and thinking included in output; Codex reports only its main agent, with how many turns started helpers whose use it doesn't report; how many Claude Code turns counted the main agent only because no per-model breakdown came; how agent time is placed by model; what "not known" means; that agent time adds up agents running at once; and why no prices are shown.
+
+None of this is repeated line by line.
+
+**Partial numbers:** `>` marks a recorded lower bound when whole turns are missing. There is no repeated explanation banner. Unknown is never shown as zero: when nothing known adds up, the number reads "not known". A missing figure a tool didn't send reads "not reported". No money appears anywhere.
+
+### The three small places
+
+### Task sheet → Overview → What it used
+
+Total tokens and agent time, a line with the input the tools reused from their cache "as the tools report it", and an "About these numbers" link. Then each stage that ran, in plan order with planning first, with its agents: role, tool, the model and effort that actually ran (or "asked for sol at xhigh, ran gpt-6.1 at medium", or "settings not confirmed"), rounds, tokens and time, and each model's tokens when an agent's tokens span more than one. A stage removed by a re-plan still shows under its old name. A task with no entries says "Nothing used yet" or that it ran before Petrina kept track.
+
+### Products page → Agent work
+
+Each product's total tokens and agent time, finished and cancelled tasks included.
+
+### Pool popover → Today
+
+(see The pool).
+
+Cards, board columns, the Agents page and the inbox show no usage numbers, so the board stays calm.
+
+## Library
+
+### Roles
+
+A card per role with its icon, purpose, what it may change, what it sees and what it hands back. Built-in roles say "Built-in", plus "Edited" once changed; roles you add say "Added by you". **Add a role**, at the top of the section, starts one from blank, from a Security reviewer or from a Copywriter, with a name, an icon and a colour of your choice.
+  - **Edit** opens a panel from the right that asks, in plain words: what it's for (the planner reads this to decide when to bring it in), how it works (what the agent is told), what it may change and what it hands back. Below them it shows what Petrina decides: where its tasks sit on the board and what it sees. No code, ids or settings. Save is explicit (⌘↵); Cancel, Escape or closing with unsaved changes asks first.
+  - **What it may change:** Read-only (anything it changes is undone when its step ends) or Can change the product (its changes are saved on the task's branch and checked by the reviewers). Roles that change the product always work before the final review: Petrina handles delivery itself after it. The choice is locked, with the reason shown, for the Planner (always read-only), the reviewers (they never change the work they judge) and the Builder (it always makes changes).
+  - **What it hands back:** a role you add hands back Notes, which every later agent on the task reads, or Pass-or-fail findings, which put it in the review next to the code reviewers, its blocking findings going back to the builder. You choose once: to hand back something else, add a new role. Built-in roles keep their name, icon and kind of result, because Petrina depends on them; their description can change.
+  - **Reset to default** brings back Petrina's wording and settings for an edited built-in role, after you confirm. **Remove role** takes a role you added out of the Library and the planner, after a confirmation that names any unfinished task using it: tasks already planned with it still run it, and past tasks still show its name and icon.
+  - The **Release Manager** has View instead of Edit. It writes release notes, read-only, and can't be edited here. Petrina adds delivery last and handles publishing itself, as before.
+  - The engine saves the changes and keeps them across restarts. They reach the next agent that starts and the next plan the planner makes; an agent already working finishes with the version it started with. Roles you add appear in plans with their icon and name like any other; when the planner puts one where it can't work, the plan's reason says what Petrina changed. In the demo, changes apply to the simulated squad for the session.
+
+### Templates
+
+Example plans the planner learns from.
+
+## Settings
+
+One page for the whole app, from the bottom of the rail or with ⌘, (Ctrl+, on Windows and Linux). It uses the same page header, type and spacing as the other pages, in every look. It contains app-wide preferences; each product is edited on Products.
+
+### Appearance
+
+The looks, grouped Light and Dark, each with its name and one sentence. The same list is in the top bar and in the command palette ("Use the Ink theme", and the same for the others).
+
+### Notifications
+
+One switch ("Notify me when the squad needs me"), a line about permission, and **Send a test notification**. The line is honest: a browser says it allows Petrina's notifications, blocks them (with how to allow them), or has not been asked yet. The desktop app cannot read the system's setting, so it says so, suggests the test, and names where to allow Petrina: System Settings › Notifications on a Mac, Settings › System › Notifications on Windows, the desktop's notification settings on Linux.
+
+It never says "allowed" without having checked. On a Mac the test goes out after five seconds, because macOS shows no banner for the app in front. With the switch off the test is unavailable.
+
+### Keyboard
+
+The single-key shortcuts switch (the same choice as in the command palette) and a button that lists every keyboard shortcut.
+
+- Later: pool limit and caps per tool, default checkpoints, where data lives. (There is no permission list: Petrina remembers no permission answers.)
+
+## First run
+
+Four short screens in one window, with a step indicator, Back, and **Skip setup** on every screen. It shows only on a fresh install (no products, no tasks), and only once Petrina has its engine's real state: until then it says "Starting Petrina…". Someone who already uses Petrina never sees it. Closing Petrina partway reopens at the first unfinished screen; a lost connection keeps the screen and everything typed, says it is reconnecting, and carries on.
+
+1. **Welcome:** "Petrina runs a squad of AI agents on your products. You set priorities and make the calls." Everything runs on this machine. Get started (or Enter).
+2. **Tools:** Claude Code, Codex and the GitHub CLI, each Checking, Ready, Not installed, Not logged in, or Couldn't check (the GitHub CLI says which account). Grok gets a row only when it is installed, and Git and Node.js only when missing. Anything not Ready shows one sentence and the official guide; a confirmed installation or login problem also shows its command with Copy. An uncertain result offers Details and Check again, without guessing that the login is wrong. Tools are checked once when the screen opens and then only with Check again; window focus and tab visibility never trigger checks. Continue needs Git, Node.js and one agent tool (Claude Code, Codex, or Grok when installed) that is Ready or couldn't be checked. Notes say when agents will review on one tool, when Petrina will only try a tool, and that the GitHub CLI is needed before the first pull request.
+3. **Product:** up to six GitHub clones found in the usual code folders, newest first, one click each, or paste a folder (~ and subfolders work). The scan never follows a shortcut, on the way to a code folder or inside one. On a Mac it stays out of Documents, Desktop and Downloads, which would bring up a system permission window; a clone there is pasted. Refusals are one plain sentence. A folder already added says so. A clone not linked to GitHub keeps its finished work on this machine, and the screen says so, here and in Add a product.
+4. **First task:** the product picked, a title, three starter ideas, optional details, "Show me the plan first" on, and More options with the New task dialog's choices. Start (or Enter) shows Starting… and keeps everything until Petrina confirms the task is saved; a refusal, no answer in 10 seconds or a lost connection gives a plain message and Try again, never a second card.
+
+Then the board, with the first card on its Plan step and a one-time tip that follows "Show me the plan first": the plan will arrive in Needs you for approval, or the squad has started and the card shows the plan. While the first task is stuck, the tip says so and points at Needs you instead of promising a plan. Skip setup leads to a board whose empty state offers Add a product and New task. `?demo=first-run` shows first run on the simulated squad.
