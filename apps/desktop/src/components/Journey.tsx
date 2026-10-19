@@ -731,6 +731,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
             {acceptanceChecks.map((check) => <li key={check.text}>
               <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" ? "bad" : "needs-you"}`}>{check.result === "pass" ? "Passed" : check.result === "fail" ? "Failed" : "Could not verify"}</span>
               <strong>{check.text}</strong>
+              {check.evidence ? <span>{check.evidence}</span> : null}
               {check.reason ? <span>{check.reason}</span> : null}
             </li>)}
           </ul>

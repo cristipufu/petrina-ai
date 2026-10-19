@@ -76,7 +76,7 @@ export interface Scenario {
   /** Repair a partial ballot with a revised first verdict; the remaining findings are not bugs. */
   correctPartialVerification?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
-  tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once" | "blocked";
+  tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once" | "blocked" | "no-evidence";
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
   releaseManager?: "hang";
   /**
@@ -1044,6 +1044,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       });
     }
     case "tester":
+      if (plan.tester === "no-evidence") return done({ summary: "It looks fine.", checks: [{ text: "A greeting file exists", result: "pass" }] });
       if (plan.tester === "omit-once" && !marked("tester-omitted")) {
         mark("tester-omitted");
         return done({ summary: "It looks fine.", checks: [] });
@@ -1064,13 +1065,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       // "fail-once": the second tester pass (the one on the final code) fails an acceptance item, once.
       if (plan.tester === "blocked") return done({ summary: "I could not open the live session because its account limit is exhausted.", checks: [{ text: "A greeting file exists", result: "blocked", reason: "The Claude Code weekly limit prevents opening a live session." }] });
-      if (plan.tester === "always-fail") return done({ summary: "The greeting still does not appear.", checks: [{ text: "A greeting file exists", pass: false }] });
+      if (plan.tester === "always-fail") return done({ summary: "The greeting still does not appear.", checks: [{ text: "A greeting file exists", pass: false, evidence: "The scripted guest welcome page has no greeting; expected the greeting to be visible." }] });
       if (plan.tester === "fail-once" && marked("tester-passed-once") && !marked("tester-failed-once")) {
         mark("tester-failed-once");
-        return done({ summary: "Tried it: the greeting is missing on the welcome page.", checks: [{ text: "A greeting file exists", pass: false }] });
+        return done({ summary: "Tried it: the greeting is missing on the welcome page.", checks: [{ text: "A greeting file exists", pass: false, evidence: "The scripted guest welcome page has no greeting; expected the greeting to be visible." }] });
       }
       mark("tester-passed-once");
-      return done({ summary: "Tried it: it works.", checks: [{ text: "A greeting file exists", pass: true }] });
+      return done({ summary: "Tried it: it works.", checks: [{ text: "A greeting file exists", pass: true, evidence: "The scripted greeting check returned the expected result." }] });
     case "release manager": {
       if (plan.releaseManager === "hang" && !marked("release-manager-started")) return hang(sessionId, "release-manager-started");
       await say("Writing the release notes");

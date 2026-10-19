@@ -35,14 +35,15 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(fakes.openings("tester")).toHaveLength(1);
       expect(task.brief!.acceptance.every((item) => item.met)).toBe(true);
       expect(task.acceptancePassed).toBe(true);
+      expect(task.journey!.find((step) => step.roleId === "tester")!.acceptanceChecks![0]!.evidence).toBe("The scripted greeting check returned the expected result.");
     } finally { await engine.shutdown(); }
   });
 
-  it("keeps unavailable acceptance checks unverified and prevents an unchanged retry or low-risk auto-ship", async () => {
+  it.each(["blocked", "no-evidence"] as const)("keeps %s acceptance checks unverified and prevents an unchanged retry or low-risk auto-ship", async (tester) => {
     const root = tempDir("petrina-acceptance-blocked-");
     roots.push(root);
     const fakes = new Fakes(join(root, "fake"));
-    fakes.scenario({ planner: "tester-with-design", builder: "plain", tester: "blocked", risk: "low" });
+    fakes.scenario({ planner: "tester-with-design", builder: "plain", tester, risk: "low" });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
     try {
       const productId = await engine.addProduct(makeProduct(root));
@@ -62,10 +63,11 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(task.state).toBe("needs-you");
       expect(task.acceptancePassed).toBe(false);
       expect(task.acceptanceUnverified).toBe(true);
-      expect(task.brief!.acceptance[0]).toMatchObject({ verification: "blocked", reason: "The Claude Code weekly limit prevents opening a live session." });
+      const reason = tester === "blocked" ? "The Claude Code weekly limit prevents opening a live session." : "The agent did not record how it verified this item.";
+      expect(task.brief!.acceptance[0]).toMatchObject({ verification: "blocked", reason });
       expect(task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking")).toHaveLength(0);
       expect(delivery.title).toContain("1 acceptance check could not be verified");
-      expect(delivery.body).toContain("Claude Code weekly limit prevents opening a live session");
+      expect(delivery.body).toContain(reason);
       expect(fakes.openings("tester")).toHaveLength(1);
       expect(task.journey!.filter((step) => step.roleId === "tester")).toHaveLength(1);
       expect(task.landed).toBeUndefined();

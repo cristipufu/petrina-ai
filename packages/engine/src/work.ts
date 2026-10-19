@@ -121,11 +121,13 @@ export class Work {
       if (role.canEdit) { await this.k.saveRoleEdits(task, roleId, profileId); this.k.saveRepository(task); testedVersions = task.repositories ? await versionsOf(task) : undefined; }
       const result = { ...rawResult, checks: rawResult.checks.map((check) => {
         const productIds = productsFor(task, "productIds" in check ? check.productIds : undefined);
-        return task.repositories && !productIds.length ? { ...check, productIds: [], result: "blocked" as const, reason: "Together: no valid affected products were assigned. The coordinator must resolve ownership." } : { ...check, productIds };
+        if (task.repositories && !productIds.length) return { ...check, productIds: [], result: "blocked" as const, reason: "Together: no valid affected products were assigned. The coordinator must resolve ownership." };
+        if (check.result !== "blocked" && !check.evidence) return { ...check, productIds, result: "blocked" as const, reason: "The agent did not record how it verified this item." };
+        return { ...check, productIds };
       }) };
       const testerStep = openStep(task);
       if (testerStep?.kind === "agent" && testerStep.roleId === roleId) {
-        testerStep.acceptanceChecks = result.checks.map((check) => ({ text: check.text, result: check.result, ...("reason" in check && check.reason ? { reason: check.reason } : {}) }));
+        testerStep.acceptanceChecks = result.checks.map((check) => ({ text: check.text, result: check.result, ...(check.evidence ? { evidence: check.evidence } : {}), ...("reason" in check && check.reason ? { reason: check.reason } : {}) }));
       }
       await this.learnings.note(task, result.learnings, roleId, by);
       if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => {

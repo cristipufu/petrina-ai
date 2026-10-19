@@ -292,6 +292,8 @@ export interface JourneyAcceptanceCheck {
   text: string;
   result: "pass" | "fail" | "blocked";
   reason?: string;
+  /** The scenario and observed result, recorded by this acceptance run. */
+  evidence?: string;
 }
 
 export interface JourneyProductCheck {

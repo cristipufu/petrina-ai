@@ -4,7 +4,7 @@
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { activeRoles, BUILT_IN_ROLES, FINDING_REVIEW_RULES, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
+import { ACCEPTANCE_EVIDENCE_RULE, activeRoles, BUILT_IN_ROLES, FINDING_REVIEW_RULES, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
@@ -96,9 +96,9 @@ export const GuideResult = z.object({
 });
 
 const AcceptanceCheckResult = z.union([
-  z.object({ productIds: z.array(z.string()).optional(), text: z.string(), result: z.enum(["pass", "fail", "blocked"]), reason: z.string().optional() }),
+  z.object({ productIds: z.array(z.string()).optional(), text: z.string(), result: z.enum(["pass", "fail", "blocked"]), reason: z.string().optional(), evidence: z.string().trim().min(3).max(1200).optional() }),
   // Older saved agent sessions may still hand back the original pass/fail shape.
-  z.object({ text: z.string(), pass: z.boolean() }).transform(({ text, pass }) => ({ text, productIds: undefined as string[] | undefined, result: pass ? "pass" as const : "fail" as const })),
+  z.object({ text: z.string(), pass: z.boolean(), evidence: z.string().trim().min(3).max(1200).optional() }).transform(({ text, pass, evidence }) => ({ text, evidence, productIds: undefined as string[] | undefined, result: pass ? "pass" as const : "fail" as const })),
 ]).refine((check) => check.result !== "blocked" || Boolean(check.reason?.trim()), "A blocked acceptance check needs a reason");
 
 export const TestResult = z.object({
@@ -323,10 +323,11 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
   "tester": {
     result: TestResult,
     reads: ["notes", "brief", "report", "check-results"],
-    shape: ({ task }) => `{"summary": "How it went", "checks": [{"text": "An acceptance item", ${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"result": "pass"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
+    shape: ({ task }) => `{"summary": "How it went", "checks": [{"text": "An acceptance item", ${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"result": "pass", "evidence": "The exact scenario tried, expected and observed result, or the current applicable automated check"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: () => {
-      return `Run the product and check every acceptance item like a user would. Do not change files. For each item, report "result": "pass" when verified, "fail" when you reproduced a product defect, or "blocked" when you could not perform the check. For a blocked check, give a short "reason" naming what prevented verification. A blocked check is not a product failure, but it is not evidence that the item passes; do not guess or retry unchanged checks.\n${LEARN}`;
+      return `Run the product and check every acceptance item like a user would. Do not change files. For each item, report "result": "pass" when verified, "fail" when you reproduced a product defect, or "blocked" when you could not perform the check. ${ACCEPTANCE_EVIDENCE_RULE} For a blocked check, give a short "reason" naming what prevented verification. A blocked check is not a product failure, but it is not evidence that the item passes; do not guess or retry unchanged checks.\n${LEARN}`;
     },
+    withInstructions: (_context, wording) => `${wording}\n${ACCEPTANCE_EVIDENCE_RULE}`,
   },
   "code-reviewer": {
     result: ReviewResult,

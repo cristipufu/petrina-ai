@@ -1,6 +1,9 @@
 import { deliveryLabel } from "./source.js";
 import type { AgentProfile, DeliveryMode, Plan, Role, Stage, Task, Tool } from "./model.js";
 
+/** Acceptance evidence is the same requirement in the role library and the engine contract. */
+export const ACCEPTANCE_EVIDENCE_RULE = `For every pass or failure, include short "evidence": the specific scenario, expected and observed result, with the relevant failure/recovery variant and a nearby passing control when needed. Distinguish what you executed from what you only inspected. A passing suite, test name or demo picture does not prove an untried concurrency, interruption or restart condition. Reuse Petrina's current checks when they cover the item; several items may cite one applicable result or focused probe, without rerunning a full suite or repeating logs.`;
+
 /** A result rule shared by built-in, edited and added reviewers. */
 export const FINDING_CONFIRMATION_RULE = `For earlier findings, confirm an id only if that specific problem is still present in the current code you reviewed. "Confirms" means "still broken now"; it never means that you agree the earlier report was valid at the time. Use {"id": "<finding id>", "evidence": "<current reproduction, expected and observed result>"} in "confirms". A dismissed finding, claimed fix or previously reopened finding requires current evidence: state the exact failing case on this version, including a nearby passing control when it distinguishes the regression. The earlier report, verdict and builder's answer are history, not evidence that it still fails. Fresh proof reopens the same id for a new check; its earlier dismissal is preserved. If it now works, leave its id out and do not report it again.`;
 
@@ -184,10 +187,10 @@ Be strict both ways: a finding without real evidence is not real, and a real one
     icon: "flask",
     tone: "green",
     purpose: "Runs the product like a user and checks every acceptance item.",
-    instructions: "Run the product and check every acceptance item like a user would. Do not change files. Report each check as pass, fail, or could not verify. For anything you could not verify, give a short reason. Do not guess that it passes or report an unavailable check as a product defect.",
+    instructions: `Run the product and check every acceptance item like a user would. Do not change files. Report each check as pass, fail, or could not verify. ${ACCEPTANCE_EVIDENCE_RULE} For anything you could not verify, give a short reason. Do not guess that it passes or report an unavailable check as a product defect.`,
     canEdit: false,
     sees: "The acceptance checklist and the running product.",
-    handsBack: "A pass, fail, or could not verify result per acceptance item, with a reason for anything unverified.",
+    handsBack: "A result per acceptance item, with the scenario and observed evidence, or a reason it could not be verified.",
     result: "checks",
     column: "building",
   },

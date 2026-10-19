@@ -55,6 +55,8 @@ Mechanics borrowed and credited:
 | `do` with the Tester | The product checks run first, so the Tester can reuse verified automated evidence and focus on trying the acceptance list like a user, once on the change before its first review. Each item is pass, fail, or could not be verified; an unavailable check stays unverified and blocks delivery without being sent to the builder as a product defect. Fix rounds skip it (the code reviewers check the fixes), and right before the delivery check the tester tries the final code once more if it changed since; a reproduced failure there goes back to the builder like a failing check. Failed product checks return to the builder while their allowance remains, then ask the coordinator immediately; no final Tester starts while those checks fail |
 | `gate` | Waits for the coordinator (design approval, delivery approval) |
 
+Each new acceptance pass or failure records a short account of the actual scenario and observed result, or names the applicable current automated evidence. The node's details show that evidence beside the item. Missing evidence remains unverified rather than passing or creating a product defect. Previously finished records keep their original evidence without invented detail. One probe may support several items; this adds no duplicate full-suite run or workflow gate.
+
 ### Task lifecycle
 
 ```
