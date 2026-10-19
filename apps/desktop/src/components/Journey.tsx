@@ -522,7 +522,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
   const handedOn = nextAgent?.agentInputs?.flatMap((input) => input.sections.map((section) => section.body)).join("\n") ?? "";
   const findings = node.result?.findings ?? (role?.result === "findings" && nextAgent
     ? task.findings.filter((finding) => nextAgent.fixing && nextAgent.findingIds?.includes(finding.id) || checkingThisRound && handedOn.includes(`[${finding.id}]`)) : undefined);
-  const reviewGroups = useMemo(() => role?.result === "findings" ? reviewRoundGroups(node, task.journey ?? []) : undefined, [role?.result, node, task.journey]);
+  const reviewGroups = useMemo(() => role?.result === "findings" ? reviewRoundGroups(node, task.journey ?? [], (id) => find.role(id)?.result) : undefined, [role?.result, node, task.journey, find]);
   const outcome = reviewOutcome(node, role);
   const given = node.agentInputs?.flatMap((input) => input.sections.map((section) => section.body)).join("\n") ?? "";
   const objections = node.result?.objections ?? (role?.result === "objections" && ownStep

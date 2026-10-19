@@ -47,3 +47,13 @@ describe("the recorded result of a review round", () => {
     expect(reviewOutcome(voters)).toBe("6 real");
   });
 });
+
+it("counts custom build and findings roles by result, keeping unrelated agent steps out of the round boundary", () => {
+  const fixture = repairedReviewFixture();
+  const customSteps = fixture.steps.map((entry) => ({ ...entry, roleId: entry.roleId === "builder" ? "repair-specialist" : "custom-reviewer" }));
+  const roles = { "repair-specialist": "build", "custom-reviewer": "findings" } as const;
+  const current = customSteps.at(-1)!;
+  const groups = reviewRoundGroups(node(current), customSteps, (id) => roles[id as keyof typeof roles])!;
+  expect(groups.fixed.map((finding) => finding.id)).toEqual(["old-4", "old-5", "old-6"]);
+  expect(groups.fixedRecorded).toBe(true);
+});

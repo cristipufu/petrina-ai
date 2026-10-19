@@ -1,4 +1,4 @@
-import { findingCount, type Finding, type JourneyNode, type JourneyStep, type Role } from "@petrina/core";
+import { BUILT_IN_ROLES, findingCount, type Finding, type JourneyNode, type JourneyStep, type Role } from "@petrina/core";
 
 const object = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
@@ -19,7 +19,7 @@ export interface ReviewRoundGroups {
 }
 
 /** Never read mutable task.findings: a later round must not change an earlier round's result. */
-export function reviewRoundGroups(node: JourneyNode, steps: readonly JourneyStep[]): ReviewRoundGroups | undefined {
+export function reviewRoundGroups(node: JourneyNode, steps: readonly JourneyStep[], resultFor: (id: string) => Role["result"] | undefined = (id) => BUILT_IN_ROLES.find((role) => role.id === id)?.result): ReviewRoundGroups | undefined {
   const index = steps.findIndex((step) => step.id === node.id);
   if (index < 0 || node.state !== "done" || node.endedAt === undefined || !node.result?.findings) return undefined;
   const prior = new Map<string, Finding>();
@@ -27,12 +27,12 @@ export function reviewRoundGroups(node: JourneyNode, steps: readonly JourneyStep
   for (let i = 0; i < index; i++) {
     const step = steps[i]!;
     for (const finding of step.result?.findings ?? []) prior.set(finding.id, finding);
-    if (step.kind === "agent" && step.roleId !== "verifier" && step.result?.findings !== undefined && step.endedAt !== undefined) previousReview = i;
+    if (step.kind === "agent" && step.roleId && resultFor(step.roleId) === "findings" && step.result?.findings !== undefined && step.endedAt !== undefined) previousReview = i;
   }
   const claims = new Map<string, { fixed: boolean; text: string; at: number }>();
   let fixedRecorded = true;
   for (const step of steps.slice(previousReview + 1, index)) {
-    if (step.kind !== "agent" || step.roleId !== "builder") continue;
+    if (step.kind !== "agent" || !step.roleId || resultFor(step.roleId) !== "build") continue;
     if (step.fixing && !step.agentResults?.length) fixedRecorded = false;
     for (const result of step.agentResults ?? []) {
       const answers = object(result.value)?.answers;
