@@ -105,15 +105,21 @@ describe("fixes", () => {
   const platforms: Platform[] = ["darwin", "win32", "linux"];
   const ids = Object.keys(CHECK_NAMES) as CheckId[];
 
-  it("give every status that is not Ready one sentence, one command and an official web guide, for each operating system", () => {
+  it("give uncertain checks a retry instruction and only confirmed setup problems a terminal command", () => {
     for (const platform of platforms) {
       for (const id of ids) {
         expect(fixFor(id, "ready", platform)).toBeUndefined();
         for (const status of ["not-installed", "logged-out", "unknown"] as const) {
           const fix = fixFor(id, status, platform)!;
           expect(sentences(fix.sentence)).toBe(1);
-          expect(fix.command).toMatch(/^[\w-]/);
-          expect(fix.command).not.toContain("\n");
+          if (status === "unknown") {
+            expect(fix.command).toBeUndefined();
+            expect(fix.sentence).toContain("Check again");
+            expect(fix.sentence).not.toMatch(/log in|install.*again/);
+          } else {
+            expect(fix.command).toMatch(/^[\w-]/);
+            expect(fix.command).not.toContain("\n");
+          }
           expect(fix.guide).toMatch(/^https:\/\//);
           expect(isGuide(fix.guide)).toBe(true);
         }

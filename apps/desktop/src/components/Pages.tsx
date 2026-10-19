@@ -5,7 +5,7 @@ import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
 import { ProductName, RoleAvatar } from "./bits";
 import { LimitStepper } from "./Pool";
 import { drivingText, openHandBack } from "./TakeOver";
-import { CheckAgain, shownChecks, ToolList, useCheckOnReturn } from "./Tools";
+import { CheckAgain, shownChecks, ToolList, useCheckOnEnter } from "./Tools";
 import { RolesSection, type RolePanelTarget } from "./Roles";
 import type { SheetTab } from "./TaskCard";
 
@@ -163,7 +163,7 @@ export function LibraryPage({ state, find, onRole }: { state: State; find: Looku
 
 /** Installed tools and the terminal used to join them belong with the live agents. */
 function AgentTools({ state }: { state: State }) {
-  useCheckOnReturn(mode === "engine");
+  useCheckOnEnter(mode === "engine");
   return <>
       <h2 className="section-title">Tools on this machine</h2>
       {state.setup ? (

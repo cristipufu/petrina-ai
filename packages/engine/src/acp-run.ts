@@ -711,6 +711,9 @@ export class AgentRun {
     const ready = (async () => {
       const session = await open();
       sessionOptions = ((session as { configOptions?: ConfigOption[] }).configOptions ?? []) as ConfigOption[];
+      // Account probes send no work. Opening already tests authentication; model, thinking and
+      // permission configuration only adds failure points to this short readiness check.
+      if (options.probe) return session;
       const set = async (configId: string, value: string | undefined): Promise<boolean> => {
         if (!value) return false;
         const option = sessionOptions.find((entry) => entry.id === configId);

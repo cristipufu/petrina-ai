@@ -83,8 +83,8 @@ export const CHECK_LABELS: Record<CheckStatus, string> = {
 export interface Fix {
   /** Exactly one plain sentence. */
   sentence: string;
-  /** One command to copy into Terminal. */
-  command: string;
+  /** A command only when the check identifies an installation or login problem. */
+  command?: string;
   /** The official guide, a web link. */
   guide: string;
 }
@@ -151,9 +151,7 @@ export function fixFor(id: CheckId, status: CheckStatus, platform: Platform): Fi
     case "logged-out":
       return { sentence: `${name} is installed but not logged in, so run this in ${terminal} to log in, then come back to Petrina.`, command: login ?? pick(INSTALL[id], platform), guide: guides.login ?? guides.install };
     case "unknown":
-      return login
-        ? { sentence: `If ${name} doesn't work, run this in ${terminal} to log in again, then come back to Petrina.`, command: login, guide: guides.login ?? guides.install }
-        : { sentence: `If ${name} doesn't work, install it again by running this in ${terminal}, then come back to Petrina.`, command: pick(INSTALL[id], platform), guide: guides.install };
+      return { sentence: `Petrina couldn't confirm ${name} was ready; open Details to see why, then choose Check again.`, guide: guides.login ?? guides.install };
   }
 }
 

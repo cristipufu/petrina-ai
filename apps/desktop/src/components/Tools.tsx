@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Copy, ExternalLink, RotateCw } from "lucide-react";
 import { agentTools, CHECK_LABELS, CHECK_NAMES, checkOf, fixFor, type CheckId, type Fix, type Platform, type ToolCheck } from "@petrina/core";
 import { desktop, mode, sim } from "../engine";
@@ -14,26 +14,15 @@ export function shownChecks(checks: readonly ToolCheck[] | undefined): ToolCheck
   return rows.map((id) => checkOf(checks, id));
 }
 
-/**
- * Check the tools again whenever the coordinator comes back to the window (after running a fix in
- * Terminal, say), and once when `active` turns on. Never more than once every few seconds.
- */
-export function useCheckOnReturn(active: boolean): void {
+/** Check once when this screen opens. Returning focus never launches another probe. */
+export function useCheckOnEnter(active: boolean): void {
+  const entered = useRef(false);
   useEffect(() => {
-    if (!active) return;
-    let last = 0;
-    const again = () => {
-      if (document.visibilityState !== "visible" || Date.now() - last < 4_000) return;
-      last = Date.now();
-      sim.checkTools();
-    };
-    again();
-    window.addEventListener("focus", again);
-    document.addEventListener("visibilitychange", again);
-    return () => {
-      window.removeEventListener("focus", again);
-      document.removeEventListener("visibilitychange", again);
-    };
+    if (!active) { entered.current = false; return; }
+    // React's development effect replay is still the same visit to this screen.
+    if (entered.current) return;
+    entered.current = true;
+    void sim.checkTools();
   }, [active]);
 }
 
@@ -79,7 +68,7 @@ export function FixSteps({ fix, detail, name }: { fix: Fix; detail?: string | un
   return (
     <div className="fix">
       <p>{fix.sentence}</p>
-      <CopyCommand command={fix.command} />
+      {fix.command && <CopyCommand command={fix.command} />}
       <div className="fix-links">
         <GuideLink url={fix.guide} name={name} />
         {detail && (

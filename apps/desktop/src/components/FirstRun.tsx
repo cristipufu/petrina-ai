@@ -6,7 +6,7 @@ import { ago } from "../lib";
 import { Logo } from "./bits";
 import { EngineRecovery } from "./EngineState";
 import { TaskOptions, type Position } from "./NewTask";
-import { CheckAgain, shownChecks, ToolList, useCheckOnReturn } from "./Tools";
+import { CheckAgain, shownChecks, ToolList, useCheckOnEnter } from "./Tools";
 
 // First run: four short screens in one window. Welcome, Tools, Product, First task. It shows only
 // once the engine's real state says setup is not done, so someone who already uses Petrina never
@@ -206,7 +206,7 @@ function Welcome({ onNext }: { onNext: () => void }) {
 }
 
 function Tools({ state, onBack, onNext }: { state: State; onBack: (() => void) | undefined; onNext: () => void }) {
-  useCheckOnReturn(true);
+  useCheckOnEnter(true);
   const checks = state.setup?.checks ?? [];
   const gate = toolsGate(checks);
   return (

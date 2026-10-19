@@ -95,6 +95,7 @@ describe("Tool status", () => {
       // Opened a conversation the way an agent does, in Petrina's own empty folder, and said nothing to it.
       expect(fakes.opens().length).toBeGreaterThan(0);
       expect(fakes.prompts()).toEqual([]);
+      for (const opened of fakes.opens()) expect(fakes.settings(opened.session)).toEqual([]);
       const conversations = readdirSync(join(fakes.dir, "conversations")).map((file) => JSON.parse(readFileSync(join(fakes.dir, "conversations", file), "utf8")) as { cwd: string });
       for (const conversation of conversations) expect(conversation.cwd).toBe(join(data, "checks"));
     } finally {
