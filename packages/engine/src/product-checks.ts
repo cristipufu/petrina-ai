@@ -379,9 +379,11 @@ export class ProductChecks {
   /**
    * Right before the delivery check: the checks run again when the code changed since they last ran.
    * A failure sends the work back to the builder, twice at most; after that the coordinator sees it.
+   * Exhausted returns are a failure, never permission to start final acceptance.
    */
-  async checksBeforeDelivery(task: MTask, signal: AbortSignal): Promise<boolean> {
-    return (await this.failing(task, signal)) && this.backToBuilder(task, "right before your delivery check");
+  async checksBeforeDelivery(task: MTask, signal: AbortSignal): Promise<"passed" | "returned" | "exhausted"> {
+    if (!(await this.failing(task, signal))) return "passed";
+    return this.backToBuilder(task, "right before your delivery check") ? "returned" : "exhausted";
   }
 
   /**

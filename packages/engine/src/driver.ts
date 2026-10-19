@@ -323,7 +323,13 @@ export class Driver {
             // What the coordinator checks is the work as it would land: one commit on top of the latest main.
             if ((await this.updates.upToDate(current, signal)) === "conflict") { sentBack = true; break; }
             // Right before the coordinator is asked to ship, the checks run again on what would ship.
-            if (await this.checks.checksBeforeDelivery(current, signal)) { sentBack = true; break; }
+            const checkResult = await this.checks.checksBeforeDelivery(current, signal);
+            if (checkResult === "returned") { sentBack = true; break; }
+            if (checkResult === "exhausted") {
+              this.k.saveRepository(current);
+              this.k.gate(current, "delivery");
+              return;
+            }
             await this.learnings.offer(current);
             if (current.delivery === "release" && current.repositories) {
               const releaseStage = current.plan!.stages.find((entry) => entry.kind === "do" && entry.roleId === "release-manager")!;

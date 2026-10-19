@@ -158,6 +158,53 @@ describe.concurrent("failed checks are evidence until something changes", () => 
     } finally { await f.engine.shutdown(); }
   });
 
+  it("asks the coordinator before final acceptance when later checks fail after their builder returns are exhausted", async () => {
+    const f = await fixture(true, { planner: "tester-first", builder: "plain" });
+    try {
+      f.setCheck("--pass");
+      const original = await f.delivery();
+      const testedPatch = original.testedPatch;
+      const reviewers = f.fakes.openings("code reviewer").length;
+      expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(original.acceptancePassed).toBe(true);
+
+      // A later fix changes the patch after acceptance has already passed. The earlier
+      // automatic check fixes have used their allowance, as on a long-running task.
+      const live = f.engine.task(f.taskId)!;
+      live.checkReturns = 2;
+      writeFileSync(join(live.worktree!, "later-fix.txt"), "A later change\n");
+      git(live.worktree!, "add", "later-fix.txt");
+      git(live.worktree!, "commit", "-q", "-m", "A later change");
+      f.setCheck();
+      f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Check the later change");
+
+      const failed = await f.delivery();
+      expect(failed.checks!.results.some((run) => !run.ok)).toBe(true);
+      expect(failed.checkReturns).toBe(2);
+      expect(failed.testedPatch).toBe(testedPatch);
+      expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(reviewers);
+      expect(failed.statusLine).toBe("Checks still fail. Your call");
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain("Automated checks: 1 of 1 failed (Welcome)");
+      expect(journeyProblems(failed)).toEqual([]);
+
+      await f.restart();
+      expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(taskOf(f.engine.getState(), f.taskId).checks).toEqual(failed.checks);
+
+      // A coordinator-authorized real fix still goes through checks, review and
+      // final acceptance. Escalating must not mark the unfinished review complete.
+      f.fakes.scenario({ planner: "tester-first", builder: "plain", fixes: "change" });
+      f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix the failed welcome check");
+      const fixed = await f.delivery();
+      expect(fixed.checks!.results.every((run) => run.ok)).toBe(true);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(reviewers * 2);
+      expect(f.fakes.openings("tester")).toHaveLength(2);
+      expect(fixed.testedPatch).not.toBe(testedPatch);
+      expect(journeyProblems(fixed)).toEqual([]);
+    } finally { await f.engine.shutdown(); }
+  });
+
   it("tells acceptance testing whether saved checks really cover the code and required commands", async () => {
     const f = await fixture();
     try {
