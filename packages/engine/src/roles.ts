@@ -9,7 +9,14 @@ import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
 
+export const SourcePointers = z.array(z.object({
+  productId: z.string().trim().min(1).max(100),
+  revision: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i),
+  path: z.string().trim().min(1).max(180).refine((path) => !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes(".."), "Use a repository-relative location"),
+}).strict()).max(8);
+
 export const PlanResult = z.object({
+  sourcePointers: SourcePointers.optional(),
   worksOn: z.array(WorkChoiceSchema).max(20).optional(),
   leadProductId: z.string().optional(),
   rationale: z.string().min(3),
@@ -233,7 +240,7 @@ export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
   {"kind": "gate", "title": "Your design check", "roleId": "architect", "gate": "design"},
   {"kind": "do", "title": "Build", "roleId": "builder", "profileIds": ["<profile id>"]},
   {"kind": "review-chain", "title": "Review", "roleId": "code-reviewer", "profileIds": ["<profile id>", "<profile id on another tool>"], "maxRounds": 2}
-], "risk": {"level": "medium", "why": "What it touches, in plain words"}}`,
+], "sourcePointers": [], "risk": {"level": "medium", "why": "What it touches, in plain words"}}`,
     instructions: (ctx) => {
       const roles = plannerRoles(ctx.roles);
       const toolName = (toolId: string) => ADAPTERS[toolId]?.name ?? toolId;
@@ -255,6 +262,7 @@ Stage kinds:
 - "gate": the coordinator checks. Use gate "design" after a converge stage when the change affects what users see.
 
 Rules:
+- If you already inspected useful source locations, optionally return up to eight sourcePointers: {productId, revision: the full commit SHA you actually inspected, path: a repository-relative location}. Do no extra research to fill this field. Return locations only, never recommendations, a proposed architecture, inferred requirements or a research transcript. Omit it or return [] when there is nothing useful to carry forward.
 - Size the plan to the task. A small fix can be a builder and two reviewers. Something new deserves research, a converge design, a design gate, a builder, maybe a tester, and a review chain.
 - Always include exactly one builder stage before the review chain.
 - Use findings roles only in review-chain stages. For a mix of roles, list roleIds in the same order as profileIds. Notes and checks roles work in do stages; only the Architect and Design reviewer work in converge stages.

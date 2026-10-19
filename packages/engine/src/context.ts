@@ -9,6 +9,7 @@ import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel, MTask } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import { takeMessages } from "./messages.js";
+import { currentSourcePointers } from "./source-pointers.js";
 
 export interface Section {
   title: string;
@@ -42,6 +43,8 @@ export class Context {
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
     const points = reads.includes("guide-points") ? await this.guide.pendingPoints(task) : [];
     const currentChecks = reads.includes("check-results") && !!task.checks?.results.length ? await this.currentChecks(task) : false;
+    const mayUsePointers = role?.result === "brief" || (role?.result === "build" && !task.fixing && !task.plan?.stages.some((stage) => stage.kind === "converge"));
+    const pointers = mayUsePointers ? await currentSourcePointers(task as Task, task.sourcePointers ?? []) : [];
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
     takeMessages(task, member, Infinity);
     const source = task.source ? [{ title: "Approved starting point and delivery", body: workSummary({ ...task.source, product: { ...task.source.product, name: this.k.productOf(task)?.name ?? task.source.product.name } }) }] : [];
@@ -52,6 +55,7 @@ export class Context {
       `Review guide: use this product’s REVIEW.md at its saved base version.`,
     ].join("\n")).join("\n\n") + `\n\n${role?.canEdit ? `You own only product ${task.productId}. Read the other copies when needed; change only your own product. Return your own title, report and PR description.` : "Inspect every repository and the behaviour across them together."}\nFor every acceptance result and finding, explicitly return productIds naming every affected product. Unassigned items stay under Together for the coordinator. Passing separate suites cannot prove shared acceptance. For each lesson, return {productId, text} naming its product; unassigned lessons stay under Together and are never added to a repository automatically. Shared repairs require a separate answer from every affected builder and combined verification.` }] : [];
     const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => this.parts[part](task, roleId, points, currentChecks))];
+    if (pointers.length) sections.push({ title: "Previously inspected source locations (verify independently)", body: `Navigation only: this incomplete selection can steer attention. It contains no recommendations or extra requirements. Verify the current code and inspect other areas as needed; the original request and approved brief remain authoritative.\n${pointers.map((pointer) => `- ${pointer.productId}: ${pointer.path} (source version ${pointer.revision})`).join("\n")}` });
     if (role?.result === "findings") {
       const cards = openFollowUpCards(this.k.s.tasks as Task[], productsOn(task as Task));
       // shownKey records which cards this reviewer was shown. It is not a message seat:

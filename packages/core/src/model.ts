@@ -475,6 +475,13 @@ export interface ShippingRecord {
   carriedOver?: true;
 }
 
+/** Navigation references only; no earlier agent's recommendations or inferred requirements. */
+export interface SourcePointer {
+  productId: Id;
+  revision: string;
+  path: string;
+}
+
 export interface DesignBrief {
   summary: string;
   forUsers: readonly string[];
@@ -764,6 +771,8 @@ export interface Task {
   /** Ask the coordinator before Petrina delivers. */
   approveDelivery: boolean;
   plan?: Plan;
+  /** Optional locations actually inspected during planning, verified again before handoff. */
+  sourcePointers?: readonly SourcePointer[];
   /** -1 while the planner runs, then the index into `plan.stages`. */
   stageIndex: number;
   /** Rounds per stage id. */
