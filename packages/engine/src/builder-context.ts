@@ -5,7 +5,7 @@ import type { BuilderContext, Role, Task } from "@petrina/core";
 import type { Section } from "./context.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-const reusable = (title: string) => /^(?:Design brief|Product checks|Approved starting point and delivery|Complete approved product map and responsibility|The coordinator's notes on this task|What the builder reports|Previously inspected source locations)/.test(title);
+const reusable = (title: string) => /^(?:Design brief|Product checks|Approved starting point and delivery|Complete approved product map and responsibility|The coordinator's notes on this task|What the builder reports|Previously inspected source locations|What earlier agents on this task handed back|Points the coordinator accepted for the review guide|Open follow-up cards|The pull request description you wrote last time)/.test(title);
 
 /** Delta only a confirmed continuation; an immutable full packet remains readable after compaction. */
 export async function builderContext(dataDir: string, task: Task, role: Role, sessionId: string, sections: readonly Section[], previous?: BuilderContext, options: { design?: boolean; knownSections?: readonly string[] } = {}): Promise<{ sections: Section[]; snapshot?: BuilderContext }> {

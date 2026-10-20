@@ -6,6 +6,27 @@ import { builderContext } from "../src/builder-context.js";
 import { Cleanup } from "../src/cleanup.js";
 import { makeWorld, removeDir, tempDir } from "./support.js";
 
+it("omits unchanged handoffs, guide points, follow-ups and PR descriptions while retaining changed context", async () => {
+  const root = tempDir("petrina-background-delta-");
+  try {
+    const task = createDemoState(1_000_000_000).tasks[0]!;
+    const sections = ["What earlier agents on this task handed back", "Points the coordinator accepted for the review guide, not in REVIEW.md yet", "Open follow-up cards", "The pull request description you wrote last time"].map((title) => ({ title, body: `Original ${title}` }));
+    for (const id of ["builder", "code-reviewer"]) {
+      const role = BUILT_IN_ROLES.find((entry) => entry.id === id)!;
+      const first = await builderContext(root, task, role, id, sections);
+      const next = await builderContext(root, task, role, id, sections, first.snapshot);
+      expect(next.sections.map((section) => section.title)).toEqual(["Current authoritative task context"]);
+      const packet = await readFile(next.snapshot!.file, "utf8");
+      for (const section of sections) expect(packet).toContain(section.body);
+      const changed = sections.map((section, index) => index === 1 ? { ...section, body: "A newly accepted requirement" } : section);
+      const updated = await builderContext(root, task, role, id, changed, next.snapshot);
+      expect(updated.sections.slice(1)).toEqual([changed[1]!]);
+      const removed = await builderContext(root, task, role, id, changed.slice(1), updated.snapshot);
+      expect(removed.sections[0]!.body).toContain(`Earlier sections no longer apply: ${sections[0]!.title}#1`);
+    }
+  } finally { removeDir(root); }
+});
+
 it("sends changed Builder context and every new finding while keeping full authoritative context readable", async () => {
   const root = tempDir("petrina-builder-context-");
   try {

@@ -36,6 +36,8 @@ Check finder and Guide keeper errands save the main step's conversation, attempt
 
 After a supported return to the same Builder conversation, unchanged background sections can be replaced by a reference to an immutable complete context packet. The engine sends changed instructions, every current finding and complete failure-log references, and records exactly that input on the journey. The packet remains readable when a harness compacts its conversation; missing or altered packets, changed roles or sources, and fresh conversations receive full context.
 
+Reusable background includes earlier handoffs, accepted guide points, open follow-up cards and the prior PR description. Confirmed native continuations retain their static verification and role rules, refreshing role details when context scope changes and receiving a short update for the new browser capture folder. Fresh sessions receive the complete rules.
+
 This applies to check fixes and review fixes without removing quality gates. Packets are private runtime files and disappear with finished or cancelled tasks, independently of worktree cleanup. Fewer input characters alone are not a measured reduction in tokens, cost or duration.
 
 ### Role editing and plan contracts

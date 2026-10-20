@@ -433,7 +433,7 @@ export class Turns {
           else delete repository.conversation.context;
         }
         this.recordJourneyInput(scope, roleId, profileId, sections, "continued");
-        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) });
+        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: !previous || !("snapshot" in prepared) || prepared.snapshot?.scope !== previous.scope });
       } else if (picked) {
         // One line about the restart (or the hand back, or that it may now use the screen), then only what the conversation
         // has not heard: the answer to its open question, and messages still in line.
@@ -725,7 +725,8 @@ export class Turns {
       const sections = prepared.sections;
       const note: import("@petrina/core").ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true, ...("snapshot" in prepared && prepared.snapshot ? { context: prepared.snapshot } : {}) };
       this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh");
-      const opening = (wentBack ? continuePrompt : buildPrompt)({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections });
+      const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
+      const opening = wentBack ? continuePrompt(promptContext, { refreshRole: !offered?.context || note.context?.scope !== offered.context.scope }) : buildPrompt(promptContext);
       const result = await this.converse(scope, run, agent, opening, "first", role, profileId, schema, signal, {
         ...options,
         main: false,
@@ -794,7 +795,8 @@ export class Turns {
       return send(`Messages from the coordinator, in order:\n${messages}\n\nTake all of them into account. When you are done, end with the result block again.`, "message");
     };
     const mayAsk = mayAskScreen(role);
-    let reply = await send(run.browser ? `${opening}\n\n${browserPrompt(run.browser.directory)}` : opening, reason);
+    const browser = run.browser ? (run.reopened ? `Browser capture folder for this turn: ${run.browser.directory}. Earlier pages and browser logins are gone; the same browser and output rules apply.` : browserPrompt(run.browser.directory)) : undefined;
+    let reply = await send(browser ? `${opening}\n\n${browser}` : opening, reason);
     if (options.main) this.briefed(scope);
     for (let repairs = 0; ; ) {
       if (signal.aborted) throw new Aborted();

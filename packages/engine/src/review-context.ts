@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { BuilderContext, Finding, Hunt, Id, Role, Task } from "@petrina/core";
 import type { Section } from "./context.js";
 import type { ContextPart } from "./roles.js";
@@ -43,12 +43,17 @@ async function output(path: string, args: string[]): Promise<string> {
 }
 
 const LOCKFILES = ["bun.lock", "bun.lockb", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"];
-async function comparison(path: string, range: string) {
+const EXCLUDE_LOCKS = LOCKFILES.map((name) => `:(glob,exclude)**/${name}`);
+const ONLY_LOCKS = LOCKFILES.map((name) => `:(glob)**/${name}`);
+async function comparison(path: string, range: string, files?: readonly string[]) {
+  if (files?.length === 0) return { stat: "", patch: "", locks: "" };
   const args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", range, "--"];
+  const selected = files?.map((file) => `:(literal)${file}`) ?? ["."];
+  const lockPaths = files ? files.filter((file) => LOCKFILES.includes(basename(file))).map((file) => `:(literal)${file}`) : ONLY_LOCKS;
   const [stat, patch, locks] = await Promise.all([
-    output(path, ["diff", "--no-ext-diff", "--stat", range, "--"]),
-    output(path, [...args, ".", ...LOCKFILES.map((name) => `:(glob,exclude)**/${name}`)]),
-    output(path, [...args, ...LOCKFILES.map((name) => `:(glob)**/${name}`)]),
+    output(path, ["diff", "--no-ext-diff", "--stat", range, "--", ...selected]),
+    output(path, [...args, ...selected, ...EXCLUDE_LOCKS]),
+    lockPaths.length ? output(path, [...args, ...lockPaths]) : "",
   ]);
   return { stat, patch, locks };
 }
@@ -66,10 +71,10 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
     const head = await git.head(path), base = work.baseSha ?? work.base!;
     heads[work.productId] = head;
     const full = `${base}...${head}`;
-    const delta = work.reviewedSha ? `${work.reviewedSha}..${head}` : undefined;
+    const delta = !work.portReview && work.reviewedSha ? `${work.reviewedSha}..${head}` : undefined;
     const [guide, change, fixes] = await Promise.all([
       git.fileAt(path, base, "REVIEW.md"),
-      comparison(path, full),
+      work.portReview ? undefined : comparison(path, full),
       delta ? comparison(path, delta) : undefined,
     ]);
     const header = `# Review material for ${work.source?.product.name ?? work.productId}\nProduct: ${work.productId}\nBase: ${base}\nReviewed commit: ${head}`;
@@ -81,25 +86,26 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
       lockFiles.push(saved);
       return `## Lockfile changes\nLockfile paths are included in the statistics above. Their patch is separate: ${JSON.stringify(saved.file)} (reference ${saved.digest}). These changes remain in review scope: read this patch when assessing dependency or integrity changes. Security reviewers and Verifiers must inspect relevant lockfile changes before clearing their claims.`;
     };
-    const parts = [
-      header, rules,
-      `## Complete change\nComparison: git diff ${full}\n${change.stat}\n${change.patch || "No non-lockfile changes."}`,
-      await lockMaterial(change.locks, "full"),
-    ];
+    const parts = [header, rules];
+    if (change) parts.push(`## Complete change\nComparison: git diff ${full}\n${change.stat}\n${change.patch || "No non-lockfile changes."}`, await lockMaterial(change.locks, "full"));
     if (work.portReview) {
       const port = work.portReview;
       // Git rejects range-diff when either side has no commits. Explicit before/after
       // patches still show a removed or newly introduced change without inventing a port.
-      const comparison = port.from === port.head || port.onto === head
-        ? `Previous reviewed change:\n${port.from === port.head ? "No commits in this range." : await output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", `${port.from}..${port.head}`, "--"])}\n\nCurrent port:\n${port.onto === head ? "No commits in this range." : await output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", `${port.onto}..${head}`, "--"])}`
-        : await output(path, ["range-diff", "--no-color", `${port.from}..${port.head}`, `${port.onto}..${head}`]);
-      parts.push(`## Port of the previously reviewed change\n${comparison}`);
-      parts.push(`## Resolved files against the new base\n${await output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", `${port.onto}..${head}`, "--", ...port.files])}`);
+      const compare = async (paths: string[], includeEmpty = false) => {
+        if (port.from !== port.head && port.onto !== head) return output(path, ["range-diff", "--no-color", `${port.from}..${port.head}`, `${port.onto}..${head}`, "--", ...paths]);
+        const patch = (range: string) => output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", range, "--", ...paths]);
+        const [before, after] = await Promise.all([port.from === port.head ? "" : patch(`${port.from}..${port.head}`), port.onto === head ? "" : patch(`${port.onto}..${head}`)]);
+        return before || after || includeEmpty ? `Previous reviewed change:\n${before || (port.from === port.head ? "No commits in this range." : "No changes.")}\n\nCurrent port:\n${after || (port.onto === head ? "No commits in this range." : "No changes.")}` : "";
+      };
+      const [ported, portLocks, resolved] = await Promise.all([compare([".", ...EXCLUDE_LOCKS], true), compare(ONLY_LOCKS), comparison(path, `${port.onto}..${head}`, port.files)]);
+      parts.push(`## Port of the previously reviewed change\n${ported}`);
+      parts.push(`## Resolved files against the new base\n${resolved.stat}\n${resolved.patch || "No non-lockfile changes."}`, await lockMaterial([portLocks, resolved.locks].filter(Boolean).join("\n\n"), "port"));
     }
     signal.throwIfAborted();
     const saved = await immutable(folder, "full.md", parts.filter(Boolean).join("\n\n"));
     artifacts.push(saved);
-    materials.push(`- ${work.source?.product.name ?? work.productId} (${work.productId}), commit ${head}, base ${base}: ${JSON.stringify(saved.file)} (reference ${saved.digest}); complete comparison git diff ${base}...HEAD, with HEAD fixed at ${head}${work.portReview ? "; includes the port comparison and resolved files" : ""}`);
+    materials.push(`- ${work.source?.product.name ?? work.productId} (${work.productId}), commit ${head}, base ${base}: ${JSON.stringify(saved.file)} (reference ${saved.digest}); ${work.portReview ? "port comparison and resolved files for the previously reviewed change" : `complete comparison git diff ${base}...HEAD`}, with HEAD fixed at ${head}`);
     if (fixes && delta) {
       const incremental = await immutable(folder, "incremental.md", [header, rules, `## Changes since the last completed code-review round\nComparison: git diff ${delta}\n${fixes.stat}\n${fixes.patch || "No non-lockfile changes."}`, await lockMaterial(fixes.locks, "incremental")].filter(Boolean).join("\n\n"));
       artifacts.push(incremental);

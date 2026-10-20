@@ -468,7 +468,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const session = sessions.get(sessionId)!;
   session.turns += 1;
   if (roleOf(text)) session.role = roleOf(text);
-  const captures = /Browser output belongs only in (.+), outside product files\./.exec(text)?.[1];
+  const captures = /Browser output belongs only in (.+), outside product files\./.exec(text)?.[1]
+    ?? /Browser capture folder for this turn: (.+)\. Earlier pages/.exec(text)?.[1];
   if (captures) session.captures = captures;
   // The restart line of a reopened conversation, or the summary a fresh one starts with.
   const restarted = text.includes("Petrina restarted");

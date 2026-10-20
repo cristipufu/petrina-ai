@@ -187,7 +187,7 @@ ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
  * For an agent going back to its own conversation with the next piece of work on the same task: what it
  * already knows still holds, so it gets its job as it stands now and the context, without the introduction.
  */
-export function continuePrompt(ctx: PromptContext): string {
+export function continuePrompt(ctx: PromptContext, options: { refreshRole?: boolean } = {}): string {
   if (ctx.sections.some((section) => section.title === PREPARED_REVIEW)) ctx = { ...ctx, preparedReview: true };
   const { task } = ctx;
   const contract = contractFor(ctx.role);
@@ -196,9 +196,7 @@ export function continuePrompt(ctx: PromptContext): string {
   return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}). What you learned before still holds; here is where things stand now.
 
 # Your job now
-${contract.instructions(ctx)}${roleCard(ctx)}
-
-${FOCUSED_VERIFICATION}
+${contract.instructions(ctx)}${options.refreshRole ? roleCard(ctx) : ""}
 
 ${sections}
 

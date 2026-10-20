@@ -1,5 +1,6 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import * as gitOps from "../src/git.js";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, createDemoState, type DeepMutable, type Finding } from "@petrina/core";
 import { Context } from "../src/context.js";
@@ -37,6 +38,46 @@ async function bare() {
 }
 
 describe("immutable review inputs", () => {
+  it("omits settled native failures while retaining open failures and settled agent findings", async () => {
+    const f = await bare();
+    try {
+      f.task.findings.push({ ...structuredClone(earlier), id: "native-fixed", raisedBy: "petrina", text: "Old native failure", evidence: "OLD-LONG-DIAGNOSTIC" }, { ...structuredClone(earlier), id: "native-open", status: "open", raisedBy: "petrina", text: "Still failing native check" });
+      const input = await f.context.captureReview(f.scope);
+      const body = input.parts.findings!.map((part) => part.body).join("\n");
+      expect(body).not.toContain("OLD-LONG-DIAGNOSTIC"); expect(body).toContain("Still failing native check"); expect(body).toContain(earlier.text);
+      expect(input.findings.map((finding) => finding.id)).toEqual([earlier.id, "native-open"]);
+      expect(f.task.findings).toHaveLength(3);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("prepares only port comparisons and keeps lockfile evidence out of the inline port material", async () => {
+    const f = await bare();
+    try {
+      writeFileSync(join(f.repo, "bun.lock"), "PORT-LOCKFILE-SENTINEL\n".repeat(1_000));
+      mkdirSync(join(f.repo, "packages", "[new]"), { recursive: true });
+      writeFileSync(join(f.repo, "packages", "[new]", "package-lock.json"), "NESTED-PORT-LOCKFILE\n");
+      writeFileSync(join(f.repo, "greeting.txt"), "A-PORTED-GREETING\n");
+      git(f.repo, "add", "."); git(f.repo, "commit", "-qm", "Resolve the port");
+      const head = git(f.repo, "rev-parse", "HEAD");
+      f.scope.work.portReview = { from: f.base, head: f.first, onto: f.first, files: ["greeting.txt", "bun.lock", "packages/[new]/package-lock.json"] };
+      f.scope.work.reviewedSha = f.first;
+      const run = spyOn(gitOps, "run");
+      try {
+        const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
+        const input = await readReviewInput(ref);
+        const full = readFileSync(input.artifacts![0]!.file, "utf8");
+        expect(full).toContain("A-PORTED-GREETING"); expect(full).toContain("bun.lock"); expect(full).not.toContain("PORT-LOCKFILE-SENTINEL");
+        expect(full).toContain("packages/[new]/package-lock.json"); expect(full).not.toContain("NESTED-PORT-LOCKFILE");
+        expect(full).not.toContain("## Complete change");
+        expect(input.artifacts!.some((file) => file.file.endsWith(".incremental.md"))).toBe(false);
+        const locks = input.artifacts!.find((file) => file.file.endsWith(".port-lockfiles.md"))!;
+        expect(readFileSync(locks.file, "utf8")).toContain("PORT-LOCKFILE-SENTINEL");
+        expect(readFileSync(locks.file, "utf8")).toContain("NESTED-PORT-LOCKFILE");
+        expect(run.mock.calls.some(([args]) => args.includes(`${f.base}...${head}`))).toBe(false);
+      } finally { run.mockRestore(); }
+    } finally { await f.engine.shutdown(); }
+  });
+
   it("uses high-effort verifiers without changing discovery profiles, retaining a configured fallback when high is absent", async () => {
     const f = await bare();
     try {
@@ -202,7 +243,13 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       }
       const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
       expect(sessions.size).toBe(single ? 1 : 2);
-      for (const id of sessions) expect(f.fakes.opens().filter((entry) => entry.session === id).map((entry) => entry.how)).toEqual(["new", reopen]);
+      for (const id of sessions) {
+        expect(f.fakes.opens().filter((entry) => entry.session === id).map((entry) => entry.how)).toEqual(["new", reopen]);
+        const prompts = f.fakes.received("code reviewer").filter((entry) => entry.session === id);
+        expect(prompts[0]!.text).toContain("Browser output belongs only in");
+        expect(prompts[1]!.text).toContain("Browser capture folder for this turn:");
+        expect(prompts[1]!.text).not.toContain("Browser output belongs only in");
+      }
       const voterIds = new Set(f.fakes.received("verifier").map((entry) => entry.session));
       expect(voterIds.size).toBeGreaterThan(0);
       expect(f.fakes.opens().filter((entry) => voterIds.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);

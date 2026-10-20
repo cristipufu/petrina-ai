@@ -20,11 +20,19 @@ const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reaso
 const promptFor = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => buildPrompt(context(role, screen));
 
 describe("prompts", () => {
-  it("requires an external execution deadline for focused probes on fresh and continued turns", () => {
+  it("states the focused verification rules on fresh turns without repeating them on confirmed continuations", () => {
     for (const role of BUILT_IN_ROLES) {
       expect(promptFor(role)).toContain(FOCUSED_VERIFICATION);
-      expect(continuePrompt(context(role))).toContain(FOCUSED_VERIFICATION);
+      expect(continuePrompt(context(role))).not.toContain(FOCUSED_VERIFICATION);
     }
+  });
+  it("refreshes role purpose and handoff details when the continued context scope changed", () => {
+    const role = { ...BUILT_IN_ROLES.find((entry) => entry.id === "builder")!, purpose: "A changed purpose", handsBack: "A changed handoff" };
+    const ctx = context(role);
+    expect(continuePrompt(ctx)).not.toContain("A changed purpose");
+    const changed = continuePrompt(ctx, { refreshRole: true });
+    expect(changed).toContain("A changed purpose"); expect(changed).toContain("A changed handoff");
+    expect(changed).not.toContain(FOCUSED_VERIFICATION);
   });
   it("explains fresh browser storage after restart and failed reopening, including a screen continuation", () => {
     const where = { stage: "Build", role: "Builder", done: ["Checked the page"] };

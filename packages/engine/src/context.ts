@@ -18,6 +18,8 @@ export interface Section {
   body: string;
 }
 
+const reviewFindings = ({ task }: RepositoryContext) => task.findings.filter((finding) => finding.raisedBy !== "petrina" || finding.status === "open");
+
 export class Context {
   private readonly parts: Record<ContextPart, (scope: RepositoryContext, roleId: Id, points: readonly string[], currentChecks: boolean) => Section[]> = {
     notes: (scope) => this.notes(scope),
@@ -31,7 +33,10 @@ export class Context {
     },
     report: (scope, roleId) => this.report(scope, roleId),
     "check-results": (scope, _roleId, _points, currentChecks) => this.checkResults(scope, currentChecks),
-    findings: (scope) => (scope.task.findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(scope.task.findings as Task["findings"]) }] : []),
+    findings: (scope) => {
+      const findings = reviewFindings(scope);
+      return findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(findings) }] : [];
+    },
   };
 
   constructor(
@@ -79,7 +84,7 @@ export class Context {
     const currentChecks = !!scope.work.checks?.results.length && await this.currentChecks(scope);
     const parts: ReviewInput["parts"] = {};
     for (const part of ["brief", "guide-points", "report", "check-results", "findings"] as const) parts[part] = this.parts[part](scope, "code-reviewer", points, currentChecks);
-    return structuredClone({ parts, source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: scope.task.findings });
+    return structuredClone({ parts, source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: reviewFindings(scope) });
   }
 
   private approvedSource(scope: RepositoryContext): Section[] {
