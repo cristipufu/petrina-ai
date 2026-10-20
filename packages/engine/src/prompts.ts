@@ -231,7 +231,7 @@ export function formatObjections(objections: readonly Objection[]): string {
 /** The words agents and the coordinator use for a finding's severity. */
 export const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "important", suggestion: "nit", "pre-existing": "pre-existing" };
 
-export function formatFindings(findings: readonly Finding[]): string {
+export function formatFindings(findings: readonly Finding[], options: { complete?: boolean } = {}): string {
   return findings
     .map((finding) => {
       const line = [
@@ -242,8 +242,28 @@ export function formatFindings(findings: readonly Finding[]): string {
         .filter(Boolean)
         .join("\n");
       // Keep the reproduction with an open finding so builders and fresh voters need not rediscover it.
-      const evidence = finding.evidence && finding.status === "open" ? `\n  Evidence:\n${finding.evidence.slice(-1200).replace(/^/gm, "    ")}` : "";
-      return line + evidence;
+      const evidence = finding.evidence && (options.complete || finding.status === "open") ? `\n  Evidence:\n${(options.complete ? finding.evidence : finding.evidence.slice(-1200)).replace(/^/gm, "    ")}` : "";
+      const details = options.complete ? [
+        `  Raised by: ${finding.raisedBy}${finding.roleId ? `, role ${finding.roleId}` : ""}. Products: ${finding.productIds?.join(", ") || "not assigned"}.`,
+        finding.steps ? `  How to reproduce: ${finding.steps}` : "",
+        finding.confirmedBy.length ? `  Confirmed by: ${finding.confirmedBy.join(", ")}` : "",
+        ...(finding.disputes ?? []).map((entry) => `  Disputed by ${entry.by}: ${entry.reason}`),
+        ...(finding.votes ?? []).map((entry) => `  Vote by ${entry.by} (${entry.toolId ?? "tool not reported"}): ${entry.verdict}. ${entry.reason}`),
+        ...Object.entries(finding.answers ?? {}).map(([id, answer]) => `  Builder for ${id}: ${answer.fixed ? "fixed" : "not fixed"}. ${answer.text}`),
+        ...(finding.judgments ?? []).map((entry) => `  Severity reported by ${entry.by}: ${FINDING_TAG[entry.severity]}`),
+        finding.reopenedAt !== undefined ? `  Reopened at ${new Date(finding.reopenedAt).toISOString()}. Earlier decisions below are historical, not current support.` : "",
+        ...(finding.earlierReviews ?? []).map((entry) => `  Earlier decision at ${new Date(entry.at).toISOString()}:\n${[
+          entry.evidence ? `    Evidence: ${entry.evidence}` : "",
+          `    Confirmed by: ${entry.confirmedBy.join(", ") || "none"}`,
+          entry.verification ? `    Verification: ${entry.verification.verdict}. ${entry.verification.reason}` : "",
+          entry.answer ? `    Builder: ${entry.answer.fixed ? "fixed" : "not fixed"}. ${entry.answer.text}` : "",
+          ...(entry.disputes ?? []).map((dispute) => `    Disputed by ${dispute.by}: ${dispute.reason}`),
+          ...(entry.votes ?? []).map((vote) => `    Vote by ${vote.by} (${vote.toolId ?? "tool not reported"}): ${vote.verdict}. ${vote.reason}`),
+        ].filter(Boolean).join("\n")}`),
+        finding.sameBug ? `  Matching follow-up: ${finding.sameBug}` : "",
+        finding.tracking ? `  Follow-up tracking: ${"taskId" in finding.tracking ? finding.tracking.taskId : finding.tracking.reason}` : "",
+      ].filter(Boolean).join("\n") : "";
+      return line + evidence + (details ? `\n${details}` : "");
     })
     .join("\n");
 }

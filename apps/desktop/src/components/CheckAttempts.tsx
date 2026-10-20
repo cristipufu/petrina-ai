@@ -30,8 +30,9 @@ function Attempt({ checks, find, now }: { checks: readonly JourneyProductCheck[]
   const active = checks.some((check) => check.result === "pending" || check.result === "running");
   const end = active ? now : ends.length ? Math.max(...ends) : undefined;
   const product = checks[0]?.productId;
+  const metadata = [product ? find.product(product)?.name ?? "Removed product" : undefined, start !== undefined ? `Started ${new Date(start).toLocaleString()}` : undefined, start !== undefined && end !== undefined ? `${duration(start, end)}${active ? " so far" : " elapsed"}` : undefined].filter(Boolean).join(" · ");
   return <div className="journey-context check-attempt">
-    <p className="quiet-text num">{[product ? find.product(product)?.name ?? "Removed product" : undefined, start !== undefined ? `Started ${new Date(start).toLocaleString()}` : undefined, start !== undefined && end !== undefined ? `${duration(start, end)}${active ? " so far" : " elapsed"}` : undefined].filter(Boolean).join(" · ")}</p>
+    {metadata && <p className="quiet-text num">{metadata}</p>}
     <ul className="journey-check-list">{checks.map((check, index) => <li key={check.id ?? index}>
       <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" || check.result === "did-not-finish" ? "bad" : check.result === "running" ? "running" : ""}`}>{check.result === "running" && <LoaderCircle size={12} className="check-progress-spinner" aria-hidden="true" />}{({ pass: "Passed", fail: "Failed", "did-not-finish": "Timed out", running: "Running", pending: "Pending", stopped: "Stopped", skipped: "Not needed" } as const)[check.result]}</span>
       <strong>{check.name}</strong>

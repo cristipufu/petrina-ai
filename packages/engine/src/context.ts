@@ -36,7 +36,7 @@ export class Context {
     "check-results": (scope, _roleId, _points, currentChecks) => this.checkResults(scope, currentChecks),
     findings: (scope) => {
       const findings = reviewFindings(scope);
-      return findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(findings) }] : [];
+      return findings.length ? [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(findings, { complete: true }) }] : [];
     },
   };
 

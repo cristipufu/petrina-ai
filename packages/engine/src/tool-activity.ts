@@ -54,7 +54,10 @@ function browserAction(update: ToolActivity): { action: string; input: Record<st
   return action ? { action, input } : undefined;
 }
 
-const browserName = (name: string) => /(?:^|__)browser_([a-z_]+)$/i.exec(name.trim().replace(/^Running\s+/i, ""))?.[1]?.toLowerCase();
+function browserName(value: string): string | undefined {
+  const name = value.trim().replace(/^Running\s+/i, "");
+  return /\s/.test(name) ? undefined : /(?:^|__)browser_([a-z_]+)$/i.exec(name)?.[1]?.toLowerCase();
+}
 
 const BROWSER_ACTIONS: Record<string, string> = {
   navigate: "Opening a page", navigate_back: "Going back a page", snapshot: "Reading the page",

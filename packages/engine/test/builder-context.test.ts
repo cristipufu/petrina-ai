@@ -22,7 +22,11 @@ it("reduces unchanged finding records only within an intact native conversation 
     expect(next.sections[0]!.title).toBe("Current authoritative task context");
     expect(next.sections.find((section) => section.title === "Current finding status index")!.body).toContain("old: fixed");
     const delta = next.sections.find((section) => section.title.startsWith("New or changed finding"))!;
-    expect(JSON.parse(delta.body)).toEqual([updated]);
+    expect(delta.body).toContain("Products: web");
+    expect(delta.body).toContain("Changed proof");
+    expect(delta.body).toContain("Builder response");
+    expect(delta.body).toContain("Fresh proof");
+    expect(delta.body).toContain("Counterexample");
     expect(next.sections.map((section) => section.body).join("\n")).not.toContain(unchanged.text);
     expect(await readFile(next.snapshot!.file, "utf8")).toContain(unchanged.text);
     expect(await readFile(next.snapshot!.file, "utf8")).toContain("Counterexample");

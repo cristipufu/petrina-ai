@@ -33,6 +33,7 @@ describe("plain agent activity across tools", () => {
       expect(describeTool({ title: "run_command", rawInput: { description: `Running ${name}` } })).toBe(expected);
     }
     expect(describeTool({ title: "run_command", rawInput: { description: "Check that browser_evaluate handles a missing page" } })).toBe("Check that browser_evaluate handles a missing page");
+    expect(describeTool({ title: "run_command", rawInput: { description: "Verify the regression in mcp__page__browser_evaluate" } })).toBe("Verify the regression in mcp__page__browser_evaluate");
     expect(describeTool({ title: "run_command", rawInput: { CommandLine: "browser_evaluate", description: "Validate the chosen colour" } })).toBe("Validate the chosen colour");
     expect(describeTool({ title: "An ordinary action", rawInput: { function: "browser_take_screenshot" } })).toBe("An ordinary action");
     expect(browserTarget({ title: "call_mcp_tool", rawInput: { ToolName: "browser_navigate", Arguments: { url: "https://example.com/page?private=value" } } })).toBe("Page: https://example.com/page");

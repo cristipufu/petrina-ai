@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { BuilderContext, Finding, Role, Task } from "@petrina/core";
 import type { Section } from "./context.js";
+import { FINDING_TAG, formatFindings } from "./prompts.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const reusable = (title: string) => /^(?:Design brief|Product checks|Approved starting point and delivery|Complete approved product map and responsibility|The coordinator's notes on this task|What the builder reports|Previously inspected source locations|What earlier agents on this task handed back|Points the coordinator accepted for the review guide|Open follow-up cards|The pull request description you wrote last time|Earlier implementation and verification evidence)/.test(title);
@@ -44,8 +45,8 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
         const removed = Object.keys(previous.findingHashes).filter((id) => !(id in findingHashes));
         reducedFindings = true;
         return [
-          { title: "Current finding status index", body: `${options.findings.map((finding) => `- ${finding.id}: ${finding.status}, ${finding.severity}`).join("\n") || "No current findings."}${removed.length ? `\nNo longer present: ${removed.join(", ")}.` : ""}\nUnchanged records are in the complete current context packet above. Reopening a settled finding still requires fresh evidence on the current code.` },
-          ...(changed.length ? [{ title: "New or changed finding records (confirm or dispute by id)", body: JSON.stringify(changed, null, 2) }] : []),
+          { title: "Current finding status index", body: `${options.findings.map((finding) => `- ${finding.id}: ${finding.status}, ${FINDING_TAG[finding.severity]}`).join("\n") || "No current findings."}${removed.length ? `\nNo longer present: ${removed.join(", ")}.` : ""}\nUnchanged records are in the complete current context packet above. Reopening a settled finding still requires fresh evidence on the current code.` },
+          ...(changed.length ? [{ title: "New or changed finding records (confirm or dispute by id)", body: formatFindings(changed, { complete: true }) }] : []),
         ];
       }
       if (options.design && options.knownSections?.includes(section.title)) return [];

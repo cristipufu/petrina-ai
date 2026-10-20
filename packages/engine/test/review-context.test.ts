@@ -196,7 +196,7 @@ describe("immutable review inputs", () => {
   });
 });
 
-async function run(reopen: Scenario["reopen"], options: { single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"] } = {}) {
+async function run(reopen: Scenario["reopen"], options: { single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; seedFinding?: boolean } = {}) {
   const root = tempDir("petrina-review-resume-"); roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   const scenario: Scenario = { planner: options.single ? "short" : "pair", builder: "plain", reviewer: options.reviewer ?? "important", fixes: "change", controlled: true, reopen, limited: options.limited };
@@ -215,6 +215,7 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
   }
   const taskId = engine.addTask({ productId, title: "Reuse independent reviewers", description: "ORIGINAL-REVIEW-REQUEST [no-check]", approvePlan: true, ...(second ? { worksOn: [productId, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "local" as const })) } : {}) });
   const task = () => engine.task(taskId)!;
+  if (options.seedFinding) task().findings.push(structuredClone(earlier));
   const tick = (allow: (role: string, session: string) => boolean = () => true) => {
     for (const entry of fakes.received()) if (allow(entry.role, entry.session)) writeFileSync(join(fakes.dir, `release-${entry.session}`), "go");
     for (const item of engine.getState().inbox) {
@@ -231,6 +232,22 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
 }
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
+  for (const single of [false, true]) it(`omits unchanged closed findings from the actual continued ${single ? "single" : "parallel"} reviewer input`, async () => {
+    const f = await run("resume", { single, seedFinding: true });
+    try {
+      const task = await f.done();
+      const first = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 1)!;
+      const next = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!;
+      expect(first.agentInputs!.every((input) => input.sections.some((section) => section.body.includes(earlier.text)))).toBe(true);
+      for (const input of next.agentInputs!) {
+        expect(input.mode).toBe("continued");
+        expect(input.sections.some((section) => section.title === "Current finding status index" && section.body.includes("older: fixed"))).toBe(true);
+        expect(input.sections.map((section) => section.body).join("\n")).not.toContain(earlier.text);
+        expect(input.sections.some((section) => section.title.startsWith("New or changed finding records"))).toBe(true);
+      }
+    } finally { await f.engine().shutdown(); }
+  });
+
   for (const reopen of ["resume", "load"] as const) for (const single of [false, true]) it(`continues ${single ? "one reviewer" : "each parallel reviewer"} with ${reopen}, while voters stay fresh`, async () => {
     const f = await run(reopen, { single });
     try {
