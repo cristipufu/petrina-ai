@@ -334,6 +334,31 @@ describe('the journey in the task sheet', () => {
     expect(items[2]).toContain('PendingCommit message hook');
   });
 
+  it('separates interrupted and failed attempts from the latest passing rerun', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const step = task.journey!.findLast((step) => step.kind === 'petrina' && step.work === 'checks')!;
+    step.productChecks = [
+      { id: 'check-0', name: 'Tests', result: 'stopped', detail: 'Original interruption', startedAt: NOW - 90_000, endedAt: NOW - 80_000 },
+      { id: 'run-1:check-0', name: 'Tests', result: 'fail', detail: 'Original failure', startedAt: NOW - 60_000, endedAt: NOW - 50_000 },
+      { id: 'run-2:check-0', attemptId: 'run-2', productId: task.productId, queuedAt: NOW - 30_000, name: 'Tests', result: 'pass', startedAt: NOW - 20_000, endedAt: NOW - 10_000 },
+    ];
+    await mount(state);
+    await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${step.id}"]`)!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Latest attempt · 1 of 1 passed');
+    const earlier = [...details.querySelectorAll<HTMLDetailsElement>('.check-attempt-history')];
+    expect(earlier).toHaveLength(2);
+    expect(earlier.every((entry) => !entry.open)).toBe(true);
+    expect(earlier[0]!.querySelector('summary')?.textContent).toContain('Earlier attempt 2 · 1 of 1 failed');
+    expect(earlier[0]!.textContent).toContain('Original failure');
+    expect(earlier[1]!.querySelector('summary')?.textContent).toContain('Interrupted');
+    expect(earlier[1]!.textContent).toContain('Original interruption');
+    expect(details.querySelector('.check-attempt')?.textContent).toContain('PassedTests');
+    expect(details.querySelector('.check-attempt')?.textContent).not.toContain('Original failure');
+  });
+
   it('shows the failed test behind a delivery checkpoint, not just “checks still fail”', async () => {
     const state = createDemoState(NOW);
     const task = taskOf(state, 'pricing-refresh');

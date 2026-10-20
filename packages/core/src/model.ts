@@ -311,6 +311,10 @@ export interface JourneyAcceptanceCheck {
 
 export interface JourneyProductCheck {
   id?: string;
+  /** Shared by the commands prepared together, including a rerun on the same journey step. */
+  attemptId?: string;
+  queuedAt?: number;
+  productId?: Id;
   /** Original run, including its complete diagnostic link. Never points to a later run. */
   run?: CheckRun;
   name: string;

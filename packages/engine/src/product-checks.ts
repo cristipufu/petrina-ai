@@ -200,9 +200,10 @@ export class ProductChecks {
     if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now(), repository);
     const step = openStep(task);
     const prefix = step?.productChecks?.length ? `run-${step.productChecks.length}:` : "";
+    const attempt = { attemptId: `run-${step?.productChecks?.length ?? 0}`, queuedAt: Date.now(), productId: repository.productId };
     const entries: CheckEntries = new Map<string, DeepMutable<JourneyProductCheck>>([
-      ...checks.filter((check) => check.argv.length).map((check, index) => [`check-${index}`, { id: `${prefix}check-${index}`, name: check.name, result: "pending" as const }] as const),
-      ...hooks.map((hook) => [`hook-${hook}`, { id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" as const }] as const),
+      ...checks.filter((check) => check.argv.length).map((check, index) => [`check-${index}`, { ...attempt, id: `${prefix}check-${index}`, name: check.name, result: "pending" as const }] as const),
+      ...hooks.map((hook) => [`hook-${hook}`, { ...attempt, id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" as const }] as const),
     ]);
     if (step) {
       // Continuing release notes reuse their journey node. Each revalidation keeps its own
@@ -224,7 +225,7 @@ export class ProductChecks {
         kept = await this.savedProductResults(scope, checks, state);
         for (const [id, entry] of entries) if (id.startsWith("hook-") && !state.hooks.includes(id.slice(5))) entry.result = "skipped";
         for (const hook of state.hooks) if (!entries.has(`hook-${hook}`)) {
-          const entry: DeepMutable<JourneyProductCheck> = { id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" };
+          const entry: DeepMutable<JourneyProductCheck> = { ...attempt, id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" };
           entries.set(`hook-${hook}`, entry);
           if (step) step.productChecks = [...(step.productChecks ?? []), entry];
         }

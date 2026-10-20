@@ -51,6 +51,7 @@ it("retains live check progress and every original diagnostic through repeated p
     const visible = journeyView(task, engine.activeState()).nodes[0]!.productChecks!;
     expect(visible[1]).toHaveProperty("id", "check-1");
     expect(visible[1]).toHaveProperty("startedAt");
+    expect(visible[1]).toMatchObject({ attemptId: "run-0", productId: "product", queuedAt: expect.any(Number) });
     expect(visible[0]).not.toHaveProperty("run");
   } finally { writeFileSync(release, "go"); }
   expect(await running).toBe(0);
@@ -59,6 +60,7 @@ it("retains live check progress and every original diagnostic through repeated p
   expect(await engine["checks"].runProductChecks(executionFor(task), [{ name: "Quick", argv: [process.execPath, "-e", 'await Bun.write(Bun.stderr, "Original failure near the beginning\\n" + "Later diagnostic line\\n".repeat(9000)); process.exit(1);'] }], new AbortController().signal)).toBe(1);
   const evidence = task.journey![0]!.productChecks!;
   expect(evidence).toHaveLength(3);
+  expect(evidence[2]!.attemptId).not.toBe(evidence[0]!.attemptId);
   expect(new Set(evidence.map((check) => check.id)).size).toBe(3);
   expect(evidence[0]!.run!.logPath).toBe(firstLog);
   expect(evidence[2]!.run!.logPath).not.toBe(firstLog);
@@ -70,6 +72,7 @@ it("retains live check progress and every original diagnostic through repeated p
   const replacement = new Engine(home, { ...options, admissionsClosed: true });
   engines.push(replacement);
   const focused = new Coordination(replacement);
+  expect(replacement.task(task.id)!.journey![0]!.productChecks![2]!.attemptId).toBe(evidence[2]!.attemptId);
   let page = await focused.call("journey.check", { taskId: task.id, nodeId: "notes", index: 2 });
   expect(page.commandOutcome).toBe("failed");
   expect(page.completeness).toBe("complete");

@@ -2100,6 +2100,10 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-check-list li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }
 .journey-check-list li > span:not(.label) { color: var(--text-2); }
 .journey-check-list .journey-check-detail { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.check-attempt-history { border-top: 1px solid var(--line); padding-top: 8px; min-width: 0; }
+.check-attempt-history > summary { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); cursor: pointer; overflow-wrap: anywhere; }
+.check-attempt-history > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.check-attempt-history[open] > summary { margin-bottom: 12px; }
 .journey-asked { display: grid; gap: 8px; }
 .journey-asked ul { list-style: none; display: grid; gap: 8px; }
 .journey-asked li { display: grid; gap: 2px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }

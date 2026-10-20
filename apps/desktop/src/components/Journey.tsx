@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type Keybo
 import { createPortal } from "react-dom";
 import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { Ban, Check, Flag, GitBranch, Hourglass, LoaderCircle, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Ban, Check, Flag, GitBranch, Hourglass, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
 import { journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
 import { ago, duration, EFFORT_LABEL, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
@@ -13,6 +13,7 @@ import { FindingItem } from "./sheet/ReviewTab";
 import { ObjectionItem } from "./sheet/DesignTab";
 import { reviewOutcome, reviewRoundGroups } from "../reviewRound";
 import { ReviewRoundFindings } from "./ReviewRoundFindings";
+import { CheckAttempts } from "./CheckAttempts";
 
 // ── Words ───────────────────────────────────────────────────────────────────────────────
 
@@ -776,17 +777,8 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
         </div>
       ) : null}
 
-      {node.kind === "petrina" && node.work === "checks" && (() => {
-        const recorded = node.productChecks;
-        if (recorded?.length) return <div className="journey-context">
-          <h4>{recorded.some((check) => check.result === "pending" || check.result === "running") ? "Checks in this run" : "Automated check results"}</h4>
-          <ul className="journey-check-list">{recorded.map((check, index) => <li key={check.id ?? `${index}-${check.name}`}>
-            <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" || check.result === "did-not-finish" ? "bad" : check.result === "running" ? "running" : ""}`}>{check.result === "running" && <LoaderCircle size={12} className="check-progress-spinner" aria-hidden="true" />}{({ pass: "Passed", fail: "Failed", "did-not-finish": "Timed out", running: "Running", pending: "Pending", stopped: "Stopped", skipped: "Not needed" } as const)[check.result]}</span>
-            <strong>{check.name}</strong>
-            {check.startedAt !== undefined && <span className="quiet-text num">{duration(check.startedAt, check.endedAt ?? now)}{check.endedAt === undefined ? " so far" : ""}</span>}
-            {check.detail ? <span className="journey-check-detail">{check.detail}</span> : null}
-          </li>)}</ul>
-        </div>;
+      {(node.productChecks?.length || (node.kind === "petrina" && node.work === "checks")) && (() => {
+        if (node.productChecks?.length) return <CheckAttempts checks={node.productChecks} find={find} now={now} />;
         if (currentCheckRuns?.length) return <div className="journey-context">
           <h4>Automated check results</h4>
           <ul className="journey-check-list">{currentCheckRuns.map((check) => <li key={check.name}>

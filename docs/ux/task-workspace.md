@@ -62,7 +62,7 @@ The middle column always shows the task's complete chronological journey: the st
 
 ### Live automated checks
 
-Automated checks show every check in that run, with pending, running and completed results, and elapsed time for checks that have started. Product commands run serially, with type checks and lint first; a static failure leaves later commands and hooks skipped, with no passing result implied. The task’s status names the checks currently running.
+Automated checks show every check in that run, with pending, running and completed results, and elapsed time for checks that have started. Product commands run serially, with type checks and lint first; a static failure leaves later commands and hooks skipped, with no passing result implied. The task’s status names the checks currently running. When a step contains repeated preparations, its latest attempt shows its own count, outcome, product and recorded timing. Earlier attempts are separate disclosures, collapsed by default, retaining stopped results and original diagnostics.
 
 ### Release notes
 
