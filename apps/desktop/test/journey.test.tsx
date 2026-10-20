@@ -222,6 +222,31 @@ describe('the journey in the task sheet', () => {
     expect([...details.querySelectorAll('button')].some((button) => button.textContent?.includes('Read this step'))).toBe(false);
   });
 
+  it('distinguishes repeated starts and keeps same-title input sections without key warnings', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const step = task.journey!.find((step) => step.roleId === 'builder')!;
+    const input = { roleId: 'builder', profileId: step.profileId!, taskTitle: task.title, mode: 'fresh' as const, sections: [{ title: 'Requirements', body: 'Keep the selected delivery.' }, { title: 'Requirements', body: 'Keep the quoted total.' }] };
+    step.agentInputs = [input, { ...input, sections: [] }, { ...input, reviewerKey: '0' }];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await mount(state);
+      await openTask('pricing-refresh');
+      const item = host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${step.id}"]`)!;
+      await act(async () => item.click());
+      const details = host.querySelector('.journey-details')!;
+      const labels = [...details.querySelectorAll('.journey-agent-start summary')].map((summary) => summary.textContent!);
+      expect(new Set(labels).size).toBe(labels.length);
+      expect(labels.filter((label) => label.includes('Start 1'))).toHaveLength(2);
+      expect(labels.filter((label) => label.includes('Start 2'))).toHaveLength(2);
+      expect(labels.filter((label) => label.includes('Seat 1'))).toHaveLength(2);
+      expect(labels.filter((label) => label.includes('Seat 1')).every((label) => !label.includes('Start'))).toBe(true);
+      expect(details.textContent).toContain('Keep the selected delivery.');
+      expect(details.textContent).toContain('Keep the quoted total.');
+      expect(errors.mock.calls.filter((args) => /same key|unique.*key/i.test(args.join(' ')))).toEqual([]);
+    } finally { errors.mockRestore(); }
+  });
+
   it('explains a Builder fix assignment and shows the exact failed Tester check', async () => {
     const state = createDemoState(NOW);
     const task = taskOf(state, 'pricing-refresh');

@@ -664,6 +664,10 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
             : previousJourneyStep?.kind === "you" ? "Your checkpoint" : previousJourneyStep?.kind === "wait" ? "The task dependency" : undefined;
         const priorResult = previousJourneyStep?.reason ?? previousJourneyStep?.outcome;
         const inputs = node.agentInputs ?? [];
+        const seatKey = (input: typeof inputs[number]) => JSON.stringify([input.roleId, input.profileId, input.reviewerKey]);
+        const starts = new Map<string, number>();
+        for (const input of inputs) starts.set(seatKey(input), (starts.get(seatKey(input)) ?? 0) + 1);
+        const seen = new Map<string, number>();
         return <div className="journey-context">
           <h4>Why this step started</h4>
           <p>{previousJourneyStep
@@ -672,7 +676,10 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
           {inputs.length > 0 ? inputs.map((input, index) => {
             const inputRole = find.role(input.roleId)?.name ?? input.roleId;
             const profile = find.profile(input.profileId);
-            const agentLabel = `${inputRole}${inputs.length > 1 && profile ? ` (${profileText(profile, find, true)})` : ""}${input.reviewerKey !== undefined ? ` · Seat ${Number(input.reviewerKey) + 1}` : ""}`;
+            const identity = seatKey(input);
+            const start = (seen.get(identity) ?? 0) + 1;
+            seen.set(identity, start);
+            const agentLabel = `${inputRole}${inputs.length > 1 && profile ? ` (${profileText(profile, find, true)})` : ""}${input.reviewerKey !== undefined ? ` · Seat ${Number(input.reviewerKey) + 1}` : ""}${starts.get(identity)! > 1 ? ` · Start ${start}` : ""}`;
             return <div className="journey-agent-start" key={`${input.roleId}:${input.profileId}:${input.reviewerKey ?? "main"}:${index}`}>
               <details className="agent-selection">
                 <summary>Agent choice{inputs.length > 1 ? ` · ${agentLabel}` : ""}</summary>
@@ -696,7 +703,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
                   <h4>Job instructions</h4>
                   <p>{input.instructions}</p>
                 </div> : <p className="note">Job instructions were not recorded for this start.</p>}
-                {input.sections.length ? input.sections.map((section) => <div key={section.title}>
+                {input.sections.length ? input.sections.map((section, sectionIndex) => <div key={`${section.title}:${sectionIndex}`}>
                   <h4>{section.title}</h4>
                   <p>{section.body}</p>
                 </div>) : <p className="note">No additional task context was recorded for this step.</p>}
