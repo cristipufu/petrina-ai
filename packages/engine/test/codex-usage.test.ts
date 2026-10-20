@@ -33,6 +33,17 @@ const alive = (pid: number): boolean => {
 const soon = Math.floor(Date.now() / 1000) + 3600;
 
 describe("what Codex's app-server says about usage", () => {
+  it("forces an app-server that reports usage but ignores its normal stop", async () => {
+    const server = appServer({ ignoreTerm: true, primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: Math.round(Date.now() / 1000) + 3600 } });
+    let child: import("node:child_process").ChildProcess | undefined;
+    try {
+      const reports = await readCodexUsage({ command: server.command, env: process.env, onProcess: process => { child = process; } });
+      expect(reports[0]!.utilization).toBe(0.1);
+      await waitFor(() => child?.signalCode === "SIGKILL", "the stubborn app-server to be forced closed", 5000);
+      expect(alive(child!.pid!)).toBe(false);
+    } finally { if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }
+  });
+
   it("maps each window by its length, with the reset time in milliseconds, and the status by how much is used", () => {
     const result = { rateLimits: { primary: { usedPercent: 88, windowDurationMins: 10080, resetsAt: soon }, secondary: { usedPercent: 12.5, windowDurationMins: 300, resetsAt: null } } };
     expect(codexReports(result)).toEqual([

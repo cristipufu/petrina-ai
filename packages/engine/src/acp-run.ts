@@ -325,7 +325,7 @@ export class AgentRun {
     // Login probes send no work. Every coding agent, including a parallel reviewer or a
     // reopened builder, gets a new engine-owned browser within the opening deadline.
     // An identity check never opens a page, so it starts no browser.
-    const showBrowser = !options.probe && options.browser !== false;
+    const showBrowser = !signal.aborted && !options.probe && options.browser !== false;
     const browserReady = showBrowser ? AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog) : Promise.resolve(undefined);
     browserReady.catch(() => undefined);
     let stopping: Promise<boolean> | undefined;
@@ -360,6 +360,7 @@ export class AgentRun {
       signal.addEventListener("abort", openingAborted, { once: true });
     });
     stopped.catch(() => undefined);
+    if (signal.aborted) { abort(); openingAborted(); }
 
     // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
     // already in the session view and timeline.
@@ -487,6 +488,7 @@ export class AgentRun {
     );
 
     const open = async (): Promise<{ sessionId: string; configOptions?: unknown; how?: "resume" | "load" }> => {
+      if (signal.aborted) throw new Error("Stopped before the agent started");
       // Notices let Codex announce a reroute as a typed update instead of text in the reply.
       const [init, browser] = await Promise.all([
         connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} } } }),

@@ -51,18 +51,25 @@ export class Sources {
     // Tasks saved before starting choices existed already chose this product and its default branch.
     if (!task.workChoice && task.productId) task.workChoice = { productId: task.productId, startFrom: { kind: "default" }, delivery: task.delivery };
     const choices = proposal ?? (task.workChoice ? [task.workChoice] : []);
-    task.workProposal = [...choices];
+    const pendingProposal = [...choices];
+    task.workProposal = pendingProposal;
     task.workError = "Checking the product and starting point with GitHub…";
     task.confirmWork = true;
     delete task.proposedSource;
     if (choices.length !== 1) {
       task.workError = choices.length > 1 ? "This plan involves several products. Choose one product for this task; multi-product tasks are a separate feature." : "Choose one registered product and its starting point.";
       task.confirmWork = true;
+      task.workValidating = false;
+      this.k.commitNow(task);
       return;
     }
     const choice = choices[0]!;
+    const current = () => task.workProposal === pendingProposal && !task.workRows;
+    task.workValidating = true;
     try {
+      this.k.commitNow(task);
       const resolved = await this.resolve(task, choice);
+      if (!current()) return;
       delete task.workError;
       const original = task.workChoice;
       // Compare resolved identities too: a PR number and its link are the same choice.
@@ -80,8 +87,11 @@ export class Sources {
         task.confirmWork = true;
       }
     } catch (error) {
+      if (!current()) return;
       task.workError = error instanceof Error ? error.message : String(error);
       task.confirmWork = true;
+    } finally {
+      if (current()) task.workValidating = false;
     }
     const source = task.proposedSource ?? scope.work.source;
     if (source) for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && this.k.role(stage.roleId)?.result === "delivery") stage.title = deliveryLabel({ source, delivery: source.destination.mode });
@@ -181,7 +191,7 @@ export class Sources {
       work.workProduct = work.source.product;
     }
     try { row.source = await this.resolve(task, row.choice); delete row.error; }
-    catch (error) { row.error = String(error); }
+    catch (error) { row.error = error instanceof Error ? error.message : String(error); }
     task.workError = task.workRows!.some((entry) => entry.error) ? "Some product choices need your attention." : undefined;
     this.k.commitNow();
   }

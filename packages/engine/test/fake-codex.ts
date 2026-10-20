@@ -14,12 +14,15 @@ export interface CodexScript {
   error?: string;
   /** Never answer the read. */
   hang?: boolean;
+  /** Let the reader prove it forces an app-server that ignores the normal stop. */
+  ignoreTerm?: boolean;
   /** Delay initialization, as on a busy host before the executable starts answering. */
   bootDelayMs?: number;
 }
 
 const dir = process.argv[2];
 const script = (): CodexScript => !dir ? { primary: { usedPercent: 16, windowDurationMins: 10_080, resetsAt: Math.round(Date.now() / 1000) + 5 * 86_400 } } : (existsSync(join(dir, "codex.json")) ? (JSON.parse(readFileSync(join(dir, "codex.json"), "utf8")) as CodexScript) : {});
+if (script().ignoreTerm) process.on("SIGTERM", () => {});
 const note = (message: unknown) => dir && appendFileSync(join(dir, "codex.jsonl"), `${JSON.stringify({ pid: process.pid, ...(message as object) })}\n`);
 const send = (message: unknown) => process.stdout.write(`${JSON.stringify(message)}\n`);
 

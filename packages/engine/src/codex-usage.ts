@@ -108,7 +108,11 @@ export async function readCodexUsage(options: ReadOptions): Promise<UsageInfo[]>
     return await Promise.race([read, late]);
   } finally {
     clearTimeout(timer);
-    if (child.exitCode === null && child.signalCode === null) child.kill();
+    if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+      child.kill();
+      const force = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, 2000);
+      child.once("exit", () => clearTimeout(force));
+    }
   }
 }
 

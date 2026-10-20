@@ -598,7 +598,10 @@ export class Engine extends Kernel implements Commands {
     const task = this.task(taskId);
     const scope = task ? executionFor(task) : undefined;
     if (task?.workValidating) throw new Error("Wait for validation to finish, then edit the choices.");
-    if (task?.workRows) return this.setTaskProducts(taskId, task.workRows.map((row) => row.choice.productId === choice.productId ? choice : choice.lead ? { ...row.choice, lead: false } : row.choice));
+    if (task?.workRows) {
+      if (!task.workRows.some(row => row.choice.productId === choice.productId)) throw new Error("That product is not in this task's product choices. Add it to the task before changing its starting point.");
+      return this.setTaskProducts(taskId, task.workRows.map((row) => row.choice.productId === choice.productId ? choice : choice.lead ? { ...row.choice, lead: false } : row.choice));
+    }
     if (!task || scope!.work.worktree || !this.s.inbox.some((item) => item.taskId === taskId && item.kind === "plan")) throw new Error("The starting point can be edited at the plan check before work starts.");
     await this.sources.propose(task, [choice]);
     this.commitNow();
