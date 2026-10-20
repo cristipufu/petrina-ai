@@ -4,7 +4,7 @@ import type { UsageInfo } from "./usage.js";
 import type { UsageReader } from "./usage-reader.js";
 export interface AccountReading {
   reports: UsageInfo[];
-  tokens?: { total: number; input: number; output: number; reasoning: number };
+  tokens?: { total: number; input: number; output: number; reasoning: number; cached?: number };
 }
 export interface LimitFailure { kind: "usage" | "rate" | "spend"; retryAfter?: number; reason?: string }
 export interface ReaderOptions {

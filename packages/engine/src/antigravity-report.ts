@@ -29,16 +29,20 @@ export function antigravityReading(text: string): AntigravityReading {
     const utilization = (100 - remaining) / 100;
     reports.push({ toolId: "antigravity", model, name: name!, kind, utilization, resetsAt, status: utilization >= 1 ? "rejected" : utilization >= 0.9 ? "allowed_warning" : "allowed" });
   }
-  const total = /\*\*Session total:\*\* ([\d,]+) tokens \(prompt: ([\d,]+), completion: ([\d,]+)(?:, thinking: ([\d,]+))?\)/.exec(text);
+  const total = /\*\*Session total:\*\* ([\d,]+) tokens \(prompt: ([\d,]+), completion: ([\d,]+)(?:, thinking: ([\d,]+))?(?:, cached: ([\d,]+))?\)/.exec(text);
   const number = (value: string | undefined) => Number((value ?? "0").replaceAll(",", ""));
-  const tokens = total ? { total: number(total[1]), input: number(total[2]), output: number(total[3]) + number(total[4]), reasoning: number(total[4]) } : /\*\*Session total:\*\* data not available yet/.test(text) ? { total: 0, input: 0, output: 0, reasoning: 0 } : undefined;
-  return { reports, ...(tokens && Object.values(tokens).every(value => Number.isSafeInteger(value) && value >= 0) && tokens.total === tokens.input + tokens.output ? { tokens } : {}) };
+  const tokens = total ? { total: number(total[1]), input: number(total[2]), output: number(total[3]) + number(total[4]), reasoning: number(total[4]), ...(total[5] !== undefined ? { cached: number(total[5]) } : {}) } : /\*\*Session total:\*\* data not available yet/.test(text) ? { total: 0, input: 0, output: 0, reasoning: 0 } : undefined;
+  return { reports, ...(tokens && Object.values(tokens).every(value => Number.isSafeInteger(value) && value >= 0) && tokens.total === tokens.input + tokens.output && (tokens.cached === undefined || tokens.cached <= tokens.input) ? { tokens } : {}) };
 }
 
 /** Cumulative totals include previous turns after resume. Record only this turn's increase.
- * The native prompt count does not split cached input, so new input/cache stay unreported. */
+ * Prompt includes cached input. Split it only when both readings report cache
+ * (or the earlier session is empty), never adding cache to the total again. */
 export function antigravityTurnReport(before: AntigravityReading | undefined, after: AntigravityReading | undefined): TurnReport | undefined {
   const a = before?.tokens, b = after?.tokens;
   if (!a || !b || b.total < a.total || b.input < a.input || b.output < a.output || b.reasoning < a.reasoning) return undefined;
-  return { main: { total: b.total - a.total, output: b.output - a.output, reasoning: b.reasoning - a.reasoning } };
+  const input = b.input - a.input;
+  const cached = b.cached !== undefined && (a.cached !== undefined || a.total === 0) ? b.cached - (a.cached ?? 0) : undefined;
+  const split = cached !== undefined && cached >= 0 && cached <= input ? { input: input - cached, cacheRead: cached } : {};
+  return { main: { total: b.total - a.total, output: b.output - a.output, reasoning: b.reasoning - a.reasoning, ...split } };
 }
