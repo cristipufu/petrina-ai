@@ -30,6 +30,23 @@ function store(): { file: string; db: Store } {
   return { file, db: new Store(file) };
 }
 
+it("rolls active-id tracking back after a failed save and avoids rewriting identical metadata", () => {
+  const { db } = store();
+  try {
+    const empty = state([]), added = state([task(1, { state: "backlog", finishedAt: undefined })]);
+    db.save(empty);
+    db.database.run("CREATE TRIGGER reject_snapshot BEFORE UPDATE ON kv BEGIN SELECT RAISE(ABORT, 'snapshot refused'); END");
+    expect(() => db.save(added, [], [], [])).toThrow("snapshot refused");
+    expect(db.database.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM active_tasks").get()!.n).toBe(0);
+    db.database.run("DROP TRIGGER reject_snapshot");
+    db.save(added, [], [], []);
+    expect(db.loadActive()!.tasks.map((entry) => entry.id)).toEqual(added.tasks.map((entry) => entry.id));
+    db.database.run("CREATE TRIGGER reject_same_snapshot BEFORE UPDATE ON kv BEGIN SELECT RAISE(ABORT, 'unnecessary metadata update'); END");
+    expect(() => db.save(added, [], [], [])).not.toThrow();
+    db.database.run("DROP TRIGGER reject_same_snapshot");
+  } finally { db.close(); }
+});
+
 function reviewedTask(number: number, changes: Partial<Task> = {}): Task {
   const finding: Finding = {
     id: `finding-${number}`, text: "Checked behaviour", severity: "blocking", status: number % 2 ? "fixed" : "dismissed",

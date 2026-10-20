@@ -20,6 +20,7 @@ export function settledHistoryTask(task: Task): boolean {
 export class Store {
   private readonly db: Database;
   readonly history: TaskHistory;
+  private activeIds: Set<Id>;
 
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -27,6 +28,7 @@ export class Store {
     this.db.run("PRAGMA journal_mode = WAL");
     this.db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)");
     this.db.run("CREATE TABLE IF NOT EXISTS active_tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
+    this.activeIds = this.readActiveIds();
     this.history = new TaskHistory(this.db);
     this.db.run("CREATE TABLE IF NOT EXISTS coordination_handled_items (id TEXT PRIMARY KEY)");
   }
@@ -74,20 +76,21 @@ export class Store {
     const omit = new Set(retired);
     const dirty = changedActive ? new Set(changedActive) : undefined;
     const { history: _history, ...current } = state;
+    const active = state.tasks.filter((task) => !omit.has(task.id));
+    const ids = new Set(active.map((task) => task.id));
     try {
       this.db.transaction(() => {
         this.history.put([...state.tasks.filter((task) => finishedTask(task) && (!dirty || dirty.has(task.id) || omit.has(task.id))), ...changedArchive]);
-        const active = state.tasks.filter((task) => !omit.has(task.id));
-        const savedIds = new Set(this.db.query<{ id: string }, []>("SELECT id FROM active_tasks").all().map((row) => row.id));
-        for (const task of active) if (!dirty || dirty.has(task.id) || !savedIds.has(task.id)) {
+        for (const task of active) if (!dirty || dirty.has(task.id) || !this.activeIds.has(task.id)) {
           this.db.query("INSERT INTO active_tasks(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body WHERE body IS NOT excluded.body").run(task.id, JSON.stringify(task));
         }
-        const ids = new Set(active.map((task) => task.id));
-        for (const id of savedIds) if (!ids.has(id)) this.db.query("DELETE FROM active_tasks WHERE id=?").run(id);
-        this.db.query("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run("state", JSON.stringify({ ...current, tasks: [], taskIds: active.map((task) => task.id) }), Date.now());
+        for (const id of this.activeIds) if (!ids.has(id)) this.db.query("DELETE FROM active_tasks WHERE id=?").run(id);
+        this.db.query("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at WHERE kv.value IS NOT excluded.value").run("state", JSON.stringify({ ...current, tasks: [], taskIds: active.map((task) => task.id) }), Date.now());
       }).immediate();
+      this.activeIds = ids;
     } catch (error) {
       this.history.reloadMetadata();
+      this.activeIds = this.readActiveIds();
       throw error;
     }
   }
@@ -102,6 +105,7 @@ export class Store {
       }).immediate();
     } catch (error) {
       this.history.reloadMetadata();
+      this.activeIds = this.readActiveIds();
       throw error;
     }
   }
@@ -117,6 +121,10 @@ export class Store {
 
   get database(): Database {
     return this.db;
+  }
+
+  private readActiveIds(): Set<Id> {
+    return new Set(this.db.query<{ id: string }, []>("SELECT id FROM active_tasks").all().map((row) => row.id));
   }
 
   close(): void {

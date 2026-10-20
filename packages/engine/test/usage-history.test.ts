@@ -10,6 +10,32 @@ const DAY = 24 * HOUR;
 const report = (extra: Partial<UsageReport> & Pick<UsageReport, "at">): UsageReport => ({ toolId: "claude-code", kind: "seven_day", status: "allowed", utilization: 0.5, ...extra });
 
 describe("The history of usage readings", () => {
+  it("does no database writes for identical reports and refreshes a reading after retention expires", () => {
+    const db = new Database(":memory:");
+    try {
+      const log = new WorkLog(db);
+      log.recordUsage(report({ at: NOW }));
+      const changes = () => db.query<{ n: number }, []>("SELECT total_changes() AS n").get()!.n;
+      const before = changes();
+      expect(log.recordUsage(report({ at: NOW + HOUR }))).toBe(false);
+      expect(changes()).toBe(before);
+      expect(log.recordUsage(report({ at: NOW + 31 * DAY }))).toBe(true);
+      expect(log.usageHistory({}).map((entry) => entry.at)).toEqual([NOW + 31 * DAY]);
+    } finally { db.close(); }
+  });
+
+  it("finds the highest numeric task id across turns and moments without accepting partial numeric names", () => {
+    const db = new Database(":memory:");
+    try {
+      const log = new WorkLog(db);
+      expect(log.highestTaskNumber()).toBe(0);
+      log.startTurn({ id: "turn", taskId: "task-21", productId: "p", stageId: "build", stageTitle: "Build", stageKind: "do", round: 1, fixing: false, roleId: "builder", toolId: "codex", profileId: "sol-high", sessionId: "session", reason: "first", startedAt: 1, mainOnly: false, helpers: 0 });
+      expect(log.highestTaskNumber()).toBe(21);
+      for (const id of ["task-00042", "task-1000-extra", "task-999x", "task--500", "task-", "other-9000", "task-90.5"]) log.addMoment({ id, taskId: id, productId: "p", kind: "untracked", at: 1 });
+      expect(log.highestTaskNumber()).toBe(42);
+    } finally { db.close(); }
+  });
+
   it("writes a reading only when it differs from the latest one of its limit, keeps thirty days, and answers a period", () => {
     const db = new Database(":memory:");
     try {

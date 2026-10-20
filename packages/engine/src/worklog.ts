@@ -387,12 +387,13 @@ export class WorkLog implements WorkLogReader {
    */
   recordUsage(report: UsageReport): boolean {
     if (this.closed) return false;
+    const cutoff = report.at - USAGE_HISTORY_MS;
+    const latest = this.db
+      .query<ReadingRow, [string, string, string]>("SELECT * FROM usage_readings WHERE tool_id = ? AND kind = ? AND model = ? ORDER BY at DESC, seq DESC LIMIT 1")
+      .get(report.toolId, report.kind, report.model ?? "");
+    if (latest && latest.at >= cutoff && sameReading(readingOf(latest), report)) return false;
     return this.db.transaction(() => {
-      this.db.query("DELETE FROM usage_readings WHERE at < ?").run(report.at - USAGE_HISTORY_MS);
-      const latest = this.db
-        .query<ReadingRow, [string, string, string]>("SELECT * FROM usage_readings WHERE tool_id = ? AND kind = ? AND model = ? ORDER BY at DESC, seq DESC LIMIT 1")
-        .get(report.toolId, report.kind, report.model ?? "");
-      if (latest && sameReading(readingOf(latest), report)) return false;
+      this.db.query("DELETE FROM usage_readings WHERE at < ?").run(cutoff);
       this.db
         .query("INSERT INTO usage_readings (tool_id, kind, model, status, utilization, window_minutes, name, resets_at, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(report.toolId, report.kind, report.model ?? "", report.status, num(report.utilization), num(report.windowMinutes), report.name ?? null, num(report.resetsAt), report.at);
@@ -429,8 +430,11 @@ export class WorkLog implements WorkLogReader {
 
   /** The highest `task-N` number in the log, so ids keep counting up even if the state is lost. */
   highestTaskNumber(): number {
-    const rows = this.db.query<{ task_id: string }, []>("SELECT DISTINCT task_id FROM work_turns UNION SELECT DISTINCT task_id FROM work_moments").all();
-    return rows.reduce((max, row) => Math.max(max, Number(/^task-(\d+)$/.exec(row.task_id)?.[1] ?? 0)), 0);
+    return this.db.query<{ n: number | null }, []>(`SELECT MAX(n) AS n FROM (
+      SELECT MAX(CAST(substr(task_id, 6) AS INTEGER)) AS n FROM work_turns WHERE task_id GLOB 'task-[0-9]*' AND substr(task_id, 6) NOT GLOB '*[^0-9]*'
+      UNION ALL
+      SELECT MAX(CAST(substr(task_id, 6) AS INTEGER)) AS n FROM work_moments WHERE task_id GLOB 'task-[0-9]*' AND substr(task_id, 6) NOT GLOB '*[^0-9]*'
+    )`).get()!.n ?? 0;
   }
 
   // ── Stages ─────────────────────────────────────────────────────────────

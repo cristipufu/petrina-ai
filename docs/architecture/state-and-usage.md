@@ -24,11 +24,13 @@ The first public message appears immediately. Further text chunks update that me
 
 SQLite stores active task bodies in separate rows. A streaming update marks only its task dirty; metadata and that row are saved together, without serializing untouched peers. Global transitions retain a complete save, and shutdown saves every task. Existing local data moves to rows atomically on its first load; finished records retain their history indexes.
 
+The store retains its active ids between saves and reloads them after rollback. Identical metadata avoids a write; changed checkpoint times still persist with task clocks. Unchanged usage readings are rejected before opening a write transaction, and startup computes the highest numeric task id inside SQLite.
+
 Each window has at most one unacknowledged live snapshot, identified by a transport counter independent of task ids and the state's counter. It acknowledges in a microtask after applying the state, without depending on paints in a hidden desktop window, so background inbox notifications keep arriving. A suspended or slow window holds up only its own next snapshot.
 
 While it waits, the engine retains only a dirty flag and serializes the latest state when the window is ready; it never queues intermediate snapshots for that window. Commands and their replies remain independent, and another window can keep receiving updates. Dropped outgoing messages close the connection so pending calls fail and durable requests retain their normal retry identity. The app and engine use one current `petrina.v1` protocol.
 
-Snapshots still include active task bodies; this bounds delivery, not the size of one task's record.
+This bounds delivery independently of the size of a separately fetched task record.
 
 ## Task summaries and step times
 
