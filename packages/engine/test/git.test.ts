@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import * as operations from "../src/git.js";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -55,6 +56,33 @@ describe("Petrina's own git steps", () => {
     const registered = git(repo, "worktree", "list", "--porcelain", "-z");
     expect(registered).toContain(realpathSync.native(active));
     expect(registered).not.toContain(old);
+  });
+
+  it("removes finished locked and missing snapshots with one registration read and one batch verification", async () => {
+    const repo = join(temp, "finished-batch"); mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Keep the product\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Initial");
+    const sha = git(repo, "rev-parse", "HEAD"), folder = join(temp, "finished-batch.copies");
+    const copies = ["one", "two", "three"].map(name => join(folder, name));
+    const unrelated = join(temp, "unfinished-review");
+    for (const copy of [...copies, unrelated]) await addCopy(repo, copy, sha);
+    git(repo, "worktree", "lock", copies[0]!); git(repo, "worktree", "lock", copies[1]!);
+    rmSync(copies[1]!, { recursive: true, force: true });
+    mkdirSync(join(folder, "unregistered"));
+    writeFileSync(join(unrelated, "unsaved.txt"), "Still working\n");
+    const listed = spyOn(operations, "linkedWorktrees");
+    try {
+      expect(await removeFinishedCopies(repo, folder)).toBe(true);
+      expect(listed).toHaveBeenCalledTimes(2);
+      expect(existsSync(folder)).toBe(false);
+      const remaining = git(repo, "worktree", "list", "--porcelain", "-z");
+      for (const copy of copies) expect(remaining).not.toContain(copy);
+      expect(remaining).toContain(realpathSync.native(unrelated));
+      expect(readFileSync(join(unrelated, "unsaved.txt"), "utf8")).toBe("Still working\n");
+      listed.mockClear();
+      expect(await removeWorktree(repo, join(temp, "already-gone"))).toBe(false);
+      expect(listed).toHaveBeenCalledTimes(1);
+    } finally { listed.mockRestore(); }
   });
 
   it("prunes deleted review copies in one batch, preserving saved screen copies and unrelated worktrees", async () => {

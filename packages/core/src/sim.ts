@@ -820,7 +820,7 @@ export class Simulator {
     // Back from waiting for the screen: the same agent picks up where it left off, on the screen.
     const screen = task.screen?.granted && !task.screen.heard && task.screen.roleId === next.roleId ? task.screen : undefined;
     // A review round's reviewers share its step on the journey; each joins it as it starts.
-    beginAgentStep(task, current?.kind === "review-chain" ? current.roleId : next.roleId, next.profileId, d.now, current?.kind === "review-chain" ? current.profileIds : undefined);
+    beginAgentStep(task, current?.kind === "review-chain" ? current.roleId : next.roleId, next.profileId, d.now, d.roles, current?.kind === "review-chain" ? current.profileIds : undefined);
     // Claude Code and Codex have known sandbox states; other tools keep their own setup.
     const agent: ActiveAgent = { ...next, since: d.now, step: screen?.step ?? 0, ...(["claude-code", "codex"].includes(toolId) ? { sandbox: { on: true as const } } : {}) };
     task.agent = agent;

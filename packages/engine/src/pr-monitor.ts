@@ -1,7 +1,7 @@
 import type { ShippingVerifier, DeliveryEvidence } from "./shipping-verifier.js";
 // Observe PRs and interrupted cancelled deliveries. This module never publishes.
 import { CLEANUP_WORDS, needsPullRequestCheck, repositoryDelivered, type Id, type Task } from "@petrina/core";
-import * as git from "./git.js";
+import * as github from "./github.js";
 import type { Kernel, MTask } from "./kernel.js";
 import { executionFor, type RepositoryContext } from "./repository-context.js";
 import { Unreachable } from "./connection.js";
@@ -96,7 +96,7 @@ export class PrMonitor {
         return;
       }
       const repo = product?.repo;
-      const result = repo && repository.branch ? await git.pullRequests(repo, repository.branch, this.k.options.gh) : undefined;
+      const result = repo && repository.branch ? await github.pullRequests(repo, repository.branch, this.k.options.gh) : undefined;
       if (this.k.stopped || !finished()) return;
       if (!result?.ok) {
         if (!repository.cleanup?.error) this.k.log(scope, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.unconfirmedPr));
@@ -104,7 +104,7 @@ export class PrMonitor {
       } else {
         const ours = result.value.filter((pr) => pr.head === repository.branch && !pr.fork);
         const checked = repository.cleanup?.checkedDelivery;
-        let pr: git.PullRequestInfo | undefined;
+        let pr: github.PullRequestInfo | undefined;
         if (checked) {
           for (const candidate of ours) if (await this.verifier.matchesPullRequest(scope, candidate, checked.tested, checked.base)) { pr = candidate; break; }
         } else {
@@ -153,7 +153,7 @@ export class PrMonitor {
       try {
 
         const pending = task.repositories!.filter((work) => work.pr?.state === "open").map((work) => ({ work, pr: work.pr! }));
-        const states = await Promise.all(pending.map(({ work, pr }) => git.prState(work.source!.product.repo, pr.number, this.k.options.gh).catch(() => undefined)));
+        const states = await Promise.all(pending.map(({ work, pr }) => github.prState(work.source!.product.repo, pr.number, this.k.options.gh).catch(() => undefined)));
         if (this.k.stopped || this.k.drivers.has(task.id)) continue;
         for (const [index, { work, pr }] of pending.entries()) {
           const state = states[index];
@@ -173,7 +173,7 @@ export class PrMonitor {
       this.following.add(task.id);
       try {
         const repo = this.k.repositoryOf(task)?.repo;
-        const state = repo ? await git.prState(repo, executionFor(task).work.pr!.number, this.k.options.gh).catch(() => undefined) : undefined;
+        const state = repo ? await github.prState(repo, executionFor(task).work.pr!.number, this.k.options.gh).catch(() => undefined) : undefined;
         if (this.k.stopped || (state !== "merged" && state !== "closed") || !following(task)) return;
         executionFor(task).work.pr!.state = state;
         const words = state === "merged" ? `Merged #${executionFor(task).work.pr!.number} on GitHub` : `Closed #${executionFor(task).work.pr!.number} without merging`;

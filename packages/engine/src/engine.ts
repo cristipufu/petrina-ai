@@ -1,3 +1,4 @@
+import { completeAll } from "./parallel.js";
 import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, validateTaskDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
 import { executionFor, scopesFor } from "./repository-context.js";
 // The real engine: the same state the UI renders, driven by real agents over ACP.
@@ -138,7 +139,7 @@ export class Engine extends Kernel implements Commands {
     this.beforeCaptureRemoval = (task) => this.followUps.beforeRemoval(task);
     this.acceptedPoints = new AcceptedPoints(this);
     // Tasks from before journeys were recorded: one step per finished stage, and the step under way, so new steps follow on from there.
-    for (const task of this.s.tasks) if (!task.journey && task.startedAt !== undefined) task.journey = legacyJourney(task as unknown as Task, this.s.inbox as InboxItem[]) as MTask["journey"];
+    for (const task of this.s.tasks) if (!task.journey && task.startedAt !== undefined) task.journey = legacyJourney(task as unknown as Task, this.s.inbox as InboxItem[], this.s.roles) as MTask["journey"];
     // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
     this.shipping.carryOverShipping();
     this.driver.recover();
@@ -542,13 +543,11 @@ export class Engine extends Kernel implements Commands {
     const temp = join(captures, tempName);
     try {
       await mkdir(temp);
-      const images = [] as { id: string; caption: string }[];
-      for (const source of sources) for (const line of source.session) for (const image of line.images ?? []) {
-        if (!/^[a-f0-9-]{36}$/.test(image.id)) continue;
+      const images = await completeAll(sources.flatMap(source => source.session.flatMap(line => (line.images ?? []).filter(image => /^[a-f0-9-]{36}$/.test(image.id)).map(async image => {
         const id = randomUUID();
         await copyFile(join(captures, source.id, `${image.id}.png`), join(temp, `${id}.png`));
-        images.push({ id, caption: `${source.title}: ${image.caption}` });
-      }
+        return { id, caption: `${source.title}: ${image.caption}` };
+      }))));
       // Other commands may have edited or queued a request while the pictures were copied.
       if (this.stopped || JSON.stringify(taskIds.map((id) => this.task(id))) !== before) throw new Error("A selected task changed. Review the selection and try again.");
       combinedBacklogInput(this.s.tasks as Task[], taskIds, title);

@@ -1,4 +1,4 @@
-// Git and GitHub operations. Every command is an argument array: nothing goes through a shell.
+// Local Git operations. Every command is an argument array: nothing goes through a shell.
 //
 // Agents can change a working copy's git settings (worktrees share them with the main clone), so
 // Petrina's own git steps never run hooks or the file monitor, and only the steps that talk to
@@ -29,7 +29,6 @@ export interface RunResult {
 
 /** The `gh` command to run. Tests stand in a fake GitHub through the Engine's constructor. */
 export type Gh = readonly string[];
-const GH: Gh = ["gh"];
 
 /**
  * Where Petrina fetches from and publishes to: the product's saved address. `local`: a test
@@ -48,6 +47,9 @@ const SHA = /^[0-9a-f]{7,40}$/i;
 const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
 /** Git ref names, passed only as individual arguments. Unicode and punctuation valid in git are preserved. */
 const NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*(?:^|\/)\.)(?!.*\.lock(?:\/|$))(?!.*[/.]$)(?!@$)[^\x00-\x20\x7f~^:?*\[\\]+$/;
+
+export const isRefName = (value: string): boolean => NAME.test(value);
+export const isRepoName = (value: string): boolean => REPO.test(value);
 
 export const isBranchName = (value: string): boolean => NAME.test(value) && !value.endsWith(".lock") && !value.includes("@{") && !value.startsWith(".");
 
@@ -106,12 +108,6 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /** How long Petrina waits for GitHub before giving up on a lookup or a fetch. */
 export const FETCH_TIMEOUT_MS = 30_000;
 
-/** gh with the coordinator's login, pinned to the product's repository and run outside any working copy. */
-export async function gh(cmd: Gh, repo: string, args: readonly string[], input?: string): Promise<RunResult> {
-  if (!REPO.test(repo)) return { code: 2, stdout: "", stderr: `not a GitHub repository: ${repo}` };
-  return run([...cmd, ...args, "--repo", repo], tmpdir(), input, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
-}
-
 export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean; local?: boolean; timeoutMs?: number; ownHooks?: boolean; index?: string; rawOutput?: boolean } = {}): Promise<RunResult> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
@@ -165,7 +161,7 @@ async function must(cmd: readonly string[], cwd: string, input?: string): Promis
   return result.stdout;
 }
 
-const failed = (result: RunResult): { ok: false; error: string } => ({ ok: false, error: (result.stderr || result.stdout || `exit ${result.code}`).slice(0, 300) });
+export const commandFailure = (result: RunResult): { ok: false; error: string } => ({ ok: false, error: (result.stderr || result.stdout || `exit ${result.code}`).slice(0, 300) });
 
 export interface RepoInfo {
   root: string;
@@ -301,7 +297,7 @@ export async function fetchRef(root: string, remote: Remote, from: string, to: s
     timeoutMs,
   });
   if (fetched.timedOut) return { ok: false, error: "timed out", timedOut: true };
-  if (fetched.code !== 0) return failed(fetched);
+  if (fetched.code !== 0) return commandFailure(fetched);
   const sha = await revParse(root, to);
   return sha ? { ok: true, sha } : { ok: false, error: `no ${from} after fetching` };
 }
@@ -312,7 +308,7 @@ export async function remoteRefs(root: string, remote: Remote, refs: readonly st
   const risky = await riskySettings(root);
   if (risky.length) return { ok: false, error: `the repository's git settings include ${risky.slice(0, 3).join(", ")}` };
   const listed = await run(["git", "ls-remote", "--", remote.url, ...refs], root, undefined, { credentials: true, local: remote.local === true, timeoutMs: FETCH_TIMEOUT_MS });
-  if (listed.code !== 0) return failed(listed);
+  if (listed.code !== 0) return commandFailure(listed);
   const found = new Map<string, string>();
   for (const line of listed.stdout.split("\n").filter(Boolean)) {
     const [sha, ref] = line.split("\t");
@@ -339,7 +335,7 @@ export async function push(root: string, remote: Remote, updates: readonly { sha
     undefined,
     { credentials: true, local: remote.local === true, timeoutMs: 5 * 60_000 },
   );
-  return pushed.code === 0 ? { ok: true, value: undefined } : failed(pushed);
+  return pushed.code === 0 ? { ok: true, value: undefined } : commandFailure(pushed);
 }
 
 /** Create (or reuse) the task's worktree on its own branch, starting from `base`. */
@@ -401,18 +397,17 @@ export async function commitHooks(path: string): Promise<CommitHook[]> {
 
 /** The executable hook files, including local hooks outside the committed tree. */
 export async function commitHookFiles(path: string): Promise<{ name: CommitHook; path: string }[]> {
-  const found: { name: CommitHook; path: string }[] = [];
   const where = await run(["git", "rev-parse", "--path-format=absolute", ...COMMIT_HOOKS.flatMap((name) => ["--git-path", `hooks/${name}`])], path, undefined, { ownHooks: true });
-  if (where.code !== 0) return found;
+  if (where.code !== 0) return [];
   const paths = where.stdout.split("\n");
-  for (const [index, name] of COMMIT_HOOKS.entries()) {
+  const hooks = await Promise.all(COMMIT_HOOKS.map(async (name, index) => {
     const file = paths[index];
-    if (!file) continue;
-    const mode = await stat(file).then((info) => (info.isFile() ? info.mode : undefined)).catch(() => undefined);
-    // Git skips a hook it cannot execute, except on Windows, where it runs every hook through its own shell.
-    if (mode !== undefined && (process.platform === "win32" || (mode & 0o111) !== 0)) found.push({ name, path: file });
-  }
-  return found;
+    if (!file) return [];
+    const mode = await stat(file).then(info => info.isFile() ? info.mode : undefined).catch(() => undefined);
+    // Git requires executable hooks, except on Windows where its shell runs them.
+    return mode !== undefined && (process.platform === "win32" || (mode & 0o111) !== 0) ? [{ name, path: file }] : [];
+  }));
+  return hooks.flat();
 }
 
 /**
@@ -430,9 +425,9 @@ export async function reattach(path: string, branch: string): Promise<void> {
   await run(["git", "reset", "--hard", "--quiet"], path);
 }
 
-/** The message of the working copy's last commit. */
-export async function message(path: string): Promise<string> {
-  return (await run(["git", "log", "-1", "--format=%B", "HEAD"], path)).stdout;
+/** The message at a captured commit, or the working copy's current HEAD. */
+export async function message(path: string, ref = "HEAD"): Promise<string> {
+  return (await run(["git", "log", "-1", "--format=%B", ref], path)).stdout;
 }
 
 /** Whether files git tracks changed in the working copy (new files aside). */
@@ -560,12 +555,11 @@ export async function openOn(path: string, onto: string, tree: string): Promise<
 
 /** Files that still hold git's conflict markers, out of `paths`. */
 export async function withMarkers(path: string, paths: readonly string[]): Promise<string[]> {
-  const marked: string[] = [];
-  for (const file of paths) {
+  const marked = await Promise.all(paths.map(async file => {
     const text = await readFile(join(path, file), "utf8").catch(() => "");
-    if (/^(<{7}|>{7})( |$)/m.test(text) || /^={7}$/m.test(text)) marked.push(file);
-  }
-  return marked;
+    return /^(<{7}|>{7})( |$)/m.test(text) || /^={7}$/m.test(text);
+  }));
+  return paths.filter((_, index) => marked[index]);
 }
 
 export async function resetTo(path: string, sha: string): Promise<void> {
@@ -587,7 +581,7 @@ export async function currentBranch(path: string): Promise<string | undefined> {
 export async function switchTo(path: string, branch: string): Promise<Check<void>> {
   if (!NAME.test(branch)) return { ok: false, error: "not a branch Petrina opens" };
   const switched = await run(["git", "switch", "--quiet", "--no-guess", branch], path);
-  return switched.code === 0 ? { ok: true, value: undefined } : failed(switched);
+  return switched.code === 0 ? { ok: true, value: undefined } : commandFailure(switched);
 }
 
 /** The commit a ref or sha names, or undefined when there is none. */
@@ -672,7 +666,7 @@ export async function replaceLocalDelivery(root: string, branch: string, from: s
 async function moveLocalBranch(root: string, branch: string, from: string, to: string, checkedOutHere: boolean): Promise<Check<void>> {
   const ref = `refs/heads/${branch}`;
   const located = await run(["git", "rev-parse", "--git-path", "index"], root);
-  if (located.code !== 0) return failed(located);
+  if (located.code !== 0) return commandFailure(located);
   const index = resolve(root, located.stdout);
   const lock = `${index}.lock`;
   try {
@@ -691,7 +685,7 @@ async function moveLocalBranch(root: string, branch: string, from: string, to: s
       }
     }
     const moved = await run(["git", "update-ref", "-m", "Delivered by Petrina", ref, to, from], root);
-    if (moved.code !== 0) return failed(moved);
+    if (moved.code !== 0) return commandFailure(moved);
     if (!checkedOutHere) return { ok: true, value: undefined };
     await run(["git", "update-index", "-q", "--refresh"], root, undefined, { index: lock });
     const files = await run(["git", "read-tree", "-m", "-u", from, to], root, undefined, { index: lock });
@@ -700,7 +694,7 @@ async function moveLocalBranch(root: string, branch: string, from: string, to: s
     if (!stayed) {
       if (files.code === 0) await run(["git", "read-tree", "-m", "-u", to, from], root, undefined, { index: lock });
       await run(["git", "update-ref", "-m", "Petrina could not update the files", ref, from, to], root);
-      return files.code === 0 ? { ok: false, error: `the main copy switched branches at that moment, so ${branch} stays where it was` } : failed(files);
+      return files.code === 0 ? { ok: false, error: `the main copy switched branches at that moment, so ${branch} stays where it was` } : commandFailure(files);
     }
     renameSync(lock, index);
     installed = true;
@@ -714,7 +708,7 @@ async function moveLocalBranch(root: string, branch: string, from: string, to: s
 export async function createBranchAt(root: string, branch: string, sha: string): Promise<Check<void>> {
   if (!isBranchName(branch) || !isSha(sha)) return { ok: false, error: "not a local branch Petrina creates" };
   const result = await run(["git", "update-ref", `refs/heads/${branch}`, sha, "0".repeat(sha.length)], root);
-  return result.code === 0 ? { ok: true, value: undefined } : failed(result);
+  return result.code === 0 ? { ok: true, value: undefined } : commandFailure(result);
 }
 
 export interface FileChange {
@@ -850,13 +844,18 @@ export async function mainClone(path: string): Promise<string | undefined> {
  * never follows a link out of it, so shared caches and the files they link to stay. Safe to run again
  * after a failure or an interruption. Throws a plain-language reason; returns false when nothing was left.
  */
-export async function removeWorktree(root: string, path: string): Promise<boolean> {
+export function removeWorktree(root: string, path: string): Promise<boolean> {
+  return removeKnownWorktree(root, path);
+}
+
+/** Batch cleanup shares one registration observation, then verifies the complete batch. */
+async function removeKnownWorktree(root: string, path: string, known?: readonly string[]): Promise<boolean> {
   try {
     if (!existsSync(root)) throw new Reason("the product's folder could not be found");
     const target = worktreeLocation(path);
     const main = canonical(root);
     if (resolve(path) === resolve(root) || target === main || main.startsWith(target + sep)) throw new Reason("that folder holds the product itself");
-    const recorded = async () => (await linkedWorktrees(root)).find((entry) => worktreeLocation(entry) === target);
+    const recorded = async () => (known ?? await linkedWorktrees(root)).find((entry) => worktreeLocation(entry) === target);
     const record = await recorded();
     const there = () =>
       lstat(path).then(
@@ -867,12 +866,13 @@ export async function removeWorktree(root: string, path: string): Promise<boolea
         },
       );
     const folder = await there();
+    if (!folder && !record) return false;
     if (folder) await rm(path, { recursive: true, force: true });
     if (await there()) throw new Reason("its folder could not be deleted");
     // With the folder gone, git only drops its record. Forced twice: also when the copy was locked.
     if (record) await oneAtATime(root, () => run(["git", "worktree", "remove", "--force", "--force", record], root, undefined, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS }));
-    if (await recorded()) throw new Reason("the repository still lists it as a working copy");
-    if (await there()) throw new Reason("its folder could not be deleted");
+    if (record && !known && await recorded()) throw new Reason("the repository still lists it as a working copy");
+    if (record && await there()) throw new Reason("its folder could not be deleted");
     return folder || record !== undefined;
   } catch (error) {
     if (error instanceof Reason) throw error;
@@ -901,7 +901,9 @@ export async function removeFinishedCopies(root: string, folder: string): Promis
   const names = entry?.isDirectory() ? await readdir(folder) : [];
   const location = worktreeLocation(folder);
   const recorded = (await linkedWorktrees(root)).filter((copy) => worktreeLocation(dirname(copy)) === location);
-  for (const copy of new Set([...names.map((name) => join(folder, name)), ...recorded])) await removeWorktree(root, copy);
+  const copies = [...new Set([...names.map((name) => join(folder, name)), ...recorded])];
+  await completeAll(copies.map(copy => removeKnownWorktree(root, copy, recorded)));
+  if (recorded.length && (await linkedWorktrees(root)).some(copy => worktreeLocation(dirname(copy)) === location)) throw new Reason("the repository still lists it as a working copy");
   await rm(folder, { recursive: true, force: true });
   return entry !== undefined || recorded.length > 0;
 }
@@ -924,129 +926,4 @@ export async function removeCopies(root: string, folder: string, keep: readonly 
     // These copies are detached: one prune drops all missing unlocked registrations.
     await run(["git", "worktree", "prune"], root);
   });
-}
-
-// ── GitHub, through gh pinned to the product's repository ──────────────────
-
-export interface PullRequestInfo {
-  number: number;
-  url: string;
-  state: "open" | "merged" | "closed";
-  head: string;
-  base: string;
-  /** The latest commit of its branch, as GitHub has it (kept after the branch is deleted). */
-  commit: string;
-  /** Opened from a fork: not this repository's branch. */
-  fork: boolean;
-}
-
-const LIST_LIMIT = 100;
-/**
- * gh's answer for a release that is not there. GitHub gives the same answer for a repository the
- * login cannot see, so it only counts once `canSee` says the login sees the repository.
- */
-const noRelease = (result: RunResult) => /^release not found$/im.test(result.stderr);
-
-/**
- * Does the coordinator's GitHub login see the product's repository? Asked before any "not there"
- * counts: GitHub answers "not found" alike for a missing release and a repository the login cannot see.
- */
-export async function canSee(repo: string, cmd: Gh = GH): Promise<Check<void>> {
-  if (!REPO.test(repo)) return { ok: false, error: `not a GitHub repository: ${repo}` };
-  const result = await run([...cmd, "repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"], tmpdir(), undefined, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
-  if (result.code !== 0) return { ok: false, error: `your GitHub login cannot see ${repo} (${failed(result).error})` };
-  return result.stdout.toLowerCase() === repo.toLowerCase() ? { ok: true, value: undefined } : { ok: false, error: `GitHub answered for ${result.stdout || "another repository"}, not ${repo}` };
-}
-
-/** "Not there", once the login is known to see the repository; otherwise why GitHub could not say. */
-async function notThere<T>(repo: string, cmd: Gh): Promise<Check<T | undefined>> {
-  const seen = await canSee(repo, cmd);
-  return seen.ok ? { ok: true, value: undefined } : seen;
-}
-
-const stateOf = (value: unknown): "open" | "merged" | "closed" => {
-  const state = String(value ?? "").toLowerCase();
-  return state === "merged" ? "merged" : state === "closed" ? "closed" : "open";
-};
-
-export async function prState(repo: string, number: number, cmd: Gh = GH): Promise<"open" | "merged" | "closed" | undefined> {
-  const result = await gh(cmd, repo, ["pr", "view", String(number), "--json", "state", "--jq", ".state"]);
-  if (result.code !== 0) return undefined;
-  return stateOf(result.stdout);
-}
-
-/**
- * Every pull request from this branch, open, closed or merged. A listing that may be cut short does
- * not count, and an empty one only once the login is known to see the repository.
- */
-export async function pullRequests(repo: string, branch: string, cmd: Gh = GH): Promise<Check<PullRequestInfo[]>> {
-  if (!NAME.test(branch)) return { ok: false, error: "not a branch Petrina looks up" };
-  const result = await gh(cmd, repo, ["pr", "list", "--head", branch, "--state", "all", "--limit", String(LIST_LIMIT), "--json", "number,url,state,headRefName,baseRefName,headRefOid,isCrossRepository"]);
-  if (result.code !== 0) return failed(result);
-  try {
-    const list = JSON.parse(result.stdout) as Record<string, unknown>[];
-    if (!Array.isArray(list)) return { ok: false, error: "GitHub's answer was not readable" };
-    if (list.length >= LIST_LIMIT) return { ok: false, error: "GitHub listed too many pull requests to check them all" };
-    const prs: PullRequestInfo[] = [];
-    for (const entry of list) {
-      if (typeof entry.number !== "number" || typeof entry.url !== "string" || typeof entry.headRefName !== "string" || typeof entry.baseRefName !== "string" || typeof entry.headRefOid !== "string") {
-        return { ok: false, error: "GitHub's answer was not readable" };
-      }
-      prs.push({ number: entry.number, url: entry.url, state: stateOf(entry.state), head: entry.headRefName, base: entry.baseRefName, commit: entry.headRefOid, fork: entry.isCrossRepository === true });
-    }
-    if (!prs.length) {
-      const seen = await canSee(repo, cmd);
-      if (!seen.ok) return seen;
-    }
-    return { ok: true, value: prs };
-  } catch {
-    return { ok: false, error: "GitHub's answer was not readable" };
-  }
-}
-
-export type Created = { ok: true; url: string } | { ok: false; exists: boolean; error: string };
-
-/** Open a pull request from an already pushed branch. The title and body stay text: arguments and standard input, never a shell. */
-export async function openPullRequest(repo: string, pr: { head: string; base: string; title: string; body: string }, cmd: Gh = GH): Promise<Created> {
-  if (!NAME.test(pr.head) || !NAME.test(pr.base)) return { ok: false, exists: false, error: "not a branch Petrina publishes" };
-  const result = await gh(cmd, repo, ["pr", "create", "--head", pr.head, "--base", pr.base, `--title=${pr.title}`, "--body-file", "-"], pr.body);
-  return created(result);
-}
-
-function created(result: RunResult): Created {
-  if (result.code === 0) return { ok: true, url: result.stdout.split("\n").find((line) => line.startsWith("https://")) ?? result.stdout };
-  return { ok: false, exists: /already exists/i.test(`${result.stderr}\n${result.stdout}`), error: failed(result).error };
-}
-
-/** The latest published release's tag; undefined only when the login sees the repository and it has none. */
-export async function latestRelease(repo: string, cmd: Gh = GH): Promise<Check<string | undefined>> {
-  const result = await gh(cmd, repo, ["release", "view", "--json", "tagName"]);
-  if (result.code !== 0) return noRelease(result) ? notThere(repo, cmd) : failed(result);
-  try {
-    const tag = (JSON.parse(result.stdout) as { tagName?: unknown }).tagName;
-    return typeof tag === "string" ? { ok: true, value: tag } : { ok: false, error: "GitHub's answer was not readable" };
-  } catch {
-    return { ok: false, error: "GitHub's answer was not readable" };
-  }
-}
-
-/** The release for a tag; undefined only when the login sees the repository and it has none. */
-export async function findRelease(repo: string, tag: string, cmd: Gh = GH): Promise<Check<{ tag: string; url: string; draft: boolean } | undefined>> {
-  if (!NAME.test(tag)) return { ok: false, error: "not a tag Petrina looks up" };
-  const result = await gh(cmd, repo, ["release", "view", tag, "--json", "tagName,url,isDraft"]);
-  if (result.code !== 0) return noRelease(result) ? notThere(repo, cmd) : failed(result);
-  try {
-    const parsed = JSON.parse(result.stdout) as { tagName?: unknown; url?: unknown; isDraft?: unknown };
-    if (typeof parsed.tagName !== "string" || typeof parsed.url !== "string") return { ok: false, error: "GitHub's answer was not readable" };
-    return { ok: true, value: { tag: parsed.tagName, url: parsed.url, draft: parsed.isDraft === true } };
-  } catch {
-    return { ok: false, error: "GitHub's answer was not readable" };
-  }
-}
-
-/** Publish the release on a tag already on GitHub: it can never create or pick another tag. */
-export async function createRelease(repo: string, tag: string, notes: string, cmd: Gh = GH): Promise<Created> {
-  if (!NAME.test(tag)) return { ok: false, exists: false, error: "not a tag Petrina publishes" };
-  const result = await gh(cmd, repo, ["release", "create", tag, "--verify-tag", `--title=${tag}`, "--notes-file", "-"], notes);
-  return created(result);
 }

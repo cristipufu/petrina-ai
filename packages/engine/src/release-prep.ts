@@ -1,6 +1,7 @@
 // Release versions and notes preparation. Publishing and its gates stay in Shipping.
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import * as github from "./github.js";
 import * as git from "./git.js";
 import { declaredVersion, isVersionFile, lockWithVersion, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, ownCrates, parseVersion, withVersion } from "./version.js";
 import { type Kernel, type MStage, RELEASE_MANAGER_PROFILE } from "./kernel.js";
@@ -136,7 +137,7 @@ export class ReleasePrep {
     const product = this.k.repositoryOf(scope)!;
     const shipping = repository.shipping!;
     const remote = await this.connections.requireConnection(scope, signal);
-    const latest = await this.connections.serial(product.id, () => git.latestRelease(product.repo, this.k.options.gh));
+    const latest = await this.connections.serial(product.id, () => github.latestRelease(product.repo, this.k.options.gh));
     if (!latest.ok) throw new Error(`Petrina could not read the latest release on GitHub (${latest.error}), so it published nothing. Retry when GitHub is reachable.`);
     // The product's main version files, on the work as it is now.
     const declared = await this.declaredVersions(repository.worktree!, shipping.start!);

@@ -1,3 +1,4 @@
+import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
 import { UsageCoordinator } from "./usage-coordinator.js";
 import { blockingDependencies, clearTaskStep, finishTaskStep, stopTaskActivity } from "@petrina/core";
@@ -14,8 +15,8 @@ import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckB
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
 import type { Which } from "./setup.js";
-import { Store, settledHistoryTask } from "./store.js";
-import { finishedTask, stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";
+import { Store } from "./store.js";
+import { stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import type { UsageInfo, UsageLimited } from "./usage.js";
@@ -187,6 +188,7 @@ export function checksLine(task: Task): string | undefined {
 }
 
 export abstract class Kernel {
+  private readonly projection = new StateProjection(this, task => renameRoles({ ...this.s, tasks: [task], inbox: [] }));
   readonly screens = new ScreenCoordinator(this);
   readonly usageCoordinator = new UsageCoordinator(this);
   /** Set by the Engine: what starts drivers and fills free slots. */
@@ -393,75 +395,12 @@ export abstract class Kernel {
     return this.s as unknown as State;
   };
 
-  /** Explicit compatibility/debug snapshot. Production never loads all archived conversations. */
-  getState = (): State => {
-    this.activeState();
-    const current = new Map<string, Task>([...this.archiveCache.values(), ...this.s.tasks].map((task) => [task.id, taskView(task) as Task]));
-    // Shutdown closes SQLite before detached cleanup finishes. Reads used while waiting for that
-    // cleanup keep the last in-memory work; stopping never loads an unbounded history snapshot.
-    const tasks = this.stopped ? [] : this.store.history.all().map((task) => { const known = current.get(task.id); if (known) return known; restoreRepositoryState(task as MTask); return taskView(task as MTask); });
-    const ids = new Set(tasks.map((task) => task.id));
-    tasks.push(...[...current.values()].filter((task) => !ids.has(task.id)));
-    const { history: _history, ...state } = this.activeState();
-    return { ...state, tasks };
-  };
-
-  /** A bounded live update: all completed tasks are represented by archive totals, never bodies. */
-  private readonly taskRevisions = new Map<Id, number>();
-  private readonly dirtyTasks = new Set<Id>();
-  private allTasksDirty = true;
-  private nextTaskRevision = 0;
-
-  private changed(target?: MTask | RepositoryContext): void {
-    const revision = ++this.nextTaskRevision;
-    if (target) {
-      const task = executionOf(target).task;
-      this.dirtyTasks.add(task.id);
-      this.taskRevisions.set(task.id, revision);
-    } else {
-      this.allTasksDirty = true;
-      for (const task of this.s.tasks) this.taskRevisions.set(task.id, revision);
-    }
-  }
-
-  private detailRevision(id: Id): string { return `${this.boot}:${this.taskRevisions.get(id) ?? 0}`; }
-
-  windowState = (): State => {
-    // A terminal result must be in the archive before the window stops seeing its live body.
-    if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
-    const tasks = this.s.tasks.filter((task) => !finishedTask(task)).map((task) => ({ ...taskView(task), detailsOmitted: true, detailsRevision: this.detailRevision(task.id), session: [], timeline: [], journey: undefined, designSessions: undefined, reviewSessions: undefined, handedBack: undefined })) as Task[];
-    const usageReads: NonNullable<State["pool"]["usageReads"]> = this.usageCoordinator.snapshot();
-    const dependencies = this.stopped ? [] : [...new Set([...this.s.inbox.map((item) => item.taskId), ...this.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])].flatMap((id) => {
-      const item = this.store.history.item(id);
-      return item ? [item] : [];
-    });
-    return { ...this.activeState(), tasks, ...(Object.keys(usageReads).length ? { pool: { ...this.s.pool, usageReads } } : {}), history: { ...this.store.history.info(), ...(dependencies.length ? { dependencies } : {}) } };
-  };
-
-  historyPage = (request: HistoryQuery): HistoryPage => {
-    if (this.stopped) throw new Error("The engine has stopped. Reconnect to open task history.");
-    if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
-    return this.store.history.page(request);
-  };
-
-  taskDetails = (id: Id): Task | undefined => { const task = this.task(id); return task ? taskView(task) : undefined; };
-
-  private readonly archiveCache = new Map<Id, MTask>();
-
-  /** A cleanup result for an already archived task must survive immediately, even after cache eviction. */
-  saveArchivedTask(task: MTask): void {
-    if (this.stopped || this.s.tasks.includes(task)) return;
-
-    this.store.save(this.activeState(), this.retiredTasks(), [task as Task]);
-  }
-
-  forgetProductHistory(productId: Id): void {
-    for (const [id, task] of this.archiveCache) if (library.involvesProduct(task, productId)) this.archiveCache.delete(id);
-  }
-
-  private retiredTasks(): Id[] {
-    return this.s.tasks.filter((task) => settledHistoryTask(task as Task) && !this.drivers.has(task.id) && !this.settling.has(task.id) && !this.switching.has(task.id) && !this.copyCleanups.has(task.id) && !this.followsUpHeld(task.id)).map((task) => task.id);
-  }
+  getState = (): State => this.projection.getState();
+  windowState = (): State => this.projection.windowState();
+  historyPage = (request: HistoryQuery): HistoryPage => this.projection.historyPage(request);
+  taskDetails = (id: Id): Task | undefined => this.projection.taskDetails(id);
+  saveArchivedTask(task: MTask): void { this.projection.saveArchivedTask(task); }
+  forgetProductHistory(productId: Id): void { this.projection.forgetProductHistory(productId); }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -759,7 +698,7 @@ export abstract class Kernel {
     const role = conversation?.role ?? this.role(roleId);
     if (role && (conversation?.access?.canEdit ?? role.canEdit)) {
       const sha = await git.commitAll(repository.worktree!, `${task.title}: ${role.name}`);
-      if (repository.checks) repository.checks.current = repository.checks.tree === await git.treeOf(repository.worktree!);
+      if (repository.checks && (sha || repository.checks.current !== false)) repository.checks.current = repository.checks.tree === await git.treeOf(repository.worktree!);
       if (sha) this.log(scope, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
     }
   }
@@ -779,28 +718,7 @@ export abstract class Kernel {
     });
   }
 
-  task(id: Id): MTask | undefined {
-    const live = this.s.tasks.find((task) => task.id === id);
-    if (live) return live;
-    const cached = this.archiveCache.get(id);
-    if (cached) {
-      this.archiveCache.delete(id);
-      this.archiveCache.set(id, cached);
-      return cached;
-    }
-    if (this.stopped) return undefined;
-    const saved = this.store.history.get(id) as MTask | undefined;
-    if (!saved) return undefined;
-    restoreRepositoryState(saved);
-    renameRoles({ ...this.s, tasks: [saved], inbox: [] });
-    // On-demand reads stay bounded even when walking through years of finished work.
-    if (this.archiveCache.size >= 16) {
-      this.store.save(this.activeState(), this.retiredTasks(), [...this.archiveCache.values()] as Task[]);
-      this.archiveCache.delete(this.archiveCache.keys().next().value!);
-    }
-    this.archiveCache.set(id, saved);
-    return saved;
-  }
+  task(id: Id): MTask | undefined { return this.projection.task(id); }
 
   repositoryOf(target: MTask | RepositoryContext) {
     const scope = executionOf(target);
@@ -926,7 +844,7 @@ export abstract class Kernel {
   commit(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
     this.flushStreamChanges();
-    this.changed(target);
+    this.projection.changed(target);
     this.syncIdleSleep();
     // An activity or other update is about to be shown. The to-do item is written first, so a forced
     // kill once that update is visible still has the item.
@@ -945,7 +863,7 @@ export abstract class Kernel {
   noteTodo(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
     this.flushStreamChanges();
-    this.changed(target);
+    this.projection.changed(target);
     this.todoPending = true;
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     this.s.now = Date.now();
@@ -957,7 +875,7 @@ export abstract class Kernel {
   commitNow(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
     this.flushStreamChanges();
-    this.changed(target);
+    this.projection.changed(target);
     this.syncIdleSleep();
     this.s.planner = this.onUsable(PLANNER_PROFILE);
     clearTimeout(this.saveTimer);
@@ -985,7 +903,7 @@ export abstract class Kernel {
     clearTimeout(this.streamTimer);
     this.streamTimer = undefined;
     const pending = this.streamedTasks.size > 0;
-    for (const task of this.streamedTasks) if (this.task(task.id) === task) this.changed(task);
+    for (const task of this.streamedTasks) if (this.task(task.id) === task) this.projection.changed(task);
     this.streamedTasks.clear();
     return pending;
   }
@@ -1020,16 +938,7 @@ export abstract class Kernel {
     const streamed = this.flushStreamChanges();
     this.todoPending = false;
     this.s.now = Date.now();
-    const revision = this.store.history.info().revision;
-    const retired = this.retiredTasks();
-    const complete = all || this.allTasksDirty;
-    const changedArchive = [...this.archiveCache.values()].filter((task) => complete || this.dirtyTasks.has(task.id));
-    this.store.save(this.activeState(), retired, changedArchive as Task[], complete ? undefined : [...this.dirtyTasks]);
-    this.allTasksDirty = false;
-    this.dirtyTasks.clear();
-    const ids = new Set(retired);
-    this.s.tasks = this.s.tasks.filter((task) => !ids.has(task.id));
-    for (const id of ids) this.taskRevisions.delete(id);
-    if (!this.stopped && (streamed || this.store.history.info().revision !== revision)) for (const listener of this.listeners) listener();
+    const historyChanged = this.projection.save(all);
+    if (!this.stopped && (streamed || historyChanged)) for (const listener of this.listeners) listener();
   }
 }

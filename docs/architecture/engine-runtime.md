@@ -27,14 +27,16 @@ Inside the engine, `Engine` (`engine.ts`) is a thin front with the coordinator's
 | `learnings.ts`, `accepted-points.ts` | Lessons offered at delivery, written to AGENTS.md, and accepted instructions retired from the pending queue once incorporated |
 | `update.ts` | One commit per task, put on top of the latest main before the delivery check and before shipping |
 | `shipping.ts` | Delivery preparation, publishing and recovery gates; publishing is never repeated blindly |
-| `release-prep.ts`, `pr-monitor.ts`, `shipping-verifier.ts` | Release preparation; PR observation and cancelled settlement; shared local/GitHub delivery verification. Observations carry evidence; Shipping owns recording and publishing |
+| `release-prep.ts`, `pr-monitor.ts`, `shipping-verifier.ts`, `companion-links.ts` | Release preparation; PR observation and cancelled settlement; shared local/GitHub delivery verification. Observations carry evidence; Shipping owns recording and publishing; companion linking has its own saved completion state |
 | `screen-coordinator.ts` | Screen arbitration, waiting review members, screen timers and retained-copy cleanup |
 | `usage-coordinator.ts` | Account-reader registry, reports, limit timers and profile/stand-in choice |
 | `take-over.ts`, `terminal.ts` | Take over in the terminal |
+| `git.ts`, `github.ts` | Local Git plumbing and worktree cleanup; repository-pinned GitHub CLI operations through the same command runner |
+| `state-projection.ts` | Lean live snapshots, indexed history access, bounded archive cache and task revision/persistence bookkeeping |
 | `store.ts`, `sql-log.ts` | SQLite state/history persistence and optional execution diagnostics; see [SQL logging](state-and-usage.md#optional-sql-execution-log) |
 | `tracking.ts`, `worklog.ts`, account readers | The work log: an entry per agent turn and per notable moment, the permanent product list, each tool's limits, and the numbers each view asks for |
 
-The kernel retains canonical state, lookups, recording and persistence. Screen and usage coordinators receive explicit subsets of that host; the Engine delegates checkpoint state changes to the checkpoint module. Repository-wide operations use `scopesFor` to enumerate canonical owners in approved order, with excluded owners included only for cleanup. Operations with shared-task rules still own those rules rather than treating shared delivery as a single-product loop.
+The kernel retains canonical runtime state, recording, stream flushing and save timers. The state projection owns snapshots, archive caching, revisions and persistence selection. Screen and usage coordinators receive explicit subsets of that host; the Engine delegates checkpoint state changes to the checkpoint module. Repository-wide operations use `scopesFor` to enumerate canonical owners in approved order, with excluded owners included only for cleanup. Operations with shared-task rules still own those rules rather than treating shared delivery as a single-product loop.
 
 Built-in role contracts live in the engine's `roles.ts`, with their defaults in `@petrina/core`'s library. A role the coordinator adds uses the contract for its kind of result: notes or findings, with its saved wording and permission. The rules a task's run follows (board column, checkpoint wording, where a request for changes goes, how rounds end) live in `@petrina/core`'s `flow.ts`, shared by the engine and the demo simulator.
 

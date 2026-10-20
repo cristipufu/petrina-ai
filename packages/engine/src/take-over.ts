@@ -1,3 +1,4 @@
+import { completeAll } from "./parallel.js";
 import { executionFor, repositoryView } from "./repository-context.js";
 // Take over in the terminal: the coordinator drives a step's agent by hand, then hands it back. The
 // launcher scripts and terminals are in terminal.ts.
@@ -191,31 +192,33 @@ export class TakeOver {
 
       const changedProducts = new Set<Id>(files.length ? [scope!.work.productId] : []);
       if (task.repositories && driving.repositoryCopies) {
-        const prepared: { work: NonNullable<MTask["repositories"]>[number]; sha: string; snapshot: string; head: string }[] = [];
-        for (const [id, copy] of Object.entries(driving.repositoryCopies)) {
-          const work = task.repositories.find((entry) => entry.productId === id);
-          if (!work?.worktree || copy.path === work.worktree) continue;
+        const inspected = await completeAll(Object.entries(driving.repositoryCopies).map(async ([id, copy]) => {
+          const work = task.repositories!.find(entry => entry.productId === id);
+          if (!work?.worktree || copy.path === work.worktree) return undefined;
           const [branch, clean] = await Promise.all([git.currentBranch(copy.path), git.isClean(copy.path)]);
           if (branch) throw new Error(`Keep ${work.source!.product.name} on its saved review snapshot, then hand back again.`);
           if (!clean) await git.commitAll(copy.path, `${task.title} (changes made by hand)`);
-          const changed = await git.changedSince(copy.path, copy.head);
-          if (!changed.length) continue;
+          if (!(await git.changedSince(copy.path, copy.head)).length) return undefined;
           const [head, parent] = await Promise.all([git.head(copy.path), git.head(work.worktree)]);
           const merged = await git.mergeTree(work.worktree, parent, head);
           if (!merged || merged.conflicts.length) throw new Error(`Your changes to ${work.source!.product.name} overlap with its task copy. Resolve them in the snapshot, then hand back again.`);
-          prepared.push({ work, snapshot: copy.path, head, sha: await git.commitTree(work.worktree, merged.tree, parent, `${task.title} (changes made by hand)`) });
-        }
-        for (const kept of prepared) {
-          changedProducts.add(kept.work.productId);
+          return { work, head, sha: await git.commitTree(work.worktree, merged.tree, parent, `${task.title} (changes made by hand)`) };
+        }));
+        const prepared = inspected.filter(entry => entry !== undefined);
+        // Validate every product before advancing task copies. Keep the old snapshot anchors
+        // until every advance succeeds, so a partial failure remains visible on the next hand-back.
+        await completeAll(prepared.map(async kept => {
           await git.moveTo(kept.work.worktree!, kept.sha);
+          changedProducts.add(kept.work.productId);
           if (kept.work.checks) kept.work.checks.current = false;
-          kept.work.reviewedTree = undefined;
-          kept.work.checkedSha = undefined;
-          kept.work.checkedPatch = undefined;
-
+          delete kept.work.reviewedTree;
+          delete kept.work.checkedSha;
+          delete kept.work.checkedPatch;
+          task.handChanges = true;
+        }));
+        for (const kept of prepared) {
           driving.repositoryCopies[kept.work.productId]!.head = kept.head;
         }
-        if (prepared.length) task.handChanges = true;
       }
       // A reviewer works detached from the task's branch. Keep the coordinator's edits in both:
       // its conversation continues in its own copy, and the task's later checks and reviews see them.

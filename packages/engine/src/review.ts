@@ -231,7 +231,7 @@ export class Reviews {
     if (scope.work.portReview && Object.keys(reported).length) return [];
     const planned = stage.profileIds.map((profileId, index) => ({ key: String(index), profileId }));
     // The journey and the engine share the port reviewer's position; tool choice follows the latest builder.
-    const reviewers = scope.work.portReview ? [planned[portReviewerIndex(repositoryView(scope), stage.profileIds, (id) => this.k.profile(id)?.toolId)]!] : planned;
+    const reviewers = scope.work.portReview ? [planned[portReviewerIndex(repositoryView(scope), stage.profileIds, (id) => this.k.profile(id)?.toolId, this.k.s.roles)]!] : planned;
     return reviewers.filter((entry) => !reported[entry.key]);
   }
 

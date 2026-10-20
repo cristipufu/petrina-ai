@@ -190,8 +190,8 @@ function placeOf(task: Omit<JourneyTask, "journey">, execution: JourneyExecution
  * The reviewer who looks at a port of an already reviewed change, by place in the stage's reviewers: the first on a
  * tool other than the latest builder's, or else the first. The engine then substitutes for unavailable tools.
  */
-export function portReviewerIndex(task: Pick<Task, "plan" | "builderSession">, profileIds: readonly Id[], toolOf: (profileId: Id) => Id | undefined): number {
-  const builder = task.builderSession?.toolId ?? toolOf(task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "");
+export function portReviewerIndex(task: Pick<Task, "plan" | "builderSession">, profileIds: readonly Id[], toolOf: (profileId: Id) => Id | undefined, roles: JourneyContext["roles"]): number {
+  const builder = task.builderSession?.toolId ?? toolOf(task.plan?.stages.find((stage) => roles.find(role => role.id === stage.roleId)?.result === "build")?.profileIds[0] ?? "");
   return Math.max(0, profileIds.findIndex((profileId) => toolOf(profileId) !== builder));
 }
 
@@ -257,7 +257,7 @@ export function stopCheckProgress(task: Pick<JourneyTask, "journey">, at: number
  * continues the same step; a new round, a send-back or a retry after getting stuck is a new one.
  * `team`: every agent on the step when several work at once (a review round's reviewers, its voters).
  */
-export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at: number, team?: readonly Id[], execution: JourneyExecution = task): JourneyStep {
+export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at: number, roles: JourneyContext["roles"], team?: readonly Id[], execution: JourneyExecution = task): JourneyStep {
   const key = agentKey(task, roleId, execution);
   const many = team ? { team: [...team] } : {};
   const open = openStep(task);
@@ -267,7 +267,7 @@ export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at:
     return open;
   }
   if (open) close(open, at);
-  const fixingFindings = task.fixing && roleId === "builder"
+  const fixingFindings = task.fixing && roles.find(role => role.id === roleId)?.result === "build"
     ? { findingIds: (task.findings ?? []).filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id) }
     : {};
   return push(task, { kind: "agent", ...key, ...fixingFindings, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
@@ -391,7 +391,7 @@ const LEGACY_WAITS: Partial<Record<InboxKind, JourneyWait>> = { plan: "plan", de
  * question under it), or the coordinator's step it waits at. New steps are recorded after these, and
  * picking up after a restart or an answer continues the step under way.
  */
-export function legacyJourney(task: Task, inbox: readonly InboxItem[]): JourneyStep[] {
+export function legacyJourney(task: Task, inbox: readonly InboxItem[], roles: JourneyContext["roles"]): JourneyStep[] {
   if (task.startedAt === undefined) return [];
   const at = task.startedAt;
   const steps: JourneyStep[] = [];
@@ -399,11 +399,12 @@ export function legacyJourney(task: Task, inbox: readonly InboxItem[]): JourneyS
   const stages = task.plan?.stages ?? [];
   const finished = task.state === "pr-open" || task.state === "done";
   const ended = { endedAt: at, end: "done", legacy: true } as const;
-  if (task.plan) add({ kind: "agent", roleId: "planner", profileId: task.plan.plannerProfileId, ...ended });
+  const planner = roles.find(role => role.result === "plan");
+  if (task.plan && planner) add({ kind: "agent", roleId: planner.id, profileId: task.plan.plannerProfileId, ...ended });
   for (const stage of stages.slice(0, Math.max(0, finished ? stages.length : task.stageIndex))) {
     const agent = { kind: "agent", stageId: stage.id, roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}), ...ended } as const;
     if (stage.kind === "gate") add({ kind: "you", stageId: stage.id, waitsFor: stage.gate ?? "delivery", ...ended });
-    else if (isDelivery(stage)) {
+    else if (isDelivery(stage, roles)) {
       // Petrina publishes; only a release has the Release Manager's notes first.
       if (task.delivery === "release") add(agent);
       add({ kind: "petrina", stageId: stage.id, work: "delivery", ...ended });
@@ -416,7 +417,7 @@ export function legacyJourney(task: Task, inbox: readonly InboxItem[]): JourneyS
   const waits = item && LEGACY_WAITS[item.kind];
   const stage = task.stageIndex >= 0 ? stages[task.stageIndex] : undefined;
   // Delivering before the update, with no agent of its own now: Petrina's delivery was under way.
-  if (roleId && stage && isDelivery(stage) && task.delivery !== "release") steps.push({ id: `j${steps.length + 1}`, kind: "petrina", work: "delivery", ...placeOf(task), startedAt: task.agent?.since ?? asked[0]?.at ?? at });
+  if (roleId && stage && isDelivery(stage, roles) && task.delivery !== "release") steps.push({ id: `j${steps.length + 1}`, kind: "petrina", work: "delivery", ...placeOf(task), startedAt: task.agent?.since ?? asked[0]?.at ?? at });
   else if (roleId) {
     const profileId = task.agent?.profileId ?? asked[0]?.profileId;
     const asks = asked.map(({ id, kind, title, at: askedAt }): JourneyAsk => ({ id, kind: kind === "question" ? "question" : "permission", title, at: askedAt }));
@@ -546,7 +547,7 @@ export interface JourneyView {
 }
 
 export interface JourneyContext {
-  roles: readonly Pick<Role, "id" | "name">[];
+  roles: readonly Pick<Role, "id" | "name" | "result">[];
   profiles: readonly AgentProfile[];
   tasks: readonly Task[];
   inbox: readonly InboxItem[];
@@ -557,8 +558,8 @@ export interface JourneyContext {
 type Planned = Omit<Named, "end" | "endedAt"> & { profileId?: Id };
 
 /** The plan's last stage: Petrina publishes the work, after the Release Manager's notes for a release. */
-function isDelivery(stage: Pick<Stage, "kind" | "roleId">): boolean {
-  return stage.kind === "do" && stage.roleId === "release-manager";
+function isDelivery(stage: Pick<Stage, "kind" | "roleId">, roles: JourneyContext["roles"]): boolean {
+  return stage.kind === "do" && roles.find(role => role.id === stage.roleId)?.result === "delivery";
 }
 
 /** Whether the review stage at `index` looks only at the builder's port: the first review stage from here, after a port. */
@@ -568,7 +569,7 @@ function portAt(task: Task, index: number): boolean {
 }
 
 /** One stage's steps, as the plan has them, from a position on: the design position, or a place in the stage's steps. */
-function stageSteps(task: Task, stage: Stage, index: number, ctx: Pick<JourneyContext, "profiles">, from = 0): Planned[] {
+function stageSteps(task: Task, stage: Stage, index: number, ctx: Pick<JourneyContext, "profiles" | "roles">, from = 0): Planned[] {
   const round = task.rounds[stage.id] ?? 1;
   const base = { stageId: stage.id, round: 1, sub: 0 };
   switch (stage.kind) {
@@ -576,9 +577,9 @@ function stageSteps(task: Task, stage: Stage, index: number, ctx: Pick<JourneyCo
       return from === 0 ? [{ ...base, kind: "you", waitsFor: stage.gate ?? "delivery" }] : [];
     case "do": {
       // After its first pass, the tester runs again only when the engine schedules the final-code pass.
-      if (stage.roleId === "tester" && task.testedPatch !== undefined && !task.retest) return [];
+      if (ctx.roles.find(role => role.id === stage.roleId)?.result === "checks" && task.testedPatch !== undefined && !task.retest) return [];
       const agent: Planned = { ...base, kind: "agent", roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) };
-      if (!isDelivery(stage)) return from === 0 ? [{ ...agent, ...(task.updating && index === task.stageIndex ? { update: true } : task.fixing && index === task.stageIndex ? { fixing: true } : {}) }] : [];
+      if (!isDelivery(stage, ctx.roles)) return from === 0 ? [{ ...agent, ...(task.updating && index === task.stageIndex ? { update: true } : task.fixing && index === task.stageIndex ? { fixing: true } : {}) }] : [];
       // The release notes are written once: an interrupted delivery only publishes again.
       const notes = task.delivery === "release" && !(index === task.stageIndex && task.shipping?.prepared);
       return [...(notes ? [agent] : []), { ...base, kind: "petrina" as const, work: "delivery" as const }].slice(from);
@@ -595,7 +596,7 @@ function stageSteps(task: Task, stage: Stage, index: number, ctx: Pick<JourneyCo
       if (from > 0) return [];
       // A port of an already reviewed change gets one reviewer, as the engine picks it.
       if (portAt(task, index)) {
-        const reviewer = portReviewerIndex(task, stage.profileIds, (id) => ctx.profiles.find((profile) => profile.id === id)?.toolId);
+        const reviewer = portReviewerIndex(task, stage.profileIds, (id) => ctx.profiles.find((profile) => profile.id === id)?.toolId, ctx.roles);
         const profileId = stage.profileIds[reviewer];
         return [{ ...base, kind: "agent", round, port: true, roleId: reviewerAt(stage, reviewer), ...(profileId ? { profileId } : {}) }];
       }
@@ -611,9 +612,10 @@ function plannedSteps(task: Task, open: JourneyStep | undefined, ctx: JourneyCon
   if (task.stageIndex < 0) {
     // At the plan check the whole plan is ahead; otherwise the planner has yet to write it.
     if (task.plan && open?.kind === "you" && open.waitsFor === "plan") return stages.flatMap((stage, index) => stageSteps(task, stage, index, ctx));
-    if (open?.kind === "agent" && open.roleId === "planner") return [];
+    if (open?.kind === "agent" && ctx.roles.find(role => role.id === open.roleId)?.result === "plan") return [];
     const profileId = ctx.planner ?? task.plan?.plannerProfileId;
-    return [{ kind: "agent", roleId: "planner", round: 1, sub: 0, ...(profileId ? { profileId } : {}) }];
+    const planner = ctx.roles.find(role => role.result === "plan");
+    return planner ? [{ kind: "agent", roleId: planner.id, round: 1, sub: 0, ...(profileId ? { profileId } : {}) }] : [];
   }
   const current = stages[task.stageIndex];
   if (!current) return [];
@@ -627,7 +629,7 @@ function plannedSteps(task: Task, open: JourneyStep | undefined, ctx: JourneyCon
   else if (mine?.kind === "agent") {
     const coversStage = all.some((step) => step.kind === "agent" && step.roleId === mine.roleId);
     // Supporting roles run before the stage's own work; only its reviewers' fresh voters cover it too.
-    if (current.kind === "review-chain" && mine.roleId === "verifier") here = [];
+    if (current.kind === "review-chain" && ctx.roles.find(role => role.id === mine.roleId)?.result === "votes") here = [];
     else if (!coversStage) here = all;
     else here = current.kind === "converge" ? stageSteps(task, current, task.stageIndex, ctx, task.sub + 1) : all.filter((step) => step.kind === "petrina");
   }
@@ -635,7 +637,7 @@ function plannedSteps(task: Task, open: JourneyStep | undefined, ctx: JourneyCon
   else if (mine?.kind === "petrina") here = mine.work === "delivery" ? [] : all;
   else here = all;
   // A final-code tester pass returns straight to the delivery check; it does not repeat the reviewers.
-  const deliveryCheck = task.retest && current.kind === "do" && current.roleId === "tester"
+  const deliveryCheck = task.retest && current.kind === "do" && ctx.roles.find(role => role.id === current.roleId)?.result === "checks"
     ? stages.findIndex((stage) => stage.kind === "gate" && stage.gate === "delivery")
     : -1;
   const next = deliveryCheck >= 0 ? deliveryCheck : task.stageIndex + 1;
@@ -668,9 +670,9 @@ function endOf(task: Task): JourneyView["end"] {
  * ahead, with a start point and, once it is over, an end point. Pure: the same task gives the same journey.
  */
 export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
-  const recorded: readonly JourneyStep[] = task.journey ?? legacyJourney(task, ctx.inbox);
+  const recorded: readonly JourneyStep[] = task.journey ?? legacyJourney(task, ctx.inbox, ctx.roles);
   const open = openStep({ journey: recorded });
-  const latestCompletedTester = recorded.reduce((latest, step, index) => ((step.kind === "agent" && step.roleId === "tester") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
+  const latestCompletedTester = recorded.reduce((latest, step, index) => ((step.kind === "agent" && ctx.roles.find(role => role.id === step.roleId)?.result === "checks") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
   const finished = FINISHED.includes(task.state);
   const run: JourneyNode["run"] = task.state === "running" ? "working" : task.state === "paused" ? "paused" : "waiting";
 
@@ -795,7 +797,7 @@ export function journeyViewKey(task: Task, ctx: JourneyContext): string {
     .map(({ id, kind, blocking, roleId, profileId, at, title }) => [id, kind, blocking, roleId, profileId, at, title]);
   return JSON.stringify([
     taskView,
-    ctx.roles.map(({ id, name }) => [id, name]),
+    ctx.roles.map(({ id, name, result }) => [id, name, result]),
     ctx.profiles.map(({ id, toolId }) => [id, toolId]),
     queued,
     legacyInbox,

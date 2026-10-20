@@ -242,7 +242,7 @@ export class Driver {
     switch (stage.kind) {
       case "do":
         // Petrina publishes by itself: the Release Manager's seat is needed only for a release's notes.
-        if (stage.roleId === "release-manager" && !needsReleaseManager(scope.work)) return undefined;
+        if (this.k.role(stage.roleId)?.result === "delivery" && !needsReleaseManager(scope.work)) return undefined;
         return { roleId: stage.roleId, profileId: (task.repositories && this.k.role(stage.roleId)?.result === "build" ? task.plan?.products?.find((work) => work.productId === scope.work.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? PLANNER_PROFILE };
       case "converge":
         return task.sub === 0
@@ -321,7 +321,7 @@ export class Driver {
         if (!scope.work.worktree && this.sourceSettled(current) && (current.stageIndex >= 0 || !current.approvePlan)) await this.prepare(scope, signal);
         if (current.stageIndex >= 0 && !scope.work.worktree) { this.k.gate(current, "plan"); return; }
         // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
-        if (stage && current.handChanges && (stage.gate === "delivery" || stage.roleId === "release-manager")) {
+        if (stage && current.handChanges && (stage.gate === "delivery" || this.k.role(stage.roleId)?.result === "delivery")) {
           const chain = lastIndexWhere(current.plan!.stages, (entry) => entry.kind === "review-chain");
           if (chain >= 0) {
             current.stageIndex = chain;
@@ -383,7 +383,7 @@ export class Driver {
               }
               await this.learnings.offer(scope);
               if (scope.work.delivery === "release" && current.repositories) {
-                const releaseStage = current.plan!.stages.find((entry) => entry.kind === "do" && entry.roleId === "release-manager")!;
+                const releaseStage = current.plan!.stages.find((entry) => entry.kind === "do" && this.k.role(entry.roleId)?.result === "delivery")!;
                 await this.shipping.releases.previewRelease(scope, releaseStage, signal);
               }
               const checkedHead = await git.head(scope.work.worktree!).catch(() => undefined);
@@ -498,7 +498,7 @@ export class Driver {
         if (!stage) throw new Error("The plan ended without a delivery");
         const next =
           stage.kind === "do"
-            ? stage.roleId === "release-manager"
+            ? this.k.role(stage.roleId)?.result === "delivery"
               ? await this.shipping.deliver(current, stage, signal)
               : await this.work.runDo(scope, stage, signal)
             : stage.kind === "converge"

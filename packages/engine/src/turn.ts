@@ -232,8 +232,8 @@ export class Turns {
     role.canEdit = access.canEdit;
     if (access.afterReview && !same) this.k.log(scope, "warn", `${role.name} works read-only on this task: its step comes after the final review`, roleId, profileId);
     // A conversation that never showed it got its instructions (Petrina stopped in between) starts again instead.
-    const reopen = same && same.briefed && roleId !== "release-manager" && same.toolId === profile.toolId && same.model === model && (role.result !== "build" || !same.plannedProfileId || same.plannedProfileId === plannedId) ? same : undefined;
-    let again = saved && !reopen ? (same ? (same.briefed || roleId === "release-manager" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
+    const reopen = same && same.briefed && role.result !== "delivery" && same.toolId === profile.toolId && same.model === model && (role.result !== "build" || !same.plannedProfileId || same.plannedProfileId === plannedId) ? same : undefined;
+    let again = saved && !reopen ? (same ? (same.briefed || role.result === "delivery" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
     // Back to an earlier step's conversation, unless this step already has one of its own.
     const offered = typeof options.resume === "function" ? await options.resume(profile, role) : options.resume;
     const back = !saved && offered?.toolId === profile.toolId && offered.model === model ? offered : undefined;
@@ -284,7 +284,7 @@ export class Turns {
     const stage = task.plan?.stages[task.stageIndex];
     const journeyRole = options.copy && stage?.kind === "review-chain" && !repository.portReview && stage.roleIds?.includes(roleId) ? stage.roleId : roleId;
     const team = previous?.kind === "agent" && previous.roleId === journeyRole ? previous.team ?? (previous.profileId ? [previous.profileId] : []) : [];
-    beginAgentStep(task, journeyRole, profileId, Date.now(), options.copy ? [...new Set([...team, profileId])] : undefined, repository);
+    beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, options.copy ? [...new Set([...team, profileId])] : undefined, repository);
     if (saved) {
       task.statusLine = options.status ?? `${role.name} is getting back to work`;
     } else {
@@ -350,7 +350,7 @@ export class Turns {
     // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
     // the old note; a reopened one keeps the open question until the conversation hears the answer.
     const asked = picked ? reopen?.asked : undefined;
-    if (roleId !== "release-manager") {
+    if (role.result !== "delivery") {
       repository.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && same?.context ? { context: same.context } : {}), ...(picked && handback ? { handback } : {}) };
       const pending = screen?.member && task.hunt?.screenTurns?.[screen.member];
       // Keep the latest reopened or replacement conversation when this member yields to a peer.
@@ -566,7 +566,7 @@ export class Turns {
     const journeyRole = stage?.kind === "review-chain" && !repository.portReview && stage.roleIds?.includes(roleId) ? stage.roleId : roleId;
     const group = openStep(task);
     const team = group?.kind === "agent" && group.roleId === journeyRole ? group.team ?? (group.profileId ? [group.profileId] : []) : [];
-    beginAgentStep(task, journeyRole, profileId, Date.now(), [...new Set([...team, profileId])], repository);
+    beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, [...new Set([...team, profileId])], repository);
     if (options.took) {
       const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ${options.took.refusal ? `could not continue (${options.took.refusal})` : "ran out of usage"}`;
       this.k.say(scope, "system", words, roleId, profileId);

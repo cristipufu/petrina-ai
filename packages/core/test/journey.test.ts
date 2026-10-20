@@ -14,6 +14,7 @@ import {
   landingOf,
   legacyJourney,
   petrinaMoment,
+  portReviewerIndex,
   recordStepResult,
   stepName,
   syncWait,
@@ -24,6 +25,7 @@ import {
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
 import { addRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS } from "../src/roles.js";
 import type { JourneyStep, State, Task } from "../src/model.js";
+import type { DeepMutable } from "../src/flow.js";
 import { Simulator, type Triggers } from "../src/sim.js";
 
 it("stops unfinished check displays without changing completed results or closing a resumable step", () => {
@@ -101,8 +103,42 @@ describe("a task's journey", () => {
         { id: "old", text: "Pre-existing", severity: "pre-existing", raisedBy: "reviewer", confirmedBy: [], status: "open" },
       ],
     };
-    const step = beginAgentStep(task, "builder", "codex", 10);
+    const step = beginAgentStep(task, "builder", "codex", 10, BUILT_IN_ROLES);
     expect(step.findingIds).toEqual(["open"]);
+  });
+
+  it("uses result contracts for renamed build, test, delivery, planner and verifier roles", () => {
+    const state = emptyState();
+    const kinds = ["build", "checks", "delivery", "plan", "votes"];
+    const roles = state.roles.map(role => kinds.includes(role.result) ? { ...role, id: `renamed-${role.id}`, name: `Renamed ${role.name}` } : role);
+    const roleId = (kind: string) => roles.find(role => role.result === kind)!.id;
+    const task = JSON.parse(JSON.stringify({ ...createDemoState(100).tasks[0]!, state: "running", stageIndex: 0, sub: 0, rounds: {}, fixing: true, journey: [], builderSession: undefined, delivery: "pull-request", plan: {
+      rationale: "Roles follow their result", plannerProfileId: "sol-high", stages: [
+        { id: "build", kind: "do", title: "Build", roleId: roleId("build"), profileIds: ["sol-high"] },
+        { id: "test", kind: "do", title: "Test", roleId: roleId("checks"), profileIds: ["opus-high"] },
+        { id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"] },
+        { id: "gate", kind: "gate", title: "Delivery check", roleId: roleId("delivery"), profileIds: [], gate: "delivery" },
+        { id: "deliver", kind: "do", title: "Deliver", roleId: roleId("delivery"), profileIds: [] },
+      ] }, findings: [{ id: "fix", text: "Fix this bug", severity: "blocking", status: "open", raisedBy: "opus-high", confirmedBy: [] }] })) as DeepMutable<Task>;
+    const context = { ...contextOf(state), roles };
+    expect(beginAgentStep(task, roleId("build"), "sol-high", 100, roles).findingIds).toEqual(["fix"]);
+    expect(portReviewerIndex(task, ["sol-high", "opus-high"], id => state.profiles.find(profile => profile.id === id)?.toolId, roles)).toBe(1);
+    task.testedPatch = "earlier";
+    expect(journeyView(task, context).nodes.some(node => node.state === "next" && node.roleId === roleId("checks"))).toBe(false);
+    endAgentStep(task, { outcome: W.built }, 101);
+    task.stageIndex = 1; task.retest = true; task.fixing = false;
+    beginAgentStep(task, roleId("checks"), "opus-high", 102, roles);
+    const live = journeyView(task, context).nodes.filter(node => ["now", "next", "ahead"].includes(node.state));
+    expect(live.map(node => node.roleId ?? node.work ?? node.waitsFor)).toEqual([roleId("checks"), "delivery", "delivery"]);
+    task.stageIndex = 2; task.journey = []; task.retest = false;
+    beginAgentStep(task, roleId("votes"), "opus-high", 103, roles);
+    expect(journeyView(task, context).nodes.some(node => ["next", "ahead"].includes(node.state) && node.roleId === "code-reviewer")).toBe(false);
+    task.stageIndex = -1; task.journey = [];
+    beginAgentStep(task, roleId("plan"), "sol-high", 104, roles);
+    expect(journeyView(task, context).nodes.filter(node => ["now", "next", "ahead"].includes(node.state)).map(node => node.roleId)).toEqual([roleId("plan")]);
+    expect(legacyJourney(task, [], roles)[0]?.roleId).toBe(roleId("plan"));
+    const changed = { ...context, roles: roles.map(role => role.result === "checks" ? { ...role, result: "notes" as const } : role) };
+    expect(journeyViewKey(task, context)).not.toBe(journeyViewKey(task, changed));
   });
 
   it("keeps the view key stable for conversation updates and unrelated task activity", () => {
@@ -435,7 +471,7 @@ describe("recorded the way the engine records", () => {
     const index = task.stageIndex + 1;
     stages.splice(index, 0, { id: "try", title: "Try the change", kind: "do", roleId: "tester", profileIds: ["opus-high"] });
     const retesting = { ...task, plan: { ...task.plan!, stages }, stageIndex: index, retest: true, testedPatch: "earlier-code" };
-    beginAgentStep(retesting, "tester", "opus-high", at + 2);
+    beginAgentStep(retesting, "tester", "opus-high", at + 2, BUILT_IN_ROLES);
     const view = journeyView(retesting, contextOf(emptyState()));
     expect(view.nodes.filter((node) => ["now", "next", "ahead"].includes(node.state)).map((node) => `${node.name}: ${node.state}`)).toEqual(["Tester: now", "Your delivery check: next", "Publish delivery: ahead"]);
   });
@@ -451,7 +487,7 @@ describe("recorded the way the engine records", () => {
     expect(view.nodes[1]).toMatchObject({ reason: "stuck", tone: "stuck" });
 
     endYouStep(task, { outcome: W.triedAgain, reason: W.tryAgain }, t + 200);
-    beginAgentStep(task, "builder", "opus-high", t + 300);
+    beginAgentStep(task, "builder", "opus-high", t + 300, BUILT_IN_ROLES);
     view = journeyView({ ...task, state: "running" }, contextOf(state));
     expect(boxes(view).slice(0, 4)).toEqual(["Planner: done", "Builder: failed", "Stuck: done", "Builder (again): now"]);
     expect(view.nodes[2]).toMatchObject({ reason: "you asked to try again", startedAt: t + 100, endedAt: t + 200 });
@@ -481,7 +517,7 @@ describe("recorded the way the engine records", () => {
     else endAgentStep(task, { outcome: "Finished", reason: "ready" }, sim.getState().now);
     // The Guide keeper runs before the builder begins its requested fixes.
     const helping = { ...task, fixing: roleId === "guide-keeper" };
-    beginAgentStep(helping, roleId, "opus-high", sim.getState().now);
+    beginAgentStep(helping, roleId, "opus-high", sim.getState().now, BUILT_IN_ROLES);
     const view = journeyView(helping, contextOf(sim.getState()));
     expect(view.nodes.find((node) => node.state === "now")).toMatchObject({ roleId });
     expect(view.nodes.find((node) => node.state === "next")).toMatchObject({ name: next });
@@ -517,14 +553,14 @@ describe("recorded the way the engine records", () => {
       expect(state.profiles.find((profile) => profile.id === port.profileId)?.toolId).not.toBe(builderTool);
     }
 
-    beginAgentStep(task, "builder", stages[build]!.profileIds[0]!, t + 120);
+    beginAgentStep(task, "builder", stages[build]!.profileIds[0]!, t + 120, BUILT_IN_ROLES);
     endAgentStep(task, { outcome: W.broughtUpToDate, reason: W.upToDate }, t + 200);
     delete task.updating;
     task.portReview = { from: "a", head: "c", onto: "b", files: ["greeting.txt"] };
     task.stageIndex = review;
     beginPetrinaStep(task, "checks", t + 200);
     endPetrinaStep(task, { outcome: W.checks(0, 2), reason: W.checksPassed }, t + 210);
-    beginAgentStep(task, "code-reviewer", port.profileId!, t + 210, [port.profileId!]);
+    beginAgentStep(task, "code-reviewer", port.profileId!, t + 210, BUILT_IN_ROLES, [port.profileId!]);
     view = journeyView({ ...task, state: "running" }, contextOf(state));
     expect(boxes(view).slice(2, 7)).toEqual(["Update branch: done", "Builder (update): done", "Automated checks (port): done", "Code reviewer (port): now", "Your delivery check: next"]);
     expect(journeyProblems({ ...task, state: "running" })).toEqual([]);
@@ -589,7 +625,7 @@ describe("recorded the way the engine records", () => {
   it("picking up the same step continues its box", () => {
     const task = atBuild();
     const open = task.journey!.at(-1)!;
-    expect(beginAgentStep(task, "builder", "opus-high", open.startedAt + 5_000)).toBe(open);
+    expect(beginAgentStep(task, "builder", "opus-high", open.startedAt + 5_000, BUILT_IN_ROLES)).toBe(open);
     expect(task.journey!.filter((step) => step.roleId === "builder")).toHaveLength(1);
   });
 });
@@ -613,7 +649,7 @@ describe("tasks that ran before journeys were recorded", () => {
     const id = sim.addTask({ productId: "p", title: "Saved carts", kind: "feature" });
     runUntil(sim, () => !!inboxItem(sim, id, "design"), (kind) => kind === "design");
     const { journey: _gone, ...old } = taskOf(sim, id);
-    const steps = legacyJourney(old as Task, sim.getState().inbox);
+    const steps = legacyJourney(old as Task, sim.getState().inbox, BUILT_IN_ROLES);
     expect(steps.at(-1)).toMatchObject({ kind: "you", waitsFor: "design", startedAt: inboxItem(sim, id, "design")!.at });
     expect(steps.at(-1)!.legacy).toBeUndefined();
   });
@@ -625,13 +661,13 @@ describe("tasks that ran before journeys were recorded", () => {
     runUntil(sim, () => !!inboxItem(sim, id, "question"), () => true);
     const { journey: _gone, ...old } = taskOf(sim, id);
     const question = inboxItem(sim, id, "question")!;
-    const steps = legacyJourney(old as Task, sim.getState().inbox);
+    const steps = legacyJourney(old as Task, sim.getState().inbox, BUILT_IN_ROLES);
     expect(steps.at(-1)).toMatchObject({ kind: "agent", roleId: "architect", stageId: old.plan!.stages[0]!.id, round: 1, sub: 0, startedAt: old.agent!.since, asks: [{ id: question.id, kind: "question", title: "Formal or casual?" }] });
     const view = journeyView({ ...old, journey: steps } as Task, contextOf(sim.getState()));
     expect(boxes(view).slice(0, 4)).toEqual(["Planner: done", "Architect: you", "Design reviewer: next", "Your design check: ahead"]);
     // Answering it continues the same box.
     const task: JourneyTask = { ...old, journey: steps };
-    expect(beginAgentStep(task, "architect", old.agent!.profileId, Date.now())).toBe(steps.at(-1));
+    expect(beginAgentStep(task, "architect", old.agent!.profileId, Date.now(), BUILT_IN_ROLES)).toBe(steps.at(-1));
   });
 });
 

@@ -1,9 +1,9 @@
+import { CompanionLinks } from "./companion-links.js";
 import { ShippingVerifier, realPath, type DeliveryEvidence } from "./shipping-verifier.js";
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
 import { executionFor, type RepositoryContext, type RepositoryWork } from "./repository-context.js";
 import { companionText, landingState, repositoryDelivered } from "@petrina/core";
-import { api } from "./source-github.js";
 // Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
 // top of the latest main, approved for this delivery and destination, with the checks passing on it. Petrina
 // publishes the exact commit it checked, with what the builder wrote to go out with it: it pushes the branch and
@@ -31,6 +31,7 @@ import {
   type ShippingStep,
   type TaskSource,
 } from "@petrina/core";
+import * as github from "./github.js";
 import * as git from "./git.js";
 import { ReleaseNotesResult, TEXT_LIMITS } from "./roles.js";
 import { WaitingForUsage } from "./usage.js";
@@ -76,6 +77,7 @@ export class Shipping {
   readonly releases: ReleasePrep;
   readonly monitor: PrMonitor;
   readonly verifier: ShippingVerifier;
+  private readonly companions: CompanionLinks;
 
   constructor(
     private readonly k: Kernel,
@@ -86,6 +88,7 @@ export class Shipping {
     private readonly tools: ToolChecks,
   ) {
     this.releases = new ReleasePrep(k, turns, connections);
+    this.companions = new CompanionLinks(k);
     this.verifier = new ShippingVerifier(k, connections);
     this.monitor = new PrMonitor(k, this.verifier, {
       recordDelivery: (scope, evidence, signal) => this.recordDelivery(scope, evidence, signal),
@@ -120,7 +123,7 @@ export class Shipping {
   private async deliverMany(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
 
     const closed = task.repositories!.filter((entry) => entry.pr?.state === "closed" && !entry.landingAccepted);
-    const states = await Promise.all(closed.map((work) => git.prState(work.source!.product.repo, work.pr!.number, this.k.options.gh)));
+    const states = await Promise.all(closed.map((work) => github.prState(work.source!.product.repo, work.pr!.number, this.k.options.gh)));
     this.stopIfAsked(signal);
     for (const [index, work] of closed.entries()) {
       const state = states[index];
@@ -170,48 +173,7 @@ export class Shipping {
       task.state = "running";
       this.k.commitNow();
     }
-    // Linking has its own saved progress and recovery; it never reopens or republishes a delivery.
-    const text = companionText(task.repositories!);
-    if (text) for (const work of task.repositories!.filter((entry) => entry.pr)) {
-
-      task.activeProductId = work.productId;
-      if (work.companion?.state === "done" && work.companion.text === text) continue;
-      work.companion = { text, state: "checking" };
-      task.statusLine = `Finishing companion links for ${work.source!.product.name}`;
-      this.k.commitNow();
-      try {
-        const repo = work.source!.product.repo;
-        const number = work.pr!.number;
-        const existing = work.source!.destination.kind === "update-pr";
-        if (existing) {
-          const comments = (await api(repo, `issues/${number}/comments?per_page=100`, this.k.options.gh)).flat() as { body?: string }[];
-          if (!comments.some((comment) => comment.body === text)) {
-            const posted = await git.gh(this.k.options.gh ?? ["gh"], repo, ["pr", "comment", String(number), "--body-file", "-"], text);
-            if (posted.code) throw new Error(posted.stderr || "Could not confirm the companion comment.");
-          }
-          const confirmed = (await api(repo, `issues/${number}/comments?per_page=100`, this.k.options.gh)).flat() as { body?: string }[];
-          if (!confirmed.some((comment) => comment.body === text)) throw new Error("Could not confirm the companion comment. Check again before retrying.");
-        } else {
-          const read = await git.gh(this.k.options.gh ?? ["gh"], repo, ["pr", "view", String(number), "--json", "body"]);
-          if (read.code) throw new Error("Could not read the companion links. Check again.");
-          const body = JSON.parse(read.stdout).body;
-          if (typeof body !== "string") throw new Error("GitHub did not return the pull request description.");
-          const next = `${body.replace(/\n*Part of a change across: [^\n]*\.?$/u, "")}\n\n${text}`;
-          if (body !== next) {
-            const edited = await git.gh(this.k.options.gh ?? ["gh"], repo, ["pr", "edit", String(number), "--body-file", "-"], next);
-            if (edited.code) throw new Error(edited.stderr || "Could not finish companion links.");
-          }
-        }
-        work.companion.state = "done";
-        this.k.commitNow();
-      } catch (error) {
-        work.companion.state = "pending";
-        this.k.raise(task, "stuck", "Deliveries are saved; companion links need finishing", false, { body: String(error) });
-        task.statusLine = "Deliveries saved. Finish links";
-        this.k.commitNow();
-        return "stop";
-      }
-    }
+    if (!await this.companions.finish(task)) return "stop";
     this.finishMany(task);
     return "stop";
   }
@@ -592,7 +554,7 @@ export class Shipping {
     if (!pushed.ok) throw new Error(`GitHub refused the push of this task's branch, so no pull request was opened (${pushed.error}). Retry once that is sorted.`);
     this.k.log(scope, "status", `Petrina pushed the branch at ${prepared.tested.slice(0, 7)}`);
     const opened = await this.publishStep(scope, signal, "open", "Publishing: opening the pull request", () =>
-      git.openPullRequest(product.repo, { head: branch, base: repository.source?.destination.branch ?? product.defaultBranch ?? "main", title: prepared.title!.trim(), body: prepared.body! }, this.k.options.gh),
+      github.openPullRequest(product.repo, { head: branch, base: repository.source?.destination.branch ?? product.defaultBranch ?? "main", title: prepared.title!.trim(), body: prepared.body! }, this.k.options.gh),
     );
     this.stopIfAsked(signal);
     if (!opened.ok && !opened.exists) throw new Error(`GitHub did not open the pull request (${opened.error}). Retry: Petrina looks for it on GitHub before opening another.`);
@@ -628,7 +590,7 @@ export class Shipping {
         if (before.tag === tested) throw new Error(`The tag ${tag} is on GitHub at the tested commit, but ${branch} there does not have it. Petrina published nothing more. Look at it on GitHub, then retry or cancel.`);
         // A moved default branch or a newer release make this preparation and its version stale.
         if (before.main !== shipping.base && before.main !== tested) return this.prepareAgain(scope, `${branch} moved on GitHub`);
-        const latest = await this.connections.serial(product.id, () => git.latestRelease(product.repo, this.k.options.gh));
+        const latest = await this.connections.serial(product.id, () => github.latestRelease(product.repo, this.k.options.gh));
         if (!latest.ok) throw new Error(`Petrina could not read the latest release on GitHub (${latest.error}), so it published nothing. Retry when GitHub is reachable.`);
         if ((latest.value ?? "") !== shipping.after) return this.prepareAgain(scope, latest.value ? `${latest.value} came out meanwhile` : "The latest release changed meanwhile");
         if (before.tag) throw new Error(`The tag ${tag} already exists on GitHub at another commit. Petrina will not move or reuse it, and published nothing more. Look at it on GitHub, then retry or cancel.`);
@@ -665,7 +627,7 @@ export class Shipping {
       throw new Error(`The tag ${tag} on GitHub ${at.tag ? `is at ${at.tag.slice(0, 7)}` : "is gone"}, not at the tested commit ${tested.slice(0, 7)}, so Petrina created no release. Look at it on GitHub, then retry or cancel.`);
     }
     // GitHub showed no release for this tag. Release creation only uses the tag already on GitHub.
-    const created = await this.publishStep(scope, signal, "release", `Publishing: creating the release ${tag}`, () => git.createRelease(product.repo, tag, notes!, this.k.options.gh));
+    const created = await this.publishStep(scope, signal, "release", `Publishing: creating the release ${tag}`, () => github.createRelease(product.repo, tag, notes!, this.k.options.gh));
     this.stopIfAsked(signal);
     if (!created.ok && !created.exists) throw new Error(`GitHub did not create the release ${tag} (${created.error}). Retry: Petrina looks for it on GitHub before creating another.`);
     const release = await this.verifier.findRelease(scope);

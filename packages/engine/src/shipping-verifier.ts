@@ -1,5 +1,6 @@
 // Observe exact approved delivery destinations. This module never publishes or records delivery.
 import { realpathSync } from "node:fs";
+import * as github from "./github.js";
 import * as git from "./git.js";
 import { sourcePr } from "./source-github.js";
 import { type Connections, Unreachable } from "./connection.js";
@@ -29,19 +30,19 @@ export class ShippingVerifier {
     this.k.commit();
   }
   /** GitHub's listing for the task's branch: the pull request for this work, none, or a stop for anything else there. */
-  async findPullRequest(scope: RepositoryContext, cancelled = false): Promise<git.PullRequestInfo | undefined> {
+  async findPullRequest(scope: RepositoryContext, cancelled = false): Promise<github.PullRequestInfo | undefined> {
     const { work: repository } = scope;
     const product = this.k.repositoryOf(scope)!;
     const tested = repository.shipping!.prepared!.tested;
     const defaultBranch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
     this.checking(scope, "Checking: looking for the pull request on GitHub");
-    const listed = await this.connections.serial(product.id, () => git.pullRequests(product.repo, repository.branch!, this.k.options.gh));
+    const listed = await this.connections.serial(product.id, () => github.pullRequests(product.repo, repository.branch!, this.k.options.gh));
     if (!listed.ok) throw new Unreachable(`Petrina could not check GitHub for this task's pull request (${listed.error}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
     const ours = listed.value.filter((pr) => pr.head === repository.branch && !pr.fork);
     // Cancellation publishes nothing more. Any open pull request from this branch needs its copy,
     // even when someone changed its base or added commits while the last publishing step was stopping.
     if (cancelled) return ours.find((pr) => pr.state === "open") ?? ours.find((pr) => pr.base === defaultBranch && pr.commit === tested);
-    let match: git.PullRequestInfo | undefined;
+    let match: github.PullRequestInfo | undefined;
     for (const pr of ours) {
       if (await this.matchesPullRequest(scope, pr, tested, defaultBranch)) { match = pr; break; }
     }
@@ -55,7 +56,7 @@ export class ShippingVerifier {
   }
 
   /** A reused branch name is not evidence of this delivery: its checked work and base must match. */
-  async matchesPullRequest(scope: RepositoryContext, pr: git.PullRequestInfo, tested: string, base: string): Promise<boolean> {
+  async matchesPullRequest(scope: RepositoryContext, pr: github.PullRequestInfo, tested: string, base: string): Promise<boolean> {
     const { work: repository } = scope;
     if (pr.base !== base) return false;
     if (pr.commit === tested) return true;
@@ -93,7 +94,7 @@ export class ShippingVerifier {
     const product = this.k.repositoryOf(scope)!;
     const tag = repository.shipping!.tag!;
     this.checking(scope, `Checking: looking for the release ${tag} on GitHub`);
-    const found = await this.connections.serial(product.id, () => git.findRelease(product.repo, tag, this.k.options.gh));
+    const found = await this.connections.serial(product.id, () => github.findRelease(product.repo, tag, this.k.options.gh));
     if (!found.ok) throw new Unreachable(`Petrina could not check GitHub for the release ${tag} (${found.error}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
     if (found.value && (found.value.tag !== tag || found.value.draft)) throw new Error(`GitHub has a ${found.value.draft ? "draft " : ""}release for ${tag} that Petrina did not publish. Look at it on GitHub, then retry or cancel.`);
     return found.value ? { tag: found.value.tag, url: found.value.url } : undefined;

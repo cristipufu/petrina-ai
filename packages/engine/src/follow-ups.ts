@@ -6,7 +6,8 @@ import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
-import { findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, type AgentProfile, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type MatchAnswer, type MatchAsk, type ReportImage, type Task } from "@petrina/core";
+import { createTaskState, findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, type AgentProfile, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type MatchAnswer, type MatchAsk, type ReportImage, type Task } from "@petrina/core";
+import { completeAll } from "./parallel.js";
 import { AgentRun } from "./acp-run.js";
 import type { Kernel, MTask } from "./kernel.js";
 import { parseResult } from "./prompts.js";
@@ -349,43 +350,17 @@ export class FollowUps {
     });
     const product = this.k.s.products.find((entry) => entry.id === choices[0]?.productId);
     const names = create.productIds.map((productId) => this.k.s.products.find((entry) => entry.id === productId)?.name ?? productId);
-    const task: MTask = {
-      id,
-      productId: product?.id ?? choices[0]?.productId ?? "",
-      selectedProducts: choices,
-      explicitStart: false,
-      workChoice: choices[0] ?? { productId: product?.id ?? "", startFrom: { kind: "default" }, delivery: product?.delivery ?? "pull-request" },
-      repository: {
-        productId: product?.id ?? choices[0]?.productId ?? "",
-        delivery: choices[0]?.delivery ?? product?.delivery ?? "pull-request",
-        workChoice: choices[0] ?? { productId: product?.id ?? "", startFrom: { kind: "default" }, delivery: product?.delivery ?? "pull-request" },
-        ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
-      },
-      title: create.title,
-      description: followUpDescription(create.reports, names),
-      area: create.title.toLowerCase(),
-      kind: "bug",
-      priority: this.k.s.tasks.length,
-      held: false,
-      state: "backlog",
-      column: "backlog",
-      holdsSlot: false,
-      approvePlan: choices.length !== 1,
-      delivery: choices[0]?.delivery ?? product?.delivery ?? "pull-request",
-      approveDelivery: choices.some((choice) => this.k.s.products.find((entry) => entry.id === choice.productId)?.approveDelivery !== false),
-      stageIndex: -1,
-      rounds: {},
-      sub: 0,
-      fixing: false,
-      statusLine: "Review the request before queueing",
-      createdAt: Date.now(),
-      timeline: [{ id: this.k.id(id), at: Date.now(), text: "Kept as future work", tone: "status" }],
-      session: [],
-      queued: [],
-      objections: [],
-      findings: [],
-      followUp: { reports: create.reports.map(stored) },
+    const now = Date.now();
+    const task: MTask = createTaskState({ productId: choices[0]?.productId ?? "", title: create.title, description: followUpDescription(create.reports, names), kind: "bug", worksOn: choices, backlog: true }, this.k.s.products,
+      { id, timelineId: this.k.id(id), now, priority: this.k.s.tasks.length });
+    // Discovery selects the affected products; the coordinator still reviews this inferred request.
+    task.explicitStart = false;
+    task.repository = {
+      productId: task.productId, delivery: task.delivery, workChoice: structuredClone(task.workChoice),
+      ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
     };
+    task.timeline = [{ id: task.timeline[0]!.id, at: now, text: "Kept as future work", tone: "status" }];
+    task.followUp = { reports: create.reports.map(stored) };
     this.k.s.tasks.push(task);
     return task;
   }
@@ -449,13 +424,9 @@ export class FollowUps {
 
   /** True when every picture that is still on the original report is now on the card. */
   private async keepImages(card: MTask, reports: readonly FollowUpCredit[]): Promise<boolean> {
-    const images: ReportImage[] = [];
-    let failed = false;
-    for (const report of reports) for (const image of report.images) {
-      const saved = await keepPicture(this.k.dataDir, card.id, image);
-      if (saved === "failed") failed = true;
-      else if (saved) images.push(saved);
-    }
+    const saved = await completeAll(reports.flatMap(report => report.images).map(image => keepPicture(this.k.dataDir, card.id, image)));
+    const failed = saved.some(image => image === "failed");
+    const images = saved.filter((image): image is ReportImage => !!image && image !== "failed");
     if (images.length) card.session = [...card.session, { id: this.k.id(card.id), at: Date.now(), from: "system", text: "Kept from the original report", images }];
     return !failed;
   }

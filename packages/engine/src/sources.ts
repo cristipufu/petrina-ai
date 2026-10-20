@@ -1,6 +1,7 @@
 import { executionFor } from "./repository-context.js";
 import { detachRepositoryState, type RepositoryContext } from "./repository-context.js";
 import { productName, deliveryLabel, workSummary, type TaskSource, type WorkChoice } from "@petrina/core";
+import * as github from "./github.js";
 import * as git from "./git.js";
 import { background, branchExists, prNumber, sourcePr } from "./source-github.js";
 import type { Kernel, MTask } from "./kernel.js";
@@ -83,7 +84,7 @@ export class Sources {
       task.confirmWork = true;
     }
     const source = task.proposedSource ?? scope.work.source;
-    if (source) for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = deliveryLabel({ source, delivery: source.destination.mode });
+    if (source) for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && this.k.role(stage.roleId)?.result === "delivery") stage.title = deliveryLabel({ source, delivery: source.destination.mode });
     const item = this.k.s.inbox.find((entry) => entry.taskId === task.id && entry.kind === "plan");
     if (item) item.body = [task.proposedSource ?? scope.work.source ? workSummary((task.proposedSource ?? scope.work.source)!) : "", task.workError ?? ""].filter(Boolean).join("\n");
     this.k.commitNow();
@@ -124,7 +125,7 @@ export class Sources {
         if (!product && !row.addition) {
           const repo = choice.repo ?? choice.productId;
           if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("Needs adding: choose a registered product or an exact GitHub repository.");
-          const read = await git.gh(this.k.options.gh ?? ["gh"], repo, ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]);
+          const read = await github.gh(this.k.options.gh ?? ["gh"], repo, ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]);
           if (read.code) throw new Error(`Could not check ${repo} on GitHub. Retry when it is accessible.`);
           const data = JSON.parse(read.stdout);
           if (data.nameWithOwner?.toLowerCase() !== repo.toLowerCase() || !data.defaultBranchRef?.name) throw new Error(`GitHub did not confirm ${repo} and its default branch.`);
@@ -255,7 +256,7 @@ export class Sources {
       task.leadProductId = task.workRows.find((row) => row.choice.lead)?.source?.product.id ?? task.plan?.leadProductId ?? task.repositories[0]!.productId;
       if (task.plan) {
         task.plan.leadProductId = task.leadProductId;
-        for (const stage of task.plan.stages) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = task.repositories.length > 1 ? `Deliver across ${task.repositories.length} products` : deliveryLabel({ source: task.repositories[0]!.source, delivery: task.repositories[0]!.delivery });
+        for (const stage of task.plan.stages) if (stage.kind === "do" && this.k.role(stage.roleId)?.result === "delivery") stage.title = task.repositories.length > 1 ? `Deliver across ${task.repositories.length} products` : deliveryLabel({ source: task.repositories[0]!.source, delivery: task.repositories[0]!.delivery });
       }
       task.productId = task.leadProductId;
       const lead = task.repositories.find((work) => work.productId === task.leadProductId)!;

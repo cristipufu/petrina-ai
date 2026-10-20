@@ -74,7 +74,7 @@ export function normalizePlan(input: PlanInput): Plan {
 
   result.stages.forEach((raw, index) => {
     const id = `${task.id}:s${index}`;
-    const role = raw.roleId === RELEASE_MANAGER || raw.roleId === "planner" ? undefined : roles.get(raw.roleId);
+    const role = roles.get(raw.roleId)?.result === "delivery" || roles.get(raw.roleId)?.result === "plan" ? undefined : roles.get(raw.roleId);
     if (raw.roleId === RELEASE_MANAGER || raw.reviewerRoleId === RELEASE_MANAGER || raw.roleIds?.includes(RELEASE_MANAGER)) deliveryLeftOut();
 
     if (raw.kind === "gate") {

@@ -1,6 +1,7 @@
 // Read-only GitHub background. `pr view` uses --repo; API reads use the same exact
 // repository in their endpoint (gh api has no --repo option). All run outside repositories.
 import { tmpdir } from "node:os";
+import * as github from "./github.js";
 import * as git from "./git.js";
 
 const GH = ["gh"];
@@ -19,7 +20,7 @@ export function prNumber(value: string, repo: string): number {
 }
 
 export async function sourcePr(repo: string, number: number, cmd: git.Gh = GH): Promise<SourcePr> {
-  const read = await git.gh(cmd, repo, ["pr", "view", String(number), "--json", "number,url,state,title,body,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository"]);
+  const read = await github.gh(cmd, repo, ["pr", "view", String(number), "--json", "number,url,state,title,body,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository"]);
   if (read.code) throw new Error(`Could not read PR #${number} in ${repo}: ${read.stderr || read.stdout}. Retry when it is accessible.`);
   const data = JSON.parse(read.stdout);
   const headRepo = data.headRepository?.nameWithOwner ?? (data.headRepositoryOwner?.login && data.headRepository?.name ? `${data.headRepositoryOwner.login}/${data.headRepository.name}` : data.isCrossRepository === false ? repo : undefined);

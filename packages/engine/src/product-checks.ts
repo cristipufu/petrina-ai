@@ -6,9 +6,8 @@ import { beginRepair, acceptanceVersion } from "./repositories.js";
 import { beginPetrinaStep, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, type Id, type ProductCheck } from "@petrina/core";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckRun, DeepMutable, JourneyProductCheck } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, expectedCheckCommands, orderedChecks, staticCheck, type CheckProgress } from "./checks.js";
@@ -30,7 +29,7 @@ function checkDiagnostic(output: string): string | undefined {
 }
 
 type CheckEntries = Map<string, DeepMutable<JourneyProductCheck>>;
-type CheckState = { sha?: string; tree?: string; trackedChanged: boolean; hooks: string[]; definition: string };
+type CheckState = { sha?: string; tree?: string; trackedChanged: boolean; hooks: string[]; definition: string; message?: string };
 
 export class ProductChecks {
   /**
@@ -112,7 +111,7 @@ export class ProductChecks {
     if (!product || !repository.worktree) return [];
     // Another task may have found (or the coordinator set) the checks while this agent waited.
     // Its saved conversation still finishes its own request before the cached checks can be reused.
-    const continuing = repository.conversation?.roleId === "check-finder";
+    const continuing = this.k.role(repository.conversation?.roleId ?? "")?.result === "check-discovery";
     if (product.checksBy === "coordinator" && !continuing) return product.checks ?? [];
     const fingerprint = checksFingerprint(repository.worktree);
     const unstartable = repository.checks?.results.some((run) => run.output.startsWith("Could not start")) ?? false;
@@ -196,7 +195,7 @@ export class ProductChecks {
     // Resuming unfinished release notes revalidates the preparation first. Those repeated checks belong
     // to the same step's timeline: they do not complete the notes or start another agent step.
     const open = openStep(task);
-    const resumingNotes = open?.kind === "agent" && open.roleId === "release-manager" && open.stageId === task.plan?.stages[task.stageIndex]?.id;
+    const resumingNotes = open?.kind === "agent" && this.k.role(open.roleId ?? "")?.result === "delivery" && open.stageId === task.plan?.stages[task.stageIndex]?.id;
     // A checks step's elapsed time includes waiting for another task's run.
     if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now(), repository);
     const step = openStep(task);
@@ -307,7 +306,7 @@ export class ProductChecks {
       checksRestored = true;
       const staticFailed = checks.some((check) => staticCheck(check) && ran.some((run) => !run.ok && run.command === commandText(check.argv)));
       hooksStarted = !staticFailed && hooks.length > 0;
-      const hooksRan = staticFailed ? [] : await this.runHooks(scope, hooks, env, signal, progress);
+      const hooksRan = staticFailed ? [] : await this.runHooks(scope, hooks, before, state.message, env, signal, progress);
       if (signal.aborted) {
         this.noteStopped(scope, [...ran, ...hooksRan], entries);
         throw new Aborted();
@@ -317,13 +316,13 @@ export class ProductChecks {
       // The hooks too: whatever they committed or changed in files git tracks is put back.
       if (!repository.hooking && (!checksRestored || hooksStarted)) await restore();
     }
-    const tree = await git.treeOf(repository.worktree, before);
+    const tree = state.sha === before && state.tree ? state.tree : await git.treeOf(repository.worktree, before);
     repository.checks = { current: true, at: Date.now(), ...(before ? { sha: before } : {}), ...(tree ? { tree } : {}), definition, results };
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     const failed = this.settleFindings(scope, results);
     this.k.log(scope, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
-    if (failed.length && openStep(task)?.roleId === "release-manager") {
+    if (failed.length && this.k.role(openStep(task)?.roleId ?? "")?.result === "delivery") {
       endAgentStep(task, { outcome: W.interrupted, reason: W.checksFailed(failed.length), tone: "back", end: "failed" }, Date.now());
     } else {
       endPetrinaStep(task, failed.length ? { outcome: W.checks(failed.length, results.length), reason: W.checksFailed(failed.length), tone: "back" } : { outcome: W.checks(0, results.length), reason: W.checksPassed }, Date.now());
@@ -379,27 +378,29 @@ export class ProductChecks {
   }
 
   /** The commands and hook inputs: a new definition needs a fresh run, even on the same tree. */
-  private async definition(scope: RepositoryContext, checks: readonly ProductCheck[], hooks: Awaited<ReturnType<typeof git.commitHookFiles>>): Promise<string> {
+  private async definition(scope: RepositoryContext, checks: readonly ProductCheck[], hooks: Awaited<ReturnType<typeof git.commitHookFiles>>, sha?: string): Promise<{ definition: string; message?: string }> {
     const { work: repository } = scope;
     const hash = createHash("sha256").update(JSON.stringify(checks.filter((check) => check.argv.length).map((check) => check.argv)));
     const [bodies, message] = await Promise.all([
       Promise.all(hooks.map((hook) => readFile(hook.path))),
-      hooks.some((hook) => hook.name === "commit-msg") ? git.message(repository.worktree!) : undefined,
+      hooks.some((hook) => hook.name === "commit-msg") ? git.message(repository.worktree!, sha) : undefined,
     ]);
     for (const [index, hook] of hooks.entries()) {
       hash.update(JSON.stringify([hook.name, hook.path])).update(bodies[index]!);
       if (hook.name === "commit-msg") hash.update(message!);
       if (hook.name === "pre-commit") hash.update(repository.baseSha ?? "");
     }
-    return hash.digest("hex");
+    return { definition: hash.digest("hex"), ...(message !== undefined ? { message } : {}) };
   }
 
   /** Reuse one observation within this operation, never as a persistent freshness flag. */
   private async captureState(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<CheckState> {
     const path = scope.work.worktree!;
-    const [status, files, tree] = await Promise.all([git.worktreeStatus(path), git.commitHookFiles(path), git.treeOf(path)]);
+    const [status, files] = await Promise.all([git.worktreeStatus(path), git.commitHookFiles(path)]);
     const hooks = await this.noteHooks(scope, files.map((hook) => hook.name));
-    return { sha: status.head, tree, trackedChanged: status.trackedChanged, hooks, definition: await this.definition(scope, checks, files) };
+    // The reusable tree and message must belong to the same observed commit.
+    const [tree, definition] = await Promise.all([status.head ? git.treeOf(path, status.head) : undefined, this.definition(scope, checks, files, status.head)]);
+    return { sha: status.head, tree, trackedChanged: status.trackedChanged, hooks, ...definition };
   }
 
   /** Whether the last run used the same code and definitions. A squash keeps its evidence, pass or fail. */
@@ -520,12 +521,12 @@ export class ProductChecks {
    * change: pre-commit with the change staged on top of where the task started, and commit-msg on the task's
    * commit message. Petrina's own git steps never run hooks; these run like the product's checks, with no logins.
    */
-  private async runHooks(scope: RepositoryContext, hooks: readonly string[], env: NodeJS.ProcessEnv, signal: AbortSignal, progress: (id: string, event: CheckProgress) => void): Promise<CheckRun[]> {
+  private async runHooks(scope: RepositoryContext, hooks: readonly string[], head: string, message: string | undefined, env: NodeJS.ProcessEnv, signal: AbortSignal, progress: (id: string, event: CheckProgress) => void): Promise<CheckRun[]> {
     const { task, work: repository } = scope;
     const worktree = repository.worktree!;
     const base = repository.baseSha;
     const branch = repository.branch;
-    if (!hooks.length || !base || !branch || (await git.head(worktree).catch(() => base)) === base) return [];
+    if (!hooks.length || !base || !branch || head === base) return [];
     const runs: CheckRun[] = [];
     if (hooks.includes("pre-commit")) {
       // On disk before HEAD moves: a restart while it is detached puts it back on the branch.
@@ -541,11 +542,14 @@ export class ProductChecks {
       }
     }
     if (hooks.includes("commit-msg") && !signal.aborted) {
-      // The message the task's one commit carries, in a file of its own, as git hands it over.
-      const folder = await mkdtemp(join(tmpdir(), "petrina-message-"));
+      // The exact message fingerprinted before checks, as Git hands it over.
+      if (message === undefined) throw new Error("The check run has no captured commit message. Capture its inputs again before running commit hooks.");
+      const parent = join(this.k.dataDir, "checks", task.id);
+      await mkdir(parent, { recursive: true });
+      const folder = await mkdtemp(join(parent, "message-"));
       try {
         const file = join(folder, "COMMIT_EDITMSG");
-        await writeFile(file, `${await git.message(worktree)}\n`);
+        await writeFile(file, `${message}\n`);
         const [run] = await runChecks(worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress("hook-commit-msg", event));
         if (run) runs.push({ ...run, command: "git hook run commit-msg" });
       } finally {
