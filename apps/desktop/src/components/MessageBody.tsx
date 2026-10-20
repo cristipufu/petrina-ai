@@ -1,44 +1,39 @@
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Expand, Image as ImageIcon, X } from "lucide-react";
 import { failureText, sim } from "../engine";
 import { useFocusTrap } from "./bits";
+import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-type MessagePart = { kind: "text"; text: string } | { kind: "image"; label: string; path: string };
+const markdownPlugins = [remarkGfm];
 
-/** Recognize local screenshot links only; everything else remains harmless plain text. */
-export function messageParts(text: string): MessagePart[] {
-  const parts: MessagePart[] = [];
-  const links = /!?\[([^\]\n]*)\]\((<[^>\n]+>|[^)\n]+)\)/g;
-  let end = 0;
-  for (const match of text.matchAll(links)) {
-    let path = match[2]!.replace(/^<|>$/g, "");
-    try { path = decodeURIComponent(path); } catch { /* A literal percent is allowed in a filename. */ }
-    if (!/\.(?:png|jpe?g|gif|webp)$/i.test(path) || (/^[a-z][a-z0-9+.-]*:/i.test(path) && !/^(?:file:|[a-z]:[\\/])/i.test(path)) || path.startsWith("//")) continue;
-    if (match.index > end) parts.push({ kind: "text", text: text.slice(end, match.index) });
-    parts.push({ kind: "image", label: match[1]?.trim() || "Screenshot", path });
-    end = match.index + match[0].length;
-  }
-  if (end < text.length) parts.push({ kind: "text", text: text.slice(end) });
-  return parts;
+function localImagePath(value: string): string | undefined {
+  let path = value;
+  try { path = decodeURIComponent(path); } catch { /* Literal percent in a filename. */ }
+  if (!/\.(?:png|jpe?g|gif|webp)$/i.test(path) || (/^[a-z][a-z0-9+.-]*:/i.test(path) && !/^(?:file:|[a-z]:[\\/])/i.test(path)) || path.startsWith("//")) return;
+  return path;
 }
 
 /** Screenshot bytes live only in a visible preview, never in saved task or window state. */
 export const MessageBody = memo(function MessageBody({ text, taskId, productId, finished = false }: { text: string; taskId: string; productId?: string; finished?: boolean }) {
-  const parts = useMemo(() => messageParts(text), [text]);
-  const content: ReactNode[] = [];
-  for (let index = 0; index < parts.length; index++) {
-    const part = parts[index]!;
-    if (part.kind === "text") { content.push(<span key={index}>{part.text}</span>); continue; }
-    const images = [part];
-    const first = index;
-    while (parts[index + 1]?.kind === "text" && /^[\s·|,]*$/.test((parts[index + 1] as { text: string }).text) && parts[index + 2]?.kind === "image") {
-      images.push(parts[index + 2] as typeof part);
-      index += 2;
-    }
-    content.push(<span className="message-images" key={first}>{images.map((image, item) => <ImagePreview key={`${item}:${image.path}`} taskId={taskId} productId={productId} path={image.path} label={image.label} finished={finished} />)}</span>);
-  }
-  return <>{content}</>;
+  const components = useMemo<Components>(() => ({
+    a: ({ href, children }) => {
+      const path = localImagePath(href ?? "");
+      if (path) return <ImagePreview taskId={taskId} productId={productId} path={path} label={typeof children === "string" ? children : "Screenshot"} finished={finished} />;
+      return href && /^(https?:|mailto:)/i.test(href) ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>;
+    },
+    img: ({ src, alt }) => {
+      const path = typeof src === "string" ? localImagePath(src) : undefined;
+      return path ? <ImagePreview taskId={taskId} productId={productId} path={path} label={alt || "Screenshot"} finished={finished} /> : <span>{alt || "Image"}</span>;
+    },
+    table: ({ children }) => <div className="message-table"><table>{children}</table></div>,
+    // Keep agents' words readable without introducing a source-code viewer.
+    code: ({ children }) => <span>{children}</span>,
+    pre: ({ children }) => <div className="message-quotation">{children}</div>,
+  }), [taskId, productId, finished]);
+  return <div className="message-markdown"><Markdown remarkPlugins={markdownPlugins} components={components} skipHtml
+    urlTransform={(url) => localImagePath(url) ? url : defaultUrlTransform(url)}>{text}</Markdown></div>;
 });
 
 /** Both saved report pictures and links share the same bounded, visible-only image lifetime. */

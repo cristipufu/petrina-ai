@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MessageBody, messageParts } from '../src/components/MessageBody';
+import { MessageBody } from '../src/components/MessageBody';
 
 const { preview } = vi.hoisted(() => ({ preview: vi.fn() }));
 vi.mock('../src/engine', async (original) => ({ ...await original<typeof import('../src/engine')>(), sim: { previewImage: preview } }));
@@ -33,21 +33,45 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
 
 describe('local screenshot links in public messages', () => {
+  it('renders paragraphs, headings, emphasis and readable noninteractive task lists', async () => {
+    const text = 'I will review the current screens.\n\n**To-do list**\n- [ ] Review existing guidelines\n- [x] Shape the routine editor\n\n## Evidence\n\n1. Read the current source\n2. Check the result\n\n> Keep the saved intent.\n\n[Documentation](https://example.com/guide)';
+    await act(async () => root.render(<MessageBody taskId="task-1" text={text} />));
+    expect(host.querySelector('strong')?.textContent).toBe('To-do list');
+    const checkboxes = [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    expect(checkboxes.map(input => input.checked)).toEqual([false, true]);
+    expect(checkboxes.every(input => input.disabled)).toBe(true);
+    expect(host.querySelectorAll('ol li')).toHaveLength(2);
+    expect(host.querySelector('h2')?.textContent).toBe('Evidence');
+    expect(host.querySelector('blockquote')?.textContent).toContain('Keep the saved intent.');
+    expect(host.querySelector('a')?.getAttribute('rel')).toContain('noopener');
+    expect(host.textContent).not.toContain('- [ ]');
+  });
+
+  it('updates incomplete streamed Markdown and keeps raw HTML and unsafe links inactive', async () => {
+    await act(async () => root.render(<MessageBody taskId="task-1" text="**Working" />));
+    expect(host.textContent).toContain('Working');
+    await act(async () => root.render(<MessageBody taskId="task-1" text={'**Working**\n\n- [ ] Review\n\n<script>alert(1)</script>\n\n[Bad](javascript:alert)\n\n![Remote](https://example.com/image.png)'} />));
+    expect(host.querySelector('strong')?.textContent).toBe('Working');
+    expect(host.querySelector('script')).toBeNull();
+    expect(host.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(host.querySelector('img[src^="http"]')).toBeNull();
+    expect(preview).not.toHaveBeenCalled();
+  });
+
   it('requests a shared message screenshot from the product that supplied it', async () => {
     await act(async () => root.render(<MessageBody taskId="shared-task" productId="api" text="[Checked](screenshots/checked.png)" />));
     await visible(true);
     expect(preview).toHaveBeenCalledWith('shared-task', 'screenshots/checked.png', 'api');
   });
 
-  it('recognizes local Markdown links and leaves websites and unrelated text untouched', () => {
-    expect(messageParts('Shots: [Light](/task/light.png) · ![Dark](<screenshots/dark theme.webp>)')).toEqual([
-      { kind: 'text', text: 'Shots: ' }, { kind: 'image', label: 'Light', path: '/task/light.png' },
-      { kind: 'text', text: ' · ' }, { kind: 'image', label: 'Dark', path: 'screenshots/dark theme.webp' },
-    ]);
+  it('recognizes local Markdown links without fetching websites or unrelated paths', async () => {
+    await act(async () => root.render(<MessageBody taskId="task-1" text={'Shots: [Light](/task/light.png) · ![Dark](<screenshots/dark theme.webp>) · [File](file:///task/light%20theme.png)'} />));
+    expect(host.querySelectorAll('.message-image')).toHaveLength(3);
     for (const text of ['Plain <script> remains text', '[Website](https://example.com/image.png)', '[Network](//remote/image.png)', '[Document](/task/README.md)', '[SVG](/task/image.svg)']) {
-      expect(messageParts(text)).toEqual([{ kind: 'text', text }]);
+      await act(async () => root.render(<MessageBody taskId="task-1" text={text} />));
+      expect(host.querySelector('.message-image')).toBeNull();
     }
-    expect(messageParts('[Light](file:///task/light%20theme.png)')[0]).toEqual({ kind: 'image', label: 'Light', path: 'file:///task/light theme.png' });
+    expect(preview).not.toHaveBeenCalled();
   });
 
   it('reads images only near the viewport and releases their bytes when scrolled away', async () => {
