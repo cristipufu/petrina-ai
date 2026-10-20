@@ -588,7 +588,7 @@ export async function revParse(path: string, ref: string): Promise<string | unde
 
 /** Does `descendant` contain `ancestor`? */
 export async function contains(path: string, descendant: string, ancestor: string): Promise<boolean> {
-  if (!SHA.test(descendant) || !SHA.test(ancestor)) return false;
+  if ((descendant !== "HEAD" && !SHA.test(descendant)) || !SHA.test(ancestor)) return false;
   return (await run(["git", "merge-base", "--is-ancestor", ancestor, descendant], path)).code === 0;
 }
 

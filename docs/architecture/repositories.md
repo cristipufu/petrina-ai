@@ -43,6 +43,8 @@ Overlapping: the working copy is put on main with the change applied, conflict m
 
 When a port does follow a review, the change itself was reviewed already: one reviewer, on a tool other than the builder's where the stage has one, reviews only the port (`git range-diff` between the reviewed version and the ported one, and each resolved file against main's), as one round; its findings go back to the builder as usual, and the rounds after it are ordinary. The coordinator's approval still resets after a port, because the change was rewritten by hand.
 
+Prepared port material contains those port comparisons rather than regenerating the complete reviewed change. Lockfile comparisons are linked separately and retain their review scope. Each repository's temporary review copies are removed through that repository's own clone, including copies for products removed from the task.
+
 Nothing at delivery rebases, merges or changes code; for a release Petrina adds only its own version commit. Petrina delivers the result itself, as a fast-forward, a pull request or a release.
 
 ## Shipping is never repeated blindly

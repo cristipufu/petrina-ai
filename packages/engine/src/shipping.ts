@@ -53,6 +53,7 @@ export const CARRIED_OVER = "This delivery was interrupted before Petrina was up
 
 /** What the check before publishing found. `unknown`: GitHub could not be asked. `other`: something that is not this work is there. */
 type Delivery = { found: true; text: string; record: (signal: AbortSignal) => Promise<unknown> | unknown } | { found: false; text: string } | { found: "unknown" | "other"; text: string };
+type DeclaredVersion = { file: string; version?: string; text: string };
 
 /** Publishing found new source commits, after ruling out an already completed push. */
 class SourceMoved extends Error {}
@@ -133,9 +134,11 @@ export class Shipping {
 
   private async deliverMany(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
 
-    for (const work of task.repositories!.filter((entry) => entry.pr?.state === "closed" && !entry.landingAccepted)) {
-
-      const state = await git.prState(work.source!.product.repo, work.pr!.number, this.k.options.gh);
+    const closed = task.repositories!.filter((entry) => entry.pr?.state === "closed" && !entry.landingAccepted);
+    const states = await Promise.all(closed.map((work) => git.prState(work.source!.product.repo, work.pr!.number, this.k.options.gh)));
+    this.stopIfAsked(signal);
+    for (const [index, work] of closed.entries()) {
+      const state = states[index];
       if (state) work.pr!.state = state;
     }
     if (task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) { this.finishMany(task); return "stop"; }
@@ -377,10 +380,10 @@ export class Shipping {
       this.k.commitNow();
       return "ready";
     }
-    await this.chooseVersion(scope, signal);
+    const declared = await this.chooseVersion(scope, signal);
     this.k.log(scope, "status", `Getting the release ready: Petrina sets the version to ${shipping.version}`);
     this.k.commitNow();
-    const tested = await this.setVersion(scope);
+    const tested = await this.setVersion(scope, declared);
     // A version commit changes what ships: the checks run on it too.
     if (tested !== start && (await this.checks.failing(scope, signal))) return this.preparationFailed(scope, `The product's checks fail with the version set to ${shipping.version}`, signal);
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
@@ -484,7 +487,7 @@ export class Shipping {
    * stops the release, with nothing published. Returns the commit to publish: the version commit, or the work
    * itself when its files already say the version (a first release, or none to set).
    */
-  private async setVersion(scope: RepositoryContext): Promise<string> {
+  private async setVersion(scope: RepositoryContext, declared: readonly DeclaredVersion[]): Promise<string> {
     const { work: repository } = scope;
     const worktree = repository.worktree!;
     const shipping = repository.shipping!;
@@ -493,11 +496,10 @@ export class Shipping {
     const stop = (why: string): never => {
       throw new Error(`Petrina could not set the version to ${version}: ${why}. It published nothing. Set it there yourself (only the version) in a task, or release by hand, then retry.`);
     };
-    const due = (await this.declaredVersions(worktree, start)).filter((entry) => entry.version !== version);
+    const due = declared.filter((entry) => entry.version !== version);
     if (!due.length) return start;
     const before = new Map<string, string>();
-    for (const { file, version: from } of due) {
-      const text = (await git.fileAt(worktree, start, file))!;
+    for (const { file, version: from, text } of due) {
       const next = withVersion(file, text, from!, version);
       if (next === undefined) return stop(`${file} does not state it in a way Petrina can change on its own`);
       before.set(file, from!);
@@ -538,7 +540,7 @@ export class Shipping {
   }
 
   /** Releases: the latest published release plus the product's bump, worked out now, with its tag still free on GitHub. */
-  private async chooseVersion(scope: RepositoryContext, signal: AbortSignal): Promise<void> {
+  private async chooseVersion(scope: RepositoryContext, signal: AbortSignal): Promise<DeclaredVersion[]> {
     const { work: repository } = scope;
     const product = this.k.repositoryOf(scope)!;
     const shipping = repository.shipping!;
@@ -571,19 +573,18 @@ export class Shipping {
     shipping.version = next.version;
     shipping.tag = next.tag;
     shipping.after = latest.value ?? "";
+    return declared;
   }
 
   /** What the product's main version files say at a commit: those that state a version, and those Petrina cannot read (no `version`). */
-  private async declaredVersions(path: string, sha: string): Promise<{ file: string; version?: string }[]> {
-    const found: { file: string; version?: string }[] = [];
-    for (const file of MAIN_VERSION_FILES) {
-      const text = await git.fileAt(path, sha, file);
-      if (text === undefined) continue;
+  private async declaredVersions(path: string, sha: string): Promise<DeclaredVersion[]> {
+    const contents = await Promise.all(MAIN_VERSION_FILES.map((file) => git.fileAt(path, sha, file)));
+    return MAIN_VERSION_FILES.flatMap((file, index) => {
+      const text = contents[index];
+      if (text === undefined) return [];
       const declared = declaredVersion(file, text);
-      if (declared === "unreadable") found.push({ file });
-      else if (declared !== "none") found.push({ file, version: declared.version });
-    }
-    return found;
+      return declared === "unreadable" ? [{ file, text }] : declared === "none" ? [] : [{ file, text, version: declared.version }];
+    });
   }
 
   /** A release's version commit on top of `start`: one parent, and only version files changed. */
@@ -1594,8 +1595,12 @@ export class Shipping {
       this.following.add(task.id);
       try {
 
-        for (const work of task.repositories!) if (work.pr?.state === "open") {
-          const state = await git.prState(work.source!.product.repo, work.pr.number, this.k.options.gh).catch(() => undefined);
+        const pending = task.repositories!.filter((work) => work.pr?.state === "open").map((work) => ({ work, pr: work.pr! }));
+        const states = await Promise.all(pending.map(({ work, pr }) => git.prState(work.source!.product.repo, pr.number, this.k.options.gh).catch(() => undefined)));
+        if (this.k.stopped || this.k.drivers.has(task.id)) continue;
+        for (const [index, { work, pr }] of pending.entries()) {
+          const state = states[index];
+          if (work.pr !== pr || pr.state !== "open") continue;
           if (state === "merged" || state === "closed") {
             work.pr.state = state;
 

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import { addCopy, commitAll, commitTree, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
+import { addCopy, commitAll, commitTree, contains, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { firstLine, removeDir, testGitEnv } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
@@ -14,6 +14,20 @@ const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g,
 
 describe("Petrina's own git steps", () => {
   afterAll(() => removeDir(temp));
+
+  it("checks ancestry from HEAD directly while preserving hash validation for other inputs", async () => {
+    const repo = join(temp, "head-ancestry"); mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "First\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "First");
+    const base = git(repo, "rev-parse", "HEAD");
+    writeFileSync(join(repo, "README.md"), "Second\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Second");
+    const head = git(repo, "rev-parse", "HEAD");
+    expect(await contains(repo, "HEAD", base)).toBe(true);
+    expect(await contains(repo, head, base)).toBe(true);
+    expect(await contains(repo, base, head)).toBe(false);
+    expect(await contains(repo, "other-reference", base)).toBe(false);
+    expect(await contains(repo, "HEAD", "invalid-ancestor")).toBe(false);
+  });
 
   it("unlinks a replaced reviewer folder without following it into an unfinished task", async () => {
     const repo = join(temp, "peer-link-repo");

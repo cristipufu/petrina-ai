@@ -1,7 +1,11 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { chmodSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import * as gitOps from "../src/git.js";
+import { Cleanup } from "../src/cleanup.js";
 import { detachRepositoryState, executionFor } from "../src/repository-context.js";
 import { Learnings } from "../src/learnings.js";
-import { makeWorld, removeDir, waitFor, type World } from "./support.js";
+import { git, makeWorld, removeDir, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];
 afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
@@ -24,6 +28,51 @@ async function fixture(name: string) {
 }
 
 describe("explicit repository execution contexts", () => {
+  it("reads shared PR states concurrently and ignores late replies after a driver starts", async () => {
+    const { engine, task } = await fixture("parallel-pr-reads");
+    await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
+    task.state = "pr-open";
+    for (const [index, work] of task.repositories!.entries()) {
+      const product = engine.s.products.find((product) => product.id === work.productId)!;
+      work.source = { product, confirmed: true, start: { kind: "default", branch: "main" }, destination: { mode: "pull-request", repo: product.repo, branch: "main", kind: "new-pr" } };
+      work.pr = { number: index + 1, url: "https://example.test/pr", state: "open", openedAt: 1 };
+    }
+    let closing = false, pending: Promise<void> | undefined;
+    const replies: ((value: Awaited<ReturnType<typeof gitOps.prState>>) => void)[] = [];
+    const read = spyOn(gitOps, "prState").mockImplementation(() => closing ? Promise.resolve("open") : new Promise((resolve) => replies.push(resolve)));
+    try {
+      pending = engine["shipping"].pollPullRequests();
+      expect(replies).toHaveLength(2);
+      engine.drivers.set(task.id, new AbortController());
+      replies[0]!("merged"); replies[1]!("closed");
+      await pending;
+      expect(task.repositories!.map((work) => work.pr!.state)).toEqual(["open", "open"]);
+      expect(task.state as string).toBe("pr-open");
+    } finally {
+      closing = true; for (const reply of replies) reply("open");
+      await pending?.catch(() => {}); engine.drivers.delete(task.id); read.mockRestore(); await engine.shutdown();
+    }
+  });
+
+  it("observes check inputs once per gate and rechecks freshness instead of trusting a saved current flag", async () => {
+    const { engine, task } = await fixture("check-observations");
+    const probe = spyOn(gitOps, "worktreeStatus");
+    try {
+      engine.setPoolPaused(false);
+      const scope = executionFor(task, "first"), checks = engine["checks"], signal = new AbortController().signal;
+      const commands = [{ name: "Quick check", argv: [process.execPath, "-e", "console.log('Checked')"] }];
+      engine.s.products.find((product) => product.id === "first")!.checks = commands;
+      expect(await checks.failing(scope, signal, commands)).toBe(false);
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(await checks.failing(scope, signal, commands)).toBe(false);
+      expect(probe).toHaveBeenCalledTimes(2);
+      expect(scope.work.checks!.current).toBe(true);
+      writeFileSync(join(scope.work.worktree!, "README.md"), "A tracked change after the checks\n");
+      expect(await checks.current(scope)).toBe(false);
+      expect(probe).toHaveBeenCalledTimes(3);
+    } finally { probe.mockRestore(); await engine.shutdown(); }
+  });
+
   it("keeps bound owners and canonical state through snapshots, saves and restart", async () => {
     const f = await fixture("snapshots");
     let engine = f.engine;
@@ -67,10 +116,17 @@ describe("explicit repository execution contexts", () => {
       release = await checks["turnToRun"](second, signal);
       pending = checks.runProductChecks(first, [{ name: "First product only", argv: [process.execPath, "-e", "console.error('Failure from the first product'); process.exit(1)"] }], signal);
       await waitFor(() => checks["line"].length === 1, "the first product's check to queue");
+      writeFileSync(join(first.work.worktree!, "queued-change.txt"), "Committed while checks waited\n");
+      git(first.work.worktree!, "add", "."); git(first.work.worktree!, "commit", "-qm", "Keep the change made while checks waited");
+      const queuedHead = await gitOps.head(first.work.worktree!);
+      const hook = join(first.work.worktree!, ".git", "hooks", "commit-msg");
+      writeFileSync(hook, "#!/bin/sh\nexit 0\n"); chmodSync(hook, 0o755);
       task.activeProductId = "second";
       engine.getState(); engine.windowState(); engine.taskDetails(task.id); engine.commitNow();
       release(); release = undefined;
       expect(await pending).toBe(1);
+      expect(await gitOps.head(first.work.worktree!)).toBe(queuedHead);
+      expect(engine.s.products.find((product) => product.id === "first")!.hooks).toEqual(["commit-msg"]);
       expect(first.work.checks!.results[0]!.output).toContain("Failure from the first product");
       expect(second.work.checks).toBeUndefined();
       expect(Object.hasOwn(task, "checks")).toBe(false);
@@ -81,6 +137,29 @@ describe("explicit repository execution contexts", () => {
       engine.save();
       expect(engine.store.load()!.tasks.find((entry) => entry.id === task.id)!.repositories![0]!.checks!.results[0]!.ok).toBe(false);
     } finally { release?.(); await pending?.catch(() => {}); await engine.shutdown(); }
+  });
+
+  it("cleans each included and excluded repository's review copies once using its own clone", async () => {
+    const { engine, task } = await fixture("cleanup-roots");
+    try {
+      await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
+      task.state = "cancelled";
+      task.excludedRepositories = [{ ...structuredClone(task.repositories![0]!), productId: "excluded" }];
+      const works = [...task.repositories!, ...task.excludedRepositories];
+      for (const work of works) {
+        const product = engine.s.products.find((product) => product.id === work.productId) ?? engine.s.products[0]!;
+        work.source = { product: { ...product, id: work.productId }, confirmed: true, start: { kind: "default", branch: "main" }, destination: { mode: "local", repo: product.repo, branch: "main", kind: "branch" } };
+        work.worktree = join(engine.dataDir, "worktrees", work.productId, task.id);
+      }
+      const copies = spyOn(gitOps, "removeFinishedCopies").mockResolvedValue(true);
+      const main = spyOn(gitOps, "removeWorktree").mockResolvedValue(true);
+      try {
+        await new Cleanup(engine).removeCopy(task.id);
+        expect(copies.mock.calls).toEqual(works.map((work) => [work.source!.product.path!, join(engine.dataDir, "worktrees", work.productId, `${task.id}.copies`)]));
+        expect(main.mock.calls).toEqual(works.map((work) => [work.source!.product.path!, work.worktree!]));
+        expect(works.every((work) => work.cleanup?.reviewCopiesRemovedAt !== undefined)).toBe(true);
+      } finally { copies.mockRestore(); main.mockRestore(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("writes a shared reviewer's named lesson directly to its repository", async () => {

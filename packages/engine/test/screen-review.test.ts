@@ -465,6 +465,7 @@ it.each(["pause", "cancel", "fail"] as const)("removes the saved copies and git 
       expect(Object.keys(f.task().hunt!.screenTurns!)).toHaveLength(2);
       expect(Object.values(f.task().hunt!.screenTurns!).every((entry) => existsSync(entry.copy))).toBe(true);
     } else {
+      await waitFor(() => !f.engine.copyCleanups.has(f.id) && !f.engine.cleanupJobs.has(f.id) && !f.engine.backgroundWork.size, "the copy cleanup and Git registry update to finish");
       const registered = git(f.repo, "worktree", "list", "--porcelain");
       for (const copy of registeredCopies) expect(registered).not.toContain(copy);
     }

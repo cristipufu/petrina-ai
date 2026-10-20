@@ -30,6 +30,7 @@ function checkDiagnostic(output: string): string | undefined {
 }
 
 type CheckEntries = Map<string, DeepMutable<JourneyProductCheck>>;
+type CheckState = { sha?: string; tree?: string; trackedChanged: boolean; hooks: string[]; definition: string };
 
 export class ProductChecks {
   /**
@@ -56,11 +57,12 @@ export class ProductChecks {
 
   releasePreparation(taskId: Id): void { this.preparations.delete(taskId); }
 
-  private async turnToRun(scope: RepositoryContext, signal: AbortSignal): Promise<() => void> {
+  private async turnToRun(scope: RepositoryContext, signal: AbortSignal): Promise<(() => void) & { waited: boolean }> {
     const { task } = scope;
     if (signal.aborted || this.k.stopped) throw new Aborted();
     const most = this.k.options.checkRuns ?? 1;
-    if (this.running >= most) {
+    const waited = this.running >= most;
+    if (waited) {
       task.statusLine = "Waiting to run the checks: another task's run comes first";
       this.k.commit();
       await new Promise<void>((resolve, reject) => {
@@ -96,7 +98,7 @@ export class ProductChecks {
       finished();
       throw new WaitingForUsage(this.k.draining ? this.k.drainLine : "Waiting for the pool to resume");
     }
-    return finished;
+    return Object.assign(finished, { waited });
   }
 
   /**
@@ -171,7 +173,7 @@ export class ProductChecks {
    * hooks on the task's whole change. Failures become blocking findings, with the output as evidence. A check
    * only looks: whatever one changes in files git tracks is undone, so nothing unreviewed joins the work.
    */
-  async runProductChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
+  async runProductChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[], prepared?: CheckState): Promise<number> {
     const { task, work: repository } = scope;
     if (!repository.worktree) return 0;
     // A check queue entry is not a model conversation. No agent still runs on this copy.
@@ -181,16 +183,16 @@ export class ProductChecks {
     }
     if (!this.claimPreparation(task.id)) throw new WaitingForUsage("Waiting for room to prepare the product checks");
     this.k.schedule();
-    try { return await this.runPreparedChecks(scope, checks, signal, kept); }
+    try { return await this.runPreparedChecks(scope, checks, signal, kept, prepared); }
     finally { this.releasePreparation(task.id); }
   }
 
-  private async runPreparedChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[]): Promise<number> {
+  private async runPreparedChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[], prepared?: CheckState): Promise<number> {
     const { task, work: repository } = scope;
     if (!repository.worktree) return 0;
-    const hooks = await this.noteHooks(scope);
+    let state = prepared ?? await this.captureState(scope, checks);
+    const hooks = state.hooks;
     if (!checks.length && !hooks.length && !repository.checks) return 0;
-    const definition = await this.definition(scope, checks);
     // Resuming unfinished release notes revalidates the preparation first. Those repeated checks belong
     // to the same step's timeline: they do not complete the notes or start another agent step.
     const open = openStep(task);
@@ -213,11 +215,22 @@ export class ProductChecks {
       step.productChecks = [...(step.productChecks ?? []), ...entries.values()];
     }
     this.k.commit();
-    let finished: (() => void) | undefined;
+    let finished: Awaited<ReturnType<ProductChecks["turnToRun"]>> | undefined;
     let complete = false;
     try {
       finished = await this.turnToRun(scope, signal);
-      const failures = await this.runAll(scope, checks, hooks, definition, signal, entries, kept);
+      if (finished.waited) {
+        state = await this.captureState(scope, checks);
+        // Another run held the lane. Files and external hook inputs may have changed while waiting.
+        kept = await this.savedProductResults(scope, checks, state);
+        for (const [id, entry] of entries) if (id.startsWith("hook-") && !state.hooks.includes(id.slice(5))) entry.result = "skipped";
+        for (const hook of state.hooks) if (!entries.has(`hook-${hook}`)) {
+          const entry: DeepMutable<JourneyProductCheck> = { id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" };
+          entries.set(`hook-${hook}`, entry);
+          if (step) step.productChecks = [...(step.productChecks ?? []), entry];
+        }
+      }
+      const failures = await this.runAll(scope, checks, state, signal, entries, kept);
       complete = true;
       return failures;
     } finally {
@@ -232,14 +245,15 @@ export class ProductChecks {
     }
   }
 
-  private async runAll(scope: RepositoryContext, checks: readonly ProductCheck[], hooks: string[], definition: string, signal: AbortSignal, entries: CheckEntries, kept?: readonly CheckRun[]): Promise<number> {
+  private async runAll(scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState, signal: AbortSignal, entries: CheckEntries, kept?: readonly CheckRun[]): Promise<number> {
     const { task, work: repository } = scope;
     if (signal.aborted || this.k.stopped) throw new Aborted();
     if (!repository.worktree) return 0;
     task.statusLine = "Running the product's checks";
     this.k.commit();
     // Checks and hooks are the repository's own code: whatever they commit or change, the work stays as it was.
-    const before = await git.head(repository.worktree);
+    const before = state.sha ?? await git.head(repository.worktree);
+    const { hooks, definition } = state;
     const env = { ...withoutCredentials(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
     const step = openStep(task);
     const progress = (id: string, event: CheckProgress) => {
@@ -355,23 +369,35 @@ export class ProductChecks {
   }
 
   /** The commands and hook inputs: a new definition needs a fresh run, even on the same tree. */
-  private async definition(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<string> {
+  private async definition(scope: RepositoryContext, checks: readonly ProductCheck[], hooks: Awaited<ReturnType<typeof git.commitHookFiles>>): Promise<string> {
     const { work: repository } = scope;
     const hash = createHash("sha256").update(JSON.stringify(checks.filter((check) => check.argv.length).map((check) => check.argv)));
-    for (const hook of await git.commitHookFiles(repository.worktree!)) {
-      hash.update(JSON.stringify([hook.name, hook.path])).update(await readFile(hook.path));
-      if (hook.name === "commit-msg") hash.update(await git.message(repository.worktree!));
+    const [bodies, message] = await Promise.all([
+      Promise.all(hooks.map((hook) => readFile(hook.path))),
+      hooks.some((hook) => hook.name === "commit-msg") ? git.message(repository.worktree!) : undefined,
+    ]);
+    for (const [index, hook] of hooks.entries()) {
+      hash.update(JSON.stringify([hook.name, hook.path])).update(bodies[index]!);
+      if (hook.name === "commit-msg") hash.update(message!);
       if (hook.name === "pre-commit") hash.update(repository.baseSha ?? "");
     }
     return hash.digest("hex");
   }
 
+  /** Reuse one observation within this operation, never as a persistent freshness flag. */
+  private async captureState(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<CheckState> {
+    const path = scope.work.worktree!;
+    const [status, files, tree] = await Promise.all([git.worktreeStatus(path), git.commitHookFiles(path), git.treeOf(path)]);
+    const hooks = await this.noteHooks(scope, files.map((hook) => hook.name));
+    return { sha: status.head, tree, trackedChanged: status.trackedChanged, hooks, definition: await this.definition(scope, checks, files) };
+  }
+
   /** Whether the last run used the same code and definitions. A squash keeps its evidence, pass or fail. */
-  private async ranOn(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<boolean> {
+  private async ranOn(scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState): Promise<boolean> {
     const { work: repository } = scope;
     if (!repository.checks || !repository.worktree) return false;
-    if (await git.trackedChanged(repository.worktree)) return false;
-    const hooks = await this.noteHooks(scope);
+    if (state.trackedChanged) return false;
+    const { hooks, definition, sha, tree } = state;
     const productCommands = expectedCheckCommands(checks, repository.checks.results);
     const staticFailed = checks.some((check) => staticCheck(check) && repository.checks!.results.some((run) => !run.ok && run.command === commandText(check.argv)));
     const expected = [
@@ -380,7 +406,6 @@ export class ProductChecks {
       ...(!staticFailed && hooks.includes("commit-msg") ? ["git hook run commit-msg"] : []),
     ];
     if (JSON.stringify(expected) !== JSON.stringify(repository.checks.results.map((run) => run.command))) return false;
-    const definition = await this.definition(scope, checks);
     if (repository.checks.definition) {
       if (repository.checks.definition !== definition) return false;
     } else {
@@ -388,7 +413,6 @@ export class ProductChecks {
       // Verify hooks once, then save their complete definition instead of guessing from command text.
       if (hooks.length) return false;
     }
-    const [sha, tree] = await Promise.all([git.head(repository.worktree).catch(() => undefined), git.treeOf(repository.worktree)]);
     const matched = (!!tree && repository.checks.tree === tree) || (!!sha && repository.checks.sha === sha);
     if (matched) repository.checks.definition = definition;
     // A hook may launch checks outside the committed tree: unchanged launcher bytes cannot prove
@@ -401,16 +425,18 @@ export class ProductChecks {
   async current(scope: RepositoryContext): Promise<boolean> {
     const { work: repository } = scope;
     const product = this.k.productOf(scope);
-    return this.ranOn(scope, product && repository.worktree ? checksFor(product, repository.worktree) : []);
+    if (!repository.checks || !repository.worktree) return false;
+    const checks = product ? checksFor(product, repository.worktree) : [];
+    return this.ranOn(scope, checks, await this.captureState(scope, checks));
   }
 
   /** Revalidating opaque or older hooks must not retry product checks with unchanged code and commands. */
-  private async savedProductResults(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<readonly CheckRun[] | undefined> {
+  private async savedProductResults(scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState): Promise<readonly CheckRun[] | undefined> {
     const { work: repository } = scope;
     if (!repository.checks || !repository.worktree) return undefined;
-    if (await git.trackedChanged(repository.worktree)) return undefined;
-    if (repository.checks.definition && (repository.checks.definition !== await this.definition(scope, checks) || !(await this.noteHooks(scope)).length)) return undefined;
-    const [sha, tree] = await Promise.all([git.head(repository.worktree).catch(() => undefined), git.treeOf(repository.worktree)]);
+    if (state.trackedChanged) return undefined;
+    if (repository.checks.definition && (repository.checks.definition !== state.definition || !state.hooks.length)) return undefined;
+    const { sha, tree } = state;
     if (!(tree && repository.checks.tree === tree) && !(sha && repository.checks.sha === sha)) return undefined;
     const commands = orderedChecks(checks).map((check) => commandText(check.argv));
     const results = repository.checks.results.slice(0, commands.length);
@@ -457,19 +483,20 @@ export class ProductChecks {
     if (!repository.worktree) return false;
     const product = this.k.productOf(scope);
     checks ??= product ? checksFor(product, repository.worktree) : [];
-    if (await this.ranOn(scope, checks)) {
+    const state = await this.captureState(scope, checks);
+    if (await this.ranOn(scope, checks, state)) {
       if (repository.checks) repository.checks.current = true;
       const failed = this.settleFindings(scope, repository.checks!.results);
       this.k.commit();
       return failed.length > 0;
     }
-    return (await this.runProductChecks(scope, checks, signal, await this.savedProductResults(scope, checks))) > 0;
+    return (await this.runProductChecks(scope, checks, signal, await this.savedProductResults(scope, checks, state), state)) > 0;
   }
 
   /** The repository's commit hooks, as git would run them now, noted on the product for the builder's instructions. */
-  async noteHooks(scope: RepositoryContext): Promise<string[]> {
+  async noteHooks(scope: RepositoryContext, observed?: string[]): Promise<string[]> {
     const { work: repository } = scope;
-    const hooks: string[] = await git.commitHooks(repository.worktree!);
+    const hooks = observed ?? await git.commitHooks(repository.worktree!);
     const product = this.k.productOf(scope);
     if (product && (product.hooks ?? []).join() !== hooks.join()) {
       if (hooks.length) product.hooks = hooks;

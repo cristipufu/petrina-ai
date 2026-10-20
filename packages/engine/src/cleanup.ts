@@ -134,7 +134,7 @@ export class Cleanup {
         if (!path.startsWith(resolve(this.k.dataDir, "worktrees") + sep)) continue;
         try {
           const root = work.source!.product.path!;
-          for (const productId of new Set(task.repositories!.map((entry) => entry.productId))) await git.removeFinishedCopies(root, join(this.k.dataDir, "worktrees", productId, `${task.id}.copies`));
+          await git.removeFinishedCopies(root, join(this.k.dataDir, "worktrees", work.productId, `${task.id}.copies`));
           await git.removeWorktree(root, path);
           work.cleanup = { removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
         } catch (error) { work.cleanup = { error: String(error) }; }

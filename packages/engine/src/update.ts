@@ -61,8 +61,7 @@ export class Updates {
     const met = await git.mergeBase(worktree, "HEAD", main);
     if (!met) return { base };
     if (met === base) return { base, fork: base };
-    const forward = await git.contains(worktree, met, base);
-    const baseInBranch = await git.contains(worktree, await git.head(worktree), base);
+    const [forward, baseInBranch] = await Promise.all([git.contains(worktree, met, base), git.contains(worktree, "HEAD", base)]);
     // The usual case: the branch forked at the base and main moved on since. Nothing to settle.
     if (!forward && baseInBranch) return { base, fork: base };
     repository.baseSha = met;
@@ -109,12 +108,14 @@ export class Updates {
     const fork = foldedFork === latest.sha ? foldedFork : await git.mergeBase(worktree, "HEAD", latest.sha);
     if (!fork) throw new Error(`The work and ${latest.ref} share no history, so Petrina could not bring the work up to date`);
     if (fork === latest.sha) return "current";
-    if (!(await git.isClean(worktree))) throw new Error(`The working copy has changes Petrina did not commit, so it could not bring the work up to date with ${sourceName}`);
-    const merged = await git.mergeTree(worktree, latest.sha);
+    const [clean, merged, gained, tree] = await Promise.all([
+      git.isClean(worktree), git.mergeTree(worktree, latest.sha), git.commitsSince(worktree, fork, latest.sha),
+      repository.reviewedTree ? git.treeOf(worktree) : undefined,
+    ]);
+    if (!clean) throw new Error(`The working copy has changes Petrina did not commit, so it could not bring the work up to date with ${sourceName}`);
     if (!merged) throw new Error(`Petrina could not bring the work up to date with ${sourceName}`);
-    const gained = await git.commitsSince(worktree, fork, latest.sha);
     const commits = `${gained} new commit${gained === 1 ? "" : "s"}`;
-    const reviewed = !!repository.reviewedTree && repository.reviewedTree === await git.treeOf(worktree);
+    const reviewed = !!repository.reviewedTree && repository.reviewedTree === tree;
     if (!merged.conflicts.length) {
       await git.moveTo(worktree, await git.commitTree(worktree, merged.tree, latest.sha, this.message(scope)));
       if (reviewed) repository.reviewedTree = merged.tree;

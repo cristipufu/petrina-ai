@@ -391,9 +391,11 @@ export class Driver {
               }
               const checkedHead = await git.head(scope.work.worktree!).catch(() => undefined);
               if (checkedHead) scope.work.checkedSha = checkedHead;
+              else delete scope.work.checkedSha;
               if (work) work.nothingToPublish = scope.work.delivery !== "release" && checkedHead === scope.work.baseSha;
               const checkedPatch = await this.updates.patch(scope);
               if (checkedPatch) scope.work.checkedPatch = checkedPatch;
+              else delete scope.work.checkedPatch;
 
             }
             if (sentBack) continue;
@@ -410,12 +412,7 @@ export class Driver {
               this.k.commit();
               continue;
             }
-            const head = await git.head(scope.work.worktree!).catch(() => undefined);
-            if (head) scope.work.checkedSha = head;
-            const patch = await this.updates.patch(scope);
-            if (patch) scope.work.checkedPatch = patch;
-            // What agents learned on the way: offered to the coordinator without holding the delivery up.
-            await this.learnings.offer(scope);
+            const { checkedSha: head, checkedPatch: patch } = scope.work;
             if (this.shipsUnasked(current)) {
               if (head) scope.work.approvedSha = head;
               if (patch) scope.work.approvedPatch = patch;
