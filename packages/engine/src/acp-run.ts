@@ -636,15 +636,22 @@ export class AgentRun {
 
   /** The adapter's native account command: no AI call or task message. */
   async readAccountUsage(): Promise<AccountReading | undefined> {
+    if (!running(this.child)) { this.accountBefore = undefined; return undefined; }
     const adapter = ADAPTERS[this.profile.toolId];
     const accounting = adapter?.accountUsage;
     if (!accounting) return undefined;
     this.state.accountText = "";
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
+    let onExit!: () => void;
+    const exited = new Promise<never>((_, reject) => {
+      onExit = () => reject(new Error(`${adapter!.name} stopped before reporting usage`));
+      this.child.once("exit", onExit);
+    });
     try {
       await Promise.race([
         this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text: accounting.command }] }),
+        exited,
         new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new Error(`${adapter!.name} did not report usage in time`)); }, 20_000); }),
       ]);
       const reading = accounting.parse(this.state.accountText);
@@ -659,6 +666,7 @@ export class AgentRun {
       if (timedOut) await this.stop();
       return undefined;
     } finally {
+      this.child.removeListener("exit", onExit);
       clearTimeout(timer);
       delete this.state.accountText;
     }

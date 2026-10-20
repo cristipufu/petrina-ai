@@ -1,9 +1,9 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { Engine } from "../src/engine.js";
 import { serve } from "../src/server.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir, waitFor } from "./support.js";
 
 const dir = tempDir("petrina-server-");
 const engine = new Engine(join(dir, "data"));
@@ -33,6 +33,32 @@ function connect(url: string, protocols: string[], origin?: string): Promise<"op
 
 /** The status a handshake gets, without upgrading. */
 const status = (path: string, headers: Record<string, string>) => fetch(`${http}${path}`, { headers }).then((response) => response.status);
+
+it("closes a window cleanly after a failed timed snapshot and serves a fresh snapshot on reconnect", async () => {
+  let socket: WebSocket | undefined;
+  const states: number[] = [];
+  const open = () => {
+    const client = new WebSocket(ws, { protocols: ["petrina.v1", `petrina.token.${token}`], headers: { origin: OWN } } as unknown as string[]);
+    client.onmessage = event => {
+      const message = JSON.parse(String(event.data));
+      if (message.type === "state") { states.push(message.stateId); client.send(JSON.stringify({ type: "state-ack", stateId: message.stateId })); }
+    };
+    return client;
+  };
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  const snapshot = spyOn(engine, "windowState");
+  try {
+    socket = open(); await waitFor(() => states.length === 1, "the first live snapshot");
+    let closed: number | undefined; socket.onclose = event => { closed = event.code; };
+    snapshot.mockImplementationOnce(() => { throw new Error("Snapshot unavailable"); });
+    engine.commit();
+    await waitFor(() => closed !== undefined, "the timed snapshot failure to close its socket");
+    expect(closed).toBe(1011);
+    expect(log).toHaveBeenCalledWith("Could not refresh task windows:", expect.objectContaining({ message: "Snapshot unavailable" }));
+    socket = open(); await waitFor(() => states.length === 2, "a recovered snapshot");
+    expect(states[1]).toBeGreaterThan(states[0]!);
+  } finally { socket?.close(); snapshot.mockRestore(); log.mockRestore(); }
+});
 
 describe("the engine's key checks", () => {
   it("lets only Petrina's browser pages read whether their health-check key was refused", async () => {

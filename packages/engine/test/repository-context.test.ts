@@ -425,6 +425,29 @@ describe("explicit repository execution contexts", () => {
     }
   });
 
+  it("clears temporary release preparation after version, history or notes failures", async () => {
+    const { engine, task } = await fixture("release-preview-interruption");
+    const scope = executionFor(task), releases = engine["shipping"]["releases"];
+    scope.work.delivery = "release"; scope.work.baseSha = git(scope.work.worktree!, "rev-parse", "HEAD");
+    const stage = { id: "delivery", title: "Delivery", kind: "gate" as const, gate: "delivery" as const, roleId: "release-manager", profileIds: ["sol-high"] };
+    const choose = spyOn(releases, "chooseVersion").mockImplementation(async () => { Object.assign(scope.work.shipping!, { version: "1.0.0", tag: "v1.0.0", after: "" }); return []; });
+    const history = spyOn(releases, "sincePreviousRelease").mockResolvedValue({ title: "History", body: "A change" });
+    const turn = spyOn(engine["turns"], "turn").mockResolvedValue({ notes: "Notes", summary: "Summary" });
+    try {
+      for (const fail of [choose, history, turn]) {
+        fail.mockRejectedValueOnce(new Error("Interrupted preview"));
+        await expect(releases.previewRelease(scope, stage, new AbortController().signal)).rejects.toThrow("Interrupted preview");
+        expect(scope.work.shipping).toBeUndefined();
+        expect(scope.work.releasePreview).toBeUndefined();
+        engine.commitNow();
+        expect(engine.store.load()!.tasks.find(entry => entry.id === task.id)!.repositories![0]!.shipping).toBeUndefined();
+      }
+      await releases.previewRelease(scope, stage, new AbortController().signal);
+      expect(scope.work.shipping).toBeUndefined();
+      expect(scope.work.releasePreview).toMatchObject({ version: "1.0.0", notes: "Notes" });
+    } finally { choose.mockRestore(); history.mockRestore(); turn.mockRestore(); await engine.shutdown(); }
+  });
+
   it("reuses original version contents and reads each committed target once while validating a release", async () => {
     const { engine, task } = await fixture("release-version-reads");
     const scope = executionFor(task, "first"), path = scope.work.worktree!;

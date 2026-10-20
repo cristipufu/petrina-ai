@@ -161,7 +161,14 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
   const sendState = (ready: ServerWebSocket<Socket>[]) => {
     if (!ready.length) return;
     const id = ++stateId;
-    const message = JSON.stringify({ type: "state", stateId: id, state: engine.windowState() });
+    let message: string;
+    try {
+      message = JSON.stringify({ type: "state", stateId: id, state: engine.windowState() });
+    } catch (error) {
+      console.error("Could not refresh task windows:", error);
+      for (const socket of ready) socket.close(1011, "Could not refresh this window. Reconnecting.");
+      return;
+    }
     for (const socket of ready) {
       socket.data.dirty = false;
       socket.data.awaitingState = id;

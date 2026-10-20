@@ -58,6 +58,21 @@ describe("Petrina's own git steps", () => {
     expect(registered).not.toContain(old);
   });
 
+  it("ignores already absent copies when the product moved, but preserves existing folders for recovery", async () => {
+    const missing = join(temp, "moved-product"), folder = join(temp, "moved-product.copies");
+    const listed = spyOn(operations, "linkedWorktrees");
+    try {
+      expect(await removeFinishedCopies(missing, folder)).toBe(false);
+      expect(await removeWorktree(missing, folder)).toBe(false);
+      expect(listed).not.toHaveBeenCalled();
+      mkdirSync(folder); writeFileSync(join(folder, "keep.txt"), "Recover me");
+      await expect(removeFinishedCopies(missing, folder)).rejects.toThrow("the product's folder could not be found");
+      await expect(removeWorktree(missing, folder)).rejects.toThrow("the product's folder could not be found");
+      expect(readFileSync(join(folder, "keep.txt"), "utf8")).toBe("Recover me");
+      expect(listed).not.toHaveBeenCalled();
+    } finally { listed.mockRestore(); }
+  });
+
   it("removes finished locked and missing snapshots with one registration read and one batch verification", async () => {
     const repo = join(temp, "finished-batch"); mkdirSync(repo);
     git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");

@@ -100,6 +100,16 @@ export class Store {
     }
   }
 
+  /** Persist one edited archive without retiring or rewriting any live task. */
+  saveArchivedTask(task: Task): void {
+    try {
+      this.db.transaction(() => this.history.put([task])).immediate();
+    } catch (error) {
+      this.history.reloadMetadata();
+      throw error;
+    }
+  }
+
   /** The product and its finished history disappear together with the approved current snapshot. */
   removeProduct(productId: Id, state: State, recordRemoval?: () => void): void {
     try {

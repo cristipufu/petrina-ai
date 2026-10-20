@@ -424,7 +424,14 @@ export class FollowUps {
 
   /** True when every picture that is still on the original report is now on the card. */
   private async keepImages(card: MTask, reports: readonly FollowUpCredit[]): Promise<boolean> {
-    const saved = await completeAll(reports.flatMap(report => report.images).map(image => keepPicture(this.k.dataDir, card.id, image)));
+    const kept = new Set(card.session.flatMap(line => (line.images ?? []).flatMap(image => image.from ? [JSON.stringify([image.from.taskId, image.from.imageId])] : [])));
+    const pending = reports.flatMap(report => report.images).filter(image => {
+      const key = JSON.stringify([image.sourceTaskId, image.sourceImageId]);
+      if (kept.has(key)) return false;
+      kept.add(key);
+      return true;
+    });
+    const saved = await completeAll(pending.map(image => keepPicture(this.k.dataDir, card.id, image)));
     const failed = saved.some(image => image === "failed");
     const images = saved.filter((image): image is ReportImage => !!image && image !== "failed");
     if (images.length) card.session = [...card.session, { id: this.k.id(card.id), at: Date.now(), from: "system", text: "Kept from the original report", images }];

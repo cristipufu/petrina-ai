@@ -1,5 +1,6 @@
 import { executionFor } from "../src/repository-context.js";
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, expect, it, spyOn } from "bun:test";
+import * as fileIO from "node:fs/promises";
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@petrina/core";
@@ -334,6 +335,36 @@ it("leaves a report untracked when the match cannot be settled, then links one c
     await engine["followUps"].catchUp();
     expect(cardFor(engine, "held")).toHaveLength(1);
   } finally { await engine.shutdown(); }
+});
+
+it("retries a partial picture copy without attaching successful images again", async () => {
+  const world = await open();
+  const { engine } = world;
+  const source = taskOf(engine, world.shop, "Two pictures", [older("partial", "bug-partial: The footer opens a retired page.")]);
+  plant(engine, source.id, source.findings[0]!.text);
+  source.journey![0]!.agentResults![0]!.images!.push({ id: "second", caption: "The other view" });
+  writeFileSync(join(engine.dataDir, "captures", source.id, "second.png"), "png");
+  const original = fileIO.copyFile;
+  let fail = true;
+  const copy = spyOn(fileIO, "copyFile").mockImplementation(async (from, to, mode) => {
+    if (String(from).endsWith("second.png") && fail) throw new Error("Copy unavailable");
+    return original(from, to, mode);
+  });
+  try {
+    await finish(engine, source);
+    const card = cardFor(engine, "partial")[0]!;
+    expect(card.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+    expect(source.findings[0]!.tracking).toBeUndefined();
+    fail = false;
+    await engine["followUps"].catchUp();
+    const images = card.session.flatMap(line => line.images ?? []);
+    expect(images).toHaveLength(2);
+    expect(new Set(images.map(image => image.from!.imageId))).toEqual(new Set(["pic", "second"]));
+    expect(readdirSync(join(engine.dataDir, "captures", card.id))).toHaveLength(2);
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: card.id });
+    await engine["followUps"].catchUp();
+    expect(card.session.flatMap(line => line.images ?? [])).toHaveLength(2);
+  } finally { copy.mockRestore(); await engine.shutdown(); }
 });
 
 it("keeps a report's picture on the unfinished follow-up, then removes it when that follow-up is finished or cancelled", async () => {

@@ -851,7 +851,11 @@ export function removeWorktree(root: string, path: string): Promise<boolean> {
 /** Batch cleanup shares one registration observation, then verifies the complete batch. */
 async function removeKnownWorktree(root: string, path: string, known?: readonly string[]): Promise<boolean> {
   try {
-    if (!existsSync(root)) throw new Reason("the product's folder could not be found");
+    if (!existsSync(root)) {
+      const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+      if (!entry) return false;
+      throw new Reason("the product's folder could not be found");
+    }
     const target = worktreeLocation(path);
     const main = canonical(root);
     if (resolve(path) === resolve(root) || target === main || main.startsWith(target + sep)) throw new Reason("that folder holds the product itself");
@@ -896,6 +900,10 @@ export async function removeFinishedCopies(root: string, folder: string): Promis
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
+  if (!existsSync(root)) {
+    if (!entry) return false;
+    throw new Reason("the product's folder could not be found");
+  }
   // Unlink a replacement before inspecting children; never follow it into somebody else's copy.
   if (entry && !entry.isDirectory()) await rm(folder, { force: true });
   const names = entry?.isDirectory() ? await readdir(folder) : [];

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { AgentRun } from "../src/acp-run.js";
@@ -72,6 +72,24 @@ describe("Antigravity native accounting", () => {
 });
 
 describe("Antigravity agent sessions", () => {
+  it("does not send account commands after exit or wait for the account deadline when the process dies mid-read", async () => {
+    const dir = folder(); new Fakes(dir);
+    const run = await AgentRun.start({ profile, cwd: folder(), command: [process.execPath, fake, dir, "--tool=antigravity"], signal: new AbortController().signal, browser: false, callbacks });
+    const child = run["child"], connection = run["connection"];
+    const listeners = child.listenerCount("exit");
+    const prompt = spyOn(connection, "prompt").mockImplementation(() => { child.kill("SIGKILL"); return new Promise(() => {}); });
+    try {
+      const reading = run.readAccountUsage();
+      let finished = false; void reading.then(() => { finished = true; });
+      await waitFor(() => finished, "account read to finish when its process exits", 5000);
+      expect(await reading).toBeUndefined();
+      expect(child.listenerCount("exit")).toBeLessThanOrEqual(listeners);
+      prompt.mockClear();
+      expect(await run.readAccountUsage()).toBeUndefined();
+      expect(prompt).not.toHaveBeenCalled();
+    } finally { prompt.mockRestore(); await run.stop(); }
+  });
+
   it("hands an exhausted Argon profile back through the usage path without blocking Flash", async () => {
     const dir = folder(); const fakes = new Fakes(dir);
     const options = { cwd: folder(), command: [process.execPath, fake, dir, "--tool=antigravity", "--argon-empty"], signal: new AbortController().signal, browser: false, callbacks };

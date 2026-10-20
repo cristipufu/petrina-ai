@@ -26,12 +26,15 @@ export class ReleasePrep {
     const start = await git.head(repository.worktree!);
     if (repository.releasePreview?.start === start && repository.releasePreview.base === repository.baseSha) return;
     repository.shipping = { moves: 0, failures: 0, start, base: repository.baseSha };
-    await this.chooseVersion(scope, signal);
-    const log = await this.sincePreviousRelease(scope, signal);
-    const result = await this.turns.turn(scope, "release-manager", stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE, () => [log], ReleaseNotesResult, signal);
-    const shipping = repository.shipping!;
-    repository.releasePreview = { start, base: repository.baseSha, version: shipping.version!, tag: shipping.tag!, after: shipping.after!, notes: result.notes, summary: result.summary };
-    delete repository.shipping;
+    try {
+      await this.chooseVersion(scope, signal);
+      const log = await this.sincePreviousRelease(scope, signal);
+      const result = await this.turns.turn(scope, "release-manager", stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE, () => [log], ReleaseNotesResult, signal);
+      const shipping = repository.shipping!;
+      repository.releasePreview = { start, base: repository.baseSha, version: shipping.version!, tag: shipping.tag!, after: shipping.after!, notes: result.notes, summary: result.summary };
+    } finally {
+      delete repository.shipping;
+    }
     this.k.finishStep(scope);
     this.k.commitNow();
   }

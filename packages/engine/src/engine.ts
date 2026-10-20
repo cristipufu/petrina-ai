@@ -153,7 +153,7 @@ export class Engine extends Kernel implements Commands {
     this.armScreenTimer();
     this.timers.push(
       setInterval(() => {
-        void this.shipping.monitor.pollPullRequests();
+        this.pollPullRequests();
         this.shipping.monitor.settleCancelledTasks();
         // Apart from GitHub: a slow lookup never holds up removing copies.
         // Confirmed older bugs are linked before a finished task's pictures are removed.
@@ -168,11 +168,15 @@ export class Engine extends Kernel implements Commands {
     // A long command may send no activity. Save its working time too, so a forced stop loses little of it.
     this.timers.push(
       setInterval(() => {
-        if (!this.stopped && this.s.tasks.some((task) => task.stepClock?.since !== undefined || Object.values(task.hunt?.work ?? {}).some((work) => work.clock?.since !== undefined))) this.save();
+        try {
+          if (!this.stopped && this.s.tasks.some((task) => task.stepClock?.since !== undefined || Object.values(task.hunt?.work ?? {}).some((work) => work.clock?.since !== undefined))) this.save();
+        } catch (error) {
+          console.error("Could not save step times:", error);
+        }
       }, 15_000),
     );
     this.shipping.monitor.settleCancelledTasks();
-    void this.shipping.monitor.pollPullRequests();
+    this.pollPullRequests();
     this.schedule();
     this.readUsage();
     // Catch up at start: link any older bug saved only part-way, then remove finished working copies.
@@ -182,10 +186,16 @@ export class Engine extends Kernel implements Commands {
 
   schedule(): void {
     if (!this.startupComplete) {
+      this.syncScreen();
+      this.commitNow();
       this.startupSchedulePending = true;
       return;
     }
     this.driver.schedule();
+  }
+
+  private pollPullRequests(): void {
+    void this.trackWork(this.shipping.monitor.pollPullRequests()).catch(error => console.error("Could not refresh pull requests:", error));
   }
 
   startDriver(taskId: Id, resume = false): void {
@@ -794,13 +804,15 @@ export class Engine extends Kernel implements Commands {
    * first, and while it is still not installed or not logged in, the item stays with its fix.
    */
   async retry(itemId: Id): Promise<void> {
-    this.takeover.notDrivingItem(itemId);
     const stuck = this.s.inbox.find((entry) => entry.id === itemId);
+    if (stuck?.kind !== "stuck") return;
+    this.takeover.notDrivingItem(itemId);
     if (stuck?.toolId && (await this.tools.stillNotReady(stuck.toolId, this.task(stuck.taskId)))) return;
     const item = this.s.inbox.find((entry) => entry.id === itemId);
     const task = item && this.task(item.taskId);
     const scope = task ? executionFor(task) : undefined;
-    if (!item || !task) return;
+    if (item !== stuck || item.kind !== "stuck" || !task) return;
+    this.takeover.notDrivingItem(itemId);
     this.s.inbox = this.s.inbox.filter((entry) => entry.id !== itemId);
     delete task.error;
     // An explicit Retry refreshes checks, pass or fail, even on unchanged work. Keep the output visible
@@ -950,12 +962,11 @@ export class Engine extends Kernel implements Commands {
     this.waiting.delete(itemId);
   }
 
-  approve(itemId: Id): void {
+  approve(itemId: Id): void | Promise<void> {
     this.takeover.notDrivingItem(itemId);
     const kind = this.s.inbox.find((entry) => entry.id === itemId)?.kind;
     if (kind === "stuck") {
-      void this.retry(itemId);
-      return;
+      return this.retry(itemId);
     }
     if (kind === "shipping") {
       this.shipping.checkShipping(itemId);

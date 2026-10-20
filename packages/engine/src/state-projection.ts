@@ -66,7 +66,8 @@ export class StateProjection {
   saveArchivedTask(task: MTask): void {
     if (this.k.stopped || this.k.s.tasks.includes(task)) return;
 
-    this.k.store.save(this.k.activeState(), this.retiredTasks(), [task as Task]);
+    this.k.store.saveArchivedTask(task as Task);
+    this.dirtyTasks.delete(task.id);
   }
 
   forgetProductHistory(productId: Id): void {
@@ -93,8 +94,9 @@ export class StateProjection {
     this.normalize(saved);
     // On-demand reads stay bounded even when walking through years of finished work.
     if (this.archiveCache.size >= 16) {
-      this.k.store.save(this.k.activeState(), this.retiredTasks(), [...this.archiveCache.values()] as Task[]);
-      this.archiveCache.delete(this.archiveCache.keys().next().value!);
+      const first = this.archiveCache.keys().next().value!;
+      if (this.allTasksDirty || this.dirtyTasks.has(first)) this.saveArchivedTask(this.archiveCache.get(first)!);
+      this.archiveCache.delete(first);
     }
     this.archiveCache.set(id, saved);
     return saved;
