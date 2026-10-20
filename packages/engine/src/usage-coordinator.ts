@@ -24,7 +24,7 @@ export class UsageCoordinator {
       if (!command) continue;
       this.readers.set(adapter.id, usage.create({
         command, cwd: join(dataDir, "checks"), env: () => agentEnv(process.env),
-        record: reports => { for (const info of reports) this.recordUsage(info); this.k.schedule(); },
+        record: reports => { this.recordAccountUsage(adapter.id, reports); this.k.schedule(); },
         log: text => console.warn(`${new Date().toISOString()} ${text}`), changed: () => this.k.commit(),
       }));
     }
@@ -201,7 +201,28 @@ export class UsageCoordinator {
    * count comes from outside any turn).
    */
   recordUsage(info: UsageInfo): void {
+    this.noteUsage(info, Date.now());
+    if (info.status === "rejected" && !info.overage) this.armLimitTimer();
+    this.k.commit();
+  }
+
+  /** A successful complete account snapshot replaces quotas and blocks from the previous subscription. */
+  recordAccountUsage(toolId: Id, reports: readonly UsageInfo[]): void {
+    // Empty or mismatched data cannot establish that an old restriction ended.
+    if (!reports.length || reports.some(report => report.toolId !== toolId)) return;
+    const previous = (this.k.s.pool.usage ?? []).filter(report => report.toolId === toolId);
+    this.k.s.pool.usage = (this.k.s.pool.usage ?? []).filter(report => report.toolId !== toolId);
+    // Only retire blocks created by the reports being replaced (same scope and report time).
+    // A turn-only refusal can have its own cooldown despite an available account balance.
+    this.k.s.pool.limited = (this.k.s.pool.limited ?? []).filter(limit => limit.toolId !== toolId || limit.retry || !previous.some(report =>
+      report.status === "rejected" && !report.overage && report.at === limit.at && (report.model ?? "") === (limit.model ?? "")));
     const now = Date.now();
+    for (const report of reports) this.noteUsage(report, now);
+    this.armLimitTimer();
+    this.k.commit();
+  }
+
+  private noteUsage(info: UsageInfo, now: number): void {
     const report = { ...info, at: now };
     this.k.s.pool.usage = withReport(this.k.s.pool.usage, report) as MState["pool"]["usage"];
     this.k.tracking.usageReported(report);
@@ -210,9 +231,7 @@ export class UsageCoordinator {
     if (info.status === "rejected" && !info.overage) {
       const until = info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS;
       this.k.s.pool.limited = withLimit(this.k.s.pool.limited, { toolId: info.toolId, ...(info.model ? { model: info.model } : {}), until, reason: `${this.toolName(info.toolId)}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, at: now }) as MState["pool"]["limited"];
-      this.armLimitTimer();
     }
-    this.k.commit();
   }
 
   /**

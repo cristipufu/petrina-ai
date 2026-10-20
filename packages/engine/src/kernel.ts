@@ -787,6 +787,7 @@ export abstract class Kernel {
    * count comes from outside any turn).
    */
   recordUsage(info: UsageInfo): void { return this.usageCoordinator.recordUsage(info); }
+  recordAccountUsage(toolId: Id, reports: readonly UsageInfo[]): void { this.usageCoordinator.recordAccountUsage(toolId, reports); }
 
   /**
    * An agent on this tool is starting, or the engine is (no tool): refresh the account

@@ -835,6 +835,7 @@ export class Turns {
       onLog: (text: string) => void this.k.agentLog(task.id, text),
       onCleanupIncomplete: () => { if (this.k.task(task.id)) this.k.log(scope, "warn", CLEANUP_INCOMPLETE); },
       onUsage: (info: import("./usage.js").UsageInfo) => this.k.recordUsage(info),
+      onAccountUsage: (reports: readonly import("./usage.js").UsageInfo[]) => this.k.recordAccountUsage(profile.toolId, reports),
     };
     const start = (sessionId?: string) => this.inSandbox(profile, (sandbox) => {
       // Resolve the command for each process, including a fallback or sandbox retry.

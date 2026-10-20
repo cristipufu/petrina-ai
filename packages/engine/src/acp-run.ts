@@ -39,6 +39,8 @@ export interface RunCallbacks {
   onCleanupIncomplete?(): void;
   /** The tool said how much of a usage limit is used (every report, whether or not it is close). */
   onUsage?(info: UsageInfo): void;
+  /** A complete native account response, including changed quota groups after a subscription change. */
+  onAccountUsage?(reports: readonly UsageInfo[]): void;
   /** What the tool says it is logged in with, when it says: "none" means not logged in. */
   onAuthStatus?(kind: string): void;
 }
@@ -651,13 +653,15 @@ export class AgentRun {
       this.child.once("exit", onExit);
     });
     try {
-      await Promise.race([
+      const response = await Promise.race([
         this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text: accounting.command }] }),
         exited,
         new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new Error(`${adapter!.name} did not report usage in time`)); }, 20_000); }),
       ]);
+      if (response.stopReason !== "end_turn") throw new Error(`${adapter!.name} did not finish reporting account usage`);
       const reading = accounting.parse(this.state.accountText);
-      for (const info of reading.reports) this.callbacks?.onUsage?.(info);
+      if (this.callbacks?.onAccountUsage) this.callbacks.onAccountUsage(reading.reports);
+      else for (const info of reading.reports) this.callbacks?.onUsage?.(info);
       this.accountBefore = reading;
       // The caller compares its saved baseline with this snapshot.
       return reading;

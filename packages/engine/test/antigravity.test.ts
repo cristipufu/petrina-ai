@@ -170,6 +170,35 @@ describe("Antigravity agent sessions", () => {
     } finally { await engine.shutdown(); }
   });
 
+  it("delivers each native account command as one complete snapshot rather than partial window updates", async () => {
+    const dir = folder(); new Fakes(dir);
+    const account = spyOn({ read(_reports: readonly unknown[]) {} }, "read");
+    const partial = spyOn({ read(_report: unknown) {} }, "read");
+    const run = await AgentRun.start({ profile, cwd: folder(), command: [process.execPath, fake, dir, "--tool=antigravity"], signal: new AbortController().signal, browser: false, callbacks: { ...callbacks, onUsage: partial, onAccountUsage: account } });
+    try {
+      expect(account).toHaveBeenCalledTimes(1);
+      expect(account.mock.calls[0]![0]).toHaveLength(3);
+      await run.readAccountUsage();
+      expect(account).toHaveBeenCalledTimes(2);
+      expect(partial).not.toHaveBeenCalled();
+    } finally { await run.stop(); }
+  });
+
+  it("does not replace account quotas with an interrupted native reading even if it emitted valid windows", async () => {
+    const dir = folder(); new Fakes(dir);
+    let snapshots = 0;
+    const run = await AgentRun.start({ profile, cwd: folder(), command: [process.execPath, fake, dir, "--tool=antigravity"], signal: new AbortController().signal, browser: false, callbacks: { ...callbacks, onAccountUsage: () => { snapshots++; } } });
+    const prompt = spyOn(run["connection"], "prompt").mockImplementation(async () => {
+      run["state"].accountText = quota;
+      return { stopReason: "cancelled" };
+    });
+    try {
+      expect(snapshots).toBe(1);
+      expect(await run.readAccountUsage()).toBeUndefined();
+      expect(snapshots).toBe(1);
+    } finally { prompt.mockRestore(); await run.stop(); }
+  });
+
   it("stops a native account command that never answers", async () => {
     const dir = folder();
     let pid: number | undefined;

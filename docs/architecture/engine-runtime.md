@@ -106,6 +106,8 @@ It reads when the engine starts (Codex installed), whenever a Codex agent starts
 
 A report that says a tool is out marks it out until the reset even when no turn failed on it. Grok reports its account allowance through the read-only `_x.ai/billing` ACP extension. Petrina initializes the installed CLI, asks once and stops it, without a session or prompt. Its percentage and weekly or monthly reset feed the same scheduler and history. Reads at startup, before work, after turns and from Analytics share one reader, with the same one-minute page and five-minute background gaps.
 
+A successful complete account reading replaces that tool's current quota groups and account restrictions, including groups removed or combined by a subscription change. Other tools and transient request-refusal cooldowns are retained. Empty or failed reads keep the last successful snapshot. Individual streaming usage updates replace only their own window; history retains the earlier readings.
+
 Antigravity reads its local `/usage` command in a disposable probe at startup and during idle or Analytics refreshes. A running Antigravity session supplies its own before/after readings, avoiding a duplicate background probe at turn start. Read failures keep the last successful report and never fail a task.
 
 #### Limit scope
