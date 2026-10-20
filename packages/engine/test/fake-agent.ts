@@ -274,7 +274,7 @@ const configOptions = (): ConfigOption[] => {
   if (tool === "codex") return [select("mode", ["read-only", "agent"]), select("model", ["gpt-6.1"]), { ...select("reasoning_effort", ["low", "medium", "high"]), currentValue: "medium" }];
   if (tool === "claude-code") return [select("mode", ["default", "auto"]), { ...select("model", ["opus", "sonnet"], ["Opus 5.5", "Sonnet 5.5"]), currentValue: "sonnet" }, { ...select("effort", ["low", "medium", "high", "xhigh"]), currentValue: "medium" }];
   if (tool === "antigravity") return [select("model", ["gemini-4-argon", "gemini-3.8-flash"], ["Gemini 4 Argon", "Gemini 3.8 Flash"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto_edit", "yolo"])];
-  return [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol", "grok-4.7", "gemini-4-argon", "gemini-3.8-flash"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto", "agent", "auto_edit"])];
+  return [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol", "grok-4.7", "gemini-4-argon", "gemini-3.8-flash"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto", "agent", "auto_edit", "yolo"])];
 };
 
 /** A turn that only ends when the engine cancels it, or the engine goes away. */

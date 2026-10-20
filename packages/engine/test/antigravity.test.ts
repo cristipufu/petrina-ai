@@ -129,14 +129,20 @@ describe("Antigravity agent sessions", () => {
       expect(first.text).not.toContain("Quota Limits");
       const sessionId = run.sessionId;
       await run.stop();
+      const saved = join(dir, "conversations", `${sessionId}.json`);
+      const conversation = JSON.parse(readFileSync(saved, "utf8"));
+      // Reopening must replace the mode retained by an earlier native session too.
+      conversation.options.find((option: { id: string }) => option.id === "mode").currentValue = "auto_edit";
+      writeFileSync(saved, JSON.stringify(conversation));
       run = await AgentRun.start({ ...options, reopen: sessionId });
       expect(run.reopened).toBe("resume");
       expect((await run.prompt("You are the Researcher in Petrina. Hand back updated notes.")).report).toEqual({ main: { total: 110, output: 10, reasoning: 0 } });
       expect(messages.join(" ")).not.toContain("Session total");
       expect(fakes.prompts()).toHaveLength(2);
       const settings = readFileSync(join(dir, "config.jsonl"), "utf8");
-      expect(settings).toContain('"value":"auto_edit"');
-      expect(settings).not.toContain('"value":"yolo"');
+      // New and resumed sessions both replace the native default with unattended mode.
+      expect(settings.split("\n").filter(line => line.includes('"configId":"mode"') && line.includes('"value":"yolo"'))).toHaveLength(2);
+      expect(settings).not.toContain('"value":"auto_edit"');
     } finally { await run.stop(); }
   });
 

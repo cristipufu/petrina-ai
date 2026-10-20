@@ -110,7 +110,7 @@ Things to verify per tool before relying on them: model and effort selection thr
 
 Antigravity uses Google's native ACP distribution, pinned at 1.4.1 with its sibling harness. `petrina antigravity install` installs it explicitly; ordinary tool checks never download software. `petrina antigravity login` opens Google's personal-account sign-in. The connector keeps its own login, separately from the terminal CLI. Ready requires opening a session, without an AI prompt or browser sign-in during ordinary checks.
 
-Profiles offer Gemini 4 Argon and Gemini 3.8 Flash at medium or high thinking. The session must confirm both `model` and `thinking_level` before receiving work. Its `auto_edit` mode approves edits; command permissions still reach the coordinator. The ACP server does not expose the CLI's Auto classifier. It never receives the all-tools `yolo` mode. Native session resume preserves each participant's conversation. Terminal takeover stays unavailable because the CLI cannot open ACP session identifiers.
+Profiles offer Gemini 4 Argon and Gemini 3.8 Flash at medium or high thinking. The session must confirm both `model` and `thinking_level` before receiving work. New and resumed sessions use the server's native `yolo` mode, as requested by the coordinator, so tool calls proceed without per-command approval. This approves all tools; it is not the terminal CLI's selective Auto classifier, which the ACP server does not expose. Petrina's workflow gates and read-only cleanup still apply. Native session resume preserves each participant's conversation. Terminal takeover stays unavailable because the CLI cannot open ACP session identifiers.
 
 The built-in `/usage` command is local, not an AI turn. It supplies quota groups and UTC reset times; Argon's separate quota applies to Argon, and Gemini's shared quota covers Flash (and Argon when no separate Argon bucket is reported). Limits for unavailable third-party models do not block these profiles. Idle and Analytics reads share a throttled reader; live sessions report their own before/after readings without starting another probe. Failed reads retain the last report and its age.
 
@@ -154,13 +154,13 @@ The status line comes from the agent's own plan and tool activity over ACP. The 
 
 ## Permissions
 
-Petrina relies on each tool's own safety checker instead of building one:
+Petrina configures each tool's native permission mode instead of building a checker:
 
 | Tool | Mode | Who decides |
 |---|---|---|
 | Claude Code | Auto | Claude Code's classifier allows or blocks each action; commands run inside Claude Code's own sandbox |
 | Codex | Auto review | Codex's reviewer approves, inside Codex's own workspace sandbox |
-| Antigravity | `auto_edit` | Edits are approved by the native mode; command permissions reach the coordinator. Its ACP server has no CLI Auto classifier and is never given `yolo`. |
+| Antigravity | `yolo` | The native server approves all tools for unattended work, as requested by the coordinator. It has no selective CLI Auto classifier. Petrina's workflow gates still apply. |
 | Grok | Auto | Grok's own checker. The process starts with `--permission-mode auto`, and the session asks for auto mode (`autoMode` on `session/new`, `session/resume` and `session/load`). A saved always-approve setting would otherwise win. Never an always-approve or yolo flag |
 
 - Petrina reads no commands. When a tool's checker flags something and asks, the question goes to the inbox unchanged, with the exact command or paths, and the coordinator allows or denies it once.

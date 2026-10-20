@@ -90,8 +90,8 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     installed: antigravityInstalled,
     forgetProbe: forgetAntigravityProbe,
     options: { model: "model", effort: "thinking_level", mode: "mode" },
-    // Google's ACP server offers edit approval, but no CLI Auto classifier. Commands still ask.
-    mode: "auto_edit",
+    // The coordinator wants unattended tool use. Google's ACP server has no selective CLI Auto mode.
+    mode: "yolo",
     login: "open",
     models: ["Gemini 4 Argon", "Gemini 3.8 Flash"],
   },
