@@ -21,6 +21,17 @@ for (const target of [undefined, "/custom/codex"]) it(`keeps the real Codex targ
   expect(env.CODEX_PATH).not.toBe(env.PETRINA_CODEX_EXECUTABLE);
 });
 
+it("respects the user's native plan-tool setting, including its disabled default", () => {
+  for (const enabled of [undefined, false, true]) {
+    const config = { ...(enabled !== undefined ? { "tools.update_plan.enabled": enabled } : {}), "unrelated.setting": "preserved" };
+    const env = { CODEX_CONFIG: JSON.stringify(config) };
+    ADAPTERS.codex!.prepareEnv!(env);
+    const prepared = JSON.parse(env.CODEX_CONFIG);
+    expect(prepared["tools.update_plan.enabled"]).toBe(enabled);
+    expect(prepared["unrelated.setting"]).toBe("preserved");
+  }
+});
+
 for (const id of ["claude-code", "codex", "grok", "antigravity"]) {
   it(`${id}: restores inherited managed settings before a nested launch, including another clone`, () => {
     for (const target of [undefined, "/custom/codex"]) {
@@ -70,6 +81,7 @@ for (const toolId of ["claude-code", "codex", "grok", "antigravity"]) it(`${tool
     const received = await Bun.file(file).json();
     for (const key of ["CLAUDECODE", "CODEX_THREAD_ID", "GROK_SESSION_ID", "PETRINA_LIFECYCLE_REPLACEMENT", "PETRINA_RECONNECT_PORT"]) expect(received[key]).toBeUndefined();
     expect(ownSession(received).CODEX_PATH).toBe("/custom/codex");
+    if (toolId === "codex") expect(JSON.parse(received.CODEX_CONFIG)["tools.update_plan.enabled"]).toBeUndefined();
     expect(received.GROK_MEMORY).toBe(toolId === "grok" ? "0" : "1");
     expect(env.GROK_MEMORY).toBe("1");
     expect(env.CODEX_PATH).toBe("/other-clone/codex-background.ts");

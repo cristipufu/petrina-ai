@@ -306,11 +306,10 @@ describe("saved role wording", () => {
         // the richer role list and main's placement rules keeps its earlier wording.
         const expected = was
           .replace(`Your working copy is ${context.worktree}, on branch ${context.branch}. Stay inside it.`, `Your planning folder is ${context.worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.`)
-          .replace('Keep a short to-do list as you work, written in plain language: the coordinator watches it live.', 'Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.')
           .replace('{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request"}], "rationale":', '{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request", "reason": "Why this product is involved", "builderProfileId": "<profile id>"}], "leadProductId": "<product id for shared repairs>", "rationale":');
         expect(now.replace(job(now), "")).toBe(expected.replace(job(expected), ""));
         expect(now).toContain(plannerRoles(context.roles));
-      } else expect(now).toBe(was.replace('Keep a short to-do list as you work, written in plain language: the coordinator watches it live.', 'Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.'));
+      } else expect(now).toBe(was);
     }
   });
   it("leaves the product's full check run to Petrina after the Builder finishes", () => {

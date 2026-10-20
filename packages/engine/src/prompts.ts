@@ -49,6 +49,8 @@ export function proseOf(text: string): string {
 
 export const PREPARED_REVIEW = "Prepared review material";
 
+const TODO_PROMPT = `Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Use structured progress updates if your tool already provides them; otherwise continue normally. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.`;
+
 /** Shared by roles and fresh/continued turns; uncertainty is investigated, never reported as fact. */
 export const INVESTIGATION_RULE = `Ground decisions in the task's requirements, governing repository instructions and evidence from the current code. When unsure, search and investigate before acting; search the web and consult current official documentation or other primary sources for uncertain interfaces or behavior. Check that sources apply to the installed version, and reproduce suspected defects when possible. Never present an assumption as a fact. Distinguish verified behavior, hypotheses and checks you could not perform. Do not invent requirements or treat a check you could not run as a confirmed bug. Ask the coordinator only for a material product decision or missing information that investigation cannot resolve.`;
 
@@ -184,7 +186,7 @@ ${contract.instructions(ctx)}${roleCard(ctx)}
 
 ${sections}
 
-Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.
+${TODO_PROMPT}
 ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
 }
 
@@ -207,7 +209,7 @@ ${contract.instructions(ctx)}${options.refreshRole ? roleCard(ctx) : ""}
 
 ${sections}
 
-${screenNow(ctx.screen ?? (mayAskScreen(ctx.role) ? "ask" : undefined))}Keep a short to-do list as you work, written in plain language: the coordinator watches it live. Word each item as what you are doing for the product, the way you would tell the coordinator ("Working out what changes for users"), never with file, function or command names.
+${screenNow(ctx.screen ?? (mayAskScreen(ctx.role) ? "ask" : undefined))}${TODO_PROMPT}
 ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
 }
 
