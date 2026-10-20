@@ -44,7 +44,7 @@ function SingleTaskStart({ task, state }: { task: Task; state: State }) {
         <option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update the pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option>
       </select></label>
       {error && <p role="alert" className="note bad">{error}</p>}
-      <button className="btn" disabled={saving} onClick={async () => { setSaving(true); setError(""); try { await sim.setTaskStart(task.id, choice); setEditing(false); } catch (error) { setError(String(error)); } finally { setSaving(false); } }}>Apply choices</button>
+      <button className="btn" disabled={saving || task.workValidating} onClick={async () => { setSaving(true); setError(""); try { await sim.setTaskStart(task.id, choice); setEditing(false); } catch (error) { setError(String(error)); } finally { setSaving(false); } }}>Apply choices</button>
     </div>}
     {!source && !task.workError && <p className="note">{deliveryLabel(task)}. The planner will confirm the starting point.</p>}
   </section>;
@@ -91,7 +91,7 @@ function ManyTaskStart({ task, state }: { task: Task; state: State }) {
           <label>When ready for {label}<select className="select" value={choice.delivery} onChange={(event) => setChoice({ ...choice, delivery: event.target.value as WorkChoice["delivery"] })}><option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option></select></label>
           <label>Builder for {label}<select className="select" value={choice.builderProfileId ?? task.plan?.products?.find((owner) => owner.productId === key)?.builderProfileId ?? task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0]} onChange={(event) => setChoice({ ...choice, builderProfileId: event.target.value })}>{state.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.model} · {profile.effort}</option>)}</select></label>
           <label className="toggle"><input type="checkbox" checked={choice.lead ?? task.leadProductId === key} onChange={(event) => setChoice({ ...choice, lead: event.target.checked })} />Lead shared repairs for {label}</label>
-          <button className="btn" disabled={saving} onClick={() => void apply(() => sim.setTaskStart(task.id, choice), () => setEditing(undefined))}>Apply choices for {label}</button>
+          <button className="btn" disabled={saving || task.workValidating} onClick={() => void apply(() => sim.setTaskStart(task.id, choice), () => setEditing(undefined))}>Apply choices for {label}</button>
           <button className="btn quiet" onClick={() => setEditing(undefined)}>Cancel editing {label}</button>
         </fieldset>}
         {adding === key && product && <fieldset className="stack"><legend>Add {label}</legend>
@@ -99,7 +99,7 @@ function ManyTaskStart({ task, state }: { task: Task; state: State }) {
           <label>Product name<input className="select" value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label>Permanent folder<input className="select" value={folder} onChange={(event) => setFolder(event.target.value)} /></label>
           {choice && <label>When ready for {label}<select className="select" value={choice.delivery} onChange={(event) => setChoice({ ...choice, delivery: event.target.value as WorkChoice["delivery"] })}><option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option></select></label>}
-          <button className="btn" disabled={saving || !folder.trim() || !name.trim()} onClick={() => void apply(async () => { if (choice && choice.delivery !== row.choice.delivery) await sim.setTaskStart(task.id, choice); await sim.setTaskAddition(task.id, product.repo, name, folder); }, () => setAdding(undefined))}>Confirm folder for {label}</button>
+          <button className="btn" disabled={saving || task.workValidating || !folder.trim() || !name.trim()} onClick={() => void apply(async () => { if (choice && choice.delivery !== row.choice.delivery) await sim.setTaskStart(task.id, choice); await sim.setTaskAddition(task.id, product.repo, name, folder); }, () => setAdding(undefined))}>Confirm folder for {label}</button>
           <button className="btn quiet" onClick={() => setAdding(undefined)}>Cancel adding {label}</button>
         </fieldset>}
       </div>;

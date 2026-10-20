@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { ArrowRight, ChevronDown, Send, ShieldCheck, ShieldOff, User } from "lucide-react";
 import type { ActiveAgent, Id, MessageMode, ReportImage, SessionLine, State, Task } from "@petrina/core";
 import { sim, useEngineStatus, useUnsent } from "../engine";
@@ -8,6 +8,7 @@ import { UnsentMessage } from "./EngineState";
 import { Ask } from "./Inbox";
 import { ImagePreview, MessageBody } from "./MessageBody";
 import type { SheetTab } from "./TaskCard";
+import type { TaskDrafts } from "../drafts";
 
 interface LogProps {
   task: Task;
@@ -59,7 +60,8 @@ function ReportPicture({ taskId, image, finished }: { taskId: string; image: Rep
 export function StepConversation({ lines, find, now, live = false, taskId, repositories = find.task(taskId)?.repositories, finished = false }: { lines: readonly SessionLine[]; find: Lookup; now: number; live?: boolean; taskId: string; repositories?: Task["repositories"]; finished?: boolean }) {
   const section = useRef<HTMLElement>(null);
   const pinned = useRef(true);
-  const textSize = lines.reduce((size, line) => size + line.text.length, 0);
+  const textSize = useMemo(() => lines.reduce((size, line) => size + line.text.length, 0), [lines]);
+  const groups = useMemo(() => groupLines(lines), [lines]);
   useLayoutEffect(() => {
     const scroller = section.current?.closest<HTMLElement>(".sheet-scroll");
     if (!scroller) return;
@@ -73,7 +75,7 @@ export function StepConversation({ lines, find, now, live = false, taskId, repos
   }, [live, lines.length, textSize]);
   return <section ref={section} className="step-conversation" aria-label="This step's conversation">
     <div className="chat">
-      {groupLines(lines).map((group) => Array.isArray(group) ? (
+      {groups.map((group) => Array.isArray(group) ? (
         <ActivityGroup key={group[0]!.id} lines={group}>{(line) => <li key={line.id}><ArrowRight size={12} aria-hidden="true" /><span>{line.productId && `${messageProduct(line.productId, find, repositories)}: `}{line.text}</span></li>}</ActivityGroup>
       ) : group.from === "system" ? (
         <p key={group.id} className="system">{group.text} · {when(group.at, now)}</p>
@@ -118,7 +120,8 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
   // A refusal adds its reason and actions under the message.
   const refused = unsent.filter((entry) => entry.refused).length;
   // Streaming can grow an earlier bubble while another agent's activity is the last line.
-  const textSize = task.session.reduce((size, line) => size + line.text.length, 0);
+  const textSize = useMemo(() => task.session.reduce((size, line) => size + line.text.length, 0), [task.session]);
+  const groups = useMemo(() => groupLines(task.session), [task.session]);
   const pinned = useRef(true);
   const marked = step && task.session.some((line) => line.step === step.id) ? step : undefined;
   const firstMarked = marked ? task.session.find((line) => line.step === marked.id)?.id : undefined;
@@ -217,7 +220,7 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
       )}
       <div className="chat reading" aria-label="Conversation">
         {task.session.length === 0 && <div className="empty-state">The conversation starts when an agent picks this task up.</div>}
-        {groupLines(task.session).map((group) => {
+        {groups.map((group) => {
           if (Array.isArray(group))
             return (
               <ActivityGroup key={group[0]!.id} lines={group} className={`session-activity ${group.some((line) => inStep(line)) ? "in-step" : ""}`} reveal={group.some((line) => Boolean(inStep(line)))}>
@@ -283,7 +286,9 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
 }
 
 /** Messages queue until the agent finishes its step, or interrupt it. */
-function Composer({ task, find, text, onText, focusRequest, onFocused }: { task: Task; find: Lookup; text: string; onText: (text: string) => void; focusRequest: boolean; onFocused: () => void }) {
+function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task; find: Lookup; drafts: TaskDrafts; focusRequest: boolean; onFocused: () => void }) {
+  const text = useSyncExternalStore(drafts.subscribe, () => drafts.get(task.id));
+  const onText = (value: string) => drafts.set(task.id, value);
   const id = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const [expanded, setExpanded] = useState(false);

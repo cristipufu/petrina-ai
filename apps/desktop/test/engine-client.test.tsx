@@ -66,6 +66,29 @@ async function advance(ms: number) { await act(async () => { await vi.advanceTim
 const current = () => Socket.instances.at(-1)!;
 
 describe('the real browser connection', () => {
+  it('ticks only a synced visible connection, and catches up immediately when shown', async () => {
+    await mount();
+    const { EngineClient } = await import('../src/engine');
+    const client = new EngineClient({ desktop: false, address });
+    try {
+      const notify = vi.fn(); client.subscribe(notify);
+      const unseen = client.getState();
+      await advance(15_000); expect(client.getState()).toBe(unseen);
+      const socket = current(); socket.connect();
+      socket.onmessage?.({ data: JSON.stringify({ type: 'state', state: createDemoState(1000) }) });
+      const before = client.getState(); notify.mockClear();
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+      await advance(30_000); expect(client.getState()).toBe(before); expect(notify).not.toHaveBeenCalled();
+      visibility.mockReturnValue('visible');
+      await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+      expect(client.getState().now).toBe(Date.now()); expect(notify).toHaveBeenCalledTimes(1);
+      expect(client.getState().tasks).toBe(before.tasks);
+      notify.mockClear(); await advance(15_000); expect(notify).toHaveBeenCalledTimes(1);
+      socket.close(); notify.mockClear();
+      const disconnected = client.getState();
+      await advance(15_000); expect(client.getState()).toBe(disconnected);
+    } finally { client.dispose(); }
+  });
   it('acknowledges after processing state and keeps background inbox updates moving without a paint', async () => {
     await mount();
     const { EngineClient } = await import('../src/engine');

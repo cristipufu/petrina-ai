@@ -13,6 +13,7 @@ import { Overview } from "./sheet/Overview";
 import { PlanView } from "./sheet/PlanTab";
 import { DesignView } from "./sheet/DesignTab";
 import { ReviewView } from "./sheet/ReviewTab";
+import type { TaskDrafts } from "../drafts";
 
 export type TaskListEntry = Pick<Task, "id" | "productId" | "title" | "state" | "statusLine"> & Partial<Pick<Task, "held" | "source" | "todo">>;
 
@@ -30,8 +31,8 @@ interface SheetProps {
   onToast: (title: string, detail?: string) => void;
   /** A notification's item that opens once the sheet closes, because something typed in it is not sent yet. */
   waiting?: string;
-  draft: string;
-  onDraft: (text: string) => void;
+  hasDraft: boolean;
+  drafts: TaskDrafts;
   messageFocus: boolean;
   onMessageFocused: () => void;
   onMessage: () => void;
@@ -62,7 +63,7 @@ function TaskActivity({ task }: { task: TaskListEntry }) {
   return <span className={`task-list-activity ${task.state}`}><Icon size={13} aria-hidden="true" /><span>{label}</span></span>;
 }
 
-export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, onStep, onClose, onToast, draft, onDraft, messageFocus, onMessageFocused, onMessage, onAboutNumbers, onOpenTask, waiting }: SheetProps) {
+export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, onStep, onClose, onToast, hasDraft, drafts, messageFocus, onMessageFocused, onMessage, onAboutNumbers, onOpenTask, waiting }: SheetProps) {
   const [pane, setPane] = useState(selectedStep || tab !== "overview" ? "details" : "flow");
   const [menu, setMenu] = useState(false);
   const [detailsTarget, setDetailsTarget] = useState<HTMLDivElement | null>(null);
@@ -241,7 +242,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
                 onClick={() => { onTab(entry.id); setPane("details"); }}
               >
                 {entry.label}
-                {entry.id === "session" && draft && <span className="draft-mark" aria-label="Unsent message" title="Unsent message" />}
+                {entry.id === "session" && hasDraft && <span className="draft-mark" aria-label="Unsent message" title="Unsent message" />}
                 {counts[entry.id] ? <span className="count">{counts[entry.id]}</span> : null}
               </button>
             ))}
@@ -265,13 +266,13 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
             )}
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
-            {tab === "review" && <ReviewView task={task} find={find} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />}
+            {tab === "review" && <ReviewView task={task} now={state.now} find={find} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />}
             {tab === "session" && !selectedStep && <Session.Log key={sessionStep?.id ?? "latest"} task={task} state={state} find={find} scroller={scroller} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
           </div>
           </div></div>
 
           {showAgentControls && <footer className="task-agent-footer" aria-label="Agent controls">
-            <Session.Composer key={task.id} task={task} find={find} text={draft} onText={onDraft} focusRequest={messageFocus} onFocused={onMessageFocused} />
+            <Session.Composer key={task.id} task={task} find={find} drafts={drafts} focusRequest={messageFocus} onFocused={onMessageFocused} />
             <div className="task-terminal-actions"><TakeOverControls task={task} state={state} onToast={onToast} /></div>
           </footer>}
           </aside>

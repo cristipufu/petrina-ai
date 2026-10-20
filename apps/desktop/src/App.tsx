@@ -1,7 +1,7 @@
 import { involvesProduct, taskProductIds } from "@petrina/core";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { boardOrder, draftFor, inboxOrder, inboxTab, keyArea, matchesWords, reconcileHighlight, stepHighlight, withDraft, type KeyArea, type Page, type State, type Task, type TaskList } from "@petrina/core";
-import { failureText, sim, mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { boardOrder, inboxOrder, inboxTab, keyArea, matchesWords, reconcileHighlight, stepHighlight, type KeyArea, type Page, type State, type Task, type TaskList } from "@petrina/core";
+import { sim, mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { AddProductDialog } from "./components/AddProduct";
 import { AnalyticsPage } from "./components/Analytics";
 import { CouldNotStart, EngineRecovery, StartingScreen } from "./components/EngineState";
@@ -31,6 +31,8 @@ import { appActions, taskActions } from "./paletteActions";
 import { taskCommands } from "./taskCommands";
 import { Toasts, useToasts } from "./toasts";
 import { PAGE_NAMES, routeHref, useAppRoute } from "./routes";
+import { useTaskDetails } from "./task-details";
+import { TaskDrafts } from "./drafts";
 
 // The app's frame: which page shows, the board and inbox highlights and focus, the task sheet and the
 // dialogs. The top bar, the rail, the keyboard, the palette's actions, notification landings and toasts
@@ -72,7 +74,7 @@ export function App() {
 }
 
 function Workspace({ state, status }: { state: State; status: EngineStatus }) {
-  const find = useMemo(() => lookup(state), [state]);
+  const find = useMemo(() => lookup(state), [state.roles, state.profiles, state.tools, state.products, state.tasks, state.history?.dependencies]);
   const viewport = useViewport();
   const [route, navigate] = useAppRoute();
   const { view, product, sheet, productSettings } = route;
@@ -93,42 +95,13 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const history = useHistoryPage(state, view === "history", product, route.history);
   const historyIds = useMemo(() => history.page?.items.map((task) => task.id) ?? [], [history.page]);
   const setHistoryPosition = (position: HistoryPosition) => navigate((previous) => ({ ...previous, history: position, sheet: undefined }));
-  const [fetchedTask, setFetchedTask] = useState<{ id: string; task?: Task; error?: string }>();
   const [detailsRetry, setDetailsRetry] = useState(0);
   const liveSheetTask = sheet ? find.task(sheet.taskId) : undefined;
   const wantedTaskId = sheet?.taskId;
   const needsDetails = !liveSheetTask || liveSheetTask.detailsOmitted === true;
-  const latestDetails = useRef({ id: wantedTaskId, revision: liveSheetTask?.detailsRevision });
-  latestDetails.current = { id: wantedTaskId, revision: liveSheetTask?.detailsRevision };
-  useEffect(() => {
-    // A closed sheet must not retain an archived conversation or its recorded agent inputs.
-    setFetchedTask(undefined);
-    if (!wantedTaskId || !needsDetails) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let loaded: string | undefined;
-    let first = true;
-    const load = async () => {
-      const revision = latestDetails.current.revision;
-      if (first || loaded !== revision) {
-        first = false;
-        try {
-          const task = await sim.taskDetails(wantedTaskId);
-          if (cancelled) return;
-          loaded = task?.detailsRevision ?? revision;
-          setFetchedTask({ id: wantedTaskId, task });
-        } catch (error) {
-          if (cancelled) return;
-          loaded = revision;
-          setFetchedTask((previous) => ({ ...previous, id: wantedTaskId, error: failureText(error) }));
-        }
-      }
-      if (!cancelled) timer = setTimeout(() => { void load(); }, 400);
-    };
-    void load();
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [wantedTaskId, needsDetails, detailsRetry]);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const fetchedTask = useTaskDetails(wantedTaskId, needsDetails, liveSheetTask?.detailsRevision, state.history?.revision, !liveSheetTask, detailsRetry);
+  const [draftStore] = useState(() => new TaskDrafts());
+  const drafts = useSyncExternalStore(draftStore.subscribe, draftStore.presence);
   const [messageFocus, setMessageFocus] = useState<string>();
   const messageFocused = useCallback(() => setMessageFocus(undefined), []);
   const [newTitle, setNewTitle] = useState("");
@@ -177,7 +150,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const lastHistoryIds = useRef<readonly string[]>([]);
   if (history.page) lastHistoryIds.current = historyIds;
   const boardIds = view === "history" ? history.page ? historyIds : lastHistoryIds.current : activeBoardIds;
-  const items = useMemo(() => inboxOrder(state), [state]);
+  const items = useMemo(() => inboxOrder(state), [state.inbox, state.tasks]);
   const inboxIds = useMemo(() => items.map((item) => item.id), [items]);
   const previousBoard = useRef(boardIds);
   const previousInbox = useRef(inboxIds);
@@ -196,8 +169,9 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const loadingDetails = Boolean(sheet && !sheetTask && fetchedTask?.id !== wantedTaskId);
   const detailsError = !sheetTask && fetchedTask?.id === wantedTaskId ? fetchedTask?.error : undefined;
   // Only the open historical task joins this view of the sheet. The board and Analytics keep the engine projection.
-  const detailState = useMemo(() => sheetTask && sheetTask !== liveSheetTask ? { ...state, tasks: [...state.tasks.filter((task) => task.id !== sheetTask.id), sheetTask] } : state, [state, sheetTask, liveSheetTask]);
-  const detailFind = useMemo(() => lookup(detailState), [detailState]);
+  const detailTasks = useMemo(() => sheetTask && sheetTask !== liveSheetTask ? [...state.tasks.filter((task) => task.id !== sheetTask.id), sheetTask] : state.tasks, [state.tasks, sheetTask, liveSheetTask]);
+  const detailState = useMemo(() => detailTasks === state.tasks ? state : { ...state, tasks: detailTasks }, [state, detailTasks]);
+  const detailFind = useMemo(() => lookup(detailState), [detailState.roles, detailState.profiles, detailState.tools, detailState.products, detailState.tasks, detailState.history?.dependencies]);
   const missing = route.missing ? "Page not found"
     : sheet && !sheetTask && !loadingDetails && !detailsError ? "Task not found"
     : productSettings && !find.product(productSettings) ? "Product not found" : undefined;
@@ -445,10 +419,10 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         setInboxId(id ?? currentInboxId ?? inboxIds[0]);
       }} onOpenItem={openItem} /> : <div />}
 
-      {sheet && !sheetTask && (loadingDetails || detailsError) && <TaskLoading error={detailsError} onRetry={() => { setFetchedTask(undefined); setDetailsRetry((value) => value + 1); }} onClose={close} />}
+      {sheet && !sheetTask && (loadingDetails || detailsError) && <TaskLoading error={detailsError} onRetry={() => setDetailsRetry((value) => value + 1)} onClose={close} />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} tasks={sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} onOpenTask={openLinked} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} draft={draftFor(drafts, sheetTask.id)} onDraft={(text) => setDrafts((all) => withDraft(all, sheetTask.id, text))} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
+        <TaskSheet task={sheetTask} tasks={sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} onOpenTask={openLinked} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} hasDraft={Boolean(drafts[sheetTask.id])} drafts={draftStore} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
       )}
 
       {!missing && rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}

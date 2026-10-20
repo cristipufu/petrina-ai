@@ -175,7 +175,9 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const [showDetail, setShowDetail] = useState(false);
   const [reopened, setReopened] = useState<string>();
   // Lessons the coordinator unticked, by their place in the offer: the rest are added.
-  const [dropped, setDropped] = useState<number[]>([]);
+  const offer = `${item.id}:${item.body ?? ""}`;
+  const [selection, setSelection] = useState<{ offer: string; dropped: number[] }>({ offer, dropped: [] });
+  const dropped = selection.offer === offer ? selection.dropped : [];
   const lessons = item.kind === "learnings" ? (item.body ?? "").split("\n").map((line) => line.replace(/^- /, "")).filter(Boolean) : [];
   const kept = lessons.map((_, index) => index).filter((index) => !dropped.includes(index));
   const task = find.task(item.taskId);
@@ -251,9 +253,9 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         (item.kind === "learnings" ? (
           <ul className="ask-body ask-lessons">
             {lessons.map((line, index) => (
-              <li key={line}>
+              <li key={index}>
                 <label>
-                  <input type="checkbox" checked={!dropped.includes(index)} onChange={(event) => setDropped((now) => (event.target.checked ? now.filter((entry) => entry !== index) : [...now, index]))} />
+                  <input type="checkbox" checked={!dropped.includes(index)} onChange={(event) => setSelection({ offer, dropped: event.target.checked ? dropped.filter(entry => entry !== index) : [...dropped, index] })} />
                   <span>{line}</span>
                 </label>
               </li>

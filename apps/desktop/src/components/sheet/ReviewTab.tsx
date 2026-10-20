@@ -95,7 +95,7 @@ function FollowUpLine({ finding, find, onOpen }: { finding: Finding; find: Looku
   return <p className="issue-who">{words.label} <TaskLink taskId={tracking.taskId} find={find} {...(onOpen ? { onOpen } : {})}>{title}</TaskLink></p>;
 }
 
-export function ReviewView({ task, find, onOpen }: { task: Task; find: Lookup; onOpen?: (taskId: string) => void }) {
+export function ReviewView({ task, now, find, onOpen }: { task: Task; now: number; find: Lookup; onOpen?: (taskId: string) => void }) {
   const reviews = (task.plan?.stages ?? []).flatMap((stage, index) => stage.kind === "review-chain" ? [index] : []);
   const reviewing = reviews.some((index) => index <= task.stageIndex);
   // Reaching review is not completion: all planned review steps must be behind us.
@@ -108,7 +108,7 @@ export function ReviewView({ task, find, onOpen }: { task: Task; find: Lookup; o
       <p className="note">Deleted or skipped tests: {work.tamper ? work.tamper.problems.length ? "Needs attention" : "Passed" : "Not run"}</p>
       {work.checks?.current === false && <p className="note">These checks cover an earlier version. Current checks: Not run</p>}
       {!work.checks?.results.length && <p className="note">Product checks: Not run</p>}
-      {!!work.checks?.results.length && <ChecksSection runs={work.checks.results} at={work.checks.at} />}
+      {!!work.checks?.results.length && <ChecksSection runs={work.checks.results} at={work.checks.at} now={now} />}
       <FindingsSection find={find} findings={task.findings.filter((finding) => finding.productIds?.length === 1 && finding.productIds[0] === work.productId)} empty={together.length ? "No findings assigned only to this product. Shared findings appear under Together." : emptyReview} {...(onOpen ? { onOpen } : {})} />
     </section>)}
     <section className="sheet-section"><h2>Together</h2>{!together.length && <p className="quiet-text">{emptyReview}</p>}<ol className="issues">{openFirst(together.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" }))).map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></section>
@@ -122,7 +122,7 @@ export function ReviewView({ task, find, onOpen }: { task: Task; find: Lookup; o
 
   return (
     <>
-      {runs.length > 0 && <ChecksSection runs={runs} at={task.checks!.at} />}
+      {runs.length > 0 && <ChecksSection runs={runs} at={task.checks!.at} now={now} />}
       {reviewing && (
         <p className="tamper">
           <ShieldCheck size={16} aria-hidden="true" />
@@ -144,9 +144,9 @@ function FindingsSection({ findings, find, empty, onOpen }: { findings: readonly
 }
 
 /** What Petrina saw when it ran the product's checks itself: evidence, never an agent's word. */
-function ChecksSection({ runs, at }: { runs: readonly CheckRun[]; at: number }) {
+function ChecksSection({ runs, at, now }: { runs: readonly CheckRun[]; at: number; now: number }) {
   const failed = runs.filter((run) => !run.ok).length;
-  const when = ago(at, Date.now());
+  const when = ago(at, now);
   return (
     <section className="sheet-section">
       <h2>

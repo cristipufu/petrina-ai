@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Expand, Image as ImageIcon, X } from "lucide-react";
 import { failureText, sim } from "../engine";
@@ -24,7 +24,7 @@ export function messageParts(text: string): MessagePart[] {
 }
 
 /** Screenshot bytes live only in a visible preview, never in saved task or window state. */
-export function MessageBody({ text, taskId, productId, finished = false }: { text: string; taskId: string; productId?: string; finished?: boolean }) {
+export const MessageBody = memo(function MessageBody({ text, taskId, productId, finished = false }: { text: string; taskId: string; productId?: string; finished?: boolean }) {
   const parts = useMemo(() => messageParts(text), [text]);
   const content: ReactNode[] = [];
   for (let index = 0; index < parts.length; index++) {
@@ -39,7 +39,7 @@ export function MessageBody({ text, taskId, productId, finished = false }: { tex
     content.push(<span className="message-images" key={first}>{images.map((image, item) => <ImagePreview key={`${item}:${image.path}`} taskId={taskId} productId={productId} path={image.path} label={image.label} finished={finished} />)}</span>);
   }
   return <>{content}</>;
-}
+});
 
 /** Both saved report pictures and links share the same bounded, visible-only image lifetime. */
 export function ImagePreview({ taskId, productId, path, imageId, label, finished }: { taskId: string; productId?: string; path?: string; imageId?: string; label: string; finished: boolean }) {

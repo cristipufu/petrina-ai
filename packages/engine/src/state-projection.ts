@@ -58,7 +58,7 @@ export class StateProjection {
     return this.k.store.history.page(request);
   };
 
-  taskDetails = (id: Id): Task | undefined => { const task = this.task(id); return task ? taskView(task) : undefined; };
+  taskDetails = (id: Id): Task | undefined => { const task = this.task(id); return task ? { ...taskView(task), detailsRevision: this.detailRevision(id) } : undefined; };
 
   private readonly archiveCache = new Map<Id, MTask>();
 

@@ -305,7 +305,7 @@ function ProductStep({ state, clones, live, onBack, onNext }: { state: State; cl
                     <FolderGit2 size={20} aria-hidden="true" />
                     <span className="clone-name">{clone.repo.split("/")[1]}</span>
                     <span className="clone-where">
-                      {clone.repo} · {short(clone.path)} · changed {ago(clone.changedAt, Date.now()) === "now" ? "just now" : `${ago(clone.changedAt, Date.now())} ago`}
+                      {clone.repo} · {short(clone.path)} · changed {ago(clone.changedAt, state.now) === "now" ? "just now" : `${ago(clone.changedAt, state.now)} ago`}
                     </span>
                     {adding === clone.path && <span className="clone-adding">Adding…</span>}
                   </button>

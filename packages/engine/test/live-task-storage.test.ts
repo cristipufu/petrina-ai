@@ -18,6 +18,7 @@ it("coalesces streamed revisions and persists the final text on completion and s
     engine.say(task, "agent", "First words"); engine.commitNow(task);
     const revision = () => engine.windowState().tasks.find((entry) => entry.id === task.id)!.detailsRevision;
     const before = revision();
+    expect(engine.taskDetails(task.id)!.detailsRevision).toBe(before);
     const notifications: string[] = [];
     const off = engine.subscribe(() => notifications.push(revision()!));
     for (let chunk = 0; chunk < 100; chunk++) { task.session[0]!.text = `Latest chunk ${chunk}`; engine.noteStream(task); }
@@ -26,6 +27,7 @@ it("coalesces streamed revisions and persists the final text on completion and s
     await waitFor(() => revision() !== before, "one coalesced message notification");
     expect(new Set(notifications).size).toBe(1);
     expect(engine.taskDetails(task.id)!.session[0]!.text).toBe("Latest chunk 99");
+    expect(engine.taskDetails(task.id)!.detailsRevision).toBe(revision()!);
     const beforeSave = revision();
     task.session[0]!.text = "Stream flushed by an ordinary save"; engine.noteStream(task); engine.save(false);
     expect(revision()).not.toBe(beforeSave);

@@ -18,7 +18,7 @@ The selected archived task is added only to its workspace’s display state, so 
 
 ## Window snapshots
 
-Live summaries omit conversation bodies, timeline history and journey inputs. The open task fetches its complete record when its revision changes, with at most one request in flight and no background detail requests after closing. Revisions include the engine boot, so reconnecting after a restart refreshes the details. The simulator still supplies complete records directly.
+Live summaries omit conversation bodies, timeline history and journey inputs. The open task fetches its complete record when its revision changes, with at most one request in flight, a 400ms throttle and no idle polling timer or detail requests after closing. Responses carry the revision they read; archived work refreshes from the history revision. Revisions include the engine boot, so reconnecting after a restart refreshes the details. The simulator still supplies complete records directly. Message drafts stay in the window; typing updates only the composer, with the workspace notified when a draft appears or clears.
 
 The first public message appears immediately. Further text chunks update that message in memory, with detail revisions and persistence notifications coalesced over 400ms. Other state changes and completed turns flush pending text, and shutdown saves the final words. Parallel message streams share the same bounded notification window.
 

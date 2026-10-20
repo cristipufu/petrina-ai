@@ -185,6 +185,7 @@ export class EngineClient {
   private disposed = false;
   private readonly clock: ReturnType<typeof setInterval>;
   private readonly onVisibility = () => {
+    this.tick();
     if (document.visibilityState === "visible" && this.status.link !== "live" && this.status.link !== "failed" && !this.status.restarted && !this.socket) void this.attempt(this.failures > 0);
   };
 
@@ -197,10 +198,13 @@ export class EngineClient {
     // Hidden windows get slow timers: the moment the window shows again, retry instead of waiting.
     document.addEventListener("visibilitychange", this.onVisibility);
     // The engine only sends state when something changes; keep "3m ago" honest in between.
-    this.clock = setInterval(() => {
-      this.state = { ...this.state, now: Date.now() };
-      this.emit();
-    }, 15_000);
+    this.clock = setInterval(() => this.tick(), 15_000);
+  }
+
+  private tick(): void {
+    if (this.disposed || !this.status.synced || this.status.link !== "live" || document.visibilityState === "hidden") return;
+    this.state = { ...this.state, now: Date.now() };
+    this.emit();
   }
 
   /** A refreshed module gives its connection to the next one; the old copy must release every handle. */

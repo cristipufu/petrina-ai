@@ -14,7 +14,7 @@ interface BoardProps {
   selectedId: string | undefined;
   onOpen: (taskId: string, tab?: SheetTab) => void;
   onFocus: (taskId?: string) => void;
-  drafts: Readonly<Record<string, string>>;
+  drafts: Readonly<Record<string, boolean>>;
   onPlace: (taskId: string, anchorId: string, side: "before" | "after") => void;
   onNewTask: () => void;
   onShowInbox: () => void;

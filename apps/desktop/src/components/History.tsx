@@ -53,7 +53,7 @@ export function History({ page, error, reload, position, onPosition, find, selec
   page?: HistoryPage; error?: string; reload: () => void; position?: HistoryPosition;
   onPosition: (position: HistoryPosition) => void; find: Lookup; selectedId?: string;
   onFocus: (id?: string) => void; onOpen: (id: string) => void; hrefFor: (id: string) => string;
-  drafts: Readonly<Record<string, string>>;
+  drafts: Readonly<Record<string, boolean>>;
 }) {
   const [query, setQuery] = useState(position?.query ?? "");
   useEffect(() => setQuery(position?.query ?? ""), [position?.query]);

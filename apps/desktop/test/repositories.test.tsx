@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDemoState, historyItem, reviewStats, type Task, type TaskSource } from "@petrina/core";
-import { Inbox } from "../src/components/Inbox";
+import { Ask, Inbox } from "../src/components/Inbox";
 import { History } from "../src/components/History";
 import { ProductEditor } from "../src/components/ProductSettings";
 import { NewTaskDialog } from "../src/components/NewTask";
@@ -10,7 +10,7 @@ import { TaskStart } from "../src/components/TaskStart";
 import { ReviewView } from "../src/components/sheet/ReviewTab";
 import { lookup } from "../src/lib";
 
-const commands = vi.hoisted(() => ({ addTask: vi.fn(async () => "task"), setTaskStart: vi.fn(async () => {}), setTaskProducts: vi.fn(async () => {}), setTaskAddition: vi.fn(async () => {}), setTaskApproval: vi.fn(), requestChanges: vi.fn(), approve: vi.fn() }));
+const commands = vi.hoisted(() => ({ addTask: vi.fn(async () => "task"), addLessons: vi.fn(), setTaskStart: vi.fn(async () => {}), setTaskProducts: vi.fn(async () => {}), setTaskAddition: vi.fn(async () => {}), setTaskApproval: vi.fn(), requestChanges: vi.fn(), approve: vi.fn() }));
 vi.mock("../src/engine", () => ({ mode: "demo", desktop: false, sim: commands, useEngineStatus: () => ({ link: "live" }), useUnsent: () => [] }));
 let root: Root, host: HTMLDivElement;
 afterEach(() => { act(() => root?.unmount()); host?.remove(); vi.clearAllMocks(); });
@@ -21,6 +21,40 @@ function button(text: string): HTMLButtonElement { return [...host.querySelector
 function source(index: number): TaskSource { const product = state.products[index]!; return { product: { ...product, defaultBranch: "main" }, start: { kind: "default", branch: "main" }, destination: { mode: "pull-request", kind: "new-pr", repo: product.repo, branch: "main" }, confirmed: false }; }
 
 describe("shared product controls", () => {
+  it("resets lesson selections when the same offer changes, and handles duplicate lines independently", async () => {
+    const task = state.tasks[0]!;
+    const item = { id: "lessons", taskId: task.id, kind: "learnings" as const, title: "Lessons", body: "- First lesson\n- Second lesson", at: state.now, blocking: false };
+    const show = (body: string) => <Ask item={{ ...item, body }} state={state} find={lookup(state)} onOpen={() => {}} />;
+    await render(show(item.body));
+    await click(host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[0]!);
+    expect(button("Add 1 of 2")).toBeDefined();
+    await act(async () => root.render(show("- Second lesson\n- Same lesson\n- Same lesson")));
+    expect([...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].map(box => box.checked)).toEqual([true, true, true]);
+    await click(host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1]!);
+    await click(button("Add 2 of 3"));
+    expect(commands.addLessons).toHaveBeenCalledExactlyOnceWith(item.id, [0, 2]);
+  });
+
+  it.each([false, true])("disables applying a %s shared-product edit while validation is in flight", async shared => {
+    const task: Task = { ...state.tasks[0]!, worktree: undefined, workRows: shared ? [0, 1].map(index => ({ source: source(index), choice: { productId: state.products[index]!.id, startFrom: { kind: "default" }, delivery: "pull-request" } })) : undefined };
+    const current = { ...state, tasks: [task], inbox: [{ id: "plan", kind: "plan" as const, taskId: task.id, title: "Plan", at: state.now, blocking: false }] };
+    await render(<TaskStart task={task} state={current} />);
+    await click(shared ? button("Change") : button("Change product or starting point"));
+    await act(async () => root.render(<TaskStart task={{ ...task, workValidating: true }} state={current} />));
+    expect(button("Apply choices").disabled).toBe(true);
+    await click(button("Apply choices")); expect(commands.setTaskStart).not.toHaveBeenCalled();
+    await act(async () => root.render(<TaskStart task={task} state={current} />));
+    expect(button("Apply choices").disabled).toBe(false);
+  });
+
+  it.each([false, true])("uses the supplied clock for %s shared-product check evidence", async shared => {
+    const checks = { at: state.now - 180_000, results: [{ name: "Tests", command: "bun test", ms: 10, ok: true, output: "" }] };
+    const task: Task = { ...state.tasks[0]!, checks, repositories: shared ? [{ productId: state.products[0]!.id, delivery: "pull-request", source: source(0), completedStages: [], checks }] : undefined };
+    await render(<ReviewView task={task} now={state.now} find={lookup(state)} />);
+    expect(host.textContent).toContain("run by Petrina 3m ago");
+    await act(async () => root.render(<ReviewView task={task} now={state.now + 120_000} find={lookup(state)} />));
+    expect(host.textContent).toContain("run by Petrina 5m ago");
+  });
   it("offers an operable send-back form after shared release preparation fails", async () => {
     const task: Task = { ...state.tasks[0]!, state: "needs-you", statusLine: "Delivery preparation needs you", repositories: [0, 1].map((index) => ({ productId: state.products[index]!.id, source: source(index), delivery: index ? "release" : "pull-request", completedStages: [] })) };
     const item = { id: "release-preparation", taskId: task.id, kind: "delivery" as const, title: "Your delivery check", body: "Shop API: getting the release ready failed. Nothing was published. Your approved work is saved; try delivery again or send it back with a note.", at: state.now, blocking: false };
@@ -102,7 +136,7 @@ describe("shared product controls", () => {
 
   it("groups shared and unassigned findings under Together with separate builder answers", async () => {
     const task: Task = { ...state.tasks[0]!, repositories: [0, 1].map((index) => ({ productId: state.products[index]!.id, source: source(index), delivery: "pull-request", completedStages: [] })), findings: [{ id: "shared", text: "The two products disagree", productIds: state.products.slice(0, 2).map((product) => product.id), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open", answers: { [state.products[0]!.id]: { fixed: true, text: "First product repaired", at: 1 } } }, { id: "unassigned", text: "Ownership needs a decision", severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" }] };
-    await render(<ReviewView task={task} find={lookup(state)} />);
+    await render(<ReviewView now={state.now} task={task} find={lookup(state)} />);
     const together = [...host.querySelectorAll("section")].find((section) => section.querySelector("h2")?.textContent === "Together")!;
     expect(together.textContent).toContain("The two products disagree"); expect(together.textContent).toContain("Ownership needs a decision");
     expect(together.textContent).toContain("Builder answered: fixed");
@@ -121,7 +155,7 @@ describe("shared product controls", () => {
       repositories: [0, 1].map((index) => ({ productId: state.products[index]!.id, source: source(index), delivery: "pull-request", completedStages: [] })),
       findings: [{ id: "only-first-product", text: "A note for the first product", productIds: [state.products[0]!.id], severity: "suggestion", raisedBy: "petrina", confirmedBy: [], status: "open" }],
     };
-    await render(<ReviewView task={task} find={lookup(state)} />);
+    await render(<ReviewView now={state.now} task={task} find={lookup(state)} />);
     const products = host.querySelectorAll(".repository-row");
     expect(products[0]!.textContent).toContain("A note for the first product");
     expect(products[1]!.textContent).toContain(empty);
@@ -133,7 +167,7 @@ describe("shared product controls", () => {
 
   it("does not claim reviews or the deleted tests check passed before they ran", async () => {
     const task: Task = { ...state.tasks[0]!, stageIndex: -1, state: "running", findings: [], checks: undefined, repositories: [0, 1].map((index) => ({ productId: state.products[index]!.id, source: source(index), delivery: "pull-request", completedStages: [] })) };
-    await render(<ReviewView task={task} find={lookup(state)} />);
+    await render(<ReviewView now={state.now} task={task} find={lookup(state)} />);
     expect(host.textContent).not.toContain("passed");
     expect(host.textContent).not.toContain("Passed");
     expect(host.textContent).toContain("Deleted or skipped tests: Not run");
@@ -146,7 +180,7 @@ describe("shared product controls", () => {
 
   it("keeps an empty review in progress distinct from completed review results", async () => {
     const task: Task = { ...state.tasks[0]!, plan: { rationale: "Review together", plannerProfileId: "sonnet-medium", stages: [{ id: "review", kind: "review-chain", roleId: "code-reviewer", title: "Review", profileIds: ["opus-high", "sol-high"] }] }, stageIndex: 0, state: "running", findings: [], repositories: [0, 1].map((index) => ({ productId: state.products[index]!.id, source: source(index), delivery: "pull-request", completedStages: [] })), hunt: { stageId: "review", round: 1, reported: {}, findings: 0 } };
-    await render(<ReviewView task={task} find={lookup(state)} />);
+    await render(<ReviewView now={state.now} task={task} find={lookup(state)} />);
     for (const section of host.querySelectorAll(".repository-row")) expect(section.textContent).toContain("No findings reported yet.");
     expect(host.textContent).not.toContain("Every reviewer passed");
     expect(host.textContent).not.toContain("No findings assigned only to this product");

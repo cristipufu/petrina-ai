@@ -9,7 +9,7 @@ import { lookup } from "../src/lib";
 function checked(votes: Vote[], extra: Partial<Finding> = {}) {
   const state = createDemoState(1_000_000_000);
   const task = { ...state.tasks[0]!, findings: [{ id: "finding", text: "An older finding", severity: "blocking" as const, status: "dismissed" as const, raisedBy: "opus-high", confirmedBy: [], votes, verification: { by: "sol-high", verdict: "not-a-bug" as const, reason: "The page already shows the greeting.", at: state.now }, ...extra }] };
-  return renderToStaticMarkup(<ReviewView task={task} find={lookup(state)} />);
+  return renderToStaticMarkup(<ReviewView now={state.now} task={task} find={lookup(state)} />);
 }
 
 describe("empty review progress", () => {
@@ -48,7 +48,7 @@ describe("empty review progress", () => {
         ...extra,
       };
       const host = document.createElement("div");
-      host.innerHTML = renderToStaticMarkup(<ReviewView task={task} find={lookup(state)} />);
+      host.innerHTML = renderToStaticMarkup(<ReviewView now={state.now} task={task} find={lookup(state)} />);
       const sections = kind === "several products" ? [...host.children] : [host];
       expect(sections).toHaveLength(kind === "several products" ? 3 : 1);
       for (const section of sections) {
@@ -106,7 +106,7 @@ it("shows a tracked follow-up and one Petrina could not match", () => {
   const state = createDemoState(1_000_000_000);
   const card = state.tasks.find((task) => task.id === "footer-follow-up")!;
   const source = state.tasks.find((task) => task.id === card.followUp!.reports[0]!.taskId)!;
-  const review = renderToStaticMarkup(<ReviewView task={source} find={lookup(state)} />);
+  const review = renderToStaticMarkup(<ReviewView now={state.now} task={source} find={lookup(state)} />);
   expect(review).toContain("Tracked in");
   expect(review).toContain(`/tasks/${card.id}`);
   expect(review).toContain("Not tracked. Petrina could not match it");
@@ -128,7 +128,7 @@ it("labels an acceptance result that could not be checked without calling it a d
     ...state.tasks[0]!,
     findings: [{ id: "finding", text: "Could not verify acceptance check: A real session can write safely", severity: "blocking" as const, status: "unverified" as const, raisedBy: "sol-high", confirmedBy: [], evidence: "The account limit prevented a session." }],
   };
-  const html = renderToStaticMarkup(<ReviewView task={task} find={lookup(state)} />);
+  const html = renderToStaticMarkup(<ReviewView now={state.now} task={task} find={lookup(state)} />);
   expect(html).toContain("Could not verify");
   expect(html).toContain("The account limit prevented a session.");
   expect(html).not.toContain("class=\"label bad\">Open");
@@ -171,7 +171,7 @@ describe("check cleanup", () => {
         }],
       },
     };
-    const html = renderToStaticMarkup(<ReviewView task={task} find={lookup(state)} />);
+    const html = renderToStaticMarkup(<ReviewView now={state.now} task={task} find={lookup(state)} />);
     expect(html).toContain("Petrina could not confirm every child process stopped. Some may still be running.");
   });
 });
