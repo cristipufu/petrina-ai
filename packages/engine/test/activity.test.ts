@@ -25,6 +25,19 @@ describe("plain agent activity across tools", () => {
     expect(browserTarget({ title: "browser_navigate", rawInput: { url: "bad url" } })).toBeUndefined();
   });
 
+  it("reads Antigravity MCP metadata and display prefixes without inspecting executable payloads", () => {
+    for (const [name, expected] of [["browser_evaluate", "Checking the page"], ["browser_take_screenshot", "Taking a picture"], ["browser_navigate", "Opening a page"], ["browser_snapshot", "Reading the page"], ["browser_future_action", "Using the browser"]] as const) {
+      expect(describeTool({ title: `Running ${name}`, kind: "other" })).toBe(expected);
+      expect(describeTool({ title: "call_mcp_tool", rawInput: { ToolName: name, ServerName: "page", Arguments: { function: "private executable payload" } } })).toBe(expected);
+      expect(describeTool({ title: "An opaque wrapper", rawInput: { arguments: { function: "private executable payload" } }, _meta: { is_mcp_tool_call: true, mcp: { server: "page", tool: name } } })).toBe(expected);
+      expect(describeTool({ title: "run_command", rawInput: { description: `Running ${name}` } })).toBe(expected);
+    }
+    expect(describeTool({ title: "run_command", rawInput: { description: "Check that browser_evaluate handles a missing page" } })).toBe("Check that browser_evaluate handles a missing page");
+    expect(describeTool({ title: "run_command", rawInput: { CommandLine: "browser_evaluate", description: "Validate the chosen colour" } })).toBe("Validate the chosen colour");
+    expect(describeTool({ title: "An ordinary action", rawInput: { function: "browser_take_screenshot" } })).toBe("An ordinary action");
+    expect(browserTarget({ title: "call_mcp_tool", rawInput: { ToolName: "browser_navigate", Arguments: { url: "https://example.com/page?private=value" } } })).toBe("Page: https://example.com/page");
+  });
+
   it("describes Grok searches just like other tools, even without metadata", () => {
     for (const call of [
       { title: "Search", kind: "search" },

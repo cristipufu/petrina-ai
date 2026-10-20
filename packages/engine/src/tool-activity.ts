@@ -34,7 +34,9 @@ function toolMetadata(update: ToolActivity): Record<string, unknown> | undefined
 
 function browserAction(update: ToolActivity): { action: string; input: Record<string, unknown> } | undefined {
   const metadata = toolMetadata(update);
-  let name = typeof metadata?.name === "string" ? metadata.name : update.title ?? "";
+  const mcp = update._meta?.mcp;
+  const mcpTool = mcp && typeof mcp === "object" && "tool" in mcp ? mcp.tool : undefined;
+  let name = typeof metadata?.name === "string" ? metadata.name : typeof mcpTool === "string" ? mcpTool : update.title ?? "";
   let input = update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput) ? update.rawInput as Record<string, unknown> : {};
   if (/^(?:use_tool|call_tool)$/i.test(name)) {
     const wrapped = input.tool_name ?? input.name;
@@ -43,9 +45,16 @@ function browserAction(update: ToolActivity): { action: string; input: Record<st
     const args = input.arguments ?? input.args ?? input.parameters;
     input = args && typeof args === "object" && !Array.isArray(args) ? args as Record<string, unknown> : {};
   }
-  const action = /(?:^|__)browser_([a-z_]+)$/i.exec(name)?.[1]?.toLowerCase();
+  if (name === "call_mcp_tool" && typeof input.ToolName === "string") {
+    name = input.ToolName;
+    const args = input.Arguments;
+    input = args && typeof args === "object" && !Array.isArray(args) ? args as Record<string, unknown> : {};
+  }
+  const action = browserName(name);
   return action ? { action, input } : undefined;
 }
+
+const browserName = (name: string) => /(?:^|__)browser_([a-z_]+)$/i.exec(name.trim().replace(/^Running\s+/i, ""))?.[1]?.toLowerCase();
 
 const BROWSER_ACTIONS: Record<string, string> = {
   navigate: "Opening a page", navigate_back: "Going back a page", snapshot: "Reading the page",
@@ -144,6 +153,8 @@ function purposeOf(rawInput: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const text = value.trim().replace(/\s+/g, " ");
   if (text.length < 3) return undefined;
+  const browser = browserName(text);
+  if (browser) return BROWSER_ACTIONS[browser] ?? "Using the browser";
   const line = text.length > 90 ? `${text.slice(0, 89).trimEnd()}…` : text;
   return line[0]!.toUpperCase() + line.slice(1);
 }
