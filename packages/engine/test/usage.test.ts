@@ -196,17 +196,20 @@ describe.concurrent("an agent that runs out of usage", () => {
     });
     try {
       const task = await run.done();
-      const finding = task.findings.find((entry) => entry.text === "The greeting is missing on the welcome page.")!;
+      const findings = task.findings.filter((entry) => entry.severity === "blocking");
+      expect(findings).toHaveLength(2);
       expect(run.fakes.openings("verifier")).toHaveLength(1);
-      expect(finding.votes).toHaveLength(1);
-      const vote = finding.votes![0]!;
-      expect(run.engine.profile(vote.by)!.toolId).toBe("claude-code");
-      expect(vote.toolId).toBe("claude-code");
-      expect(vote.plannedProfileId).toBe(vote.by);
-      expect(vote.verdict).toBe("real");
-      expect(finding.verification!.verdict).toBe("real");
-      expect(finding.status).toBe("fixed");
-      expect(lines(task)).toContain("Sent back to the builder: 1 important");
+      for (const finding of findings) {
+        expect(finding.votes).toHaveLength(1);
+        const vote = finding.votes![0]!;
+        expect(run.engine.profile(vote.by)!.toolId).toBe("claude-code");
+        expect(vote.toolId).toBe("claude-code");
+        expect(vote.plannedProfileId).toBe(vote.by);
+        expect(vote.verdict).toBe("real");
+        expect(finding.verification!.verdict).toBe("real");
+        expect(finding.status).toBe("fixed");
+      }
+      expect(lines(task)).toContain("Sent back to the builder: 2 important");
     } finally { run.engine.shutdown(); }
   });
 

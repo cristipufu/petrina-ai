@@ -1097,7 +1097,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       const disputed = undisputed.get(sessionId);
       if (disputed && text.includes("Your result block could not be used")) {
         undisputed.delete(sessionId);
-        return done({ ...blocks, disputes: [{ id: disputed, reason: DISPUTE_REASON }] });
+        return done({ ...blocks, disputes: disputed === "a-finding-that-is-not-listed" ? [] : [{ id: disputed, reason: DISPUTE_REASON }] });
       }
       if (text.includes('"verdict": "pass"')) {
         if (text.includes(SECURITY_FINDING)) return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });

@@ -166,7 +166,7 @@ describe("Claude Code's own sandbox", () => {
             ["sol-high", { on: true }],
           ]);
           // A vote includes the installed third tool too, with its own setup and no sandbox claim.
-          if (voting && (await engine.state()).tools.some((tool) => tool.id === "grok" && tool.status === "ready")) expected.set("grok-xhigh", undefined);
+          if (voting && (await engine.state()).tools.some((tool) => tool.id === "grok" && tool.status === "ready")) expected.set("grok-high", undefined);
           if (voting && (await engine.state()).tools.some((tool) => tool.id === "antigravity" && tool.status === "ready")) expected.set("argon-high", undefined);
           const group = await traceTaskWait(!voting && unavailable ? "Reviewers without Claude Code's sandbox" : undefined, () => engine.state(), run.taskId, () => engine.until((state) => {
             const task = run.find(state);

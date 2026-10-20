@@ -265,8 +265,11 @@ import before from "./today-prompts.json";
 describe("saved role wording", () => {
   const contexts = promptContexts();
   it("keeps main's default instructions apart from confirmed-source planning and screen instructions, and the Release Manager unchanged", () => {
+    const multipleReports = "Several independent reports may describe the same underlying bug: fix it once and reuse that explanation, but answer every related finding id. ";
     for (const [name, context] of Object.entries(contexts)) {
-      const now = buildPrompt(context).replace(roleCard(context), "").replace(`\n${DESIGN_OBJECTION_RULE}`, "").replace(ASK_FOR_SCREEN, "If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.");
+      const text = buildPrompt(context);
+      if (context.role.id === "builder") expect(text.includes(multipleReports)).toBe(!!context.task.fixing);
+      const now = text.replace(multipleReports, "").replace(roleCard(context), "").replace(`\n${DESIGN_OBJECTION_RULE}`, "").replace(ASK_FOR_SCREEN, "If a check truly needs the running app on screen, don't do it: list it in your result as a check that needs the screen.");
       const was = (before as Record<string, string>)[name]!;
       if (context.role.id === "planner") {
         const job = (text: string) => text.slice(text.indexOf("# Your job"), text.indexOf("## Design brief") > 0 ? text.indexOf("## Design brief") : text.length);

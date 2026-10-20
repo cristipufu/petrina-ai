@@ -138,6 +138,9 @@ for (const role of ["code reviewer", "verifier"] as const) {
         expect(f.engine.getState().inbox.some((item) => item.kind === "screen")).toBe(false);
         expect(f.fakes.received(role).filter((entry) => entry.session === session)).toHaveLength(2);
         expect(f.fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new", "resume"]);
+        const resumed = f.fakes.received(role).findLast((entry) => entry.session === session)!.text;
+        expect(resumed).toContain("You may now use the screen for:");
+        expect(resumed).not.toContain("Keep what you already know from the previous round");
         // Its peer has not even finished its first turn.
         expect(f.fakes.received(role).filter((entry) => entry.session === peer)).toHaveLength(1);
         expect(slotUses(f.engine.getState()).filter((entry) => entry.taskId === f.id)).toHaveLength(seats);

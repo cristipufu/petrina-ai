@@ -37,6 +37,19 @@ async function bare() {
 }
 
 describe("immutable review inputs", () => {
+  it("uses high-effort verifiers without changing discovery profiles, retaining a configured fallback when high is absent", async () => {
+    const f = await bare();
+    try {
+      const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["opus-xhigh", "sol-xhigh"], maxRounds: 2 };
+      f.engine.s.tools.forEach((tool) => { tool.status = "ready"; });
+      const voters = f.engine["reviews"]["voters"](stage);
+      expect(voters.length).toBeGreaterThan(1);
+      expect(voters.every((id) => f.engine.profile(id)!.effort === "high")).toBe(true);
+      expect(stage.profileIds).toEqual(["opus-xhigh", "sol-xhigh"]);
+      f.engine.s.profiles = f.engine.s.profiles.filter((profile) => profile.toolId !== "codex" || profile.effort !== "high");
+      expect(f.engine["reviews"]["voters"](stage)).toContain("sol-xhigh");
+    } finally { await f.engine.shutdown(); }
+  });
   for (const empty of ["old", "new", "both"]) it(`prepares a port whose ${empty} commit range is empty`, async () => {
     const f = await bare();
     try {
@@ -80,15 +93,41 @@ describe("immutable review inputs", () => {
       const file = /: ("[^"\n]+\.md") \(reference/.exec(snapshot.material!.body)![1]!;
       const body = readFileSync(JSON.parse(file), "utf8");
       expect(body).toContain(`git diff ${f.base}...${ref.heads.p}`);
-      expect(body).toContain(`git diff ${f.first}..${ref.heads.p}`);
+      expect(body).not.toContain("## Changes since the last completed code-review round");
       const guide = body.split("## Complete change")[0]!;
       expect(guide).toContain("Preserve the original rule.");
       expect(guide).not.toContain("A change cannot replace the original rule.");
-      const delta = body.split("## Changes since the last completed code-review round")[1]!;
+      const incremental = snapshot.artifacts!.find((artifact) => artifact.file.endsWith(".incremental.md"))!;
+      const delta = readFileSync(incremental.file, "utf8");
+      expect(delta).toContain(`git diff ${f.first}..${ref.heads.p}`);
       expect(delta).toContain("+FIX-ONLY"); expect(delta).not.toContain("+FIRST-CHANGE");
       writeFileSync(join(f.repo, "REVIEW.md"), "MUTATED-WORKTREE-GUIDE");
       expect(readFileSync(JSON.parse(file), "utf8")).toBe(body);
       expect(JSON.stringify(repositoryView(f.scope))).not.toContain("+FIX-ONLY");
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("keeps lockfile patches separate, with paths in the statistics and the complete evidence available", async () => {
+    const f = await bare();
+    try {
+      f.scope.work.reviewedSha = f.first;
+      writeFileSync(join(f.repo, "bun.lock"), "LOCKFILE-ONLY-SENTINEL\n".repeat(5_000));
+      writeFileSync(join(f.repo, "greeting.txt"), "FIRST-CHANGE\nFIX-ONLY\n");
+      git(f.repo, "add", "."); git(f.repo, "commit", "-qm", "Update a dependency and the greeting");
+      const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
+      const input = await readReviewInput(ref);
+      const ordinary = input.artifacts!.filter((artifact) => !artifact.file.endsWith("-lockfiles.md"));
+      const locks = input.artifacts!.filter((artifact) => artifact.file.endsWith("-lockfiles.md"));
+      expect(ordinary).toHaveLength(2); expect(locks).toHaveLength(2);
+      for (const artifact of ordinary) {
+        const text = readFileSync(artifact.file, "utf8");
+        expect(text).toContain("bun.lock"); expect(text).not.toContain("LOCKFILE-ONLY-SENTINEL");
+        expect(text).toContain("These changes remain in review scope");
+      }
+      for (const artifact of locks) expect(readFileSync(artifact.file, "utf8")).toContain("+LOCKFILE-ONLY-SENTINEL");
+      const delta = readFileSync(ordinary.find((artifact) => artifact.file.endsWith(".incremental.md"))!.file, "utf8");
+      expect(delta).toContain("+FIX-ONLY"); expect(delta).not.toContain("+FIRST-CHANGE");
+      expect(input.material!.body).toContain("never excluded from review scope");
     } finally { await f.engine.shutdown(); }
   });
 
@@ -242,7 +281,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
         expect(context).toBeDefined();
       }
       const inputs = rounds[1]!.agentInputs!;
-      expect(inputs.every((input) => input.sections.find((section) => section.title === "Prepared review material")!.body.match(/\(reference /g)?.length === 2)).toBe(true);
+      expect(inputs.every((input) => input.sections.find((section) => section.title === "Prepared review material")!.body.match(/\(reference /g)?.length === 4)).toBe(true);
     } finally { await f.engine().shutdown(); }
   });
 });

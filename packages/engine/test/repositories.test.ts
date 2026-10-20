@@ -33,12 +33,12 @@ function setup(name: string) {
 
 describe.concurrent("one task across products", () => {
   for (const [name, reports, owners] of [
-    ["omitted ownership", [["second"], undefined], ["second"]],
-    ["foreign ownership", [["second"], ["foreign"]], ["second"]],
-    ["mixed valid and foreign ownership", [["first"], ["second", "foreign"]], ["first"]],
-    ["valid expansion", [["first"], ["second"]], ["first", "second"]],
-    ["unknown-only reports", [undefined, ["foreign"]], []],
-    ["invalid mixed reports", [["first", "foreign"], ["second", "foreign"]], []],
+    ["omitted ownership", [["second"], undefined], [["second"], []]],
+    ["foreign ownership", [["second"], ["foreign"]], [["second"], []]],
+    ["mixed valid and foreign ownership", [["first"], ["second", "foreign"]], [["first"], []]],
+    ["valid expansion", [["first"], ["second"]], [["first"], ["second"]]],
+    ["unknown-only reports", [undefined, ["foreign"]], [[], []]],
+    ["invalid mixed reports", [["first", "foreign"], ["second", "foreign"]], [[], []]],
   ] as const) for (const reverse of [false, true]) it(`keeps explicit finding owners across ${name}${reverse ? " in reverse order" : ""}`, async () => {
     const { shop, api, start } = setup(`finding-owners-${name.replaceAll(" ", "-")}-${reverse}`);
     const engine = start();
@@ -54,9 +54,13 @@ describe.concurrent("one task across products", () => {
         const result = ReviewResult.parse({ verdict: "fail", findings: [{ text: index ? "The GREETING is missing!" : "The greeting is missing.", productIds: productIds?.map((id) => ids[id]), severity: "important", evidence: `Current reproduction from reviewer ${index}.` }] });
         await engine["reviews"]["applyReview"](executionFor(task), stage, result, index ? "sol-high" : "opus-high", "code-reviewer", String(index));
       }
-      expect(task.findings).toHaveLength(1);
-      expect(task.findings[0]!.productIds?.slice().sort()).toEqual(owners.map((id) => ids[id]).sort());
-      expect(task.findings[0]!.confirmedBy).toEqual(["sol-high"]);
+      expect(task.findings).toHaveLength(2);
+      const expected = reverse ? [...owners].reverse() : owners;
+      for (const [index, finding] of task.findings.entries()) {
+        expect(finding.productIds?.slice().sort()).toEqual(expected[index]!.map((id) => ids[id]).sort());
+        expect(finding.confirmedBy).toEqual([]);
+        expect(finding.evidence).toBe(`Current reproduction from reviewer ${index}.`);
+      }
     } finally { await engine.shutdown(); }
   });
 
@@ -196,11 +200,11 @@ describe.concurrent("one task across products", () => {
       task.plan = { rationale: "Review both products", plannerProfileId: "sonnet-medium", stages: [stage] };
       task.stageIndex = 0;
       const proof = "The current guest state fails after signing out; the signed-in control and original case pass.";
-      for (const severity of ["blocking", "suggestion", "pre-existing"] as const) for (const channel of ["confirmation", "duplicate"] as const) for (const by of ["sol-high", "opus-high"]) {
+      for (const severity of ["blocking", "suggestion", "pre-existing"] as const) for (const by of ["sol-high", "opus-high"]) {
         task.hunt = { stageId: stage.id, round: 2, reported: {}, findings: 1 };
         task.findings = [{ id: "dismissed", text: "The greeting is missing.", productIds: [first, second], severity, raisedBy: "opus-high", status: "dismissed", confirmedBy: ["opus-xhigh"], evidence: "The original welcome path passed.", disputes: [{ by: "sol-high", reason: "The original path works on current code.", at: 1 }], verification: { by: "sol-high", verdict: "not-a-bug", reason: "The old reproduction does not fail.", at: 1 }, votes: [{ by: "sol-high", toolId: "codex", verdict: "not-a-bug", reason: "The original path passes." }] }];
         const before = JSON.parse(JSON.stringify(task.findings[0]!));
-        const result = ReviewResult.parse({ verdict: "fail", ...(channel === "confirmation" ? { confirms: [{ id: "dismissed", evidence: proof }] } : { findings: [{ text: "The GREETING is missing!", productIds: [second, first], severity: "important", evidence: proof }] }) });
+        const result = ReviewResult.parse({ verdict: "fail", confirms: [{ id: "dismissed", evidence: proof }] });
         expect(checkReviewEvidence(task.findings, result, task)).toBeUndefined();
         await engine["reviews"]["applyReview"](executionFor(task), stage, result, by, "code-reviewer", "0");
         expect(task.findings).toHaveLength(1);
@@ -267,32 +271,37 @@ describe.concurrent("one task across products", () => {
       const moment = engine.tracking.log.moments({ taskId: id, kinds: ["verdict"] }).at(-1)!;
       expect(moment).toMatchObject({ count: 1, blocking: 1 });
 
-      // Ordinary open reports still union owners, even when initially assigned to different products.
+      // Similar prose never combines independently reported owners or invents agreement.
       task.findings = [{ id: "open-api", text: "The greeting is missing.", productIds: [second], evidence: "The API guest case fails.", severity: "blocking", raisedBy: "earlier-reviewer", status: "open", confirmedBy: [] }];
       expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, evidence: undefined }] }), task)).toBeUndefined();
       await engine["reviews"]["applyReview"](executionFor(task), stage, result, "opus-high", "code-reviewer", "0");
-      expect(task.findings).toHaveLength(1);
-      expect(task.findings[0]!.productIds).toEqual([second, first]);
-      expect(task.findings[0]!.evidence).toContain("The API guest case fails.");
-      expect(task.findings[0]!.evidence).toContain(report.evidence);
+      expect(task.findings).toHaveLength(2);
+      expect(task.findings[0]!.productIds).toEqual([second]);
+      expect(task.findings[1]!.productIds).toEqual([first]);
+      expect(task.findings[0]!.evidence).toBe("The API guest case fails.");
+      expect(task.findings[1]!.evidence).toBe(report.evidence);
+      expect(task.findings.every((finding) => finding.confirmedBy.length === 0)).toBe(true);
 
-      // Overlap with a shared claimed fix still identifies the same issue and needs new proof.
+      // An explicit id identifies a shared claimed fix and still needs new proof.
       task.findings = [{ id: "shared-fixed", text: "The greeting is missing.", productIds: [second, first], evidence: "The original shared case.", severity: "blocking", raisedBy: "earlier-reviewer", status: "fixed", confirmedBy: [], answer: { fixed: true, at: 1, text: "Both owners repaired it." } }];
-      expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, evidence: undefined }] }), task)).toContain("shared-fixed");
-      expect(checkReviewEvidence(task.findings, result, task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](executionFor(task), stage, result, "opus-high", "code-reviewer", "0");
+      expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", confirms: ["shared-fixed"] }), task)).toContain("shared-fixed");
+      const confirmation = ReviewResult.parse({ verdict: "fail", confirms: [{ id: "shared-fixed", evidence: report.evidence }] });
+      expect(checkReviewEvidence(task.findings, confirmation, task)).toBeUndefined();
+      await engine["reviews"]["applyReview"](executionFor(task), stage, confirmation, "opus-high", "code-reviewer", "0");
       expect(task.findings).toHaveLength(1);
       expect(task.findings[0]!).toMatchObject({ id: "shared-fixed", status: "open", productIds: [second, first], evidence: report.evidence });
       expect(task.findings[0]!.earlierReviews![0]!.evidence).toBe("The original shared case.");
 
-      // A duplicate never erases a validated owner. With no valid assignment, it stays Together.
-      for (const [prior, incoming, expected] of [[[second], undefined, [second]], [undefined, [first], [first]], [[second], ["not-a-product"], [second]], [undefined, ["not-a-product"], []]] as [string[] | undefined, string[] | undefined, string[]][]) {
+      // A new report never erases a prior owner. Invalid new assignments stay Together.
+      for (const [prior, incoming, expected] of [[[second], undefined, []], [undefined, [first], [first]], [[second], ["not-a-product"], []], [undefined, ["not-a-product"], []]] as [string[] | undefined, string[] | undefined, string[]][]) {
         task.findings = [{ id: "ownership-unknown", text: "The greeting is missing.", productIds: prior, severity: "blocking", raisedBy: "earlier-reviewer", status: "fixed", confirmedBy: [], answer: { fixed: true, at: 1, text: "Claimed repaired." } }];
         const unknown = ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds: incoming }] });
-        expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds: incoming, evidence: undefined }] }), task)).toContain("ownership-unknown");
+        expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds: incoming, evidence: undefined }] }), task)).toBeUndefined();
         await engine["reviews"]["applyReview"](executionFor(task), stage, unknown, "opus-high", "code-reviewer", "0");
-        expect(task.findings).toHaveLength(1);
-        expect(task.findings[0]!).toMatchObject({ id: "ownership-unknown", status: "open", productIds: expected, evidence: report.evidence });
+        expect(task.findings).toHaveLength(2);
+        expect(task.findings[0]!).toMatchObject({ id: "ownership-unknown", status: "fixed" });
+        expect(task.findings[0]!.productIds).toEqual(prior);
+        expect(task.findings[1]!).toMatchObject({ status: "open", productIds: expected, evidence: report.evidence });
       }
     } finally { await engine.shutdown(); }
   });
@@ -1073,9 +1082,14 @@ describe.concurrent("shared-task repair regressions", () => {
         }
       }
       engine["reviews"]["settleReviews"](task, stage);
-      const expected = order === "both-pass" ? "fixed" : order === "dispute-without-confirmation" ? "dismissed" : "open";
+      const expected = order === "both-pass" ? "fixed" : order === "dispute-without-confirmation" || order.startsWith("repeated-finding") ? "dismissed" : "open";
       expect(task.findings[0]!.status).toBe(expected);
-      expect(reviewRoundEnd(task, stage, 2).kind === "passed").toBe(expected !== "open");
+      expect(reviewRoundEnd(task, stage, 2).kind === "passed").toBe(expected !== "open" && !order.startsWith("repeated-finding"));
+      if (order.startsWith("repeated-finding")) {
+        expect(task.findings).toHaveLength(2);
+        expect(task.findings[1]!.status).toBe("open");
+        expect(task.findings[1]!.confirmedBy).toEqual([]);
+      }
       if (expected === "open") expect(task.findings[0]!.confirmedBy).toHaveLength(1);
       if (order.includes("dispute")) expect(task.findings[0]!.disputes).toHaveLength(1);
     } finally { await engine.shutdown(); }

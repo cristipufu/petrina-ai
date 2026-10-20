@@ -3,7 +3,7 @@ import { beginRepair, productsFor } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { assignedProducts, endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Id, type Role, type Stage, type Task, type Vote } from "@petrina/core";
+import { endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Id, type Role, type Stage, type Task, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -42,11 +42,6 @@ function mostCommon(votes: readonly Vote[]): Vote | undefined {
   return votes.find((vote) => vote.verdict === best);
 }
 
-/** The same finding, however it is spaced or capitalised. */
-function sameFinding(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
 function closedFinding(finding: Finding): boolean {
   return finding.status === "fixed" || finding.status === "dismissed";
 }
@@ -55,25 +50,14 @@ function needsCurrentEvidence(finding: Finding): boolean {
   return finding.raisedBy !== "petrina" && (closedFinding(finding) || finding.reopenedAt !== undefined || finding.answer?.fixed === true);
 }
 
-/** Equal wording on an independent product cannot reopen another product's closed finding. */
-function sameReviewFinding(earlier: Finding, reported: Pick<Finding, "text" | "productIds">, task?: Task): boolean {
-  if (sameFinding(earlier.text) !== sameFinding(reported.text)) return false;
-  if (!task?.repositories || !needsCurrentEvidence(earlier)) return true;
-  const prior = assignedProducts(task, earlier.productIds), incoming = assignedProducts(task, reported.productIds);
-  // Ordinary open reports combine owners; overlapping shared findings and unassigned ownership keep their identity.
-  return !prior.length || !incoming.length || prior.some((id) => incoming.includes(id));
-}
-
 /** Closed findings are judged again only from current reproductions, never unexplained old ids. */
-export function checkReviewEvidence(findings: readonly Finding[], result: z.infer<typeof ReviewResult>, task?: Task): string | undefined {
+export function checkReviewEvidence(findings: readonly Finding[], result: z.infer<typeof ReviewResult>, _task?: Task): string | undefined {
+  const unknown = [...result.confirms, ...result.disputes.map((entry) => entry.id)].filter((id) => !findings.some((finding) => finding.id === id));
+  if (unknown.length) return `Confirm or dispute only finding ids provided in your saved review input. These ids were not shown: ${[...new Set(unknown)].join(", ")}. Report a new problem as a new finding instead.`;
   const missing = new Set(result.confirms.filter((id) => {
     const finding = findings.find((entry) => entry.id === id);
     return finding && needsCurrentEvidence(finding) && !result.confirmationEvidence[id]?.trim();
   }));
-  for (const reported of result.findings) {
-    const finding = findings.find((entry) => sameReviewFinding(entry, reported, task));
-    if (finding && needsCurrentEvidence(finding) && !reported.evidence?.trim()) missing.add(finding.id);
-  }
   return missing.size ? `Current evidence is required to reopen or support a previously closed finding. For ${[...missing].join(", ")}, return "confirms": [{"id": "<finding id>", "evidence": "<exact current failing case, expected and observed result>"}]. Include a nearby passing control when it distinguishes the regression. If there is no current failing case, omit the confirmation. The old report alone is not current evidence.` : undefined;
 }
 
@@ -381,93 +365,45 @@ export class Reviews {
     if (task.repositories && task.hunt) for (const finding of task.findings) {
       const owners = productsFor(task, finding.productIds);
       if (owners.length < 2 || finding.raisedBy === "petrina" || finding.text.startsWith("Failed acceptance check:") || !owners.every((id) => finding.answers?.[id]?.fixed)) continue;
-      const passed = result.verdict === "pass" && !result.confirms.includes(finding.id) && !result.findings.some((entry) => sameReviewFinding(finding, entry, task));
+      const passed = result.verdict === "pass" && !result.confirms.includes(finding.id);
       task.hunt.fixReviews = { ...task.hunt.fixReviews, [finding.id]: { ...task.hunt.fixReviews?.[finding.id], [reviewerKey]: passed } };
     }
-    // A finding is raised once. Another reviewer raising an open one backs it; a repeat of a settled one is dropped.
-    // Each reviewer's tag is saved here, before any later comparison of older bugs.
+    // New reports keep their own identities. Only explicit confirmations by id back an earlier finding.
     const shown = task.shownFollowUps?.[`review-${reviewerKey}`] ?? task.shownFollowUps?.[reviewerKey];
     const picked = (value: string | undefined): Finding["sameBug"] | undefined => {
       const choice = value?.trim();
       if (!choice || !shown?.length || (choice !== "none" && !shown.includes(choice))) return undefined;
       return choice === "none" ? "none" : choice;
     };
-    const rememberTag = (target: DeepMutable<Finding>, incoming: (typeof result.findings)[number], fresh: boolean) => {
-      const prior = target.judgments?.length ? [...target.judgments] : [{ by: target.raisedBy, severity: target.severity, at: Date.now() }];
-      const tagged = noteReviewTag(fresh ? undefined : { severity: target.severity, judgments: prior, verification: target.verification }, SEVERITY[incoming.severity], profileId, Date.now());
-      const relevant = tagged.judgments.some((entry) => entry.severity === "pre-existing") || tagged.judgments.length > 1;
-      if (relevant) target.judgments = tagged.judgments;
-      if (tagged.clearVote) {
-        target.severity = "blocking";
-        delete target.verification;
-        delete target.votes;
-      } else if (fresh) target.severity = tagged.severity;
-      if (incoming.steps?.trim() && !target.steps) target.steps = incoming.steps.trim();
-      if (shown?.length && !target.cardsShown) target.cardsShown = [...shown];
-      const choice = picked(incoming.sameBug);
-      if (choice && !target.sameBug) target.sameBug = choice;
-    };
-    const raised: typeof result.findings = [];
-    let backed = 0;
+    const raised: DeepMutable<Finding>[] = [];
     for (const finding of result.findings) {
-      const same = task.findings.find((entry) => sameReviewFinding(entry, finding, task));
-      if (!same) {
-        raised.push(finding);
-        const choice = picked(finding.sameBug);
-        const tagged = noteReviewTag(undefined, SEVERITY[finding.severity], profileId, Date.now());
-        const relevant = tagged.judgments.some((entry) => entry.severity === "pre-existing");
-        const created: DeepMutable<Finding> = {
-          id: this.k.id(task.id),
-          text: finding.text,
-          ...(task.repositories ? { productIds: productsFor(task, finding.productIds) } : {}),
-          ...(finding.where ? { where: finding.where } : {}),
-          ...(finding.evidence ? { evidence: finding.evidence } : {}),
-          ...(finding.steps?.trim() ? { steps: finding.steps.trim() } : {}),
-          ...(shown?.length ? { cardsShown: [...shown] } : {}),
-          ...(choice ? { sameBug: choice } : {}),
-          ...(relevant ? { judgments: tagged.judgments } : {}),
-          severity: tagged.severity,
-          raisedBy: profileId,
-          roleId,
-          confirmedBy: [],
-          status: "open",
-        };
-        task.findings.push(created);
-      } else if ((same.status === "open" || closedFinding(same)) && same.raisedBy !== "petrina") {
-        if (task.repositories) {
-          const incoming = productsFor(task, finding.productIds), prior = productsFor(task, same.productIds);
-          same.productIds = [...new Set([...prior, ...incoming])];
-        }
-        const closed = closedFinding(same);
-        const before = same.severity;
-        const incomingSeverity = SEVERITY[finding.severity];
-        // Fresh proof reopens a dismissed finding with the classification it already had.
-        // A clash is only two tags on a finding that is still open.
-        if (closed) reopenFinding(same, Date.now(), finding.evidence);
-        else addEvidence(same, finding.evidence);
-        if (closed) {
-          if (finding.steps?.trim() && !same.steps) same.steps = finding.steps.trim();
-          if (shown?.length && !same.cardsShown) same.cardsShown = [...shown];
-          const choice = picked(finding.sameBug);
-          if (choice && !same.sameBug) same.sameBug = choice;
-        } else rememberTag(same, finding, false);
-        // Older and Important disagree. That reviewer does not count as backing the Important finding.
-        const disagreed = !closed && ((before === "pre-existing" && incomingSeverity === "blocking") || (before === "blocking" && incomingSeverity === "pre-existing"));
-        if (disagreed || (same.reopenedAt === undefined && !same.answer?.fixed && same.raisedBy === profileId) || same.confirmedBy.includes(profileId)) continue;
-        same.confirmedBy.push(profileId);
-        backed += 1;
-      }
+      const choice = picked(finding.sameBug);
+      const tagged = noteReviewTag(undefined, SEVERITY[finding.severity], profileId, Date.now());
+      const relevant = tagged.judgments.some((entry) => entry.severity === "pre-existing");
+      const created: DeepMutable<Finding> = {
+        id: this.k.id(task.id), text: finding.text,
+        ...(task.repositories ? { productIds: productsFor(task, finding.productIds) } : {}),
+        ...(finding.where ? { where: finding.where } : {}),
+        ...(finding.evidence ? { evidence: finding.evidence } : {}),
+        ...(finding.steps?.trim() ? { steps: finding.steps.trim() } : {}),
+        ...(shown?.length ? { cardsShown: [...shown] } : {}),
+        ...(choice ? { sameBug: choice } : {}),
+        ...(relevant ? { judgments: tagged.judgments } : {}),
+        severity: tagged.severity, raisedBy: profileId, roleId, confirmedBy: [], status: "open",
+      };
+      task.findings.push(created);
+      raised.push(created);
     }
-    const important = raised.some((finding) => finding.severity === "important");
+    const important = raised.some((finding) => finding.severity === "blocking");
     // A confirmed existing finding asks for fixes just as a newly raised one does. Count each once.
-    const named = (finding: Finding) => result.findings.some((entry) => sameReviewFinding(finding, entry, task));
+    const created = new Set(raised.map((finding) => finding.id));
     const seen = new Set([...(openStep(task)?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id)]);
-    recordStepResult(task, { findings: task.findings.filter((finding) => seen.has(finding.id) || named(finding)) });
-    const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || named(finding)));
+    recordStepResult(task, { findings: task.findings.filter((finding) => seen.has(finding.id) || created.has(finding.id)) });
+    const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || created.has(finding.id)));
     this.k.tracking.verdict(task, roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
-    const confirmed = result.confirms.length + backed;
+    const confirmed = result.confirms.length;
     const also = [confirmed ? `confirmed ${confirmed}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
-    this.k.log(task, important ? "warn" : "done", `${findingCount(raised.map((finding) => ({ severity: SEVERITY[finding.severity] })))}${also ? `; ${also}` : ""}`, roleId, profileId);
+    this.k.log(task, important ? "warn" : "done", `${findingCount(raised)}${also ? `; ${also}` : ""}`, roleId, profileId);
   }
 
   /**
@@ -559,8 +495,8 @@ export class Reviews {
   }
 
   /**
-   * One voter per tool that can run and the squad can use: the stage's own reviewer on that tool when it has
-   * one, else that tool's most thorough profile.
+   * One fresh voter per tool. Prefer high effort for checking a specific claim;
+   * the stage's discovery reviewers keep their configured profiles.
    */
   private voters(stage: MStage): Id[] {
     const usable = this.k.usableTools() as Id[];
@@ -570,8 +506,8 @@ export class Reviews {
     return tools
       .map((toolId) => {
         const own = stage.profileIds.find((id) => this.k.profile(id)?.toolId === toolId);
-        const profiles = this.k.s.profiles.filter((profile) => profile.toolId === toolId);
-        return own ?? (profiles.find((profile) => profile.effort === "xhigh") ?? profiles[0])?.id;
+        const profiles = this.k.s.profiles.filter((profile) => profile.toolId === toolId && !profile.standby);
+        return profiles.find((profile) => profile.effort === "high")?.id ?? own ?? profiles[0]?.id;
       })
       .filter((id): id is Id => !!id);
   }

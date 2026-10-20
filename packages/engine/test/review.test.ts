@@ -146,7 +146,7 @@ describe.concurrent("reviews that converge", () => {
     const { task, fakes, root } = await untilDelivery({ builder: "plain", reviewer: "confirm-fixed", reviewRounds: 3, reopenedEvidence: evidence });
     const finding = task.findings.find((entry) => entry.severity === "blocking")!;
     expect(task.findings.filter((entry) => entry.id === finding.id)).toHaveLength(1);
-    expect(task.findings.filter((entry) => entry.severity === "blocking")).toHaveLength(1);
+    expect(task.findings.filter((entry) => entry.severity === "blocking")).toHaveLength(2);
     expect(finding.status).toBe("open");
     expect(finding.evidence).toBe(evidence);
     expect(finding.earlierReviews).toHaveLength(2);
@@ -169,20 +169,20 @@ describe.concurrent("reviews that converge", () => {
     expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(true);
   });
 
-  it("requires current evidence for a duplicate fixed report, preserving its identity and the new proof", async () => {
-    const evidence = "The guest welcome page loses the greeting after signing out on this version; opening it signed in still works.";
-    const { task, fakes } = await untilDelivery({ builder: "plain", reviewer: "important-twice", reviewRounds: 3, reopenedEvidence: evidence, reviewConfirmation: { role: "code reviewer", correction: "evidence", duplicate: true } });
-    expect(task.findings).toHaveLength(1);
-    const finding = task.findings[0]!;
-    expect(finding.status).toBe("open");
-    expect(finding.severity).toBe("blocking");
-    expect(finding.evidence).toBe(evidence);
-    expect(finding.earlierReviews![0]!.evidence).toBe("Opened the welcome page");
-    expect(fakes.received("code reviewer").filter((entry) => entry.text.startsWith("Your result block could not be used: Current evidence is required"))).toHaveLength(4);
+  it("keeps new reports separate from earlier fixed findings even when their wording repeats", async () => {
+    const { task, fakes } = await untilDelivery({ builder: "plain", reviewer: "important-twice", reviewRounds: 3, reviewConfirmation: { role: "code reviewer", correction: "evidence", duplicate: true } });
+    const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer" && step.endedAt !== undefined).length;
+    expect(rounds).toBeGreaterThanOrEqual(3);
+    expect(task.findings).toHaveLength(rounds * 2);
+    expect(new Set(task.findings.map((finding) => finding.id)).size).toBe(rounds * 2);
+    expect(task.findings.filter((finding) => finding.status === "fixed")).toHaveLength((rounds - 1) * 2);
+    expect(task.findings.filter((finding) => finding.status === "open")).toHaveLength(2);
+    expect(task.findings.every((finding) => !finding.earlierReviews?.length && !finding.confirmedBy.length)).toBe(true);
+    expect(fakes.received("code reviewer").filter((entry) => entry.text.startsWith("Your result block could not be used: Current evidence is required"))).toHaveLength(0);
     const builders = fakes.openings("builder");
-    expect(builders).toHaveLength(3);
-    expect(builders[2]).toContain(`[${finding.id}]`);
-    expect(builders[2]).toContain(evidence);
+    expect(builders).toHaveLength(rounds);
+    for (const finding of task.findings.slice(2, 4)) expect(builders[2]).toContain(`[${finding.id}]`);
+    expect(builders[2]).toContain("fix it once");
     expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(true);
   });
 
@@ -211,7 +211,7 @@ describe.concurrent("reviews that converge", () => {
       expect(finding.status).toBe("fixed");
       expect(finding.verification?.verdict).toBe("not-a-bug");
       expect(finding.earlierReviews?.[0]?.verification?.verdict).toBe("real");
-      expect(reviewStats([task]).findings).toMatchObject({ fixed: 1, notABug: 0 });
+      expect(reviewStats([task]).findings).toMatchObject({ fixed: 2, notABug: 0 });
       expect(run.fakes.openings("builder")).toHaveLength(2);
     } finally { await engine.shutdown(); }
     const saved = new Store(join(data, "petrina.db"));
@@ -259,7 +259,7 @@ describe.concurrent("reviews that converge", () => {
     expect(reported?.text).toBe("The greeting is missing on the welcome page.");
     expect(reported?.status).toBe("open");
     expect(reported?.answer).toBeUndefined();
-    expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(1);
+    expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(3);
 
     expect(fakes.openings("verifier")).toHaveLength(voters);
     // The two reviewers looked at the change at once, and so did the voters, up to the pool of three.
@@ -303,14 +303,18 @@ describe.concurrent("reviews that converge", () => {
 });
 
 describe.concurrent("reviewers at once, then a vote", () => {
-  it("counts the same finding from a reviewer on another tool as backing it, so nobody needs to vote on it", async () => {
-    const { task, fakes } = await untilDelivery({ reviewer: "important-twice" });
+  it("keeps blind reports separate and verifies each claim without inferring agreement from prose", async () => {
+    const { task, fakes, voters } = await untilDelivery({ reviewer: "important-twice" });
     const important = task.findings.filter((finding) => finding.text.toLowerCase().includes("greeting is missing"));
-    expect(important).toHaveLength(1);
-    expect(important[0]).toMatchObject({ raisedBy: expect.any(String), status: "fixed" });
-    expect(important[0]!.confirmedBy).toHaveLength(1);
-    expect(fakes.openings("verifier")).toHaveLength(0);
-    expect(lines(task)).toContain("Sent back to the builder: 1 important");
+    expect(important).toHaveLength(2);
+    expect(new Set(important.map((finding) => finding.id)).size).toBe(2);
+    for (const finding of important) {
+      expect(finding.status).toBe("fixed"); expect(finding.confirmedBy).toEqual([]);
+      expect(finding.verification?.verdict).toBe("real");
+      expect(fakes.openings("verifier")[0]).toContain(`[${finding.id}]`);
+    }
+    expect(fakes.openings("verifier")).toHaveLength(voters);
+    expect(lines(task)).toContain("Sent back to the builder: 2 important");
   });
 
   it("after a restart, runs again only the reviewer that had not reported", async () => {
@@ -347,7 +351,7 @@ describe.concurrent("reviewers at once, then a vote", () => {
       }, "the delivery check", 60_000);
       // Two reviewers at first, then only the one that had not reported.
       expect(fakes.openings("code reviewer")).toHaveLength(3);
-      expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(1);
+      expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(2);
       expect(task.hunt).toBeUndefined();
     } finally {
       engine.shutdown();

@@ -42,6 +42,17 @@ async function output(path: string, args: string[]): Promise<string> {
   return result.stdout;
 }
 
+const LOCKFILES = ["bun.lock", "bun.lockb", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"];
+async function comparison(path: string, range: string) {
+  const args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", range, "--"];
+  const [stat, patch, locks] = await Promise.all([
+    output(path, ["diff", "--no-ext-diff", "--stat", range, "--"]),
+    output(path, [...args, ".", ...LOCKFILES.map((name) => `:(glob,exclude)**/${name}`)]),
+    output(path, [...args, ...LOCKFILES.map((name) => `:(glob)**/${name}`)]),
+  ]);
+  return { stat, patch, locks };
+}
+
 /** Resolve each comparison once, before any reviewer reports. Raw code never enters task/window state. */
 export async function prepareReviewInput(dataDir: string, scope: RepositoryContext, input: ReviewInput, signal: AbortSignal): Promise<InputRef> {
   const { task } = scope;
@@ -58,14 +69,22 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
     const delta = work.reviewedSha ? `${work.reviewedSha}..${head}` : undefined;
     const [guide, change, fixes] = await Promise.all([
       git.fileAt(path, base, "REVIEW.md"),
-      output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", full, "--"]),
-      delta ? output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", delta, "--"]) : undefined,
+      comparison(path, full),
+      delta ? comparison(path, delta) : undefined,
     ]);
+    const header = `# Review material for ${work.source?.product.name ?? work.productId}\nProduct: ${work.productId}\nBase: ${base}\nReviewed commit: ${head}`;
+    const rules = `## Review guide at the saved base\n${guide ?? "This base has no REVIEW.md."}\nThe change's own review-guide edits do not change these rules.`;
+    const lockFiles: { file: string; digest: string }[] = [];
+    const lockMaterial = async (patch: string, label: string): Promise<string> => {
+      if (!patch) return "";
+      const saved = await immutable(folder, `${label}-lockfiles.md`, `${header}\n\n## ${label} lockfile changes\n${patch}`);
+      lockFiles.push(saved);
+      return `## Lockfile changes\nLockfile paths are included in the statistics above. Their patch is separate: ${JSON.stringify(saved.file)} (reference ${saved.digest}). These changes remain in review scope: read this patch when assessing dependency or integrity changes. Security reviewers and Verifiers must inspect relevant lockfile changes before clearing their claims.`;
+    };
     const parts = [
-      `# Review material for ${work.source?.product.name ?? work.productId}\nProduct: ${work.productId}\nBase: ${base}\nReviewed commit: ${head}`,
-      `## Review guide at the saved base\n${guide ?? "This base has no REVIEW.md."}\nThe change's own review-guide edits do not change these rules.`,
-      `## Complete change\nComparison: git diff ${full}\n${change || "No changes."}`,
-      ...(delta ? [`## Changes since the last completed code-review round\nComparison: git diff ${delta}\n${fixes || "No changes."}`] : []),
+      header, rules,
+      `## Complete change\nComparison: git diff ${full}\n${change.stat}\n${change.patch || "No non-lockfile changes."}`,
+      await lockMaterial(change.locks, "full"),
     ];
     if (work.portReview) {
       const port = work.portReview;
@@ -78,11 +97,17 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
       parts.push(`## Resolved files against the new base\n${await output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", `${port.onto}..${head}`, "--", ...port.files])}`);
     }
     signal.throwIfAborted();
-    const saved = await immutable(folder, "md", parts.join("\n\n"));
+    const saved = await immutable(folder, "full.md", parts.filter(Boolean).join("\n\n"));
     artifacts.push(saved);
-    materials.push(`- ${work.source?.product.name ?? work.productId} (${work.productId}), commit ${head}, base ${base}: ${JSON.stringify(saved.file)} (reference ${saved.digest}); complete comparison git diff ${base}...HEAD, with HEAD fixed at ${head}${delta ? `; incremental comparison git diff ${work.reviewedSha}..HEAD` : ""}${work.portReview ? "; includes the port comparison and resolved files" : ""}`);
+    materials.push(`- ${work.source?.product.name ?? work.productId} (${work.productId}), commit ${head}, base ${base}: ${JSON.stringify(saved.file)} (reference ${saved.digest}); complete comparison git diff ${base}...HEAD, with HEAD fixed at ${head}${work.portReview ? "; includes the port comparison and resolved files" : ""}`);
+    if (fixes && delta) {
+      const incremental = await immutable(folder, "incremental.md", [header, rules, `## Changes since the last completed code-review round\nComparison: git diff ${delta}\n${fixes.stat}\n${fixes.patch || "No non-lockfile changes."}`, await lockMaterial(fixes.locks, "incremental")].filter(Boolean).join("\n\n"));
+      artifacts.push(incremental);
+      materials.push(`  Incremental comparison git diff ${work.reviewedSha}..HEAD: ${JSON.stringify(incremental.file)} (reference ${incremental.digest}). Code reviewers on this fix round read this file; the full file is available when earlier context is needed.`);
+    }
+    artifacts.push(...lockFiles);
   }
-  input.material = { title: PREPARED_REVIEW, body: `Petrina prepared the saved base's REVIEW.md and exact comparisons once for this round. Read these files before reviewing; do not regenerate the same diffs or guide just to load context. Code reviewers on a fix round use the incremental comparison; Security reviewers and Verifiers retain their full-change scope. Port reviews use the port comparison. Inspect the full code and run focused reproductions wherever needed. The engine's passing checks remain the automated evidence.\n${materials.join("\n")}` };
+  input.material = { title: PREPARED_REVIEW, body: `Petrina prepared the saved base's REVIEW.md and exact comparisons once for this round. Read the files appropriate to your scope; do not regenerate the same diffs or guide just to load context. Code reviewers on a fix round read the separate incremental file, without rereading the complete change. Security reviewers and Verifiers retain their full-change scope and use the full file. Lockfile patches are separate, linked from each comparison, never excluded from review scope. Port reviews use the full file's port comparison. Inspect the full code and run focused reproductions wherever needed. The engine's passing checks remain the automated evidence.\n${materials.join("\n")}` };
   input.artifacts = artifacts;
   signal.throwIfAborted();
   const saved = await immutable(folder, "json", JSON.stringify(input));

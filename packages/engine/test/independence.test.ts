@@ -97,7 +97,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       const first = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] }).filter((entry) => entry.round === 1);
       expect(new Set(first.map((entry) => f.engine.s.profiles.find((profile) => profile.id === entry.profileId)?.toolId))).toEqual(new Set(["codex", "grok"]));
       expect(first).toHaveLength(2);
-      expect(f.fakes.openings("verifier")).toHaveLength(0);
+      expect(f.fakes.openings("verifier").length).toBeGreaterThan(0);
       expect(violations).toEqual([]);
       expect(peak).toBe(limit === 1 ? 1 : 2);
     } finally { unsub(); f.engine.shutdown(); }

@@ -462,59 +462,43 @@ it("does not open a second card when a link is saved only part-way", async () =>
   } finally { await engine.shutdown(); }
 });
 
-it("keeps an older tag and a caused tag on the task until the check settles, then records the checkers' reasons", async () => {
+it("keeps independent classifications separate and requires explicit identity for agreement", async () => {
   const world = await open();
   const { engine } = world;
   try {
     const review = async (task: ReturnType<typeof taskOf>, severity: "pre-existing" | "important", by: string, key: string) => {
-      const result = ReviewResult.parse({ verdict: "fail", findings: [{ text: "bug-clash: The footer opens a retired page.", severity, evidence: EVIDENCE, steps: STEPS }] });
-      await engine["reviews"]["applyReview"](executionFor(task), STAGE, result, by, "code-reviewer", key);
+      await engine["reviews"]["applyReview"](executionFor(task), STAGE, ReviewResult.parse({ verdict: "fail", findings: [{ text: "bug-clash: The footer opens a retired page.", severity, evidence: EVIDENCE, steps: STEPS }] }), by, "code-reviewer", key);
     };
-    const olderFirst = taskOf(engine, world.shop, "Older first", []);
-    await review(olderFirst, "pre-existing", "opus-high", "0");
-    await review(olderFirst, "important", "sol-high", "1");
-    const causedFirst = taskOf(engine, world.shop, "Caused first", []);
-    await review(causedFirst, "important", "opus-high", "0");
-    await review(causedFirst, "pre-existing", "sol-high", "1");
-    expect(olderFirst.findings).toHaveLength(1);
-    expect(causedFirst.findings).toHaveLength(1);
-    expect(olderFirst.findings[0]!.severity).toBe("blocking");
-    expect(causedFirst.findings[0]!.severity).toBe("blocking");
-    expect(olderFirst.findings[0]!.judgments?.map((entry) => entry.severity)).toEqual(["pre-existing", "blocking"]);
-    expect(causedFirst.findings[0]!.judgments?.map((entry) => entry.severity)).toEqual(["blocking", "pre-existing"]);
-    // The reviewer who disagrees does not count as a second tool backing the Important finding.
-    expect(olderFirst.findings[0]!.confirmedBy).toEqual([]);
-    expect(causedFirst.findings[0]!.confirmedBy).toEqual([]);
-    expect(engine["reviews"]["pendingVote"](olderFirst, STAGE)?.findings).toHaveLength(1);
-    expect(engine["reviews"]["pendingVote"](causedFirst, STAGE)?.findings).toHaveLength(1);
-    const once = taskOf(engine, world.shop, "One important", []);
-    await review(once, "important", "opus-high", "0");
-    expect(engine["reviews"]["pendingVote"](once, STAGE)?.findings).toHaveLength(1);
-    await review(once, "important", "sol-high", "1");
+    for (const first of ["pre-existing", "important"] as const) {
+      const task = taskOf(engine, world.shop, `${first} first`, []);
+      await review(task, first, "opus-high", "0");
+      await review(task, first === "important" ? "pre-existing" : "important", "sol-high", "1");
+      expect(task.findings).toHaveLength(2);
+      expect(new Set(task.findings.map((finding) => finding.id)).size).toBe(2);
+      expect(task.findings.map((finding) => finding.severity).sort()).toEqual(["blocking", "pre-existing"]);
+      expect(task.findings.every((finding) => finding.confirmedBy.length === 0)).toBe(true);
+      expect(engine["reviews"]["pendingVote"](task, STAGE)?.findings).toHaveLength(1);
+    }
+    const once = taskOf(engine, world.shop, "Two blind important reports", []);
+    await review(once, "important", "opus-high", "0"); await review(once, "important", "sol-high", "1");
+    expect(once.findings).toHaveLength(2);
+    expect(engine["reviews"]["pendingVote"](once, STAGE)?.findings).toHaveLength(2);
+    await engine["reviews"]["applyReview"](executionFor(once), STAGE, ReviewResult.parse({ verdict: "fail", confirms: [{ id: once.findings[0]!.id, evidence: EVIDENCE }] }), "sol-high", "code-reviewer", "1");
     expect(once.findings[0]!.confirmedBy).toEqual(["sol-high"]);
-    expect(engine["reviews"]["pendingVote"](once, STAGE)).toBeUndefined();
-    const saved = olderFirst.findings[0]!.judgments?.map((entry) => ({ by: entry.by, severity: entry.severity }));
-    await finish(engine, olderFirst);
-    expect(cards(engine)).toHaveLength(0);
-    expect(olderFirst.findings[0]!.judgments?.map((entry) => ({ by: entry.by, severity: entry.severity }))).toEqual(saved);
-    expect(olderFirst.state).toBe("done");
+    expect(engine["reviews"]["pendingVote"](once, STAGE)?.findings.map((finding) => finding.id)).toEqual([once.findings[1]!.id]);
 
-    const standing = older("standing", "This change breaks the footer.", { severity: "blocking", steps: undefined, evidence: "The new footer link fails." });
-    olderFirst.findings.push(standing);
-    const settled = olderFirst.findings[0]!;
-    settled.severity = "pre-existing";
-    settled.verification = { by: "sol-high", verdict: "pre-existing", reason: "The previous version already opened the retired page.", at: 5 };
-    settled.votes = [{ by: "grok-high", toolId: "grok", verdict: "pre-existing", reason: "The footer was already wrong before this change." }];
-    await finish(engine, olderFirst);
-    await finish(engine, causedFirst);
-    const thin = taskOf(engine, world.shop, "No steps", [older("thin", "bug-thin: The footer opens a retired page.", { steps: undefined, evidence: undefined, verification: settled.verification, votes: settled.votes })]);
-    await finish(engine, thin);
+    const settled = older("settled", "bug-clash: The footer opens a retired page.", {
+      verification: { by: "sol-high", verdict: "pre-existing", reason: "The previous version already opened the retired page.", at: 5 },
+      votes: [{ by: "grok-high", toolId: "grok", verdict: "pre-existing", reason: "The footer was already wrong before this change." }],
+    });
+    const task = taskOf(engine, world.shop, "Checked as older", [settled]);
+    await finish(engine, task);
     expect(cardFor(engine, "clash")).toHaveLength(1);
     expect(cardFor(engine, "clash")[0]!.description).toContain("Checked as older:");
-    expect(cardFor(engine, "clash")[0]!.description).toContain("The previous version already opened the retired page.");
-    expect(cardFor(engine, "clash")[0]!.description).toContain("The footer was already wrong before this change.");
-    expect(olderFirst.findings[0]!.judgments?.map((entry) => entry.severity)).toEqual(["pre-existing", "blocking"]);
-    expect(olderFirst.findings.find((entry) => entry.id === "standing")!.tracking).toBeUndefined();
+    expect(cardFor(engine, "clash")[0]!.description).toContain(settled.verification!.reason);
+    expect(cardFor(engine, "clash")[0]!.description).toContain(settled.votes![0]!.reason);
+    const thin = taskOf(engine, world.shop, "No steps", [older("thin", "bug-thin: The footer opens a retired page.", { steps: undefined, evidence: undefined, verification: settled.verification, votes: settled.votes })]);
+    await finish(engine, thin);
     expect(thin.findings[0]!.tracking).toEqual({ reason: "missing-steps" });
     expect(cardFor(engine, "thin")).toHaveLength(0);
   } finally { await engine.shutdown(); }
@@ -588,7 +572,11 @@ it("waits until every reviewer has answered before tracking an older bug, and dr
     expect(still.findings[0]!.tracking).toBeUndefined();
 
     await review(still, "bug-split: The footer opens a retired page.", "important", "sol-high", "1");
-    expect(still.findings[0]!.severity).toBe("blocking");
+    expect(still.findings).toHaveLength(2);
+    expect(still.findings[1]!.severity).toBe("blocking");
+    // A completed verifier can reclassify the older report itself; similar prose cannot.
+    still.findings[0]!.severity = "blocking";
+    still.findings[0]!.verification = { by: "sol-high", verdict: "real", reason: "This exact report reproduces only on the changed version.", at: Date.now() };
     await engine["followUps"].catchUp();
     expect(card.followUp!.reports.map((report) => report.findingId)).toEqual(["done"]);
     expect(still.findings[0]!.tracking).toBeUndefined();

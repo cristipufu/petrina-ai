@@ -43,11 +43,11 @@ describe("disputed findings", () => {
     expect(ReviewResult.safeParse({ verdict: "fail", confirms: [{ id: "fixed", evidence: "   " }] }).success).toBe(false);
   });
 
-  it("asks for current evidence for a claimed fix, including a duplicate report, without changing the finding", () => {
+  it("requires evidence for an explicit reopening without inferring identity from a new report's wording", () => {
     const fixed = finding("fixed", { status: "fixed", evidence: "Old case", answer: { fixed: true, text: "Fixed the previous ordering", at: 1 } });
     const before = JSON.stringify(fixed);
     expect(checkReviewEvidence([fixed], ReviewResult.parse({ verdict: "fail", confirms: [fixed.id] }))).toContain("Current evidence is required");
-    expect(checkReviewEvidence([fixed], ReviewResult.parse({ verdict: "fail", findings: [{ text: fixed.text, severity: "important" }] }))).toContain("Current evidence is required");
+    expect(checkReviewEvidence([fixed], ReviewResult.parse({ verdict: "fail", findings: [{ text: fixed.text, severity: "important" }] }))).toBeUndefined();
     expect(checkReviewEvidence([fixed], ReviewResult.parse({ verdict: "fail", findings: [{ text: fixed.text, severity: "important", evidence: "A different current case fails." }] }))).toBeUndefined();
     expect(JSON.stringify(fixed)).toBe(before);
     expect(checkReviewEvidence([finding("open")], ReviewResult.parse({ verdict: "fail", confirms: ["open"] }))).toBeUndefined();
@@ -58,10 +58,15 @@ describe("disputed findings", () => {
     for (const earlier of [finding("dismissed", { status: "dismissed", evidence: "The original case passed." }), finding("reopened", { reopenedAt: 1, evidence: "A new current case fails." })]) {
       const before = JSON.stringify(earlier);
       expect(checkReviewEvidence([earlier], ReviewResult.parse({ verdict: "fail", confirms: [earlier.id] }))).toContain("Current evidence is required");
-      expect(checkReviewEvidence([earlier], ReviewResult.parse({ verdict: "fail", findings: [{ text: earlier.text, severity: "important" }] }))).toContain("Current evidence is required");
+      expect(checkReviewEvidence([earlier], ReviewResult.parse({ verdict: "fail", findings: [{ text: earlier.text, severity: "important" }] }))).toBeUndefined();
       expect(checkReviewEvidence([earlier], ReviewResult.parse({ verdict: "fail", confirms: [{ id: earlier.id, evidence: "A different current path fails; the original path still passes." }] }))).toBeUndefined();
       expect(JSON.stringify(earlier)).toBe(before);
     }
+  });
+
+  it("refuses agreement with ids absent from the saved blind review input", () => {
+    expect(checkReviewEvidence([finding("known")], ReviewResult.parse({ verdict: "fail", confirms: ["peer-not-shown"] }))).toContain("not shown");
+    expect(checkReviewEvidence([finding("known")], ReviewResult.parse({ verdict: "pass", disputes: [{ id: "peer-not-shown", reason: "The current code handles this case." }] }))).toContain("not shown");
   });
 
   it("keeps who disputed a finding and why without settling it before other reviewers report", () => {
