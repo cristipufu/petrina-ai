@@ -87,7 +87,7 @@ export class UsageCoordinator {
    * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
    * yields to another tool that has one, so a cap kept for a tool that is out does not idle a pool slot.
    */
-  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id) => boolean, reviewerKey?: string): Choice | undefined {
+  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id, profile: AgentProfile) => boolean, reviewerKey?: string): Choice | undefined {
     const scope = target ? executionOf(target) : undefined;
     const task = scope?.task;
     const repository = scope?.work;
@@ -167,7 +167,7 @@ export class UsageCoordinator {
       if (saved.kind === "planned") return saved;
     }
     const own = task && roleId !== undefined && roleId === stage?.roleId ? this.builderConversation(scope!, plannedId) : undefined;
-    if (own && !limitOf(state.pool, own.profile, now) && !nearLimit(state.pool, own.profile, now) && headroom(state.pool, own.profile, now) !== 0 && (!room || room(own.toolId))) {
+    if (own && !limitOf(state.pool, own.profile, now) && !nearLimit(state.pool, own.profile, now) && headroom(state.pool, own.profile, now) !== 0 && (!room || room(own.toolId, own.profile))) {
       const check = state.setup?.checks.find((check) => check.id === own.toolId);
       // Recovery checks are bounded by the normal tool-check timeout. Checking is temporary;
       // let it answer before replacing a healthy saved Builder with a permanent fresh start.
@@ -179,13 +179,13 @@ export class UsageCoordinator {
     }
     const rules = { keep: !!screen || reviewing, awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) };
     const choice = chooseWithRoom(candidates, planned, now, rules, room);
-    if (own && room && choice.kind !== "none" && !room(choice.profile.toolId)) {
+    if (own && room && choice.kind !== "none" && !room(choice.profile.toolId, choice.profile)) {
       // A returning Builder must not get stuck on a full planned tool that recovered since
       // its last handoff. Try tools with seats; if none can work, keep the normal wait.
       const ready = candidates.tools.filter((tool) => tool.status === "ready");
-      const seated = (ready.length ? ready : candidates.tools).filter((tool) => room(tool.id));
+      const seated = (ready.length ? ready : candidates.tools).filter((tool) => candidates.profiles.some(profile => profile.toolId === tool.id && room(tool.id, profile)));
       if (seated.length) {
-        const available = { ...candidates, tools: seated.map((tool) => ({ ...tool, status: "ready" as const })), profiles: candidates.profiles.filter((profile) => seated.some((tool) => tool.id === profile.toolId)) };
+        const available = { ...candidates, tools: seated.map((tool) => ({ ...tool, status: "ready" as const })), profiles: candidates.profiles.filter((profile) => seated.some((tool) => tool.id === profile.toolId) && room(profile.toolId, profile)) };
         const next = chooseWithRoom(available, planned, now, rules, room);
         if (next.kind !== "none") return next;
       }

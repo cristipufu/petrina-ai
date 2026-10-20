@@ -672,8 +672,46 @@ describe("explicit repository execution contexts", () => {
         expect(copies.mock.calls).toEqual(works.map((work) => [work.source!.product.path!, join(engine.dataDir, "worktrees", work.productId, `${task.id}.copies`)]));
         expect(main.mock.calls).toEqual(works.map((work) => [work.source!.product.path!, work.worktree!]));
         expect(works.every((work) => work.cleanup?.reviewCopiesRemovedAt !== undefined)).toBe(true);
+        const times = works.map(work => ({ ...work.cleanup }));
+        copies.mockClear(); main.mockClear();
+        const commit = spyOn(engine, "commitNow"), archive = spyOn(engine, "saveArchivedTask");
+        try {
+          await new Cleanup(engine).removeCopy(task.id, true);
+          expect(copies).not.toHaveBeenCalled(); expect(main).not.toHaveBeenCalled();
+          expect(commit).not.toHaveBeenCalled(); expect(archive).not.toHaveBeenCalled();
+          expect(works.map(work => work.cleanup)).toEqual(times);
+        } finally { commit.mockRestore(); archive.mockRestore(); }
       } finally { copies.mockRestore(); main.mockRestore(); }
     } finally { await engine.shutdown(); }
+  });
+
+  it("continues shared cleanup after a missing source or failed save, logging each repository failure once", async () => {
+    const { engine, task } = await fixture("cleanup-missing-source");
+    await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
+    task.state = "cancelled";
+    const [first, second] = task.repositories!;
+    const extra = { ...structuredClone(first!), productId: "excluded" };
+    task.excludedRepositories = [extra];
+    const works = [first!, second!, extra];
+    for (const work of works) work.worktree = join(engine.dataDir, "worktrees", work.productId, task.id);
+    delete engine.s.products.find(product => product.id === "second")!.path;
+    extra.source = { product: { ...engine.s.products[0]!, id: extra.productId }, confirmed: true, start: { kind: "default", branch: "main" }, destination: { mode: "local", repo: "acme/first", branch: "main", kind: "branch" } };
+    const clone = spyOn(gitOps, "mainClone").mockResolvedValue(undefined);
+    const copies = spyOn(gitOps, "removeFinishedCopies").mockResolvedValue(true);
+    const main = spyOn(gitOps, "removeWorktree").mockResolvedValue(true);
+    const save = spyOn(engine, "commitNow").mockImplementationOnce(() => { throw new Error("Disk full"); });
+    try {
+      const cleanup = new Cleanup(engine);
+      await cleanup.removeCopy(task.id, true);
+      expect(copies).toHaveBeenCalledTimes(2); expect(main).toHaveBeenCalledTimes(2);
+      expect(first!.cleanup?.removedAt).toBeDefined(); expect(extra.cleanup?.removedAt).toBeDefined();
+      expect(second!.cleanup?.error).toBe("the product's repository could not be found");
+      expect(task.timeline.filter(line => line.tone === "warn" && line.productId === "second")).toHaveLength(1);
+      copies.mockClear(); main.mockClear();
+      await cleanup.removeCopy(task.id, true);
+      expect(copies).not.toHaveBeenCalled(); expect(main).not.toHaveBeenCalled();
+      expect(task.timeline.filter(line => line.tone === "warn" && line.productId === "second")).toHaveLength(1);
+    } finally { clone.mockRestore(); copies.mockRestore(); main.mockRestore(); save.mockRestore(); await engine.shutdown(); }
   });
 
   it("groups a shared reviewer's companion lessons and reads only their repository once", async () => {

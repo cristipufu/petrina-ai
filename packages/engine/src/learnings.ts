@@ -117,7 +117,7 @@ export class Learnings {
     const added = lessons.filter((text) => !product.learnings?.some((line) => hasPoint(line.text, text)));
     product.learnings = [...(product.learnings ?? []), ...added.map((text) => ({ text, at: Date.now(), fromTask: task.id }))];
     this.k.log(task, "you", `You added ${added.length === 1 ? "a lesson" : `${added.length} lessons`} to ${AGENTS_FILE}`);
-    this.k.commit();
+    this.k.commit(task);
   }
 
   /** "Not this time": AGENTS.md stays as it is. */
@@ -129,7 +129,7 @@ export class Learnings {
     const product = task && (item.productId ? this.k.s.products.find((entry) => entry.id === item.productId) : this.k.productOf(task));
     if (product) this.remember(product, (item.body ?? "").split("\n").map((line) => cleanPoint(line.replace(/^- /, ""))).filter(Boolean));
     if (task) this.k.log(task, "you", `You left ${AGENTS_FILE} as it is`);
-    this.k.commit();
+    this.k.commit(task);
   }
 
   /** Lessons the coordinator said no to, so agents' later sayings of them are not offered again. */

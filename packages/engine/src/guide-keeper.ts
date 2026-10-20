@@ -35,7 +35,7 @@ export class GuideKeeper {
       delete existing.incorporatedOn;
     } else if (!existing) product.reviewGuide = [...(product.reviewGuide ?? []), { text: point, at: Date.now(), fromTask: task.id }];
     this.k.log(task, "you", `You added to the review guide: ${point}`);
-    this.k.commit();
+    this.k.commit(task);
   }
 
   /** "Not this time": the review guide stays as it is. */
@@ -45,7 +45,7 @@ export class GuideKeeper {
     this.k.takeItem(itemId);
     const task = this.k.task(item.taskId);
     if (task) this.k.log(task, "you", "You left the review guide as it is");
-    this.k.commit();
+    this.k.commit(task);
   }
 
   /**

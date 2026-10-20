@@ -97,10 +97,17 @@ async function stopBrowser(child: ChildProcess, directory: string, lifecycle: { 
   });
   const unused = () => lifecycle.closedUnused && !lifecycle.used && child.exitCode === 0 && child.signalCode === null;
   if (unused()) return;
+  if (child.exitCode !== null || child.signalCode !== null) {
+    // exit can precede the final stdout acknowledgement. close observes the drained pipe.
+    await within(exited, 1_500);
+    if (unused()) return;
+    if (process.platform === "win32") throw new Error("The headless browser did not stop.");
+    await reap(directory, undefined);
+    return;
+  }
   if (process.platform === "win32") {
     // Once an unexpected exit loses the parent relationship, taskkill cannot prove
     // that its browsers stopped. Keep the marker and report incomplete cleanup.
-    if (child.exitCode !== null || child.signalCode !== null) throw new Error("The headless browser did not stop.");
     child.stdin?.end();
     if (await within(exited, 4_000)) {
       if (child.exitCode !== 0 || child.signalCode !== null) throw new Error("The headless browser did not stop.");
@@ -110,10 +117,6 @@ async function stopBrowser(child: ChildProcess, directory: string, lifecycle: { 
       await exited;
       if (!stopped) throw new Error("The headless browser did not stop.");
     }
-    return;
-  }
-  if (child.exitCode !== null || child.signalCode !== null) {
-    await reap(directory, undefined);
     return;
   }
   // Listed while the controller is alive. Asking it to stop does not wait on that list:

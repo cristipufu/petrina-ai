@@ -132,6 +132,18 @@ export interface EngineOptions {
 
 export class Aborted extends Error {}
 
+/** Stop waiting promptly, and remove the abort listener on either outcome. */
+export async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  let abort!: () => void;
+  const interrupted = new Promise<never>((_, reject) => {
+    abort = () => reject(new Aborted());
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  });
+  try { return await Promise.race([work, interrupted]); }
+  finally { signal.removeEventListener("abort", abort); }
+}
+
 /** A step's tool is not installed, not logged in, or would not start: the coordinator gets its fix and a Retry. */
 export class ToolProblem extends Error {
   constructor(
@@ -652,6 +664,13 @@ export abstract class Kernel {
     return item;
   }
 
+  async waitForReply(id: Id, signal: AbortSignal): Promise<string> {
+    let waiter!: { resolve: (answer: string) => void; reject: (error: unknown) => void };
+    const reply = new Promise<string>((resolve, reject) => { waiter = { resolve, reject }; this.waiting.set(id, waiter); });
+    try { return await abortable(reply, signal); }
+    finally { if (this.waiting.get(id) === waiter) this.waiting.delete(id); }
+  }
+
   dropBlockingItems(taskId: Id): void {
     const task = this.task(taskId);
     const dropped = this.s.inbox.filter((entry) => entry.taskId === taskId && entry.blocking);
@@ -749,7 +768,7 @@ export abstract class Kernel {
    * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
    * yields to another tool that has one, so a cap kept for a tool that is out does not idle a pool slot.
    */
-  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id) => boolean, reviewerKey?: string): Choice | undefined { return this.usageCoordinator.choose(plannedId, target, roleId, room, reviewerKey); }
+  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id, profile: AgentProfile) => boolean, reviewerKey?: string): Choice | undefined { return this.usageCoordinator.choose(plannedId, target, roleId, room, reviewerKey); }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */
   named(profileId: Id): string {

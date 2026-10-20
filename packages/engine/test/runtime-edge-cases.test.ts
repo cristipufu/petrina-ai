@@ -129,3 +129,84 @@ it("contains a step-clock save failure and lets the next clock checkpoint save a
     expect(engine.store.load()!.tasks.find(entry => entry.id === task.id)!.stepClock).toBeDefined();
   } finally { save.mockRestore(); log.mockRestore(); await engine.shutdown(); }
 });
+
+it("keeps clean archives out of general commits and eviction, while persisting decisions on archived offers", async () => {
+  const { engine } = await fixture();
+  const guarded: object[] = [];
+  try {
+    const ids = Array.from({ length: 18 }, (_, index) => engine.addTask({ productId: "p", title: `Old ${index}`, backlog: true }));
+    for (const id of ids) engine.cancel(id);
+    await engine["followUps"].catchUp(); await Promise.all([...engine.backgroundWork]); engine.save();
+    for (const id of ids.slice(0, 16)) {
+      const session = engine.task(id)!.session; guarded.push(session);
+      Object.defineProperty(session, "toJSON", { configurable: true, value: () => { throw new Error("Clean archive was serialized"); } });
+    }
+    engine.commitNow(); // Settings/scheduling use untargeted commits.
+    engine.commit();
+    expect(engine.taskDetails(ids[16]!)).toBeDefined();
+    for (const session of guarded) Reflect.deleteProperty(session, "toJSON"); guarded.length = 0;
+    const old = engine.task(ids[17]!)!;
+    for (const kind of ["learnings", "guide"] as const) for (const accept of [true, false]) {
+      const id = engine.raise(old, kind, "An optional offer", false, { body: kind === "learnings" ? "- Use the focused repository check." : "Inspect neighboring cases." });
+      old.state = "cancelled";
+      if (accept) engine.approve(id); else engine.decline(id);
+      engine.save(false);
+      expect(engine.store.history.get(old.id)!.timeline.at(-1)).toEqual(old.timeline.at(-1));
+      expect(engine.s.inbox.some(item => item.id === id)).toBe(false);
+    }
+    const id = engine.sendMessage(old.id, "A coordinator note", "queue", "archived-note");
+    expect(engine.store.history.get(old.id)!.queued.some(message => message.id === id)).toBe(true);
+    engine.removeQueued(old.id, id!);
+    expect(engine.store.history.get(old.id)!.queued.some(message => message.id === id)).toBe(false);
+  } finally { for (const session of guarded) Reflect.deleteProperty(session, "toJSON"); await engine.shutdown(); }
+});
+
+it("cancels screen handoff timers and ignores scheduling after shutdown during startup", async () => {
+  const { engine, task } = await fixture();
+  task.state = "waiting";
+  task.screen = { reason: "A window", at: Date.now(), roleId: "builder", profileId: "sol-high", granted: true };
+  let release: (() => void) | undefined;
+  const actual = globalThis.setTimeout;
+  const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((...args: Parameters<typeof setTimeout>) => {
+    if (args[1] === 0 && typeof args[0] === "function") { const callback = args[0]; release = () => callback(); }
+    return actual(...args);
+  }) as typeof setTimeout);
+  try { engine.releaseScreen(task); } finally { timeout.mockRestore(); }
+  const schedule = spyOn(engine, "schedule"), screen = spyOn(engine, "syncScreen"), commit = spyOn(engine, "commitNow");
+  try {
+    expect(release).toBeDefined();
+    await engine.shutdown();
+    release!(); expect(schedule).not.toHaveBeenCalled();
+    engine["startupComplete"] = false;
+    engine.schedule();
+    expect(screen).not.toHaveBeenCalled(); expect(commit).not.toHaveBeenCalled();
+  } finally { schedule.mockRestore(); screen.mockRestore(); commit.mockRestore(); await engine.shutdown(); }
+});
+
+it("starts available Antigravity models while Argon's weekly quota is exhausted", async () => {
+  const { engine, task } = await fixture();
+  engine.schedule = () => {};
+  engine.s.profiles = engine.s.profiles.filter(profile => profile.toolId === "antigravity");
+  const argon = engine.s.profiles.find(profile => profile.modelId?.includes("argon"))!;
+  const flash = engine.s.profiles.find(profile => profile.modelId?.includes("flash"))!;
+  engine.s.tools.forEach(tool => { tool.status = tool.id === "antigravity" ? "ready" : "not-installed"; });
+  engine.s.setup!.checks = [{ id: "antigravity", status: "ready" }];
+  engine.s.pool.limit = 8; engine.s.pool.toolCaps.antigravity = 4;
+  engine.s.pool.paused = false; engine.draining = false;
+  const until = Date.now() + 3_600_000;
+  engine.recordUsage({ toolId: "antigravity", model: "argon", kind: "seven_day", status: "rejected", utilization: 1, resetsAt: until });
+  engine.recordUsage({ toolId: "antigravity", model: "flash", kind: "seven_day", status: "allowed", utilization: 0, resetsAt: until });
+  engine.recordUsage({ toolId: "antigravity", model: "flash", kind: "five_hour", status: "allowed", utilization: 0.01, resetsAt: until });
+  const other = engine.task(engine.addTask({ productId: "p", title: "Other model", backlog: true }))!;
+  for (const [index, entry] of [task, other].entries()) {
+    entry.state = "waiting"; entry.stageIndex = 0;
+    entry.plan = { rationale: "Build", plannerProfileId: flash.id, stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: [index ? flash.id : argon.id] }] };
+  }
+  const start = spyOn(engine["driver"], "startDriver").mockImplementation(() => {});
+  try {
+    engine["driver"].schedule();
+    expect(start.mock.calls.map(args => args[0])).toEqual([task.id, other.id]);
+    expect([task.agent?.profileId, other.agent?.profileId]).toEqual([flash.id, flash.id]);
+    expect(engine.s.pool.limited?.every(limit => limit.model === "argon")).toBe(true);
+  } finally { start.mockRestore(); await engine.shutdown(); }
+});

@@ -5,13 +5,14 @@ import type { Kernel, MTask } from "./kernel.js";
 import { executionFor, executionOf, scopesFor, type RepositoryContext } from "./repository-context.js";
 import * as git from "./git.js";
 import { completeAll } from "./parallel.js";
-type ScreenHost = Pick<Kernel, "settling" | "dataDir" | "productOf" | "log" | "syncIdleSleep" | "s" | "columnFor" | "commitNow" | "id" | "activeState" | "schedule">;
+type ScreenHost = Pick<Kernel, "settling" | "dataDir" | "productOf" | "log" | "syncIdleSleep" | "s" | "columnFor" | "commitNow" | "id" | "activeState" | "schedule" | "stopped">;
 export class ScreenCoordinator {
   readonly groups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void; yield?: (member: string) => void }>();
   readonly copyCleanups = new Map<Id, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private releaseTimer: ReturnType<typeof setTimeout> | undefined;
   constructor(private readonly k: ScreenHost) {}
-  stop(): void { clearTimeout(this.timer); }
+  stop(): void { clearTimeout(this.timer); clearTimeout(this.releaseTimer); }
 
   /** A reopened reviewer or voter still works in its own copy, including during terminal take-over. */
   agentWorktree(target: MTask | RepositoryContext): string {
@@ -130,11 +131,14 @@ export class ScreenCoordinator {
     const held = task.screen?.granted;
     delete task.screen;
     this.k.s.inbox = this.k.s.inbox.filter((item) => !(item.taskId === task.id && item.kind === "screen"));
-    if (!held) return;
+    if (!held || this.k.stopped) return;
     // The next request stops waiting its turn now. It starts after this task's own driver has taken
     // its next step, so a screen request does not jump ahead of it.
     this.syncScreen();
-    setTimeout(() => this.k.schedule(), 0);
+    if (!this.releaseTimer) this.releaseTimer = setTimeout(() => {
+      this.releaseTimer = undefined;
+      if (!this.k.stopped) this.k.schedule();
+    }, 0);
   }
 
   /** For an hour turns itself off when it runs out. */

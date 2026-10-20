@@ -1,0 +1,101 @@
+import { afterAll, expect, it, spyOn } from "bun:test";
+import { Engine } from "../src/engine.js";
+import { Aborted } from "../src/kernel.js";
+import { Connections, CONFIRM_ADDRESS } from "../src/connection.js";
+import { executionFor } from "../src/repository-context.js";
+import * as git from "../src/git.js";
+import { removeDir, tempDir, waitFor } from "./support.js";
+
+const roots: string[] = [];
+afterAll(() => roots.forEach(removeDir));
+async function fixture() {
+  const dir = tempDir("petrina-inbox-waits-"); roots.push(dir);
+  const engine = new Engine(dir, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null } });
+  await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
+  engine.s.products.push({ id: "p", name: "Product", path: dir, repo: "acme/product", tone: "blue" });
+  const task = engine.task(engine.addTask({ productId: "p", title: "Wait safely", backlog: true }))!;
+  return { engine, task, scope: executionFor(task) };
+}
+
+it("does not ask for an address after pause during the Git lookup, and releases the product's confirmation lock", async () => {
+  const { engine, task, scope } = await fixture();
+  const connections = new Connections(engine), controller = new AbortController();
+  let resolve!: (address: string) => void;
+  const remote = spyOn(git, "remoteAddress").mockImplementation(() => new Promise(done => { resolve = done; }));
+  try {
+    task.state = "waiting"; engine.drivers.set(task.id, controller);
+    const pending = connections.connection(scope, controller.signal);
+    const rejection = pending.then(() => undefined, error => error);
+    engine.pause(task.id); resolve("https://github.com/acme/product.git");
+    expect(await rejection).toBeInstanceOf(Aborted);
+    expect(engine.taskDetails(task.id)!.state).toBe("paused"); expect(engine.s.inbox).toEqual([]); expect(engine.waiting.size).toBe(0);
+    expect(connections["confirming"].size).toBe(0);
+    await expect(connections.connection(scope, controller.signal)).rejects.toBeInstanceOf(Aborted);
+    expect(remote).toHaveBeenCalledTimes(1);
+  } finally { remote.mockRestore(); await engine.shutdown(); }
+});
+
+it("aborts a peer waiting on another task's confirmation without disrupting the original question", async () => {
+  const { engine, scope } = await fixture();
+  const connections = new Connections(engine), owner = new AbortController(), peer = new AbortController();
+  const remote = spyOn(git, "remoteAddress").mockResolvedValue("https://github.com/acme/product.git");
+  const ownerListener = spyOn(owner.signal, "removeEventListener");
+  try {
+    const pending = connections.connection(scope, owner.signal);
+    await waitFor(() => engine.waiting.size === 1, "the address question");
+    const id = engine.s.inbox[0]!.id;
+    const other = engine.task(engine.addTask({ productId: "p", title: "Peer", backlog: true }))!;
+    const waiting = connections.connection(executionFor(other), peer.signal);
+    const rejected = waiting.then(() => undefined, error => error);
+    peer.abort(); expect(await rejected).toBeInstanceOf(Aborted);
+    expect(engine.waiting.has(id)).toBe(true);
+    engine.answer(id, CONFIRM_ADDRESS);
+    expect(await pending).toMatchObject({ ok: true });
+    expect(engine.waiting.size).toBe(0); expect(connections["confirming"].size).toBe(0);
+    expect(ownerListener).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(engine.s.products[0]!.remote).toBe("https://github.com/acme/product.git");
+  } finally { remote.mockRestore(); ownerListener.mockRestore(); await engine.shutdown(); }
+});
+
+it("cleans question waiters on cancellation, on an answer and when already aborted", async () => {
+  const { engine, task, scope } = await fixture();
+  const by = { roleId: "builder", profileId: "sol-high" };
+  try {
+    const already = new AbortController(); already.abort();
+    await expect(engine["turns"]["wait"](scope, "question", "No orphan", true, {}, already.signal, "Waiting", by, false)).rejects.toBeInstanceOf(Aborted);
+    expect(engine.s.inbox).toEqual([]); expect(engine.waiting.size).toBe(0);
+    const controller = new AbortController();
+    const remove = spyOn(controller.signal, "removeEventListener");
+    engine.drivers.set(task.id, controller);
+    const question = engine["turns"]["wait"](scope, "question", "A live question", true, {}, controller.signal, "Waiting", by, false);
+    const rejection = question.then(() => undefined, error => error);
+    engine.pause(task.id); expect(await rejection).toBeInstanceOf(Aborted);
+    expect(engine.waiting.size).toBe(0); expect(engine.s.inbox).toEqual([]);
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function)); remove.mockRestore();
+    const answer = engine["turns"]["wait"](scope, "question", "Another question", true, {}, new AbortController().signal, "Waiting", by, false);
+    engine.answer(engine.s.inbox[0]!.id, "Continue");
+    expect(await answer).toBe("Continue"); expect(engine.waiting.size).toBe(0);
+  } finally { await engine.shutdown(); }
+});
+
+it("rejects answer and denial actions for other inbox kinds without consuming their identity or resolving a waiter", async () => {
+  const { engine, task } = await fixture();
+  try {
+    for (const kind of ["plan", "design", "delivery", "question", "permission", "stuck"] as const) {
+      const id = engine.raise(task, kind, "Keep this decision", true);
+      let resolved = false;
+      engine.waiting.set(id, { resolve: () => { resolved = true; }, reject: () => {} });
+      const before = JSON.stringify(task);
+      if (kind !== "question") expect(() => engine.answer(id, "yes", { clientId: "reusable-answer" })).toThrow("Use Answer only");
+      if (kind !== "permission") expect(() => engine.deny(id, "no", { clientId: "reusable-denial" })).toThrow("Use Deny only");
+      expect(resolved).toBe(false); expect(JSON.stringify(task)).toBe(before);
+      expect(engine.s.inbox.some(item => item.id === id)).toBe(true);
+      engine.waiting.delete(id); engine.takeItem(id);
+    }
+    const id = engine.raise(task, "permission", "Allowed action?", true);
+    const permission = engine.waitForReply(id, new AbortController().signal);
+    engine.deny(id, "Please investigate first", { clientId: "reusable-denial" });
+    expect(await permission).toBe("deny");
+    expect(task.received).toContain("reusable-denial");
+  } finally { await engine.shutdown(); }
+});

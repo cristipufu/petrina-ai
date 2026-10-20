@@ -4,7 +4,7 @@ import { executionFor, scopesFor, type RepositoryContext } from "./repository-co
 
 import { designWorkKey, invalidateAcceptance } from "./repositories.js";
 import { join } from "node:path";
-import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
+import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type AgentProfile, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { Kernel, Aborted, type MTask, PLANNER_PROFILE, ScreenWait, stepKey } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
@@ -131,7 +131,7 @@ export class Driver {
         if (!this.k.drivers.has(task.id) && this.reserveAgent(task)) this.startDriver(task.id);
         continue;
       }
-      const candidate = { taskId: task.id, toolId: seat.toolId };
+      const candidate = { ...this.k.profile(seat.agent.profileId), taskId: task.id, toolId: seat.toolId };
       // A peer's question, or the reviewer already on the screen, keeps the line the group set.
       if (!grantedResume(task)) task.statusLine = slotWait(this.k.activeState(), candidate) ?? "Waiting for a free slot";
       continuing.push(candidate);
@@ -150,7 +150,7 @@ export class Driver {
         (task as MTask).statusLine = seat.waiting;
         continue;
       }
-      candidates.push({ taskId: task.id, toolId: seat.toolId });
+      candidates.push({ ...this.k.profile(seat.agent?.profileId ?? ""), taskId: task.id, toolId: seat.toolId });
     }
 
     for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.activeState()), pool: this.k.s.pool, now })) {
@@ -191,7 +191,7 @@ export class Driver {
   private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
     if (!next) return { toolId: "none" };
     // This task's own slot does not count: it is the seat being filled. A stand-in whose tool is full yields.
-    const room = task ? (toolId: Id) => !slotWait(this.k.activeState(), { taskId: task.id, toolId }) : undefined;
+    const room = task ? (toolId: Id, profile: AgentProfile) => !slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId }) : undefined;
     const choice = this.k.choose(next.profileId, task, next.roleId, room, next.reviewerKey);
     if (!choice) return { agent: next, toolId: this.k.profile(next.profileId)?.toolId ?? "unknown" };
     if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting };
@@ -203,7 +203,7 @@ export class Driver {
   private reserveAgent(task: MTask): boolean {
     const { agent: next, toolId, waiting: noOne } = this.seatFor(task);
     const preparing = this.needsCheckPreparation(task);
-    let waiting = noOne ?? (this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : next ? slotWait(this.k.activeState(), { taskId: task.id, toolId }) : undefined);
+    let waiting = noOne ?? (this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : next ? slotWait(this.k.activeState(), { ...this.k.profile(next.profileId), taskId: task.id, toolId }) : undefined);
     if (!waiting && preparing && !this.checks.claimPreparation(task.id)) waiting = "Waiting for room to prepare the product checks";
     if (!preparing) this.checks.releasePreparation(task.id);
     if (waiting) {

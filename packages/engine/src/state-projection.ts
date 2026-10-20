@@ -95,7 +95,7 @@ export class StateProjection {
     // On-demand reads stay bounded even when walking through years of finished work.
     if (this.archiveCache.size >= 16) {
       const first = this.archiveCache.keys().next().value!;
-      if (this.allTasksDirty || this.dirtyTasks.has(first)) this.saveArchivedTask(this.archiveCache.get(first)!);
+      if (this.dirtyTasks.has(first)) this.saveArchivedTask(this.archiveCache.get(first)!);
       this.archiveCache.delete(first);
     }
     this.archiveCache.set(id, saved);
@@ -106,7 +106,7 @@ export class StateProjection {
     const revision = this.k.store.history.info().revision;
     const retired = this.retiredTasks();
     const complete = all || this.allTasksDirty;
-    const changedArchive = [...this.archiveCache.values()].filter((task) => complete || this.dirtyTasks.has(task.id));
+    const changedArchive = [...this.archiveCache.values()].filter((task) => all || this.dirtyTasks.has(task.id));
     this.k.store.save(this.k.activeState(), retired, changedArchive as Task[], complete ? undefined : [...this.dirtyTasks]);
     this.allTasksDirty = false;
     this.dirtyTasks.clear();

@@ -185,6 +185,7 @@ export class Engine extends Kernel implements Commands {
   }
 
   schedule(): void {
+    if (this.stopped) return;
     if (!this.startupComplete) {
       this.syncScreen();
       this.commitNow();
@@ -763,7 +764,7 @@ export class Engine extends Kernel implements Commands {
     this.stopStep(task);
     this.dropBlockingItems(taskId);
     this.log(task, "you", "You paused it");
-    this.commit();
+    this.commit(task);
     this.schedule();
   }
 
@@ -771,7 +772,7 @@ export class Engine extends Kernel implements Commands {
     const task = this.task(taskId);
     if (!task || !resumeTaskState(task, this.s.inbox.some((item) => item.taskId === taskId && !item.blocking))) return;
     this.log(task, "you", "You resumed it");
-    this.commit(); this.schedule();
+    this.commit(task); this.schedule();
   }
 
   cancel(taskId: Id): void {
@@ -790,7 +791,7 @@ export class Engine extends Kernel implements Commands {
     this.dropBlockingItems(taskId);
     this.s.inbox = this.s.inbox.filter((item) => item.taskId !== taskId);
     this.log(task, "you", "You cancelled it");
-    this.commit();
+    this.commit(task);
     // Pictures need no delivery lookup or agent shutdown before they can be discarded.
     void this.cleanup.removeCaptures(taskId);
     // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now, then the copy goes.
@@ -848,7 +849,7 @@ export class Engine extends Kernel implements Commands {
       task.queued.push(message);
     }
     routeMessages(task, this.screenGroups.get(taskId)?.recipients() ?? Object.keys(task.hunt?.screenTurns ?? {}));
-    this.commitNow();
+    this.commitNow(task);
     if (interrupt) for (const active of runs) void active.cancel();
     return message.id;
   }
@@ -860,7 +861,7 @@ export class Engine extends Kernel implements Commands {
     task.queued = task.queued.filter((message) => message.id !== messageId);
     task.stepNotes = task.stepNotes?.filter((note) => note.id !== messageId);
     task.notes = task.notes?.filter((note) => note.id !== messageId);
-    this.commitNow();
+    this.commitNow(task);
   }
 
   setStageProfile(taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): void {
@@ -868,7 +869,7 @@ export class Engine extends Kernel implements Commands {
     const title = task && assignFutureProfile(task, this.s.profiles, stageId, list, index, profileId);
     if (title === undefined) return;
     this.log(task!, "you", `You changed who works on “${title}”`);
-    this.commit();
+    this.commit(task!);
   }
 
   addReviewer(taskId: Id, stageId: Id, profileId: Id): void {
@@ -876,7 +877,7 @@ export class Engine extends Kernel implements Commands {
     const title = task && appendFutureReviewer(task, this.s.profiles, stageId, profileId);
     if (title === undefined) return;
     this.log(task!, "you", `You added a reviewer to “${title}”`);
-    this.commit();
+    this.commit(task!);
   }
 
   /**
@@ -888,6 +889,7 @@ export class Engine extends Kernel implements Commands {
   answer(itemId: Id, answer: string, context: SaidContext = {}, how: AskAnswer = "answered"): void {
     this.takeover.notDrivingItem(itemId);
     const item = this.s.inbox.find((entry) => entry.id === itemId);
+    if (item && item.kind !== "question") throw new Error("Use Answer only for a question. The request is still in your inbox.");
     const task = this.task(item?.taskId ?? context.taskId ?? "");
     const scope = task ? executionFor(task) : undefined;
     const about = item?.title ?? context.about;
@@ -905,7 +907,7 @@ export class Engine extends Kernel implements Commands {
     const waiter = this.waiting.get(itemId);
     if (item || waiter) this.unblock(task);
     else task.queued.push({ id: this.id(task.id), text: `About your question “${about}”: ${answer}`, at: Date.now() });
-    this.commitNow();
+    this.commitNow(task);
     this.waiting.delete(itemId);
     waiter?.resolve(answer);
     // Asked before a restart: no agent holds a slot for it, so the step waits for one.
@@ -940,6 +942,7 @@ export class Engine extends Kernel implements Commands {
   deny(itemId: Id, note?: string, context: SaidContext = {}): void {
     this.takeover.notDrivingItem(itemId);
     const item = this.s.inbox.find((entry) => entry.id === itemId);
+    if (item && item.kind !== "permission") throw new Error("Use Deny only for a permission request. The request is still in your inbox.");
     const task = this.task(item?.taskId ?? context.taskId ?? "");
     const said = note?.trim();
     const about = item?.title ?? context.about;
@@ -957,7 +960,7 @@ export class Engine extends Kernel implements Commands {
       task.queued.push({ id, text: said, at: Date.now() });
     }
     if (item) this.unblock(task);
-    this.commitNow();
+    this.commitNow(task);
     this.waiting.get(itemId)?.resolve("deny");
     this.waiting.delete(itemId);
   }

@@ -799,8 +799,9 @@ export class Simulator {
   private startAgent(d: Draft, task: DraftTask): void {
     const next = this.nextAgent(task);
     if (!next) return;
-    const toolId = d.profiles.find((profile) => profile.id === next.profileId)?.toolId ?? "unknown";
-    const waiting = slotWait(d as State, { taskId: task.id, toolId });
+    const profile = d.profiles.find((profile) => profile.id === next.profileId);
+    const toolId = profile?.toolId ?? "unknown";
+    const waiting = slotWait(d as State, { ...profile, taskId: task.id, toolId });
     if (waiting) {
       task.state = "waiting";
       task.holdsSlot = false;
@@ -828,8 +829,9 @@ export class Simulator {
     // one, each in a slot of its own while the pool and its tool allow.
     delete task.helpers;
     for (const [index, profileId] of (current?.kind === "review-chain" ? current.profileIds.slice(task.sub + 1) : []).entries()) {
-      const tool = d.profiles.find((profile) => profile.id === profileId)?.toolId ?? "unknown";
-      if (!extraSlot(d as State, tool)) break;
+      const helper = d.profiles.find((profile) => profile.id === profileId);
+      const tool = helper?.toolId ?? "unknown";
+      if (!extraSlot(d as State, tool, helper)) break;
       task.helpers = [...(task.helpers ?? []), { roleId: library.reviewerAt(current!, task.sub + 1 + index), profileId, since: d.now, step: 0 }];
     }
     // Each start is a fresh one: a step started again after a pause leaves no record.
@@ -1576,7 +1578,7 @@ export class Simulator {
   /** Fill free slots: tasks already in progress first (the tool with more of its limit left first), then the queue, in priority order. */
   private schedule(d: Draft): void {
     this.syncScreen(d);
-    const toolOf = new Map(d.profiles.map((profile) => [profile.id, profile.toolId]));
+    const profiles = new Map(d.profiles.map((profile) => [profile.id, profile]));
     const find = (id: Id) => d.tasks.find((entry) => entry.id === id);
     // A task waiting for others to land stays out of the running and says what it waits for.
     const blocked = (task: DraftTask): boolean => {
@@ -1597,7 +1599,8 @@ export class Simulator {
       if (!screenReady(task as Task, d as State, d.now)) continue;
       const next = this.nextAgent(task);
       if (next) {
-        const candidate = { taskId: task.id, toolId: toolOf.get(next.profileId) ?? "unknown" };
+        const profile = profiles.get(next.profileId);
+        const candidate = { ...profile, taskId: task.id, toolId: profile?.toolId ?? "unknown" };
         task.statusLine = slotWait(d as State, candidate) ?? "Waiting for a free slot";
         continuing.push(candidate);
       }
@@ -1607,7 +1610,8 @@ export class Simulator {
       const task = find(queued.id)!;
       // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
       if (blocked(task) || task.held) continue;
-      candidates.push({ taskId: task.id, toolId: toolOf.get(this.planner(d)) ?? "unknown" });
+      const profile = profiles.get(this.planner(d));
+      candidates.push({ ...profile, taskId: task.id, toolId: profile?.toolId ?? "unknown" });
     }
 
     const starts = pickStarts({ candidates, inUse: slotUses(d as unknown as State), pool: d.pool, now: d.now });

@@ -405,6 +405,36 @@ it("stops unused endpoints and endpoints receiving their first connection", asyn
   }
 });
 
+it("waits for a cleanly exited unused helper's final stdout acknowledgement before cleanup", async () => {
+  const browser = await AgentBrowser.start(root, process.env);
+  const child = browser["child"];
+  const stdout = child.stdout!, readers = stdout.listeners("data"), chunks: Buffer[] = [];
+  for (const reader of readers) stdout.removeListener("data", reader);
+  let released = false;
+  const deliver = (chunk: Buffer) => { for (const reader of readers) reader.call(stdout, chunk); };
+  const hold = (chunk: Buffer) => { if (released) deliver(chunk); else chunks.push(chunk); };
+  stdout.on("data", hold);
+  try {
+    const exit = new Promise<void>(resolve => child.once("exit", () => resolve()));
+    child.stdin!.end(); await exit;
+    expect(child.exitCode).toBe(0);
+    expect(browser["lifecycle"].closedUnused).toBe(false);
+    const scan = spyOn(processes, "execFile");
+    try {
+      const closing = browser.close();
+      released = true; for (const chunk of chunks.splice(0)) deliver(chunk);
+      await closing;
+      expect(browser["lifecycle"].closedUnused).toBe(true);
+      expect(existsSync(browser.directory)).toBe(false);
+      expect(scan.mock.calls.filter(args => args[0] === "ps" || args[0] === "taskkill")).toHaveLength(0);
+    } finally { scan.mockRestore(); }
+  } finally {
+    released = true; for (const chunk of chunks.splice(0)) deliver(chunk);
+    stdout.removeListener("data", hold); for (const reader of readers) stdout.on("data", reader);
+    await browser.close();
+  }
+});
+
 it("closes an acknowledged unused helper without scanning processes", async () => {
   const browser = await AgentBrowser.start(root, process.env);
   const scan = spyOn(processes, "execFile");

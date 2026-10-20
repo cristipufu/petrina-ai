@@ -56,7 +56,7 @@ export function inFamily(profile: Pick<AgentProfile, "model" | "modelId">, famil
 /** A tool, or a profile on it: with no model named, every report about the tool counts. */
 type OnTool = Pick<AgentProfile, "toolId"> & Partial<Pick<AgentProfile, "model" | "modelId">>;
 
-const covers = (entry: { toolId: Id; model?: string | undefined }, profile: OnTool): boolean => entry.toolId === profile.toolId && (!entry.model || profile.model === undefined || inFamily(profile as Pick<AgentProfile, "model" | "modelId">, entry.model));
+export const usageCovers = (entry: { toolId: Id; model?: string | undefined }, profile: OnTool): boolean => entry.toolId === profile.toolId && (!entry.model || profile.model === undefined || inFamily(profile as Pick<AgentProfile, "model" | "modelId">, entry.model));
 
 /** The limits still in force at `now`. */
 export function liveLimits(pool: Pool, now: number): readonly UsageLimit[] {
@@ -65,7 +65,7 @@ export function liveLimits(pool: Pool, now: number): readonly UsageLimit[] {
 
 /** The limit that keeps this profile from working, if there is one. */
 export function limitOf(pool: Pool, profile: AgentProfile, now: number): UsageLimit | undefined {
-  return liveLimits(pool, now).find((limit) => covers(limit, profile));
+  return liveLimits(pool, now).find((limit) => usageCovers(limit, profile));
 }
 
 /** The earliest time a limit in force ends, or undefined with none. */
@@ -92,21 +92,21 @@ export const currentReport = (report: UsageReport, now: number): boolean => (rep
 
 /** Whether the profile's tool says it is close to a limit that covers this profile's model. */
 export function nearLimit(pool: Pool, profile: AgentProfile, now: number): boolean {
-  return (pool.usage ?? []).some((report) => report.status !== "rejected" && covers(report, profile) && currentReport(report, now) && (report.status === "allowed_warning" || (report.utilization ?? 0) >= NEAR_LIMIT));
+  return (pool.usage ?? []).some((report) => report.status !== "rejected" && usageCovers(report, profile) && currentReport(report, now) && (report.status === "allowed_warning" || (report.utilization ?? 0) >= NEAR_LIMIT));
 }
 
-/** Whether the tool is past the slow-down mark on any window it reported (a warning counts), so fewer new agents start on it. */
-export function slowingDown(pool: Pool, toolId: Id, now: number): boolean {
-  return (pool.usage ?? []).some((report) => report.toolId === toolId && currentReport(report, now) && (report.status !== "allowed" || (report.utilization ?? 0) >= SLOW_DOWN));
+/** A tool summary, or only the windows covering a named profile, past the slow-down mark. */
+export function slowingDown(pool: Pool, toolId: Id, now: number, profile?: Partial<Pick<AgentProfile, "model" | "modelId">>): boolean {
+  return (pool.usage ?? []).some((report) => usageCovers(report, { toolId, ...profile }) && currentReport(report, now) && (report.status !== "allowed" || (report.utilization ?? 0) >= SLOW_DOWN));
 }
 
 /**
  * How many agents the tool may have at once right now: its cap as set (the pool's limit when it has none), and
  * half of that, rounded up and at least one, while it slows down. Undefined: no cap, and nothing to slow down for.
  */
-export function toolCapNow(pool: Pool, toolId: Id, now: number): number | undefined {
+export function toolCapNow(pool: Pool, toolId: Id, now: number, profile?: Partial<Pick<AgentProfile, "model" | "modelId">>): number | undefined {
   const cap = pool.toolCaps[toolId];
-  if (!slowingDown(pool, toolId, now)) return cap;
+  if (!slowingDown(pool, toolId, now, profile)) return cap;
   return Math.max(1, Math.ceil((cap ?? pool.limit) * SLOW_DOWN_SHARE));
 }
 
@@ -117,7 +117,7 @@ export function toolCapNow(pool: Pool, toolId: Id, now: number): number | undefi
  */
 export function headroom(pool: Pool, on: OnTool, now: number): number | undefined {
   let least: number | undefined;
-  for (const report of (pool.usage ?? []).filter((report) => covers(report, on) && currentReport(report, now))) {
+  for (const report of (pool.usage ?? []).filter((report) => usageCovers(report, on) && currentReport(report, now))) {
     if (report.status === "rejected") return 0;
     const used = report.utilization ?? (report.status === "allowed_warning" ? NEAR_LIMIT : undefined);
     if (used === undefined) continue;
@@ -162,6 +162,8 @@ export interface ChoiceRules {
   awayFromTools?: readonly Id[];
   /** Stand-in tools that cannot take a seat right now. The planned profile is never skipped for this. */
   skipTools?: ReadonlySet<Id>;
+  /** Full quota groups may exclude one model while another on the same tool has room. */
+  skipProfiles?: ReadonlySet<Id>;
 }
 
 function sameness(profile: AgentProfile, rules: ChoiceRules): number {
@@ -176,9 +178,10 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   const near = (profile: AgentProfile) => nearLimit(pool, profile, now);
   const ready = state.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id);
   const skipped = rules.skipTools;
+  const registered = new Set(state.profiles.map(profile => profile.id));
   // With no tool found ready (tests stand in for the tools), every tool in the list counts.
-  const available = (profile: AgentProfile) => free(profile) && (!ready.length || ready.includes(profile.toolId));
-  const usable = (profile: AgentProfile) => available(profile) && !skipped?.has(profile.toolId);
+  const available = (profile: AgentProfile) => registered.has(profile.id) && free(profile) && (!ready.length || ready.includes(profile.toolId));
+  const usable = (profile: AgentProfile) => available(profile) && !skipped?.has(profile.toolId) && !rules.skipProfiles?.has(profile.id);
   // The most independent first, then not near a limit, then the same effort, then the tool with more of its limit
   // left (one that said nothing ties with the roomiest), then the list's order.
   const closest = (profiles: AgentProfile[]) =>
@@ -207,20 +210,20 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
  * task can take the seat. With every stand-in full, the first of them is returned, so the task
  * waits for that tool's seat rather than for a usage limit.
  */
-export function chooseWithRoom(state: Pick<State, "profiles" | "tools" | "pool">, planned: AgentProfile, now: number, rules: ChoiceRules = {}, room?: (toolId: Id) => boolean): Choice {
-  const skip = new Set<Id>(rules.skipTools ?? []);
+export function chooseWithRoom(state: Pick<State, "profiles" | "tools" | "pool">, planned: AgentProfile, now: number, rules: ChoiceRules = {}, room?: (toolId: Id, profile: AgentProfile) => boolean): Choice {
+  const skip = new Set<Id>(rules.skipProfiles ?? []);
   let held: Choice | undefined;
   for (;;) {
-    const choice = chooseProfile(state, planned, now, skip.size ? { ...rules, skipTools: skip } : rules);
+    const choice = chooseProfile(state, planned, now, skip.size ? { ...rules, skipProfiles: skip } : rules);
     // A full independent tool waits for a seat. Falling back to its partner's tool would defeat the review.
     if (held?.kind === "substitute" && choice.kind !== "none" && sameness(choice.profile, rules) > sameness(held.profile, rules)) return held;
-    if (!room || choice.kind !== "substitute" || room(choice.profile.toolId)) {
+    if (!room || choice.kind !== "substitute" || room(choice.profile.toolId, choice.profile)) {
       if (choice.kind === "none" && held?.kind === "substitute") return held;
       return choice;
     }
-    if (skip.has(choice.profile.toolId)) return choice;
+    if (skip.has(choice.profile.id)) return choice;
     held ??= choice;
-    skip.add(choice.profile.toolId);
+    skip.add(choice.profile.id);
   }
 }
 

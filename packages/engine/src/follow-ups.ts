@@ -287,7 +287,7 @@ export class FollowUps {
 
   private profile(): AgentProfile | undefined {
     const ready = new Set(this.k.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id));
-    const open = this.k.s.profiles.filter((profile) => !profile.standby && extraSlot(this.k.activeState(), profile.toolId) && !limitOf(this.k.s.pool, profile, Date.now()));
+    const open = this.k.s.profiles.filter((profile) => !profile.standby && extraSlot(this.k.activeState(), profile.toolId, profile) && !limitOf(this.k.s.pool, profile, Date.now()));
     // Matching different descriptions of a bug needs judgment: prefer high, with xhigh last to bound cost.
     const effort = (profile: AgentProfile) => profile.effort === "high" ? 0 : profile.effort === "medium" ? 1 : profile.effort === "low" ? 2 : 3;
     open.sort((a, b) => effort(a) - effort(b));
@@ -295,7 +295,7 @@ export class FollowUps {
   }
 
   private async askAgent(profile: AgentProfile, prompt: string): Promise<MatchAnswer> {
-    if (this.k.admissionsClosed || !extraSlot(this.k.activeState(), profile.toolId)) return "unavailable";
+    if (this.k.admissionsClosed || !extraSlot(this.k.activeState(), profile.toolId, profile)) return "unavailable";
     const id = `follow-up-${randomUUID()}`;
     this.k.s.backgroundAgents ??= [];
     this.k.s.backgroundAgents.push({ id, roleId: "verifier", profileId: profile.id, label: "Matching older bugs", since: Date.now() });

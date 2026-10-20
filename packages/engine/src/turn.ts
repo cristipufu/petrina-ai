@@ -53,7 +53,7 @@ interface TurnOptions<T> extends ConversationOptions {
   /** The individual member whose saved screen conversation is being resumed. */
   member?: string;
   /** A parallel member replaces only its own reserved seat when it continues. */
-  room?: (toolId: Id) => boolean;
+  room?: (toolId: Id, profile: AgentProfile) => boolean;
 }
 
 /** What an agent that may not ask for the screen hears when it asks anyway: it never pauses its step or its group. */
@@ -99,7 +99,7 @@ export class Turns {
       if (this.k.admissionsClosed) throw new WaitingForUsage("Waiting for the pool to resume");
       // A screen request keeps the profile whose conversation asked, even if its planned tool is free again.
       const wanted = task.screen?.roleId === roleId ? task.screen.profileId : plannedId;
-      const room = options.room ?? ((toolId: Id) => !slotWait(this.k.activeState(), { taskId: task.id, toolId }));
+      const room = options.room ?? ((toolId: Id, profile: AgentProfile) => !slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId }));
       const choice = this.k.choose(wanted, scope, roleId, room, options.reviewerKey)!;
       if (choice.kind === "none") {
         // Stopped by a limit and waiting for the reset: the step's next attempt is a retry.
@@ -113,8 +113,8 @@ export class Turns {
       // Every actual tool qualifies, including an internal errand before a reviewer, and a handoff
       // to another model on the same tool. The task's old seat is the one being replaced.
       const wait = options.room
-        ? room(profile.toolId) ? undefined : `Waiting for a free ${this.k.s.tools.find((tool) => tool.id === profile.toolId)?.name ?? profile.toolId} slot`
-        : slotWait(this.k.activeState(), { taskId: task.id, toolId: profile.toolId });
+        ? room(profile.toolId, profile) ? undefined : `Waiting for a free ${this.k.s.tools.find((tool) => tool.id === profile.toolId)?.name ?? profile.toolId} slot`
+        : slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId: profile.toolId });
       if (wait) {
         if (stopped) this.k.tracking.owesRetry(scope, roleId, plannedId);
         this.k.waitForUsage(task, wait);
@@ -252,7 +252,7 @@ export class Turns {
     // Only the agent that has the screen is told it may use it.
     const screenWords = screen ? { reason: screen.reason } : mayAskScreen(role) ? ("ask" as const) : undefined;
     if (!task.holdsSlot || this.k.profile(task.agent?.profileId ?? "")?.toolId !== profile.toolId) {
-      const waiting = this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : slotWait(this.k.activeState(), { taskId, toolId: profile.toolId });
+      const waiting = this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : slotWait(this.k.activeState(), { ...profile, taskId, toolId: profile.toolId });
       if (waiting) {
         this.k.pendingAgentAdmissions.set(taskId, { step, roleId, profileId });
         throw new WaitingForUsage(waiting);
@@ -465,7 +465,7 @@ export class Turns {
     given: Given,
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: ConversationOptions & { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id) => boolean; seat?: Id; reviewerKey?: string; key?: string; member?: string; agent?: ActiveAgent; refresh?: boolean } = {},
+    options: ConversationOptions & { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id, profile: AgentProfile) => boolean; seat?: Id; reviewerKey?: string; key?: string; member?: string; agent?: ActiveAgent; refresh?: boolean } = {},
   ): Promise<T> {
     const { task } = scope;
     if (!this.k.role(roleId) || !this.k.productOf(scope) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
@@ -497,7 +497,7 @@ export class Turns {
         profile = choice.profile;
       }
       // A later stand-in still has to fit the seat this member already holds. With no room, the group waits.
-      if (stopped && options.room && !options.room(profile.toolId)) {
+      if (stopped && options.room && !options.room(profile.toolId, profile)) {
         const tool = this.k.s.tools.find((entry) => entry.id === profile.toolId)?.name ?? profile.toolId;
         this.k.tracking.owesRetry(scope, roleId, plannedId);
         throw new WaitingForUsage(`Waiting for a free ${tool} slot`);
@@ -955,6 +955,7 @@ export class Turns {
   }
 
   private async wait(scope: RepositoryContext, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string }, signal: AbortSignal, status: string, by: { roleId: Id; profileId: Id }, main: boolean, reviewKey?: string): Promise<string> {
+    if (signal.aborted) throw new Aborted();
     const { task, work: repository } = scope;
     const id = this.k.raise(scope, kind, title, blocking, { ...extra, ...(reviewKey ? { reviewKey } : {}) }, by);
     // It hangs under the step that asked, a reviewer's or a voter's among others included.
@@ -978,10 +979,7 @@ export class Turns {
     if (kind === "question" && note && (main || owns)) this.k.commitNow(scope);
     else this.k.commit(scope);
     try {
-      return await new Promise<string>((resolve, reject) => {
-        this.k.waiting.set(id, { resolve, reject });
-        signal.addEventListener("abort", () => reject(new Aborted()), { once: true });
-      });
+      return await this.k.waitForReply(id, signal);
     } finally {
       if (work && !signal.aborted) {
         const pending = this.k.s.inbox.find((item) => item.taskId === task.id && item.blocking && item.reviewKey === reviewKey);

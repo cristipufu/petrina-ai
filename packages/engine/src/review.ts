@@ -612,7 +612,7 @@ export class Reviews {
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
-  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
+  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
     const scope = executionFor(task);
     const stop = new AbortController();
     const signal = AbortSignal.any([parentSignal, stop.signal]);
@@ -660,7 +660,7 @@ export class Reviews {
       this.k.syncScreen();
     };
     // A handoff replaces this member's seat; its working peers still count against every cap.
-    const roomFor = (key: string) => (toolId: Id) => {
+    const roomFor = (key: string) => (toolId: Id, profile: AgentProfile) => {
       const member = members.find(member => member.key === key);
       if (member && this.k.role(member.roleId)?.result === "votes" && this.k.profile(member.profileId)?.toolId !== toolId) return false;
       const state = this.k.activeState();
@@ -670,9 +670,9 @@ export class Reviews {
         const own = uses.findIndex((use) => use.taskId === task.id && use.profileId === agent.profileId && use.roleId === agent.roleId);
         uses = uses.filter((_, index) => index !== own);
       } else if (!running.size) uses = uses.filter((use) => use.taskId !== task.id);
-      return pickStarts({ candidates: [{ taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
+      return pickStarts({ candidates: [{ ...profile, taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
     };
-    const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id) => boolean, seat: Id, continuing: boolean) => {
+    const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, continuing: boolean) => {
       yielded.delete(member.key);
       const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0, reviewKey: member.reviewKey };
       let completed = false;
@@ -754,7 +754,8 @@ export class Reviews {
           continue;
         }
         const seat = choice?.profile.id ?? member.profileId;
-        if (!room(this.k.profile(seat)?.toolId ?? "unknown")) break;
+        const profile = this.k.profile(seat)!;
+        if (!room(profile.toolId, profile)) break;
         pending.shift();
         startMember(member, join(folder, member.key), room, seat, false);
       }

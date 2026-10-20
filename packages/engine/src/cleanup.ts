@@ -126,21 +126,38 @@ export class Cleanup {
     this.removing.add(task.id);
     this.k.cleanupJobs.add(task.id);
     this.k.syncIdleSleep();
+    let changed = false;
     try {
-      for (const { work } of scopesFor(task, { includeExcluded: true })) {
+      for (const scope of scopesFor(task, { includeExcluded: true })) {
+        if (this.k.stopped) break;
+        const { work } = scope;
         const copy = work.worktree ?? work.preparingCopy?.path;
         if (!copy || work.pr?.state === "open" || work.shipping?.step || work.localUpdate?.pushed === false) continue;
         const path = resolve(copy);
         if (!path.startsWith(resolve(this.k.dataDir, "worktrees") + sep)) continue;
+        const copies = join(this.k.dataDir, "worktrees", work.productId, `${task.id}.copies`);
+        const again = work.cleanup?.removedAt !== undefined;
+        if (again && work.cleanup?.reviewCopiesRemovedAt !== undefined && !existsSync(path) && !existsSync(copies)) continue;
         try {
-          const root = work.source!.product.path!;
-          await git.removeFinishedCopies(root, join(this.k.dataDir, "worktrees", work.productId, `${task.id}.copies`));
-          await git.removeWorktree(root, path);
-          work.cleanup = { removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
-        } catch (error) { work.cleanup = { error: String(error) }; }
-        this.k.commitNow();
+          const root = work.source?.product.path ?? this.k.productOf(scope)?.path ?? await git.mainClone(path);
+          if (!root) throw new Error("the product's repository could not be found");
+          const peersRemoved = await git.removeFinishedCopies(root, copies);
+          const removed = await git.removeWorktree(root, path) || peersRemoved;
+          if ((removed && !again) || work.cleanup?.error !== undefined) this.k.log(scope, "done", CLEANUP_WORDS.removed);
+          work.cleanup = { ...work.cleanup, removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
+          delete work.cleanup.error;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (work.cleanup?.error === undefined) this.k.log(scope, "warn", CLEANUP_WORDS.failed(message));
+          work.cleanup = { ...work.cleanup, error: message };
+          delete work.cleanup.removedAt;
+          delete work.cleanup.reviewCopiesRemovedAt;
+        }
+        changed = true;
+        // Disk pressure must not prevent freeing the remaining repositories' space.
+        try { this.k.commitNow(task); } catch { /* The next save retains the pending result. */ }
       }
-      this.k.saveArchivedTask(task);
+      if (changed) try { this.k.saveArchivedTask(task); } catch { /* Retried with the next save or sweep. */ }
     } finally {
       this.removing.delete(task.id);
       this.k.cleanupJobs.delete(task.id);

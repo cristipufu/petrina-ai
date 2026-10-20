@@ -6,7 +6,7 @@ import { type RepositoryContext } from "./repository-context.js";
 
 import type { DeepMutable, Id, Product } from "@petrina/core";
 import * as git from "./git.js";
-import { Aborted, type Kernel } from "./kernel.js";
+import { Aborted, abortable, type Kernel } from "./kernel.js";
 
 /** Where credentialed steps go, or why they cannot. `missing`: the product has no GitHub repository at all. */
 export type Connection = { ok: true; remote: git.Remote } | { ok: false; reason: string; missing?: boolean };
@@ -43,6 +43,7 @@ export class Connections {
   async connection(scope: RepositoryContext, signal: AbortSignal): Promise<Connection> {
     const { work: repository } = scope;
     for (;;) {
+      if (signal.aborted) throw new Aborted();
       const product = this.k.repositoryOf(scope);
       const name = product?.name ?? "This product";
       if (!product?.path || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(product.repo) || product.repo.startsWith("local/")) return { ok: false, reason: `${name} has no GitHub repository`, missing: true };
@@ -61,7 +62,7 @@ export class Connections {
       }
       const pending = this.confirming.get(product.id);
       if (pending) {
-        await pending.catch(() => undefined);
+        await abortable(pending, signal);
         if (signal.aborted) throw new Aborted();
         continue;
       }
@@ -69,7 +70,7 @@ export class Connections {
       const asking = this.confirmAddress(scope, product.id, signal);
       this.confirming.set(
         product.id,
-        asking.then(() => undefined),
+        asking.then(() => undefined, () => undefined),
       );
       try {
         const stopped = await asking;
@@ -127,6 +128,7 @@ export class Connections {
     const product = this.k.s.products.find((entry) => entry.id === productId)!;
     const name = product.name;
     const address = await git.remoteAddress(product.path!);
+    if (signal.aborted) throw new Aborted();
     if (!address) return { ok: false, reason: `${name} has no GitHub address`, missing: true };
     if (!git.sameRepo(address, product.repo)) return { ok: false, reason: `${name}'s address ${address} is not ${product.repo} on GitHub` };
     if (product.remoteRefused === address) return { ok: false, reason: `you said ${address} is not ${name}'s GitHub address` };
@@ -136,10 +138,7 @@ export class Connections {
     });
     task.statusLine = "Waiting for you to confirm the GitHub address";
     this.k.commitNow();
-    const answer = await new Promise<string>((resolve, reject) => {
-      this.k.waiting.set(id, { resolve, reject });
-      signal.addEventListener("abort", () => reject(new Aborted()), { once: true });
-    });
+    const answer = await this.k.waitForReply(id, signal);
     const live = this.k.s.products.find((entry) => entry.id === productId);
     if (!live) return undefined;
     if (answer === CONFIRM_ADDRESS || /^\s*yes\b/i.test(answer)) {

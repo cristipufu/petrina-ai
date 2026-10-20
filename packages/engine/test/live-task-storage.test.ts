@@ -96,6 +96,7 @@ it("broadcasts summaries, fetches complete details, and saves one streaming task
     try {
       engine.say(one, "agent", "Progress beside an open archive");
       engine.commitNow(one);
+      engine.commitNow();
     } finally { Reflect.deleteProperty(archived.session, "toJSON"); }
     const metadata = engine.store.database.query<{ value: string }, []>("SELECT value FROM kv WHERE key='state'").get()!.value;
     expect(metadata).not.toContain("LARGE-PRIVATE-HISTORY");
