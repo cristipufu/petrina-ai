@@ -114,12 +114,14 @@ export type ReviewRoundEnd = { kind: "send back"; builder: number; open: number 
 /** The most review rounds a stage runs on its own, however well it converges: past it the coordinator decides. */
 export const MAX_REVIEW_ROUNDS = 5;
 
-/** Shared convergence decision. An empty set previews whether one newly found blocker could return. */
-export function allowsReviewFix(task: Task, stage: Stage, round: number, currentIds: ReadonlySet<string>): boolean {
+/** Shared convergence decision. No open findings previews whether one newly found blocker could return. */
+export function allowsReviewFix(task: Task, stage: Stage, round: number): boolean {
   if (round < (stage.maxRounds ?? 2)) return true;
+  const current = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
+  const currentIds = new Set(current.map((finding) => finding.id));
   const previous = task.blockingFindingsAfter?.[stage.id]?.at(-1);
   const before = task.blockingAfter?.[stage.id]?.at(-1);
-  const progress = previous ? previous.some((id) => !currentIds.has(id)) : before !== undefined && Math.max(1, currentIds.size) < before;
+  const progress = previous ? previous.some((id) => !currentIds.has(id)) : before !== undefined && Math.max(1, current.length) < before;
   return round < MAX_REVIEW_ROUNDS && progress;
 }
 
@@ -133,8 +135,7 @@ export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: r
   if (open === 0) return { kind: "passed" };
   const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && roleForTask(roles, entry.roleId, task)?.result === "build");
   if (builder < 0) return { kind: "used up", open };
-  const currentIds = new Set(task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id));
-  if (allowsReviewFix(task, stage, round, currentIds)) return { kind: "send back", builder, open };
+  if (allowsReviewFix(task, stage, round)) return { kind: "send back", builder, open };
   return { kind: "used up", open };
 }
 

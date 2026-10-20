@@ -175,7 +175,7 @@ function by(state: People, ...profileIds: readonly (Id | undefined)[]): string {
 /** Whether a review round may still send the work back to the builder (a later round keeps doing so while it converges). */
 function canFixReview(state: People, task: Task, stage: Stage, index: number): boolean {
   if (!task.plan!.stages.some((entry, at) => at < index && state.roles.find((role) => role.id === entry.roleId)?.result === "build")) return false;
-  return allowsReviewFix(task, stage, task.rounds[stage.id] ?? 1, new Set(task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id)));
+  return allowsReviewFix(task, stage, task.rounds[stage.id] ?? 1);
 }
 
 /** The engine requires the coordinator's check when a review would end with blocking findings open, even if shipping normally needs no approval. */
