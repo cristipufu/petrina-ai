@@ -343,7 +343,7 @@ if (stubborn) {
   setInterval(() => undefined, 1000);
   if (dir) appendFileSync(join(dir, "pids"), `${process.pid}\n`);
 }
-if (process.argv.includes("--wont-start")) process.exit(3);
+if (process.argv.includes("--wont-start") || (process.argv.includes("--exit-in-checks") && process.cwd().endsWith(`${process.platform === "win32" ? "\\" : "/"}checks`))) process.exit(3);
 const scriptPath = process.argv.find((arg) => arg.startsWith("--script="))?.slice("--script=".length);
 
 /** What the fake agents do for one test, read before every run. */

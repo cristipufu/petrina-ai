@@ -150,3 +150,7 @@ The window asks the shell for the address and key through a Tauri command that o
 ## Restarts are safe
 
 Everything the coordinator says during a step (messages, answers, the note with a "No", the change request that started the step) is saved before any agent sees it, and kept on the task until the step hands back its result. An agent that starts the step again gets all of it, in order, in its opening instructions. The window keeps what it sent until the engine confirms it, and sends it again after reconnecting, with an id so a resend counts once.
+
+## Test execution
+
+The required engine suite keeps native parallel workers and isolated test files. Test repositories copy an immutable seed into independent object stores, refs and configuration; no mutable repository or alternates are shared. Regression fixtures include the stages their assertions exercise, and deadline-independent login decisions use a controlled abort after a real conversation opens. Wall-clock process termination and startup-deadline tests retain their real waits.

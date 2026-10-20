@@ -11,7 +11,7 @@ import { AgentRun } from "../src/acp-run.js";
 import { AGENT_CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
 import { Store } from "../src/store.js";
 import { ADAPTERS, ENGINE_PROFILES, findProgram } from "../src/tools.js";
-import { EngineProcess, FAKE_GH, Fakes, git, makeProduct, makeWorld, removeDir, SLOW, tempDir, waitFor } from "./support.js";
+import { EngineProcess, FAKE_GH, Fakes, git, makeProduct, makeWorld, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const fakeGh = join(import.meta.dir, "fake-gh.ts");
@@ -131,19 +131,36 @@ describe("Tool status", () => {
 
   it("takes the tool's own word on its login: a conversation that opens is not enough for Ready", async () => {
     const fakes = new Fakes(fresh("fakes"));
-    // Claude Code opens a conversation while logged out and asks for a login only at the first message.
-    const engine = new Engine(fresh("data"), { agentCommand: agents({ "claude-code": "not-logged-in", codex: "silent-login" }, fakes.dir), toolCheckTimeoutMs: 10_000 * SLOW });
+    const cwd = fresh("checks"); mkdirSync(cwd);
+    const deadline = new AbortController();
+    let opened!: () => void;
+    const codexOpened = new Promise<void>((resolve) => { opened = resolve; });
+    const original = AgentRun.start.bind(AgentRun);
+    const gone: Promise<void>[] = [];
+    const starting = spyOn(AgentRun, "start").mockImplementation(async (options) => {
+      const run = await original(options);
+      if (options.profile.toolId === "codex") opened();
+      return run;
+    });
+    const command = agents({ "claude-code": "not-logged-in", codex: "silent-login" }, fakes.dir)!;
+    let checking: Promise<Awaited<ReturnType<typeof checkAgentTool>>[]> | undefined;
     try {
-      await engine.checkTools();
+      checking = Promise.all(["claude-code", "codex"].map((id) => {
+        const profile = ENGINE_PROFILES.find((profile) => profile.toolId === id)!;
+        return checkAgentTool({ adapter: ADAPTERS[id]!, profile, command: command(profile), env: testGitEnv(), cwd, which: () => null, ...(id === "codex" ? { signal: deadline.signal } : {}), onGone: (done) => gone.push(done) });
+      }));
+      // The missing report, rather than real elapsed time, is what this test exercises.
+      await Promise.race([codexOpened, checking.then(() => { throw new Error("The login probes ended before the silent conversation opened"); })]);
+      deadline.abort();
+      const [claude, codex] = await checking;
       expect(fakes.opens().length).toBe(2);
-      expect(status(engine, "claude-code")).toBe("logged-out");
+      expect(claude!.status).toBe("logged-out");
       // A tool that never says is Couldn't check, never Ready.
-      expect(status(engine, "codex")).toBe("unknown");
-      expect(checkOf(engine.getState().setup?.checks, "codex").detail).toContain("did not say whether it is logged in");
+      expect(codex!.status).toBe("unknown");
+      expect(codex!.detail).toContain("did not say whether it is logged in");
       expect(fakes.prompts()).toEqual([]);
-      expect(engine.getState().tools.find((tool) => tool.id === "claude-code")?.status).toBe("logged-out");
     } finally {
-      engine.shutdown();
+      deadline.abort(); await checking?.catch(() => {}); await Promise.allSettled(gone); starting.mockRestore();
     }
   });
 
@@ -735,9 +752,9 @@ describe("The squad uses tools that are ready", () => {
   });
 
   it("gives up on a tool that hangs as it starts, and names it in a Stuck item with its fix and what happened", async () => {
-    // The check gives no answer in time (Couldn't check), so the squad tries the tool, which never opens a conversation.
-    // The time limit leaves the logged-out tool time to say so on a busy machine: it is never the one tried.
-    const { engine, taskId } = await run({ "claude-code": "logged-out", codex: "hang" }, { toolCheckTimeoutMs: 4_000 * SLOW, startTimeoutMs: 1_500 });
+    // Readiness is unknown immediately; this case exercises the real agent-start deadline, not another readiness wait.
+    const command = agents({ "claude-code": "logged-out", codex: "hang" })!;
+    const { engine, taskId } = await run({ "claude-code": "logged-out", codex: "hang" }, { startTimeoutMs: 1_500, agentCommand: (profile) => profile.toolId === "codex" ? [...command(profile)!, "--exit-in-checks"] : command(profile) });
     try {
       expect(status(engine, "claude-code")).toBe("logged-out");
       expect(status(engine, "codex")).toBe("unknown");

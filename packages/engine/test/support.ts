@@ -3,7 +3,7 @@ import { displayTask } from "@petrina/core";
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
 // stand-ins only through the Engine's constructor.
 import { setDefaultTimeout } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InboxKind, State, Task } from "@petrina/core";
@@ -87,23 +87,52 @@ export const git = (cwd: string, ...args: string[]): string => {
 
 /** A product with a GitHub-like origin: a bare repository and a clone of it, on main. */
 export function makeProduct(root: string): string {
+  const seed = repositorySeed(undefined, true);
   const origin = join(root, "origin.git");
-  const seed = join(root, "seed");
   const clone = join(root, "clone");
-  mkdirSync(seed, { recursive: true });
-  git(seed, "init", "-q", "-b", "main");
-  git(seed, "config", "user.email", "test@example.com");
-  git(seed, "config", "user.name", "Test");
-  writeFileSync(join(seed, "README.md"), "# Demo\n");
-  writeFileSync(join(seed, "VERSION"), "1.0.0\n");
-  git(seed, "add", ".");
-  git(seed, "commit", "-q", "-m", "init");
-  git(root, "clone", "-q", "--bare", seed, origin);
-  git(root, "clone", "-q", origin, clone);
-  git(clone, "config", "user.email", "test@example.com");
-  git(clone, "config", "user.name", "Test");
+  mkdirSync(root, { recursive: true });
+  cpSync(seed.origin, origin, { recursive: true });
+  cpSync(seed.clone, clone, { recursive: true });
+  git(clone, "remote", "set-url", "origin", origin);
   return clone;
 }
+
+/** Reuse only the immutable starting commit. Each fixture copies its objects, refs and config. */
+interface RepositorySeed { path: string; origin: string; clone: string; head: string }
+const repositorySeeds = new Map<string, RepositorySeed>();
+function repositorySeed(version?: string, versionFile = false): RepositorySeed {
+  const key = JSON.stringify([version ?? "", versionFile]);
+  const saved = repositorySeeds.get(key);
+  if (saved) return saved;
+  const path = tempDir("petrina-repository-seed-");
+  const source = join(path, "source"), origin = join(path, "origin.git"), clone = join(path, "clone");
+  mkdirSync(source);
+  git(source, "init", "-q", "-b", "main");
+  writeFileSync(join(source, "README.md"), "# Demo\n");
+  if (versionFile) writeFileSync(join(source, "VERSION"), "1.0.0\n");
+  if (version) writeFileSync(join(source, "package.json"), `${JSON.stringify({ name: "demo", version }, null, 2)}\n`);
+  git(source, "add", ".");
+  git(source, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init");
+  if (versionFile) git(path, "clone", "-q", "--bare", "--no-hardlinks", source, origin);
+  else {
+    git(path, "init", "-q", "--bare", "-b", "main", origin);
+    git(source, "push", "-q", origin, "main");
+  }
+  git(path, "clone", "-q", "--no-hardlinks", "-c", "user.email=test@example.com", "-c", "user.name=Test", origin, clone);
+  if (versionFile) git(clone, "remote", "set-url", "origin", ADDRESS);
+  else {
+    // Worlds originally pushed an initial commit to a bare repository by path, without tracking
+    // refs or upstream configuration. Product fixtures are real clones and keep those defaults.
+    git(clone, "remote", "remove", "origin");
+    git(clone, "remote", "add", "origin", ADDRESS);
+  }
+  const seed = { path, origin, clone, head: git(source, "rev-parse", "HEAD") };
+  repositorySeeds.set(key, seed);
+  return seed;
+}
+// Standalone diagnostic scripts import these helpers too. The parallel runner owns cleanup when
+// Bun's isolated workers bypass exit hooks; ordinary scripts clean their seeds on exit.
+process.on("exit", () => { for (const seed of repositorySeeds.values()) removeDir(seed.path); });
 
 /**
  * Stops at once, saying why, when this machine holds back programs written a moment ago. Take-over
@@ -411,20 +440,14 @@ export interface World {
 
 /** A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and scripted agents. */
 export function makeWorld(name: string, options: { version?: string; address?: string } = {}): World {
+  const seed = repositorySeed(options.version);
   const dir = mkdtempSync(join(tmpdir(), `petrina-${name}-`));
   const remote = join(dir, "github.git");
-  git(dir, "init", "-q", "--bare", "-b", "main", remote);
   const clone = join(dir, "clone");
-  mkdirSync(clone);
-  git(clone, "init", "-q", "-b", "main");
-  git(clone, "config", "user.email", "test@example.com");
-  git(clone, "config", "user.name", "Test");
-  writeFileSync(join(clone, "README.md"), "# Demo\n");
-  if (options.version) writeFileSync(join(clone, "package.json"), `${JSON.stringify({ name: "demo", version: options.version }, null, 2)}\n`);
-  git(clone, "add", ".");
-  git(clone, "commit", "-q", "-m", "init");
-  git(clone, "remote", "add", "origin", options.address ?? ADDRESS);
-  git(clone, "push", "-q", remote, "main");
+  cpSync(seed.origin, remote, { recursive: true });
+  cpSync(seed.clone, clone, { recursive: true });
+  const address = options.address ?? ADDRESS;
+  if (address !== ADDRESS) git(clone, "remote", "set-url", "origin", address);
   const ghState = join(dir, "github.json");
   writeGitHub(ghState, { repo: REPO, prs: [], releases: [], calls: [] });
   const scriptPath = join(dir, "agents.json");
@@ -435,7 +458,7 @@ export function makeWorld(name: string, options: { version?: string; address?: s
     clone,
     remote,
     data,
-    initial: git(clone, "rev-parse", "HEAD"),
+    initial: seed.head,
     start: (extra = {}) => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, awakeObserver: () => {}, ...extra }),
     github: () => readGitHub(ghState),
     setGitHub: (change) => updateGitHub(ghState, change),

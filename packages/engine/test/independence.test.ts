@@ -11,7 +11,7 @@ import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], builderProfile?: string, votingOnly = false, antigravity = false) {
+async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], builderProfile?: string, reviewOnly = true, antigravity = false) {
   const root = tempDir("petrina-independence-");
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
@@ -25,7 +25,7 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
   const repo = makeProduct(root);
   const productId = await engine.addProduct(repo);
   engine.setProductDelivery(productId, "local", true);
-  if (votingOnly) {
+  if (reviewOnly) {
     const product = engine.s.products.find((entry) => entry.id === productId)!;
     product.checks = [];
     product.checksBy = "coordinator";
@@ -39,8 +39,8 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
     for (const prompt of fakes.received()) if (allow(prompt.role, prompt.session)) release(prompt.session);
     for (const item of engine.getState().inbox) {
       if (item.kind === "plan") {
-        // Voting fixtures need a build and two reviewers, without unrelated design or check discovery.
-        if (votingOnly) {
+        // Cases asserting design or brief preservation keep their design stages; code-review cases need neither.
+        if (reviewOnly) {
           const planned = engine.s.tasks.find((entry) => entry.id === taskId)!.plan!;
           planned.stages = planned.stages.filter((stage) => stage.kind !== "converge");
         }
@@ -104,7 +104,7 @@ describe.concurrent("reviews after a usage handoff", () => {
   });
 
   it("keeps a design review away from the replacement that actually wrote the brief", async () => {
-    const f = await fixture({ limited: [{ model: "opus", role: "architect", spendCap: true }] }, 1);
+    const f = await fixture({ limited: [{ model: "opus", role: "architect", spendCap: true }] }, 1, undefined, undefined, false);
     try {
       await f.advance(f.delivery);
       expect(f.models("architect")).toEqual(["opus", "gpt-6.1-sol"]);
@@ -114,7 +114,7 @@ describe.concurrent("reviews after a usage handoff", () => {
   });
 
   it("hands a design reviewer to another tool when its own usage runs out", async () => {
-    const f = await fixture({ limited: [{ model: "gpt-6.1-sol", role: "design reviewer" }] }, 1);
+    const f = await fixture({ limited: [{ model: "gpt-6.1-sol", role: "design reviewer" }] }, 1, undefined, undefined, false);
     try {
       await f.advance(f.delivery);
       expect(f.models("architect")).toEqual(["opus"]);
@@ -123,7 +123,7 @@ describe.concurrent("reviews after a usage handoff", () => {
   });
 
   it("retains a reported review after a restart of a saved legacy pair", async () => {
-    const f = await fixture({ controlled: true }, 1);
+    const f = await fixture({ controlled: true }, 1, undefined, undefined, false);
     try {
       // Save the legacy Sol + Opus plan with Claude already out before the review starts.
       await f.advance(() => f.fakes.received("builder").length === 1, (role) => role !== "builder");
