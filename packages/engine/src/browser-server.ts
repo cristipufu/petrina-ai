@@ -13,6 +13,7 @@ const http = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 0, async f
   if (request.headers.get("authorization") !== `Bearer ${secret}`) return new Response("Unauthorized", { status: 401 });
   if (closing) return new Response("Session ended", { status: 503 });
   try {
+    if (!connection) console.log(JSON.stringify({ used: true }));
     const browser = await (connection ??= import("./browser-connection.js").then(({ connectBrowser }) => connectBrowser(root)));
     if (closing) return new Response("Session ended", { status: 503 });
     return browser.fetch(request);
@@ -27,6 +28,7 @@ async function close() {
   http.stop(true);
   await connection?.then((browser) => browser.close(), () => undefined);
   await rm(root, { recursive: true, force: true });
+  if (!connection) console.log(JSON.stringify({ closedUnused: true }));
   process.exit(0);
 }
 const watchdog = setInterval(() => { try { process.kill(Number(owner), 0); } catch { void close(); } }, 1000);

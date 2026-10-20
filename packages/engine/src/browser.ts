@@ -2,18 +2,17 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { descendants, descendantsKnown } from "./process-tree.js";
 
 export class AgentBrowser {
   private closing?: Promise<void>;
-  private constructor(readonly directory: string, private readonly child: ChildProcess, readonly mcp: McpServer, private readonly registration?: string) {}
+  private constructor(readonly directory: string, private readonly child: ChildProcess, readonly mcp: McpServer, private readonly lifecycle: { used: boolean; closedUnused: boolean }, private readonly registration?: string) {}
 
   static async start(parent: string | undefined, env: NodeJS.ProcessEnv, onLog?: (text: string) => void): Promise<AgentBrowser> {
-    // macOS browser sockets have a short path limit. Its ordinary per-user temp
-    // path (or Petrina's data path) can already be too long before Playwright adds a name.
+    // A short, uncrowded parent also leaves room for macOS browser sockets.
     await mkdir(browserTempRoot(), { recursive: true, mode: 0o700 });
     const directory = await realpath(await mkdtemp(join(browserTempRoot(), "petrina-browser-")));
     const registration = parent ? join(parent, `${randomUUID()}.json`) : undefined;
@@ -37,6 +36,7 @@ export class AgentBrowser {
     // Start Bun beside the source, away from crowded system temp folders. The helper
     // changes to the capture folder itself before it handles any browser requests.
     const child = spawn(process.execPath, [join(import.meta.dir, "browser-server.ts"), directory, secret, String(process.pid)], { cwd: import.meta.dir, env: clean, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const lifecycle = { used: false, closedUnused: false };
     child.stderr?.on("data", (data: Buffer) => onLog?.(data.toString()));
     try {
       const url = await new Promise<string>((resolve, reject) => {
@@ -44,14 +44,21 @@ export class AgentBrowser {
         let output = "";
         child.stdout!.on("data", (data: Buffer) => {
           output += data.toString();
-          if (!output.includes("\n")) return;
-          clearTimeout(timer);
-          try { resolve((JSON.parse(output.split("\n")[0]!) as { url: string }).url); } catch { reject(new Error("The headless browser server could not start.")); }
+          for (let end; (end = output.indexOf("\n")) >= 0;) {
+            const line = output.slice(0, end);
+            output = output.slice(end + 1);
+            try {
+              const message = JSON.parse(line) as { url?: string; used?: boolean; closedUnused?: boolean };
+              if (message.used === true) lifecycle.used = true;
+              if (message.closedUnused === true && !lifecycle.used) lifecycle.closedUnused = true;
+              if (typeof message.url === "string") { clearTimeout(timer); resolve(message.url); }
+            } catch { reject(new Error("The headless browser server could not start.")); }
+          }
         });
         child.once("exit", () => { clearTimeout(timer); reject(new Error("The headless browser server stopped.")); });
         child.once("error", (error) => { clearTimeout(timer); reject(error); });
       });
-      return new AgentBrowser(directory, child, { type: "http", name: `petrina-browser-${secret.slice(0, 8)}`, url, headers: [{ name: "Authorization", value: `Bearer ${secret}` }] }, registration);
+      return new AgentBrowser(directory, child, { type: "http", name: `petrina-browser-${secret.slice(0, 8)}`, url, headers: [{ name: "Authorization", value: `Bearer ${secret}` }] }, lifecycle, registration);
     } catch (error) {
       child.kill();
       await rm(directory, { recursive: true, force: true });
@@ -66,7 +73,7 @@ export class AgentBrowser {
         // Playwright starts Chromium in its own process group. Killing only this
         // controller, including when it never answers, leaves that browser running.
         // Its session folder still identifies the browser after the controller exits.
-        await stopBrowser(this.child, this.directory);
+        await stopBrowser(this.child, this.directory, this.lifecycle);
         await rm(this.directory, { recursive: true, force: true });
         if (this.registration) await rm(this.registration, { force: true });
       } catch (error) {
@@ -80,13 +87,16 @@ export class AgentBrowser {
 }
 
 /** Stop the controller and every browser process this session started. Resolves only once they are gone. */
-async function stopBrowser(child: ChildProcess, directory: string): Promise<void> {
+async function stopBrowser(child: ChildProcess, directory: string, lifecycle: { used: boolean; closedUnused: boolean }): Promise<void> {
   const pid = child.pid;
   if (pid === undefined) return;
   const exited = new Promise<void>((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) resolve();
-    else child.once("exit", () => resolve());
+    // close follows stdout draining, so the helper's final unused acknowledgement is known.
+    if ((child.exitCode !== null || child.signalCode !== null) && child.stdout?.readableEnded) resolve();
+    else child.once("close", () => resolve());
   });
+  const unused = () => lifecycle.closedUnused && !lifecycle.used && child.exitCode === 0 && child.signalCode === null;
+  if (unused()) return;
   if (process.platform === "win32") {
     // Once an unexpected exit loses the parent relationship, taskkill cannot prove
     // that its browsers stopped. Keep the marker and report incomplete cleanup.
@@ -110,9 +120,10 @@ async function stopBrowser(child: ChildProcess, directory: string): Promise<void
   // a controller that never answers is still alive afterwards and is listed again before it is killed.
   let early: number[] | undefined;
   let earlyKnown = false;
-  void descendants([pid]).then((found) => { early = found; earlyKnown = found !== undefined; });
+  if (lifecycle.used) void descendants([pid]).then((found) => { early = found; earlyKnown = found !== undefined; });
   child.stdin?.end();
   const graceful = await within(exited, 4_000);
+  if (graceful && unused()) return;
   if (!graceful) {
     const again = await descendantsKnown([pid], 1_200);
     const owned = earlyKnown || again ? [...new Set([...(early ?? []), ...(again ?? [])])] : undefined;
@@ -198,7 +209,7 @@ function processesUsing(directory: string): Promise<number[] | undefined> {
 }
 
 export function browserTempRoot(): string {
-  return join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "petrina-browsers");
+  return process.platform === "darwin" ? join(homedir(), ".petrina", "b") : join(tmpdir(), "petrina-browsers");
 }
 
 /** Reap each registered browser before startup; only the session's own temp folder is eligible. */
@@ -209,6 +220,10 @@ export async function recoverBrowserTemps(registry: string): Promise<void> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
+  const tempRoot = await realpath(browserTempRoot()).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+    return resolve(browserTempRoot());
+  });
   for (const entry of entries) {
     const registration = join(registry, entry.name);
     // Older output folders and links are not registrations. Remove only the entry
@@ -233,7 +248,7 @@ export async function recoverBrowserTemps(registry: string): Promise<void> {
       await rm(registration, { force: true });
       continue;
     }
-    if (typeof directory === "string" && dirname(directory) === resolve(browserTempRoot()) && /^petrina-browser-[A-Za-z0-9]+$/.test(basename(directory))) {
+    if (typeof directory === "string" && dirname(directory) === tempRoot && /^petrina-browser-[A-Za-z0-9]+$/.test(basename(directory))) {
       // If ps cannot be read or the process tree cannot be stopped, reap throws and
       // the marker stays for the next startup to retry.
       await reap(directory, undefined);

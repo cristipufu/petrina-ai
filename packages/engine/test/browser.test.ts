@@ -1,7 +1,10 @@
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, expect, it, spyOn } from "bun:test";
+import * as processes from "node:child_process";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, linkSync, lstatSync, readFileSync, readdirSync, renameSync, symlinkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
+import { homedir } from "node:os";
+import * as os from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Engine } from "../src/engine.js";
@@ -140,6 +143,22 @@ it("starts cleanly when no interrupted browser registry exists", async () => {
   const missing = join(root, "empty-browser-registry");
   await recoverBrowserTemps(missing);
   expect(existsSync(missing)).toBe(false);
+});
+
+it.skipIf(process.platform !== "darwin")("recovers canonical browser folders when the home path is a symlink", async () => {
+  const home = join(root, "real-home"), link = join(root, "home-link"), registry = join(root, "linked-home-registry");
+  mkdirSync(home); symlinkSync(home, link); mkdirSync(registry);
+  const mockedHome = spyOn(os, "homedir").mockReturnValue(link);
+  try {
+    const browser = await AgentBrowser.start(registry, process.env);
+    const child = (browser as unknown as { child: ChildProcess }).child;
+    const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    child.kill("SIGKILL"); await exited;
+    expect(existsSync(browser.directory)).toBe(true);
+    await recoverBrowserTemps(registry);
+    expect(existsSync(browser.directory)).toBe(false);
+    expect(existsSync(registry)).toBe(false);
+  } finally { mockedHome.mockRestore(); }
 });
 
 it("discards a legacy directory and invalid browser registrations without following outside folders", async () => {
@@ -366,6 +385,20 @@ it("stops unused endpoints and endpoints receiving their first connection", asyn
       await expect(fetch("url" in browser.mcp ? browser.mcp.url : "")).rejects.toThrow();
     } finally { await browser.close(); }
   }
+});
+
+it("closes an acknowledged unused helper without scanning processes", async () => {
+  const browser = await AgentBrowser.start(root, process.env);
+  const scan = spyOn(processes, "execFile");
+  try {
+    if (process.platform === "darwin") {
+      expect(browser.directory.startsWith(join(homedir(), ".petrina", "b") + sep)).toBe(true);
+      expect(Buffer.byteLength(join(browser.directory, "SingletonSocket"))).toBeLessThan(104);
+    }
+    await browser.close();
+    expect(scan.mock.calls.filter(([program]) => program === "ps")).toHaveLength(0);
+    expect(existsSync(browser.directory)).toBe(false);
+  } finally { scan.mockRestore(); await browser.close(); }
 });
 
 it("ignores inherited debug and remote-browser settings before launch, without opening a browser", async () => {
