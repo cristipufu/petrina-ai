@@ -78,7 +78,9 @@ async function open(answer: World["answer"] = groupByBug, withNotes = false): Pr
   };
   const engine = new Engine(data, options);
   engine.setPoolPaused(true);
+  await engine.waitUntilReady();
   await engine["followUps"].catchUp();
+  await Promise.all([...engine.backgroundWork]);
   const shop = await engine.addProduct(makeProduct(root), "Shop");
   const notes = withNotes ? await engine.addProduct(makeProduct(join(root, "other")), "Notes") : "";
   const world: World = { engine, data, root, shop, notes, prompts, answer };
@@ -92,7 +94,9 @@ async function reopen(world: World, match = true): Promise<void> {
     ...(match ? { matchFollowUps: async (prompt: string) => { world.prompts.push(prompt); return world.answer(prompt); } } : {}),
   });
   world.engine.setPoolPaused(true);
+  await world.engine.waitUntilReady();
   await world.engine["followUps"].catchUp();
+  await Promise.all([...world.engine.backgroundWork]);
 }
 
 function taskOf(engine: Engine, productId: string, title: string, findings: DeepMutable<Finding>[]) {
