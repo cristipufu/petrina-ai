@@ -4,7 +4,7 @@
 // these read it, so the demo and the real squad say the same things.
 
 import { CALL_WORDS, followingCall } from "./call.js";
-import { MAX_REVIEW_ROUNDS, reviewRoundEnd } from "./flow.js";
+import { allowsReviewFix, reviewRoundEnd } from "./flow.js";
 import { portReviewerIndex } from "./journey.js";
 import { reviewerAt } from "./roles.js";
 import type { DeliveryMode, GateKind, Id, Stage, State, StepClock, StepRecord, Task } from "./model.js";
@@ -175,17 +175,13 @@ function by(state: People, ...profileIds: readonly (Id | undefined)[]): string {
 /** Whether a review round may still send the work back to the builder (a later round keeps doing so while it converges). */
 function canFixReview(state: People, task: Task, stage: Stage, index: number): boolean {
   if (!task.plan!.stages.some((entry, at) => at < index && state.roles.find((role) => role.id === entry.roleId)?.result === "build")) return false;
-  const round = task.rounds[stage.id] ?? 1;
-  if (round < (stage.maxRounds ?? 2)) return true;
-  // Past them, only a round that ends with fewer blocking findings than the last one (and some left) sends it back.
-  return round < MAX_REVIEW_ROUNDS && (task.blockingAfter?.[stage.id]?.at(-1) ?? 0) > 1;
+  return allowsReviewFix(task, stage, task.rounds[stage.id] ?? 1, new Set(task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id)));
 }
 
 /** The engine requires the coordinator's check when a review would end with blocking findings open, even if shipping normally needs no approval. */
 function needsReviewCheck(state: People, task: Task, index: number): boolean {
   const stage = task.plan?.stages[index];
-  const next = task.plan?.stages[index + 1];
-  return index === task.stageIndex && stage?.kind === "review-chain" && !!next && next.kind !== "gate" && reviewRoundEnd(task, stage, task.rounds[stage.id] ?? 1, state.roles).kind === "used up";
+  return index === task.stageIndex && stage?.kind === "review-chain" && reviewRoundEnd(task, stage, task.rounds[stage.id] ?? 1, state.roles).kind === "used up";
 }
 
 /**
@@ -235,7 +231,7 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
         const roleId = roles[0];
         const name = roles.length > 1 ? "review" : roleId && (WORK[roleId] ?? state.roles.find((role) => role.id === roleId)?.name.toLowerCase());
         if (reviewers.length) steps.push(`${port ? "a review of the port" : `${name || stage.title.toLowerCase()}${again}`}${by(state, ...reviewers.map((reviewer) => reviewer.profileId))}`);
-        if (needsReviewCheck(state, task, at)) steps.push(CHECKS.delivery);
+        if (needsReviewCheck(state, task, at)) steps.push("your call");
         break;
       }
       case "do": {
@@ -316,9 +312,8 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
     case "review-chain": {
       // Every reviewer looks at once, then voters settle what only one tool raised: what follows is the next stage.
       const after = upcoming(state, task, task.stageIndex + 1, 0);
-      if (needsReviewCheck(state, task, task.stageIndex)) return shaped([CHECKS.delivery, ...after]);
-      const mayNeedCheck = stages[task.stageIndex + 1] && stages[task.stageIndex + 1]!.kind !== "gate";
-      return shaped(after, canFixReview(state, task, stage, task.stageIndex) ? "fixes by the builder if blocking issues are found" : mayNeedCheck ? "your OK to ship if blocking issues are found" : undefined);
+      if (needsReviewCheck(state, task, task.stageIndex)) return shaped(["your call", ...(after[0] === CHECKS.delivery ? after.slice(1) : after)]);
+      return shaped(after, canFixReview(state, task, stage, task.stageIndex) ? "fixes by the builder if blocking issues are found" : "your call if blocking issues are found");
     }
     default:
       if (task.retest && state.roles.find((role) => role.id === stage.roleId)?.result === "checks") {

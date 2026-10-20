@@ -114,6 +114,15 @@ export type ReviewRoundEnd = { kind: "send back"; builder: number; open: number 
 /** The most review rounds a stage runs on its own, however well it converges: past it the coordinator decides. */
 export const MAX_REVIEW_ROUNDS = 5;
 
+/** Shared convergence decision. An empty set previews whether one newly found blocker could return. */
+export function allowsReviewFix(task: Task, stage: Stage, round: number, currentIds: ReadonlySet<string>): boolean {
+  if (round < (stage.maxRounds ?? 2)) return true;
+  const previous = task.blockingFindingsAfter?.[stage.id]?.at(-1);
+  const before = task.blockingAfter?.[stage.id]?.at(-1);
+  const progress = previous ? previous.some((id) => !currentIds.has(id)) : before !== undefined && Math.max(1, currentIds.size) < before;
+  return round < MAX_REVIEW_ROUNDS && progress;
+}
+
 /**
  * Past its planned rounds, a review keeps sending the work back while it converges (each round resolves at least
  * one previously open Important finding), up to MAX_REVIEW_ROUNDS. Only a round that stops making progress hands
@@ -124,13 +133,8 @@ export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: r
   if (open === 0) return { kind: "passed" };
   const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && roleForTask(roles, entry.roleId, task)?.result === "build");
   if (builder < 0) return { kind: "used up", open };
-  if (round < (stage.maxRounds ?? 2)) return { kind: "send back", builder, open };
-  const previous = task.blockingFindingsAfter?.[stage.id]?.at(-1);
   const currentIds = new Set(task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id));
-  const resolvedPrior = previous?.some((id) => !currentIds.has(id)) ?? false;
-  const before = task.blockingAfter?.[stage.id]?.at(-1);
-  const madeProgress = previous ? resolvedPrior : before !== undefined && open < before;
-  if (round < MAX_REVIEW_ROUNDS && madeProgress) return { kind: "send back", builder, open };
+  if (allowsReviewFix(task, stage, round, currentIds)) return { kind: "send back", builder, open };
   return { kind: "used up", open };
 }
 

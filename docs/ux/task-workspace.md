@@ -42,7 +42,7 @@ Next, in Overview under Right now, appears for working tasks, tasks that need yo
 
 Delivery says what Petrina does itself: "Petrina opens the pull request", "Petrina commits to main", or for a release, the Release Manager's notes and then "Petrina publishes the release". A step with an alternative is shown on its own: "or another design round if the reviewer objects", "or your call if they still disagree", or "or fixes by the builder if blocking issues are found".
 
-It follows the current plan, rounds and edits, leaving out reviewers who have already reported and skipping earlier design checks on the way back to the one where you asked for changes. While the Check finder or the Guide keeper prepares a step, Next still names that step. The full sentence wraps in place, with no popup. Queued, stuck and finished tasks have no Next line.
+It follows the current plan, finding-based convergence limits and edits, naming an unresolved review decision “your call”, leaving out reviewers who have already reported and skipping earlier design checks on the way back to the one where you asked for changes. While the Check finder or the Guide keeper prepares a step, Next still names that step. The full sentence wraps in place, with no popup. Queued, stuck and finished tasks have no Next line.
 
 ### Remaining time
 

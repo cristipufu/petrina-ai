@@ -3,6 +3,7 @@ import { createDemoState, createFirstRunDemo, createPortfolioDemo, DEMO_PRODUCTS
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js";
 import type { Stage, State, StepRecord, Task } from "../src/model.js";
 import { Simulator } from "../src/sim.js";
+import { reviewRoundEnd } from "../src/flow.js";
 import { CALL_WORDS } from "../src/call.js";
 import { TODO_MAX, leftWords, mainLine, nextLine, pauseClock, plainTodo, resumeClock, startClock, timeLeft, workedSoFar } from "../src/summary.js";
 
@@ -142,18 +143,18 @@ describe("what comes next", () => {
     const stages = task.plan!.stages.filter((stage) => stage.gate !== "delivery").map((stage) => stage.kind === "review-chain" ? { ...stage, maxRounds: 1 } : stage);
     const review = stages.find((stage) => stage.kind === "review-chain")!;
     const final: Task = { ...task, approveDelivery: false, plan: { ...task.plan!, stages } };
-    expect(nextLine(state, final)).toBe("Next: your OK to ship, then Petrina opens the pull request");
+    expect(nextLine(state, final)).toBe("Next: your call, then Petrina opens the pull request");
     // This check is still required when there is no builder to return findings to.
     const noBuilder: Task = { ...final, stageIndex: final.stageIndex - 1, plan: { ...final.plan!, stages: stages.filter((stage) => stage.roleId !== "builder").map((stage) => stage.kind === "review-chain" ? { ...stage, maxRounds: 3 } : stage) } };
-    expect(nextLine(state, noBuilder)).toBe("Next: your OK to ship, then Petrina opens the pull request");
+    expect(nextLine(state, noBuilder)).toBe("Next: your call, then Petrina opens the pull request");
     for (const status of ["fixed", "dismissed"] as const) {
-      expect(nextLine(state, { ...final, findings: final.findings.map((finding) => ({ ...finding, status })) })).toBe("Next: Petrina opens the pull request, or your OK to ship if blocking issues are found");
+      expect(nextLine(state, { ...final, findings: final.findings.map((finding) => ({ ...finding, status })) })).toBe("Next: Petrina opens the pull request, or your call if blocking issues are found");
     }
     // Past its planned rounds, a review that leaves fewer blocking findings than the round before still sends the work back.
     const converging: Task = { ...final, rounds: { [review.id]: 2 }, blockingAfter: { [review.id]: [2] } };
     expect(nextLine(state, converging)).toBe("Next: Petrina opens the pull request, or fixes by the builder if blocking issues are found");
-    expect(nextLine(state, { ...converging, blockingAfter: { [review.id]: [1] } })).toBe("Next: your OK to ship, then Petrina opens the pull request");
-    expect(nextLine(state, { ...converging, rounds: { [review.id]: 5 } })).toBe("Next: your OK to ship, then Petrina opens the pull request");
+    expect(nextLine(state, { ...converging, blockingAfter: { [review.id]: [1] } })).toBe("Next: your call, then Petrina opens the pull request");
+    expect(nextLine(state, { ...converging, rounds: { [review.id]: 5 } })).toBe("Next: your call, then Petrina opens the pull request");
 
     const demo = new Simulator({ ...state, tasks: [final] });
     until(demo, () => item(demo, "delivery") !== undefined);
@@ -162,6 +163,25 @@ describe("what comes next", () => {
     demo.approve(item(demo, "delivery")!.id);
     until(demo, () => taskOf(demo, id).state === "pr-open");
     expect(taskOf(demo, id).timeline.some((entry) => entry.text.startsWith("Petrina opened pull request"))).toBe(true);
+  });
+
+  it("predicts the canonical finding-id convergence decision even when blocker counts stay at one", () => {
+    const { sim, id, on } = feature();
+    until(sim, on("code-reviewer"), true);
+    const state = sim.getState();
+    const task = taskOf(sim, id);
+    const stage = task.plan!.stages[task.stageIndex]!;
+    const original = { id: "earlier", text: "Original bug", severity: "blocking" as const, raisedBy: "sol-high", confirmedBy: [], status: "fixed" as const };
+    const fresh = { ...original, id: "new", text: "A distinct new bug", status: "open" as const };
+    const progressed: Task = { ...task, rounds: { [stage.id]: 3 }, blockingAfter: { [stage.id]: [1] }, blockingFindingsAfter: { [stage.id]: [[original.id]] }, findings: [original, fresh] };
+    expect(reviewRoundEnd(progressed, stage, 3, state.roles).kind).toBe("send back");
+    expect(nextLine(state, progressed)).toContain("or fixes by the builder");
+    const unchanged: Task = { ...progressed, findings: [{ ...original, status: "open" }] };
+    expect(reviewRoundEnd(unchanged, stage, 3, state.roles).kind).toBe("used up");
+    expect(nextLine(state, unchanged)).toContain("Next: your call");
+    expect(nextLine(state, { ...progressed, rounds: { [stage.id]: 5 } })).toContain("Next: your call");
+    expect(reviewRoundEnd({ ...progressed, findings: [] }, stage, 3, state.roles).kind).toBe("passed");
+    expect(nextLine(state, { ...progressed, findings: [] })).toContain("or fixes by the builder");
   });
 
   it("follows the design loop: review, another round, the reviewer's last round", () => {
@@ -214,9 +234,9 @@ describe("what comes next", () => {
     expect(next(sim, id)).toBe("Next: your OK to ship, or fixes by the builder if blocking issues are found");
     until(sim, on("builder", 1, (task) => task.fixing), true);
     expect(next(sim, id)).toBe("Next: code review again (Claude Code · Opus 5.5 and Codex · sol), then your OK to ship");
-    // The last planned round, after a round that left one blocking finding: it cannot send the work back again.
+    // The previous blocker was fixed; a distinct new blocker can still return to the Builder.
     until(sim, on("code-reviewer", 2, (task) => task.sub === 1), true);
-    expect(next(sim, id)).toBe("Next: your OK to ship, then Petrina opens the pull request");
+    expect(next(sim, id)).toBe("Next: your OK to ship, or fixes by the builder if blocking issues are found");
     until(sim, () => item(sim, "delivery") !== undefined);
     expect(next(sim, id)).toBe("Next: Petrina opens the pull request");
   });
