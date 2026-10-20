@@ -200,6 +200,19 @@ function reviewersOf(task: Task, state: People, stage: Stage, at: number, from: 
   return one ? [one] : [];
 }
 
+/** Final preparation resolves single-product patch equivalence; until then name the conditional test. */
+function finalTesting(state: People, task: Task): string | undefined {
+  if (task.retest || task.testedPatch === undefined || task.acceptanceUnverified || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
+  const tester = task.plan?.stages.find((stage) => stage.kind === "do" && state.roles.find((role) => role.id === stage.roleId)?.result === "checks");
+  if (!tester) return undefined;
+  const versions = task.repositories?.every((work) => work.checks?.current && work.checks.tree && task.testedVersions?.[work.productId])
+    ? task.repositories.map((work) => work.checks!.tree === task.testedVersions![work.productId]) : undefined;
+  const failed = task.acceptancePassed === false;
+  if (!failed && versions?.every(Boolean)) return undefined;
+  const knownChange = versions?.some((same) => !same);
+  return `final acceptance testing${by(state, tester.profileIds[0])}${failed || knownChange ? "" : " if the code changed"}`;
+}
+
 /**
  * The steps of the plan from stage `index`, position `sub` (converge: 0 the author, 1 the reviewer;
  * review chain: the first reviewer still to look), along the likely path: reviews pass, nobody objects.
@@ -214,6 +227,10 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
       case "gate":
         // On the way back to the check where the coordinator asked for changes, the engine goes past earlier design checks.
         if (stage.gate === "design" && task.returnToCheck !== undefined && at < task.returnToCheck) break;
+        if (stage.gate === "delivery" && (at !== task.stageIndex || task.state === "running")) {
+          const testing = finalTesting(state, task);
+          if (testing) steps.push(testing);
+        }
         steps.push(CHECKS[stage.gate ?? "delivery"]);
         break;
       case "converge": {
@@ -306,6 +323,8 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
 
   const round = task.rounds[stage.id] ?? 1;
   switch (stage.kind) {
+    case "gate":
+      return shaped(upcoming(state, task, task.stageIndex, 0));
     case "converge":
       if (task.sub === 0) return shaped(followingCall(task) ? upcoming(state, task, task.stageIndex + 1, 0) : upcoming(state, task, task.stageIndex, 1));
       return shaped(upcoming(state, task, task.stageIndex + 1, 0), round >= (stage.maxRounds ?? 3) ? "your call if they still disagree" : "another design round if the reviewer objects");

@@ -274,9 +274,29 @@ describe("what comes next", () => {
     const build = stages.findIndex((stage) => stage.roleId === "builder");
     stages.splice(build + 1, 0, { id: "test", title: "Test", kind: "do", roleId: "tester", profileIds: ["sol-high"] });
     const fixing: Task = { ...task, plan: { ...task.plan!, stages }, state: "running", stageIndex: build, fixing: true, testedPatch: "earlier" };
-    expect(nextLine(state, fixing)).toBe("Next: code review (Claude Code · Opus 5.5 and Codex · sol), then your OK to ship");
+    expect(nextLine(state, fixing)).toBe("Next: code review (Claude Code · Opus 5.5 and Codex · sol), then final acceptance testing (Codex · sol) if the code changed");
     expect(nextLine(state, { ...fixing, stageIndex: build + 1, retest: true })).toBe("Next: your OK to ship, or fixes by the builder if acceptance checks fail");
     expect(startClock({ ...fixing, stageIndex: build + 1, fixing: false, retest: true }, "tester", 0).repeat).toBe(true);
+  });
+
+  it("previews final acceptance with current profiles, without inventing a test when evidence is unchanged or blocked", () => {
+    const { sim, id, on } = feature();
+    until(sim, on("code-reviewer"), true);
+    const state = sim.getState();
+    const task = taskOf(sim, id);
+    const stages = [...task.plan!.stages];
+    stages.splice(task.stageIndex, 0, { id: "acceptance", title: "Acceptance", kind: "do", roleId: "custom-checker", profileIds: ["sol-high"] });
+    const customState = { ...state, roles: [...state.roles, { ...state.roles.find((role) => role.result === "checks")!, id: "custom-checker" }] };
+    const reviewing: Task = { ...task, stageIndex: task.stageIndex + 1, testedPatch: "old", plan: { ...task.plan!, stages }, findings: [], acceptancePassed: true };
+    expect(nextLine(customState, reviewing)).toContain("final acceptance testing (Codex · sol) if the code changed");
+    const swapped = { ...customState, profiles: customState.profiles.map((profile) => profile.id === "sol-high" ? { ...profile, model: "New model" } : profile) };
+    expect(nextLine(swapped, reviewing)).toContain("Codex · New model");
+    for (const blocked of [{ acceptanceUnverified: true }, { acceptanceBlocked: true, acceptancePassed: false }]) expect(nextLine(customState, { ...reviewing, ...blocked })).not.toContain("final acceptance testing");
+    const shared: Task = { ...reviewing, testedVersions: { api: "a", web: "b" }, repositories: ["api", "web"].map((productId) => ({ productId, delivery: "local", completedStages: [], checks: { current: true, at: 0, tree: productId === "api" ? "a" : "b", results: [] } })) };
+    expect(nextLine(customState, shared)).not.toContain("final acceptance testing");
+    shared.repositories![1]!.checks!.tree = "changed";
+    expect(nextLine(customState, shared)).toContain("final acceptance testing (Codex · sol), or");
+    expect(nextLine(customState, shared)).not.toContain("if the code changed");
   });
 
   it("names the plan check while planning, only when the coordinator approves plans", () => {
