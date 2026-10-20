@@ -1,5 +1,7 @@
 # Existing header overlap: follow-up
 
+Historical material retained as evidence. It is not current implementation guidance and must not be copied into AGENTS.md. Read the [current contract](../ux.md#navigation) and its tests before making changes.
+
 Acceptance finding task-4463-29627 describes an older header problem. The branch/PR starting-point feature does not change the header. Its proposed phone-layout changes were removed from this task.
 
 Headless comparisons against main on 18 October 2026 found identical header controls and positions in both demo views, in light and dark:
@@ -17,8 +19,8 @@ No new header regression was found. The existing phone and minimum-size zoom ove
 
 Before/after evidence, using the same demo and theme:
 
-- Phone: [main](screenshots/header-follow-up-main-phone-follow-up.png), [this task](screenshots/header-follow-up-task-phone-follow-up.png).
-- Minimum desktop at 200% zoom: [main](screenshots/header-follow-up-main-minimum-zoom-200.png), [this task](screenshots/header-follow-up-task-minimum-zoom-200.png).
+- Phone: [main](../screenshots/header-follow-up-main-phone-follow-up.png), [this task](../screenshots/header-follow-up-task-phone-follow-up.png).
+- Minimum desktop at 200% zoom: [main](../screenshots/header-follow-up-main-minimum-zoom-200.png), [this task](../screenshots/header-follow-up-task-minimum-zoom-200.png).
 
 The comparison used main at `0b0a6ab5b22374c26c8d7626150e55d4c501c4fa`. Zoom uses the equivalent layout viewport and doubled pixel density; enlarged text uses doubled text with the layout refreshed.
 

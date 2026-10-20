@@ -4,7 +4,7 @@ Owns persistence, bounded window transport, step clocks and measurement definiti
 
 ## Tasks across products
 
-[The shared-task brief](../shared-tasks.md) describes scope approval, product ownership, combined review, per-repository recovery and landing. One task remains one record; its repository records retain separate work and deliveries.
+[The repository contract](repositories.md#tasks-across-products) owns scope approval, product ownership, combined review, per-repository recovery and landing. One task remains one record; its repository records retain separate work and deliveries.
 
 Execution state belongs to a `RepositoryState` record: `repository` for an ordinary task, or one record per product in the approved shared scope. Branches, working folders, check evidence, repair allowances, conversations and deliveries live only there. The runtime task owns the request, plan, review process and stage progress; its type excludes repository execution fields.
 
@@ -34,6 +34,16 @@ While it waits, the engine retains only a dirty flag and serializes the latest s
 
 This bounds delivery independently of the size of a separately fetched task record.
 
+## Optional SQL execution log
+
+Start with `bun run engine --debug-sql` to log the shared state/history/work-log connection. It is off by default. `PETRINA_DEBUG_SQL=1` enables it for a CLI-launched process too, including an explicit `petrina engine start` when stopped. A normal restart preserves the launching flag or environment; stop and start without either to turn it off. A start request for an already running engine does not change its diagnostics.
+
+`sql-executions.jsonl` in the Petrina data folder contains one `{ "sql": "SELECT ... WHERE id = ?", "ms": 0.42, "at": "2026-10-20T08:00:00.000Z" }` record per completed driver execution, including failed executions and reused prepared statements. It records the original SQL template, never bound values, expanded SQL, results or error messages. Iterators record once when exhausted or closed, timing only driver advancement and cleanup. Multi-statement `exec` calls remain one driver execution.
+
+Outer transaction wall times go to `sql-transactions.jsonl`, without a `sql` field. They include nested savepoints and automatic transaction control, and must not be added to query totals. Driver timings include row materialization and any CPU, I/O or lock waits inside the call; they do not distinguish those costs or include writing the log.
+
+Both files append across restarts and rotate independently at 10 MiB, retaining the current file and four numbered backups. Records are never sampled or truncated; one oversized SQL template can exceed the rotation size. Analysis covers the retained recorded period. A write failure disables logging with one timestamped engine-log message; SQL results and errors retain their normal behavior.
+
 ## Task summaries and step times
 
 An ACP plan update names the agent's current to-do item: the first entry in progress. With none in progress, the last item stays until the agent picks another or hands back its result. The task saves this item separately from its latest tool activity, as one plain line with formatting removed and a limit of about 100 characters. The timeline keeps each new item. Tool calls only change the activity line.
@@ -61,8 +71,6 @@ The simulator follows the same rules, with several tool actions under each scrip
 ## Work log and usage
 
 Petrina records what the squad uses so the coordinator can see what work costs in tokens and time, per task, per product and for the whole squad. No prices: on subscriptions they would mislead.
-
-### What is logged, and where
 
 ### One entry per agent turn
 
@@ -104,7 +112,7 @@ The `products_ever` table retains id, name, repository, when added and, if remov
 
 The `usage_readings` table records which limit, how much of it was used, its status, length and reset time, and when the tool said so. The last thirty days are kept, and a reading identical to the latest one of its limit is not written again, so a tool repeating itself on every turn leaves one row per change.
 
-The tables live in the engine's SQLite file next to its state, are kept forever and survive restarts. They hold only numbers, names and ids: no prompts, replies, commands or file paths. The dollar figure Claude Code sends is never read. The app never receives the log: the work-log state only carries a counter that changes when an entry is written and when tracking began.
+The tables live in the engine's SQLite file next to its state and survive restarts. Work history is retained; account readings keep the thirty-day window above. They hold only numbers, names and ids: no prompts, replies, commands or file paths. The dollar figure Claude Code sends is never read. The app never receives the log: the work-log state only carries a counter that changes when an entry is written and when tracking began.
 
 Limits use the existing shared pool reports (`pool.usage`) and blocked tools and models (`pool.limited`), so Analytics, the pool and Agents always read one source. Each view asks the engine for its own numbers with one checked request (`usage`, with a fixed set of views and periods), and asks again when the counter changes or the local day rolls over. The per-product totals are added up by SQLite, so they stay fast after a year of turns.
 
@@ -130,6 +138,12 @@ Codex gives one figure per turn, kept as one line under the model Codex names fo
 
 Grok reports whole-prompt usage in `_meta.usage`, including collected subagent work. The per-model breakdown is counted once; a valid aggregate without a complete breakdown stays under "Model not reported". Its sibling token fields describe only the last model call and its sibling total is context size. Input includes cache reads and writes, which are subtracted to record new input; reasoning is already included in output. An incomplete report stays unreported. A confirmed resolved model keeps tokens and agent time on the same model row.
 
+### Antigravity
+
+Native session counters are read before and after each turn, subtracting the previous totals after resume. Thinking is included once in output and also recorded as its subset. Cached and new input are not split by the connector and remain unreported. Context-window usage updates are not token bills.
+
+Quota figures are remaining percentages, converted to used percentages. Google reports Gemini Models and, on accounts with a separate allowance, Gemini 4 Argon independently. A reported 100% remaining is 0% used, not a missing report; unavailable figures never become zero. Group names remain the provider's own. Scope and reader timing are in [runtime usage limits](engine-runtime.md#account-readers).
+
 ### No helper figure, and effort stays on the agent
 
 Claude Code folds helper agents that use the same model into that model's line, so nobody can say how much was helper work; Petrina doesn't try, and keeps no separate helper figure anywhere. Token lines carry only a model and its figures. Effort belongs to the agent's turn (asked for and actually run) and is shown on the agent, never next to tokens.
@@ -154,11 +168,9 @@ On the first start with a work log, any product id a task still points to that i
 
 ### Limits
 
-Claude Code sends limit notices on its context updates (`_meta._claude/rateLimit`): which limit (5-hour, weekly, weekly for one model, extra usage), how much is used when given, a status (fine, close, reached) and the reset time. Codex doesn't send them over ACP, so Petrina starts the installed `codex app-server`, calls `account/rateLimits/read` and stops it: no agent, no thread, no tokens. That happens after a Codex turn (at most every 5 minutes) and when Analytics opens (at most once a minute).
+Reader protocols, refresh timing and scheduling effects live in [runtime usage limits](engine-runtime.md#usage-limits). Only a limit's reported percentage, status, window, model group and reset are retained. A failed read leaves an earlier report and its timestamp intact; with none, the figure is unreported. Reports survive restarts, and an expired reset is shown as such rather than carried into the next window. Analytics and the pool share the Usage component; Agents shows slots, the queue and tool readiness.
 
-Only each limit's percentage, length and reset are kept. With no earlier report, a failed read means "not reported"; later failures retain the previous report. Grok is read through its ACP billing extension with the same gaps, retaining only its allowance percentage, period and reset. These reads update `pool.usage`, alongside Claude Code’s own reports. Limits are stored with the time they were reported, survive restarts, and a passed reset time is shown as such. The same Usage component serves Analytics and the pool. Agents shows the occupied slots and queue.
-
-The pool keeps only the latest report per tool and kind of limit. Every report from a tool also goes into the thirty-day history beside the work log (`usage_readings`, see above), unless it repeats the latest reading of its limit. Analytics draws from it: for the chosen period, each limit's readings over time with its reset moments (the distinct reset times reports named, once passed) and the next reset when it is known and inside the period, ending each line on the pool's latest report.
+The pool keeps only the latest report per tool, model group and kind of limit. Every report from a tool also goes into the thirty-day history beside the work log (`usage_readings`, see above), unless it repeats the latest reading of its limit. Analytics draws from it: for the chosen period, each limit's readings over time with its reset moments (the distinct reset times reports named, once passed) and the next reset when it is known and inside the period, ending each line on the pool's latest report.
 
 Analytics also charts tokens over time from the per-model lines: per day (per hour for Today), split by tool, by model or by provider (Anthropic for Claude Code, OpenAI for Codex, xAI for Grok, Google for Gemini: a small map in `@petrina/core`), measuring all tokens, one part of them where the tools reported it, or agent time, with the running total. All three splits are worked out in one view, so the window switches without asking again, and they add up to the same totals.
 

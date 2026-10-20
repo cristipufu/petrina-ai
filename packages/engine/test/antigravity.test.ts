@@ -42,6 +42,11 @@ describe("Antigravity native accounting", () => {
     expect(antigravityReading(quota.replace("2% remaining", "0% remaining")).reports.at(-1)?.status).toBe("rejected");
     expect(antigravityReading(quota.replaceAll(/resets [^)]+/g, "resets invalid")).reports).toEqual([]);
     expect(antigravityReading("context: 500000 tokens")).toEqual({ reports: [] });
+    // Native /usage reports unused shared windows alongside a separately consumed Argon quota.
+    const separate = antigravityReading(quota.replace("80% remaining", "100% remaining").replace("2% remaining", "37% remaining")).reports;
+    expect(separate.map(report => [report.model, report.kind, report.utilization])).toEqual([
+      ["flash", "seven_day", 0], ["flash", "five_hour", 0], ["argon", "seven_day", 0.63],
+    ]);
   });
 
   it("uses differences across turns and resume, includes thinking once in output, and leaves cache/new input unknown", () => {

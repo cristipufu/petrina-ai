@@ -168,8 +168,8 @@ export async function launch(options: LaunchOptions): Promise<void> {
     console.error("Petrina's engine crashed:", error);
     stop(1);
   });
-  // Asked to stop by hand: reviewers and voters in flight start over after a restart, so they get a few minutes
-  // to hand back first, and nothing new starts meanwhile. A second signal stops at once.
+  // A manual stop drains admitted work without a deadline; nothing new starts meanwhile.
+  // A second signal explicitly interrupts instead of waiting for that work to finish.
   let draining = false;
   const stopGently = () => {
     if (stopping) return;

@@ -1,5 +1,7 @@
 # Agents get a headless browser
 
+Historical material retained as evidence. It is not current implementation guidance and must not be copied into AGENTS.md. Read the [current contract](../architecture/agents.md#background-browsers) and its tests before making changes.
+
 Every agent gets an invisible browser with empty storage whenever its conversation opens, including resume, load and a fresh start after reopening fails. Both restart explanations say earlier pages and browser logins are gone.
 
 - Attach Playwright MCP through both connectors' session protocol. Use bundled Chromium headlessly with an isolated profile; never connect to personal Chrome, an extension or an existing browser. Ignore inherited browser debug, remote-service and profile overrides. Disable inherited personal-browser, desktop tools and plugins through connector controls without changing personal settings.

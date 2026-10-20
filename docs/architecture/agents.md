@@ -4,11 +4,45 @@ Owns role contracts, tool configuration, context, messages, permissions and scre
 
 ## Roles
 
+Roles are records the engine saves and keeps across restarts (`packages/core/src/roles.ts`). The engine and the demo squad share the rules, and the engine enforces them, not the Library's form.
+
+### Built-in roles
+
+Built-in roles keep their name, icon and kind of result, because Petrina depends on them. The coordinator can change their purpose, how they work and what they hand back, and their permission unless that would break how the squad works: the Planner is always read-only, reviewers never change the work they judge, and the Builder always makes changes. Only the fields the coordinator changed are saved, so the others keep following Petrina's defaults; **Reset to default** drops them. The Release Manager is shown but can't be changed: it writes release notes while Petrina handles delivery itself.
+
+### Added roles
+
+(at most 20) hand back notes or pass-or-fail findings, chosen once. A notes role works in a `do` step, and what it hands back reaches every later agent on the task. A findings role joins the review next to the code reviewers: it sees the design, the acceptance checklist, the builder's report and earlier findings, confirms or disputes them (every dispute gives its reason, as for the code reviewers), and its blocking findings go back to the builder under its name. A removed role leaves the Library and the planner's list, and stays known to the tasks that use it.
+
+### Refused, whoever sends it
+
+The engine refuses an unknown role, any change to the Release Manager, a locked permission, a changed kind of result, a changed name, icon or colour on a built-in role, a duplicate name (ignoring capitals, counting built-in names), a missing name or purpose, text over the limit (name 40, purpose 200, instructions 4,000, hands-back 300 characters) and a 21st added role.
+
+### What an agent is told
+
+The agent receives its role's wording, inside Petrina's fixed rules for its kind of result (never its name, so an added role gets the rules of the built-in role it works like), then its purpose, one sentence on what it may change in this step and what it hands back, with the task, the coordinator's notes and the result format as before. The planner's fixed rules (the roles and profiles it may use with what each one does, the stage kinds and the rules) come after its wording and can't be replaced by it. The Release Manager keeps its fixed delivery contract.
+
+### Every step that may change the product comes before the final review
+
+(the plan's last review chain). The engine moves one the planner put after it, and the plan's reason says so; a step that still ends up after it, because its role was switched to changing the product after planning, runs read-only and the timeline says why. Read-only steps may still run after the final review. No planned role changes the product after the final review. Petrina adds delivery last, after the final review and the delivery check, as before, and handles publishing itself; only the read-only Release Manager works there, and only for releases.
+
+### Misplaced roles are corrected, never stuck
+
+Findings in a `do` step join the final review, notes or checks in the review get a step of their own before it (also when the plan names a role for every reviewer), any other role there that doesn't review is replaced by a code reviewer or left out, an added role in the design pair gives way to the built-in one, internal roles, including the Release Manager, are left out wherever the planner put them, a role removed while the planner planned is left out, and the final review always keeps a code reviewer. The plan's reason says what Petrina changed.
+
+### Work is never lost between roles
+
+A role that may change the product has its work committed at the end of its step, labelled with its name, so a later read-only role never wipes it. Read-only roles, added ones included, have their changes and commits undone when their step ends.
+
+- Changes reach the next agent that starts and the next plan. An agent already working finishes with the version of its role it started with, its wording, name and permission included, even when Petrina restarts in between and its conversation starts again. Reviewers and voters working side by side each keep their own saved version; a replacement on another tool keeps it until that part of the review finishes.
+
+## Context and conversations
+
 ### Source locations from planning
 
 Selected products provide the Planner with a bounded navigation packet from their exact local default-branch tree: top-level paths, workspace scripts and clearly partial AGENTS.md/README excerpts. Packets are shared by tree version, contain no prior agent's conclusions, and do not replace reading the actual selected source or its complete instructions.
 
-The planner may hand on up to eight source locations it already inspected, each tied to a product and exact commit. They contain paths only, without architecture recommendations or inferred requirements. The engine verifies that the prepared copy still has that revision and location before showing them to the Architect, or the first Builder when design is skipped. They are an explicitly incomplete navigation aid, never requirements; independent reviewers receive none. Changed sources and old records fall back to ordinary discovery. No extra research turn is added, and this does not establish a measured speed-up.
+The planner may hand on up to eight source locations it already inspected, each tied to a product and exact commit. They contain paths only, without architecture recommendations or inferred requirements. The engine verifies that the prepared copy still has that revision and location before showing them to the Architect, or the first Builder when design is skipped. They are an explicitly incomplete navigation aid, never requirements; independent reviewers receive none. Changed sources and old records fall back to ordinary discovery. No extra research turn is added.
 
 ### Source locations in a design
 
@@ -30,9 +64,13 @@ The first code or security review starts fresh. Each reviewer seat saves its own
 
 A changed role, planned or actual profile, request or approved source starts a complete fresh review; an unavailable native session or context packet does too. Usage replacements retain only their own conversation when selected again. Completed references survive an engine restart, are cleared when the stage ends or the task is paused/cancelled, and never belong to another reviewer. Verifiers always start fresh.
 
+### Side errands
+
 Check finder and Guide keeper errands save the main step's conversation, attempts, to-do item and clock durably before using their own conversation. An interrupted errand can reopen without losing the main session; finishing or falling back restores its bookkeeping. Explicit task pause still clears the main native conversation, and cancellation drops the errand.
 
 ### Continued Builder context
+
+Fix rounds and branch updates return to the Builder's own supported conversation. The round that explicitly asks it to step back and rethink starts fresh; an unavailable native session receives its previous report in a new conversation.
 
 After a supported return to the same Builder conversation, unchanged background sections can be replaced by a reference to an immutable complete context packet. The engine sends changed instructions, every current finding and complete failure-log references, and records exactly that input on the journey. The packet remains readable when a harness compacts its conversation; missing or altered packets, changed roles or sources, and fresh conversations receive full context.
 
@@ -40,52 +78,18 @@ Reusable background includes earlier handoffs, accepted guide points, open follo
 
 Independent guide, check-evidence and source-location reads run together. Coordinator notes are gathered only after those reads finish, so messages received during preparation reach the opening prompt.
 
-This applies to check fixes and review fixes without removing quality gates. Packets are private runtime files and disappear with finished or cancelled tasks, independently of worktree cleanup. Fewer input characters alone are not a measured reduction in tokens, cost or duration.
-
-### Role editing and plan contracts
-
-Roles are records the engine saves and keeps across restarts (`packages/core/src/roles.ts`). The engine and the demo squad share the rules, and the engine enforces them, not the Library's form.
-
-### Built-in roles
-
-Built-in roles keep their name, icon and kind of result, because Petrina depends on them. The coordinator can change their purpose, how they work and what they hand back, and their permission unless that would break how the squad works: the Planner is always read-only, reviewers never change the work they judge, and the Builder always makes changes. Only the fields the coordinator changed are saved, so the others keep following Petrina's defaults; **Reset to default** drops them. The Release Manager is shown but can't be changed: it writes release notes while Petrina handles delivery itself.
-
-### Added roles
-
-(at most 20) hand back notes or pass-or-fail findings, chosen once. A notes role works in a `do` step, and what it hands back reaches every later agent on the task. A findings role joins the review next to the code reviewers: it sees the design, the acceptance checklist, the builder's report and earlier findings, confirms or disputes them (every dispute gives its reason, as for the code reviewers), and its blocking findings go back to the builder under its name. A removed role leaves the Library and the planner's list, and stays known to the tasks that use it.
-
-### Refused, whoever sends it
-
-The engine refuses an unknown role, any change to the Release Manager, a locked permission, a changed kind of result, a changed name, icon or colour on a built-in role, a duplicate name (ignoring capitals, counting built-in names), a missing name or purpose, text over the limit (name 40, purpose 200, instructions 4,000, hands-back 300 characters) and a 21st added role.
-
-### What an agent is told
-
-The agent receives its role's wording, inside Petrina's fixed rules for its kind of result (never its name, so an added role gets the rules of the built-in role it works like), then its purpose, one sentence on what it may change in this step and what it hands back, with the task, the coordinator's notes and the result format as before. The planner's fixed rules (the roles and profiles it may use with what each one does, the stage kinds and the rules) come after its wording and can't be replaced by it. The Release Manager is told exactly what it was before.
-
-### Every step that may change the product comes before the final review
-
-(the plan's last review chain). The engine moves one the planner put after it, and the plan's reason says so; a step that still ends up after it, because its role was switched to changing the product after planning, runs read-only and the timeline says why. Read-only steps may still run after the final review. No planned role changes the product after the final review. Petrina adds delivery last, after the final review and the delivery check, as before, and handles publishing itself; only the read-only Release Manager works there, and only for releases.
-
-### Misplaced roles are corrected, never stuck
-
-Findings in a `do` step join the final review, notes or checks in the review get a step of their own before it (also when the plan names a role for every reviewer), any other role there that doesn't review is replaced by a code reviewer or left out, an added role in the design pair gives way to the built-in one, internal roles, including the Release Manager, are left out wherever the planner put them, a role removed while the planner planned is left out, and the final review always keeps a code reviewer. The plan's reason says what Petrina changed.
-
-### Work is never lost between roles
-
-A role that may change the product has its work committed at the end of its step, labelled with its name, so a later read-only role never wipes it. Read-only roles, added ones included, have their changes and commits undone when their step ends.
-
-- Changes reach the next agent that starts and the next plan. An agent already working finishes with the version of its role it started with, its wording, name and permission included, even when Petrina restarts in between and its conversation starts again. Reviewers and voters working side by side each keep their own saved version; a replacement on another tool keeps it until that part of the review finishes.
+This applies to check fixes and review fixes without removing quality gates. Packets are private runtime files and disappear with finished or cancelled tasks, independently of worktree cleanup.
 
 ## Tools: ACP first
 
-Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Claude Code and Codex have maintained ACP adapters. Grok is the ACP server itself:
+Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Claude Code and Codex have maintained ACP adapters. Grok and Antigravity expose native ACP servers:
 
 | Tool | ACP adapter |
 |---|---|
 | Claude Code | `agentclientprotocol/claude-agent-acp` (Claude Agent SDK) |
 | Codex | `agentclientprotocol/codex-acp` (Codex App Server) |
 | Grok | `grok --permission-mode auto agent stdio` (no Node adapter; model `grok-4.7`, effort `reasoning_effort`) |
-| Others | Any agent that speaks ACP: Gemini CLI, OpenCode, and more as they add it |
+| Antigravity | Google's pinned native ACP distribution (see below) |
 
 ACP gives Petrina what it needs without per-tool code:
 
@@ -98,19 +102,7 @@ ACP gives Petrina what it needs without per-tool code:
 | Permission prompts | `session/request_permission`, sent only when the tool's own safety check flags something; the coordinator answers |
 | Pick up after a restart | `session/resume`, or `session/load` (which replays the conversation) when that is all the agent offers |
 
-So a tool is mostly configuration:
-
-```json
-{
-  "id": "codex",
-  "name": "Codex",
-  "command": ["npx", "-y", "@agentclientprotocol/codex-acp"],
-  "models": ["…"],
-  "efforts": ["low", "medium", "high", "xhigh"]
-}
-```
-
-A dedicated adapter is written only when a tool needs something ACP does not expose (for example reading usage limits). Codex's usage (`packages/engine/src/codex-usage.ts`) is one request to its app-server. Grok's account usage (`packages/engine/src/grok-usage.ts`) is an ACP initialization and its read-only billing extension, without opening a session or sending a prompt. Only the allowance percentage, period and reset time are retained. Both scheduling and Analytics share each tool's reader.
+Supported commands, model selections and adapter capabilities live in `packages/engine/src/tools.ts`; `acp-run.ts` owns the native session handshake. Account-reader protocols and refresh timing belong to [runtime usage limits](engine-runtime.md#account-readers).
 
 Things to verify per tool before relying on them: model and effort selection through ACP, use of the user's existing login, and `session/resume` or `session/load` support.
 
@@ -120,13 +112,13 @@ Antigravity uses Google's native ACP distribution, pinned at 1.4.1 with its sibl
 
 Profiles offer Gemini 4 Argon and Gemini 3.8 Flash at medium or high thinking. The session must confirm both `model` and `thinking_level` before receiving work. Its `auto_edit` mode approves edits; command permissions still reach the coordinator. The ACP server does not expose the CLI's Auto classifier. It never receives the all-tools `yolo` mode. Native session resume preserves each participant's conversation. Terminal takeover stays unavailable because the CLI cannot open ACP session identifiers.
 
-The built-in `/usage` command is local, not an AI turn. It supplies quota groups and UTC reset times; Argon's separate quota applies to Argon, and Gemini's shared quota covers Flash (and Argon when no separate Argon bucket is reported). Limits for unavailable third-party models do not block these profiles. One throttled reader serves startup, work and Analytics, with failed reads retaining the last report and its age.
+The built-in `/usage` command is local, not an AI turn. It supplies quota groups and UTC reset times; Argon's separate quota applies to Argon, and Gemini's shared quota covers Flash (and Argon when no separate Argon bucket is reported). Limits for unavailable third-party models do not block these profiles. Idle and Analytics reads share a throttled reader; live sessions report their own before/after readings without starting another probe. Failed reads retain the last report and its age.
 
-Token accounting reads native session counters before and after each turn, subtracting the previous totals after resume. Thinking is included once in output and also recorded as its subset. The connector does not split cached from new input, so those fields stay unreported. Context-window usage updates are not token bills. Account-command output never enters task messages or agent history in the app. Reads are bounded and stop their harness, including on shutdown.
+Token accounting and quota scope are defined in [state and usage](state-and-usage.md#antigravity). Account-command output never enters task messages or agent history in the app. Reads are bounded and stop their harness, including on shutdown.
 
 ### Background browsers
 
-Every conversation opening (new, resume, load or replacement) attaches an engine-owned Playwright MCP browser through ACP. Bundled Chromium runs headlessly with isolated storage in a short temporary folder outside the working copy. Connector controls exclude personal-browser and desktop integrations; personal settings are untouched. A restarted agent is told its pages and browser logins are gone.
+Every eligible conversation opening (all roles except the Release Manager; new, resume, load or replacement) attaches an engine-owned Playwright MCP browser through ACP. Bundled Chromium runs headlessly with isolated storage in a short temporary folder outside the working copy. Connector controls exclude personal-browser and desktop integrations; personal settings are untouched. A restarted agent is told its pages and browser logins are gone.
 
 On macOS the short parent folder lives under the user's home, away from crowded system temporary folders. A helper that never initialized the browser acknowledges that fact when it closes cleanly, avoiding process scans. Used, crashed or unacknowledged helpers still require process cleanup; an unreadable process list never counts as proof that cleanup finished. Recovery resolves the same canonical parent as startup.
 
@@ -134,7 +126,7 @@ Browser output, including agent-named captures, stays in that folder. Reports ma
 
 Pictures survive agent handoffs and restarts, but their bytes are removed when the task is done or cancelled, even if its working copy must stay; a startup sweep removes any finished or orphaned capture folders without reading archived conversations. Task state carries only picture references on the originating report. The authenticated image endpoint loads them separately. Closing, failure, pause, cancellation and shutdown remove temporary output and profiles; restart also removes registered interrupted folders.
 
-See [the browser brief](../headless-browser.md) for the acceptance checklist.
+Browser regression and native-tool validation guidance is in [testing](../testing.md#browser-and-native-tool-checks).
 
 ### Checking the tools
 
@@ -152,18 +144,11 @@ The agent tools are Claude Code, Codex, Grok and Antigravity when installed. The
 
 A step whose tool is not ready, won't start (or doesn't open a conversation within two minutes) or asks for a login becomes a Stuck item naming the tool, with its fix; Retry checks the tool again before trying. A pull request or release checks the GitHub CLI's login before the delivery gets ready, so nothing goes out halfway; commit to main needs no GitHub.
 
-### Needs a real device: first run
-
-These do not block shipping. The flow, its screens (light and dark, keyboard only) and the engine's checks are covered by tests and a headless browser; these need the installed app or another system:
-
-1. **Installed desktop app, and the first minute.** Install Petrina on a Mac where Claude Code, Codex and the GitHub CLI are installed and logged in, with a GitHub clone in `~/code`. Open it from the Dock for the first time: "Starting Petrina…", then Welcome, and every tool Ready (found through the login shell's PATH). From opening Petrina to the planner running takes under 60 seconds. Then the same with GitHub not answering: the first card still plans, within about 30 seconds of the usual time, from the copy on the machine, and its timeline says so.
-2. **Mac permission windows.** On a Mac, first run never brings up the system's "would like to access your Documents folder" window (or Desktop or Downloads) while it looks for clones. On a Mac without Apple's developer tools, the Git row says Not installed and the developer-tools installer never opens by itself. A guide link opens in the default browser, outside Petrina.
-3. **Windows.** First run on a Windows PC: fixes show the Windows commands (winget) and say "a terminal", clones in `source\repos` are found, a pasted path with backslashes or `~` works, and a guide link opens in the default browser.
-4. **Linux.** First run on a Linux desktop: fixes show the Linux commands, and a guide link opens in the default browser.
-
 ## Results and questions
 
 An agent hands back its result as one fenced `petrina` block of JSON at the end of its last message, in the shape its role contract shows it. A stage finishes only when that block parses and passes the role's schema; otherwise the agent is told exactly what is wrong, twice at most. An agent that cannot go on without a decision ends with a `needsInput` block instead: the question goes to the inbox, and the answer comes back to the same conversation.
+
+Every fresh or continued agent is told to investigate uncertain facts through current code, reproduction and web research using applicable official documentation or primary sources. Evidence, hypotheses and unavailable checks stay distinct; only unresolved material product decisions go to the coordinator.
 
 The status line comes from the agent's own plan and tool activity over ACP. The engine attaches its background browser through ACP; it does not attach the coordinator CLI/MCP tools to product agents.
 
@@ -175,6 +160,7 @@ Petrina relies on each tool's own safety checker instead of building one:
 |---|---|---|
 | Claude Code | Auto | Claude Code's classifier allows or blocks each action; commands run inside Claude Code's own sandbox |
 | Codex | Auto review | Codex's reviewer approves, inside Codex's own workspace sandbox |
+| Antigravity | `auto_edit` | Edits are approved by the native mode; command permissions reach the coordinator. Its ACP server has no CLI Auto classifier and is never given `yolo`. |
 | Grok | Auto | Grok's own checker. The process starts with `--permission-mode auto`, and the session asks for auto mode (`autoMode` on `session/new`, `session/resume` and `session/load`). A saved always-approve setting would otherwise win. Never an always-approve or yolo flag |
 
 - Petrina reads no commands. When a tool's checker flags something and asks, the question goes to the inbox unchanged, with the exact command or paths, and the coordinator allows or denies it once.
@@ -187,25 +173,25 @@ Petrina relies on each tool's own safety checker instead of building one:
 
 Every Claude Code conversation, new, resumed or loaded after a restart, and every Claude Code agent working beside others in a copy of its own (reviewers, voters), opens with Claude Code's own sandbox switched on, the same for every role, through the connector's own session option (`_meta.claudeCode.options.sandbox`, `packages/engine/src/sandbox.ts`). Petrina builds no sandbox, wrappers or command rules of its own, and Codex gets nothing new.
 
-### Required, and every command still reviewed
+#### Required, and every command still reviewed
 
 The sandbox must start (`failIfUnavailable`), and its own auto-approval of sandboxed commands is off, so Auto mode reviews every command exactly as before. The sandbox only limits what an approved command can change. Claude Code's own rerun outside the sandbox stays on: Auto mode can approve running a command outside it.
 
-### Where commands may write
+#### Where commands may write
 
-, besides the working copy (Claude Code's default): the temporary folders (the system's and the user's own); the sign-in caches (aws's SSO, CLI and login caches, never its settings or credentials files; the az folder; Git Credential Manager's folders, the Azure DevOps sign-in helper); and the download caches of npm, bun, pnpm, yarn, pip, uv, cargo and go, never where they keep installed programs.
+Besides the working copy (Claude Code's default): the temporary folders (the system's and the user's own); the sign-in caches (aws's SSO, CLI and login caches, never its settings or credentials files; the az folder; Git Credential Manager's folders, the Azure DevOps sign-in helper); and the download caches of npm, bun, pnpm, yarn, pip, uv, cargo and go, never where they keep installed programs.
 
 Two additions come from Claude Code itself: in a linked working copy it lets commands write the main repository's shared git history (not its hooks or git settings), and it adds whatever the coordinator's own or the product's Claude Code settings allow.
 
-### Network
+#### Network
 
 Every website is allowed, without questions. On a Mac, local ports (test servers) and the system's certificate check (gh and other Go tools) are allowed too. SSH and headless browsers cannot run inside the sandbox on a Mac, so Claude Code reruns them outside it, only when Auto mode approves.
 
-### Process checks on a Mac
+#### Process checks on a Mac
 
 Claude Code's sandbox allows process information and signals only within the same sandbox. Reading the process list (`ps`) can still fail, which prevents some engine tests from passing inside it. The connector's session settings have no allowance for this; agents rely on Petrina's own checks for the full suite, and the Session hover and AGENTS.md say so.
 
-### When it cannot start
+#### When it cannot start
 
 (Windows, or a system missing what it needs), Claude Code refuses to open the conversation and says why: the connector reports "Sandbox required but unavailable: …" for a new conversation and a reopened one alike. Petrina then opens the same conversation again without it (a reopened one is reopened, not started fresh), and the session says once "Running without Claude Code's sandbox: " with the reason in plain words.
 
@@ -215,11 +201,9 @@ Petrina remembers this until it restarts: later Claude Code agents do not try ag
 
 The Session tab shows Sandboxed or Not sandboxed next to the agent's status, with what the sandbox covers on hover, or why it is off. Codex agents show Sandboxed, by Codex's own sandbox. Grok keeps its own auto mode and gets no sandbox settings or sandbox label from this change. While the coordinator drives in their terminal it shows nothing: that runs with their own setup, outside Petrina's settings.
 
-Git’s private helper folders are removed when their process exits. When `PETRINA_HOME` is set, they live in its `runtime-tmp` folder, so a test fixture also reclaims them after forcibly stopping its engine. The required engine suite stays fully parallel; its parent process owns a temporary folder and removes it after the workers stop, including failed runs, because Bun’s isolated workers bypass exit hooks.
-
 ## Messages to a running agent
 
-Public ACP message chunks also stream into the saved task conversation while the agent works. Harness message ids preserve distinct progress updates and final replies; tools without ids use activity boundaries. Chunks update one bubble at most once a second, with immediate flushes at boundaries and handoff. Structured result fences never stream into the UI; private thought chunks remain separate from public messages.
+Public ACP message chunks also stream into the saved task conversation while the agent works. Harness message ids preserve distinct progress updates and final replies; tools without ids use activity boundaries. Chunks update one bubble through the bounded notification window in [window snapshots](state-and-usage.md#window-snapshots), with immediate flushes at boundaries and handoff. Structured result fences never stream into the UI; private thought chunks remain separate from public messages.
 
 Ordinary and parallel turns use the same path, and loading a saved conversation does not replay its history into the UI again. Review findings, design objections and the architect’s answers are copied onto the journey step at handoff, so later rounds cannot overwrite that step’s result.
 
@@ -315,26 +299,11 @@ If files changed, the tamper check runs on the whole branch at once and the task
 
 Independent repository inspections run together; their findings are applied in product order. Take-over reuses the saved commit, and hand-back reads commit identity and cleanliness together, while committing and moving working copies remain ordered.
 
-### How it was checked
-
-On macOS: by hand with the real Claude Code and Codex, in Terminal. Linux: Petrina's own launcher in every terminal it finds (the system default ones, Console, GNOME Terminal, Konsole, Xfce, MATE, LXTerminal, kitty, XTerm), on a virtual screen in a container. Windows: the `open.ps1` launcher run by PowerShell 7 in a container; Windows itself is not checked yet.
-
-### Needs a real device: Windows
-
-These do not block shipping. Run them once a Windows PC is available:
-
-1. Take over a Claude Code agent and a Codex agent with Windows Terminal installed: a new Windows Terminal window opens in the task's working copy, on the agent's conversation with its history.
-2. The same without Windows Terminal: a Windows PowerShell 5.1 window opens instead.
-3. With an accented letter in the user's folder or the product's path (say `C:\Users\José`): the app still opens in the right folder.
-4. Close the app: Petrina says it has closed, and Hand back works. Close the window with the app still open: the same.
-5. Run the copied command twice at once, and click Reopen terminal while the app is open: only one copy of the app runs, and the other window says it is already open.
-6. Claude Code and Codex installed through npm (`claude.cmd`, `codex.cmd`): the launcher starts them with every option intact.
-
 ## Agents pick up where they left off
 
 The moment an agent's conversation opens, the engine saves a note of it on the task: the step (stage, design round, reviewer position), the role, the tool and model, the conversation's id, and the working copy's commit when the step first started. The note goes when the step finishes or fails, or the coordinator pauses, cancels or asks for changes; stopping Petrina keeps it.
 
-After a restart, a step whose note matches its step, role, tool and model reopens that conversation in the same working copy, with resume, or load when that is all the tool offers (what load replays is not shown again). Model, effort and the automatic safety mode are set again, mode last, and the agent's environment and Claude Code's sandbox settings are the same as for a new conversation.
+After a restart, a step whose note matches its step, role, tool and model reopens that conversation in the same working copy, with resume, or load when that is all the tool offers (what load replays is not shown again). Model, effort and the automatic safety mode are confirmed again, changing only options that differ, mode last, and the agent's environment and Claude Code's sandbox settings are the same as for a new conversation.
 
 The agent gets one line (Petrina restarted, the stage, the last thing it was doing, check the working copy and continue), then only what it has not heard: the answer to its open question and messages still in line. The timeline says "Picked up where it left off".
 
@@ -342,20 +311,14 @@ When the conversation cannot be reopened (the tool cannot, it is gone, an error,
 
 A question open at the restart stays in the inbox without holding a slot, and its answer goes to the conversation that asked it, once; an open permission request is dropped with a note, and the agent asks again if it still needs to. A read-only role's clean-up goes back to the commit from when the step first started. The Release Manager never reopens a conversation, and pausing, resuming and "Try again" start the step fresh.
 
-Reviewers and voters working side by side start fresh unless they have a saved screen request, so stopping the engine by hand (Ctrl-C or SIGTERM on `petrina serve`) first drains: no new agent starts, waiting tasks say "Petrina is restarting", and those agents and a Release Manager mid-delivery get up to four minutes to hand back; a second Ctrl-C stops at once. The app closing its engine stops it at once, so a relaunch never finds the folder busy.
-
-## The builder keeps its conversation
-
-A fix round, or bringing work up to date, goes back to the builder's own conversation from its last step (same tool and model), so it keeps what it learned, compactions and all, and hears only its job now and where things stand. The round where it is asked to step back and rethink starts fresh on purpose. When the tool cannot reopen it, a fresh conversation gets what the builder reported last time.
+A graceful engine stop or restart admits no new work and waits for admitted agents and checks to drain; it has no automatic four-minute cutoff. A second stop signal interrupts immediately. Closing the desktop app interrupts its owned engine with a bounded shutdown. Completed reviewer results and supported conversations follow the separate recovery rules above; fresh Verifiers remain independent. See [lifecycle and ownership](../coordination.md#lifecycle-and-ownership) for coordinator controls.
 
 ## Learnings in AGENTS.md
 
-The builder, reviewers and testers can pass on, with their results, what they learned about working in the repository (how to build or test it, a trap, an unwritten convention): one line each, at most three, never about the task itself. Petrina keeps them on the task, without repeated text or lines AGENTS.md already has, and at the delivery check offers them in one inbox item, without holding anything up.
+The builder, reviewers and testers can pass on, with their results, what they learned about working in the repository (how to build or test it, a trap, an unwritten convention): one line each, at most three, verified and useful to unrelated future tasks. Task history, delivery summaries, old feature briefs, acceptance checklists, one-off investigations and temporary conditions are excluded by their shared learning instructions. Current product behavior belongs in its existing design or UX contract; bugs belong in findings or follow-up tasks. This is guidance with coordinator approval, not a semantic content filter. Petrina keeps them on the task, without repeated text or lines AGENTS.md already has, and at the delivery check offers them in one inbox item, without holding anything up.
 
 Lessons are grouped by repository before reading its instructions once. With a working copy, its committed AGENTS.md is authoritative, including an empty or deleted file; before the copy exists, the saved base supplies it. Shared lessons never trigger an unrelated repository read.
 
 Matching ignores whitespace, bullets and sentence-ending punctuation, while preserving case, paths, flags and all words; changed wording stays for the coordinator to judge. Accepted ones join the "Learnings" section of AGENTS.md with the next delivery, in its one commit (`packages/engine/src/learnings.ts`). At startup and once a minute, accepted lessons already present in the product's default branch leave the pending queue.
 
-Review-guide points retain the exact commit that incorporated them: they are no longer written into deliveries, but still accompany reviews pinned before that commit. A later base that already incorporated a rule respects subsequent edits or removal instead of restoring the old instruction. Instructions only on an unpublished branch stay pending; an unreadable repository proves nothing.
-
-Petrina adds nothing to agents' prompts for this: Claude Code and Codex both load AGENTS.md by themselves, so a session Petrina starts and one the coordinator starts in the repository know the same things.
+Accepted AGENTS.md rules need no separate prompt copy: Claude Code and Codex both load AGENTS.md by themselves, so a session Petrina starts and one the coordinator starts in the repository know the same things.

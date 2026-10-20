@@ -54,7 +54,7 @@ Confirmed unrelated review bugs appear in Backlog for coordinator review. Their 
 └──────────┴──────────────────────────────────────────────────────────┴────────────────┘
 ```
 
-- **Top bar** (56px): product switcher, search (⌘K), the pool indicator, the inbox button with its count, and **New task**, the only solid violet button in the workspace. It stays quiet, with neutral buttons and a thin bottom divider. While screen use is on, or an agent is on the screen, a small screen icon shows on the pool button (see [The screen](#the-screen)).
+- **Top bar** (56px): product switcher, search (⌘K), the pool indicator, the inbox button with its count, and **New task**, the only solid violet button in the workspace. It stays quiet, with neutral buttons and a thin bottom divider. While screen use is on, or an agent is on the screen, a small screen icon shows on the pool button (see [The screen](ux/coordination.md#the-screen)).
 - **Left rail** (64px): Board, History, Products, Agents, Analytics, Library, and Settings at the bottom. Icons with labels, a right-hand divider and a separate Settings footer.
 - **Main area:** the board by default, with no extra page-title row. Other pages keep their descriptions and controls without repeating their name above them.
 - **Right panel** (360px): the inbox. It can be hidden (I) and opened again from the top bar.
@@ -168,16 +168,14 @@ P pauses or resumes; on queued tasks it holds or releases them. Products is in t
 
 - **No tools installed:** first run stops at the tools check with the fix for each one.
 - **Only one agent tool:** every step runs on it, reviews included, and first run says so.
-- **A tool is not ready, logs out or won't start:** a "Stuck" inbox item names the tool, with its fix and Retry, which checks the tool again first. A tool that hangs as it starts counts as not starting after a minute. A tool that wouldn't start keeps its fix and what it said behind Details, even when its check passes again. The same for the GitHub CLI before a pull request or release ships.
-- **A usage limit is hit:** the agent pauses with "Resumes at 14:00" and offers to switch tool.
-- **Closing the app with agents running:** asks whether to keep running in the background or pause everything.
+- **A tool is not ready, logs out or won't start:** a "Stuck" inbox item names the tool, with its fix and Retry, which checks the tool again first. Tool readiness checks and agent startup have separate bounded waits; see [tool checking](architecture/agents.md#checking-the-tools). A tool that wouldn't start keeps its fix and what it said behind Details, even when its check passes again. The same for the GitHub CLI before a pull request or release ships.
+- **A usage limit is hit:** the engine uses an available stand-in, or waits with the reported reset time when no stand-in can run.
+- **Closing the app with agents running:** stops the engine the desktop app owns and saves progress; an independently started engine keeps running.
 - **Two tasks touching the same area:** the planner warns ("Might overlap with Checkout revamp").
-- **A stage runs too long:** a soft time limit per stage raises an inbox item.
 
 ## Later
 
 - Epics: the planner splits a big ask into several tasks.
 - Follow-ups on pull request comments.
-- A Tester role that runs the app and attaches screenshots.
 - Diagrams of what a change does.
 - Phone notifications.

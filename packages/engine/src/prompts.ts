@@ -49,6 +49,9 @@ export function proseOf(text: string): string {
 
 export const PREPARED_REVIEW = "Prepared review material";
 
+/** Shared by roles and fresh/continued turns; uncertainty is investigated, never reported as fact. */
+export const INVESTIGATION_RULE = `Ground decisions in the task's requirements, governing repository instructions and evidence from the current code. When unsure, search and investigate before acting; search the web and consult current official documentation or other primary sources for uncertain interfaces or behavior. Check that sources apply to the installed version, and reproduce suspected defects when possible. Never present an assumption as a fact. Distinguish verified behavior, hypotheses and checks you could not perform. Do not invent requirements or treat a check you could not run as a confirmed bug. Ask the coordinator only for a material product decision or missing information that investigation cannot resolve.`;
+
 export interface PromptContext {
   preparedReview?: boolean;
   task: Task;
@@ -171,6 +174,8 @@ ${LOGINS}
 
 ${FOCUSED_VERIFICATION}
 
+${INVESTIGATION_RULE}
+
 # The task: ${task.title}
 ${task.description || "(no further description)"}
 
@@ -196,6 +201,8 @@ export function continuePrompt(ctx: PromptContext, options: { refreshRole?: bool
   return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}). What you learned before still holds; here is where things stand now.
 
 # Your job now
+${INVESTIGATION_RULE}
+
 ${contract.instructions(ctx)}${options.refreshRole ? roleCard(ctx) : ""}
 
 ${sections}
@@ -254,6 +261,7 @@ export function restartPrompt(where: WhereYouWere, unheard: { answer?: { questio
   const last = where.done.at(-1);
   const parts = [
     `Petrina restarted while you were on “${where.stage}” as the ${where.role}. ${last ? `The last thing you were doing: ${last}.` : "You had just started this step."} Your last action may not have finished, so check the working copy, then continue where you left off. Earlier pages and browser logins are gone; the supplied headless browser starts with empty storage.`,
+    INVESTIGATION_RULE,
   ];
   if (unheard.answer) parts.push(`The coordinator answered your question “${unheard.answer.question}”: ${unheard.answer.text}`);
   if (unheard.messages.length) parts.push(`Messages from the coordinator you have not seen yet, in order:\n${unheard.messages.map((text) => `- ${text}`).join("\n")}`);
@@ -263,7 +271,7 @@ export function restartPrompt(where: WhereYouWere, unheard: { answer?: { questio
 
 /** The one line a conversation reopened for the screen gets, followed by what it has not heard yet. Nothing restarted. */
 export function screenPrompt(reason: string, messages: readonly string[]): string {
-  const parts = [screenRules(reason)];
+  const parts = [screenRules(reason), INVESTIGATION_RULE];
   if (messages.length) parts.push(`Messages from the coordinator you have not seen yet, in order:\n${messages.map((text) => `- ${text}`).join("\n")}`);
   parts.push(`${messages.length ? "Take them into account. " : ""}When you are done, end with the result block.`);
   return parts.join("\n\n");
@@ -406,7 +414,7 @@ export function handBackNote(back: HandBack): string {
 
 /** What a reopened conversation hears after a hand back, then any messages that waited for it. */
 export function handBackPrompt(note: string, messages: readonly string[]): string {
-  const parts = [`The coordinator took over this step in their own terminal, on this same conversation, and has handed it back to you. What changed:\n${note}`];
+  const parts = [`The coordinator took over this step in their own terminal, on this same conversation, and has handed it back to you. What changed:\n${note}`, INVESTIGATION_RULE];
   if (messages.length) parts.push(`Messages from the coordinator that waited for the hand back, in order:\n${messages.map((text) => `- ${text}`).join("\n")}`);
   parts.push("Check the working copy, then carry on with this step. When you are done, end with the result block.");
   return parts.join("\n\n");

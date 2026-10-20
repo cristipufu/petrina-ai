@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, DESIGN_OBJECTION_RULE, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE } from "@petrina/core";
-import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, LOGINS, mayAskScreen, parseResult, restartPrompt, screenRules } from "../src/prompts.js";
+import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, handBackPrompt, INVESTIGATION_RULE, LOGINS, mayAskScreen, parseResult, restartPrompt, screenPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
 
 const task = createDemoState(1_000_000_000).tasks[0]!;
@@ -20,6 +20,27 @@ const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reaso
 const promptFor = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => buildPrompt(context(role, screen));
 
 describe("prompts", () => {
+  it("requires evidence and web research across roles and continuation paths without duplicating the rule", () => {
+    const custom = { ...BUILT_IN_ROLES.find(role => role.id === "code-reviewer")!, id: "custom-review", name: "An added reviewer" };
+    for (const role of [...BUILT_IN_ROLES, custom]) for (const prompt of [buildPrompt(context(role)), continuePrompt(context(role))]) {
+      expect(prompt.split(INVESTIGATION_RULE)).toHaveLength(2);
+      expect(prompt).toContain("search the web");
+      expect(prompt).toContain("Check that sources apply to the installed version");
+      expect(prompt).toContain("Never present an assumption as a fact");
+    }
+    for (const prompt of [restartPrompt({ stage: "Review", role: "Reviewer", done: [] }, { messages: [] }), screenPrompt("Check the app", []), handBackPrompt("Updated the page", [])]) {
+      expect(prompt.split(INVESTIGATION_RULE)).toHaveLength(2);
+    }
+  });
+  it("instructs fresh and continued roles to propose durable working rules rather than task history or old specifications", () => {
+    const custom = { ...BUILT_IN_ROLES.find(role => role.id === "code-reviewer")!, id: "custom-lessons", name: "An added reviewer" };
+    const roles = [...BUILT_IN_ROLES.filter(role => ["builder", "tester", "code-reviewer", "security-reviewer"].includes(role.id)), custom];
+    for (const role of roles) for (const prompt of [buildPrompt(context(role)), continuePrompt(context(role))]) {
+      expect(prompt).toContain("verified, durable rules for working in this repository");
+      expect(prompt).toContain("Never propose task history, delivery summaries, historical comparisons, older feature briefs");
+      expect(prompt).toContain("The coordinator approves every line before it joins AGENTS.md");
+    }
+  });
   it("states the focused verification rules on fresh turns without repeating them on confirmed continuations", () => {
     for (const role of BUILT_IN_ROLES) {
       expect(promptFor(role)).toContain(FOCUSED_VERIFICATION);
@@ -272,7 +293,7 @@ import before from "./today-prompts.json";
 
 describe("saved role wording", () => {
   const contexts = promptContexts();
-  it("keeps main's default instructions apart from confirmed-source planning and screen instructions, and the Release Manager unchanged", () => {
+  it("preserves default role contracts alongside the approved planning, screen and shared policy changes", () => {
     const multipleReports = "Several independent reports may describe the same underlying bug: fix it once and reuse that explanation, but answer every related finding id. ";
     for (const [name, context] of Object.entries(contexts)) {
       const text = buildPrompt(context);

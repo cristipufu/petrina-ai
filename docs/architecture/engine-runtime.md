@@ -27,7 +27,8 @@ Inside the engine, `Engine` (`engine.ts`) is a thin front with the coordinator's
 | `update.ts` | One commit per task, put on top of the latest main before the delivery check and before shipping |
 | `shipping.ts` | Delivery, never repeated blindly, and pull request polling |
 | `take-over.ts`, `terminal.ts` | Take over in the terminal |
-| `tracking.ts`, `worklog.ts`, `codex-usage.ts` | The work log: an entry per agent turn and per notable moment, the permanent product list, each tool's limits, and the numbers each view asks for |
+| `store.ts`, `sql-log.ts` | SQLite state/history persistence and optional execution diagnostics; see [SQL logging](state-and-usage.md#optional-sql-execution-log) |
+| `tracking.ts`, `worklog.ts`, account readers | The work log: an entry per agent turn and per notable moment, the permanent product list, each tool's limits, and the numbers each view asks for |
 
 Built-in role contracts live in the engine's `roles.ts`, with their defaults in `@petrina/core`'s library. A role the coordinator adds uses the contract for its kind of result: notes or findings, with its saved wording and permission. The rules a task's run follows (board column, checkpoint wording, where a request for changes goes, how rounds end) live in `@petrina/core`'s `flow.ts`, shared by the engine and the demo simulator.
 
@@ -97,9 +98,11 @@ It reads when the engine starts (Codex installed), whenever a Codex agent starts
 
 A report that says a tool is out marks it out until the reset even when no turn failed on it. Grok reports its account allowance through the read-only `_x.ai/billing` ACP extension. Petrina initializes the installed CLI, asks once and stops it, without a session or prompt. Its percentage and weekly or monthly reset feed the same scheduler and history. Reads at startup, before work, after turns and from Analytics share one reader, with the same one-minute page and five-minute background gaps.
 
+Antigravity reads its local `/usage` command in a disposable probe at startup and during idle or Analytics refreshes. A running Antigravity session supplies its own before/after readings, avoiding a duplicate background probe at turn start. Read failures keep the last successful report and never fail a task.
+
 #### Limit scope
 
-A limit is for the whole tool, except Claude Code's weekly Opus and Sonnet limits, which are for that model only.
+Most limits cover the whole tool. Claude Code's weekly Opus and Sonnet limits cover those models only. Antigravity uses the quota groups actually reported: a separate Argon bucket applies to Argon, leaving the Gemini Models bucket for Flash; without a separate Argon bucket, the shared Gemini limit applies to both.
 
 #### Choosing a stand-in
 
@@ -153,4 +156,4 @@ Everything the coordinator says during a step (messages, answers, the note with 
 
 ## Test execution
 
-The required engine suite keeps native parallel workers and isolated test files. Test repositories copy an immutable seed into independent object stores, refs and configuration; no mutable repository or alternates are shared. Regression fixtures include the stages their assertions exercise, and deadline-independent login decisions use a controlled abort after a real conversation opens. Wall-clock process termination and startup-deadline tests retain their real waits.
+Commands, fixture isolation, timing requirements and platform validation live in [testing](../testing.md). [AGENTS.md](../../AGENTS.md#checks-and-test-cost) defines the contribution rules; keep the required engine suite fully parallel.

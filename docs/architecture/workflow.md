@@ -110,6 +110,8 @@ The planner rates every task Low, Medium or High from what it touches; unrated w
 
 When the coordinator sends back a delivery every reviewer passed, the Guide keeper proposes one point; accepted, that task's reviewers get it with the task, like the coordinator's notes, and it is committed to `REVIEW.md` on the branch that ships (the first one also adds the section to `AGENTS.md`).
 
+Review-guide points retain the exact commit that incorporated them: they are no longer written into deliveries, but still accompany reviews pinned before that commit. A later base that already incorporated a rule respects subsequent edits or removal instead of restoring the old instruction. Instructions only on an unpublished branch stay pending; an unreadable repository proves nothing.
+
 ### Measuring
 
 The Analytics page shows how reviews are going: rounds to pass, what became of each finding, deliveries sent back, and how each reviewer profile's Important findings held up (`packages/core/src/reviews.ts`).

@@ -60,3 +60,31 @@ Clearly not there: Petrina carries on with the saved step; pushing the same comm
 A cancelled task stays cancelled, but what went out keeps its link; if GitHub cannot be asked then, Petrina asks again every minute and after a restart. A delivery saved by a Petrina from before this design, whose delivery agent published it itself, is never acted on by Petrina: no check, no update from GitHub, no preparation.
 
 The task shows "This delivery was interrupted before Petrina was updated: check GitHub, then choose", with "It went out (mark as done)" and "Ship it again" (a fresh delivery, from the delivery approval as the task sets it), and nothing happens until the coordinator picks one. Cancelling it keeps the note on the task.
+
+## Tasks across products
+
+One task has one queue position, plan, design, acceptance list and delivery decision. Each product retains its own approved source, working copy, Builder conversation, checks and delivery. State ownership and historical membership are defined in [state and usage](state-and-usage.md#tasks-across-products).
+
+### Scope and preparation
+
+The coordinator may select several products, or let the planner propose them. The planner receives the registered products and existing choices, can investigate GitHub with the coordinator's login, and returns explicit choices and reasons. The engine validates those choices; it does not infer repositories or destinations from task wording. An omitted coordinator choice stays visible until the coordinator removes it. A PR fork remains a starting point within the original product.
+
+The complete product list is approved before fetching, cloning or preparing copies. A proposed repository needs a confirmed name and permanent folder. A separate task copy keeps that permanent clone on its default branch. Preparation is saved per product; retries preserve successful preparations and reuse only Petrina's saved clone folder. A resumed clone must still point to the approved repository; another repository’s files and metadata stay untouched and require a different folder. If the repository changes its default branch, preparation still uses the approved branch when it exists, including as an origin-tracking branch; it never switches the approved source. A different folder or revised scope keeps the rest of the plan.
+
+### Building and review
+
+There is one Build step. Each product has an owner working in its own saved conversation, with the full product map available to read. Editing roles work product by product before final review. Reviewers inspect independent snapshots of all repositories at the same saved versions. Product checks, commit hooks and the deleted or skipped tests check run separately per repository. Missing evidence says Not run.
+
+### Repairs
+
+Every failed acceptance item and review finding names its affected products. Repairs visit the lead first when affected, otherwise plan order, and then every remaining affected owner. Each builder sees only its own items and answers separately. A shared finding stays open until every owner has answered and combined verification confirms the repair. An unassigned item stays under Together for the coordinator. Builder answers never replace acceptance evidence. A shared item records every affected version; changing one invalidates its evidence. Each product has its own two check repairs and two acceptance repairs, saved across restarts. Visiting several owners is one repair pass.
+
+Review objections and shared repair decisions wait until every reviewer has reported, then settle before Petrina decides whether a voter is needed. A confirmation that the problem remains keeps it open, whichever report arrives first, including across a restart. An exhausted product keeps its unresolved failures for the coordinator while other affected products use their remaining tries. Before review, empty product sections and Together say reviews start after the build; during review they say no findings have been reported yet. Once all planned reviews finish without findings, every section says every reviewer passed, including at delivery approval, while waiting for merge and after completion. An empty findings section alone never proves that the combined review passed.
+
+### Publication and landing
+
+One shared delivery approval covers all repositories and the companion wording. When a pull request will receive companion text, pending links name their approved owner/repository; the preview explains that every companion PR’s readers will see all companion names and links. Deliveries with no publishing pull request omit that wording, since releases and local commits do not receive companion text. Petrina fills in the resulting PR or release addresses within those approved repositories automatically, without another checkpoint. Changed destinations still require renewed approval. Release versions and notes are previewed as text; version commits are made and checked afterwards. All repositories finish publication preparation before the first publication. Existing PRs keep their title and description and receive one companion comment. New PRs link to confirmed companions; linking is saved separately from publication. Retry checks uncertain outcomes first and resumes unfinished work. Confirmed publications are never repeated or rolled back.
+
+The task lands only when every published repository has landed. An open PR keeps it Waiting for merge. A PR closed without merging requires an explicit coordinator decision and keeps dependents blocked. Removing a finished product preserves shared history under the remaining products; removing its last product removes the task and its embedded history.
+
+The regression cases live in `packages/engine/test/repositories.test.ts` and the source, review-settlement and delivery tests. Historical acceptance checklists are retained only in [the archived brief](../archive/shared-tasks.md).

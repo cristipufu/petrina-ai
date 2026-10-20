@@ -66,6 +66,15 @@ Keeps a task in the queue without starting it ("not yet"). It is in the card's M
 - Delivery shows in the footer in words: "Pull request #237 · awaiting merge", "Released v1.4.0", "Delivered locally to main".
 - Shortcuts (Message, Pause or Resume, Move to top, and More: Open, Join the session, Hold, Cancel) appear on hover and on keyboard focus, in space the footer always keeps for them, so nothing moves or gets covered.
 
+A task taking a slot leaves the queue immediately, before its working copy is ready or its planner speaks: no queue number, drag handle, queue count or next-up entry remains. The card's Plan step is current, its planner is named, and the Products page counts it under Plan. Resumed tasks show their own current step immediately too.
+
+- The queue and the pool stay global: priority is across products, because the pool of agents is shared.
+- Cards always carry their product, so an all-products board stays readable.
+
+### Combining small backlog tasks
+
+Backlog offers **Select tasks**, then **Combine and queue** for two to twenty small requests. The confirmation shows every original request and lets the coordinator name the combined task. Compatible product, starting-point and delivery choices are preserved, as are the stricter plan and shipping approvals. Conflicting choices, long requests or unresolved dependencies explain what must be resolved first. Originals move to History as combined requests with a link to the replacement; the combined task links back, includes every request and picture, and runs one plan and review flow. Nothing is combined merely by selecting cards.
+
 ## History
 
 History sits directly below Board in the rail. It shows a grid of completed and cancelled tasks, newest first, with product, title, finish date and delivery outcome. There is no Done section on Board. The product switcher scopes History without leaving the page; its search matches the beginnings of words in task titles. Search and product changes return to the newest matching page.

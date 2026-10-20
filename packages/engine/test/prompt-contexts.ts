@@ -1,6 +1,6 @@
-// The situations each built-in role is prompted in, for the test that proves an unedited role is
-// told what it was told before roles became editable. `today-prompts.json` holds what Petrina's
-// prompts said in each of them before that change.
+// Stable situations for comparing built-in role contracts. `today-prompts.json` retains the
+// role-editing baseline with deliberate shared-policy updates; assertions separately cover
+// newer planning and screen behavior rather than regenerating every fixture on each change.
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, type DeliveryMode, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "../src/prompts.js";
 

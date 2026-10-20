@@ -1,5 +1,7 @@
 # Tasks across products
 
+Historical material retained as evidence. It is not current implementation guidance and must not be copied into AGENTS.md. Read the [current contract](../architecture/repositories.md#tasks-across-products) and its tests before making changes.
+
 One task has one place in Backlog or Queue, plan, design, acceptance list and delivery decision. Products keep separate approved sources, destinations, working copies, builder conversations, checks and delivery records. The task appears under each retained product and once in the portfolio. Finished work stays in paged History under every retained product; cards contain compact product and delivery summaries, and conversations load only when opened.
 
 The coordinator may select several products, or let the planner propose them. The planner receives the registered products and existing choices, can investigate GitHub with the coordinator's login, and returns explicit choices and reasons. The engine validates those choices; it does not infer repositories or destinations from task wording. An omitted coordinator choice stays visible until the coordinator removes it. A PR fork remains a starting point within the original product.
