@@ -20,6 +20,8 @@ The selected archived task is added only to its workspace’s display state, so 
 
 Live summaries omit conversation bodies, timeline history and journey inputs. The open task fetches its complete record when its revision changes, with at most one request in flight and no background detail requests after closing. Revisions include the engine boot, so reconnecting after a restart refreshes the details. The simulator still supplies complete records directly.
 
+The first public message appears immediately. Further text chunks update that message in memory, with detail revisions and persistence notifications coalesced over 400ms. Other state changes and completed turns flush pending text, and shutdown saves the final words. Parallel message streams share the same bounded notification window.
+
 SQLite stores active task bodies in separate rows. A streaming update marks only its task dirty; metadata and that row are saved together, without serializing untouched peers. Global transitions retain a complete save, and shutdown saves every task. Existing local data moves to rows atomically on its first load; finished records retain their history indexes.
 
 Each window has at most one unacknowledged live snapshot, identified by a transport counter independent of task ids and the state's counter. It acknowledges in a microtask after applying the state, without depending on paints in a hidden desktop window, so background inbox notifications keep arriving. A suspended or slow window holds up only its own next snapshot.

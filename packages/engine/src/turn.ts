@@ -163,11 +163,12 @@ export class Turns {
       if (line) {
         if (line.text === message.text) return;
         line.text = message.text;
+        this.k.noteStream(scope);
       } else {
         this.k.say(scope, "agent", message.text, roleId, profileId);
         last = { key: message.id, line: task.session.at(-1)!.id };
+        this.k.commit(scope);
       }
-      this.k.commit(scope);
     };
   }
 

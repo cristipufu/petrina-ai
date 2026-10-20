@@ -173,6 +173,8 @@ for (const ending of ["completed", "failed"] as const) it(`persists ${ending} fo
 
 for (const step of ["delivery", "checks", "agent"]) it(`releases a ${step} reservation when pause arrives during preparation, and resumes it exactly once`, async () => {
   const { e, home, taskId, task, c } = fixture();
+  // Startup cleanup also belongs to a drain. Finish it before isolating the admitted step's reservation.
+  await e.waitUntilReady(); await Promise.all([...e.backgroundWork]);
   e.schedule = () => e["driver"].schedule();
   e["driver"]["prepare"] = async () => {};
   e.tidy = () => {};

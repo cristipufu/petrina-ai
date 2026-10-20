@@ -338,6 +338,11 @@ export abstract class Kernel {
   /** A to-do item is in memory and not in the snapshot on disk yet. */
   private todoPending = false;
 
+  /** Text already updated in memory, awaiting one bounded detail/persistence notification. */
+  private readonly streamedTasks = new Set<MTask>();
+  private streamTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly legacyReviewerTools = new WeakMap<MTask, { key: string; tools: Id[] }>();
+
   /** Wakes the scheduler when the first usage limit in force ends. */
   limitTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -1025,9 +1030,10 @@ export abstract class Kernel {
       ? (repository?.builderSession ? { toolId: repository!.builderSession.toolId, modelId: repository!.builderSession.model } : builder ? this.profile(builder) : undefined)
       : undefined;
     if (task && stage?.kind === "converge" && task.sub === 1 && roleId === (stage.reviewerRoleId ?? "design-reviewer")) {
-      const author = this.tracking.log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
+      const saved = task.designSessions?.[JSON.stringify([stage.id, "author", repository!.productId])];
+      const author = saved ? undefined : this.tracking.log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
       const legacy = task.session.findLast((line) => line.from === "agent" && line.roleId === stage.roleId)?.profileId;
-      made = author ? { toolId: author.toolId, modelId: author.modelRan ?? author.modelAsked } : this.profile(legacy ?? stage.profileIds[0] ?? "");
+      made = saved ? { toolId: saved.toolId, modelId: saved.model } : author ? { toolId: author.toolId, modelId: author.modelRan ?? author.modelAsked } : this.profile(legacy ?? stage.profileIds[0] ?? "");
     }
     let peers: Id[] = [];
     if (task && stage?.kind === "review-chain" && findings && !repository?.portReview) {
@@ -1035,11 +1041,18 @@ export abstract class Kernel {
       const key = reviewerKey ?? String(stage.profileIds.indexOf(plannedId));
       // Older rounds saved reports without the profiles at their positions. Their latest verdicts
       // name the actual reviewers; replace the reported positions' planned tools with those tools.
-      const legacy = hunt && Object.keys(hunt.reported).some((key) => !hunt.profiles?.[key])
-        ? this.tracking.log.moments({ taskId: task.id, stageId: stage.id, round, kinds: ["verdict"] })
-          .slice(-Object.keys(hunt.reported).length)
-          .flatMap((entry) => { const profile = this.profile(entry.profileId ?? ""); return profile ? [profile.toolId] : []; })
-        : [];
+      let legacy: Id[] = [];
+      if (hunt && Object.keys(hunt.reported).some((key) => !hunt.profiles?.[key])) {
+        const stamp = JSON.stringify([stage.id, round, Object.keys(hunt.reported).sort()]);
+        const cached = this.legacyReviewerTools.get(task);
+        if (cached?.key === stamp) legacy = cached.tools;
+        else {
+          legacy = this.tracking.log.moments({ taskId: task.id, stageId: stage.id, round, kinds: ["verdict"] })
+            .slice(-Object.keys(hunt.reported).length)
+            .flatMap((entry) => { const profile = this.profile(entry.profileId ?? ""); return profile ? [profile.toolId] : []; });
+          this.legacyReviewerTools.set(task, { key: stamp, tools: legacy });
+        }
+      }
       peers = stage.profileIds.flatMap((id, index) => {
         if (String(index) === key) return [];
         if (legacy.length && hunt?.reported[String(index)]) return [];
@@ -1238,6 +1251,7 @@ export abstract class Kernel {
 
   commit(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
+    this.flushStreamChanges();
     this.changed(target);
     this.syncIdleSleep();
     // An activity or other update is about to be shown. The to-do item is written first, so a forced
@@ -1256,6 +1270,7 @@ export abstract class Kernel {
    */
   noteTodo(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
+    this.flushStreamChanges();
     this.changed(target);
     this.todoPending = true;
     this.s.planner = this.onUsable(PLANNER_PROFILE);
@@ -1267,6 +1282,7 @@ export abstract class Kernel {
   /** Commit and save right away: what the coordinator said survives a forced kill a moment later. */
   commitNow(target?: MTask | RepositoryContext): void {
     if (this.stopped) return;
+    this.flushStreamChanges();
     this.changed(target);
     this.syncIdleSleep();
     this.s.planner = this.onUsable(PLANNER_PROFILE);
@@ -1275,6 +1291,29 @@ export abstract class Kernel {
     this.todoPending = false;
     this.save(false);
     for (const listener of this.listeners) listener();
+  }
+
+  /** Coalesce token chunks without postponing the first message or a completed turn. */
+  noteStream(target: MTask | RepositoryContext): void {
+    if (this.stopped) return;
+    this.streamedTasks.add(executionOf(target).task);
+    if (this.streamTimer) return;
+    this.streamTimer = setTimeout(() => {
+      this.flushStreamChanges();
+      if (this.stopped) return;
+      this.s.now = Date.now();
+      for (const listener of this.listeners) listener();
+      this.armSave();
+    }, 400);
+  }
+
+  private flushStreamChanges(): boolean {
+    clearTimeout(this.streamTimer);
+    this.streamTimer = undefined;
+    const pending = this.streamedTasks.size > 0;
+    for (const task of this.streamedTasks) if (this.task(task.id) === task) this.changed(task);
+    this.streamedTasks.clear();
+    return pending;
   }
 
   /** One ordinary save for a burst of updates. A later update does not reset the wait. */
@@ -1304,6 +1343,7 @@ export abstract class Kernel {
    * working time ends at the last save, so the time Petrina was not running is never counted.
    */
   save(all = true): void {
+    const streamed = this.flushStreamChanges();
     this.todoPending = false;
     this.s.now = Date.now();
     const revision = this.store.history.info().revision;
@@ -1316,6 +1356,6 @@ export abstract class Kernel {
     const ids = new Set(retired);
     this.s.tasks = this.s.tasks.filter((task) => !ids.has(task.id));
     for (const id of ids) this.taskRevisions.delete(id);
-    if (!this.stopped && this.store.history.info().revision !== revision) for (const listener of this.listeners) listener();
+    if (!this.stopped && (streamed || this.store.history.info().revision !== revision)) for (const listener of this.listeners) listener();
   }
 }
