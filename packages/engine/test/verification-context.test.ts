@@ -15,7 +15,9 @@ it("links earlier evidence to its node, code and confirmed settings without pres
       { id: "fix", kind: "agent", round: 1, sub: 0, startedAt: 7, endedAt: 9, agentResults: [{ roleId: "custom-builder", profileId: "original-tool", at: 8, versions: { api: "fixed-tree" }, value: { summary: "Narrow fix", changes: ["Fixed one defect"] } }] },
       { id: "unfinished", kind: "agent", round: 1, sub: 0, startedAt: 10, agentResults: [{ roleId: "custom-builder", profileId: "original-tool", at: 11, value: { summary: "Not finished", changes: [] } }] },
     ];
-    const sections = await verificationContext(root, task, { api: "fixed-tree", web: "same-tree" });
+    const parallel = await Promise.all(Array.from({ length: 4 }, () => verificationContext(root, task, { api: "fixed-tree", web: "same-tree" })));
+    const sections = parallel[0]!;
+    expect(parallel.every((value) => JSON.stringify(value) === JSON.stringify(sections))).toBe(true);
     const file = JSON.parse(sections[0]!.body.match(/available at ("[^"]+")/)![1]!);
     const saved = JSON.parse(await readFile(file, "utf8"));
     expect(saved.reports).toHaveLength(3);

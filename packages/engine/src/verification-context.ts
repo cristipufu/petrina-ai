@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import type { Section } from "./context.js";
@@ -20,10 +20,14 @@ export async function verificationContext(dataDir: string, task: Pick<Task, "id"
   const folder = join(dataDir, "contexts", task.id, "verification");
   const file = join(folder, `${digest}.json`);
   await mkdir(folder, { recursive: true, mode: 0o700 });
-  try { await writeFile(file, body, { flag: "wx", mode: 0o600 }); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    if (await readFile(file, "utf8") !== body) throw new Error("The saved verification evidence changed. Try this step again.");
+  const existing = await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+  if (existing !== undefined && existing !== body) throw new Error("The saved verification evidence changed. Try this step again.");
+  if (existing === undefined) {
+    const temporary = join(folder, `${digest}.${randomUUID()}.tmp`);
+    try {
+      await writeFile(temporary, body, { flag: "wx", mode: 0o600 });
+      await rename(temporary, file);
+    } finally { await rm(temporary, { force: true }); }
   }
   const firstBuild = records.find((entry) => entry.kind === "implementation");
   const latestTest = records.findLast((entry) => entry.kind === "acceptance");
