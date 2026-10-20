@@ -84,6 +84,8 @@ This applies to check fixes and review fixes without removing quality gates. Pac
 
 Every connector removes inherited agent-session markers before opening its own session. Managed executable overrides are restored before another provider or working copy prepares its launch; Codex's wrapper retains the real executable across nested launches and refuses a target pointing back to itself. A failed process-list lookup reports incomplete cleanup while preserving the original startup failure.
 
+Managed Grok sessions disable its persistent workspace memory through the native process setting. The current request, repository contracts and the participant's own resumed conversation remain available, as do all skills. Petrina does not modify personal memory files or settings; independent reviewers do not inherit notes from other tasks.
+
 Petrina talks to agents through the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Claude Code and Codex have maintained ACP adapters. Grok and Antigravity expose native ACP servers:
 
 | Tool | ACP adapter |

@@ -58,6 +58,10 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     models: ["sol", "astra"],
   },
   grok: {
+    // Shared native project memory can contain another task's obsolete rules.
+    // Keep this conversation's history and skills; disable only persistent memory
+    // for managed runs. The installed ACP route does not honor --no-memory.
+    prepareEnv: env => { env.GROK_MEMORY = "0"; },
     parseLimitError: grokLimit,
     parseTurnReport: grokTurnReport,
     toolMetadata: meta => {
