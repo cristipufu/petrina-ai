@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Monitor, User } from "lucide-react";
-import { SCREEN_WORDS, mainLine, nextLine, screenWait, timeLeft, workedSoFar, type Role, type State, type Task } from "@petrina/core";
+import { occurrenceText, SCREEN_WORDS, mainLine, nextLine, screenWait, timeLeft, workedSoFar, type Role, type State, type Task } from "@petrina/core";
 import { deliveryText, duration, profileText, type Lookup } from "../../lib";
 import { failureText, sim } from "../../engine";
 import { RoleAvatar } from "../bits";
@@ -73,6 +73,7 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
 
   return (
     <>
+      {task.maintenance && <section className="sheet-section reading"><h2>Scheduled routine</h2><p>{task.maintenance.routineName}</p><p>{occurrenceText(task.maintenance.scheduledAt, task.maintenance.zone)}</p>{task.maintenance.catchUp && <p>{task.maintenance.catchUp}</p>}<p>{task.maintenance.role.name} · {profileText(task.maintenance.profile, find, true)}</p>{task.maintenance.noProductChanges && <p>Completed · No product changes</p>}{task.maintenance.settingsDecision && <p>Requested: {task.maintenance.settingsDecision.requested}<br />Reported: {task.maintenance.settingsDecision.actual}<br />{task.maintenance.settingsDecision.choice === "keep" ? "You kept this run with its reported settings." : task.maintenance.settingsDecision.choice === "stop" ? "You stopped this run." : "Waiting for your decision in Inbox."}</p>}</section>}
       {task.combinedInto && <section className="sheet-section reading"><h2>Combined request</h2><p>This request is part of <TaskLink taskId={task.combinedInto} find={find} onOpen={onOpenTask}>the combined task</TaskLink>.</p></section>}
       {task.combinedFrom?.length && <section className="sheet-section reading"><h2>Original requests</h2><ul>{task.combinedFrom.map((source) => <li key={source.id}><TaskLink taskId={source.id} find={find} onOpen={onOpenTask}>{source.title}</TaskLink></li>)}</ul></section>}
       {!separateFlow && <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} {...(onOpenTask ? { onOpenTask } : {})} />}

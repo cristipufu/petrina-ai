@@ -38,6 +38,7 @@ const NewTask = z.object({
  * the command table (Commands in @petrina/core): every command, nothing else, arguments the engine takes.
  */
 const RoleDraft = z.object({
+  category: z.enum(["workflow", "maintenance"]).optional(),
   name: z.string().max(ROLE_LIMITS.name * 10),
   icon: z.enum(ROLE_ICON_CHOICES as unknown as [RoleIcon, ...RoleIcon[]]),
   tone: z.enum(TONE_CHOICES as unknown as [Tone, ...Tone[]]),
@@ -48,7 +49,12 @@ const RoleDraft = z.object({
   result: z.enum(["plan", "notes", "brief", "objections", "build", "checks", "findings", "delivery", "check-discovery", "guide", "votes"]),
 });
 
+const RoutineDraft = z.object({ name: z.string().max(100), productId: z.string(), roleId: z.string(), profileId: z.string(), focus: z.string().max(4000), zone: z.string().max(100), enabled: z.boolean(), schedule: z.discriminatedUnion("kind", [z.object({ kind: z.literal("daily"), time: z.string() }), z.object({ kind: z.literal("weekly"), time: z.string(), weekdays: z.array(z.number().int().min(0).max(6)).max(7) }), z.object({ kind: z.literal("cron"), expression: z.string().max(200) })]) });
 const ARGS = {
+  saveRoutine: z.tuple([RoutineDraft, z.string().optional()]),
+  setRoutineEnabled: z.tuple([z.string(), z.boolean()]),
+  removeRoutine: z.tuple([z.string()]),
+  resolveMaintenanceSettings: z.tuple([TaskId, z.enum(["keep", "stop"])]),
   historyPage: z.tuple([z.object({ productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
   taskDetails: z.tuple([TaskId]),
   previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),

@@ -571,7 +571,7 @@ export class ProductChecks {
   backToBuilder(scope: RepositoryContext, when: string): boolean {
     const { task, work: repository } = scope;
     if (task.repositories) return beginRepair(this.k, task, "checks", task.stageIndex);
-    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && this.k.role(entry.roleId)?.result === "build");
+    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && this.k.role(entry.roleId, task)?.result === "build");
     if (builder < 0 || (repository.checkReturns ?? 0) >= 2) return false;
     repository.checkReturns = (repository.checkReturns ?? 0) + 1;
     task.stageIndex = builder;

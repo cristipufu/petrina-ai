@@ -1,5 +1,5 @@
 import { deliveryLabel } from "./source.js";
-import type { AgentProfile, DeliveryMode, Plan, Role, Stage, Task, Tool } from "./model.js";
+import type { DeliveryMode, Plan, Role, Stage, Task, Tool } from "./model.js";
 
 /** Acceptance evidence is the same requirement in the role library and the engine contract. */
 export const ACCEPTANCE_EVIDENCE_RULE = `For every pass or failure, include short "evidence": the specific scenario, expected and observed result, with the relevant failure/recovery variant and a nearby passing control when needed. Distinguish what you executed from what you only inspected. A passing suite, test name or demo picture does not prove an untried concurrency, interruption or restart condition. Reuse Petrina's current checks when they cover the item; several items may cite one applicable result or focused probe, without rerunning a full suite or repeating logs.`;
@@ -259,12 +259,8 @@ export const KNOWN_TOOLS: readonly Tool[] = [
   },
 ];
 
-export const DEFAULT_PROFILES: readonly AgentProfile[] = [
-  { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" },
-  { id: "sonnet-medium", toolId: "claude-code", model: "Sonnet 5.5", modelId: "sonnet", effort: "medium" },
-  { id: "codex-xhigh", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "xhigh" },
-  { id: "codex-high", toolId: "codex", model: "sol", modelId: "gpt-6.1-sol", effort: "high" },
-];
+export { DEFAULT_PROFILES } from "./profiles.js";
+
 
 const PLANNER_PROFILE = "sonnet-medium";
 
@@ -303,7 +299,7 @@ export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDeli
  */
 export function composePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery" | "source">, roles: readonly Role[] = BUILT_IN_ROLES): Plan {
   const plan = basePlan(task);
-  const added = roles.filter((role) => role.added && !role.removed);
+  const added = roles.filter((role) => role.added && !role.removed && role.category !== "maintenance");
   if (!added.length) return plan;
   const stages = [...plan.stages];
   const review = stages.findIndex((stage) => stage.kind === "review-chain");

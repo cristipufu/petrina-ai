@@ -80,6 +80,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const { view, product, sheet, productSettings } = route;
   const setSheet = useCallback((next: typeof sheet) => navigate((previous) => ({ ...previous, sheet: next })), [navigate]);
   const [rolePanel, setRolePanel] = useState<RolePanelTarget>();
+  const [routineDialog, setRoutineDialog] = useState(false);
   const setProductSettings = (next: string | undefined) => navigate((previous) => ({ ...previous, view: "products", productSettings: next }));
   /** "About these numbers" opens with Analytics when a task sheet's link leads there. */
   const [aboutNumbers, setAboutNumbers] = useState(false);
@@ -116,8 +117,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const focusArea = useRef<KeyArea | undefined>(undefined);
   const { toasts, showToast, toast, dismiss } = useToasts();
   // Read by notification clicks, which arrive outside React's renders.
-  const latest = useRef({ state, dialog: creating || addingProduct || Boolean(rolePanel), sheet: sheet !== undefined });
-  latest.current = { state, dialog: creating || addingProduct || Boolean(rolePanel), sheet: sheet !== undefined };
+  const latest = useRef({ state, dialog: creating || addingProduct || Boolean(rolePanel) || routineDialog, sheet: sheet !== undefined });
+  latest.current = { state, dialog: creating || addingProduct || Boolean(rolePanel) || routineDialog, sheet: sheet !== undefined };
 
   // What the top bar gives up as the window narrows (or zooms, or text grows), in this order: the
   // wordmark and repeated wording, then the search field, the pool's squares, then pool and theme
@@ -304,15 +305,15 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     const el = id ? Array.from(document.querySelectorAll<HTMLElement>(`[${attr}]`)).find((node) => node.getAttribute(attr) === id) : area === "inbox" ? inboxPanel.current : document.querySelector<HTMLElement>(view === "history" ? ".history-page" : ".board");
     if (id && !pressing.current) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
     // Give Tab a starting point at the highlighted item, without taking focus from a field.
-    if (el && !palette && !creating && !addingProduct && !rolePanel && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
+    if (el && !palette && !creating && !addingProduct && !rolePanel && !routineDialog && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
       el.focus({ preventScroll: true });
       focusArea.current = undefined;
     }
-  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, rolePanel, shortcuts, history.page]);
+  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, rolePanel, routineDialog, shortcuts, history.page]);
 
   useGlobalKeys({
     palette,
-    modal: creating || addingProduct || shortcuts || Boolean(rolePanel),
+    modal: creating || addingProduct || shortcuts || Boolean(rolePanel) || routineDialog,
     sheetOpen: Boolean(sheet),
     area,
     singleKeys,
@@ -320,7 +321,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     boardId: currentBoardId,
     inboxId: currentInboxId,
     togglePalette: () => {
-      if (creating || addingProduct || rolePanel) return;
+      if (creating || addingProduct || rolePanel || routineDialog) return;
       if (palette) setPalette(false);
       else openPalette();
     },
@@ -408,7 +409,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         )}
         {!missing && view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {!missing && view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
-        {!missing && view === "library" && <LibraryPage state={state} find={find} onRole={setRolePanel} />}
+        {!missing && view === "library" && <LibraryPage state={state} find={find} onRole={setRolePanel} onRoutineDialog={setRoutineDialog} product={product} view={route.libraryView ?? "routines"} onView={libraryView => navigate(previous => ({ ...previous, libraryView }))} onOpen={open} />}
         {!missing && view === "settings" && <SettingsPage onShortcuts={() => setShortcuts(true)} theme={theme} onTheme={setTheme} />}
       </main>
 

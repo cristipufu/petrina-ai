@@ -106,10 +106,11 @@ export const JOURNEY_WORDS = {
  * How a task's work ended up, honestly. A pull request closed without merging did not land, and
  * "Mark as done" confirms no delivery. `open`: not finished yet.
  */
-export type Landing = "landed" | "awaiting-merge" | "closed" | "marked-done" | "cancelled" | "open";
+export type Landing = "landed" | "awaiting-merge" | "closed" | "marked-done" | "no-changes" | "cancelled" | "open";
 
-export function landingOf(task: Pick<Task, "state" | "pr" | "release" | "landed">): Landing {
+export function landingOf(task: Pick<Task, "state" | "pr" | "release" | "landed"> & { maintenance?: Pick<NonNullable<Task["maintenance"]>, "noProductChanges"> }): Landing {
   if (task.state === "cancelled") return "cancelled";
+  if (task.state === "done" && task.maintenance?.noProductChanges) return "no-changes";
   if (task.release || task.landed || task.pr?.state === "merged") return "landed";
   // Recorded before "closed" was: a finished task whose pull request never merged.
   if (task.pr && (task.pr.state === "closed" || task.state === "done")) return "closed";
@@ -145,7 +146,7 @@ export const PETRINA_STEP_NAMES: Readonly<Record<JourneyWork, string>> = {
 // ── Recording: the engine and the simulator call these as the task moves ───────────────────
 
 /** What the recording helpers read and write: the engine's and the simulator's working copies of a task. */
-export type JourneyTask = Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "updating" | "portReview"> & Partial<Pick<Task, "findings">> & { journey?: JourneyStep[] };
+export type JourneyTask = Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "updating" | "portReview"> & Partial<Pick<Task, "findings" | "maintenance">> & { journey?: JourneyStep[] };
 
 /** How a step ended, in a few words, and why the work moved on. */
 export interface StepEnd {
@@ -267,7 +268,7 @@ export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at:
     return open;
   }
   if (open) close(open, at);
-  const fixingFindings = task.fixing && roles.find(role => role.id === roleId)?.result === "build"
+  const fixingFindings = task.fixing && (task.maintenance?.role.id === roleId ? task.maintenance.role : roles.find(role => role.id === roleId))?.result === "build"
     ? { findingIds: (task.findings ?? []).filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id) }
     : {};
   return push(task, { kind: "agent", ...key, ...fixingFindings, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
@@ -376,6 +377,7 @@ export function syncWait(task: JourneyTask & Pick<Task, "after">, blockers: read
   const parts = [
     ...(ended("landed").length ? [JOURNEY_WORDS.landed(ended("landed"))] : []),
     ...(ended("closed").length ? [JOURNEY_WORDS.othersClosed(ended("closed"))] : []),
+    ...(ended("no-changes").length ? [`${quoteTitles(ended("no-changes"))} completed without product changes`] : []),
     ...(ended("marked-done").length ? [JOURNEY_WORDS.othersMarkedDone(ended("marked-done"))] : []),
     ...(ended("cancelled").length ? [JOURNEY_WORDS.othersCancelled(ended("cancelled"))] : []),
   ];
@@ -648,6 +650,8 @@ const FINISHED: readonly Task["state"][] = ["done", "pr-open", "cancelled"];
 
 function endOf(task: Task): JourneyView["end"] {
   switch (landingOf(task)) {
+    case "no-changes":
+      return { text: "Completed · No product changes", state: "done" };
     case "cancelled":
       return { text: "Cancelled", state: "cancelled" };
     case "landed":
@@ -670,6 +674,7 @@ function endOf(task: Task): JourneyView["end"] {
  * ahead, with a start point and, once it is over, an end point. Pure: the same task gives the same journey.
  */
 export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
+  if (task.maintenance) ctx = { ...ctx, roles: [...ctx.roles.filter(role => role.id !== task.maintenance!.role.id), task.maintenance.role] };
   const recorded: readonly JourneyStep[] = task.journey ?? legacyJourney(task, ctx.inbox, ctx.roles);
   const open = openStep({ journey: recorded });
   const latestCompletedTester = recorded.reduce((latest, step, index) => ((step.kind === "agent" && ctx.roles.find(role => role.id === step.roleId)?.result === "checks") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);

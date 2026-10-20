@@ -583,11 +583,16 @@ describe('the app keyboard', () => {
     expect(document.activeElement).toBe(field);
     expect(el('.inbox-item.selected').getAttribute('data-inbox-id')).toBe(id);
   });
-  it('leaves the role panel its own keys: Escape asks before unsaved changes go, and app shortcuts wait', async () => {
+  it.each(['Researcher', 'Bug finder'])('leaves the %s role panel its own keys: Escape asks before unsaved changes go, and app shortcuts wait', async (roleName) => {
     const button = (text: string) => { const found = Array.from(host.querySelectorAll('button')).find((entry) => entry.textContent?.trim() === text); expect(found, text).toBeDefined(); return found!; };
     const roles = simulator.getState().roles;
     await key('l');
-    await click('[aria-label="Edit the Researcher"]');
+    expect(el('.library-views [aria-current="page"]').textContent).toBe('Routines');
+    await click('.library-views a[href="/library/roles"]');
+    expect(el('.library-views [aria-current="page"]').textContent).toBe('Roles');
+    const opener = el(`[aria-label="Edit the ${roleName}"]`);
+    await act(async () => opener.focus());
+    await click(`[aria-label="Edit the ${roleName}"]`);
     await type('.role-form textarea', 'Finds out what people expect.');
     await key('k', { ctrlKey: true }); expect(host.querySelector('.command-palette')).toBeNull();
     await key('Escape');
@@ -604,6 +609,7 @@ describe('the app keyboard', () => {
     await act(async () => button('Discard changes').click());
     expect(host.querySelector('.sheet.panel')).toBeNull();
     expect(simulator.getState().roles).toBe(roles);
+    expect(document.activeElement).toBe(opener);
   });
   it('does not act while typing or repeat the pause key, and can disable single keys', async () => {
     await key('j'); await key('p'); const paused = simulator.getState();

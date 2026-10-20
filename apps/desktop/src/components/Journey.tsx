@@ -120,6 +120,7 @@ const LANDING_WORDS: Record<ReturnType<typeof landingOf>, string> = {
   "awaiting-merge": "not landed yet: awaiting merge",
   closed: "did not land: closed without merging",
   "marked-done": "marked as done, delivery not confirmed",
+  "no-changes": "completed without product changes",
   cancelled: "did not land: cancelled",
   open: "not landed yet",
 };

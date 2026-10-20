@@ -52,6 +52,24 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); });
 
 describe('the Library role forms', () => {
+  it.each([['Reports only', 'notes', false], ['Small changes with review', 'build', true]] as const)('creates and edits a maintenance role returning %s with no permission switch', async (label, result, canEdit) => {
+    await click('Add a maintenance role');
+    expect(panel().textContent).not.toContain('What it may change');
+    expect(panel().textContent).not.toContain('The planner reads this');
+    await fill('Name', `Custom ${result}`);
+    await fill("What it's for", 'Investigate one bounded area.');
+    await fill('How it works', 'Establish evidence before proposing changes.');
+    const option = [...panel().querySelectorAll('label')].find(node => node.querySelector('.t')?.textContent === label)!;
+    await act(async () => (option.control as HTMLInputElement).click());
+    await click(/^Save/, panel());
+    const role = simulator.getState().roles.find(role => role.name === `Custom ${result}`)!;
+    expect(role.category).toBe('maintenance'); expect(role.result).toBe(result); expect(role.canEdit).toBe(canEdit);
+    await click(`Edit the Custom ${result}`);
+    expect(panel().textContent).toContain(label); expect(panel().textContent).not.toContain('What it may change');
+    await fill('Name', `Renamed ${result}`); await click(/^Save/, panel());
+    expect(simulator.getState().roles.find(entry => entry.id === role.id)?.result).toBe(result);
+  });
+
   it('labels every built-in card and offers View only for the Release Manager', async () => {
     const roles = simulator.getState().roles;
     expect(host.querySelectorAll('.role-card')).toHaveLength(roles.length);

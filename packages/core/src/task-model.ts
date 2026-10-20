@@ -108,6 +108,7 @@ export type TaskRepository = RepositoryState & {
 
 /** The request and coordinator choices. They survive every step and restart. */
 export interface TaskRequest {
+  maintenance?: import("./routines.js").MaintenanceRun;
   id: Id;
   /** The requested product; execution may currently belong to another approved product. */
   productId: Id;

@@ -2,7 +2,7 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, REPAIR_RULE, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
+import { BUILT_IN_ROLES, MAINTENANCE_ROLES, draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, REPAIR_RULE, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { dispatch } from "../src/server.js";
@@ -451,23 +451,29 @@ describe("the engine's own rules for roles", () => {
         ["saveRole", ["tester", draft("tester", { result: "notes" })], "To hand back something else, add a new role."],
         ["saveRole", ["tester", draft("tester", { name: "QA" })], "Built-in roles keep their name, icon and colour"],
         ["saveRole", ["tester", draft("tester", { instructions: "x".repeat(4001) })], "Keep this to 4,000 characters"],
+        ["saveRole", ["researcher", draft("researcher", { category: "maintenance" })], "A role keeps its Workflow or Maintenance category"],
+        ["saveRole", ["maintenance-bug-finder", draft("maintenance-bug-finder", { category: "workflow" })], "A role keeps its Workflow or Maintenance category"],
         ["addRole", [{ ...ROLE_STARTS[0]!.draft, name: "builder", purpose: "Builds more." }], "There is already a role called “Builder”"],
         ["addRole", [{ ...ROLE_STARTS[1]!.draft, canEdit: true }], "Reviewers never change the work they judge"],
         ["removeRole", ["architect"], "Built-in roles can't be removed"],
       ];
-      for (const [name, args, message] of refused) await expect(act(name, ...args)).rejects.toThrow(message);
+      for (const [name, args, message] of refused) {
+        const before = JSON.stringify({ roles: engine.getState().roles, changes: engine.getState().roleChanges });
+        await expect(act(name, ...args)).rejects.toThrow(message);
+        expect(JSON.stringify({ roles: engine.getState().roles, changes: engine.getState().roleChanges })).toBe(before);
+      }
       for (let n = 1; n <= 20; n += 1) await act("addRole", { ...ROLE_STARTS[0]!.draft, name: `Helper ${n}`, purpose: "Helps." });
       await expect(act("addRole", { ...ROLE_STARTS[0]!.draft, name: "Helper 21", purpose: "Helps." })).rejects.toThrow("You can add at most 20 roles");
       const helper = engine.getState().roles.find((role) => role.name === "Helper 1")!;
       await expect(act("saveRole", helper.id, { ...draftOf(helper), result: "findings" })).rejects.toThrow("add a new role");
       // Nothing refused changed anything.
-      expect(engine.getState().roles.filter((role) => !role.added)).toEqual(BUILT_IN_ROLES.map((role) => ({ ...role })));
+      expect(engine.getState().roles.filter((role) => !role.added)).toEqual([...BUILT_IN_ROLES, ...MAINTENANCE_ROLES].map((role) => ({ ...role })));
     } finally {
       engine.shutdown();
     }
   });
 
-  it("loads data saved before roles were editable with Petrina's built-in roles", () => {
+  it("loads data saved before roles were editable with both built-in categories, without duplicating them on restart", async () => {
     const root = tempDir("petrina-role-upgrade-");
     roots.push(root);
     const home = join(root, "home");
@@ -475,12 +481,17 @@ describe("the engine's own rules for roles", () => {
     const old = BUILT_IN_ROLES.map(({ instructions: _instructions, result: _result, ...role }) => role);
     store.save({ now: 1, seq: 3, products: [], roles: old, tools: [], profiles: [], tasks: [], inbox: [], pool: { limit: 3, paused: false, toolCaps: {} } } as unknown as State);
     store.close();
-    const engine = new Engine(home);
+    let engine = new Engine(home);
     try {
-      expect(engine.getState().roles).toEqual(BUILT_IN_ROLES.map((role) => ({ ...role })));
+      const defaults = [...BUILT_IN_ROLES, ...MAINTENANCE_ROLES].map((role) => ({ ...role }));
+      expect(engine.getState().roles).toEqual(defaults);
+      expect(engine.getState().roleChanges).toEqual({ edits: {}, added: [] });
+      await engine.shutdown();
+      engine = new Engine(home);
+      expect(engine.getState().roles).toEqual(defaults);
       expect(engine.getState().roleChanges).toEqual({ edits: {}, added: [] });
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

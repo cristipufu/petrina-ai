@@ -1,3 +1,4 @@
+import { saveRoutine, admitRoutines, prepareMaintenanceTask, type RoutineDraft } from "./routines.js";
 import { DEMO_RISK, DEMO_CHECKS, scriptFor, laterObjections, callAnswers, briefFor, capitalize, areaFromTitle, simReport, demoSource } from "./sim-script.js";
 import type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
 export { readCall } from "./sim-script.js";
@@ -585,6 +586,33 @@ export class Simulator {
     return created;
   }
 
+  saveRoutine(draft: RoutineDraft, routineId?: Id): Id {
+    let id = routineId ?? "";
+    this.update(d => {
+      const previous = d.routines?.find(r => r.id === routineId);
+      if (routineId && !previous) throw new Error("That routine was removed.");
+      id ||= this.id(d, "routine");
+      const next = saveRoutine(draft, d, id, d.now, previous);
+      d.routines = [...(d.routines ?? []).filter(r => r.id !== id), next] as Draft["routines"];
+    });
+    return id;
+  }
+  setRoutineEnabled(routineId: Id, enabled: boolean): void {
+    const routine = this.state.routines?.find(r => r.id === routineId);
+    if (!routine) throw new Error("That routine was removed.");
+    if (enabled) this.saveRoutine({ ...routine, enabled }, routineId);
+    else this.update(d => { d.routines!.find(r => r.id === routineId)!.enabled = false; });
+  }
+  removeRoutine(routineId: Id): void { this.update(d => { d.routines = d.routines?.filter(r => r.id !== routineId); }); }
+  resolveMaintenanceSettings(taskId: Id, choice: "keep" | "stop"): void {
+    if (choice === "stop") { this.cancel(taskId); return; }
+    this.updateTask(taskId, (d, task) => {
+      if (task.maintenance?.settingsDecision) task.maintenance.settingsDecision.choice = choice;
+      d.inbox = d.inbox.filter(i => !(i.taskId === taskId && i.kind === "maintenance-settings"));
+      task.state = "waiting"; this.schedule(d);
+    });
+  }
+
   resetRole(roleId: Id): void {
     this.changeRoles((changes) => library.resetRole(changes, roleId));
   }
@@ -1042,6 +1070,18 @@ export class Simulator {
       return;
     }
 
+    if (stage.kind === "do" && task.maintenance?.role.id === agent.roleId) {
+      const summary = "Investigated the selected area. Nothing actionable found in this demo run.";
+      task.handedBack = [...(task.handedBack ?? []), { at: d.now, roleId: agent.roleId, profileId: agent.profileId, stageId: stage.id, roleName: task.maintenance.role.name, title: stage.title, summary, notes: ["Completed without product changes."] }];
+      task.maintenance.noProductChanges = true;
+      this.log(d, task, "done", summary, agent.roleId, agent.profileId);
+      endAgentStep(task, { outcome: W.wroteNotes, reason: W.notesReady }, d.now);
+      this.endStage(d, task, "done");
+      task.state = "done"; task.column = "done"; task.finishedAt = d.now;
+      task.statusLine = "Completed · No product changes"; task.holdsSlot = false;
+      delete task.agent;
+      return;
+    }
     if (stage.kind === "do") {
       if (result === "build" && task.fixing) {
         let count = 0;
@@ -1578,6 +1618,13 @@ export class Simulator {
 
   /** Fill free slots: tasks already in progress first (the tool with more of its limit left first), then the queue, in priority order. */
   private schedule(d: Draft): void {
+    admitRoutines(d, d.now, (routine, scheduledAt) => {
+      const id = this.id(d, "task");
+      const task = createTaskState({ productId: routine.productId, title: routine.name, kind: "chore" }, d.products, { id, timelineId: this.id(d, id), now: d.now, priority: queueOf(d.tasks).length });
+      prepareMaintenanceTask(task, routine, d as State, scheduledAt, d.now);
+      d.tasks.push(task as DraftTask);
+      return id;
+    });
     this.syncScreen(d);
     const profiles = new Map(d.profiles.map((profile) => [profile.id, profile]));
     const find = (id: Id) => d.tasks.find((entry) => entry.id === id);
@@ -1611,7 +1658,7 @@ export class Simulator {
       const task = find(queued.id)!;
       // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
       if (blocked(task) || task.held) continue;
-      const profile = profiles.get(this.planner(d));
+      const profile = profiles.get(task.maintenance?.profile.id ?? this.planner(d));
       candidates.push({ ...profile, taskId: task.id, toolId: profile?.toolId ?? "unknown" });
     }
 
@@ -1621,7 +1668,7 @@ export class Simulator {
       if (!task) continue;
       if (task.state === "queued") {
         task.startedAt = d.now;
-        task.stageIndex = -1;
+        task.stageIndex = task.maintenance ? 0 : -1;
         this.log(d, task, "milestone", "Started from the queue");
       }
       // The screen is this agent's from now until its step ends.

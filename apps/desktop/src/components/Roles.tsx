@@ -24,7 +24,7 @@ import { ConfirmDialog, ROLE_ICONS, useDismiss, useFocusTrap, useViewport } from
 export type RoleStart = (typeof ROLE_STARTS)[number]["id"];
 
 /** What the role panel shows: a role in the Library, or a new one from a starting point. */
-export type RolePanelTarget = { roleId: string } | { start: RoleStart };
+export type RolePanelTarget = { roleId: string } | { start: RoleStart; category?: "maintenance" };
 
 /** The Roles section of the Library: a card per role, and a way to add one. */
 export function RolesSection({ state, onOpen }: { state: State; onOpen: (target: RolePanelTarget) => void }) {
@@ -34,16 +34,19 @@ export function RolesSection({ state, onOpen }: { state: State; onOpen: (target:
     <section aria-labelledby="roles-title">
       <div className="section-row">
         <h2 className="section-title" id="roles-title">
-          Roles
+          Workflow roles
         </h2>
         <AddRoleMenu disabled={full} onPick={(start) => onOpen({ start })} />
       </div>
       {full && <p className="note section-note">You've added {ROLE_LIMITS.added} roles, the most you can. Remove one you no longer use to add another.</p>}
       <div className="grid">
-        {roles.map((role) => (
+        {roles.filter(role => role.category !== "maintenance").map((role) => (
           <RoleCard key={role.id} role={role} onOpen={() => onOpen({ roleId: role.id })} />
         ))}
       </div>
+      <div className="section-row"><h2 className="section-title">Maintenance roles</h2><button className="btn outline" disabled={full} onClick={() => onOpen({ start: "blank", category: "maintenance" })}><Plus size={16} aria-hidden="true" />Add a maintenance role</button></div>
+      <p className="note section-note">These roles run only from routines. They stay out of ordinary plans.</p>
+      <div className="grid">{roles.filter(role => role.category === "maintenance").map(role => <RoleCard key={role.id} role={role} onOpen={() => onOpen({ roleId: role.id })} />)}</div>
     </section>
   );
 }
@@ -156,7 +159,7 @@ const ORDER: readonly RoleField[] = ["name", "purpose", "instructions", "handsBa
  */
 export function RolePanel({ state, target, onClose }: { state: State; target: RolePanelTarget; onClose: () => void }) {
   const role = "roleId" in target ? state.roles.find((entry) => entry.id === target.roleId && !entry.removed) : undefined;
-  const [initial] = useState<RoleDraft>(() => (role ? draftOf(role) : { ...ROLE_STARTS.find((start) => "start" in target && start.id === target.start)!.draft }));
+  const [initial] = useState<RoleDraft>(() => (role ? draftOf(role) : { ...ROLE_STARTS.find((start) => "start" in target && start.id === target.start)!.draft, ...("category" in target ? { category: target.category } : {}) }));
   const [draft, setDraft] = useState(initial);
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -339,10 +342,10 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
                     </div>
                   </>
                 )}
-                {text("purpose", "What it's for", "The planner reads this to decide when to bring the role in.", 2)}
+                {text("purpose", "What it's for", draft.category === "maintenance" ? "Helps you choose this role for a routine." : "The planner reads this to decide when to bring the role in.", 2)}
                 {text("instructions", "How it works", "What the agent is told. Petrina adds the task, your notes, how to hand back the result and what it may change.", 8)}
 
-                <fieldset className="form-field" aria-describedby={`${id}-access-note${lock ? ` ${id}-access-lock` : ""}`}>
+                {draft.category !== "maintenance" && <fieldset className="form-field" aria-describedby={`${id}-access-note${lock ? ` ${id}-access-lock` : ""}`}>
                   <legend>What it may change</legend>
                   <div className="options-list">
                     {ACCESS.map((option) => (
@@ -362,7 +365,7 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
                   <p className="hint" id={`${id}-access-note`}>
                     Roles that change the product always work before the final review. Petrina handles delivery itself after the final review.
                   </p>
-                </fieldset>
+                </fieldset>}
 
                 <fieldset className="form-field">
                   <legend>What it hands back</legend>
@@ -371,7 +374,7 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
                       <div className="kind">
                         <Lock size={16} aria-hidden="true" />
                         <span>
-                          <span className="t">{RESULT_WORDS[draft.result].label}</span>
+                          <span className="t">{draft.category === "maintenance" ? draft.result === "build" ? "Small changes with review" : "Reports only" : RESULT_WORDS[draft.result].label}</span>
                           <span className="d">{RESULT_WORDS[draft.result].detail}</span>
                         </span>
                       </div>
@@ -380,10 +383,10 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
                   ) : (
                     <>
                       <div className="options-list">
-                        {(["notes", "findings"] as const).map((result) => (
+                        {(draft.category === "maintenance" ? ["notes", "build"] as const : ["notes", "findings"] as const).map((result) => (
                           <label key={result} className="option">
-                            <input type="radio" name={`${id}-result`} checked={draft.result === result} onChange={() => set(result === "findings" ? { result, canEdit: false } : { result })} />
-                            <span className="t">{RESULT_WORDS[result].label}</span>
+                            <input type="radio" name={`${id}-result`} checked={draft.result === result} onChange={() => set(draft.category === "maintenance" ? { result, canEdit: result === "build" } : result === "findings" ? { result, canEdit: false } : { result })} />
+                            <span className="t">{draft.category === "maintenance" ? result === "build" ? "Small changes with review" : "Reports only" : RESULT_WORDS[result].label}</span>
                             <span className="d">{RESULT_WORDS[result].detail}</span>
                           </label>
                         ))}

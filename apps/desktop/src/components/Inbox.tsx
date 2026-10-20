@@ -32,6 +32,7 @@ import { FixSteps } from "./Tools";
 import type { SheetTab } from "./TaskCard";
 
 const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> = {
+  "maintenance-settings": { label: "Agent settings", icon: TriangleAlert, tone: "amber" },
   question: { label: "Question", icon: CircleHelp, tone: "violet" },
   permission: { label: "Permission", icon: ShieldQuestion, tone: "amber" },
   plan: { label: "Plan check", icon: MapIcon, tone: "indigo" },
@@ -291,6 +292,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
+      {item.kind === "maintenance-settings" && <div className="actions"><button className="btn lead" onClick={() => sim.resolveMaintenanceSettings(item.taskId, "keep")}>Keep this run</button><button className="btn" onClick={() => sim.resolveMaintenanceSettings(item.taskId, "stop")}>Stop this run</button></div>}
       {!sending && item.kind === "question" && (
         <>
           {item.options && item.options.length > 0 && (

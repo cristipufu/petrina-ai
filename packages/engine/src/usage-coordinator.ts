@@ -66,7 +66,7 @@ export class UsageCoordinator {
     const stage = task.plan?.stages[task.stageIndex];
     if (stage?.kind !== "do") return undefined;
     const current = repository.conversation;
-    const role = current?.roleId === stage.roleId && current.role ? current.role : this.k.role(stage.roleId);
+    const role = current?.roleId === stage.roleId && current.role ? current.role : this.k.role(stage.roleId, task);
     if (role?.result !== "build") return undefined;
     const own = repository.builderSession;
     const saved = current
@@ -95,16 +95,24 @@ export class UsageCoordinator {
     // same review group still choose from their own planned profiles.
     const screen = task?.screen?.roleId === roleId && task?.screen?.profileId === plannedId
       && (reviewerKey === undefined || !task.screen.member || task.screen.member === `review-${reviewerKey}`);
-    const planned = this.k.profile(plannedId);
+    const saved = task?.maintenance && task.maintenance.role.id === roleId ? task.maintenance.profile : undefined;
+    const planned = saved ?? this.k.profile(plannedId);
+    if (saved) {
+      if (task?.maintenance?.settingsDecision && !task.maintenance.settingsDecision.choice) return { kind: "none", waiting: "Waiting for your decision about the reported agent settings" };
+      const limit = limitOf(this.k.s.pool, saved, Date.now());
+      if (limit) return { kind: "none", waiting: "Waiting for usage on the saved maintenance profile" };
+      if (!this.k.s.tools.some(t => t.id === saved.toolId && t.status === "ready")) return { kind: "none", waiting: "The saved maintenance tool is unavailable. Check it in Agents, then resume this run." };
+      return { kind: "planned", profile: saved, reason: "Kept the profile saved in the maintenance routine." };
+    }
     if (!planned) return undefined;
     const stage = task?.plan?.stages[task.stageIndex];
     const round = task && stage ? task.rounds[stage.id] ?? 1 : 1;
-    const role = roleId === undefined ? undefined : this.k.role(roleId);
+    const role = roleId === undefined ? undefined : this.k.role(roleId, task);
     const contract = role && contractFor(role);
     const findings = role?.result === "findings";
     // Security and port reviews follow the latest builder, including a replacement that did the port.
-    const builder = task?.plan?.stages.find((stage) => this.k.role(stage.roleId)?.result === "build")?.profileIds[0];
-    let made: { toolId: Id; modelId?: string } | undefined = contract?.awayFromBuilder || (repository?.portReview && stage?.kind === "review-chain" && findings)
+    const builder = task?.plan?.stages.find((stage) => this.k.role(stage.roleId, task)?.result === "build")?.profileIds[0];
+    let made: { toolId: Id; modelId?: string } | undefined = contract?.awayFromBuilder || (!!task?.maintenance && findings) || (repository?.portReview && stage?.kind === "review-chain" && findings)
       ? (repository?.builderSession ? { toolId: repository!.builderSession.toolId, modelId: repository!.builderSession.model } : builder ? this.k.profile(builder) : undefined)
       : undefined;
     if (task && stage?.kind === "converge" && task.sub === 1 && roleId === (stage.reviewerRoleId ?? "design-reviewer")) {
@@ -151,7 +159,7 @@ export class UsageCoordinator {
       profiles: state.profiles.filter((profile) => usable.includes(profile.toolId) || (!usable.length && profile.id === plannedId)),
       tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
     } : state;
-    if (roleId !== undefined && this.k.role(roleId)?.result === "votes") {
+    if (roleId !== undefined && this.k.role(roleId, task)?.result === "votes") {
       // A voter owns one actual tool's place, not a nominal profile's place. Other tools have
       // voters of their own: a model fallback stays on this tool; a usage limit drops its place.
       // A full cap still waits, rather than giving a partner another vote.
@@ -159,7 +167,7 @@ export class UsageCoordinator {
       if ((ready.length && !ready.some((tool) => tool.id === planned.toolId)) || !candidates.profiles.some((profile) => profile.toolId === planned.toolId)) return { kind: "none", waiting: "Waiting for a usable review tool" };
       candidates = { ...candidates, profiles: candidates.profiles.filter((profile) => profile.toolId === planned.toolId) };
     }
-    const reviewing = roleId !== undefined && ["findings", "objections", "votes"].includes(this.k.role(roleId)?.result ?? "");
+    const reviewing = roleId !== undefined && ["findings", "objections", "votes"].includes(this.k.role(roleId, task)?.result ?? "");
     const now = Date.now();
     // A saved screen conversation is not swapped just for being near a limit. Reopen it on its tool
     // while that tool is available; a replacement still follows the current independence rules.
@@ -178,6 +186,10 @@ export class UsageCoordinator {
         const ready = candidates.tools.filter((tool) => tool.status === "ready");
         if (!ready.length || ready.some((tool) => tool.id === own.toolId)) return { kind: own.profile.id === plannedId ? "planned" : "substitute", profile: own.profile, reason: "Returned to the Builder's existing conversation on an available profile." };
       }
+    }
+    if (task?.maintenance && findings && candidates.tools.some(tool => tool.status === "ready" && tool.id !== task.maintenance!.profile.toolId)) {
+      const author = task.maintenance.profile;
+      candidates = { ...candidates, profiles: candidates.profiles.filter(profile => !(profile.toolId === author.toolId && profile.modelId === author.modelId && profile.effort === author.effort)) };
     }
     const rules = { keep: !!screen || reviewing, awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) };
     const choice = chooseWithRoom(candidates, planned, now, rules, room);
@@ -251,7 +263,7 @@ export class UsageCoordinator {
     this.k.tracking.limitHit(task, roleId, profileId, error);
     this.k.s.pool.limited = withLimit(this.k.s.pool.limited, { toolId: error.toolId, ...(error.model ? { model: error.model } : {}), ...(error.retry ? { retry: true } : {}), until: error.until, reason: error.reason, at: Date.now() }) as MState["pool"]["limited"];
     const outcome = error.retry ? `could not continue (${error.reason}); retry after ${untilWords(error.until, Date.now())}` : `ran out of usage (${error.reason}), until ${untilWords(error.until, Date.now())}`;
-    this.k.log(task, "warn", `${this.k.role(roleId)?.name ?? roleId} on ${this.k.named(profileId)} ${outcome}`, roleId, profileId);
+    this.k.log(task, "warn", `${this.k.role(roleId, task)?.name ?? roleId} on ${this.k.named(profileId)} ${outcome}`, roleId, profileId);
     this.armLimitTimer();
     this.k.commitNow();
   }

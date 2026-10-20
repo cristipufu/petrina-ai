@@ -45,6 +45,7 @@ function outcome(item: HistoryItem): string {
   if (item.landed) return item.localUpdate?.pushed ? `Committed to ${item.landed.branch} · pushed to GitHub` : `Delivered locally to ${item.landed.branch}`;
   if (item.pr?.state === "merged") return `Pull request #${item.pr.number} merged`;
   if (item.pr && landingOf(item) === "closed") return `Pull request #${item.pr.number} closed without merging`;
+  if (landingOf(item) === "no-changes") return "Completed · No product changes";
   if (landingOf(item) === "marked-done") return "Marked as done · delivery not confirmed";
   return item.state === "cancelled" ? "Cancelled" : "Completed";
 }
@@ -75,7 +76,7 @@ export function History({ page, error, reload, position, onPosition, find, selec
         <div className="history-summary" aria-live="polite"><span className="num">{page.total.toLocaleString()} {page.total === 1 ? "task" : "tasks"}{position?.query ? ` matching “${position.query}”` : " in history"}</span></div>
         {page.items.length ? <div className="history-grid">{page.items.map((item) => {
           const date = item.finishedAt ?? item.createdAt;
-          const delivered = item.deliveries?.length ? item.deliveries.every((work) => work.nothingToPublish || landingOf({ ...item, ...work }) === "landed") : landingOf(item) === "landed";
+          const delivered = item.deliveries?.length ? item.deliveries.every((work) => work.nothingToPublish || landingOf({ ...item, ...work }) === "landed") : ["landed", "no-changes"].includes(landingOf(item));
           const names = item.products?.map((product) => find.product(product.id)?.name ?? product.name);
           const Icon = item.state === "cancelled" ? Ban : delivered ? CheckCircle2 : CircleMinus;
           return <a key={item.id} href={hrefFor(item.id)} className={`history-card ${item.state} ${selectedId === item.id ? "selected" : ""}`} data-task-id={item.id} onFocus={() => onFocus(item.id)} onClick={(event) => followLink(event, () => onOpen(item.id))}>

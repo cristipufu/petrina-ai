@@ -44,6 +44,10 @@ export interface SaidContext {
 }
 
 export interface Commands {
+  saveRoutine(draft: import("./routines.js").RoutineDraft, routineId?: Id): Id;
+  setRoutineEnabled(routineId: Id, enabled: boolean): void;
+  removeRoutine(routineId: Id): void;
+  resolveMaintenanceSettings(taskId: Id, choice: "keep" | "stop"): void;
   historyPage(query: HistoryQuery): HistoryPage;
   taskDetails(taskId: Id): Task | undefined;
   previewImage(taskId: Id, path: string, productId?: Id): Promise<{ mime: string; data: string }>;
@@ -135,6 +139,7 @@ export type CommandName = keyof Commands;
 
 /** Every command by name, for the code that handles them all the same way. */
 export const COMMAND_NAMES = [
+  "saveRoutine", "setRoutineEnabled", "removeRoutine", "resolveMaintenanceSettings",
   "historyPage", "taskDetails", "previewImage",
   "saveRole", "addRole", "resetRole", "removeRole",
   "addProduct",

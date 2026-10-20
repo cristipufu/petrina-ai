@@ -19,6 +19,7 @@ export interface AppRoute {
   product: string;
   sheet?: TaskRoute;
   productSettings?: string;
+  libraryView?: "routines" | "roles" | "profiles";
   history?: { cursor?: string; query?: string; previous?: readonly string[] };
   missing?: string;
 }
@@ -46,6 +47,7 @@ export function readRoute(address: URL): AppRoute {
   if (page && Object.hasOwn(PAGE_NAMES, page)) {
     const route = { ...base, view: page as Page, ...(page === "history" ? historyState() : {}) };
     if (parts.length === 1) return route;
+    if (page === "library" && ["routines", "roles", "profiles"].includes(id ?? "") && parts.length === 2) return { ...route, libraryView: id as AppRoute["libraryView"] };
     if (page === "products" && id && detail === "settings" && !extra) return { ...route, productSettings: id };
     // Bookmarks from before product settings moved out of app settings still open their editor.
     if (page === "settings" && id === "products" && detail && !extra) return { ...route, view: "products", productSettings: detail };
@@ -67,7 +69,8 @@ export function routeHref(route: AppRoute, search = window.location.search): str
     path = `/tasks/${encodeURIComponent(route.sheet.taskId)}${route.sheet.tab === "overview" ? "" : `/${route.sheet.tab}`}`;
     if (route.view !== "board") query.set("from", route.view);
     if (route.sheet.stepId) query.set("node", route.sheet.stepId);
-  } else if (route.view === "products" && route.productSettings) path += `/${encodeURIComponent(route.productSettings)}/settings`;
+  } else if (route.view === "library" && route.libraryView) path += `/${route.libraryView}`;
+  else if (route.view === "products" && route.productSettings) path += `/${encodeURIComponent(route.productSettings)}/settings`;
   const suffix = query.toString();
   return path + (suffix ? `?${suffix}` : "");
 }

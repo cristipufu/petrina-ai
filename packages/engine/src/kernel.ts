@@ -131,6 +131,7 @@ export interface EngineOptions {
 }
 
 export class Aborted extends Error {}
+export class MaintenanceProfileProblem extends Error {}
 
 /** Stop waiting promptly, and remove the abort listener on either outcome. */
 export async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -502,9 +503,9 @@ export abstract class Kernel {
     this.stopStep(task);
     task.holdsSlot = false;
     const published = task.repositories?.filter((work) => library.repositoryPublished(work)).length ?? 0;
-    task.state = published ? "needs-you" : "failed";
+    task.state = published || error instanceof MaintenanceProfileProblem ? "needs-you" : "failed";
     task.error = message;
-    task.statusLine = published ? `Delivery needs you · ${published} of ${task.repositories!.length} delivered` : "Stuck. Needs you";
+    task.statusLine = published ? `Delivery needs you · ${published} of ${task.repositories!.length} delivered` : error instanceof MaintenanceProfileProblem ? "Waiting for confirmed maintenance settings. Check the tool, then try again." : "Stuck. Needs you";
     this.dropBlockingItems(taskId);
     // What went wrong belongs to the step that got stuck (an agent's, or Petrina's own); then the task waits for the coordinator.
     if (openStep(task)?.kind !== "you") endOpenStep(task, { outcome: W.stuck, reason: message, tone: "stuck", end: "failed" }, Date.now());
@@ -524,7 +525,7 @@ export abstract class Kernel {
       beginYouStep(task, "stuck", Date.now());
       this.raise(task, "stuck", `“${task.title}” is stuck`, false, { body: message.slice(0, 600) });
     }
-    task.state = published ? "needs-you" : "failed";
+    task.state = published || error instanceof MaintenanceProfileProblem ? "needs-you" : "failed";
     this.commit();
   }
 
@@ -674,13 +675,13 @@ export abstract class Kernel {
 
   dropBlockingItems(taskId: Id): void {
     const task = this.task(taskId);
-    const dropped = this.s.inbox.filter((entry) => entry.taskId === taskId && entry.blocking);
+    const dropped = this.s.inbox.filter((entry) => entry.taskId === taskId && entry.blocking && entry.kind !== "maintenance-settings");
     if (task) withdrawAsks(task, dropped.map((item) => item.id), Date.now());
     for (const item of dropped) {
       this.waiting.get(item.id)?.reject(new Aborted());
       this.waiting.delete(item.id);
     }
-    this.s.inbox = this.s.inbox.filter((entry) => !(entry.taskId === taskId && entry.blocking));
+    this.s.inbox = this.s.inbox.filter((entry) => !(entry.taskId === taskId && entry.blocking && entry.kind !== "maintenance-settings"));
   }
 
   stopDriver(taskId: Id): void {
@@ -753,8 +754,8 @@ export abstract class Kernel {
     return this.s.products.find((product) => product.id === repository.productId);
   }
 
-  role(id: Id): Role | undefined {
-    return this.s.roles.find((role) => role.id === id) as Role | undefined;
+  role(id: Id, task?: MTask): Role | undefined {
+    return library.roleForTask(this.s.roles, id, task);
   }
 
   profile(id: Id): AgentProfile | undefined {

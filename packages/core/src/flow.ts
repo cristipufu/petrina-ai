@@ -2,6 +2,7 @@
 // never drift: which board column a task is in, what a checkpoint says, where a request for changes
 // sends the task, and how design and review rounds end.
 
+import { roleForTask } from "./roles.js";
 import { CALL_WORDS, callOn, designStageIndex, startCall } from "./call.js";
 import type { Column, GateKind, InboxKind, Role, Stage, Task } from "./model.js";
 
@@ -24,7 +25,7 @@ export function columnOf(task: Task, roles: readonly Role[]): Column {
   if (!stage) return "ready";
   if (stage.kind === "gate") return stage.gate === "plan" ? "planning" : stage.gate === "design" ? "designing" : "ready";
   if (stage.kind === "review-chain") return "reviewing";
-  return roles.find((role) => role.id === stage.roleId)?.column ?? "building";
+  return roleForTask(roles, stage.roleId, task)?.column ?? "building";
 }
 
 export const GATE_TITLE: Record<GateKind, (title: string) => string> = {
@@ -88,7 +89,7 @@ export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note
     }
   } else if (kind === "delivery") {
     task.sentBack = (task.sentBack ?? 0) + 1;
-    const index = lastIndexWhere(stages, (stage) => roles.find((role) => role.id === stage.roleId)?.result === "build" && stage.kind === "do");
+    const index = lastIndexWhere(stages, (stage) => roleForTask(roles, stage.roleId, task)?.result === "build" && stage.kind === "do");
     if (index >= 0) {
       task.stageIndex = index;
       task.fixing = true;
@@ -121,7 +122,7 @@ export const MAX_REVIEW_ROUNDS = 5;
 export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: readonly Role[]): ReviewRoundEnd {
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").length;
   if (open === 0) return { kind: "passed" };
-  const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && roles.find((role) => role.id === entry.roleId)?.result === "build");
+  const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && roleForTask(roles, entry.roleId, task)?.result === "build");
   if (builder < 0) return { kind: "used up", open };
   if (round < (stage.maxRounds ?? 2)) return { kind: "send back", builder, open };
   const previous = task.blockingFindingsAfter?.[stage.id]?.at(-1);

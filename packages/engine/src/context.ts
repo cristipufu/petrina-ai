@@ -47,7 +47,7 @@ export class Context {
 
   async sectionsFor(scope: RepositoryContext, roleId: Id, member?: string, copies?: Readonly<Record<string, string>>, shownKey?: string, review?: ReviewInput): Promise<Section[]> {
     const { task, work: repository } = scope;
-    const role = this.k.role(roleId);
+    const role = this.k.role(roleId, task);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
     const fromPlanning = task.plan?.stages.some((stage) => stage.kind === "converge") ? [] : task.sourcePointers ?? [];
     const references = role?.result === "brief" ? [...(task.brief?.sourcePointers ?? []), ...(task.sourcePointers ?? [])]
@@ -58,11 +58,14 @@ export class Context {
       currentSourcePointers(repositoryView(scope), references),
     ]);
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
-    takeMessages(task, member, Infinity);
+    // Preparing context to replay an accepted reply does not deliver instructions yet.
+    const heldReply = task.maintenance?.role.id === roleId && task.maintenance.pendingReply && task.maintenance.settingsDecision?.choice === "keep";
+    if (!heldReply) takeMessages(task, member, Infinity);
     const source = review ? review.source : this.approvedSource(scope);
     const rows = review ? review.products : this.productRows(scope);
     const map = rows ? [{ title: "Complete approved product map and responsibility", body: rows.map((row) => `${row.beforeCopy}${copies?.[row.productId] ?? row.copy}${row.afterCopy}`).join("\n\n") + `\n\n${role?.canEdit ? `You own only product ${repository.productId}. Read the other copies when needed; change only your own product. Return your own title, report and PR description.` : "Inspect every repository and the behaviour across them together."}\nFor every acceptance result and finding, explicitly return productIds naming every affected product. Unassigned items stay under Together for the coordinator. Passing separate suites cannot prove shared acceptance. For each lesson, return {productId, text} naming its product; unassigned lessons stay under Together and are never added to a repository automatically. Shared repairs require a separate answer from every affected builder and combined verification.` }] : [];
     const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => review && part !== "notes" ? review.parts[part] ?? [] : this.parts[part](scope, roleId, points, currentChecks))];
+    if (task.maintenance) sections.unshift({ title: "Saved scheduled maintenance request", body: task.maintenance.input });
     if (review?.material) sections.push(review.material);
     if (pointers.length) sections.push({ title: "Previously inspected source locations (verify independently)", body: `Navigation only: this incomplete selection can steer attention. It contains no recommendations or extra requirements. Verify the current code and inspect other areas as needed; the original request and approved brief remain authoritative.\n${pointers.map((pointer) => `- ${pointer.productId}: ${pointer.path} (source version ${pointer.revision})`).join("\n")}` });
     if (role?.result === "findings") {
@@ -179,7 +182,7 @@ export class Context {
     if (!repository.report) return [];
     const sections = [{ title: "What the builder reports", body: [repository.report.summary, ...repository.report.changes.map((change) => `- ${change}`), repository.report.tests ? `Tests: ${repository.report.tests}` : ""].filter(Boolean).join("\n") }];
     // The builder keeps what goes out with the work current: what it wrote last time, to hand back as it should read now.
-    if (this.k.role(roleId)?.result === "build" && repository.delivery === "pull-request" && repository.report.description) sections.push({ title: "The pull request description you wrote last time", body: repository.report.description });
+    if (this.k.role(roleId, scope.task)?.result === "build" && repository.delivery === "pull-request" && repository.report.description) sections.push({ title: "The pull request description you wrote last time", body: repository.report.description });
     return sections;
   }
 

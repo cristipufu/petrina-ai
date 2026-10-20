@@ -52,7 +52,7 @@ export class Driver {
   private testerNeedsChecks(task: MTask): boolean {
     const scope = executionFor(task);
     const stage = task.plan?.stages[task.stageIndex];
-    return stage?.kind === "do" && this.k.role(stage.roleId)?.result === "checks" && !task.retest && scope.work.conversation?.roleId !== stage.roleId
+    return stage?.kind === "do" && this.k.role(stage.roleId, task)?.result === "checks" && !task.retest && scope.work.conversation?.roleId !== stage.roleId
       && this.preparedTesters.get(task.id) !== this.testerCheckKey(task);
   }
 
@@ -145,7 +145,7 @@ export class Driver {
       // What it waited for landed or was cancelled: back to plain queue words.
       if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) (task as MTask).statusLine = "In the queue";
       if (task.held) continue;
-      const seat = this.seatOf({ roleId: "planner", profileId: this.k.onUsable(PLANNER_PROFILE) });
+      const seat = this.seatFor(task as MTask);
       if (seat.waiting) {
         (task as MTask).statusLine = seat.waiting;
         continue;
@@ -160,7 +160,7 @@ export class Driver {
       if (!task || ((this.k.settling.has(taskId) || this.k.drivers.has(taskId)) && !group)) continue;
       if (task.state === "queued") {
         task.startedAt = Date.now();
-        task.stageIndex = -1;
+        task.stageIndex = task.maintenance ? 0 : -1;
         this.k.log(task, "milestone", "Started from the queue");
       }
       // The group already has its peer's seat. Resuming the granted member must not take the task's
@@ -223,7 +223,7 @@ export class Driver {
     if (next) task.agent = { ...next, since: Date.now(), step: 0 };
     else delete task.agent;
     task.column = this.k.columnFor(task);
-    task.statusLine = preparing ? "Preparing the product's checks" : next ? `${this.k.role(next.roleId)?.name ?? next.roleId} is starting` : "Getting ready";
+    task.statusLine = preparing ? "Preparing the product's checks" : next ? `${this.k.role(next.roleId, task)?.name ?? next.roleId} is starting` : "Getting ready";
     return true;
   }
 
@@ -242,8 +242,8 @@ export class Driver {
     switch (stage.kind) {
       case "do":
         // Petrina publishes by itself: the Release Manager's seat is needed only for a release's notes.
-        if (this.k.role(stage.roleId)?.result === "delivery" && !needsReleaseManager(scope.work)) return undefined;
-        return { roleId: stage.roleId, profileId: (task.repositories && this.k.role(stage.roleId)?.result === "build" ? task.plan?.products?.find((work) => work.productId === scope.work.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? PLANNER_PROFILE };
+        if (this.k.role(stage.roleId, task)?.result === "delivery" && !needsReleaseManager(scope.work)) return undefined;
+        return { roleId: stage.roleId, profileId: (task.repositories && this.k.role(stage.roleId, task)?.result === "build" ? task.plan?.products?.find((work) => work.productId === scope.work.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? PLANNER_PROFILE };
       case "converge":
         return task.sub === 0
           ? { roleId: stage.roleId, profileId: stage.profileIds[0] ?? PLANNER_PROFILE }
@@ -293,7 +293,7 @@ export class Driver {
         const current = task();
         let scope = executionFor(current);
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
-        if (!stage || this.k.role(stage.roleId)?.result !== "checks") this.preparedTesters.delete(taskId);
+        if (!stage || this.k.role(stage.roleId, current)?.result !== "checks") this.preparedTesters.delete(taskId);
         // A restart can find the working copy detached by an interrupted commit hook. Put it back before
         // review or delivery reads that original starting version as the task's work.
         if (scope.work.worktree && scope.work.hooking) await this.recoverHook(scope);
@@ -306,22 +306,27 @@ export class Driver {
             await this.sources.addApproved(current, work.productId, signal);
             if (work.preparation !== "ready") { await this.prepare(scope, signal); work.preparation = "ready"; this.k.commitNow(); }
           }
-          if (stage?.kind === "do" && this.k.role(stage.roleId)?.canEdit) for (const work of current.repositories) {
+          if (stage?.kind === "do" && this.k.role(stage.roleId, current)?.canEdit) for (const work of current.repositories) {
             const scope: RepositoryContext = { task: current, work };
             current.activeProductId = work.productId;
             if (work.pr || work.release || work.landed) continue;
             await this.shipping.clearUnpublishedVersion(scope);
           }
-          const editing = stage && this.k.role(stage.roleId)?.canEdit && (stage.kind === "do" || (stage.kind === "converge" && current.sub === 0));
+          const editing = stage && this.k.role(stage.roleId, current)?.canEdit && (stage.kind === "do" || (stage.kind === "converge" && current.sub === 0));
           const progress = stage?.kind === "converge" ? designWorkKey(current, stage.id) : stage?.id;
           const nextProduct = current.repair?.products[current.repair.index] ?? (editing && progress ? current.repositories.find((work) => !work.completedStages.includes(progress))?.productId : undefined) ?? current.leadProductId ?? current.repositories[0]!.productId;
           current.activeProductId = nextProduct;
           scope = executionFor(current);
         }
+        if (current.maintenance && !scope.work.source) {
+          if (!this.k.s.products.some(product => product.id === current.maintenance!.product.id)) throw new Error("The maintenance product was removed. This run cannot change products.");
+          scope.work.source = { ...await this.sources.resolve(current, scope.work.workChoice!, current.maintenance.product), confirmed: true };
+          this.k.commitNow(current);
+        }
         if (!scope.work.worktree && this.sourceSettled(current) && (current.stageIndex >= 0 || !current.approvePlan)) await this.prepare(scope, signal);
         if (current.stageIndex >= 0 && !scope.work.worktree) { this.k.gate(current, "plan"); return; }
         // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
-        if (stage && current.handChanges && (stage.gate === "delivery" || this.k.role(stage.roleId)?.result === "delivery")) {
+        if (stage && current.handChanges && (stage.gate === "delivery" || this.k.role(stage.roleId, current)?.result === "delivery")) {
           const chain = lastIndexWhere(current.plan!.stages, (entry) => entry.kind === "review-chain");
           if (chain >= 0) {
             current.stageIndex = chain;
@@ -336,7 +341,7 @@ export class Driver {
         }
         // Acceptance was tried on this change already. Fixes are reviewed, and the final code is tried once more
         // right before the delivery check, so a tester pass per fix round is spared.
-        if (stage?.kind === "do" && this.k.role(stage.roleId)?.result === "checks" && !current.retest && current.testedPatch !== undefined && (!current.repositories || current.acceptancePassed)) {
+        if (stage?.kind === "do" && this.k.role(stage.roleId, current)?.result === "checks" && !current.retest && current.testedPatch !== undefined && (!current.repositories || current.acceptancePassed)) {
           this.k.log(current, "milestone", "Acceptance will be tried once more on the final code, right before your delivery check");
           current.stageIndex += 1;
           current.sub = 0;
@@ -383,7 +388,7 @@ export class Driver {
               }
               await this.learnings.offer(scope);
               if (scope.work.delivery === "release" && current.repositories) {
-                const releaseStage = current.plan!.stages.find((entry) => entry.kind === "do" && this.k.role(entry.roleId)?.result === "delivery")!;
+                const releaseStage = current.plan!.stages.find((entry) => entry.kind === "do" && this.k.role(entry.roleId, current)?.result === "delivery")!;
                 await this.shipping.releases.previewRelease(scope, releaseStage, signal);
               }
               const checkedHead = await git.head(scope.work.worktree!).catch(() => undefined);
@@ -398,7 +403,7 @@ export class Driver {
             if (sentBack) continue;
             const versions = await invalidateAcceptance(current);
             // The tester tried an earlier version of the change: the final code gets one more pass first.
-            const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && this.k.role(entry.roleId)?.result === "checks");
+            const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && this.k.role(entry.roleId, current)?.result === "checks");
             const acceptanceFailed = current.acceptancePassed === false;
             const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || current.acceptanceUnverified === true;
             if (tester >= 0 && current.testedPatch !== undefined && !acceptanceExhausted && (acceptanceFailed || (await this.checks.acceptanceVersion(scope, versions)) !== current.testedPatch)) {
@@ -498,7 +503,7 @@ export class Driver {
         if (!stage) throw new Error("The plan ended without a delivery");
         const next =
           stage.kind === "do"
-            ? this.k.role(stage.roleId)?.result === "delivery"
+            ? this.k.role(stage.roleId, current)?.result === "delivery"
               ? await this.shipping.deliver(current, stage, signal)
               : await this.work.runDo(scope, stage, signal)
             : stage.kind === "converge"
@@ -508,6 +513,7 @@ export class Driver {
       }
     } catch (error) {
       if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) return;
+      if (this.k.task(taskId)?.maintenance?.settingsDecision && !this.k.task(taskId)?.maintenance?.settingsDecision?.choice) return;
       if (error instanceof WaitingForUsage) {
         // Admission may close during an awaited preparation step. Every such exit must
         // release its reservation and remain schedulable, even if the callee only threw.
@@ -614,7 +620,7 @@ export class Driver {
    */
   recover(): void {
     const keep = (item: InboxItem) => {
-      if (!item.blocking) return true;
+      if (!item.blocking || item.kind === "maintenance-settings") return true;
       const task = this.k.task(item.taskId);
       return item.kind === "question" && task?.state === "needs-you" && executionFor(task).work.conversation?.asked?.itemId === item.id;
     };

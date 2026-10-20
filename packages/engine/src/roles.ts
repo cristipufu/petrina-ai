@@ -4,7 +4,7 @@
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { ACCEPTANCE_EVIDENCE_RULE, activeRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
+import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
@@ -66,6 +66,7 @@ export const ObjectionsResult = z.object({
 });
 
 export const NotesResult = z.object({
+  complete: z.boolean().optional(),
   images: ReportImages,
   summary: z.string().min(3),
   notes: z.array(z.string()).default([]),
@@ -75,6 +76,7 @@ export const NotesResult = z.object({
 const LEARNED = z.array(z.union([z.string(), z.object({ productId: z.string(), text: z.string() })])).max(5).default([]);
 
 export const BuildResult = z.object({
+  complete: z.boolean().optional(),
   images: ReportImages,
   summary: z.string().min(3),
   // One line for the commit that carries the whole change, in the repository's own style.
@@ -468,13 +470,13 @@ Do not change any files, and do not commit, tag, push or publish anything: Petri
 /** What the planner can choose, including roles the coordinator added. */
 export function plannerRoles(roles: readonly Role[]): string {
   const fits = { do: 'a "do" stage', design: 'the author of a "converge" stage', "design-review": 'the reviewer of a "converge" stage', review: 'a reviewer in a "review-chain" stage' };
-  return activeRoles(roles).filter((role) => !role.internal && stepOf(role)).map((role) => `- ${role.id} (${role.name}): ${role.purpose} | ${role.canEdit ? "changes the product" : "read-only"} | hands back: ${role.handsBack || role.result} | fits: ${fits[stepOf(role)!]}`).join("\n");
+  return workflowRoles(roles).filter((role) => !role.internal && stepOf(role)).map((role) => `- ${role.id} (${role.name}): ${role.purpose} | ${role.canEdit ? "changes the product" : "read-only"} | hands back: ${role.handsBack || role.result} | fits: ${fits[stepOf(role)!]}`).join("\n");
 }
 
 /** The contract follows the result, so a coordinator's added reviewer works like a built-in reviewer. */
 export function contractFor(role: Role): RoleContract {
   const builtIn = BUILT_IN_ROLES.find((entry) => entry.id === role.id);
-  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "findings" ? "code-reviewer" : role.result === "brief" ? "architect" : role.result === "objections" ? "design-reviewer" : "researcher"]!;
+  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "build" ? "builder" : role.result === "findings" ? "code-reviewer" : role.result === "brief" ? "architect" : role.result === "objections" ? "design-reviewer" : "researcher"]!;
   if (role.id === "release-manager") return contract;
   const instructions = (ctx: PromptContext): string => {
     const original = contract.instructions(ctx);
@@ -482,7 +484,7 @@ export function contractFor(role: Role): RoleContract {
     return contract.withInstructions ? contract.withInstructions(ctx, role.instructions) : role.instructions;
   };
   return { ...contract, instructions: (ctx) => {
-    const text = instructions(ctx);
+    const text = instructions(ctx) + (role.category === "maintenance" ? '\nSet "complete" to true only after completing the bounded investigation. Return false for an incomplete investigation and explain what prevented completion. Distinguish findings from missing evidence.\n' : "");
     const designRuntime = role.result === "objections" ? designReviewRuntime(ctx.task) : "";
     const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [DESIGN_RESEARCH_RULE] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
@@ -491,7 +493,8 @@ export function contractFor(role: Role): RoleContract {
 }
 
 export function shapeFor(contract: RoleContract, ctx: PromptContext): string {
-  const shape = typeof contract.shape === "function" ? contract.shape(ctx) : contract.shape;
+  let shape = typeof contract.shape === "function" ? contract.shape(ctx) : contract.shape;
+  if (ctx.role.category === "maintenance") shape = shape.replace(/}\s*$/, ', "complete": true}');
   return ["notes", "objections", "build", "checks", "findings"].includes(ctx.role.result)
     ? shape.replace(/}\s*$/, ', "images": [{"path": "A chosen browser capture", "caption": "What the picture demonstrates, in plain language"}]}')
     : shape;

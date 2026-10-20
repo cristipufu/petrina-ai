@@ -88,7 +88,21 @@ Cards, board columns, the Agents page and the inbox show no usage numbers, so th
 
 ## Library
 
+Library has addressable Routines, Roles and Profiles views. `/library` and `/library/routines` open Routines; `/library/roles` and `/library/profiles` open the other views. Links retain the product scope and demo parameters through refresh and browser history. Routines follow the product filter; roles and profiles are shared.
+
+### Routines
+
+Each card names its product, maintenance role, full tool/model/effort profile, frequency, saved time zone, dated next queue time with UTC offset and Enabled, Disabled or Needs attention state. Latest queued run is a separate task link. Scheduling messages explain catch-up, skipped triggers and the blocking task, paused scheduling or unavailable references without replacing that link. Edit and Remove remain available for missing references.
+
+Add a routine and Edit open the same responsive panel. Choose exactly one saved product, maintenance role and profile; the suggested name follows the role and product until edited. Focus instructions are optional. The time zone initially uses the Mac's regional zone and is editable on both creation and editing. Daily uses a local time; Weekly uses weekdays and a local time. Custom reveals five-field minute-based cron, with numeric values, lists, ranges and steps, a field guide and plain-language validation. When date and weekday are both restricted, either can match. Impossible dates and unknown zones cannot save; valid infrequent dates can.
+
+The editor previews the next three queue times and explains delivery: completed investigations without changes finish in History; changes get automated checks, two independent Code reviewers and delivery approval. Reports only is always read-only. A daylight-saving gap skips that local time; a repeated time runs once, at its first occurrence. The saved zone does not follow later Mac zone changes. Queue time does not promise an agent start, and Petrina must be running to queue work.
+
+After sleep or restart, missed times combine into one catch-up task representing the latest missed occurrence. Every unfinished earlier run blocks another, including failed, held, paused and unresolved delivery work. Skipped work never replays. Creating, rescheduling, changing zone, re-enabling or repairing an unavailable choice starts at the first future time. Repairing a routine does not queue a catch-up for the time it needed attention. Disabling or removing stops future occurrences while preserving existing tasks. Save is explicit, Command/Ctrl+Enter works, Escape closes or asks before discarding edits, and focus returns to the opener. Disconnected controls wait for reconnection.
+
 ### Roles
+
+Workflow and Maintenance are permanent categories. Workflow roles alone appear in ordinary plans and task role pickers. Maintenance has six editable starters and its own Add a maintenance role control. New maintenance roles choose Reports only or Small changes with review once, with permission determined by that result and no separate permission switch. Renaming never changes behavior. Starter instructions follow the evidence-first examples in [OpenAI’s maintenance article](https://developers.openai.com/blog/maintaining-software-with-the-gpt-6-family), adapted to available repository evidence without assuming specific services.
 
 A card per role with its icon, purpose, what it may change, what it sees and what it hands back. Built-in roles say "Built-in", plus "Edited" once changed; roles you add say "Added by you". **Add a role**, at the top of the section, starts one from blank, from a Security reviewer or from a Copywriter, with a name, an icon and a colour of your choice.
   - **Edit** opens a panel from the right that asks, in plain words: what it's for (the planner reads this to decide when to bring it in), how it works (what the agent is told), what it may change and what it hands back. Below them it shows what Petrina decides: where its tasks sit on the board and what it sees. No code, ids or settings. Save is explicit (⌘↵); Cancel, Escape or closing with unsaved changes asks first.
@@ -97,6 +111,12 @@ A card per role with its icon, purpose, what it may change, what it sees and wha
   - **Reset to default** brings back Petrina's wording and settings for an edited built-in role, after you confirm. **Remove role** takes a role you added out of the Library and the planner, after a confirmation that names any unfinished task using it: tasks already planned with it still run it, and past tasks still show its name and icon.
   - The **Release Manager** has View instead of Edit. It writes release notes, read-only, and can't be edited here. Petrina adds delivery last and handles publishing itself, as before.
   - The engine saves the changes and keeps them across restarts. They reach the next agent that starts and the next plan the planner makes; an agent already working finishes with the version it started with. Roles you add appear in plans with their icon and name like any other; when the planner puts one where it can't work, the plan's reason says what Petrina changed. In the demo, changes apply to the simulated squad for the session.
+
+### Profiles
+
+One shared catalog supplies the engine and demos. Existing profiles and selections remain available, including for maintenance. Codex additionally offers GPT-6 Astra Ultra, GPT-6.1 Sol Ultra and GPT-6.1 Sol Medium. Ultra and Extra High are distinct. Cards show active stage and routine counts.
+
+If a maintenance tool reports different model or effort settings, Inbox shows requested and reported settings with Keep this run and Stop this run. Keeping accepts only that turn's work and retains normal delivery gates; stopping cancels and cleans up. Neither changes the routine's profile. The task's Scheduled routine section retains its frozen request, times, findings and settings decision after routine edits or deletion.
 
 ### Templates
 

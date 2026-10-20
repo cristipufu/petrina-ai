@@ -100,14 +100,14 @@ export function makeProduct(root: string): string {
 /** Reuse only the immutable starting commit. Each fixture copies its objects, refs and config. */
 interface RepositorySeed { path: string; origin: string; clone: string; head: string }
 const repositorySeeds = new Map<string, RepositorySeed>();
-function repositorySeed(version?: string, versionFile = false): RepositorySeed {
-  const key = JSON.stringify([version ?? "", versionFile]);
+function repositorySeed(version?: string, versionFile = false, objectFormat?: "sha1" | "sha256"): RepositorySeed {
+  const key = JSON.stringify([version ?? "", versionFile, objectFormat]);
   const saved = repositorySeeds.get(key);
   if (saved) return saved;
   const path = tempDir("petrina-repository-seed-");
   const source = join(path, "source"), origin = join(path, "origin.git"), clone = join(path, "clone");
   mkdirSync(source);
-  git(source, "init", "-q", "-b", "main");
+  git(source, "init", "-q", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []));
   writeFileSync(join(source, "README.md"), "# Demo\n");
   if (versionFile) writeFileSync(join(source, "VERSION"), "1.0.0\n");
   if (version) writeFileSync(join(source, "package.json"), `${JSON.stringify({ name: "demo", version }, null, 2)}\n`);
@@ -115,7 +115,7 @@ function repositorySeed(version?: string, versionFile = false): RepositorySeed {
   git(source, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init");
   if (versionFile) git(path, "clone", "-q", "--bare", "--no-hardlinks", source, origin);
   else {
-    git(path, "init", "-q", "--bare", "-b", "main", origin);
+    git(path, "init", "-q", "--bare", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []), origin);
     git(source, "push", "-q", origin, "main");
   }
   git(path, "clone", "-q", "--no-hardlinks", "-c", "user.email=test@example.com", "-c", "user.name=Test", origin, clone);
@@ -439,8 +439,8 @@ export interface World {
 }
 
 /** A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and scripted agents. */
-export function makeWorld(name: string, options: { version?: string; address?: string } = {}): World {
-  const seed = repositorySeed(options.version);
+export function makeWorld(name: string, options: { version?: string; address?: string; objectFormat?: "sha1" | "sha256" } = {}): World {
+  const seed = repositorySeed(options.version, false, options.objectFormat);
   const dir = mkdtempSync(join(tmpdir(), `petrina-${name}-`));
   const remote = join(dir, "github.git");
   const clone = join(dir, "clone");

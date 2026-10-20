@@ -150,6 +150,7 @@ export class Engine extends Kernel implements Commands {
       const own = planned ? this.builderConversation(task, planned) : undefined;
       if (own) void this.tools.check(own.toolId as CheckId).then(() => { if (!this.stopped) this.schedule(); });
     }
+    this.timers.push(setInterval(() => { try { this.pollRoutines(); this.schedule(); } catch (error) { console.error("Could not save maintenance admission:", error); } }, 15_000));
     this.armScreenTimer();
     this.timers.push(
       setInterval(() => {
@@ -184,6 +185,62 @@ export class Engine extends Kernel implements Commands {
     void this.trackWork(this.acceptedPoints.sweep());
   }
 
+  saveRoutine(draft: library.RoutineDraft, routineId?: Id): Id {
+    const previous = routineId ? this.s.routines?.find(r => r.id === routineId) : undefined;
+    if (routineId && !previous) throw new Error("That routine was removed. Close this editor and create a new routine.");
+    const id = routineId ?? `routine-${randomUUID()}`;
+    const next = library.saveRoutine(draft, this.s, id, Date.now(), previous);
+    this.s.routines = [...(this.s.routines ?? []).filter(r => r.id !== id), next] as typeof this.s.routines;
+    this.commitNow();
+    return id;
+  }
+
+  setRoutineEnabled(routineId: Id, enabled: boolean): void {
+    const routine = this.s.routines?.find(r => r.id === routineId);
+    if (!routine) throw new Error("That routine was removed.");
+    // Disable remains available even if a reference has disappeared.
+    if (!enabled) { routine.enabled = false; this.commitNow(); return; }
+    this.saveRoutine({ ...routine, enabled }, routineId);
+  }
+
+  removeRoutine(routineId: Id): void {
+    this.s.routines = (this.s.routines ?? []).filter(r => r.id !== routineId);
+    this.commitNow();
+  }
+
+  resolveMaintenanceSettings(taskId: Id, choice: "keep" | "stop"): void {
+    const task = this.task(taskId), decision = task?.maintenance?.settingsDecision;
+    if (!task || !decision || decision.choice) return;
+    decision.choice = choice;
+    this.log(task, "you", choice === "keep" ? `You kept this maintenance turn with its reported settings: ${decision.actual}. Future turns still request ${decision.requested}.` : "You stopped this maintenance run after its tool reported different settings");
+    this.s.inbox = this.s.inbox.filter(item => !(item.taskId === taskId && item.kind === "maintenance-settings"));
+    if (choice === "stop") { this.cancel(taskId); this.commitNow(task); return; }
+    task.state = "waiting";
+    task.statusLine = "Continuing with the reported settings you accepted";
+    this.commitNow(task); this.schedule();
+  }
+
+  /** A synchronous admission decision, saved before the ordinary driver sees it. */
+  pollRoutines(now = Date.now()): void {
+    if (this.stopped) return;
+    const before = structuredClone(this.s.routines);
+    const ids = new Set(this.s.tasks.map(t => t.id));
+    try {
+      const changed = library.admitRoutines(this.s, now, (routine, scheduledAt) => {
+        const id = this.createTask({ productId: routine.productId, title: routine.name, kind: "chore", approvePlan: false, approveDelivery: true });
+        const task = this.task(id)!;
+        library.prepareMaintenanceTask(task, routine, this.s as library.State, scheduledAt, now);
+        this.log(task, "milestone", `Queued by routine “${routine.name}” for ${library.occurrenceText(scheduledAt, routine.zone)}`);
+        return id;
+      });
+      if (changed) this.commitNow();
+    } catch (error) {
+      this.s.routines = before;
+      this.s.tasks = this.s.tasks.filter(t => ids.has(t.id));
+      throw error;
+    }
+  }
+
   schedule(): void {
     if (this.stopped) return;
     if (!this.startupComplete) {
@@ -192,6 +249,7 @@ export class Engine extends Kernel implements Commands {
       this.startupSchedulePending = true;
       return;
     }
+    this.pollRoutines();
     this.driver.schedule();
   }
 
@@ -818,6 +876,7 @@ export class Engine extends Kernel implements Commands {
     if (item !== stuck || item.kind !== "stuck" || !task) return;
     this.takeover.notDrivingItem(itemId);
     this.s.inbox = this.s.inbox.filter((entry) => entry.id !== itemId);
+    if (task.state === "failed" && task.maintenance) delete task.maintenance.readOnlyWrites;
     delete task.error;
     // An explicit Retry refreshes checks, pass or fail, even on unchanged work. Keep the output visible
     // until that run finishes; ordinary stage changes and restarts keep its identity and reuse it.

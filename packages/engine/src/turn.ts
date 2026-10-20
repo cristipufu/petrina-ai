@@ -7,9 +7,9 @@ import type { Sources } from "./sources.js";
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, startClock } from "@petrina/core";
+import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, startClock } from "@petrina/core";
 import type { z } from "zod";
-import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
+import { AgentRun, ReopenFailed, type PermissionInfo, type TurnResult } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
 import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox.js";
@@ -18,7 +18,7 @@ import { UsageLimited, WaitingForUsage } from "./usage.js";
 import type { AgentMessage } from "./agent-messages.js";
 import { ADAPTERS } from "./tools.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
-import { Kernel, Aborted, ScreenWait, notReady, stepKey, ToolProblem } from "./kernel.js";
+import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, notReady, stepKey, ToolProblem } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
@@ -95,7 +95,7 @@ export class Turns {
    */
   async turn<T>(scope: RepositoryContext, roleId: Id, plannedId: Id, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T> = {}): Promise<T> {
     const { task, work: repository } = scope;
-    if (!this.k.role(roleId) || !this.k.profile(plannedId) || (this.k.role(roleId)?.result !== "plan" && !this.k.productOf(scope))) throw new Error(`Unknown role or product: ${roleId} on ${plannedId}`);
+    if (!this.k.role(roleId, task) || !(task.maintenance?.profile.id === plannedId || this.k.profile(plannedId)) || (this.k.role(roleId, task)?.result !== "plan" && !this.k.productOf(scope))) throw new Error(`Unknown role or product: ${roleId} on ${plannedId}`);
     let stopped: { profileId: Id; error: UsageLimited } | undefined;
     for (;;) {
       if (this.k.admissionsClosed) throw new WaitingForUsage("Waiting for the pool to resume");
@@ -125,7 +125,7 @@ export class Turns {
       this.k.tracking.attempt(scope, roleId, plannedId, profile, stopped !== undefined);
       options.used?.(profile.id);
       // Said where the coordinator will see it: a security review that could not stay off the builder's tool.
-      const builder = this.k.profile(task.plan?.stages.find((stage) => this.k.role(stage.roleId)?.result === "build")?.profileIds[0] ?? "");
+      const builder = this.k.profile(task.plan?.stages.find((stage) => this.k.role(stage.roleId, task)?.result === "build")?.profileIds[0] ?? "");
       const builderTool = repository.builderSession?.toolId ?? builder?.toolId;
       if (roleId === "security-reviewer" && builderTool === profile.toolId && !task.timeline.some((entry) => entry.text.startsWith("Security review on the builder's tool"))) {
         this.k.log(scope, "warn", `Security review on the builder's tool (${this.k.named(profile.id)}): no other tool is available for this review`);
@@ -225,7 +225,7 @@ export class Turns {
   /** One attempt at the step by one agent on one profile. */
   private async attempt<T>(scope: RepositoryContext, roleId: Id, plannedId: Id, profile: AgentProfile, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T>): Promise<T> {
     const { task, work: repository } = scope;
-    let role = this.k.role(roleId);
+    let role = this.k.role(roleId, task);
     const product = this.k.repositoryOf(scope) ?? (role?.result === "plan" ? { id: "", name: "To be chosen", repo: "", tone: "blue" as const } : undefined);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
     const profileId = profile.id;
@@ -376,7 +376,37 @@ export class Turns {
     }
     this.k.commitNow(scope);
     const headBefore = !role.canEdit ? head : undefined;
+    const checkSettings = async (reply?: TurnResult, result?: T) => {
+      const maintenance = task.maintenance;
+      if (maintenance?.role.id !== roleId || !run.lastTurn) return;
+      const notes = run.lastTurn;
+      const model = notes.changed.model ?? notes.modelSeen ?? run.settings.model;
+      const effort = notes.changed.effort ?? run.settings.effort;
+      if (sameModel(profile.toolId, profile.modelId ?? profile.model, model) && effort === profile.effort && !notes.rerouted) return;
+      if (!role.canEdit && headBefore) {
+        const status = await git.worktreeStatus(worktree);
+        if (status.head !== headBefore || !status.clean) maintenance.readOnlyWrites = true;
+      }
+      const requested = `${profile.model} · ${profile.effort} effort`;
+      const actual = `${model ?? "unconfirmed model"} · ${effort ?? "unconfirmed effort"} effort`;
+      const stageId = task.plan!.stages[task.stageIndex]!.id;
+      if (reply) {
+        maintenance.pendingReply = { stageId, text: reply.text, stopReason: reply.stopReason, ...(reply.streamed ? { streamed: true } : {}) };
+        delete maintenance.pendingResult;
+      } else maintenance.pendingResult = { stageId, value: result };
+      maintenance.settingsDecision = { requested, actual, at: Date.now() };
+      this.k.pauseStep(task);
+      task.state = "needs-you"; task.holdsSlot = false; delete task.agent;
+      task.statusLine = "The tool reported different settings. Choose whether to keep or stop this run.";
+      this.k.s.inbox.push({ id: `maintenance-settings-${task.id}`, taskId: task.id, kind: "maintenance-settings", title: "Unexpected maintenance agent settings", body: `Requested: ${requested}\nReported: ${actual}\nKeeping this run accepts the work as produced. Delivery still needs its usual checks and approval. The routine keeps its saved profile.`, at: Date.now(), blocking: true });
+      this.k.commitNow(task);
+      throw new Aborted();
+    };
     try {
+      if (task.maintenance?.role.id === roleId) {
+        const confirmed = run.settings;
+        if (confirmed.model !== (profile.modelId ?? profile.model) || confirmed.effort !== profile.effort) throw new MaintenanceProfileProblem(`The maintenance profile could not be confirmed. Requested ${profile.model} at ${profile.effort}; reported ${confirmed.model ?? "no model"} at ${confirmed.effort ?? "no effort"}. Check the tool settings, then retry this run. No maintenance instructions were sent.`);
+      }
       // The last moment to notice a pause before the agent gets any work.
       if (signal.aborted || !live()) throw new Aborted();
       const withBackground = async (): Promise<Section[]> => [...await given(), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : [])];
@@ -399,7 +429,9 @@ export class Turns {
           delete repository.conversation.asked;
           delete repository.conversation.handback;
         }
-        const messages = takeMessages(task, options.member);
+        // A kept reply is processed before this conversation receives anything else.
+        const heldReply = task.maintenance?.role.id === roleId && task.maintenance.pendingReply && task.maintenance.settingsDecision?.choice === "keep";
+        const messages = heldReply ? [] : takeMessages(task, options.member);
         for (const message of messages) {
           if (!message.firstDelivery) continue;
           this.k.say(scope, "you", message.text);
@@ -431,7 +463,8 @@ export class Turns {
       this.k.commitNow(scope);
       // A reopened conversation carries on after the interruption; a fresh one gets its first instructions.
       const askScreen = options.member ? (reason: string) => this.saveScreenTurn(scope, role, profile, options.member!, worktree, repository.conversation, reason) : undefined;
-      const result = await this.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: !options.copy, ...(askScreen ? { askScreen } : {}) });
+      const result = await this.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: !options.copy, beforeContinue: checkSettings, ...(askScreen ? { askScreen } : {}) });
+      await checkSettings(undefined, result);
       if (repository.conversation) options.completed?.(repository.conversation, profile, role);
       return result;
     } catch (error) {
@@ -452,6 +485,7 @@ export class Turns {
         // A read-only role leaves its primary copy as found, including commits and tracked changes.
         ...(!role.canEdit && headBefore ? [(async () => {
           const state = await git.worktreeStatus(worktree);
+          if (task.maintenance?.role.id === roleId && (state.head !== headBefore || !state.clean)) task.maintenance.readOnlyWrites = true;
           if (state.head !== headBefore) {
             await git.resetTo(worktree, headBefore);
             this.k.log(scope, "warn", `Undid commits from ${role.name}, which is read-only`);
@@ -484,7 +518,7 @@ export class Turns {
     options: ConversationOptions & { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id, profile: AgentProfile) => boolean; seat?: Id; selectionReason?: string; reviewerKey?: string; key?: string; member?: string; agent?: ActiveAgent; refresh?: boolean } = {},
   ): Promise<T> {
     const { task } = scope;
-    if (!this.k.role(roleId) || !this.k.productOf(scope) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
+    if (!this.k.role(roleId, task) || !this.k.productOf(scope) || !(task.maintenance?.profile.id === plannedId || this.k.profile(plannedId))) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
     if (signal.aborted) throw new Aborted();
     const key = options.key ?? `${roleId}:${plannedId}`;
     let role = task.hunt?.roles?.[key];
@@ -523,7 +557,7 @@ export class Turns {
       if (stopped && stopped.profileId === profile.id) throw stopped.error;
       this.k.tracking.attempt(scope, roleId, plannedId, profile, stopped !== undefined);
       if (!role) {
-        role = structuredClone(this.k.role(roleId)!);
+        role = structuredClone(this.k.role(roleId, task)!);
         if (task.hunt) {
           task.hunt.roles = { ...task.hunt.roles, [key]: role };
           this.k.commitNow(scope);
@@ -667,12 +701,16 @@ export class Turns {
    * coordinator, and an unusable result back to it twice at most. Each parallel conversation hears
    * its own share of the coordinator's messages. An open question stays with the conversation that asked it.
    */
-  private async converse<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string }): Promise<T> {
+  private async converse<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void> }): Promise<T> {
     const { task, work: repository } = scope;
     const by = { roleId: role.id, profileId };
     // Every message to the agent and the reply it waits for is one entry in the work log.
-    const send = (text: string, why: TurnReason) => {
+    let previousReply: TurnResult | undefined;
+    let pendingOpening: string | undefined;
+    const send = async (text: string, why: TurnReason) => {
       if (signal.aborted) throw new Aborted();
+      if (previousReply) await options.beforeContinue?.(previousReply);
+      if (pendingOpening) { text = `${pendingOpening}\n\n${text}`; pendingOpening = undefined; }
       if (why !== "first") {
         const step = openStep(task);
         if (step?.kind === "agent") {
@@ -685,7 +723,9 @@ export class Turns {
           this.k.commitNow(scope);
         }
       }
-      return this.k.tracking.turn(scope, agent, run, text, why, signal);
+      const reply = await this.k.tracking.turn(scope, agent, run, text, why, signal);
+      previousReply = reply;
+      return reply;
     };
     const sendQueued = (batch: ReturnType<typeof takeMessages>) => {
       for (const message of batch) if (message.firstDelivery) {
@@ -698,8 +738,16 @@ export class Turns {
     };
     const mayAsk = mayAskScreen(role);
     const browser = run.browser ? (run.reopened ? `Browser capture folder for this turn: ${run.browser.directory}. Earlier pages and browser logins are gone; the same browser and output rules apply.` : browserPrompt(run.browser.directory)) : undefined;
-    let reply = await send(browser ? `${opening}\n\n${browser}` : opening, reason);
-    if (options.main) this.briefed(scope);
+    const pending = task.maintenance?.role.id === role.id && task.maintenance.settingsDecision?.choice === "keep" ? task.maintenance.pendingReply : undefined;
+    const accepted = pending?.stageId === task.plan?.stages[task.stageIndex]?.id ? pending : undefined;
+    const replayedReply: TurnResult | undefined = accepted ? { ...accepted, changed: {}, rerouted: false, helpers: 0 } : undefined;
+    let reply = replayedReply ?? await send(browser ? `${opening}\n\n${browser}` : opening, reason);
+    if (accepted) {
+      delete task.maintenance!.pendingReply;
+      if (!run.reopened) pendingOpening = browser ? `${opening}\n\n${browser}` : opening;
+    }
+    // A replacement has not heard its opening yet when it is only replaying an older reply.
+    if (options.main && (!accepted || run.reopened)) this.briefed(scope);
     for (let repairs = 0; ; ) {
       if (signal.aborted) throw new Aborted();
       const current = this.k.task(task.id);
@@ -713,6 +761,8 @@ export class Turns {
           : current.session.at(-1)
         : undefined;
       const parsed = parseResult(reply.text, schema);
+      if (parsed.ok !== true || reply.stopReason === "cancelled") await options.beforeContinue?.(reply);
+      if ((options.main || options.member) && current.queued.length) await options.beforeContinue?.(reply);
       // A screen request goes before messages in line: they reach the agent with the screen, now or when it continues.
       if (parsed.ok === "screen" && mayAsk && reply.stopReason !== "cancelled") {
         // Asking again for the screen it has: told once more, a limited number of times.
@@ -738,7 +788,9 @@ export class Turns {
         reply = await send(screenPrompt(current.screen!.reason, messages.map((message) => message.text)), "continue");
         continue;
       }
-      const batch = options.main || options.member ? takeMessages(current, options.member) : [];
+      // Keeping a saved question accepts that question, even when instructions are waiting.
+      const heldQuestion = reply === replayedReply && parsed.ok === "input";
+      const batch = !heldQuestion && (options.main || options.member) ? takeMessages(current, options.member) : [];
       if (batch.length) {
         reply = await sendQueued(batch);
         continue;
@@ -755,7 +807,7 @@ export class Turns {
         const note = repository.conversation;
         if (note && (options.main || (note.roleId === role.id && note.profileId === profileId))) delete note.asked;
         this.k.commitNow(scope);
-        reply = await send(`The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`, "answer");
+        reply = await send(`${heldQuestion ? `Question: ${parsed.question}\n\n` : ""}The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`, "answer");
         continue;
       }
       let error: string | undefined;
@@ -764,6 +816,7 @@ export class Turns {
         error = parsed.ok === true ? await options.check?.(parsed.value) : parsed.ok === "screen" ? NO_SCREEN_HERE : parsed.error;
         if (parsed.ok === true && !error) {
           // Validation may await I/O. Notes arriving during it still reach this agent before its result is accepted.
+          if ((options.main || options.member) && current.queued.length) await options.beforeContinue?.(reply);
           const late = options.main || options.member ? takeMessages(current, options.member) : [];
           if (late.length) {
             reply = await sendQueued(late);
@@ -787,6 +840,7 @@ export class Turns {
               if (signal.aborted || live.state === "done" || live.state === "cancelled") throw new Aborted();
               // Saving pictures also awaits I/O. Discard superseded copies and let this
               // agent hear any new instruction before attaching pictures or finishing.
+              if ((options.main || options.member) && current.queued.length) await options.beforeContinue?.(reply);
               const whileSaving = options.main || options.member ? takeMessages(current, options.member) : [];
               if (whileSaving.length) {
                 await Promise.all(saved.map((image) => rm(join(storage, `${image.id}.png`), { force: true })));
@@ -821,6 +875,7 @@ export class Turns {
       } finally {
         if (reportLine) this.k.pendingReportIds.delete(reportLine.id);
       }
+      await options.beforeContinue?.(reply);
       repairs += 1;
       if (repairs > 2) throw new Error(`${role.name} did not hand back a usable result: ${error}`);
       this.k.tracking.redo(current, role.id, agent.profile);

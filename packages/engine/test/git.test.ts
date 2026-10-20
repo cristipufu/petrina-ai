@@ -16,6 +16,37 @@ const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g,
 describe("Petrina's own git steps", () => {
   afterAll(() => removeDir(temp));
 
+  for (const format of ["sha1", "sha256"] as const) it(`compares and restores ${format} versions without treating an invalid version as unchanged`, async () => {
+    const repo = join(temp, `maintenance-${format}`); mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
+    git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Initial\n");
+    await commitAll(repo, "Initial");
+    const initial = await operations.head(repo), first = await operations.commitVersion(repo);
+    expect(initial).toHaveLength(format === "sha256" ? 64 : 40);
+    expect(first).toEqual({ head: initial, tree: git(repo, "rev-parse", "HEAD^{tree}") });
+    expect(await operations.revParse(repo, "HEAD")).toBe(initial);
+    expect(await operations.worktreeStatus(repo)).toEqual({ head: initial, clean: true, trackedChanged: false });
+    expect(await operations.changedFiles(repo, initial, initial)).toEqual([]);
+    writeFileSync(join(repo, "maintenance.txt"), "A committed maintenance change\n");
+    const changed = (await commitAll(repo, "Maintenance"))!;
+    expect(await operations.changedFiles(repo, initial, changed)).toEqual(["maintenance.txt"]);
+    expect(await operations.changedFiles(repo, initial.slice(0, 12), changed.slice(0, 12))).toEqual(["maintenance.txt"]);
+    expect(await operations.treeOf(repo)).toBe(git(repo, "rev-parse", "HEAD^{tree}"));
+    expect(await contains(repo, changed, initial)).toBe(true);
+    await expect(operations.changedFiles(repo, "invalid", changed)).rejects.toThrow();
+    await expect(operations.changedFiles(repo, initial, "invalid")).rejects.toThrow();
+    await expect(operations.changedFiles(repo, initial, "f".repeat(initial.length))).rejects.toThrow();
+    await expect(operations.resetTo(repo, "invalid")).rejects.toThrow();
+    writeFileSync(join(repo, ".git", "index.lock"), "Restore is temporarily unavailable\n");
+    try { await expect(operations.resetTo(repo, initial)).rejects.toThrow(); }
+    finally { rmSync(join(repo, ".git", "index.lock")); }
+    expect(await operations.head(repo)).toBe(changed);
+    await operations.resetTo(repo, initial);
+    expect(await operations.head(repo)).toBe(initial); expect(existsSync(join(repo, "maintenance.txt"))).toBe(false);
+    expect(await operations.worktreeStatus(repo)).toEqual({ head: initial, clean: true, trackedChanged: false });
+  });
+
   it("checks ancestry from HEAD directly while preserving hash validation for other inputs", async () => {
     const repo = join(temp, "head-ancestry"); mkdirSync(repo);
     git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");

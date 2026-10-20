@@ -42,6 +42,14 @@ Identity matching deliberately prefers high effort for semantic judgment, then m
 
 Pictures needed by an unfinished follow-up are copied to that card before the original task's pictures are removed. A failed copy keeps its saved retry and original bytes across restarts. Cleanup reads archived bodies only for those saved pending links, rather than loading finished conversations just to remove their capture folders. Completing or cancelling the follow-up removes its picture bytes as usual.
 
+## Maintenance completion
+
+Scheduled tasks start directly with their saved maintenance role and profile, using the normal Queue, default-branch source, product delivery destination, pool/tool limits and working-copy lifecycle. There is no Planner turn or additional Builder.
+
+After an accepted completed maintenance turn, compare the actual remaining product tree with its base. With no changes, retain the real report and finish in History through normal cleanup, without product checks, reviewers or delivery approval. This also applies to writable investigations and changes withdrawn during repair. Nothing actionable found is an honest report, never a replacement for errors, incomplete work or unresolved settings decisions.
+
+Changed maintenance work remains Medium risk and runs ordinary product checks, two fresh Code reviewers and delivery approval. Reviewers prefer different available tools and avoid the maintenance profile when another tool is available; with one tool they use independent conversations. Existing finding verification, repair limits and update-conflict handling apply, returning to the frozen maintenance role and profile. Maintenance adds no Security review, risk classifier or delivery system. Agents never publish or merge.
+
 ## Checks, reviews and risk
 
 ### Check output

@@ -42,7 +42,8 @@ export interface Remote {
 /** An answer from GitHub, or why there is none. "Not there" and "could not ask" never look alike. */
 export type Check<T> = { ok: true; value: T } | { ok: false; error: string };
 
-const SHA = /^[0-9a-f]{7,40}$/i;
+/** Full or abbreviated native object ids, for either Git object format. */
+const SHA = /^[0-9a-f]{7,64}$/i;
 /** A whole commit id, as pushes and handoffs name commits. */
 const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
 /** Git ref names, passed only as individual arguments. Unicode and punctuation valid in git are preserved. */
@@ -563,8 +564,8 @@ export async function withMarkers(path: string, paths: readonly string[]): Promi
 }
 
 export async function resetTo(path: string, sha: string): Promise<void> {
-  if (!SHA.test(sha)) return;
-  await run(["git", "reset", "--hard", "--quiet", sha], path);
+  if (!SHA.test(sha)) throw new Error("Could not restore the product: the saved version is invalid.");
+  await must(["git", "reset", "--hard", "--quiet", sha], path);
 }
 
 export async function head(path: string): Promise<string> {
@@ -604,7 +605,7 @@ export async function parents(path: string, sha: string): Promise<string[]> {
 
 /** Files that differ between two commits or trees. A failed read cannot establish that nothing changed. */
 export async function changedFiles(path: string, from: string, to: string): Promise<string[]> {
-  if (!SHA.test(from) || !SHA.test(to)) return [];
+  if (!SHA.test(from) || !SHA.test(to)) throw new Error("Could not compare product changes: the saved version is invalid.");
   return (await must(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", from, to], path)).split("\0").filter(Boolean);
 }
 

@@ -126,6 +126,7 @@ function request(item: InboxItem): string {
 
 /** What is needed, and who is asking. Only a stuck task names the task here: the rest say it below. */
 const NEED: Record<InboxKind, (who: string, task: string) => string> = {
+  "maintenance-settings": (_who, task) => `Choose whether to keep the reported agent settings for ${task}`,
   question: (who) => `${who} has a question`,
   permission: (who) => `${who} needs your permission`,
   plan: (who) => `${who}: a plan needs your OK`,

@@ -82,6 +82,14 @@ Product check runs use a separate queue, admitting one task’s run at a time by
 
 The scheduler is a pure function in `@petrina/core` (`pickStarts`), tested without any I/O.
 
+### Recurring maintenance
+
+Core calendar rules calculate daily, weekday and numeric five-field cron occurrences in an explicitly saved IANA zone, shared by preview and engine admission. Calendar iteration accepts infrequent schedules across the Gregorian cycle and rejects impossible dates. Daylight-saving gaps are skipped and repeated local minutes use only their first instant.
+
+The engine polls while running and before ordinary queue scheduling. A routine's durable handled-through watermark and new task are saved in the same SQLite transaction before driver admission. Task-history cleanup never clears that watermark. Duplicate callbacks and restarts do not duplicate occurrences; backward clock changes do not replay handled times. Forward jumps coalesce overdue occurrences to the latest missed time. An unfinished run consumes a trigger as skipped and names its blocking task; completion never replays skips. Paused or draining engines can queue due work but start no agent or check. There is no second agent scheduler.
+
+Creation, changed schedules or zones, and re-enabling start in the future. Repairing an unavailable product, role or profile also starts with the first future occurrence; time spent needing attention is not catch-up work for the replacement choice. Wording edits to a valid routine retain genuine missed occurrences. Disable/remove takes effect at the next synchronous poll and preserves saved tasks. Removed products, roles or profiles leave actionable attention states without task creation; missing repositories fail through existing recovery without changing ownership. Admission freezes routine identity/name, scheduled and queue times, catch-up explanation, product, focus, role wording/result, profile and delivery choices.
+
 ### Usage limits
 
 #### Grok request refusal

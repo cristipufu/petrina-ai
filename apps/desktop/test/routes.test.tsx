@@ -21,6 +21,14 @@ afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); 
 const at = (path: string) => readRoute(new URL(path, "http://localhost:1430"));
 
 describe("addresses", () => {
+  it("addresses all Library views while preserving product scope and demos", () => {
+    for (const libraryView of ["routines", "roles", "profiles"] as const) {
+      const route: AppRoute = { view: "library", product: "shop", libraryView };
+      const href = routeHref(route, "?demo=portfolio");
+      expect(at(href)).toEqual(route);
+      expect(href).toContain("demo=portfolio");
+    }
+  });
   it("round-trips every main page and preserves demo and product scope", () => {
     for (const view of Object.keys(PAGE_NAMES) as AppRoute["view"][]) {
       const route: AppRoute = { view, product: "shop" };
@@ -54,6 +62,17 @@ describe("addresses", () => {
   it("gives unknown or malformed addresses a recoverable missing page", () => {
     for (const path of ["/other", "/tasks", "/tasks/1/wrong", "/tasks/1/plan/extra", "/settings/products/shop/extra", "/tasks/%E0%A4%A"]) expect(at(path).missing).toBe(path);
   });
+});
+
+it("gives the routine editor the keyboard ahead of page shortcuts and returns focus", async () => {
+  await mount("/library/routines?demo");
+  const add = [...host!.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes("Add a routine"))!;
+  add.focus();
+  await act(async () => add.click());
+  expect(host!.querySelector(".routine-panel")).not.toBeNull();
+  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  expect(host!.querySelector(".routine-panel")).toBeNull();
+  expect(document.activeElement).toBe(add);
 });
 
 async function mount(path: string) {

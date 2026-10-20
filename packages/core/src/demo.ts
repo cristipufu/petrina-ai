@@ -3,7 +3,8 @@
 // log behind every usage number) are consistent.
 
 import { AFTER_WORDS, syncWait } from "./journey.js";
-import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
+import { DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
+import { libraryRoles, NO_ROLE_CHANGES } from "./roles.js";
 import { followUpDescription, followUpTitle } from "./follow-ups.js";
 import type { DeliveryMode, Finding, Id, InboxItem, JourneyStep, Product, State, Task, TaskKind, UsageReport } from "./model.js";
 import { Simulator, type SimOpenWork, type SimQuirk, type Trigger, type Triggers } from "./sim.js";
@@ -124,7 +125,7 @@ function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): St
     now,
     seq: 0,
     products: DEMO_PRODUCTS,
-    roles: BUILT_IN_ROLES,
+    roles: libraryRoles(NO_ROLE_CHANGES),
     tools: KNOWN_TOOLS,
     profiles: DEFAULT_PROFILES,
     tasks,

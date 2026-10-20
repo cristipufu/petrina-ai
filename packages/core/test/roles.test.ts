@@ -3,6 +3,7 @@ import {
   activeRoles,
   addRole,
   BUILT_IN_ROLES,
+  MAINTENANCE_ROLES,
   composePlan,
   createDemoState,
   draftOf,
@@ -34,7 +35,7 @@ const refuses = (change: () => unknown, message: string | RegExp) => expect(chan
 describe("the role library", () => {
   it("starts with Petrina's built-in roles, each with its wording and fixed kind of result", () => {
     const roles = libraryRoles(undefined);
-    expect(roles.map((role) => role.id)).toEqual(BUILT_IN_ROLES.map((role) => role.id));
+    expect(roles.map((role) => role.id)).toEqual([...BUILT_IN_ROLES, ...MAINTENANCE_ROLES].map((role) => role.id));
     expect(roles.every((role) => role.instructions && role.result && !role.edited && !role.added)).toBe(true);
   });
 

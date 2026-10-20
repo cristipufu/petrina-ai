@@ -6,13 +6,23 @@ Owns role contracts, tool configuration, context, messages, permissions and scre
 
 Roles are records the engine saves and keeps across restarts (`packages/core/src/roles.ts`). The engine and the demo squad share the rules, and the engine enforces them, not the Library's form.
 
+### Maintenance roles
+
+Workflow and Maintenance are permanent role categories. Existing workflow roles retain their identities and edits. Maintenance roles never enter Planner descriptions, example plans or ordinary role pickers; engine plan validation excludes them in standalone, design-author, design-reviewer and review positions with an explanation. Routine commands reject every workflow role, internal roles included. Editing cannot change category or result kind.
+
+Maintenance starters live in one core catalog, separate from ordinary prompt definitions. Dead-code cleanup, stale-feature cleanup, flaky-test repair and agent-instruction improvement use the existing build result and repair contract. CI optimization and Bug finder use the notes result. Reports only is read-only; Small changes with review can edit. The result determines permission, with no separate maintenance permission control and no inserted Builder. Instruction improvements require a controlled comparison of one changed instruction on the same task, snapshot, model and effort; unavailable evidence and measurements stay explicit.
+
+Each queued occurrence freezes the complete role wording and profile. Turns and all repair paths use that snapshot after Library edits, removal and restart. Maintenance results explicitly say whether the bounded investigation completed. Incomplete results and tool errors cannot finish as successful empty investigations; read-only writes are undone and require attention.
+
+Before maintenance instructions are sent, the connector must confirm the exact requested model and effort. Unavailable or unconfirmed settings wait for coordinator recovery without another profile. Usage limits also retain the saved profile. Every reply is checked before further questions, screen requests, corrections or queued instructions can advance the conversation. A reported mismatch holds progression in a durable Inbox decision. Keep accepts the saved reply with its actual settings recorded; completed results proceed without another agent turn or delivery approval. An intermediate reply is retained through restart and processed before any further instructions, which again request the original profile. Kept questions go to the Inbox before waiting instructions are sent; those instructions cannot discard the question. A replacement conversation receives the question with its answer and the saved request. Stop saves the decision and ordinary cancellation together, so an interrupted save cannot restart stopped work. The existing journey and usage records retain requested and confirmed actual settings.
+
 ### Built-in roles
 
 Built-in roles keep their name, icon and kind of result, because Petrina depends on them. The coordinator can change their purpose, how they work and what they hand back, and their permission unless that would break how the squad works: the Planner is always read-only, reviewers never change the work they judge, and the Builder always makes changes. Only the fields the coordinator changed are saved, so the others keep following Petrina's defaults; **Reset to default** drops them. The Release Manager is shown but can't be changed: it writes release notes while Petrina handles delivery itself.
 
-### Added roles
+### Added workflow roles
 
-(at most 20) hand back notes or pass-or-fail findings, chosen once. A notes role works in a `do` step, and what it hands back reaches every later agent on the task. A findings role joins the review next to the code reviewers: it sees the design, the acceptance checklist, the builder's report and earlier findings, confirms or disputes them (every dispute gives its reason, as for the code reviewers), and its blocking findings go back to the builder under its name. A removed role leaves the Library and the planner's list, and stays known to the tasks that use it.
+(at most 20 added roles across both categories) hand back notes or pass-or-fail findings, chosen once. A notes role works in a `do` step, and what it hands back reaches every later agent on the task. A findings role joins the review next to the code reviewers: it sees the design, the acceptance checklist, the builder's report and earlier findings, confirms or disputes them (every dispute gives its reason, as for the code reviewers), and its blocking findings go back to the builder under its name. A removed role leaves the Library and the planner's list, and stays known to the tasks that use it.
 
 ### Refused, whoever sends it
 

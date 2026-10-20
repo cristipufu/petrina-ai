@@ -27,13 +27,27 @@ export class Work {
   async runDo(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const { task, work: repository } = scope;
     const roleId = stage.roleId;
-    const profileId = (task.repositories && this.k.role(stage.roleId)?.result === "build" ? task.plan?.products?.find((owner) => owner.productId === repository.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? "opus-xhigh";
+    const profileId = (task.repositories && this.k.role(stage.roleId, task)?.result === "build" ? task.plan?.products?.find((owner) => owner.productId === repository.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? "opus-xhigh";
     let by = profileId;
     const used = (id: string) => (by = id);
-    const role = repository.conversation?.roleId === roleId && repository.conversation.role ? repository.conversation.role : this.k.role(roleId);
+    const role = repository.conversation?.roleId === roleId && repository.conversation.role ? repository.conversation.role : this.k.role(roleId, task);
     if (task.repositories && role?.canEdit && (repository.pr || repository.release || repository.landed)) throw new Error("This product has already been delivered. Its confirmed work is preserved; any further repair needs a separately reviewed follow-up.");
     const sections = () => this.context.sectionsFor(scope, roleId);
 
+    const maintenance = task.maintenance?.role.id === roleId ? task.maintenance : undefined;
+    const pending = maintenance?.pendingResult;
+    const savedResult = pending && pending.stageId === stage.id && maintenance?.settingsDecision?.choice === "keep" ? pending.value : undefined;
+    // A restart may interrupt a read-only turn's cleanup after its settings decision was saved.
+    const acceptedReply = maintenance?.pendingReply?.stageId === stage.id && maintenance.settingsDecision?.choice === "keep";
+    if ((savedResult !== undefined || acceptedReply) && !role?.canEdit && repository.worktree && repository.conversation?.head) {
+      const status = await git.worktreeStatus(repository.worktree);
+      if (status.head !== repository.conversation.head || !status.clean) {
+        maintenance!.readOnlyWrites = true;
+        if (status.head !== repository.conversation.head) await git.resetTo(repository.worktree, repository.conversation.head);
+        if (!status.clean) await git.discardChanges(repository.worktree);
+        this.k.commitNow(scope);
+      }
+    }
     let testedVersions: Record<string, string> | undefined;
     if (role?.result === "build") {
       if (task.miss) await this.guide.proposeGuideLine(scope, signal);
@@ -47,9 +61,10 @@ export class Work {
       const back = (task.fixing || updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
       const builderStep = openStep(task);
       if (task.fixing && builderStep?.kind === "agent" && builderStep.roleId === roleId) builderStep.builderConversation = back ? "resumed" : "new";
-      const result = await this.turns.turn(scope, roleId, profileId, sections, BuildResult, signal, {
+      const result = savedResult !== undefined ? BuildResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, BuildResult, signal, {
         used,
         check: async (value) => {
+          if (maintenance && typeof value.complete !== "boolean") return 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.';
           const missing = given.filter((finding) => !value.answers.some((answer) => answer.id === finding.id));
           if (missing.length) return `answer every finding by id in "answers" (fixed, or not fixed and why), and these have none:\n${formatFindings(missing as Task["findings"])}`;
           const marked = updating ? await git.withMarkers(repository.worktree!, updating.files) : [];
@@ -67,6 +82,7 @@ export class Work {
         ...(result.title ? { title: result.title } : {}),
         ...(description ? { description } : {}),
       };
+      if (maintenance && !result.complete) { this.k.commitNow(task); throw new Error(`Maintenance investigation is incomplete: ${result.summary}`); }
       await this.learnings.note(scope, result.learnings, roleId, by);
       // One commit per task: the builder's work joins the branch's one commit, under its title.
       const sha = await git.commitAll(repository.worktree!, this.updates.message(scope));
@@ -197,7 +213,7 @@ export class Work {
         delete task.retest;
         this.k.finishStep(scope);
         const stages = task.plan?.stages ?? [];
-        const builder = lastIndexWhere(stages, (entry) => this.k.role(entry.roleId)?.result === "build" && entry.kind === "do");
+        const builder = lastIndexWhere(stages, (entry) => this.k.role(entry.roleId, task)?.result === "build" && entry.kind === "do");
         if (failed.length && !unverified && builder >= 0 && (repository.acceptanceReturns ?? 0) < 2) {
           repository.acceptanceReturns = (repository.acceptanceReturns ?? 0) + 1;
           task.stageIndex = builder;
@@ -218,14 +234,34 @@ export class Work {
         return "continue";
       }
     } else {
-      const result = await this.turns.turn(scope, roleId, profileId, sections, NotesResult, signal, { used });
+      const result = savedResult !== undefined ? NotesResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, NotesResult, signal, { used, check: value => maintenance && typeof value.complete !== "boolean" ? 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.' : undefined });
       const handed = { ...(task.repositories && role?.canEdit ? { productId: repository.productId } : {}), at: Date.now(), profileId: by, stageId: stage.id, roleId, roleName: repository.conversation?.role?.name ?? role?.name ?? roleId, title: stage.title, summary: result.summary, notes: result.notes };
       task.handedBack = [...(task.handedBack ?? []).filter((entry) => entry.stageId !== stage.id || entry.productId !== handed.productId), handed];
       this.k.say(scope, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, by);
       this.k.log(scope, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, by);
+      if (maintenance && !result.complete) { this.k.commitNow(task); throw new Error(`Maintenance investigation is incomplete: ${result.summary}`); }
       endAgentStep(task, { outcome: W.wroteNotes, reason: W.notesReady }, Date.now());
     }
     if (role?.result !== "build" && role?.result !== "checks") await this.k.saveRoleEdits(scope, roleId, by);
+    if (maintenance) {
+      delete maintenance.pendingResult;
+      if (maintenance.readOnlyWrites) throw new Error("The read-only maintenance agent changed product files. Petrina undid those writes. Review its report and retry the investigation.");
+      // Compare the actual final product tree, including committed changes withdrawn in a repair.
+      const base = repository.baseSha;
+      const changed = repository.worktree && base ? (await git.changedFiles(repository.worktree, base, await git.head(repository.worktree))).length > 0 : true;
+      if (!changed) {
+        maintenance.noProductChanges = true;
+        this.k.finishStep(scope);
+        this.k.tracking.endStage(scope, "done");
+        Object.assign(task, { state: "done", column: "done", statusLine: "Completed · No product changes", holdsSlot: false, finishedAt: Date.now() });
+        delete task.agent;
+        repository.nothingToPublish = true;
+        repository.cleanup = { ...repository.cleanup, pullRequest: "none" };
+        this.k.onTaskDone?.(task);
+        this.k.commitNow(task);
+        return "stop";
+      }
+    }
     this.k.finishStep(scope);
     this.k.tracking.endStage(scope, "done");
     if (this.k.rerun(task)) return "continue";

@@ -66,6 +66,7 @@ export function clockTime(at: number): string {
 }
 
 export const EFFORT_LABEL: Record<Effort, string> = {
+  ultra: "ultra effort",
   low: "low effort",
   medium: "medium effort",
   high: "high effort",
@@ -86,6 +87,7 @@ export function deliveryText(task: Task): { text: string; done: boolean } | unde
   if (task.pr?.state === "merged") return { text: `Pull request #${task.pr.number} merged`, done: true };
   if (task.pr && (task.pr.state === "closed" || landingOf(task) === "closed")) return { text: `Pull request #${task.pr.number} closed without merging`, done: false };
   if (task.pr) return { text: `${task.source?.start.kind === "pull-request" ? "Updated PR" : "Pull request"} #${task.pr.number} · awaiting merge`, done: false };
+  if (landingOf(task) === "no-changes") return { text: "Completed · No product changes", done: true };
   if (landingOf(task) === "marked-done") return { text: "Marked as done · delivery not confirmed", done: false };
   return undefined;
 }

@@ -3,7 +3,7 @@
 // the product comes before the final review: after it, no planned role changes anything. Whatever
 // Petrina changes, the plan's reason says so, so the task never gets stuck on a misplaced role.
 
-import { activeRoles, deliveryStages, finalReviewIndex, RELEASE_MANAGER, stepOf, type AgentProfile, type Id, type Plan, type ProfileAssignment, type Role, type Stage, type Task } from "@petrina/core";
+import { workflowRoles, deliveryStages, finalReviewIndex, RELEASE_MANAGER, stepOf, type AgentProfile, type Id, type Plan, type ProfileAssignment, type Role, type Stage, type Task } from "@petrina/core";
 import type { z } from "zod";
 import type { PlanResult } from "./roles.js";
 
@@ -29,7 +29,7 @@ const engineAssignment = (profileId: Id): ProfileAssignment => ({ profileId, by:
 export function normalizePlan(input: PlanInput): Plan {
   const { task, result } = input;
   const onUsable = input.onUsable ?? ((id: Id) => id);
-  const roles = new Map(activeRoles(input.roles).filter((role) => !role.internal).map((role) => [role.id, role]));
+  const roles = new Map(workflowRoles(input.roles).filter((role) => !role.internal).map((role) => [role.id, role]));
   /** Every role, removed ones included, to name what Petrina left out. */
   const all = new Map(input.roles.map((role) => [role.id, role]));
   const profile = (id: string | undefined, fallback: Id) => (id && input.profiles.some((entry) => entry.id === id) ? id : fallback);
@@ -43,6 +43,7 @@ export function normalizePlan(input: PlanInput): Plan {
   const cannotRun = (roleId: Id) => {
     const named = all.get(roleId);
     if (!named) return "the plan named a role Petrina doesn't have";
+    if (named.category === "maintenance") return `the ${named.name} is a maintenance role and only runs from routines`;
     if (named.removed) return `the ${named.name} was removed from the Library`;
     return named.id === "planner" ? "the Planner only makes the plan" : `Petrina brings in the ${named.name} itself when it is needed`;
   };

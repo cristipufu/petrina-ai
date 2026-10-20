@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProfile, Pool, Tool, UsageLimit, UsageReport } from "../src/model.js";
+import { DEFAULT_PROFILES } from "../src/profiles.js";
 import { HOLDING_BACK, byRoom, chooseProfile, chooseWithRoom, headroom, liveLimits, nearLimit, nextExpiry, slowingDown, toolCapNow, untilWords, usageLines, waitingWords, withLimit, withReport } from "../src/usage.js";
 
 const opus: AgentProfile = { id: "opus-high", toolId: "claude-code", model: "Opus 5.5", modelId: "opus", effort: "high" };
@@ -41,6 +42,16 @@ describe("who works a step", () => {
     expect(choose(opus, pool({ limited: [out("claude-code", now + HOUR, "opus")] }))).toEqual({ kind: "substitute", profile: sonnet, reason: expect.any(String) });
     // The other tool's profiles are not asked while the same tool has one.
     expect(choose(opusX, pool({ limited: [out("claude-code", now + HOUR, "opus")] }))).toEqual({ kind: "substitute", profile: sonnet, reason: expect.any(String) });
+  });
+
+  it("preserves the engine's default stand-in preference in the shared catalog while retaining saved demo profiles", () => {
+    const catalog = DEFAULT_PROFILES.filter(profile => profile.id !== "fable-xhigh");
+    const limited = pool({ limited: [out("claude-code", now + HOUR, "opus")] });
+    const medium = catalog.find(profile => profile.id === "sonnet-medium")!;
+    expect(choose(opusX, pool(), catalog)).toEqual({ kind: "planned", profile: opusX, reason: expect.any(String) });
+    expect(choose(opusX, limited, catalog)).toEqual({ kind: "substitute", profile: sonnet, reason: expect.any(String) });
+    expect(choose(medium, limited, catalog)).toEqual({ kind: "planned", profile: medium, reason: expect.any(String) });
+    expect(choose(opusX, limited, catalog.filter(profile => profile.id !== sonnet.id))).toEqual({ kind: "substitute", profile: medium, reason: expect.any(String) });
   });
 
   it("is a profile on another tool when the whole tool is out, preferring the same effort", () => {

@@ -4,6 +4,7 @@
 // the result formats, the checks, undoing what read-only roles change, and no planned role
 // changing anything after the final review.
 
+import { MAINTENANCE_ROLES } from "./maintenance-roles.js";
 import { BUILT_IN_ROLES } from "./library.js";
 import { ROLE_ICON_CHOICES, TONE_CHOICES, type Column, type Id, type Role, type RoleChanges, type RoleEdit, type RoleIcon, type RoleResult, type Stage, type Task, type Tone } from "./model.js";
 
@@ -16,6 +17,7 @@ export const NO_ROLE_CHANGES: RoleChanges = { edits: {}, added: [] };
 
 /** What the coordinator fills in for a role. */
 export interface RoleDraft {
+  category?: "workflow" | "maintenance";
   name: string;
   icon: RoleIcon;
   tone: Tone;
@@ -54,7 +56,8 @@ export function stepOf(role: Pick<Role, "result">): RoleStep | undefined {
 }
 
 /** Why a role's permission cannot change, or undefined when the coordinator may choose it. */
-export function permissionLock(role: Pick<Role, "id" | "result">): string | undefined {
+export function permissionLock(role: Pick<Role, "id" | "result" | "category">): string | undefined {
+  if (role.category === "maintenance") return role.result === "build" ? "Small changes with review can change the product." : "Reports only is always read-only.";
   if (role.id === RELEASE_MANAGER) return "The Release Manager writes release notes. Petrina handles delivery itself. It can't be edited here.";
   if (["check-discovery", "guide", "votes"].includes(role.result)) return "Petrina runs this role read-only as part of its checks.";
   switch (role.result) {
@@ -83,7 +86,7 @@ function addedColumn(result: RoleResult, canEdit: boolean): Column {
 
 /** What a role the coordinator adds sees, and where its tasks sit on the board. Petrina sets both from its kind of result and permission. */
 export function addedFacts(result: RoleResult, canEdit: boolean): { sees: string; column: Column } {
-  return { sees: ADDED_SEES[result] ?? ADDED_SEES.notes!, column: addedColumn(result, result === "notes" && canEdit) };
+  return { sees: ADDED_SEES[result] ?? ADDED_SEES.notes!, column: addedColumn(result, result === "build" || (result === "notes" && canEdit)) };
 }
 
 /** One line, no runs of spaces. Names, purposes and hands-back descriptions are single lines. */
@@ -98,7 +101,7 @@ function block(text: string): string {
 
 const sameName = (a: string, b: string) => line(a).toLowerCase() === line(b).toLowerCase();
 
-const defaultOf = (id: Id) => BUILT_IN_ROLES.find((role) => role.id === id);
+const defaultOf = (id: Id) => [...BUILT_IN_ROLES, ...MAINTENANCE_ROLES].find((role) => role.id === id);
 
 /** Only the changes a built-in role allows, and only those that differ from Petrina's defaults (saved data is not trusted blindly). */
 function editOf(role: Role, edit: RoleEdit | undefined): RoleEdit {
@@ -116,17 +119,20 @@ function addedRole(raw: unknown): Role | undefined {
   const role = raw as Partial<Role> | undefined;
   if (!role || typeof role.id !== "string" || !/^added-[a-z0-9-]{1,40}$/.test(role.id)) return undefined;
   if (typeof role.name !== "string" || typeof role.purpose !== "string" || typeof role.instructions !== "string" || typeof role.handsBack !== "string") return undefined;
-  if (role.result !== "notes" && role.result !== "findings") return undefined;
-  const canEdit = role.result === "notes" && role.canEdit === true;
+  if (!role.result) return undefined;
+  const maintenance = role.category === "maintenance";
+  if (maintenance ? role.result !== "notes" && role.result !== "build" : role.result !== "notes" && role.result !== "findings") return undefined;
+  const canEdit = maintenance ? role.result === "build" : role.result === "notes" && role.canEdit === true;
   return {
     id: role.id,
+    category: maintenance ? "maintenance" : "workflow",
     name: line(role.name),
     icon: ROLE_ICON_CHOICES.includes(role.icon as RoleIcon) ? (role.icon as RoleIcon) : "lightbulb",
     tone: TONE_CHOICES.includes(role.tone as Tone) ? (role.tone as Tone) : "slate",
     purpose: line(role.purpose),
     instructions: block(role.instructions),
     canEdit,
-    sees: ADDED_SEES[role.result]!,
+    sees: ADDED_SEES[role.result] ?? ADDED_SEES.notes!,
     handsBack: line(role.handsBack),
     result: role.result,
     column: addedColumn(role.result, canEdit),
@@ -138,7 +144,7 @@ function addedRole(raw: unknown): Role | undefined {
 /** Every role: the built-in ones with the coordinator's changes, then the ones they added (removed ones included, marked). */
 export function libraryRoles(changes: RoleChanges | undefined): Role[] {
   const edits = changes?.edits ?? {};
-  const builtIn = BUILT_IN_ROLES.map((role): Role => {
+  const builtIn = [...BUILT_IN_ROLES, ...MAINTENANCE_ROLES].map((role): Role => {
     const edit = editOf(role, Object.hasOwn(edits, role.id) ? edits[role.id] : undefined);
     return Object.keys(edit).length ? { ...role, ...edit, edited: true } : { ...role };
   });
@@ -160,7 +166,7 @@ export function activeRoles(roles: readonly Role[]): Role[] {
 }
 
 export function draftOf(role: Role): RoleDraft {
-  return { name: role.name, icon: role.icon, tone: role.tone, purpose: role.purpose, instructions: role.instructions, canEdit: role.canEdit, handsBack: role.handsBack, result: role.result };
+  return { category: role.category ?? "workflow", name: role.name, icon: role.icon, tone: role.tone, purpose: role.purpose, instructions: role.instructions, canEdit: role.canEdit, handsBack: role.handsBack, result: role.result };
 }
 
 /** What is wrong with a draft, field by field, in plain words. Empty when it can be saved. */
@@ -200,6 +206,7 @@ export function editRole(changes: RoleChanges, roleId: Id, draft: RoleDraft): Ro
   const roles = libraryRoles(changes);
   const role = findRole(roles, roleId);
   if (role.id === RELEASE_MANAGER) throw new Error(permissionLock(role)!);
+  if ((draft.category ?? "workflow") !== (role.category ?? "workflow")) throw new Error("A role keeps its Workflow or Maintenance category.");
   if (draft.result !== role.result) throw new Error("A role keeps the kind of result it hands back. To hand back something else, add a new role.");
   const lock = permissionLock(role);
   if (lock && draft.canEdit !== role.canEdit) throw new Error(lock);
@@ -217,8 +224,8 @@ export function editRole(changes: RoleChanges, roleId: Id, draft: RoleDraft): Ro
   return { ...changes, edits };
 }
 
-function clean(draft: RoleDraft): RoleEdit & Pick<Role, "name" | "icon" | "tone" | "result"> {
-  return { name: line(draft.name), icon: draft.icon, tone: draft.tone, purpose: line(draft.purpose), instructions: block(draft.instructions), canEdit: draft.canEdit, handsBack: line(draft.handsBack), result: draft.result };
+function clean(draft: RoleDraft): RoleEdit & Pick<Role, "category" | "name" | "icon" | "tone" | "result"> {
+  return { category: draft.category ?? "workflow", name: line(draft.name), icon: draft.icon, tone: draft.tone, purpose: line(draft.purpose), instructions: block(draft.instructions), canEdit: draft.canEdit, handsBack: line(draft.handsBack), result: draft.result };
 }
 
 /** An id for a role the coordinator adds: from its name, never one in use, never one a built-in role could take. */
@@ -240,7 +247,9 @@ function newRoleId(name: string, taken: readonly Role[]): Id {
 export function addRole(changes: RoleChanges, draft: RoleDraft): { changes: RoleChanges; roleId: Id } {
   const roles = libraryRoles(changes);
   if (roles.filter((role) => role.added && !role.removed).length >= ROLE_LIMITS.added) throw new Error(`You can add at most ${ROLE_LIMITS.added} roles. Remove one you no longer use first.`);
-  if (!ADDED_RESULTS.includes(draft.result)) throw new Error("A role you add hands back notes, or pass-or-fail findings.");
+  if (draft.category === "maintenance" && !["notes", "build"].includes(draft.result)) throw new Error("Maintenance roles hand back reports or small changes with review.");
+  if (draft.category === "maintenance" && draft.canEdit !== (draft.result === "build")) throw new Error("The result kind decides whether a maintenance role may change the product.");
+  if (draft.category !== "maintenance" && !ADDED_RESULTS.includes(draft.result)) throw new Error("A role you add hands back notes, or pass-or-fail findings.");
   if (draft.result === "findings" && draft.canEdit) throw new Error("Reviewers never change the work they judge, so they are always read-only.");
   if (!ROLE_ICON_CHOICES.includes(draft.icon) || !TONE_CHOICES.includes(draft.tone)) throw new Error("Pick one of the icons and colours shown.");
   check(draft, roles);
@@ -333,4 +342,12 @@ export function stepMayChange(role: Role, stages: readonly Stage[], index: numbe
 /** Whether a task's plan has a role in any of its steps. */
 export function planUses(task: Pick<Task, "plan">, roleId: Id): boolean {
   return (task.plan?.stages ?? []).some((stage) => stage.roleId === roleId || stage.reviewerRoleId === roleId || (stage.roleIds ?? []).includes(roleId));
+}
+
+/** Ordinary planning and task role pickers never include maintenance. */
+export function workflowRoles(roles: readonly Role[]): Role[] { return activeRoles(roles).filter(role => role.category !== "maintenance"); }
+
+/** Execution uses the role wording frozen when a routine queued its task. */
+export function roleForTask(roles: readonly Role[], id: Id, task?: Pick<Task, "maintenance">): Role | undefined {
+  return task?.maintenance?.role.id === id ? task.maintenance.role : roles.find(role => role.id === id);
 }

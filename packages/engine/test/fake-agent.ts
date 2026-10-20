@@ -20,6 +20,7 @@ import { testGitEnv } from "./test-git-env.js";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
+  maintenance?: { change?: boolean; commit?: boolean; withdraw?: boolean; incomplete?: boolean; mismatch?: boolean; mismatchReply?: "question" | "screen" | "invalid" | "validation" | "cancelled"; mismatchSetting?: "model" | "effort"; question?: boolean; unsupported?: boolean; unconfirmed?: boolean; readOnlyWrite?: boolean };
   affectedProducts?: string[];
   /** Mix a correctly assigned review finding with one left under Together. */
   unassignedFinding?: boolean;
@@ -131,6 +132,7 @@ export interface Scenario {
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
 interface Conversation {
+  maintenance?: boolean;
   captures?: string;
   cwd: string;
   role: string;
@@ -274,7 +276,7 @@ const configOptions = (): ConfigOption[] => {
   if (tool === "codex") return [select("mode", ["read-only", "agent"]), select("model", ["gpt-6.1"]), { ...select("reasoning_effort", ["low", "medium", "high"]), currentValue: "medium" }];
   if (tool === "claude-code") return [select("mode", ["default", "auto"]), { ...select("model", ["opus", "sonnet"], ["Opus 5.5", "Sonnet 5.5"]), currentValue: "sonnet" }, { ...select("effort", ["low", "medium", "high", "xhigh"]), currentValue: "medium" }];
   if (tool === "antigravity") return [select("model", ["gemini-4-argon", "gemini-3.8-flash"], ["Gemini 4 Argon", "Gemini 3.8 Flash"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto_edit", "yolo"])];
-  return [select("model", ["default", "opus", "sonnet", "gpt-6.1-sol", "grok-4.7", "gemini-4-argon", "gemini-3.8-flash"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["high", "xhigh"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto", "agent", "auto_edit", "yolo"])];
+  return [select("model", ["default", "opus", "sonnet", "gpt-6-astra", ...(scenario().maintenance?.unsupported ? [] : ["gpt-6.1-sol"]), "grok-4.7", "gemini-4-argon", "gemini-3.8-flash"]), select("effort", ["high", "xhigh"]), select("reasoning_effort", ["low", "medium", "high", "xhigh", "ultra"]), select("thinking_level", ["low", "medium", "high"]), select("mode", ["default", "auto", "agent", "auto_edit", "yolo"])];
 };
 
 /** A turn that only ends when the engine cancels it, or the engine goes away. */
@@ -284,7 +286,7 @@ function hang(sessionId: string, marker: string): Promise<Reply> {
 }
 
 function roleOf(text: string): string {
-  return /You are the ([A-Za-z ]+) in Petrina/.exec(text)?.[1]?.trim().toLowerCase() ?? "";
+  return /You are the ([A-Za-z -]+) in Petrina/.exec(text)?.[1]?.trim().toLowerCase() ?? "";
 }
 
 function addedId(text: string, name: string): string {
@@ -511,6 +513,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     }
     return { text: block(result, prose) };
   };
+
   if (text.includes("Which older reports are the same bug")) {
     const keys = [...text.matchAll(/^- Report \[([^\]]+)\]/gm)].map((match) => match[1]!);
     if (plan.followUpMatch === "same") return done({ groups: [{ keys }], uncertain: [] });
@@ -556,6 +559,36 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     while (!existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
   }
   if (limit?.afterRelease && until) await runOut(limit, until, session, sessionId, client);
+  if (plan.maintenance && (session.maintenance || text.includes('Set "complete" to true only'))) {
+    session.maintenance = true;
+    const behavior = plan.maintenance;
+    if (behavior.change || behavior.readOnlyWrite) writeFileSync(join(session.cwd, "maintenance.txt"), "Confirmed maintenance change\n");
+    if (behavior.commit) {
+      run(session.cwd, "add", "--", "maintenance.txt");
+      run(session.cwd, "-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "--quiet", "-m", "Maintenance agent commit");
+    }
+    if (session.turns === 1 && (behavior.mismatchReply || behavior.question)) {
+      if (behavior.mismatchReply) {
+        const id = behavior.mismatchSetting === "model" ? "model" : "reasoning_effort";
+        session.options.find(option => option.id === id)!.currentValue = id === "model" ? "gpt-6-astra" : "high";
+        await send(client, sessionId, { sessionUpdate: "config_option_update", configOptions: session.options });
+      }
+      if (behavior.mismatchReply === "screen") return done({ needsScreen: { reason: "Inspect the bounded maintenance area" } });
+      if (behavior.mismatchReply === "invalid") return { text: "Investigation still in progress." };
+      if (behavior.mismatchReply === "validation") return done({ summary: "Investigation needs a complete result.", notes: [] });
+      if (behavior.mismatchReply === "cancelled") return { text: "Investigation interrupted.", stop: "cancelled" };
+      return done({ needsInput: { question: "Should I investigate the guest view?", options: ["Yes", "No"] } });
+    }
+    if (behavior.withdraw) { try { (await import("node:fs")).unlinkSync(join(session.cwd, "maintenance.txt")); } catch {} }
+    if (behavior.mismatch) {
+      session.options.find(option => option.id === "reasoning_effort")!.currentValue = "high";
+      await send(client, sessionId, { sessionUpdate: "config_option_update", configOptions: session.options });
+    }
+    const findings = behavior.change ? "Investigated and repaired a confirmed maintenance issue." : "Investigated the selected area; no actionable defect was confirmed.";
+    const answers = [...text.matchAll(/^- \[([^\]]+)\] (?:important|nit)/gm)].map(match => ({ id: match[1], fixed: true, text: "Repaired the confirmed cause." }));
+    return done({ summary: findings, notes: ["The available evidence did not justify a product change."], complete: !behavior.incomplete, changes: behavior.change ? ["Removed confirmed unused code."] : [], answers, title: "Perform focused product maintenance" });
+  }
+
   if (plan.screenRoles?.includes(session.role) && (!plan.screenModels || plan.screenModels.includes(session.model ?? ""))) {
     if (text.includes("You may now use the screen for")) {
       mark(`on-screen-${sessionId}`);
@@ -1213,7 +1246,7 @@ acp
     if (option && typeof value === "string" && option.options.some((entry) => entry.value === value)) option.currentValue = value;
     keep(ctx.params.sessionId);
     // The protocol asks for the options back; a bare acknowledgement is what a tool that skips them sends.
-    return (process.env.FAKE_BARE_ACK ? {} : { configOptions: session.options }) as acp.SetSessionConfigOptionResponse;
+    return (process.env.FAKE_BARE_ACK || scenario().maintenance?.unconfirmed ? {} : { configOptions: session.options }) as acp.SetSessionConfigOptionResponse;
   })
   .onRequest("session/prompt", async (ctx) => {
     if (notLoggedIn) throw acp.RequestError.authRequired();

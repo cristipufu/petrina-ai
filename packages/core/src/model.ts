@@ -8,9 +8,9 @@ import type { CheckId, Setup } from "./setup.js";
 
 export type Id = string;
 
-export type Effort = "low" | "medium" | "high" | "xhigh";
+export type Effort = "low" | "medium" | "high" | "xhigh" | "ultra";
 
-export const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh"];
+export const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "ultra"];
 
 /** Something that can run an agent. Usually an ACP command line. */
 export interface Tool {
@@ -69,6 +69,8 @@ export type RoleResult = "plan" | "notes" | "brief" | "objections" | "build" | "
 
 /** A role is data: what the agent is for, how it works, what it may do, what it sees and what it hands back. */
 export interface Role {
+  /** Permanent category; workflow is the default for existing roles. */
+  category?: "workflow" | "maintenance";
   id: Id;
   name: string;
   icon: RoleIcon;
@@ -746,7 +748,7 @@ export type { RepositoryState, RepositoryField, TaskRepository, TaskRequest, Tas
  * else there. `driving`: the coordinator took over a step in their terminal.
  * `screen`: an agent waits for the coordinator's OK to use the screen. Quiet: listed last, never a notification.
  */
-export type InboxKind = "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide" | "learnings" | "screen";
+export type InboxKind = "maintenance-settings" | "question" | "permission" | "plan" | "design" | "disagreement" | "delivery" | "stuck" | "shipping" | "driving" | "guide" | "learnings" | "screen";
 
 export interface InboxItem {
   productId?: Id;
@@ -918,6 +920,7 @@ export interface Terminal {
 }
 
 export interface State {
+  routines?: readonly import("./routines.js").Routine[];
   /** Short engine-owned conversations, counted in the same pool as task agents. Cleared on restart. */
   backgroundAgents?: readonly { id: Id; roleId: Id; profileId: Id; label: string; since: number }[];
   /** Compact totals and recent durations for finished work, fetched separately from the board. */
