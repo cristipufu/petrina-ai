@@ -43,6 +43,55 @@ async function withGit(script: string, check: () => Promise<void>): Promise<void
 }
 
 describe("reading a product's committed files", () => {
+  it("leaves coordinator messages queued when a parallel context read fails", async () => {
+    const root = join(folder, "failed-context");
+    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+    engine.setPoolPaused(true);
+    try {
+      const productId = await engine.addProduct(makeProduct(root));
+      const taskId = engine.addTask({ productId, title: "Keep messages through a failed preparation", backlog: true });
+      const scope = executionFor(engine.task(taskId)!);
+      scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, ms: 1, output: "passed" }] };
+      const context = new Context(engine, { pendingPoints: async () => [] } as unknown as GuideKeeper, async () => { throw new Error("Could not inspect check freshness"); });
+      const reading = context.sectionsFor(scope, "code-reviewer");
+      engine.sendMessage(taskId, "Keep this instruction for the successful retry.");
+      await expect(reading).rejects.toThrow("Could not inspect check freshness");
+      expect(scope.task.queued.map((message) => message.text)).toEqual(["Keep this instruction for the successful retry."]);
+    } finally { await engine.shutdown(); }
+  });
+
+  for (const mode of ["sections", "snapshot"] as const) it(`reads guide and check evidence together without losing late notes (${mode})`, async () => {
+    const root = join(folder, `parallel-context-${mode}`);
+    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+    engine.setPoolPaused(true);
+    const started: string[] = [];
+    let guideDone!: (points: string[]) => void, checksDone!: (current: boolean) => void;
+    const guideRead = new Promise<string[]>((resolve) => { guideDone = resolve; });
+    const checkRead = new Promise<boolean>((resolve) => { checksDone = resolve; });
+    let reading: Promise<Awaited<ReturnType<Context["sectionsFor"]>>> | undefined;
+    try {
+      const productId = await engine.addProduct(makeProduct(root));
+      const taskId = engine.addTask({ productId, title: "Keep live notes while reading context", backlog: true });
+      const scope = executionFor(engine.task(taskId)!);
+      scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, ms: 1, output: "passed" }] };
+      const guide = { pendingPoints: () => { started.push("guide"); return guideRead; } } as unknown as GuideKeeper;
+      const context = new Context(engine, guide, () => { started.push("checks"); return checkRead; });
+      reading = mode === "sections" ? context.sectionsFor(scope, "code-reviewer") : context.captureReview(scope).then((review) => context.sectionsFor(scope, "code-reviewer", undefined, undefined, undefined, review));
+      expect(started).toEqual(["guide", "checks"]);
+      engine.sendMessage(taskId, "Keep the latest instruction from the coordinator.");
+      guideDone(["Preserve the greeting."]);
+      await Promise.resolve();
+      expect(scope.task.queued).toHaveLength(1);
+      checksDone(true);
+      const sections = await reading;
+      expect(sections.find((section) => section.title.startsWith("The coordinator's notes"))?.body).toContain("Keep the latest instruction");
+      expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("Preserve the greeting.");
+      expect(sections.find((section) => section.title === "Current product checks, run by Petrina itself")?.body).toContain("Quick: passed");
+      expect(started).toEqual(["guide", "checks"]);
+      expect(scope.task.queued).toEqual([]);
+    } finally { guideDone([]); checksDone(false); await reading?.catch(() => {}); await engine.shutdown(); }
+  });
+
   it("keeps the event loop responsive while Git reads a guide, and preserves its exact text", async () => {
     await withGit('setTimeout(() => process.stdout.write("\\ufeff\\n# Review guide\\n\\n "), 200)', async () => {
       const order: string[] = [];

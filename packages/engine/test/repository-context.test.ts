@@ -28,6 +28,36 @@ async function fixture(name: string) {
 }
 
 describe("explicit repository execution contexts", () => {
+  it("inspects hand changes across products concurrently and records every result in product order", async () => {
+    const { engine, task } = await fixture("hand-change-reads");
+    await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
+    const checks: { path: string; resolve: (problems: string[]) => void }[] = [], heads: { path: string; resolve: (sha: string) => void }[] = [];
+    const check = spyOn(gitOps, "tamperCheck").mockImplementation((path) => new Promise((resolve) => checks.push({ path, resolve })));
+    const head = spyOn(gitOps, "head").mockImplementation((path) => new Promise((resolve) => heads.push({ path, resolve })));
+    let pending: Promise<void> | undefined;
+    try {
+      task.plan = { rationale: "Review hand changes", plannerProfileId: "sol-high", stages: [{ id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"] }] };
+      task.stageIndex = 0;
+      const products = ["second", "first"], paths = products.map((id) => executionFor(task, id).work.worktree!);
+      pending = engine["takeover"]["reviewHandChanges"](task, products);
+      expect(checks.map((read) => read.path)).toEqual(paths);
+      expect(heads.map((read) => read.path)).toEqual(paths);
+      checks[1]!.resolve(["A test was removed"]); heads[1]!.resolve("a".repeat(40));
+      await Promise.resolve();
+      expect(task.findings).toEqual([]);
+      checks[0]!.resolve(["A test was skipped"]); heads[0]!.resolve("b".repeat(40));
+      await pending;
+      expect(task.findings.map((finding) => [finding.text, finding.productIds])).toEqual([["A test was skipped", ["second"]], ["A test was removed", ["first"]]]);
+      expect(executionFor(task, "first").work.tamper?.sha).toBe("a".repeat(40));
+      expect(executionFor(task, "second").work.tamper?.sha).toBe("b".repeat(40));
+      expect(task.handChanges).toBe(true);
+      expect(task.rereview).toBe("review");
+    } finally {
+      for (const read of checks) read.resolve([]); for (const read of heads) read.resolve("a".repeat(40));
+      await pending?.catch(() => {}); check.mockRestore(); head.mockRestore(); await engine.shutdown();
+    }
+  });
+
   it("reuses original version contents and reads each committed target once while validating a release", async () => {
     const { engine, task } = await fixture("release-version-reads");
     const scope = executionFor(task, "first"), path = scope.work.worktree!;
@@ -255,17 +285,20 @@ describe("explicit repository execution contexts", () => {
     } finally { await engine.shutdown(); }
   });
 
-  it("writes a shared reviewer's named lesson directly to its repository", async () => {
+  it("groups a shared reviewer's companion lessons and reads only their repository once", async () => {
     const { engine, task } = await fixture("named-learning");
+    const read = spyOn(gitOps, "fileAt");
     try {
       const first = executionFor(task, "first"), second = executionFor(task, "second");
       const learnings = new Learnings(engine);
-      await learnings.note(first, [{ productId: "second", text: "Use the second product's focused check for its UI changes." }], "code-reviewer", "sol-high");
+      const texts = ["Use the second product's focused check for its UI changes.", "The second product's fixtures live beside its tests."];
+      await learnings.note(first, [...texts.map((text) => ({ productId: "second", text })), { productId: "second", text: texts[0]! }, "An unassigned shared lesson stays with the task."], "code-reviewer", "sol-high");
       expect(first.work.lessons).toBeUndefined();
-      expect(second.work.lessons?.map((lesson) => lesson.text)).toEqual(["Use the second product's focused check for its UI changes."]);
-      expect(task.sharedLessons).toBeUndefined();
+      expect(second.work.lessons?.map((lesson) => lesson.text)).toEqual(texts);
+      expect(task.sharedLessons?.map((lesson) => lesson.text)).toEqual(["An unassigned shared lesson stays with the task."]);
+      expect(read.mock.calls.filter(([, , file]) => file === "AGENTS.md")).toEqual([[second.work.worktree!, "HEAD", "AGENTS.md"]]);
       expect(Object.hasOwn(task, "lessons")).toBe(false);
-    } finally { await engine.shutdown(); }
+    } finally { read.mockRestore(); await engine.shutdown(); }
   });
 
   it("keeps a single repository's saved execution separate from its public task view", async () => {

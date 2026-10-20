@@ -59,17 +59,21 @@ export class TakeOver {
       const worktree = this.k.agentWorktree(current);
       let saved: { sha: string; files: string[] } | undefined;
       try {
+        let head: string;
         if (conversation.access?.canEdit ?? role.canEdit) {
-          const files = (await git.changedSince(worktree, await git.head(worktree))).map((entry) => entry.file);
+          const before = await git.head(worktree);
+          const files = (await git.changedSince(worktree, before)).map((entry) => entry.file);
           const sha = files.length
             ? await git.commitAll(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.k.describe(role.id, profile.id)}`)
             : undefined;
           if (sha) saved = { sha, files };
+          head = sha ?? before;
         } else {
           await this.k.undoReadOnly(current, role.id, worktree);
+          head = await git.head(worktree);
         }
-        const repositoryCopies = conversation.repositoryCopies ? Object.fromEntries(await Promise.all(Object.entries(conversation.repositoryCopies).map(async ([id, path]) => [id, { path, head: await git.head(path) }]))) : undefined;
-        current.driving = { ...(repositoryCopies ? { repositoryCopies } : {}), since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head: await git.head(worktree), ...(saved ? { saved } : {}) };
+        const repositoryCopies = conversation.repositoryCopies ? Object.fromEntries(await Promise.all(Object.entries(conversation.repositoryCopies).map(async ([id, path]) => [id, { path, head: path === worktree ? head : await git.head(path) }]))) : undefined;
+        current.driving = { ...(repositoryCopies ? { repositoryCopies } : {}), since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head, ...(saved ? { saved } : {}) };
       } catch (error) {
         // The agent has stopped, but the working copy is not ready for the coordinator: the agent carries on instead.
         this.k.log(current, "warn", `Could not get the working copy ready for you, so the ${role.name} carries on: ${error instanceof Error ? error.message : String(error)}`, role.id, profile.id);
@@ -177,12 +181,13 @@ export class TakeOver {
       const problem = this.branchProblem(task, await git.workingState(worktree));
       if (problem) throw new Error(problem);
       const role = this.k.role(driving.roleId)!;
-      const [commits, files, clean] = await Promise.all([git.commitsSince(worktree, driving.head), git.changedSince(worktree, driving.head), git.isClean(worktree)]);
-      const leftovers = clean
+      const [commits, files, status] = await Promise.all([git.commitsSince(worktree, driving.head), git.changedSince(worktree, driving.head), git.worktreeStatus(worktree)]);
+      const leftovers = status.clean
         ? undefined
         : await git.commitAll(worktree, `${task.title} (changes made by hand)\n\nMade by the coordinator in their own terminal while driving the ${role.name}, and saved by Petrina at the hand back.\n\nDriven by hand: ${this.k.describe(role.id, driving.profileId)}`);
       const text = handBackNote({ role: role.name, tool, took: Date.now() - driving.since, ...(driving.saved ? { saved: driving.saved.files } : {}), commits, files, leftovers: leftovers !== undefined, note });
-      const head = await git.head(worktree);
+      const head = leftovers ?? status.head;
+      if (!head) throw new Error("The working copy has no saved commit. Restore it in your terminal, then hand back again.");
 
       const changedProducts = new Set<Id>(files.length ? [scope!.work.productId] : []);
       if (task.repositories && driving.repositoryCopies) {
@@ -190,12 +195,12 @@ export class TakeOver {
         for (const [id, copy] of Object.entries(driving.repositoryCopies)) {
           const work = task.repositories.find((entry) => entry.productId === id);
           if (!work?.worktree || copy.path === work.worktree) continue;
-          if (await git.currentBranch(copy.path)) throw new Error(`Keep ${work.source!.product.name} on its saved review snapshot, then hand back again.`);
-          if (!await git.isClean(copy.path)) await git.commitAll(copy.path, `${task.title} (changes made by hand)`);
+          const [branch, clean] = await Promise.all([git.currentBranch(copy.path), git.isClean(copy.path)]);
+          if (branch) throw new Error(`Keep ${work.source!.product.name} on its saved review snapshot, then hand back again.`);
+          if (!clean) await git.commitAll(copy.path, `${task.title} (changes made by hand)`);
           const changed = await git.changedSince(copy.path, copy.head);
           if (!changed.length) continue;
-          const head = await git.head(copy.path);
-          const parent = await git.head(work.worktree);
+          const [head, parent] = await Promise.all([git.head(copy.path), git.head(work.worktree)]);
           const merged = await git.mergeTree(work.worktree, parent, head);
           if (!merged || merged.conflicts.length) throw new Error(`Your changes to ${work.source!.product.name} overlap with its task copy. Resolve them in the snapshot, then hand back again.`);
           prepared.push({ work, snapshot: copy.path, head, sha: await git.commitTree(work.worktree, merged.tree, parent, `${task.title} (changes made by hand)`) });
@@ -254,10 +259,14 @@ export class TakeOver {
    * they drove finishes, without using up a review round.
    */
   private async reviewHandChanges(task: MTask, changedProducts: readonly Id[]): Promise<void> {
-    for (const productId of changedProducts) {
+    const inspected = await Promise.all(changedProducts.map(async (productId) => {
       const scope = executionFor(task, productId);
-      const problems = await git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!);
-      scope.work.tamper = { at: Date.now(), sha: await git.head(scope.work.worktree!), problems };
+      const [problems, sha] = await Promise.all([git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!), git.head(scope.work.worktree!)]);
+      return { scope, problems, sha };
+    }));
+    for (const { scope, problems, sha } of inspected) {
+      const productId = scope.work.productId;
+      scope.work.tamper = { at: Date.now(), sha, problems };
       for (const problem of problems) {
         if (!task.findings.some((finding) => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(productId)))) {
           task.findings.push({ ...(task.repositories ? { productIds: [productId] } : {}), id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });

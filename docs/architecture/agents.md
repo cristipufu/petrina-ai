@@ -38,6 +38,8 @@ After a supported return to the same Builder conversation, unchanged background 
 
 Reusable background includes earlier handoffs, accepted guide points, open follow-up cards and the prior PR description. Confirmed native continuations retain their static verification and role rules, refreshing role details when context scope changes and receiving a short update for the new browser capture folder. Fresh sessions receive the complete rules.
 
+Independent guide, check-evidence and source-location reads run together. Coordinator notes are gathered only after those reads finish, so messages received during preparation reach the opening prompt.
+
 This applies to check fixes and review fixes without removing quality gates. Packets are private runtime files and disappear with finished or cancelled tasks, independently of worktree cleanup. Fewer input characters alone are not a measured reduction in tokens, cost or duration.
 
 ### Role editing and plan contracts
@@ -311,6 +313,8 @@ The same driver starts at once: the step's conversation reopens and hears the no
 
 If files changed, the tamper check runs on the whole branch at once and the task is marked as having hand changes; the delivery check and the delivery step never start while that mark is set, and it clears only when a review chain starts from its first reviewer. A chain still ahead covers the changes. Otherwise the chain being driven, or the last one behind, runs again from its first reviewer once the driven step finishes, without using up a round.
 
+Independent repository inspections run together; their findings are applied in product order. Take-over reuses the saved commit, and hand-back reads commit identity and cleanliness together, while committing and moving working copies remain ordered.
+
 ### How it was checked
 
 On macOS: by hand with the real Claude Code and Codex, in Terminal. Linux: Petrina's own launcher in every terminal it finds (the system default ones, Console, GNOME Terminal, Konsole, Xfce, MATE, LXTerminal, kitty, XTerm), on a virtual screen in a container. Windows: the `open.ps1` launcher run by PowerShell 7 in a container; Windows itself is not checked yet.
@@ -347,6 +351,8 @@ A fix round, or bringing work up to date, goes back to the builder's own convers
 ## Learnings in AGENTS.md
 
 The builder, reviewers and testers can pass on, with their results, what they learned about working in the repository (how to build or test it, a trap, an unwritten convention): one line each, at most three, never about the task itself. Petrina keeps them on the task, without repeated text or lines AGENTS.md already has, and at the delivery check offers them in one inbox item, without holding anything up.
+
+Lessons are grouped by repository before reading its instructions once. With a working copy, its committed AGENTS.md is authoritative, including an empty or deleted file; before the copy exists, the saved base supplies it. Shared lessons never trigger an unrelated repository read.
 
 Matching ignores whitespace, bullets and sentence-ending punctuation, while preserving case, paths, flags and all words; changed wording stays for the coordinator to judge. Accepted ones join the "Learnings" section of AGENTS.md with the next delivery, in its one commit (`packages/engine/src/learnings.ts`). At startup and once a minute, accepted lessons already present in the product's default branch leave the pending queue.
 

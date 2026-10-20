@@ -52,6 +52,8 @@ Each check and commit hook streams its complete output into a separate private f
 
 Testers and reviewers see whether saved results still match the code and all required commands and hooks, using the same freshness rule as the gates. Current complete passes can satisfy automated acceptance without another full run; user acceptance still needs to be tried. Changed or uncommitted code, changed checks, incomplete runs and uncertain hook inputs never become a current pass by being shown to an agent. A read-only review does not invalidate a run on unchanged work.
 
+Before a fresh Tester, each repository is brought up to date once before preparing its checks. A saved Tester or Check finder first finishes the version it was already examining.
+
 Each check operation shares one observation of its commit, tree, tracked changes and hook definition. Queue waits refresh that observation before executing. Review-context capture remains a fresh boundary; a saved current flag alone proves nothing. Settled native failures remain in history without repeating their old diagnostics to reviewers; open failures and agent finding history remain visible.
 
 A Tester must report each item in a saved acceptance checklist; missing items are repaired in the same conversation. A failed acceptance run never satisfies final acceptance, even if a Builder claims it fixed without changing the patch. Final acceptance failures return to the Builder twice, then stop at the coordinator's delivery decision; that boundary survives a restart. A new change request authorizes another bounded attempt.

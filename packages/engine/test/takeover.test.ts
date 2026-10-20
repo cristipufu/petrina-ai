@@ -1,11 +1,12 @@
 // Take over in the coordinator's terminal, and hand back, end to end on fake agents. The "terminal"
 // runs Petrina's real launcher with sh, and the launcher opens a fake of the agent's own app
 // (fake-cli.ts) that adds a turn to the conversation and changes the working copy like a person would.
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { slotUses, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "../src/engine.js";
+import * as gitOps from "../src/git.js";
 import { sessionState } from "../src/terminal.js";
 import type { CliScript } from "./fake-cli.js";
 import type { Scenario } from "./fake-agent.js";
@@ -65,7 +66,9 @@ function unusedPid(): number {
     try { process.kill(pid, 0); pid += 1; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ESRCH") return pid;
-      throw error;
+      // A live process owned by another user is not an available stand-in for a dead owner.
+      if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+      pid += 1;
     }
   }
 }
@@ -294,6 +297,27 @@ describe.skipIf(!posix)("hand changes during design", () => {
 });
 
 describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () => {
+  it("keeps the observed commit when handing back unchanged work without another HEAD read", async () => {
+    const run = await start({ planner: "short", builder: "work", reopen: "resume" });
+    let read: ReturnType<typeof spyOn<typeof gitOps, "head">> | undefined;
+    try {
+      await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
+      await run.working("builder");
+      const engine = run.engine();
+      await engine.takeOver(run.taskId, "copy");
+      engine.setPoolPaused(true);
+      const before = run.task().driving!.head;
+      engine.startDriver = () => {};
+      read = spyOn(gitOps, "head");
+      await engine.handBack(run.taskId, "No code changes", true);
+      expect(read.mock.calls).toEqual([]);
+      expect(run.task().driving).toBeUndefined();
+      expect(run.task().conversation?.head).toBe(before);
+      expect(git(run.task().worktree!, "rev-parse", "HEAD")).toBe(before);
+      expect(run.task().handChanges).not.toBe(true);
+    } finally { read?.mockRestore(); await run.engine().shutdown(); }
+  });
+
   it("keeps the task in the coordinator's hands with its seat, and offers Hand back anyway only when it cannot tell", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
     await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");

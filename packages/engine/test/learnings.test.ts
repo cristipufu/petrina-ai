@@ -1,12 +1,13 @@
 import { executionFor } from "../src/repository-context.js";
-import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { addLearnings, Learnings } from "../src/learnings.js";
 import { hasPoint } from "../src/points.js";
+import * as gitOps from "../src/git.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
@@ -39,6 +40,32 @@ describe("the Learnings section of AGENTS.md", () => {
 });
 
 describe("lessons agents pass on", () => {
+  for (const state of ["before-copy", "deleted", "empty"] as const) it(`reads learning instructions from the authoritative version: ${state}`, async () => {
+    const root = tempDir(`petrina-learning-source-${state}-`); roots.push(root);
+    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+    engine.setPoolPaused(true);
+    const repo = makeProduct(root), lesson = "Use the repository's focused greeting checks before the full suite.";
+    writeFileSync(join(repo, "AGENTS.md"), `## Learnings\n\n- ${lesson}\n`);
+    git(repo, "add", "."); git(repo, "commit", "-qm", "Record the original instruction");
+    const base = git(repo, "rev-parse", "HEAD");
+    const productId = await engine.addProduct(repo);
+    const scope = executionFor(engine.task(engine.addTask({ productId, title: "Learn from the current instructions", backlog: true }))!);
+    scope.work.baseSha = base;
+    if (state !== "before-copy") {
+      scope.work.worktree = repo;
+      if (state === "deleted") rmSync(join(repo, "AGENTS.md"));
+      else writeFileSync(join(repo, "AGENTS.md"), "");
+      git(repo, "add", "."); git(repo, "commit", "-qm", "Remove the old instruction");
+    }
+    const read = spyOn(gitOps, "fileAt");
+    try {
+      await new Learnings(engine).note(scope, [lesson], "builder", "sol-high");
+      const sourcePath = state === "before-copy" ? engine.s.products.find((product) => product.id === productId)!.path! : repo;
+      expect(read.mock.calls.filter(([, , file]) => file === "AGENTS.md")).toEqual([[sourcePath, state === "before-copy" ? base : "HEAD", "AGENTS.md"]]);
+      expect(scope.work.lessons?.map((entry) => entry.text) ?? []).toEqual(state === "before-copy" ? [] : [lesson]);
+    } finally { read.mockRestore(); await engine.shutdown(); }
+  });
+
   it("offers and saves a complete lesson, including the instructions beyond 240 characters", async () => {
     const root = tempDir("petrina-lessons-complete-");
     roots.push(root);

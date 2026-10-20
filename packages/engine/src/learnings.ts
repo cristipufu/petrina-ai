@@ -28,15 +28,20 @@ export class Learnings {
     const { task, work: repository } = scope;
     if (!lessons.length) return;
     const own: string[] = [];
+    const companions = new Map<Id, { work: RepositoryContext["work"]; texts: string[] }>();
     for (const lesson of lessons) {
       const text = typeof lesson === "string" ? lesson : lesson.text;
       const id = typeof lesson === "string" ? this.k.role(roleId)?.canEdit ? repository.productId : undefined : lesson.productId;
       if (!task.repositories || id === repository.productId) { own.push(text); continue; }
       const work = id ? task.repositories.find((entry) => entry.productId === id) : undefined;
       if (work) {
-        await this.note({ task, work }, [{ productId: work.productId, text }], roleId, profileId);
+        const group = companions.get(work.productId) ?? { work, texts: [] };
+        group.texts.push(text);
+        companions.set(work.productId, group);
       } else if (!task.sharedLessons?.some((entry) => entry.text === text)) task.sharedLessons = [...(task.sharedLessons ?? []), { text, roleId, profileId, at: Date.now() }];
     }
+    for (const { work, texts } of companions.values()) await this.note({ task, work }, texts.map((text) => ({ productId: work.productId, text })), roleId, profileId);
+    if (!own.length) return;
     const known = await this.known(scope);
     for (const raw of own) {
       // The coordinator approves this instruction as written; cutting it can lose a path or a qualification.
@@ -56,7 +61,7 @@ export class Learnings {
   private async known(scope: RepositoryContext): Promise<string> {
     const { work: repository } = scope;
     const product = this.k.productOf(scope);
-    const file = (repository.worktree && await git.fileAt(repository.worktree, "HEAD", AGENTS_FILE)) || await this.baseFile(scope);
+    const file = repository.worktree ? await git.fileAt(repository.worktree, "HEAD", AGENTS_FILE) : await this.baseFile(scope);
     return [file, ...(product?.learnings ?? []).map((line) => line.text), ...(product?.learningsDeclined ?? [])].join("\n");
   }
 

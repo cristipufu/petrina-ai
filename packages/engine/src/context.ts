@@ -49,12 +49,14 @@ export class Context {
     const { task, work: repository } = scope;
     const role = this.k.role(roleId);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
-    const points = !review && reads.includes("guide-points") ? await this.guide.pendingPoints(scope) : [];
-    const currentChecks = !review && reads.includes("check-results") && !!repository.checks?.results.length ? await this.currentChecks(scope) : false;
     const fromPlanning = task.plan?.stages.some((stage) => stage.kind === "converge") ? [] : task.sourcePointers ?? [];
     const references = role?.result === "brief" ? [...(task.brief?.sourcePointers ?? []), ...(task.sourcePointers ?? [])]
       : role?.result === "build" && !task.fixing ? task.brief?.sourcePointers ?? fromPlanning : [];
-    const pointers = await currentSourcePointers(repositoryView(scope), references);
+    const [points, currentChecks, pointers] = await Promise.all([
+      !review && reads.includes("guide-points") ? this.guide.pendingPoints(scope) : [],
+      !review && reads.includes("check-results") && !!repository.checks?.results.length ? this.currentChecks(scope) : false,
+      currentSourcePointers(repositoryView(scope), references),
+    ]);
     // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
     takeMessages(task, member, Infinity);
     const source = review ? review.source : this.approvedSource(scope);
@@ -80,8 +82,10 @@ export class Context {
 
   /** Capture common facts once; messages remain live and are delivered per member. */
   async captureReview(scope: RepositoryContext): Promise<ReviewInput> {
-    const points = await this.guide.pendingPoints(scope);
-    const currentChecks = !!scope.work.checks?.results.length && await this.currentChecks(scope);
+    const [points, currentChecks] = await Promise.all([
+      this.guide.pendingPoints(scope),
+      !!scope.work.checks?.results.length && this.currentChecks(scope),
+    ]);
     const parts: ReviewInput["parts"] = {};
     for (const part of ["brief", "guide-points", "report", "check-results", "findings"] as const) parts[part] = this.parts[part](scope, "code-reviewer", points, currentChecks);
     return structuredClone({ parts, source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: reviewFindings(scope) });

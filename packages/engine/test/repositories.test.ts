@@ -32,6 +32,27 @@ function setup(name: string) {
 }
 
 describe.concurrent("one task across products", () => {
+  for (const shared of [false, true]) it(`updates each product once before the Tester (${shared ? "shared" : "single"} task)`, async () => {
+    const { shop, api, start, fakes } = setup(`tester-updates-${shared}`);
+    const engine = start();
+    const updates = engine["updates"], original = updates.upToDate.bind(updates), prepared: string[] = [];
+    updates.upToDate = (scope, signal) => {
+      const task = scope.task, stage = task.plan?.stages[task.stageIndex];
+      if (stage?.roleId === "tester" && !task.retest) prepared.push(scope.work.productId);
+      return original(scope, signal);
+    };
+    try {
+      const first = await engine.addProduct(shop.clone), second = shared ? await engine.addProduct(api.clone, "API") : undefined;
+      const products = second ? [first, second] : [first];
+      fakes.scenario({ planner: "tester-with-design", builder: "plain", affectedProducts: products });
+      const id = engine.addTask({ productId: first, worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Give the Tester current product checks" });
+      const state = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
+      expect(taskOf(state, id).error).toBeUndefined();
+      expect(fakes.openings("tester").length).toBeGreaterThan(0);
+      expect(prepared).toEqual(products);
+    } finally { updates.upToDate = original; await engine.shutdown(); }
+  });
+
   for (const [name, reports, owners] of [
     ["omitted ownership", [["second"], undefined], [["second"], []]],
     ["foreign ownership", [["second"], ["foreign"]], [["second"], []]],

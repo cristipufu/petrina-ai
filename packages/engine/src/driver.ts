@@ -459,7 +459,6 @@ export class Driver {
         if (this.testerNeedsChecks(current)) {
           // Resolve an already-known stale base before spending checks or acceptance on it.
           // A saved Tester or Check finder first finishes the version it was already examining.
-          if (!scope.work.conversation && (await this.updates.upToDate(scope, signal)) === "conflict") continue;
           let failed = false;
           let conflict = false;
           for (const work of current.repositories ?? [undefined]) {
