@@ -12,6 +12,7 @@ import type { GuideKeeper } from "./guide-keeper.js";
 import { takeMessages } from "./messages.js";
 import { currentSourcePointers } from "./source-pointers.js";
 import type { ReviewInput } from "./review-context.js";
+import { verificationContext } from "./verification-context.js";
 
 export interface Section {
   title: string;
@@ -80,17 +81,20 @@ export class Context {
       if (cards.length) sections.push({ title: "Open follow-up cards", body: `${cards.map((card) => `- ${card.id}: ${card.title}\n  ${card.problem}`).join("\n")}\nIf this is the same bug as one of these cards, set "sameBug" to that card's id. If it is none of them, set "sameBug" to "none".` });
     }
     sections.push(...(review ? review.handedBack : this.handedBack(scope)));
+    if (!review && reads.includes("report")) sections.push(...await verificationContext(this.k.dataDir, repositoryView(scope), role?.result === "checks" ? Object.fromEntries((task.repositories ?? [repository]).map((work) => [work.productId, work.checks?.current && work.checks.tree ? work.checks.tree : "unavailable"])) : undefined));
     return sections;
   }
 
   /** Capture common facts once; messages remain live and are delivered per member. */
   async captureReview(scope: RepositoryContext): Promise<ReviewInput> {
-    const [points, currentChecks] = await Promise.all([
+    const [points, currentChecks, evidence] = await Promise.all([
       this.guide.pendingPoints(scope),
       !!scope.work.checks?.results.length && this.currentChecks(scope),
+      verificationContext(this.k.dataDir, repositoryView(scope)),
     ]);
     const parts: ReviewInput["parts"] = {};
     for (const part of ["brief", "guide-points", "report", "check-results", "findings"] as const) parts[part] = this.parts[part](scope, "code-reviewer", points, currentChecks);
+    parts.report = [...(parts.report ?? []), ...evidence];
     return structuredClone({ parts, source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: reviewFindings(scope) });
   }
 

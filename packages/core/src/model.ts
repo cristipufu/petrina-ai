@@ -276,7 +276,7 @@ export interface JourneyStep {
   /** The role-specific context given to each agent in this step. Older saved steps have no snapshot. */
   agentInputs?: readonly JourneyAgentInput[];
   /** The original accepted response, plus any pictures saved with that response. */
-  agentResults?: readonly { roleId: Id; profileId: Id; at: number; value: unknown; images?: readonly ReportImage[] }[];
+  agentResults?: readonly { roleId: Id; profileId: Id; at: number; value: unknown; images?: readonly ReportImage[]; productId?: Id; versions?: Readonly<Record<Id, string>> }[];
   /** The product checks Petrina ran during this checks step. */
   productChecks?: readonly JourneyProductCheck[];
   /** `petrina`: what Petrina did. */

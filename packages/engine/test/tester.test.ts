@@ -229,6 +229,13 @@ describe("the tester tries the change once, and the final code once more", () =>
       }
       const testers = attempts.filter((step) => step.reason !== W.agentChanged);
       expect(testers).toHaveLength(3);
+      for (const tester of testers.slice(1)) {
+        expect(tester.trigger?.reason).toContain("Final acceptance testing after review");
+        expect(tester.agentInputs?.[0]?.instructions).toContain("final acceptance testing after review");
+        expect(tester.agentInputs?.[0]?.sections.some((section) => section.title === "Why acceptance testing runs again")).toBe(true);
+        expect(tester.agentInputs?.[0]?.sections.some((section) => section.title === "Earlier implementation and verification evidence")).toBe(true);
+        expect(tester.agentResults?.at(-1)?.versions?.[task.productId]).toMatch(/^[0-9a-f]{40}$/);
+      }
       expect(new Set(testers.map((step) => step.id)).size).toBe(3);
       expect(testers.map((step) => step.reason)).toEqual(["checks passed", "1 check failed", "checks passed"]);
       expect(task.timeline.filter((entry) => entry.text === "Tester started").map((entry) => entry.step)).toEqual([attempts[0]!.id, ...testers.slice(1).map((step) => step.id)]);

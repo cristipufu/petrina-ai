@@ -86,6 +86,8 @@ After a supported return to the same Builder conversation, unchanged background 
 
 Reusable background includes earlier handoffs, accepted guide points, open follow-up cards and the prior PR description. Confirmed native continuations retain their static verification and role rules, refreshing role details when context scope changes and receiving a short update for the new browser capture folder. Fresh sessions receive the complete rules.
 
+Implementation and acceptance reports retain their node, product, confirmed settings and recorded code trees. Downstream agents receive a compact index into an immutable file of those existing reports; the full history is not copied into each prompt. A final acceptance pass names its reason and the products changed since the previous tested trees. Earlier passes are navigation evidence, never automatic proof for new code; missing historical versions stay unknown. These files share task-context cleanup.
+
 Independent guide, check-evidence and source-location reads run together. Coordinator notes are gathered only after those reads finish, so messages received during preparation reach the opening prompt.
 
 This applies to check fixes and review fixes without removing quality gates. Packets are private runtime files and disappear with finished or cancelled tasks, independently of worktree cleanup.

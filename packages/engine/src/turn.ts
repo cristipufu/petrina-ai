@@ -302,7 +302,8 @@ export class Turns {
     const stage = task.plan?.stages[task.stageIndex];
     const journeyRole = options.copy && stage?.kind === "review-chain" && !repository.portReview && stage.roleIds?.includes(roleId) ? stage.roleId : roleId;
     const team = previous?.kind === "agent" && previous.roleId === journeyRole ? previous.team ?? (previous.profileId ? [previous.profileId] : []) : [];
-    beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, options.copy ? [...new Set([...team, profileId])] : undefined, repository);
+    const journeyStep = beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, options.copy ? [...new Set([...team, profileId])] : undefined, repository);
+    if (role.result === "checks" && task.retest && !journeyStep.agentInputs?.length) journeyStep.trigger = { ...journeyStep.trigger, reason: "Final acceptance testing after review: the final code needs current acceptance evidence" };
     if (saved) {
       task.statusLine = options.status ?? `${role.name} is getting back to work`;
     } else {
@@ -858,7 +859,7 @@ export class Turns {
                 host!.images = saved;
               }
               const step = openStep(live);
-              if (step) step.agentResults = [...(step.agentResults ?? []), { roleId: role.id, profileId, at: finishedAt, value: parsed.value, ...(saved.length ? { images: saved } : {}) }];
+              if (step) step.agentResults = [...(step.agentResults ?? []), { roleId: role.id, profileId, productId: scope.work.productId, at: finishedAt, value: parsed.value, ...(saved.length ? { images: saved } : {}) }];
               // The result ends the agent's work. Saving its pictures is Petrina's time.
               if (options.main) this.k.pauseStep(current, finishedAt);
               const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;

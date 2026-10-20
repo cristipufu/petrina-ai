@@ -101,7 +101,10 @@ export class Work {
         this.k.log(scope, "done", `Brought up to date with ${sourceName}: ${result.summary}`, roleId, by);
       } else delete repository.reviewedTree;
       await this.updates.fold(scope);
-      if (repository.checks) repository.checks.current = repository.checks.tree === await git.treeOf(repository.worktree!);
+      const builtTree = await git.treeOf(repository.worktree!);
+      if (repository.checks) repository.checks.current = repository.checks.tree === builtTree;
+      const buildReport = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
+      if (buildReport && builtTree) buildReport.versions = { [repository.productId]: builtTree };
       // The next fix round or update goes back to the conversation that really completed this build.
       const conversation = repository.conversation;
       if (conversation?.briefed && conversation.roleId === roleId) repository.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId, ...(conversation.context ? { context: conversation.context } : {}) };
@@ -129,7 +132,7 @@ export class Work {
         Date.now(),
       );
     } else if (role?.result === "checks") {
-      testedVersions = task.repositories ? await versionsOf(task) : undefined;
+      testedVersions = await versionsOf(task);
       const rawResult = await this.turns.turn(scope, roleId, profileId, sections, TestResult, signal, {
         used,
         check: (value) => {
@@ -139,7 +142,7 @@ export class Work {
       });
       if (role.canEdit) {
         await this.k.saveRoleEdits(scope, roleId, by);
-        testedVersions = task.repositories ? await versionsOf(task) : undefined;
+        testedVersions = await versionsOf(task);
       }
       const result = { ...rawResult, checks: rawResult.checks.map((check) => {
         const productIds = productsFor(task, "productIds" in check ? check.productIds : undefined);
@@ -149,6 +152,8 @@ export class Work {
       }) };
       const testerStep = openStep(task);
       if (testerStep?.kind === "agent" && testerStep.roleId === roleId) {
+        const report = testerStep.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
+        if (report) report.versions = testedVersions;
         testerStep.acceptanceChecks = result.checks.map((check) => ({ text: check.text, result: check.result, ...(check.evidence ? { evidence: check.evidence } : {}), ...("reason" in check && check.reason ? { reason: check.reason } : {}) }));
       }
       await this.learnings.note(scope, result.learnings, roleId, by);

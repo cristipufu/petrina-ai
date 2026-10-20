@@ -9,6 +9,8 @@ import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
 
+const acceptanceStart = ({ task }: PromptContext) => task.retest ? "This is final acceptance testing after review. Earlier acceptance did not cover the final code or did not pass. Use the earlier evidence index to inspect what changed; old passes do not automatically satisfy this run. " : "";
+
 export const SourcePointers = z.array(z.object({
   productId: z.string().trim().min(1).max(100),
   revision: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i),
@@ -362,10 +364,11 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
     result: TestResult,
     reads: ["notes", "brief", "report", "check-results"],
     shape: ({ task }) => `{"summary": "How it went", "checks": [{"text": "An acceptance item", ${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"result": "pass", "evidence": "The exact scenario tried, expected and observed result, or the current applicable automated check"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
-    instructions: ({ role }) => {
-      return `Run the product and check every acceptance item like a user would.${role.canEdit ? "" : " Do not change files."} For each item, report "result": "pass" when verified, "fail" when you reproduced a product defect, or "blocked" when you could not perform the check. ${ACCEPTANCE_EVIDENCE_RULE} For a blocked check, give a short "reason" naming what prevented verification. A blocked check is not a product failure, but it is not evidence that the item passes; do not guess or retry unchanged checks.\n${LEARN}`;
+    instructions: (ctx) => {
+      const { role } = ctx;
+      return `${acceptanceStart(ctx)}Run the product and check every acceptance item like a user would.${role.canEdit ? "" : " Do not change files."} For each item, report "result": "pass" when verified, "fail" when you reproduced a product defect, or "blocked" when you could not perform the check. ${ACCEPTANCE_EVIDENCE_RULE} For a blocked check, give a short "reason" naming what prevented verification. A blocked check is not a product failure, but it is not evidence that the item passes; do not guess or retry unchanged checks.\n${LEARN}`;
     },
-    withInstructions: (_context, wording) => `${wording}\n${ACCEPTANCE_EVIDENCE_RULE}`,
+    withInstructions: (ctx, wording) => `${acceptanceStart(ctx)}${wording}\n${ACCEPTANCE_EVIDENCE_RULE}`,
   },
   "code-reviewer": {
     incrementalReview: true,
