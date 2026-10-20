@@ -50,6 +50,18 @@ describe("how reviews are going", () => {
     expect(stats.meanRounds).toBeUndefined();
     expect(stats.profiles).toEqual([]);
   });
+  it("measures the highest numbered round without summing code, security, repeated visits or verifier seats", () => {
+    const stages = [
+      { id: "code", kind: "review-chain" as const, title: "Code", roleId: "code-reviewer", profileIds: ["sol-high", "opus-high"] },
+      { id: "security", kind: "review-chain" as const, title: "Security", roleId: "security-reviewer", profileIds: ["sol-high"] },
+    ];
+    const task = reviewed("revisited", 1, [], { plan: { ...base.plan!, stages }, rounds: { code: 3, security: 2 }, journey: [1, 2, 3, 3].map((round, index) => ({ id: `code-${index}`, kind: "agent", roleId: "code-reviewer", stageId: "code", round, sub: 0, startedAt: index, endedAt: index + 1, team: ["sol-high", "opus-high"] })) });
+    expect(reviewStats([task])).toMatchObject({ meanRounds: 3, passed: { first: 0, third: 1, total: 1 } });
+    task.rounds = { code: 1, security: 1 };
+    expect(reviewStats([task])).toMatchObject({ meanRounds: 1, passed: { first: 1, total: 1 } });
+    delete task.journey;
+    expect(reviewStats([task]).meanRounds).toBe(1);
+  });
   it("keeps security findings separate from code findings on the same profile, including older and custom roles", () => {
     const stats = reviewStats([
       reviewed("a", 1, [

@@ -26,16 +26,16 @@ export function ReviewsPanel({ tasks, roles, find, history }: { tasks: State["ta
     <div className="review-summary">
       <div className="kpis">
         <div className="kpi">
-          <span className="kpi-label">Passed in the first round</span>
+          <span className="kpi-label">Stayed in round one</span>
           <span className="kpi-value">{share(stats.passed.first, stats.passed.total)}</span>
           <span className="kpi-note">
             {stats.passed.first} of {stats.passed.total} that passed
           </span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Rounds to pass, on average</span>
+          <span className="kpi-label">Highest round, on average</span>
           <span className="kpi-value">{stats.meanRounds === undefined ? "–" : stats.meanRounds.toFixed(1)}</span>
-          <span className="kpi-note">{stats.passed.later ? `${stats.passed.later} took four or more` : "None took four or more"}</span>
+          <span className="kpi-note">{stats.passed.later ? `${stats.passed.later} reached round four or later` : "None reached round four"}</span>
         </div>
         <div className="kpi">
           <span className="kpi-label">Handed to you unsettled</span>
@@ -48,6 +48,8 @@ export function ReviewsPanel({ tasks, roles, find, history }: { tasks: State["ta
           <span className="kpi-note">Deliveries every reviewer had passed</span>
         </div>
       </div>
+
+      <p className="muted small">Round figures use each passed task’s highest numbered review round across all its review stages. A stage visited twice in round 3 still counts as round 3; these figures do not count total review passes, parallel reviewers or verifier checks.</p>
 
       {roleRows.length > 0 && <section className="analytics-subsection" aria-labelledby="review-role-findings">
         <h3 id="review-role-findings">Findings by review role</h3>

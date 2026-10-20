@@ -17,9 +17,9 @@ export function isRejectedReopenOfVerifiedFix(finding: Pick<Finding, "reopenedAt
 export interface ReviewStats {
   /** Tasks whose review is over: passed, or handed to the coordinator with rounds used up. */
   reviewed: number;
-  /** Of those, how many passed, and in which round. */
+  /** Passed tasks, bucketed by their highest numbered round across all review stages. */
   passed: { total: number; first: number; second: number; third: number; later: number };
-  /** Mean rounds to pass, over the tasks that passed. */
+  /** Mean highest numbered round for passed tasks; repeated visits at one round do not increase it. */
   meanRounds?: number;
   /** Deliveries the coordinator sent back after every reviewer had passed them. */
   sentBack: number;
@@ -97,7 +97,7 @@ export interface ProfileStats {
   notABug: number;
 }
 
-/** The round a task passed review in, or undefined while its review is not over. */
+/** Highest convergence counter for a completed review, not a count of journey attempts. */
 function reviewOutcome(task: Task): { rounds: number; passed: boolean } | undefined {
   const stages = task.plan?.stages ?? [];
   const chains = stages.map((stage, index) => ({ stage, index })).filter(({ stage }) => stage.kind === "review-chain");
