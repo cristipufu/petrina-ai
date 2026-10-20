@@ -127,7 +127,14 @@ describe("roles the coordinator edits and adds", () => {
           released.add(first.session);
           await advance(() => fakes.openings("code reviewer").length === 2);
         }
-        const during = (await engine.state()).tasks.find((entry) => entry.id === taskId)!;
+        // Opening the replacement is earlier than its first plan update. Until that arrives,
+        // retaining the outgoing agent's to-do item is intentional.
+        const ready = await advance((state) => {
+          const work = state.tasks.find((entry) => entry.id === taskId)!.hunt?.work;
+          return [["reviewer:0", "code-reviewer"], ["reviewer:1", security]].every(([key, roleId]) =>
+            work?.[key!]?.todo === `${reviewers.find((role) => role.id === roleId)!.name.toLowerCase()} is working`);
+        });
+        const during = ready.tasks.find((entry) => entry.id === taskId)!;
         expect(during.hunt?.profiles?.["0"]).toBeDefined();
         expect(during.hunt?.profiles?.["1"]).toBeDefined();
         if (interruption === "usage replacement") expect(during.hunt?.profiles?.["0"]).not.toBe("opus-high");

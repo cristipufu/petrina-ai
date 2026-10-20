@@ -490,6 +490,8 @@ describe("a stopped check keeps an incomplete cleanup warning", () => {
         expect(task.timeline.some((entry) => entry.text === CLEANUP_INCOMPLETE)).toBe(true);
         expect(task.findings.some((finding) => finding.text.startsWith("Check failed"))).toBe(false);
         expect(alive(pid)).toBe(true);
+        // Inspect durable evidence only after its writer has finished saving and released SQLite.
+        await engine.quit();
         const store = new Store(join(home, "petrina.db"));
         try {
           const saved = store.load()!.tasks.find((entry) => entry.id === id)!;
