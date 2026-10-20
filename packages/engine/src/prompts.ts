@@ -198,7 +198,7 @@ export function continuePrompt(ctx: PromptContext, options: { refreshRole?: bool
   const contract = contractFor(ctx.role);
   const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility" || section.title === "Current authoritative task context") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
   const sections = [...map, ...ctx.sections].map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
-  return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}). What you learned before still holds; here is where things stand now.
+  return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}).${ctx.base ? ` The current base version is ${ctx.base}.` : ""} What you learned before still holds; here is where things stand now.
 
 # Your job now
 ${INVESTIGATION_RULE}

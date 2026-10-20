@@ -12,14 +12,17 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
   const all = sections.map((section) => ({ ...section }));
   if (!/^[a-zA-Z0-9_-]+$/.test(task.id)) return { sections: all };
   const root = join(dataDir, "contexts", task.id);
-  const scope = hash(JSON.stringify({ sessionId, role, productId: task.productId, path: task.worktree, title: task.title, request: task.description, source: task.source, base: task.baseSha, copies: task.repositories?.map((work) => ({ productId: work.productId, base: work.baseSha, source: work.source, path: work.worktree })) }));
+  // Advancing the approved branch changes the work, not the identity of this
+  // conversation. Changed sections are still sent by content hash below.
+  const scope = hash(JSON.stringify({ sessionId, role, productId: task.productId, path: task.worktree, title: task.title, request: task.description, source: task.source, copies: task.repositories?.map((work) => ({ productId: work.productId, source: work.source, path: work.worktree })) }));
   const counts = new Map<string, number>();
   const keyed = sections.map((section) => {
     const occurrence = (counts.get(section.title) ?? 0) + 1;
     counts.set(section.title, occurrence);
     return { section, key: `${section.title}#${occurrence}`, digest: hash(section.body) };
   });
-  const packet = `# Current task: ${task.title}\n${task.description}\n\n${sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n")}\n`;
+  const versions = (task.repositories ?? [task]).map((work) => `${work.productId}: base ${work.baseSha ?? "not prepared"}`).join("\n");
+  const packet = `# Current task: ${task.title}\n${task.description}\n\n## Current repository versions\n${versions}\n\n${sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n")}\n`;
   const digest = hash(packet);
   const file = join(root, `${digest}.md`);
   try {

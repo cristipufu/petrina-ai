@@ -51,11 +51,33 @@ it("sends changed Builder context and every new finding while keeping full autho
     const newRole = await builderContext(root, task, { ...role, instructions: "Use the new role rules." }, "own-session", changed, next.snapshot);
     expect(newRole.sections).toEqual(changed);
     expect((await builderContext(root, task, role, "fresh-session", changed, next.snapshot)).sections).toEqual(changed);
-    expect((await builderContext(root, { ...task, baseSha: "another-source" }, role, "own-session", changed, next.snapshot)).sections).toEqual(changed);
+    const advanced = await builderContext(root, { ...task, baseSha: "new-main-version" }, role, "own-session", changed, next.snapshot);
+    expect(advanced.sections.map((section) => section.title)).toEqual(["Current authoritative task context", changed[2]!.title]);
+    expect(await readFile(advanced.snapshot!.file, "utf8")).toContain("base new-main-version");
+    expect((await builderContext(root, { ...task, description: "A different request" }, role, "own-session", changed, next.snapshot)).sections).toEqual(changed);
     await rm(next.snapshot!.file);
     expect((await builderContext(root, task, role, "own-session", newBrief, next.snapshot)).sections).toEqual(newBrief);
     await writeFile(first.snapshot!.file, "Damaged context");
     expect((await builderContext(root, task, role, "own-session", changed, first.snapshot)).sections).toEqual(changed);
+  } finally { removeDir(root); }
+});
+
+it("reuses unchanged context across companion base updates, but not a changed approved source", async () => {
+  const root = tempDir("petrina-companion-context-");
+  try {
+    const task = createDemoState(1_000_000_000).tasks[0]!;
+    const role = BUILT_IN_ROLES.find((entry) => entry.result === "build")!;
+    const source = { product: { id: "api", name: "API", repo: "owner/api" }, start: { kind: "branch" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: "owner/api", branch: "main" }, confirmed: true };
+    const repository = { ...task.repository, productId: "api", source, baseSha: "old-main", worktree: "/copies/api" };
+    const shared = { ...task, repositories: [repository] };
+    const sections = [{ title: "Design brief", body: "Keep this requirement" }, { title: "Current product checks", body: "All passing on the new main" }];
+    const first = await builderContext(root, shared, role, "same-session", sections);
+    const advanced = { ...shared, repositories: [{ ...repository, baseSha: "new-main" }] };
+    const next = await builderContext(root, advanced, role, "same-session", sections, first.snapshot);
+    expect(next.sections.map((section) => section.title)).toEqual(["Current authoritative task context", "Current product checks"]);
+    expect(await readFile(next.snapshot!.file, "utf8")).toContain("api: base new-main");
+    const redirected = { ...advanced, repositories: [{ ...advanced.repositories[0]!, source: { ...source, start: { ...source.start, branch: "another-branch" } } }] };
+    expect((await builderContext(root, redirected, role, "same-session", sections, next.snapshot)).sections).toEqual(sections);
   } finally { removeDir(root); }
 });
 
