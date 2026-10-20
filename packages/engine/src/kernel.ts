@@ -333,8 +333,9 @@ export abstract class Kernel {
   readonly backgroundWork = new Set<Promise<unknown>>();
 
   trackWork<T>(work: Promise<T>): Promise<T> {
-    this.backgroundWork.add(work);
-    void work.finally(() => this.backgroundWork.delete(work)).catch(() => undefined);
+    // Drains wait for completion; the caller owns the result and any failure.
+    const tracked = work.finally(() => this.backgroundWork.delete(tracked)).catch(() => undefined);
+    this.backgroundWork.add(tracked);
     return work;
   }
 

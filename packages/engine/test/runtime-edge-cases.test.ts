@@ -15,6 +15,39 @@ async function fixture() {
   return { engine, task };
 }
 
+it("waits for background work to settle without replaying an owner's handled rejection", async () => {
+  const { engine } = await fixture();
+  let finish!: (value: string) => void;
+  let fail!: (error: Error) => void;
+  const success = new Promise<string>(resolve => { finish = resolve; });
+  const failure = new Promise<never>((_, reject) => { fail = reject; });
+  const reason = new Error("A follow-up picture is still on the original task");
+  const handled = failure.catch(error => error);
+  try {
+    expect(engine.trackWork(success)).toBe(success);
+    expect(engine.trackWork(failure)).toBe(failure);
+    expect(engine.backgroundWork.size).toBe(2);
+    expect(engine.inFlight()).toBe(2);
+    let settled = false;
+    const waiting = Promise.all([...engine.backgroundWork]).then(() => { settled = true; });
+    finish("Copied");
+    expect(await success).toBe("Copied");
+    expect(engine.backgroundWork.size).toBe(1);
+    expect(engine.inFlight()).toBe(1);
+    expect(settled).toBe(false);
+    fail(reason);
+    await waiting;
+    expect(await handled).toBe(reason);
+    expect(settled).toBe(true);
+    expect(engine.backgroundWork.size).toBe(0);
+    expect(engine.inFlight()).toBe(0);
+  } finally {
+    finish("Copied"); fail(reason);
+    await Promise.allSettled([...engine.backgroundWork]);
+    await engine.shutdown();
+  }
+});
+
 it("surfaces the planned tool's login problem instead of a usage wait when no tool is usable", async () => {
   const { engine, task } = await fixture();
   try {
