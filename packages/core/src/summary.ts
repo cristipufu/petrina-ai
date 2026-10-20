@@ -6,7 +6,7 @@
 import { CALL_WORDS, followingCall } from "./call.js";
 import { allowsReviewFix, reviewRoundEnd } from "./flow.js";
 import { portReviewerIndex } from "./journey.js";
-import { reviewerAt } from "./roles.js";
+import { reviewerAt, roleForTask } from "./roles.js";
 import type { DeliveryMode, GateKind, Id, Stage, State, StepClock, StepRecord, Task } from "./model.js";
 
 /** How long a to-do item may be on the board, in characters. */
@@ -174,7 +174,7 @@ function by(state: People, ...profileIds: readonly (Id | undefined)[]): string {
 
 /** Whether a review round may still send the work back to the builder (a later round keeps doing so while it converges). */
 function canFixReview(state: People, task: Task, stage: Stage, index: number): boolean {
-  if (!task.plan!.stages.some((entry, at) => at < index && state.roles.find((role) => role.id === entry.roleId)?.result === "build")) return false;
+  if (!task.plan!.stages.some((entry, at) => at < index && roleForTask(state.roles, entry.roleId, task)?.result === "build")) return false;
   return allowsReviewFix(task, stage, task.rounds[stage.id] ?? 1);
 }
 

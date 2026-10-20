@@ -182,6 +182,10 @@ describe("what comes next", () => {
     expect(nextLine(state, { ...progressed, rounds: { [stage.id]: 5 } })).toContain("Next: your call");
     expect(reviewRoundEnd({ ...progressed, findings: [] }, stage, 3, state.roles).kind).toBe("passed");
     expect(nextLine(state, { ...progressed, findings: [] })).toContain("or fixes by the builder");
+    const maintenanceRole = { ...state.roles.find((role) => role.result === "build")!, id: "saved-maintenance" };
+    const maintenance: Task = { ...progressed, plan: { ...progressed.plan!, stages: progressed.plan!.stages.map((entry) => state.roles.find((role) => role.id === entry.roleId)?.result === "build" ? { ...entry, roleId: maintenanceRole.id } : entry) }, maintenance: { routineId: "routine", routineName: "Maintenance", scheduledAt: 0, queuedAt: 0, zone: "UTC", focus: "Inspect", input: "Inspect", role: maintenanceRole, profile: state.profiles[0]!, product: state.products[0]! } };
+    expect(reviewRoundEnd(maintenance, stage, 3, state.roles).kind).toBe("send back");
+    expect(nextLine(state, maintenance)).toContain("or fixes by the builder");
   });
 
   it("follows the design loop: review, another round, the reviewer's last round", () => {
