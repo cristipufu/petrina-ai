@@ -318,7 +318,7 @@ export function composePlan(task: Pick<Task, "id" | "kind" | "delivery" | "appro
   }
   if (task.kind === "new" || task.kind === "feature") {
     for (const role of added.filter((entry) => entry.result === "notes")) {
-      const build = stages.findIndex((stage) => stage.roleId === "builder");
+      const build = stages.findIndex((stage) => roles.find(role => role.id === stage.roleId)?.result === "build");
       const step: Stage = { id: `${task.id}:${role.id}`, kind: "do", title: role.name, roleId: role.id, profileIds: ["sonnet-medium"] };
       if (build >= 0) stages.splice(role.canEdit ? build + 1 : build, 0, step);
     }

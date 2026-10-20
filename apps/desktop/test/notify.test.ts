@@ -305,7 +305,7 @@ describe("wording", () => {
   it("keeps a finished learning's task and product names from the historical inbox summary", () => {
     const archived = { ...guestCheckout, state: "done" as const };
     const learning = item("learnings");
-    const state: State = { ...demo, tasks: demo.tasks.filter((task) => task.id !== archived.id), inbox: [learning], history: { revision: 1, total: 1, products: [], reviews: reviewStats([]), reviewsByProduct: {}, steps: [], dependencies: [historyItem(archived)] } };
+    const state: State = { ...demo, tasks: demo.tasks.filter((task) => task.id !== archived.id), inbox: [learning], history: { revision: 1, total: 1, products: [], reviews: reviewStats([]), reviewsByProduct: {}, steps: [], dependencies: [{ ...historyItem(archived), blocksDependents: false }] } };
     expect(noticeFor(learning, state).lines).toEqual(["Guest checkout, Shop"]);
     expect(waitingLine(learning, state)).toContain("Guest checkout");
   });

@@ -1,5 +1,5 @@
 // Live projections, bounded archive ownership and revision/persistence bookkeeping.
-import { finishedTask, involvesProduct, type Id, type State, type Task, type HistoryQuery, type HistoryPage } from "@petrina/core";
+import { finishedTask, involvesProduct, type HistoryDependency, type Id, type State, type Task, type HistoryQuery, type HistoryPage } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
 import { settledHistoryTask } from "./store.js";
 import { executionOf, restoreRepositoryState, taskView, type RepositoryContext } from "./repository-context.js";
@@ -25,6 +25,7 @@ export class StateProjection {
   private readonly dirtyTasks = new Set<Id>();
   private allTasksDirty = true;
   private nextTaskRevision = 0;
+  private dependencies: { key: string; items: HistoryDependency[] } | undefined;
 
   changed(target?: MTask | RepositoryContext): void {
     const revision = ++this.nextTaskRevision;
@@ -45,10 +46,15 @@ export class StateProjection {
     if (!this.k.stopped && this.k.store.history.needsUpdate(this.k.s.tasks.filter(finishedTask) as Task[])) this.k.save();
     const tasks = this.k.s.tasks.filter((task) => !finishedTask(task)).map((task) => ({ ...taskView(task), detailsOmitted: true, detailsRevision: this.detailRevision(task.id), session: [], timeline: [], journey: undefined, designSessions: undefined, reviewSessions: undefined, handedBack: undefined })) as Task[];
     const usageReads: NonNullable<State["pool"]["usageReads"]> = this.k.usageCoordinator.snapshot();
-    const dependencies = this.k.stopped ? [] : [...new Set([...this.k.s.inbox.map((item) => item.taskId), ...this.k.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])].flatMap((id) => {
-      const item = this.k.store.history.item(id);
+    const dependencyIds = this.k.stopped ? [] : [...new Set([...this.k.s.inbox.map((item) => item.taskId), ...this.k.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])];
+    const key = JSON.stringify([this.k.store.history.info().revision, dependencyIds]);
+    // Streaming changes do not re-read archived delivery state. Keep only the current
+    // dependency set, refreshing it when membership or the history revision changes.
+    if (this.dependencies?.key !== key) this.dependencies = { key, items: dependencyIds.flatMap(id => {
+      const item = this.k.store.history.dependency(id);
       return item ? [item] : [];
-    });
+    }) };
+    const dependencies = this.dependencies.items;
     return { ...this.k.activeState(), tasks, ...(Object.keys(usageReads).length ? { pool: { ...this.k.s.pool, usageReads } } : {}), history: { ...this.k.store.history.info(), ...(dependencies.length ? { dependencies } : {}) } };
   };
 

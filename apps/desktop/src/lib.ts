@@ -1,4 +1,4 @@
-import { landingOf, onScreen, SCREEN_WORDS, screenOn, screenWait, type AgentProfile, type Column, type Effort, type Id, type Role, type RoleIcon, type RoleResult, type RunState, type State, type Task, type Tone, type Tool } from "@petrina/core";
+import { landingOf, onScreen, SCREEN_WORDS, screenOn, screenWait, slotUses, type AgentProfile, type Column, type Effort, type Id, type Role, type RoleIcon, type RoleResult, type RunState, type State, type Task, type Tone, type Tool } from "@petrina/core";
 
 export function lookup(state: State) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
@@ -18,6 +18,19 @@ export function lookup(state: State) {
 }
 
 export type Lookup = ReturnType<typeof lookup>;
+
+/** Preserve every seat, including two helpers using the same role and profile. */
+export function agentSlots(state: State, find: Lookup) {
+  const positions = new Map<string, number>();
+  return slotUses(state).map((use, index) => {
+    const task = find.task(use.taskId);
+    const position = positions.get(use.taskId) ?? 0;
+    positions.set(use.taskId, position + 1);
+    const agent = position === 0 ? task?.agent : task?.helpers?.[position - 1];
+    const work = agent?.reviewKey ? task?.hunt?.work?.[agent.reviewKey] : undefined;
+    return { ...use, task, agent, work, key: `${use.taskId}:${use.profileId ?? "unknown"}:${index}` };
+  });
+}
 
 export const STATE_LABEL: Record<RunState, string> = {
   backlog: "Backlog",

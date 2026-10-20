@@ -1,7 +1,7 @@
 // What the keyboard and the command palette do to a task: pause, hold, resume, and move it in the queue,
 // each confirmed with a short message once the engine has it.
 
-import { queueOf, type State, type Task } from "@petrina/core";
+import { queueOf, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "./engine";
 import type { Lookup } from "./lib";
 
@@ -14,6 +14,9 @@ interface Context {
   visible: (task: Task) => boolean;
   toast: (title: string, detail?: string) => void;
 }
+
+export const canTogglePause = (task: Task): boolean => !task.driving && ["queued", "paused", "running", "needs-you", "waiting"].includes(task.state);
+export const canMessage = (task: Task): boolean => task.state !== "done" && task.state !== "cancelled";
 
 export function taskCommands({ state, find, live, visible, toast }: Context) {
   /** Send an action and say so once the engine confirms it; false when it could not be sent. */
@@ -35,6 +38,7 @@ export function taskCommands({ state, find, live, visible, toast }: Context) {
   /** P: hold or release a queued task, resume a paused one, or pause one at work. */
   const pause = (task: Task) => {
     const name = `“${task.title}”`;
+    if (task.driving) { toast("Hand back first", TAKE_OVER_WORDS.handBackFirst); return; }
     if (task.state === "queued") {
       void sendAction(() => sim.setHeld(task.id, !task.held), `${name} ${task.held ? "released" : "held"}`, task.held ? "It can start when a slot is free. P again holds it." : "It stays in the queue and will not start. P again releases it.");
     } else if (task.state === "paused") {
@@ -44,7 +48,7 @@ export function taskCommands({ state, find, live, visible, toast }: Context) {
       const request = state.inbox.some((item) => item.taskId === task.id && (item.kind === "question" || item.kind === "permission") && item.blocking);
       const detail = request ? "Its open request was withdrawn and may be asked again. P to resume" : task.holdsSlot ? "The agent’s current step stopped and will start again after resuming. P to resume" : "It will not start another step. P to resume";
       void sendAction(() => sim.pause(task.id), `${name} paused`, detail);
-    } else toast(`${name} cannot be paused`, task.state === "failed" ? "Use Try again to restart this task." : "This task has finished.");
+    } else toast(`${name} cannot be paused`, task.state === "failed" ? "Use Try again to restart this task." : task.state === "backlog" ? "Review the request in Backlog, then queue it when it is ready." : "This task has finished.");
   };
 
   const moved = async (task: Task, action: () => number | Promise<number>) => {

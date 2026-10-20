@@ -12,6 +12,7 @@ export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "st
   deliveries?: readonly (Pick<Task, "productId" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & { nothingToPublish?: boolean })[];
 };
 export interface HistoryPage { items: readonly HistoryItem[]; nextCursor?: string; total: number }
+export type HistoryDependency = HistoryItem & { blocksDependents: boolean };
 export interface HistoryMetadata {
   revision: number;
   total: number;
@@ -20,7 +21,7 @@ export interface HistoryMetadata {
   reviewsByProduct: Readonly<Record<Id, ReviewStats>>;
   steps: readonly StepRecord[];
   /** Only finished tasks named by live tasks' dependencies, without their conversations. */
-  dependencies?: readonly HistoryItem[];
+  dependencies?: readonly HistoryDependency[];
 }
 
 export const finishedTask = (task: Pick<Task, "state">): boolean => task.state === "done" || task.state === "cancelled";

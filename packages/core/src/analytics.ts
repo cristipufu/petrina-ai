@@ -489,7 +489,7 @@ function stageKindOf(moment: WorkMoment, n: Names): { key: string; label: string
   if (moment.stageKind === "plan") return { key: "plan", label: "Planning" };
   if (moment.stageKind === "converge") return { key: "design", label: "Design" };
   if (moment.stageKind === "review-chain") return { key: "review", label: "Review" };
-  if (moment.roleId === "builder" && (moment.round ?? 1) > 1) return { key: "fixes", label: "Fixes after review" };
+  if (moment.roleId && n.roleResult(moment.roleId) === "build" && (moment.round ?? 1) > 1) return { key: "fixes", label: "Fixes after review" };
   const role = moment.roleId ?? "other";
   return { key: role, label: STAGE_KIND_LABEL[role] ?? n.role(role) };
 }

@@ -1,7 +1,7 @@
 // Completed tasks live outside the live snapshot. The board only reads the small current state;
 // history uses an index for its next page and reads a conversation only when it is opened.
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import { combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyAt, historyCursor, historyItem, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
+import { blocksDependents, combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyAt, historyCursor, historyItem, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryDependency, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
 
 interface Rollup { total: number; done: number; cancelled: number; shared?: number; blocked?: number; reviews: ReviewStats }
 const emptyRollup = (): Rollup => ({ total: 0, done: 0, cancelled: 0, reviews: reviewStats([]) });
@@ -121,6 +121,21 @@ export class TaskHistory {
   item(id: Id): HistoryPage["items"][number] | undefined {
     const row = this.db.query<{ item: string }, [string]>("SELECT item FROM task_history WHERE id = ?").get(id);
     return row ? JSON.parse(row.item) as HistoryPage["items"][number] : undefined;
+  }
+
+  /** Dependency decisions need delivery state, never the archived conversation or check output. */
+  dependency(id: Id): HistoryDependency | undefined {
+    const row = this.db.query<{ item: string; repositories: string }, [string]>(`SELECT item,
+      (SELECT json_group_array(json_object('pr', json_extract(value, '$.pr'),
+        'shipping', json_object('step', json_extract(value, '$.shipping.step')),
+        'localUpdate', json_extract(value, '$.localUpdate'),
+        'landingAccepted', json_extract(value, '$.landingAccepted')))
+        FROM json_each(task_history.body, '$.repositories')) AS repositories
+      FROM task_history WHERE id = ?`).get(id);
+    if (!row) return;
+    const item = JSON.parse(row.item) as HistoryPage["items"][number];
+    const repositories = JSON.parse(row.repositories) as Task["repositories"];
+    return { ...item, blocksDependents: blocksDependents({ state: item.state, repositories }) };
   }
 
   /** Finished tasks for one product, read before that product's history is removed. */

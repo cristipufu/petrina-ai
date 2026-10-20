@@ -20,9 +20,24 @@ describe("shared task ownership and landing", () => {
     expect(taskProductIds(retained)).toEqual(["first", "last"]);
     expect(retained.productId).toBe("first");
     expect(retained.activeProductId).toBe("first");
+    expect(retained.leadProductId).toBe("first");
     expect(retained.repositories!.find((work) => work.productId === "lead")!.removed).toBe(true);
     expect(retained.selectedProducts!.map((choice) => choice.productId)).toEqual(["last"]);
     expect(retained.session).toBe(saved.session);
+    expect(JSON.stringify(saved)).toBe(before);
+  });
+
+  it("takes a remaining starting point from its row and clears the removed product's execution state", () => {
+    const source = { product: { id: "last", name: "Last", repo: "acme/last", defaultBranch: "main" }, start: { kind: "default" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: "acme/last", branch: "main" }, confirmed: false };
+    const choice = { productId: "last", startFrom: { kind: "default" as const }, delivery: "local" as const };
+    const saved: Task = { ...original, productId: "lead", activeProductId: "lead", leadProductId: "lead", selectedProducts: undefined, repositories: undefined,
+      repository: { productId: "lead", delivery: "release", branch: "old", checks: { at: 1, results: [] } }, branch: "old", checks: { at: 1, results: [] },
+      plan: { ...original.plan!, leadProductId: "lead" },
+      workRows: [{ choice: { ...choice, productId: "lead" } }, { choice, source }] };
+    const before = JSON.stringify(saved);
+    const kept = withoutProduct(saved, "lead")!;
+    expect(kept).toMatchObject({ productId: "last", activeProductId: "last", leadProductId: "last", workChoice: choice, source, delivery: "local", plan: { leadProductId: "last" }, repository: { productId: "last", source, delivery: "local" } });
+    expect(kept.branch).toBeUndefined(); expect(kept.checks).toBeUndefined(); expect(kept.repository!.branch).toBeUndefined();
     expect(JSON.stringify(saved)).toBe(before);
   });
 

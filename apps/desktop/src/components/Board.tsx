@@ -1,7 +1,7 @@
 import { CombineBacklog } from "./CombineBacklog";
 import { useState, type DragEvent } from "react";
 import { ArrowRight, Hand, Lightbulb, X } from "lucide-react";
-import { boardSections, firstTaskTip, queueOf, startsNextCount, type State, type Task } from "@petrina/core";
+import { boardSections, firstTaskTip, queueOf, readyQueue, startsNextCount, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { alt, mod } from "../keyboard";
 import { type Lookup } from "../lib";
@@ -44,8 +44,7 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, draft
   const queue = queueOf(state.tasks);
   // Whatever starts as soon as the next slot frees (at least one task).
   const nextUp = new Set(
-    queue
-      .filter((task) => !task.held)
+    readyQueue(state)
       .slice(0, Math.max(1, startsNextCount(state)))
       .map((task) => task.id),
   );

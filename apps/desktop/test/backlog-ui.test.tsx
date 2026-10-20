@@ -6,6 +6,8 @@ import { App } from "../src/App";
 
 let simulator: Simulator;
 let loseCombineReply = false;
+let loseAddAt = 0, addCalls = 0;
+let holdAddReply: Promise<void> | undefined;
 const live = { link: "live", desktop: false };
 const empty: never[] = [];
 vi.mock("../src/engine", () => ({
@@ -13,11 +15,18 @@ vi.mock("../src/engine", () => ({
   useEngineStatus: () => live, useUnsent: () => empty,
   failureText: (error: unknown) => error instanceof Error ? error.message : String(error),
   useSim: () => useSyncExternalStore((fn) => simulator.subscribe(fn), () => simulator.getState()),
-  sim: new Proxy({}, { get: (_, name) => name === "synced" ? () => true : (...args: unknown[]) => { const result = (simulator[name as keyof Simulator] as Function).apply(simulator, args); return name === "combineBacklog" && loseCombineReply ? Promise.resolve(result).then(() => { throw new Error("Confirmation was lost"); }) : result; } }),
+  sim: new Proxy({}, { get: (_, name) => name === "synced" ? () => true : (...args: unknown[]) => {
+    const result = (simulator[name as keyof Simulator] as Function).apply(simulator, args);
+    if (name === "addTask") {
+      addCalls++;
+      if (holdAddReply) return holdAddReply.then(() => result);
+    }
+    return (name === "combineBacklog" && loseCombineReply) || (name === "addTask" && addCalls === loseAddAt) ? Promise.resolve(result).then(() => { throw new Error("Confirmation was lost"); }) : result;
+  } }),
 }));
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
-afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined; host = undefined; loseCombineReply = false; });
+afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined; host = undefined; loseCombineReply = false; loseAddAt = addCalls = 0; holdAddReply = undefined; });
 async function mount() {
   history.replaceState(null, "", "/?demo");
   const state = createDemoState(1_000_000_000_000);
@@ -36,6 +45,46 @@ async function type(selector: string, value: string) {
 }
 
 describe("reviewing a backlog task", () => {
+  it("ignores a second synchronous submission while the first confirmation is in flight", async () => {
+    await mount(); await click('.topbar button[title^="New task"]'); await type('.title-input', "One request");
+    let release!: () => void;
+    holdAddReply = new Promise(resolve => { release = resolve; });
+    const submit = host!.querySelector<HTMLButtonElement>('.new-task-submit .btn.lead')!;
+    await act(async () => { submit.click(); submit.click(); });
+    expect(addCalls).toBe(1); expect(simulator.getState().tasks).toHaveLength(1);
+    await act(async () => release());
+    expect(host!.querySelector('[aria-label="New task"]')).toBeNull();
+  });
+  it("confirms a partially saved batch after a lost reply without duplicating any task", async () => {
+    await mount(); await click('.topbar button[title^="New task"]');
+    const input = host!.querySelector<HTMLInputElement>('.title-input')!;
+    await act(async () => {
+      const paste = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, "clipboardData", { value: { getData: () => "First request\nSecond request\nThird request" } });
+      input.dispatchEvent(paste);
+    });
+    loseAddAt = 2;
+    await click('.new-task-submit .btn.lead');
+    expect(simulator.getState().tasks).toHaveLength(2);
+    expect(host!.querySelector('[role="alert"]')?.textContent).toContain("Confirmation was lost");
+    expect(host!.querySelector('[role="alert"]')?.textContent).not.toContain("Error:");
+    expect(input.disabled).toBe(true);
+    await click('.new-task-submit .btn.lead');
+    expect(simulator.getState().tasks.map(task => task.title)).toEqual(["First request", "Second request", "Third request"]);
+    expect(new Set(simulator.getState().tasks.map(task => task.clientId)).size).toBe(3);
+    expect(addCalls).toBe(4); expect(host!.querySelector('[aria-label="New task"]')).toBeNull();
+  });
+
+  it("gives Add another a fresh request identity and returns focus to the title", async () => {
+    await mount(); await click('.topbar button[title^="New task"]');
+    await type('.title-input', "Same title"); await click('.new-task-submit .btn.quiet');
+    expect(simulator.getState().tasks).toHaveLength(1);
+    expect(document.activeElement).toBe(host!.querySelector('.title-input'));
+    expect(host!.querySelector<HTMLInputElement>('.title-input')!.disabled).toBe(false);
+    await type('.title-input', "Same title"); await click('.new-task-submit .btn.lead');
+    expect(simulator.getState().tasks).toHaveLength(2);
+    expect(new Set(simulator.getState().tasks.map(task => task.clientId)).size).toBe(2);
+  });
   it("searches and selects several products without losing choices, and dismisses the picker before the dialog", async () => {
     await mount();
     await click('.topbar button[title^="New task"]');

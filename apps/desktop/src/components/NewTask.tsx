@@ -1,8 +1,8 @@
 import { X, ChevronDown, Package, Search } from "lucide-react";
 import { StartFromFields } from "./TaskStart";
-import { useId, useRef, useState } from "react";
-import { DELIVERY_LABEL, type DeliveryMode, type State, type TaskKind, type WorkChoice } from "@petrina/core";
-import { mode, sim } from "../engine";
+import { useEffect, useId, useRef, useState } from "react";
+import { DELIVERY_LABEL, type DeliveryMode, type NewTaskInput, type State, type TaskKind, type WorkChoice } from "@petrina/core";
+import { failureText, mode, sim } from "../engine";
 import { useDismiss, useFocusTrap, WaitingLine } from "./bits";
 
 const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
@@ -107,20 +107,31 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [batch, setBatch] = useState<string[]>([]);
+  const pending = useRef<{ inputs: NewTaskInput[]; confirmed: number; another: boolean }>(undefined);
+  const adding = useRef(false);
+  const locked = saving || pending.current !== undefined;
   const titleRef = useRef<HTMLInputElement>(null);
+  const focusNext = useRef(false);
+  useEffect(() => { if (!saving && focusNext.current) { focusNext.current = false; titleRef.current?.focus(); } }, [saving]);
   const box = useRef<HTMLDivElement>(null);
   useFocusTrap(box, () => { if (!saving) onClose(); });
   const invalidSource = choices.some(({ startFrom, delivery }) => (startFrom.kind === "branch" && !startFrom.name.trim()) || (startFrom.kind === "pull-request" && !startFrom.value.trim()) || (delivery === "release" && startFrom.kind !== "default"));
   const add = async (another: boolean) => {
-    if (!title.trim() || invalidSource || saving || (backlog && !supportsBacklog)) return;
+    if (adding.current || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)))) return;
+    const request = pending.current ??= {
+      inputs: [title.trim(), ...batch.slice(1)].map(entry => ({ clientId: crypto.randomUUID(), productId: choices[0]?.productId ?? "", worksOn: choices, title: entry, description, kind, position, approvePlan: approvePlan || choices.length !== 1, approveDelivery, backlog })),
+      confirmed: 0, another,
+    };
+    adding.current = true;
     setSaving(true); setError("");
     try {
-      for (const entry of [title.trim(), ...batch.slice(1)]) await sim.addTask({ productId: choices[0]?.productId ?? "", worksOn: choices, title: entry, description, kind, position, approvePlan: approvePlan || choices.length !== 1, approveDelivery, backlog });
-      if (another) { setTitle(""); setDescription(""); setBatch([]); titleRef.current?.focus(); } else onCreated();
-    } catch (failure) { setError(String(failure)); } finally { setSaving(false); }
+      while (request.confirmed < request.inputs.length) { await sim.addTask(request.inputs[request.confirmed]!); request.confirmed++; }
+      pending.current = undefined;
+      if (request.another) { setTitle(""); setDescription(""); setBatch([]); focusNext.current = true; } else onCreated();
+    } catch (failure) { setError(failureText(failure)); } finally { adding.current = false; setSaving(false); }
   };
   const change = (id: string, update: Partial<WorkChoice>) => setChoices(choices.map((choice) => choice.productId === id ? { ...choice, ...update } : choice));
-  const disabled = saving || !title.trim() || invalidSource || (backlog && !supportsBacklog);
+  const disabled = saving || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)));
   return <>
     <div className="dialog-scrim" onClick={saving ? undefined : onClose} />
     <div ref={box} className="dialog new-task-dialog" role="dialog" aria-modal="true" aria-label="New task" tabIndex={-1}>
@@ -132,16 +143,16 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
         <WaitingLine text={waiting} />
         <section className="new-task-section new-task-request" aria-labelledby="request-heading">
           <label id="request-heading" htmlFor="task-title">What do you want done?</label>
-          <input id="task-title" maxLength={200} ref={titleRef} autoFocus className="title-input" aria-label="What do you want done?" placeholder="A short, specific task title" value={title} disabled={saving} onChange={(event) => setTitle(event.target.value)} onPaste={(event) => { const lines = event.clipboardData.getData("text").split(/\r?\n/).map((line) => line.trim()).filter(Boolean); if (lines.length > 1) { event.preventDefault(); setTitle(lines[0]!); setBatch(lines); } }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void add(event.metaKey || event.ctrlKey ? false : event.shiftKey); } }} />
-          {batch.length > 1 && <p className="note">Plus {batch.length - 1} more tasks <button className="linkish" disabled={saving} onClick={() => setBatch([])}>Keep only the first</button></p>}
+          <input id="task-title" maxLength={200} ref={titleRef} autoFocus className="title-input" aria-label="What do you want done?" placeholder="A short, specific task title" value={title} disabled={locked} onChange={(event) => setTitle(event.target.value)} onPaste={(event) => { const lines = event.clipboardData.getData("text").split(/\r?\n/).map((line) => line.trim()).filter(Boolean); if (lines.length > 1) { event.preventDefault(); setTitle(lines[0]!); setBatch(lines); } }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void add(event.metaKey || event.ctrlKey ? false : event.shiftKey); } }} />
+          {batch.length > 1 && <p className="note">Plus {batch.length - 1} more tasks <button className="linkish" disabled={locked} onClick={() => setBatch([])}>Keep only the first</button></p>}
           <label htmlFor="task-description">Details <span className="quiet-text">Optional</span></label>
-          <textarea id="task-description" maxLength={8000} className="details" aria-label="Details" placeholder="What should change? Add context, links and how you’ll judge success." value={description} disabled={saving} onChange={(event) => setDescription(event.target.value)} />
+          <textarea id="task-description" maxLength={8000} className="details" aria-label="Details" placeholder="What should change? Add context, links and how you’ll judge success." value={description} disabled={locked} onChange={(event) => setDescription(event.target.value)} />
         </section>
 
         <section className="new-task-section new-task-products" aria-labelledby="new-task-products-heading"><h3 id="new-task-products-heading">Products & delivery <span className="quiet-text">{choices.length ? `${choices.length} selected` : "Optional"}</span></h3>
-          <fieldset className="new-task-product-controls" aria-labelledby="new-task-products-heading" disabled={saving}>
+          <fieldset className="new-task-product-controls" aria-labelledby="new-task-products-heading" disabled={locked}>
           <p className="note">Select the products involved, or let the planner propose them.</p>
-          <ProductPicker products={state.products} choices={choices} disabled={saving} onToggle={(id, selected) => { const product = state.products.find((entry) => entry.id === id)!; if (selected) { setChoices([...choices, { productId: id, startFrom: { kind: "default" }, delivery: product.delivery ?? "pull-request" }]); if (product.approveDelivery) setApproveDelivery(true); } else setChoices(choices.filter((choice) => choice.productId !== id)); }} />
+          <ProductPicker products={state.products} choices={choices} disabled={locked} onToggle={(id, selected) => { const product = state.products.find((entry) => entry.id === id)!; if (selected) { setChoices([...choices, { productId: id, startFrom: { kind: "default" }, delivery: product.delivery ?? "pull-request" }]); if (product.approveDelivery) setApproveDelivery(true); } else setChoices(choices.filter((choice) => choice.productId !== id)); }} />
           {!choices.length && <p className="note">Let the planner propose products.</p>}
           {choices.map((choice) => { const product = state.products.find((entry) => entry.id === choice.productId); if (!product) return null; return <details className="repository-row new-task-product-settings" key={choice.productId}>
             <summary><span><strong>{product.name}</strong><span className="quiet-text">{choice.startFrom.kind === "default" ? "Default branch" : choice.startFrom.kind === "branch" ? choice.startFrom.name || "Choose a branch" : choice.startFrom.value || "Choose a pull request"} · {choice.delivery === "local" ? "Commit and push" : choice.delivery === "release" ? "Publish a release" : choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</span></span><ChevronDown size={16} aria-hidden="true" /></summary>
@@ -158,27 +169,27 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
 
         <section className="new-task-section" aria-labelledby="new-task-work-heading">
           <h3 id="new-task-work-heading">Work & review</h3>
-          <TaskOptions kind={kind} delivery={choices[0]?.delivery ?? "pull-request"} position={position} onKind={setKind} onDelivery={() => {}} onPosition={setPosition} hideDelivery hidePosition disabled={saving} />
+          <TaskOptions kind={kind} delivery={choices[0]?.delivery ?? "pull-request"} position={position} onKind={setKind} onDelivery={() => {}} onPosition={setPosition} hideDelivery hidePosition disabled={locked} />
           <div className="new-task-approvals">
-            <label className="toggle"><input type="checkbox" checked={approvePlan || choices.length !== 1} disabled={saving || choices.length !== 1} onChange={(event) => setApprovePlan(event.target.checked)} />Show me the plan first</label>
-            <label className="toggle"><input type="checkbox" checked={approveDelivery} disabled={saving} onChange={(event) => setApproveDelivery(event.target.checked)} />Ask me before shipping</label>
+            <label className="toggle"><input type="checkbox" checked={approvePlan || choices.length !== 1} disabled={locked || choices.length !== 1} onChange={(event) => setApprovePlan(event.target.checked)} />Show me the plan first</label>
+            <label className="toggle"><input type="checkbox" checked={approveDelivery} disabled={locked} onChange={(event) => setApproveDelivery(event.target.checked)} />Ask me before shipping</label>
           </div>
         </section>
         <section className="new-task-section new-task-destination" aria-labelledby="new-task-start-heading">
           <h3 id="new-task-start-heading">When to start</h3>
           <div className="segmented" role="radiogroup" aria-label="When work starts">
-            <button role="radio" aria-checked={backlog} className={backlog ? "on" : ""} disabled={saving} onClick={() => setBacklog(true)}>Review in backlog</button>
-            <button role="radio" aria-checked={!backlog} className={!backlog ? "on" : ""} disabled={saving} onClick={() => setBacklog(false)}>Ready for the queue</button>
+            <button role="radio" aria-checked={backlog} className={backlog ? "on" : ""} disabled={locked} onClick={() => setBacklog(true)}>Review in backlog</button>
+            <button role="radio" aria-checked={!backlog} className={!backlog ? "on" : ""} disabled={locked} onClick={() => setBacklog(false)}>Ready for the queue</button>
           </div>
-          {!backlog && <div className="opt"><span id="new-task-queue-position">Place in the queue</span><div className="segmented" role="radiogroup" aria-labelledby="new-task-queue-position"><button role="radio" aria-checked={position === "bottom"} className={position === "bottom" ? "on" : ""} disabled={saving} onClick={() => setPosition("bottom")}>Bottom</button><button role="radio" aria-checked={position === "top"} className={position === "top" ? "on" : ""} disabled={saving} onClick={() => setPosition("top")}>Top</button></div></div>}
+          {!backlog && <div className="opt"><span id="new-task-queue-position">Place in the queue</span><div className="segmented" role="radiogroup" aria-labelledby="new-task-queue-position"><button role="radio" aria-checked={position === "bottom"} className={position === "bottom" ? "on" : ""} disabled={locked} onClick={() => setPosition("bottom")}>Bottom</button><button role="radio" aria-checked={position === "top"} className={position === "top" ? "on" : ""} disabled={locked} onClick={() => setPosition("top")}>Top</button></div></div>}
           <p className="quiet-text">{backlog ? "Saved for review. No agent starts until you queue it." : "Starts when the pool is running and a place is free."}</p>
           {backlog && !supportsBacklog && <p className="note">Backlog will be available after the engine is updated.</p>}
         </section>
-        {error && <p role="alert" className="note bad">{error}</p>}
+        {error && <p role="alert" className="note bad">{error} Retry confirms these same tasks, without adding duplicates.</p>}
       </div>
       <footer className="new-task-foot">
         <button className="btn quiet" disabled={saving} onClick={onClose}>Cancel</button>
-        <div className="new-task-submit"><button className="btn quiet" onClick={() => void add(true)} disabled={disabled}>Add another <kbd>⇧↵</kbd></button><button className="btn lead" onClick={() => void add(false)} disabled={disabled}>{saving ? "Adding…" : backlog ? "Add to backlog" : "Add to queue"} <kbd>↵</kbd></button></div>
+        <div className="new-task-submit"><button className="btn quiet" onClick={() => void add(true)} disabled={disabled || pending.current !== undefined}>Add another <kbd>⇧↵</kbd></button><button className="btn lead" onClick={() => void add(false)} disabled={disabled}>{saving ? "Adding…" : pending.current ? "Retry confirmation" : backlog ? "Add to backlog" : "Add to queue"} <kbd>↵</kbd></button></div>
       </footer>
     </div>
   </>;

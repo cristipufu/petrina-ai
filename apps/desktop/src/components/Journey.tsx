@@ -688,7 +688,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
         </div>;
       })()}
 
-      {node.kind === "agent" && node.roleId === "builder" && (
+      {node.kind === "agent" && role?.result === "build" && (
         <div className="journey-context">
           {node.fixing && (() => {
             const legacyIds = node.state === "now" && task.fixing
@@ -701,7 +701,7 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
             const journey = task.journey ?? [];
             const stepIndex = journey.findIndex((step) => step.id === node.id);
             const previous = stepIndex > 0 ? journey[stepIndex - 1] : undefined;
-            const latestTesterIndex = journey.reduce((latest, step, index) => ((step.kind === "agent" && step.roleId === "tester") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
+            const latestTesterIndex = journey.reduce((latest, step, index) => ((step.kind === "agent" && find.role(step.roleId)?.result === "checks") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
             const failedChecks = previous?.acceptanceChecks?.filter((check) => check.result !== "pass")
               ?? (stepIndex - 1 === latestTesterIndex ? task.brief?.acceptance.filter((check) => check.verification === "failed" || check.verification === "blocked").map((check) => ({ text: check.text, result: check.verification === "failed" ? "fail" as const : "blocked" as const, ...(check.reason ? { reason: check.reason } : {}) })) : undefined)
               ?? [];

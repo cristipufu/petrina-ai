@@ -1,7 +1,7 @@
 import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
-import { mainLine, queueOf, slotUses, type State } from "@petrina/core";
+import { mainLine, readyQueue, type State } from "@petrina/core";
 import { mode, sim } from "../engine";
-import { duration, profileText, type Lookup } from "../lib";
+import { agentSlots, duration, profileText, type Lookup } from "../lib";
 import { ProductName, RoleAvatar } from "./bits";
 import { LimitStepper } from "./Pool";
 import { drivingText, openHandBack } from "./TakeOver";
@@ -12,14 +12,11 @@ import type { SheetTab } from "./TaskCard";
 
 /** One tile per pool slot: who is in it, what they are doing, and a way in. Several reviewers at once have a tile each. */
 export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void }) {
-  const holders = slotUses(state).flatMap((use, index) => {
-    const task = find.task(use.taskId);
-    return task ? [{ task, roleId: use.roleId ?? task.agent?.roleId, profileId: use.profileId ?? task.agent?.profileId, key: `${use.taskId}:${use.profileId ?? index}` }] : [];
-  });
+  const holders = agentSlots(state, find).flatMap(slot => slot.task ? [{ ...slot, task: slot.task }] : []);
   const background = state.backgroundAgents ?? [];
   const filled = holders.length + background.length;
   const free = Math.max(0, state.pool.limit - filled);
-  const upNext = queueOf(state.tasks).filter((task) => !task.held);
+  const upNext = readyQueue(state);
 
   return (
     <div className="page">
@@ -40,9 +37,9 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
         </div>
       </div>
       <div className="grid">
-        {holders.map(({ task, roleId, profileId, key }) => {
+        {holders.map(({ task, agent, work, roleId, profileId, key }) => {
           const role = find.role(roleId);
-          const waiting = task.state === "needs-you";
+          const waiting = work ? Boolean(work.waiting) : task.state === "needs-you";
           const driving = task.driving !== undefined;
           return (
             <div key={key} className={`tile ${waiting ? "waiting" : ""}`}>
@@ -57,13 +54,13 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
               </div>
               <div className="title">{task.title}</div>
               <p className="card-status">
-                <span className={`dot ${task.state}`} aria-hidden="true" />
-                <span>{mainLine(task)}</span>
+                <span className={`dot ${waiting ? "needs-you" : work ? "running" : task.state}`} aria-hidden="true" />
+                <span>{work?.waiting ?? work?.todo ?? work?.activity ?? mainLine(task)}</span>
               </p>
               <div className="grow" />
               <div className="foot">
                 <ProductName product={find.product(task.productId)} />
-                {driving ? <span className="num label needs-you">{drivingText(task, state.now)}</span> : <span className="num">{duration(task.agent?.since, state.now)}</span>}
+                {driving ? <span className="num label needs-you">{drivingText(task, state.now)}</span> : <span className="num">{duration(agent?.since, state.now)}</span>}
                 {driving ? (
                   <button className="btn small lead" onClick={() => openHandBack(task.id)}>
                     <Undo2 size={16} aria-hidden="true" />

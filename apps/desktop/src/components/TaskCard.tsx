@@ -1,4 +1,4 @@
-import { sourceLabel, taskProductIds, mainLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
+import { blocksDependents, sourceLabel, taskProductIds, mainLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
 import { useCallback, useRef, useState, type DragEvent } from "react";
 import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Monitor, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { sim } from "../engine";
@@ -48,8 +48,8 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
   const queued = task.state === "queued";
   // A queued task that starts after others says what it waits for until they land.
   const waitsOnOthers = queued && (task.after ?? []).some((id) => {
-    const other = find.task(id) ?? find.finishedTask(id);
-    return other !== undefined && other.state !== "done" && other.state !== "cancelled";
+    const other = find.task(id);
+    return other ? blocksDependents(other) : find.finishedTask(id)?.blocksDependents === true;
   });
   const finished = task.state === "done" || task.state === "cancelled";
   const rounds = task.plan?.stages.reduce((max, stage) => Math.max(max, task.rounds[stage.id] ?? 1), 1) ?? 1;

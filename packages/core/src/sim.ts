@@ -206,7 +206,7 @@ export class Simulator {
             task.workChoice = first.workChoice;
             task.source = first.source;
             task.delivery = first.delivery;
-            for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = task.repositories.length > 1 ? `Deliver across ${task.repositories.length} products` : deliveryLabel(task);
+            for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && d.roles.find(role => role.id === stage.roleId)?.result === "delivery") stage.title = task.repositories.length > 1 ? `Deliver across ${task.repositories.length} products` : deliveryLabel(task);
           }
           task.confirmWork = false;
           if (task.source) task.source.confirmed = true;
@@ -612,7 +612,7 @@ export class Simulator {
       task.productId = choice.productId;
       task.delivery = choice.delivery;
       task.source = demoSource(product, choice);
-      for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && stage.roleId === "release-manager") stage.title = deliveryLabel(task);
+      for (const stage of task.plan?.stages ?? []) if (stage.kind === "do" && d.roles.find(role => role.id === stage.roleId)?.result === "delivery") stage.title = deliveryLabel(task);
       delete task.workError;
     });
   }
@@ -1034,15 +1034,16 @@ export class Simulator {
     const stage = this.stage(task);
     if (!stage) return;
     const round = this.round(task);
+    const result = d.roles.find(role => role.id === agent.roleId)?.result;
 
-    if (stage.kind === "do" && agent.roleId === "release-manager") {
+    if (stage.kind === "do" && result === "delivery") {
       this.endStage(d, task, "delivered");
       this.ship(d, task);
       return;
     }
 
     if (stage.kind === "do") {
-      if (agent.roleId === "builder" && task.fixing) {
+      if (result === "build" && task.fixing) {
         let count = 0;
         for (const finding of task.findings) {
           if (finding.status !== "open" || finding.severity === "pre-existing") continue;
@@ -1058,7 +1059,7 @@ export class Simulator {
         this.log(d, task, "done", `${stage.title} done`, agent.roleId, agent.profileId);
         endAgentStep(
           task,
-          agent.roleId === "builder" ? { outcome: W.built, reason: W.readyForReview } : agent.roleId === "tester" ? { outcome: W.checks(0, task.brief?.acceptance.length ?? 0), reason: W.checksPassed } : { outcome: W.wroteNotes, reason: W.notesReady },
+          result === "build" ? { outcome: W.built, reason: W.readyForReview } : result === "checks" ? { outcome: W.checks(0, task.brief?.acceptance.length ?? 0), reason: W.checksPassed } : { outcome: W.wroteNotes, reason: W.notesReady },
           d.now,
         );
       }
@@ -1253,7 +1254,7 @@ export class Simulator {
       this.gate(d, task, stage.gate);
       return;
     }
-    if (this.petrinaDelivers(task)) {
+    if (this.petrinaDelivers(d, task)) {
       this.ship(d, task);
       return;
     }
@@ -1261,9 +1262,9 @@ export class Simulator {
   }
 
   /** Pull requests and commits to main need no agent: Petrina publishes them itself, as the engine does. A release's notes come from the Release Manager first. */
-  private petrinaDelivers(task: DraftTask): boolean {
+  private petrinaDelivers(d: Draft, task: DraftTask): boolean {
     const stage = this.stage(task);
-    return task.delivery !== "release" && stage?.kind === "do" && stage.roleId === "release-manager";
+    return task.delivery !== "release" && stage?.kind === "do" && d.roles.find(role => role.id === stage.roleId)?.result === "delivery";
   }
 
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
@@ -1298,7 +1299,7 @@ export class Simulator {
       this.gate(d, task, stage.gate);
       return;
     }
-    if (this.petrinaDelivers(task)) {
+    if (this.petrinaDelivers(d, task)) {
       this.ship(d, task);
       return;
     }

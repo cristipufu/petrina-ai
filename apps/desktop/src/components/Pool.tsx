@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import { ChartColumn, ChevronDown, Minus, Monitor, MonitorDot, Pause, Play, Plus } from "lucide-react";
-import { onScreen, queueOf, screenMode, screenQueue, slotUses, type ScreenMode, type State, type Task } from "@petrina/core";
+import { onScreen, readyQueue, screenMode, screenQueue, type ScreenMode, type State } from "@petrina/core";
 import { sim } from "../engine";
-import { clockTime, screenMark, type Lookup } from "../lib";
+import { agentSlots, clockTime, screenMark, type Lookup } from "../lib";
 import { useUsage } from "../usage";
 import { RoleAvatar, useDismiss } from "./bits";
 import { UsageList, usageNote } from "./Usage";
@@ -21,14 +21,6 @@ export function LimitStepper({ limit }: { limit: number }) {
       </button>
     </span>
   );
-}
-
-/** Who is in each slot in use: the task, and the agent in that slot (several reviewers at once each have one). */
-function holdersOf(state: State, find: Lookup): { task?: Task; label?: string; roleId?: string; key: string }[] {
-  return slotUses(state).flatMap((use, index) => {
-    const task = find.task(use.taskId);
-    return task || use.label ? [{ task, label: use.label, roleId: use.roleId, key: `${use.taskId}:${use.profileId ?? index}` }] : [];
-  });
 }
 
 const SCREEN_CHOICES: readonly { mode: ScreenMode; label: string }[] = [
@@ -82,8 +74,8 @@ export function ScreenMarkIcon({ state }: { state: State }) {
 
 /** The pool's controls, who is in each slot, and today's numbers: in the pool popover, or in the top bar's More menu. */
 export function PoolPanel({ state, find, onOpen, onDone, onAnalytics }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void; onDone: () => void; onAnalytics: () => void }) {
-  const holders = holdersOf(state, find);
-  const next = queueOf(state.tasks).find((task) => !task.held);
+  const holders = agentSlots(state, find);
+  const next = readyQueue(state)[0];
   const slots = Array.from({ length: Math.max(state.pool.limit, holders.length) }, (_, index) => holders[index]);
   return (
     <>
@@ -128,7 +120,7 @@ export function PoolPanel({ state, find, onOpen, onDone, onAnalytics }: { state:
             >
               <RoleAvatar role={role} size={20} />
               <span className="t">{task.title}</span>
-              {task.driving ? <span className="s needs-you">You're driving</span> : task.state === "needs-you" ? <span className="s needs-you">Waiting on you</span> : <span className="s">{role?.name}</span>}
+              {task.driving ? <span className="s needs-you">You're driving</span> : (holder.work ? !!holder.work.waiting : task.state === "needs-you") ? <span className="s needs-you">Waiting on you</span> : <span className="s">{role?.name}</span>}
             </button>
           );
         })}
@@ -153,7 +145,7 @@ export function PoolButton({ state, find, onOpen, onAnalytics, compact }: { stat
   const box = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(box, open, close);
-  const holders = holdersOf(state, find);
+  const holders = agentSlots(state, find);
   const slots = Array.from({ length: Math.max(state.pool.limit, holders.length) }, (_, index) => holders[index]);
   const usage = usageNote(state);
   const mark = screenMark(state);

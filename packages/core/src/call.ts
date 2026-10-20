@@ -3,7 +3,7 @@
 // The call stays on the task, so no later design check can reopen the design it settled.
 // The engine and the simulator share these rules and words so the demo cannot drift from the real thing.
 
-import type { DesignCall, Id, Objection, Stage, Task } from "./model.js";
+import type { DesignCall, Id, Objection, Role, Stage, Task } from "./model.js";
 
 export const CALL_WORDS = {
   disagreement: "Read both sides in the Design tab, then side with the architect or write your call.",
@@ -33,11 +33,11 @@ export function designStageIndex(stages: readonly Stage[], stageIndex: number): 
  * The design check that belongs to the design stage at `designIndex`: the first one after it, with only
  * steps such as Screens in between. A check after the build, or after another design stage, is not its own.
  */
-export function designCheckIndex(stages: readonly Stage[], designIndex: number): number {
+export function designCheckIndex(stages: readonly Stage[], designIndex: number, roles: readonly Pick<Role, "id" | "result">[]): number {
   for (let index = designIndex + 1; index < stages.length; index += 1) {
     const stage = stages[index]!;
     if (stage.kind === "gate" && stage.gate === "design") return index;
-    if (stage.kind !== "do" || stage.roleId === "builder") return -1;
+    if (stage.kind !== "do" || roles.find(role => role.id === stage.roleId)?.result === "build") return -1;
   }
   return -1;
 }
@@ -47,14 +47,14 @@ export function designCheckIndex(stages: readonly Stage[], designIndex: number):
  * The plan's own design check for that stage is the one the coordinator answers; one is added right after
  * the stage only if the plan has none before the build.
  */
-export function startCall(task: Pick<Task, "plan" | "stageIndex" | "objections">, text: string, at: number): { stages: Stage[]; stageIndex: number; call: DesignCall } | undefined {
+export function startCall(task: Pick<Task, "plan" | "stageIndex" | "objections">, text: string, at: number, roles: readonly Pick<Role, "id" | "result">[]): { stages: Stage[]; stageIndex: number; call: DesignCall } | undefined {
   const stages = task.plan?.stages ?? [];
   const index = designStageIndex(stages, task.stageIndex);
   const stage = stages[index];
   if (!stage) return undefined;
   const check: Stage = { id: `${stage.id}:call-check`, kind: "gate", title: "Your design check", roleId: stage.roleId, profileIds: [], gate: "design" };
   return {
-    stages: designCheckIndex(stages, index) >= 0 ? [...stages] : [...stages.slice(0, index + 1), check, ...stages.slice(index + 1)],
+    stages: designCheckIndex(stages, index, roles) >= 0 ? [...stages] : [...stages.slice(0, index + 1), check, ...stages.slice(index + 1)],
     stageIndex: index,
     call: { text, stageId: stage.id, open: task.objections.filter((objection) => objection.status === "open").map((objection) => objection.id), at },
   };

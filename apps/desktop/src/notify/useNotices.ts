@@ -60,8 +60,9 @@ export function useNotices({ onJump, onToast }: Handlers): void {
     const update = () => {
       const state = sim.getState();
       notifier.update(state, sim.synced());
-      if (state.inbox.length === count) return;
-      count = state.inbox.length;
+      const visible = state.inbox.filter(item => item.kind !== "screen").length;
+      if (visible === count) return;
+      count = visible;
       // The same number as the Inbox button, with notifications on or off.
       if (desktop) shell.badge(realSquad ? count : 0);
       else document.title = count > 0 ? `(${count}) Petrina` : "Petrina";

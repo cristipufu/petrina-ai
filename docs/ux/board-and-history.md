@@ -18,6 +18,8 @@ Empty active groups are not shown. Queue and Backlog remain visible, in that ord
 
 Backlog tasks can be edited in their Overview, including their title, request, starting point and delivery choices. **Queue for work** is a separate, explicit action after review. A queued task that has never started can return to Backlog. Holding a queued task remains separate from reviewing a backlog task.
 
+Starts next and the free-slot previews omit held tasks and tasks waiting for dependencies to land. A finished shared task can still block a dependent while one of its deliveries is unfinished.
+
 The run state is written on the card, never shown by dimming it:
 
 ### Working

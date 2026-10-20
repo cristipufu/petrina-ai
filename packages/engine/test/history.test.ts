@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, historyAt, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
+import { blocksDependents, BUILT_IN_ROLES, historyAt, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
 import { serve } from "../src/server.js";
 import { makeWorld, removeDir, tempDir, type World } from "./support.js";
@@ -29,6 +29,29 @@ function store(): { file: string; db: Store } {
   const file = join(folder, "history.db");
   return { file, db: new Store(file) };
 }
+
+it("projects exact archived dependency decisions without loading conversations", () => {
+  const { db } = store();
+  try {
+    const pr = { number: 1, url: "https://github.com/acme/shop/pull/1", state: "open" as const, openedAt: 1 };
+    const base = { productId: "one", delivery: "pull-request" as const, completedStages: [] };
+    const tasks = [
+      task(1),
+      task(2, { repositories: [{ ...base, pr }] }),
+      task(3, { repositories: [{ ...base, pr: { ...pr, state: "closed" } }] }),
+      task(4, { repositories: [{ ...base, pr: { ...pr, state: "closed" }, landingAccepted: { at: 1 } }] }),
+      task(5, { repositories: [{ ...base, localUpdate: { branch: "main", sha: "abc", pushed: false } }] }),
+      task(6, { repositories: [{ ...base, localUpdate: { branch: "main", sha: "abc", pushed: true } }] }),
+    ];
+    db.save(state(tasks));
+    for (const task of tasks) {
+      const item = db.history.dependency(task.id)!;
+      expect(item.blocksDependents).toBe(blocksDependents(task));
+      expect(item.title).toBe(task.title); expect("session" in item).toBe(false); expect("repositories" in item).toBe(false);
+    }
+    expect(db.history.dependency("missing")).toBeUndefined();
+  } finally { db.close(); }
+});
 
 it("rolls active-id tracking back after a failed save and avoids rewriting identical metadata", () => {
   const { db } = store();
@@ -389,7 +412,13 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
       const following = engine.addTask({ productId, title: "After the finished work" });
       engine.setAfter(following, [ids[0]!]);
       expect(engine.blockers(engine.task(following)!)).toEqual([]);
-      expect(engine.windowState().history?.dependencies?.find((entry) => entry.id === ids[0])?.title).toBe("Review later 0");
+      const dependencies = engine.windowState().history!.dependencies!;
+      expect(dependencies.find((entry) => entry.id === ids[0])?.title).toBe("Review later 0");
+      expect(engine.windowState().history!.dependencies).toBe(dependencies);
+      const archived = engine.task(ids[0]!)!;
+      archived.statusLine = "Updated archived details"; engine.commitNow(archived);
+      expect(engine.windowState().history!.dependencies).not.toBe(dependencies);
+      expect(engine.windowState().history!.dependencies!.find(entry => entry.id === archived.id)!.statusLine).toBe("Updated archived details");
       const server = serve(engine, { port: 0, token: "history-fixture" });
       try {
         const raw = await (await fetch(`http://127.0.0.1:${server.port}/api/state`, { headers: { authorization: "Bearer history-fixture" } })).json() as State;

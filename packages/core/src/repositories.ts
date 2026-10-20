@@ -35,6 +35,8 @@ export function withoutProduct(task: Task, productId: Id): Task | undefined {
   const next: Task = { ...task };
   Reflect.set(next, "selectedProducts", next.selectedProducts?.filter((choice) => choice.productId !== productId));
   Reflect.set(next, "workRows", next.workRows?.filter((row) => (row.source?.product.id ?? row.choice.productId) !== productId));
+  if (next.leadProductId === productId) Reflect.set(next, "leadProductId", remaining[0]);
+  if (next.plan?.leadProductId === productId) Reflect.set(next, "plan", { ...next.plan, leadProductId: remaining[0] });
   if (next.repositories) {
     Reflect.set(next, "repositories", next.repositories.map((work) => work.productId === productId ? { ...work, removed: true } : work));
     if (next.productId === productId || next.activeProductId === productId) {
@@ -47,7 +49,14 @@ export function withoutProduct(task: Task, productId: Id): Task | undefined {
     }
   } else if (next.productId === productId) {
     Reflect.set(next, "productId", remaining[0]);
-    Reflect.set(next, "workChoice", next.selectedProducts?.[0]);
+    const row = next.workRows?.find(row => (row.source?.product.id ?? row.choice.productId) === remaining[0]);
+    const choice = next.selectedProducts?.find(choice => choice.productId === remaining[0]) ?? row?.choice;
+    for (const field of REPOSITORY_FIELDS) if (field !== "productId" && field !== "delivery") Reflect.deleteProperty(next, field);
+    Reflect.set(next, "workChoice", choice);
+    Reflect.set(next, "source", row?.source);
+    Reflect.set(next, "delivery", choice?.delivery ?? row?.source?.destination.mode ?? next.delivery);
+    if (next.repository) Reflect.set(next, "repository", { productId: remaining[0]!, delivery: next.delivery, workChoice: choice, source: row?.source });
+    if (next.activeProductId === productId) Reflect.set(next, "activeProductId", remaining[0]);
   }
   return next;
 }
@@ -99,7 +108,7 @@ export function companionPreview(works: readonly TaskRepository[]): string {
   return text && hasPullRequest ? `${text}\nThese names and links will appear on every companion pull request, visible to anyone who can read it. Pending links will become the resulting pull request or release addresses in these approved repositories.` : text;
 }
 
-export function blocksDependents(task: Task): boolean {
+export function blocksDependents(task: Pick<Task, "state" | "repositories">): boolean {
   if (task.repositories?.some((work) => work.pr?.state === "open" || (work.pr?.state === "closed" && !work.landingAccepted) || work.shipping?.step || work.localUpdate?.pushed === false)) return true;
   return task.state !== "done" && task.state !== "cancelled";
 }

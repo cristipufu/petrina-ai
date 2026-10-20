@@ -14,7 +14,7 @@ Repository operations receive a `RepositoryContext` containing the task and its 
 
 Completed and cancelled tasks appear in History rather than Board. The window receives active task summaries and compact historical totals, review aggregates and recent step timing records. `historyPage` reads at most one page of lightweight summaries, ordered by finish time and task id, with a stable cursor and optional product and title-word filters. SQLite indexes the history and its search. `taskDetails` reads the full record only when someone opens it.
 
-The selected archived task is added only to its workspace’s display state, so opening it cannot double-count Analytics or product totals. The simulator offers the same commands against its small fixture.
+The selected archived task is added only to its workspace’s display state, so opening it cannot double-count Analytics or product totals. Historical dependencies carry an explicit blocking decision, computed from their delivery state without loading conversations. Queue previews use that decision and the same live-task predicate as scheduling. The simulator offers the same commands against its small fixture.
 
 ## Window snapshots
 

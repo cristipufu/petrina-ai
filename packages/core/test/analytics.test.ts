@@ -525,6 +525,13 @@ describe("Analytics", () => {
 });
 
 describe("The squad", () => {
+  it("counts fix rounds for a custom build-result role", () => {
+    const current = state([task("custom", "shop")]);
+    current.roles = [...current.roles, { ...current.roles.find(role => role.result === "build")!, id: "repair-specialist", name: "Repair specialist" }];
+    const moment: WorkMoment = { id: "custom-fix", taskId: "custom", productId: "shop", at: NOW - HOUR, kind: "stage-end", stageKind: "do", roleId: "repair-specialist", round: 2, outcome: "done", durationMs: MIN, workMs: MIN };
+    const squad = usageView(logWith([], [moment]), { view: "analytics", period: "today" }, { now: NOW, state: current }).squad;
+    expect(squad.stageKinds).toEqual([expect.objectContaining({ key: "fixes", label: "Fixes after review", runs: 1 })]);
+  });
   it("counts stages, deliveries, send-backs, design rounds, questions and failures", () => {
     const at = NOW - 2 * HOUR;
     const base = { taskId: "k", productId: "shop" };

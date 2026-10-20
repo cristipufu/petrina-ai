@@ -7,6 +7,7 @@ import { sim } from "./engine";
 import { mod, setSingleKeys } from "./keyboard";
 import type { Theme } from "./theme";
 import { themes } from "./themes";
+import { canMessage, canTogglePause } from "./taskCommands";
 
 export function appActions({ state, singleKeys, newTask, openInbox, go, showShortcuts, sendAction, theme, onTheme }: { state: State; singleKeys: boolean; newTask: () => void; openInbox: () => void; go: (page: Page) => void; showShortcuts: () => void; sendAction: (action: () => unknown, title: string, detail?: string) => Promise<boolean>; theme: Theme; onTheme: (theme: Theme) => void }): PaletteAction[] {
   return [
@@ -44,8 +45,8 @@ export function taskActions({ task, state, sheetOpen, open, message, focusMessag
   const queue = queueOf(state.tasks);
   return [
     { id: `open-task-${task.id}`, label: `Open “${task.title}”`, shortcut: "↵", run: () => { if (!sheetOpen) open(task.id); } },
-    { id: `message-task-${task.id}`, label: `Message “${task.title}”`, shortcut: "M", run: () => { if (sheetOpen) message(task); else { open(task.id, "session"); focusMessage(task.id); } } },
-    { id: `pause-task-${task.id}`, label: `${task.state === "queued" ? (task.held ? "Release" : "Hold") : task.state === "paused" ? "Resume" : "Pause"} “${task.title}”`, shortcut: "P", run: () => pause(task) },
+    ...(canMessage(task) ? [{ id: `message-task-${task.id}`, label: `Message “${task.title}”`, shortcut: "M", run: () => { if (sheetOpen) message(task); else { open(task.id, "session"); focusMessage(task.id); } } }] : []),
+    ...(canTogglePause(task) ? [{ id: `pause-task-${task.id}`, label: `${task.state === "queued" ? (task.held ? "Release" : "Hold") : task.state === "paused" ? "Resume" : "Pause"} “${task.title}”`, shortcut: "P", run: () => pause(task) }] : []),
     ...(task.state === "queued" && queue[0]?.id !== task.id
       ? [
           {
