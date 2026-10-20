@@ -149,6 +149,9 @@ describe("usage in words", () => {
   it("says the day only when the time is not today", () => {
     expect(untilWords(new Date(2026, 9, 16, 17, 5).getTime(), now)).toBe("17:05");
     expect(untilWords(new Date(2026, 9, 23, 17, 0).getTime(), now)).toBe("Fri 17:00");
+    const beforeMidnight = new Date(2026, 9, 20, 23, 45).getTime();
+    expect(untilWords(beforeMidnight + HOUR, beforeMidnight)).toBe("Wed 00:45");
+    expect(untilWords(beforeMidnight + HOUR, beforeMidnight + 30 * 60_000)).toBe("00:45");
   });
 
   it("lists each tool: how much is used, who is out until when, or not reported", () => {

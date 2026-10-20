@@ -327,7 +327,12 @@ describe.concurrent("an agent that runs out of usage", () => {
         const task = run.find();
         return task.state === "waiting" && task.statusLine.startsWith("Waiting for usage") && task;
       }, "the task to wait for usage");
-      expect(waiting.statusLine).toMatch(/^Waiting for usage: Claude Code, Codex, Grok and Antigravity are out until \d\d:\d\d$/);
+      const reset = new Date(Math.min(...run.engine.getState().pool.limited!.map((limit) => limit.until)));
+      const clock = reset.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      const day = reset.toLocaleDateString("en-US", { weekday: "short" });
+      const prefix = "Waiting for usage: Claude Code, Codex, Grok and Antigravity are out until ";
+      // The reset may cross midnight; either date form remains valid if midnight passes after the status was recorded.
+      expect([`${prefix}${clock}`, `${prefix}${day} ${clock}`]).toContain(waiting.statusLine);
       expect(waiting.holdsSlot).toBe(false);
       expect(waiting.agent).toBeUndefined();
       const box = waiting.journey!.at(-1)!;
@@ -364,7 +369,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(retry).toMatchObject([{ roleId: "builder", profileId: "opus-high", toolId: "claude-code" }]);
       expect(run.engine.tracking.log.owedRetries()).toEqual([]);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 

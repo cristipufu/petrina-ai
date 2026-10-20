@@ -239,7 +239,7 @@ it("names and enforces the check for unresolved review issues when shipping norm
     const task = (state: State) => state.tasks.find((entry) => entry.id === taskId)!;
     await waitFor(() => fakes.marked("verifier-voting"), "the vote on an unresolved issue");
     const reviewing = await engine.state();
-    expect(nextLine(reviewing, task(reviewing))).toBe("Next: your OK to ship, then Petrina commits to main");
+    expect(nextLine(reviewing, task(reviewing))).toBe("Next: your call, then Petrina commits to main");
     writeFileSync(join(fakes.dir, "release-vote"), "go");
     const waiting = await engine.until((state) => state.inbox.some((item) => item.kind === "delivery"), "the mandatory check");
     expect(task(waiting).landed).toBeUndefined();
