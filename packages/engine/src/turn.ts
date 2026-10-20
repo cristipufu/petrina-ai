@@ -35,6 +35,7 @@ type ResumeConversation = { sessionId: string; toolId: Id; model: string; contex
 type ConversationOptions = {
   resume?: ResumeConversation | ((profile: AgentProfile, role: Role) => ResumeConversation | undefined | Promise<ResumeConversation | undefined>);
   reviewContext?: boolean;
+  reviewFindings?: readonly import("@petrina/core").Finding[];
   started?: () => void;
   completed?: (note: import("@petrina/core").ConversationNote, profile: AgentProfile, role: Role) => void;
 };
@@ -419,6 +420,7 @@ export class Turns {
         const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, repository.conversation, {
           packet: role.result === "build" || options.designContext || options.reviewContext,
           previous, design: options.designContext, knownSections: back?.knownSections,
+          findings: options.reviewFindings,
         });
         const sections = prepared.sections;
         opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole, recordJob: (job) => this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job) });
@@ -454,7 +456,7 @@ export class Turns {
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(scope, roleId, tookOver.id, startedAt), refusal) });
         else if (where) sections.push({ title: forScreen ? WHERE_YOU_WERE_SCREEN : WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "", forScreen ? "screen" : "restart") });
         if ((role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
-          await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true });
+          await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true, findings: options.reviewFindings });
         }
         opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, (job) => this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job));
       }
@@ -654,7 +656,7 @@ export class Turns {
       if (signal.aborted) throw new Aborted();
       if (options.took) givenSections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
       const note: ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
-      const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, note, { packet: options.reviewContext, previous: wentBack ? offered?.context : undefined });
+      const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, note, { packet: options.reviewContext, previous: wentBack ? offered?.context : undefined, findings: options.reviewFindings });
       const sections = prepared.sections;
       const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
       const recordJob = (job: string) => this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, job);
@@ -950,9 +952,9 @@ export class Turns {
   }
 
   private async prepareTurnPrompt(scope: RepositoryContext, role: Role, sessionId: string, sections: Section[], note: ConversationNote | undefined,
-    options: { packet?: boolean; previous?: BuilderContext; design?: boolean; knownSections?: readonly string[] }): Promise<{ sections: Section[]; refreshRole: boolean }> {
+    options: { packet?: boolean; previous?: BuilderContext; design?: boolean; knownSections?: readonly string[]; findings?: readonly import("@petrina/core").Finding[] }): Promise<{ sections: Section[]; refreshRole: boolean }> {
     if (!options.packet) return { sections, refreshRole: true };
-    const prepared = await builderContext(this.k.dataDir, repositoryView(scope), role, sessionId, sections, options.previous, { design: options.design, knownSections: options.knownSections });
+    const prepared = await builderContext(this.k.dataDir, repositoryView(scope), role, sessionId, sections, options.previous, { design: options.design, knownSections: options.knownSections, findings: options.findings });
     if (note) {
       if (prepared.snapshot) note.context = prepared.snapshot;
       else delete note.context;

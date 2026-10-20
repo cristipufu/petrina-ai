@@ -313,7 +313,7 @@ export class Reviews {
     if (stage.profileIds.length === 1 && !task.repositories) {
       const { key, profileId } = reviewers[0]!;
       const roleId = reviewerAt(stage, Number(key));
-      const participant = this.participant(scope, stage, key, profileId);
+      const participant = { ...this.participant(scope, stage, key, profileId), reviewFindings: input.findings };
       let by = profileId;
       const result = await this.turns.turn(scope, roleId, profileId, () => this.context.sectionsFor(scope, roleId, undefined, undefined, `review-${key}`, input), ReviewResult, signal, { ...participant, check, reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
       await this.applyReview(scope, stage, result, by, roleId, key);
@@ -334,7 +334,7 @@ export class Reviews {
         work: async (copy, room, seat, onUsed, agent, continuing, signal, selectionReason) => {
           let by = profileId;
           const roleId = reviewerAt(stage, Number(key));
-          const participant = this.participant(scope, stage, key, profileId);
+          const participant = { ...this.participant(scope, stage, key, profileId), reviewFindings: input.findings };
           const used = (id: Id) => { by = id; onUsed(id); };
           const given = () => this.context.sectionsFor(scope, roleId, `review-${key}`, this.turns.repositoryCopies.get(copy), undefined, input);
           const result = continuing

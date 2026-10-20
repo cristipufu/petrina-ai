@@ -382,6 +382,8 @@ export interface BuilderContext {
   file: string;
   digest: string;
   hashes: Readonly<Record<string, string>>;
+  /** Exact records already supplied to this native reviewer conversation. */
+  findingHashes?: Readonly<Record<Id, string>>;
 }
 
 export interface ConversationNote {

@@ -70,7 +70,7 @@ Each participant has a complete current context packet to read after compaction,
 
 ### Continued reviewer conversations
 
-The first code or security review starts fresh. Each reviewer seat saves its own completed conversation within that stage. Fix rounds recreate its detached copies at the same paths and reopen that conversation with current findings, Builder answers, check evidence and prepared comparisons. Unchanged request and brief sections are replaced by an immutable complete context packet, available after compaction. Journey inputs record exactly what was sent.
+The first code or security review starts fresh. Each reviewer seat saves its own completed conversation within that stage. Fix rounds recreate its detached copies at the same paths and reopen that conversation with current findings, Builder answers, check evidence and prepared comparisons. Unchanged request and brief sections are replaced by an immutable complete context packet, available after compaction. Within an intact native conversation, finding records already supplied are reduced to a current status index; new or changed records retain all recorded fields. Fresh reviewers and Verifiers receive complete independent context. Journey inputs record exactly what was sent.
 
 A changed role, planned or actual profile, request or approved source starts a complete fresh review; an unavailable native session or context packet does too. Usage replacements retain only their own conversation when selected again. Completed references survive an engine restart, are cleared when the stage ends or the task is paused/cancelled, and never belong to another reviewer. Verifiers always start fresh.
 

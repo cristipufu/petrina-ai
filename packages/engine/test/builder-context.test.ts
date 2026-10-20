@@ -3,8 +3,39 @@ import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, createDemoState } from "@petrina/core";
 import { builderContext } from "../src/builder-context.js";
+import { formatFindings } from "../src/prompts.js";
 import { Cleanup } from "../src/cleanup.js";
 import { makeWorld, removeDir, tempDir } from "./support.js";
+
+it("reduces unchanged finding records only within an intact native conversation and carries every changed field", async () => {
+  const root = tempDir("review-finding-deltas-");
+  try {
+    const task = createDemoState(1_000_000_000).tasks[0]!;
+    const role = BUILT_IN_ROLES.find((entry) => entry.id === "code-reviewer")!;
+    const unchanged = { id: "old", text: "A long old report ".repeat(300), status: "fixed" as const, severity: "blocking" as const, raisedBy: "sol-high", confirmedBy: [] };
+    const changed = { ...unchanged, id: "changed", text: "A later finding", productIds: ["api"], evidence: "Original proof" };
+    const sections = (findings: readonly import("@petrina/core").Finding[]) => [{ title: "Findings so far (confirm or dispute by id)", body: formatFindings(findings) }];
+    const first = await builderContext(root, task, role, "native-session", sections([unchanged, changed]), undefined, { findings: [unchanged, changed] });
+    const updated = { ...changed, productIds: ["web"], evidence: "Changed proof", answer: { fixed: true, text: "Builder response", at: 2 }, votes: [{ by: "opus-high", toolId: "claude-code", verdict: "real" as const, reason: "Fresh proof" }], disputes: [{ by: "sol-high", reason: "Counterexample", at: 2 }] };
+    const current = [unchanged, updated];
+    const next = await builderContext(root, task, role, "native-session", sections(current), first.snapshot, { findings: current });
+    expect(next.sections[0]!.title).toBe("Current authoritative task context");
+    expect(next.sections.find((section) => section.title === "Current finding status index")!.body).toContain("old: fixed");
+    const delta = next.sections.find((section) => section.title.startsWith("New or changed finding"))!;
+    expect(JSON.parse(delta.body)).toEqual([updated]);
+    expect(next.sections.map((section) => section.body).join("\n")).not.toContain(unchanged.text);
+    expect(await readFile(next.snapshot!.file, "utf8")).toContain(unchanged.text);
+    expect(await readFile(next.snapshot!.file, "utf8")).toContain("Counterexample");
+    const continued = await builderContext(root, task, role, "native-session", sections(current), JSON.parse(JSON.stringify(next.snapshot)), { findings: current });
+    expect(continued.sections.some((section) => section.title.startsWith("New or changed finding"))).toBe(false);
+    const fresh = await builderContext(root, task, role, "fresh-session", sections(current), next.snapshot, { findings: current });
+    expect(fresh.sections).toEqual(sections(current));
+    const withoutRecords = { ...next.snapshot!, findingHashes: undefined };
+    expect((await builderContext(root, task, role, "native-session", sections(current), withoutRecords, { findings: current })).sections).toEqual(sections(current));
+    await writeFile(next.snapshot!.file, "Broken packet");
+    expect((await builderContext(root, task, role, "native-session", sections(current), next.snapshot, { findings: current })).sections).toEqual(sections(current));
+  } finally { removeDir(root); }
+});
 
 it("omits unchanged handoffs, guide points, follow-ups and PR descriptions while retaining changed context", async () => {
   const root = tempDir("petrina-background-delta-");
