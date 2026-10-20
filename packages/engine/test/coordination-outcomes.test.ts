@@ -18,7 +18,7 @@ afterAll(async () => {
   await Promise.all(engines.map((engine) => engine.shutdown()));
   roots.forEach(removeDir);
 });
-const options = { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] };
+const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] };
 
 it("matches saved diagnostic identities without rounding large device and inode values", () => {
   const expected = { device: "9007199254740993", inode: "18446744073709551614" };

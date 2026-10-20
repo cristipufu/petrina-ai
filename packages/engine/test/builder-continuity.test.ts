@@ -24,7 +24,7 @@ async function fixture(scenario: Scenario = {}) {
       if (flag) nextGrokCheck = undefined;
       return [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(flag ? [flag] : [])];
     },
-    toolPath: () => "/bin/true", codexCommand: null, toolCheckTimeoutMs: 8000 * SLOW,
+    toolPath: () => "/bin/true", usageCommands: { codex: null }, toolCheckTimeoutMs: 8000 * SLOW,
   };
   let engine = new Engine(join(root, "data"), options);
   engine.setPoolPaused(true);

@@ -106,15 +106,15 @@ describe("Grok account usage", () => {
 
   it("shares one cached reader across engine startup, Analytics and agent refreshes, and retains the chart history", async () => {
     const fake = server(billing(85));
-    const engine = new Engine(join(fake.dir, "data"), { agentCommand: () => [], grokCommand: fake.command, toolPath: () => "/fake/tool" });
+    const engine = new Engine(join(fake.dir, "data"), { agentCommand: () => [], usageCommands: { grok: fake.command }, toolPath: () => "/fake/tool" });
     try {
       await waitFor(() => engine.getState().pool.usage?.some(r => r.toolId === "grok"), "Grok's startup reading");
       for (let n = 0; n < 5; n++) { engine.readUsage("grok"); engine.usage({ view: "analytics", period: "today" }); }
-      await engine.grokUsage!.refresh(60_000);
+      await engine.usageCoordinator.readers.get("grok")!.refresh(60_000);
       expect(fake.asked().filter(r => r.method === "_x.ai/billing")).toHaveLength(1);
       expect(engine.usage({ view: "analytics", period: "today" }).limits.tools.find(t => t.toolId === "grok")?.limits[0]?.readings.at(-1)?.used).toBe(0.85);
       writeFileSync(join(fake.dir, "billing.json"), JSON.stringify({ hang: true, ignoreStop: true }));
-      const reading = engine.grokUsage!.refresh();
+      const reading = engine.usageCoordinator.readers.get("grok")!.refresh();
       await waitFor(() => fake.asked().filter(r => r.method === "_x.ai/billing").length === 2, "a pending account read");
       const pid = fake.asked().at(-1)!.pid;
       engine.shutdown();
@@ -125,12 +125,12 @@ describe("Grok account usage", () => {
 
   it("shows failed account refreshes to the window without changing the last confirmed percentage or its age", async () => {
     const fake = server(billing(57));
-    const engine = new Engine(join(fake.dir, "data"), { agentCommand: () => [], grokCommand: fake.command, toolPath: () => "/fake/tool" });
+    const engine = new Engine(join(fake.dir, "data"), { agentCommand: () => [], usageCommands: { grok: fake.command }, toolPath: () => "/fake/tool" });
     try {
       await waitFor(() => engine.windowState().pool.usageReads?.grok?.state === "reported", "a confirmed account reading");
       const report = engine.windowState().pool.usage!.find((entry) => entry.toolId === "grok")!;
       writeFileSync(join(fake.dir, "billing.json"), JSON.stringify({ error: "Meter unavailable" }));
-      await engine.grokUsage!.refresh();
+      await engine.usageCoordinator.readers.get("grok")!.refresh();
       const pool = engine.windowState().pool;
       expect(pool.usageReads?.grok?.state).toBe("unavailable");
       expect(pool.usage!.find((entry) => entry.toolId === "grok")).toEqual(report);

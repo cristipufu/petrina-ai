@@ -15,7 +15,7 @@ describe("tasks' checks take turns on one machine", () => {
   for (const checkRuns of [1, 2]) it(`hands a released place to the waiting task before a new arrival (limit ${checkRuns})`, async () => {
     const root = tempDir("petrina-check-handoff-");
     roots.push(root);
-    const engine = new Engine(join(root, "data"), { codexCommand: null, checkRuns });
+    const engine = new Engine(join(root, "data"), { usageCommands: { codex: null }, checkRuns });
     engine.setPoolPaused(true);
     const held: (() => void)[] = [];
     try {
@@ -48,7 +48,7 @@ describe("tasks' checks take turns on one machine", () => {
   it("skips a cancelled waiter and rejects an already cancelled run without taking a place", async () => {
     const root = tempDir("petrina-check-cancel-");
     roots.push(root);
-    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     engine.setPoolPaused(true);
     const held: (() => void)[] = [];
     try {
@@ -94,7 +94,7 @@ describe("tasks' checks take turns on one machine", () => {
   for (const draining of [false, true]) it(`releases a reserved check place when ${draining ? "draining" : "paused"} during its handoff`, async () => {
     const root = tempDir("petrina-check-admission-");
     roots.push(root);
-    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null },  });
     engine.setPoolPaused(true);
     const held: (() => void)[] = [];
     try {
@@ -222,7 +222,7 @@ try {
 it("admits bounded check preparation while every model slot is occupied", async () => {
   const root = tempDir("petrina-check-separate-capacity-");
   roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null });
+  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null },  });
   engine.setPoolPaused(true);
   try {
     const productId = await engine.addProduct(makeProduct(root));
@@ -254,7 +254,7 @@ it("admits bounded check preparation while every model slot is occupied", async 
 
 it("admits a queued planner while the check-preparation lane is full", async () => {
   const root = tempDir("petrina-planner-beside-checks-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null });
+  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   });
   engine.setPoolPaused(true);
   try {
     const productId = await engine.addProduct(makeProduct(root));
@@ -273,7 +273,7 @@ it("admits a queued planner while the check-preparation lane is full", async () 
 it("keeps shared check readiness independent of the active repository and invalidates changed evidence", async () => {
   const root = tempDir("petrina-shared-check-readiness-");
   roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null });
+  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null },  });
   engine.setPoolPaused(true);
   try {
     const productId = await engine.addProduct(makeProduct(root));

@@ -8,7 +8,7 @@ import { makeProduct, removeDir, tempDir } from "./support.js";
 
 it("keeps a design revision instruction in its original phase without dropping later product decisions or legacy notes", async () => {
   const root = tempDir("petrina-phase-notes-");
-  const engine = new Engine(join(root, "data"), { codexCommand: null });
+  const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
   try {
     engine.setPoolPaused(true);
     const productId = await engine.addProduct(makeProduct(root));

@@ -454,7 +454,7 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
   it("removes product pictures from actual storage without listing all history, preserving shared membership and rollback", async () => {
     const world = makeWorld("history-capture-removal");
     worlds.push(world);
-    const engine = world.start({ agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+    const engine = world.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     try {
       engine.setPoolPaused(true);
       engine.s.products.push(...state([]).products as typeof engine.s.products);

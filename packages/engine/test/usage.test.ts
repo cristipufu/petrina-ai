@@ -545,7 +545,7 @@ describe("analytics keeps who actually did the work", () => {
       run.engine.pause(run.taskId);
       if (restart) {
         run.engine.shutdown();
-        restarted = new Engine(join(run.root, "data"), { codexCommand: null });
+        restarted = new Engine(join(run.root, "data"), { usageCommands: { codex: null } });
       }
       const engine = restarted ?? run.engine;
       expect(engine.getState().inbox.some((item) => item.id === question.id)).toBe(false);
@@ -595,7 +595,7 @@ describe("analytics keeps who actually did the work", () => {
       expect(words).not.toContain("under a minute");
       expect(JSON.stringify(asks())).not.toContain(question.title);
       run.engine.shutdown();
-      restarted = new Engine(join(run.root, "data"), { codexCommand: null });
+      restarted = new Engine(join(run.root, "data"), { usageCommands: { codex: null } });
       expect(restarted.usage({ view: "analytics", period: "today" }).squad.asks).toBe(words);
     } finally {
       run.engine.shutdown();
@@ -764,6 +764,13 @@ describe("what the tools say about usage", () => {
       expect(limitFromFailure(claude, failure({ kind }), "", now)).toBeInstanceOf(UsageLimited);
     }
     expect(limitFromFailure(codex, failure({ codexErrorInfo: "contextWindowExceeded" }), "", now)).toBeUndefined();
+  });
+
+  it("keeps native error classification on the provider that owns it", () => {
+    const claudeSentence = new Error("You've hit your usage limit.");
+    expect(limitFromFailure(claude, claudeSentence, "", now)).toBeInstanceOf(UsageLimited);
+    expect(limitFromFailure(codex, claudeSentence, "", now)).toBeUndefined();
+    expect(limitFromFailure(claude, { data: { codexErrorInfo: "usageLimitExceeded" } }, "", now)).toBeUndefined();
   });
 
   it("files a task that stopped on any limit as a usage limit in Analytics, whatever the limit is called", () => {

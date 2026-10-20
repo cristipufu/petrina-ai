@@ -12,7 +12,7 @@ const root = tempDir("petrina-session-cap-");
 afterAll(() => removeDir(root));
 
 function kernel(): Quiet {
-  return new Quiet(root, { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  return new Quiet(root, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
 }
 
 function task(id: string, images: boolean): MTask {

@@ -13,7 +13,7 @@ afterAll(async () => {
   await Promise.all(engines.map((engine) => engine.shutdown()));
   roots.forEach(removeDir);
 });
-const options = { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] };
+const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] };
 function fixture() {
   const root = tempDir("petrina-check-evidence-");
   roots.push(root);

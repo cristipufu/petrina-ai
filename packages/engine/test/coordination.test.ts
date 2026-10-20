@@ -21,7 +21,7 @@ afterAll(async () => {
 function fixture() {
   const home = tempDir("petrina-coordinate-");
   roots.push(home);
-  const e = new Engine(home, { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  const e = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   engines.push(e);
   e.setPoolPaused(true);
   // These tests exercise decisions and persistence without admitting real agents.
@@ -126,7 +126,7 @@ describe("focused coordination and durable decisions", () => {
     const sent = await c.call("task.message", { taskId: created.taskId, text: "Only once", requestId: "message-once" });
     expect(sent.messageId).toBeString();
     await e.shutdown();
-    const restarted = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+    const restarted = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     engines.push(restarted);
     const again = new Coordination(restarted);
     expect(await again.call("task.add", args)).toEqual(created);
@@ -243,7 +243,7 @@ describe("focused coordination and durable decisions", () => {
     e.save();
     expect(e.activeState().tasks.some((task) => task.id === created.taskId)).toBe(false);
     await e.shutdown();
-    const restarted = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+    const restarted = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     engines.push(restarted);
     restarted.getState = () => { throw new Error("Do not reconstruct the archive"); };
     const again = new Coordination(restarted);
@@ -390,7 +390,7 @@ describe("focused coordination and durable decisions", () => {
     const next = page.next;
     e.commitNow();
     await e.shutdown();
-    const restarted = new Engine(home, { admissionsClosed: true, codexCommand: null, grokCommand: null, terminals: () => [] });
+    const restarted = new Engine(home, { admissionsClosed: true, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     engines.push(restarted);
     const focused = new Coordination(restarted);
     while (page.next) {
@@ -537,7 +537,7 @@ describe("the shared terminal and MCP connection", () => {
       await waitFor(() => e.listeners.size > listeners, "the focused watch connection");
       first.stop(true);
       await e.shutdown();
-      const next = new Engine(home, { admissionsClosed: true, codexCommand: null, grokCommand: null, terminals: () => [] });
+      const next = new Engine(home, { admissionsClosed: true, usageCommands: { codex: null, grok: null }, terminals: () => [] });
       engines.push(next);
       replacement = serve(next, { port: 0, token });
       connect(replacement);

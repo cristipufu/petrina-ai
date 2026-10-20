@@ -13,7 +13,7 @@ for (const archived of [false, true]) for (const first of ["one", "two"] as cons
   const secondClone = join(world.dir, "second-clone");
   git(world.dir, "clone", "-q", world.clone, secondClone);
   git(secondClone, "remote", "set-url", "origin", "https://github.com/acme/second.git");
-  const options = { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] };
+  const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] };
   let engine = world.start(options);
   try {
     await engine.waitUntilReady();

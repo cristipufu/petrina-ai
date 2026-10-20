@@ -45,7 +45,7 @@ async function withGit(script: string, check: () => Promise<void>): Promise<void
 describe("reading a product's committed files", () => {
   it("leaves coordinator messages queued when a parallel context read fails", async () => {
     const root = join(folder, "failed-context");
-    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true);
     try {
       const productId = await engine.addProduct(makeProduct(root));
@@ -62,7 +62,7 @@ describe("reading a product's committed files", () => {
 
   for (const mode of ["sections", "snapshot"] as const) it(`reads guide and check evidence together without losing late notes (${mode})`, async () => {
     const root = join(folder, `parallel-context-${mode}`);
-    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true);
     const started: string[] = [];
     let guideDone!: (points: string[]) => void, checksDone!: (current: boolean) => void;
@@ -120,7 +120,7 @@ describe("reading a product's committed files", () => {
 
   for (const pullRequest of [false, true]) it(`includes a coordinator note received while its review guide was being read${pullRequest ? " for a pull request task" : ""}`, async () => {
     const root = join(folder, `context-${pullRequest}`);
-    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
       const productId = await engine.addProduct(makeProduct(root));
@@ -159,7 +159,7 @@ describe("reading a product's committed files", () => {
 
   for (const pullRequest of [false, true]) it(`keeps earlier role notes and new coordinator notes for an added reviewer while its guide is read${pullRequest ? " on a PR task" : ""}`, async () => {
     const root = join(folder, `added-context-${pullRequest}`);
-    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
       const reviewer = engine.addRole(ROLE_STARTS.find((start) => start.id === "security")!.draft);

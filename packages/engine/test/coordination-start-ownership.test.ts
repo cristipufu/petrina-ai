@@ -36,7 +36,7 @@ Engine.prototype.waitUntilReady = async function () {
   writeFileSync(${JSON.stringify(marker)}, "starting");
   await new Promise(() => {});
 };
-await launch({ home: ${JSON.stringify(home)}, mode: ${JSON.stringify(mode === "explicit" ? "serve" : "app")}, port: 0, loginShell: false, engine: { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] } });
+await launch({ home: ${JSON.stringify(home)}, mode: ${JSON.stringify(mode === "explicit" ? "serve" : "app")}, port: 0, loginShell: false, engine: { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] } });
 `);
   const interrupted = Bun.spawn([process.execPath, wrapper], { env: engineEnv(home), stdin: "pipe", stdout: "ignore", stderr: "ignore" });
   const fakes = new Fakes(join(root, "agents"));

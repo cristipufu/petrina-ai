@@ -375,7 +375,7 @@ export class Turns {
     options.started?.();
     this.k.runs.set(taskId, run);
     this.k.syncIdleSleep();
-    if (profile.toolId !== "antigravity") this.k.readUsage(profile.toolId);
+    if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId);
     const picked = run.reopened !== undefined;
     const sandbox = this.sandboxState(scope, opened.off, roleId, profileId, picked);
     if (task.agent) task.agent.sandbox = sandbox;
@@ -720,7 +720,7 @@ export class Turns {
     const runs = this.k.helperRuns.get(taskId) ?? new Set();
     this.k.helperRuns.set(taskId, runs.add(run));
     this.k.syncIdleSleep();
-    if (profile.toolId !== "antigravity") this.k.readUsage(profile.toolId);
+    if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId);
     const head = await git.head(copy).catch(() => undefined);
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();

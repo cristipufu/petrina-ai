@@ -20,7 +20,7 @@ The engine refuses an unknown role, any change to the Release Manager, a locked 
 
 ### What an agent is told
 
-The agent receives its role's wording, inside Petrina's fixed rules for its kind of result (never its name, so an added role gets the rules of the built-in role it works like), then its purpose, one sentence on what it may change in this step and what it hands back, with the task, the coordinator's notes and the result format as before. The planner's fixed rules (the roles and profiles it may use with what each one does, the stage kinds and the rules) come after its wording and can't be replaced by it. The Release Manager keeps its fixed delivery contract.
+The agent receives its role's wording, inside Petrina's fixed rules for its kind of result (never its name, so an added role gets the rules of the built-in role it works like), then its purpose, one sentence on what it may change in this step and what it hands back, with the task, the coordinator's notes and the result format as before. Role contracts render saved wording into explicit templates; they never search or splice rendered English to retain runtime rules. The planner's fixed rules (the roles and profiles it may use with what each one does, the stage kinds and the rules) come after its wording and can't be replaced by it. Review independence and incremental scope belong to contract capabilities, so added findings roles inherit the same policy as the code-review contract. The Release Manager keeps its fixed delivery contract.
 
 ### Every step that may change the product comes before the final review
 
@@ -102,7 +102,7 @@ ACP gives Petrina what it needs without per-tool code:
 | Permission prompts | `session/request_permission`, sent only when the tool's own safety check flags something; the coordinator answers |
 | Pick up after a restart | `session/resume`, or `session/load` (which replays the conversation) when that is all the agent offers |
 
-Supported commands, model selections and adapter capabilities live in `packages/engine/src/tools.ts`; `acp-run.ts` owns the native session handshake. Account-reader protocols and refresh timing belong to [runtime usage limits](engine-runtime.md#account-readers).
+Adapters are registered in `packages/engine/src/tools.ts` against `tool-adapter.ts`. Optional hooks own environment preparation, session metadata, settings verification, native usage updates, turn reports, tool metadata, limit errors, account commands and terminal arguments. The ACP runner owns the shared handshake, cancellation and process cleanup. Account readers are registered through the adapter and held by tool ID in the usage coordinator; snapshots, refreshes and shutdown enumerate that registry. Live-session account reporting avoids a duplicate probe at turn start. Adding runtime behavior no longer requires branches in the runner or kernel; supported profile, model, setup and UI catalog data still need explicit entries. Account-reader protocols and refresh timing belong to [runtime usage limits](engine-runtime.md#account-readers).
 
 Things to verify per tool before relying on them: model and effort selection through ACP, use of the user's existing login, and `session/resume` or `session/load` support.
 

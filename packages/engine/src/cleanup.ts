@@ -1,4 +1,4 @@
-import { executionFor } from "./repository-context.js";
+import { executionFor, scopesFor } from "./repository-context.js";
 // Removing finished tasks' working copies to free disk space. A task delivered, released, merged, closed or
 // cancelled no longer needs its copy (a full copy of the product, with installed packages and build output);
 // its branch and its history stay. A copy goes only once nothing uses it any more, never while a pull request
@@ -127,7 +127,7 @@ export class Cleanup {
     this.k.cleanupJobs.add(task.id);
     this.k.syncIdleSleep();
     try {
-      for (const work of [...task.repositories!, ...(task.excludedRepositories ?? [])]) {
+      for (const { work } of scopesFor(task, { includeExcluded: true })) {
         const copy = work.worktree ?? work.preparingCopy?.path;
         if (!copy || work.pr?.state === "open" || work.shipping?.step || work.localUpdate?.pushed === false) continue;
         const path = resolve(copy);

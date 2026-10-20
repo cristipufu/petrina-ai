@@ -3,7 +3,7 @@ import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as gitOps from "../src/git.js";
 import { Cleanup } from "../src/cleanup.js";
-import { detachRepositoryState, executionFor } from "../src/repository-context.js";
+import { scopesFor, detachRepositoryState, executionFor } from "../src/repository-context.js";
 import { Learnings } from "../src/learnings.js";
 import { git, makeWorld, removeDir, waitFor, type World } from "./support.js";
 
@@ -13,7 +13,7 @@ afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
 async function fixture(name: string) {
   const first = makeWorld(`context-first-${name}`), second = makeWorld(`context-second-${name}`);
   worlds.push(first, second);
-  const start = () => first.start({ agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+  const start = () => first.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
   const engine = start();
   engine.setPoolPaused(true);
   engine.schedule = () => {};
@@ -28,6 +28,46 @@ async function fixture(name: string) {
 }
 
 describe("explicit repository execution contexts", () => {
+  it("discards saved screen copies through their approved repository roots, including an excluded product", async () => {
+    const { engine, task } = await fixture("screen-owner-roots");
+    const owners = task.repositories!;
+    const paths = owners.map(work => work.worktree!);
+    owners.forEach((work, index) => { work.source = { product: { ...engine.s.products[index]!, path: paths[index]! }, start: { kind: "default", branch: "main" }, destination: { kind: "branch", mode: "local", repo: "acme/demo", branch: "main" }, confirmed: true }; });
+    task.excludedRepositories = [owners.pop()!];
+    engine.s.products.forEach(product => { product.path = "/a/different/clone"; });
+    task.hunt = { stageId: "review", round: 1, reported: {}, findings: 0, screenTurns: { "review-0": {
+      copy: "saved", reason: "Check the page", at: 1,
+      conversation: { roleId: "code-reviewer", profileId: "sol-high", sessionId: "saved", toolId: "codex", model: "sol", step: "review", startedAt: 1 },
+    } } };
+    const cleanup = spyOn(gitOps, "removeCopies").mockResolvedValue(undefined);
+    try {
+      engine.discardScreenTurns(task);
+      await engine.copyCleanups.get(task.id);
+      expect(cleanup.mock.calls.map(call => call[0])).toEqual(paths);
+      expect(task.hunt!.screenTurns).toBeUndefined();
+    } finally { cleanup.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("enumerates canonical owners in approved order, opting into excluded owners without inventing an empty scope", async () => {
+    const { engine, task } = await fixture("all-scopes");
+    try {
+      const [first, second] = task.repositories!;
+      task.activeProductId = second!.productId;
+      const excluded = { ...second!, productId: "excluded" };
+      task.excludedRepositories = [excluded];
+      expect(scopesFor(task).map(scope => scope.work)).toEqual([first!, second!]);
+      expect(scopesFor(task)[0]!.work).toBe(first!);
+      expect(scopesFor(task, { includeExcluded: true }).at(-1)!.work).toBe(excluded);
+      expect(task.activeProductId).toBe(second!.productId);
+      task.repositories = [];
+      expect(scopesFor(task)).toEqual([]);
+      delete task.repositories;
+      task.repository = first!;
+      expect(scopesFor(task)).toEqual([{ task, work: first! }]);
+      expect(scopesFor(task)[0]!.work).toBe(first!);
+    } finally { await engine.shutdown(); }
+  });
+
   for (const hooks of [false, true]) it(`restores checks with one combined inspection${hooks ? " and verifies a hook's reverted commit" : ", retaining untracked build output"}`, async () => {
     const { engine, task } = await fixture(`post-check-${hooks}`);
     const scope = executionFor(task, "first"), path = scope.work.worktree!;
@@ -141,7 +181,7 @@ describe("explicit repository execution contexts", () => {
     scope.work.shipping = { start, version: "1.0.1", tag: "v1.0.1", moves: 0, failures: 0 };
     const read = spyOn(gitOps, "fileAt");
     try {
-      const tested = await engine["shipping"]["setVersion"](scope, files);
+      const tested = await engine["shipping"]["releases"]["setVersion"](scope, files);
       expect(tested).not.toBe(start);
       for (const file of files) {
         expect(read.mock.calls.filter(([, sha, name]) => sha === start && name === file.file)).toHaveLength(0);
@@ -232,7 +272,7 @@ describe("explicit repository execution contexts", () => {
     const replies: ((value: Awaited<ReturnType<typeof gitOps.prState>>) => void)[] = [];
     const read = spyOn(gitOps, "prState").mockImplementation(() => closing ? Promise.resolve("open") : new Promise((resolve) => replies.push(resolve)));
     try {
-      pending = engine["shipping"].pollPullRequests();
+      pending = engine["shipping"].monitor.pollPullRequests();
       expect(replies).toHaveLength(2);
       engine.drivers.set(task.id, new AbortController());
       replies[0]!("merged"); replies[1]!("closed");
@@ -372,7 +412,7 @@ describe("explicit repository execution contexts", () => {
 
   it("keeps a single repository's saved execution separate from its public task view", async () => {
     const world = makeWorld("canonical-single"); worlds.push(world);
-    const start = () => world.start({ agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+    const start = () => world.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     let engine = start(); engine.setPoolPaused(true);
     try {
       const productId = await engine.addProduct(world.clone);

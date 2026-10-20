@@ -1,45 +1,28 @@
 import { createRequire } from "node:module";
 import type { AgentProfile, Tool } from "@petrina/core";
-import type { ClaudeSandbox } from "./sandbox.js";
+import type { ToolAdapter } from "./tool-adapter.js";
+export type { ToolAdapter } from "./tool-adapter.js";
+import { join } from "node:path";
+import { claudeBackground } from "./claude-background.js";
+import { BACKGROUND_FEATURES } from "./codex-background.js";
+import { claudeReports } from "./claude-usage-report.js";
+import { claudeLimit, codexLimit, grokLimit } from "./provider-limits.js";
+import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
+import { GrokUsage, grokTurnReport } from "./grok-usage.js";
+import { AntigravityUsage } from "./antigravity-usage.js";
+import { antigravityReading, antigravityTurnReport } from "./antigravity-report.js";
 import { antigravityCommand, antigravityInstalled, forgetAntigravityProbe } from "./antigravity-runtime.js";
-
-/** How Petrina drives one tool through ACP. */
-export interface ToolAdapter {
-  id: string;
-  name: string;
-  /** The adapter's entry point, resolved from node_modules. Unset when `command` is the agent itself. */
-  entry?: string;
-  /** The program to spawn when the agent is the ACP server. Otherwise Petrina runs `node` on `entry`. */
-  command?: readonly string[];
-  /** The CLI the tool needs on PATH, for detection and for taking over in a terminal. */
-  cli: string;
-  /** Additional native runtime needed alongside the terminal CLI. */
-  installed?: () => boolean;
-  /** Forget a disposable identity/account probe, only after its process has stopped. */
-  forgetProbe?: (sessionId: string, env: NodeJS.ProcessEnv) => Promise<void>;
-  /** Session config option ids the adapter exposes. `mode` is unset when the mode is session metadata instead. */
-  options: { model: string; effort: string; mode?: string };
-  /** The tool's own working mode; permission requests still reach the coordinator. */
-  mode: string;
-  /** Sent on `session/new`, `session/resume` and `session/load`. Grok's auto mode lives here, not in a config option. */
-  sessionMeta?: Readonly<Record<string, unknown>>;
-  /**
-   * How the tool says whether it is logged in, without a message to the AI. "report": its connector sends
-   * the login it runs on (`_auth/status_update`), and opens conversations either way. "open": it checks its
-   * login as a conversation opens and refuses with ACP's "log in first" error when there is none, so a
-   * conversation that opens is its own word.
-   */
-  login: "report" | "open";
-  models: readonly string[];
-  /**
-   * The session option that carries Claude Code's own sandbox settings to its adapter. Unset: the
-   * tool keeps its own setup (including Codex's workspace sandbox) and gets no sandbox settings from Petrina.
-   */
-  sandboxMeta?: (sandbox: ClaudeSandbox) => Record<string, unknown>;
-}
 
 export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
   "claude-code": {
+    parseLimitError: claudeLimit,
+    parseUsageUpdate: meta => ({ reports: claudeReports("claude-code", meta), ...(typeof meta["_claude/model"] === "string" ? { model: meta["_claude/model"] } : {}) }),
+    prepareSessionMeta: async (meta, { cwd, browser }) => {
+      if (!browser) return meta;
+      const claude = meta.claudeCode as { options?: Record<string, unknown> } | undefined;
+      return { ...meta, claudeCode: { ...claude, options: { ...claude?.options, ...await claudeBackground(cwd) } } };
+    },
+    terminalArgs: ({ session, model, effort, mode }) => ["--resume", session, "--model", model, "--effort", effort, "--permission-mode", mode],
     id: "claude-code",
     name: "Claude Code",
     entry: "@agentclientprotocol/claude-agent-acp/dist/index.js",
@@ -53,6 +36,15 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     sandboxMeta: (sandbox) => ({ claudeCode: { options: { sandbox } } }),
   },
   codex: {
+    parseLimitError: codexLimit,
+    prepareEnv: env => {
+      env.CODEX_CONFIG = JSON.stringify({ ...JSON.parse(env.CODEX_CONFIG ?? "{}"), ...Object.fromEntries(BACKGROUND_FEATURES.map(feature => [`features.${feature}`, false])) });
+      env.DISABLE_MCP_CONFIG_FILTERING = "true";
+      if (env.CODEX_PATH) env.PETRINA_CODEX_EXECUTABLE = env.CODEX_PATH;
+      env.CODEX_PATH = join(import.meta.dir, "codex-background.ts");
+    },
+    usageReader: { command: () => CODEX_USAGE_COMMAND, create: options => new CodexUsage(options), startGapMs: 0 },
+    terminalArgs: ({ session, model, effort }) => ["resume", session, "--model", model, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=user", "--no-daemon"],
     id: "codex",
     name: "Codex",
     entry: "@agentclientprotocol/codex-acp/dist/index.js",
@@ -64,6 +56,14 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     models: ["sol", "astra"],
   },
   grok: {
+    parseLimitError: grokLimit,
+    parseTurnReport: grokTurnReport,
+    toolMetadata: meta => {
+      const value = meta["x.ai/tool"];
+      return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+    },
+    usageReader: { command: () => ADAPTERS.grok!.command!, create: options => new GrokUsage(options) },
+    terminalArgs: ({ session, model, effort }) => ["--resume", session, "--model", model, "--effort", effort],
     id: "grok",
     name: "Grok",
     cli: "grok",
@@ -78,6 +78,11 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     models: ["Grok 4.7"],
   },
   antigravity: {
+    verifySessionSettings: (profile, settings) => {
+      if (settings.model !== profile.modelId || settings.effort !== profile.effort) throw new Error(`Antigravity did not confirm ${profile.model} with ${profile.effort} thinking. Check the models available to your Google account.`);
+    },
+    accountUsage: { command: "/usage", parse: antigravityReading, turnReport: antigravityTurnReport },
+    usageReader: { command: antigravityCommand, create: options => new AntigravityUsage(options), liveSession: true },
     id: "antigravity",
     name: "Antigravity",
     cli: "agy",

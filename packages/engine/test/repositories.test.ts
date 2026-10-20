@@ -689,7 +689,7 @@ describe.concurrent("one task across products", () => {
       if (!closed) shop.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
       if (closed) api.setGitHub((state) => { state.prs[0]!.state = "CLOSED"; });
       // Use the normal poll through its timer, without waiting a minute.
-      await (engine as unknown as { shipping: { pollPullRequests(): Promise<void> } }).shipping.pollPullRequests();
+      await engine["shipping"].monitor.pollPullRequests();
       const task = taskOf(engine.getState(), id);
       expect(task.state).toBe(closed ? "needs-you" : "pr-open");
       expect(engine.blockers(engine.task(dependent)!)).toHaveLength(1);
@@ -702,7 +702,7 @@ describe.concurrent("one task across products", () => {
         expect(engine.task(id)!.state).toBe("pr-open");
         expect(engine.blockers(engine.task(dependent)!)).toHaveLength(1);
         shop.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
-        await (engine as unknown as { shipping: { pollPullRequests(): Promise<void> } }).shipping.pollPullRequests();
+        await engine["shipping"].monitor.pollPullRequests();
         expect(engine.task(id)!.state).toBe("done");
       }
     } finally { await engine.shutdown(); }

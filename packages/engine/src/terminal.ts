@@ -1,3 +1,4 @@
+import { ADAPTERS } from "./tools.js";
 // Take over in the coordinator's own terminal. Petrina writes one small launcher into a folder only
 // the coordinator can read, and asks the usual terminal of the system to run it. The launcher opens
 // the agent's own tool (Claude Code or Codex) on the same conversation, in the task's working copy,
@@ -190,10 +191,10 @@ export function toolArgs(input: Pick<LaunchInput, "tool" | "sessionId" | "model"
   const session = checked(input.sessionId, SESSION, "the conversation's id");
   const model = checked(input.model, MODEL, "the model's name");
   const effort = checked(input.effort, EFFORT, "the effort");
-  if (input.tool.id === "claude-code") return [path, "--resume", session, "--model", model, "--effort", effort, "--permission-mode", checked(input.tool.mode ?? "default", /^(manual|default)$/, "the permission mode")];
-  if (input.tool.id === "grok") return [path, "--resume", session, "--model", model, "--effort", effort];
-  // --no-daemon: Codex keeps the conversation in this window only, so the agent can reopen it once the window closes.
-  return [path, "resume", session, "--model", model, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=user", "--no-daemon"];
+  const adapter = ADAPTERS[input.tool.id];
+  if (!adapter?.terminalArgs) throw new Error(`${input.tool.name} cannot reopen this conversation in a terminal`);
+  const mode = checked(input.tool.mode ?? "default", /^(manual|default)$/, "the permission mode");
+  return [path, ...adapter.terminalArgs({ session, model, effort, mode })];
 }
 
 const sh = (value: string) => `'${value}'`;

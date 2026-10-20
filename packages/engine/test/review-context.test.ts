@@ -25,7 +25,7 @@ async function bare() {
   writeFileSync(join(repo, "greeting.txt"), "FIRST-CHANGE\n");
   git(repo, "add", "."); git(repo, "commit", "-qm", "Add the greeting");
   const first = git(repo, "rev-parse", "HEAD");
-  const engine = new Engine(join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+  const engine = new Engine(join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
   engine.schedule = () => {}; engine.setPoolPaused(true);
   engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
   const id = engine.addTask({ productId: "p", title: "A precise review", backlog: true });
@@ -202,7 +202,7 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
   const scenario: Scenario = { planner: options.single ? "short" : "pair", builder: "plain", reviewer: options.reviewer ?? "important", fixes: "change", controlled: true, reopen, limited: options.limited };
   fakes.scenario(scenario);
   const data = join(root, "data");
-  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true", codexCommand: null, grokCommand: null, antigravityCommand: null };
+  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null },   };
   let engine = new Engine(data, engineOptions);
   engine.setPoolPaused(true); await engine.checkTools(); engine.setPoolLimit(options.limit ?? 2);
   const productId = await engine.addProduct(makeProduct(root)); engine.setProductDelivery(productId, "local", true);

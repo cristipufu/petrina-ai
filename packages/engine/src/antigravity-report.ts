@@ -1,10 +1,8 @@
 import type { TurnReport } from "@petrina/core";
 import type { UsageInfo } from "./usage.js";
 
-export interface AntigravityReading {
-  reports: UsageInfo[];
-  tokens?: { total: number; input: number; output: number; reasoning: number };
-}
+export type { AccountReading as AntigravityReading } from "./tool-adapter.js";
+import type { AccountReading as AntigravityReading } from "./tool-adapter.js";
 
 /** Google's built-in /usage command is handled locally, not sent to a model. Only its
  * named figures are read. ACP usage_update.used is context size, never billed tokens. */

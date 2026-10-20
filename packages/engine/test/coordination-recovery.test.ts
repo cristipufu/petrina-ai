@@ -14,7 +14,7 @@ afterAll(() => roots.forEach(removeDir));
 for (const kind of ["stop", "restart"] as const) it(`signals only accepted desktop ${kind} handoffs, and clears a failed handoff`, async () => {
   const home = tempDir("petrina-desktop-handoff-signal-");
   roots.push(home);
-  const e = new Engine(home, { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  const e = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   e.schedule = () => {};
   new Coordination(e);
   const store = new LifecycleStore(home);
@@ -61,7 +61,7 @@ for (const kind of ["pause", "restart"]) it(`a disconnected ${kind} follower can
 for (const next of ["resume", "stop", "restart"]) it(`a lost ${next} reply during a pause cannot reserve a receipt without applying its live engine effects`, async () => {
   const home = tempDir("petrina-lost-lifecycle-");
   roots.push(home);
-  const e = new Engine(home, { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  const e = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   e.schedule = () => {};
   const ownership = FolderLock.take(home)!;
   const store = new LifecycleStore(home);
@@ -139,7 +139,7 @@ for (const previous of ["unfinished-removed", "unfinished-stale", "completed"] a
   fakes.scenario({ controlled: true });
   // Persist the state an app leaves behind when it closes during a pause. Its connection
   // is normally removed; a crash may instead leave a dead connection on disk.
-  const before = new Engine(home, { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  const before = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   before.setPoolPaused(true);
   await before.shutdown();
   const store = new LifecycleStore(home);
@@ -182,7 +182,7 @@ it(`desktop reconnects once after an interrupted pause noticed by ${noticedBy}, 
   roots.push(root);
   const home = join(root, "home"), fakes = new Fakes(join(root, "agents"));
   fakes.scenario({ controlled: true });
-  const before = new Engine(home, { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  const before = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   before.setPoolPaused(true);
   await before.shutdown();
   const store = new LifecycleStore(home);

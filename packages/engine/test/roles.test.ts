@@ -19,7 +19,7 @@ const ctx = (overrides: Partial<PromptContext["task"]> = {}): PromptContext => (
 describe("every role's contract", () => {
   it("hands every brief rule to downstream roles, including covered, missing and contradictory calendar cases", async () => {
     const root = tempDir("petrina-design-context-");
-    const engine = new Engine(root, { agentCommand: () => [], codexCommand: null, grokCommand: null, toolPath: () => undefined });
+    const engine = new Engine(root, { agentCommand: () => [], usageCommands: { codex: null, grok: null },  toolPath: () => undefined });
     engine.setPoolPaused(true);
     try {
       const context = new Context(engine, { pendingPoints: async () => [] } as unknown as GuideKeeper);

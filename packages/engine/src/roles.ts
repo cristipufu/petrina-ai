@@ -156,6 +156,9 @@ export const CONTEXT_PARTS = ["notes", "brief", "objections", "checks", "finding
 export type ContextPart = (typeof CONTEXT_PARTS)[number];
 
 export interface RoleContract {
+  /** Review independence and baseline policies follow the contract, including added roles. */
+  awayFromBuilder?: boolean;
+  incrementalReview?: boolean;
   /** What it must hand back. */
   result: z.ZodType<unknown>;
   /** What it is shown besides its instructions. */
@@ -208,8 +211,8 @@ export function stepBack(task: Task): boolean {
   return reviewRound(task) > 3;
 }
 
-const CALL_INSTRUCTIONS = `The architects disagreed and the coordinator made the call below. The call is final: do not reopen it, argue with it or ask for another review. Nobody reviews the design again; the coordinator checks the brief before anything is built.
-Update the design brief so it follows the call. Read the code you need. Do not change any files: your output is the design brief. Write it for a product person: plain language, no code.
+const callInstructions = (canEdit: boolean) => `The architects disagreed and the coordinator made the call below. The call is final: do not reopen it, argue with it or ask for another review. Nobody reviews the design again; the coordinator checks the brief before anything is built.
+Update the design brief so it follows the call. Read the code you need. ${canEdit ? "Hand back the design brief." : "Do not change any files: your output is the design brief."} Write it for a product person: plain language, no code.
 Answer every objection listed as still open, or as answered after the call, by its id. Leave none out:
 - If the call decides it, set "byCall" to true, set "status" to what the call says (accepted or rejected), and in "answer" say what you changed in the brief to follow the call.
 - If the call does not speak to it, set "byCall" to false and answer it yourself: accept it and change the brief, or reject it with a reason.
@@ -255,13 +258,14 @@ export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
   {"kind": "do", "title": "Build", "roleId": "builder", "profileIds": ["<profile id>"]},
   {"kind": "review-chain", "title": "Review", "roleId": "code-reviewer", "profileIds": ["<profile id>", "<profile id on another tool>"], "maxRounds": 2}
 ], "sourcePointers": [], "risk": {"level": "medium", "why": "What it touches, in plain words"}}`,
-    instructions: (ctx) => {
+    instructions: ctx => ROLE_CONTRACTS.planner!.withInstructions!(ctx, ctx.role.instructions),
+    withInstructions: (ctx, wording) => {
       const roles = plannerRoles(ctx.roles);
       const toolName = (toolId: string) => ADAPTERS[toolId]?.name ?? toolId;
       const profiles = ctx.profiles.filter((profile) => !profile.standby).map((profile) => `- ${profile.id}: ${toolName(profile.toolId)} running ${profile.model} at ${profile.effort} effort`).join("\n");
       const tools = [...new Set(ctx.profiles.map((profile) => profile.toolId))];
       const oneTool = tools.length === 1 ? `\n- Only ${toolName(tools[0]!)} is set up on this machine: put every stage on its profiles, reviewers included, even where a rule above asks for different tools.` : "";
-      return `Compose the plan for this task: which roles work on it, on which profiles, in what order. Read the repository enough to judge the size of the work, but change nothing.
+      return `${wording}
 
 Roles you can use:
 ${roles}
@@ -291,26 +295,29 @@ Rules:
     },
   },
   "researcher": {
+    withInstructions: ({ role }, wording) => role.canEdit ? `${wording}\nDo not commit, push or open pull requests: Petrina commits your work.` : wording,
     result: NotesResult,
     reads: ["notes", "brief"],
     shape: `{"summary": "What you found, in plain language", "notes": ["One finding per line"]}`,
-    instructions: () => {
-      return "Research what users expect from this and how good products solve it. Look at the repository to understand the current state. Do not change any files.";
+    instructions: ({ role }) => {
+      return `Research what users expect from this and how good products solve it. Look at the repository to understand the current state.${role.canEdit ? "" : " Do not change any files."}`;
     },
   },
   "architect": {
     result: BriefResult,
     reads: ["notes", "brief", "objections"],
     shape: (ctx) => (followingCall(ctx.task) ? `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "sourcePointers": [], "answers": [{"id": "<objection id the call decides>", "status": "accepted", "byCall": true, "answer": "What you changed in the brief to follow the call"}, {"id": "<objection id the call does not speak to>", "status": "rejected", "byCall": false, "answer": "What you changed, or why not"}]}` : `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "sourcePointers": [], "answers": [{"id": "<objection id>", "status": "accepted", "answer": "What you changed, or why not"}]}`),
-    instructions: ({ task }) => {
-      if (followingCall(task)) return CALL_INSTRUCTIONS;
-      return `Design how this should work, for users and in the product. Read the code you need. Do not change any files: your output is the design brief.
+    withInstructions: ({ task, role }, wording) => followingCall(task) ? `${wording}\n\n${callInstructions(role.canEdit)}` : `${wording}\nIf objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason. Rejecting an objection that would grow the task beyond what was asked is a good reason.`,
+    instructions: ({ task, role }) => {
+      if (followingCall(task)) return callInstructions(role.canEdit);
+      return `Design how this should work, for users and in the product. Read the code you need. ${role.canEdit ? "Hand back the design brief." : "Do not change any files: your output is the design brief."}
 Write it for a product person: plain language, no code. The acceptance list is what the builder must satisfy and the reviewers will check.
 Keep the design as small as the task allows. Do not add mechanisms the task did not ask for (new security layers, sandboxes, settings, background services): if you see a need, put it in risks as a follow-up instead.
 If objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason. Rejecting an objection that would grow the task beyond what was asked is a good reason.`;
     },
   },
   "design-reviewer": {
+    withInstructions: ({ task }, wording) => [wording, designReviewRuntime(task)].filter(Boolean).join("\n"),
     result: ObjectionsResult,
     reads: ["notes", "brief", "objections"],
     shape: `{"objections": [{"text": "A concrete gap in the design", "blocking": true}]}`,
@@ -320,19 +327,21 @@ If objections are listed below, answer every one by its id: accept it and change
     },
   },
   "ux-designer": {
+    withInstructions: ({ role }, wording) => role.canEdit ? `${wording}\nDo not commit, push or open pull requests: Petrina commits your work.` : wording,
     result: NotesResult,
     reads: ["notes", "brief"],
     shape: `{"summary": "The screens and words you propose", "notes": ["One note per line"]}`,
-    instructions: () => {
-      return "Shape the screens, layout and words users will see for this change, following the product's existing design. Do not change any files: describe the design in your notes.";
+    instructions: ({ role }) => {
+      return `Shape the screens, layout and words users will see for this change, following the product's existing design.${role.canEdit ? " Describe the design in your notes." : " Do not change any files: describe the design in your notes."}`;
     },
   },
   "builder": {
     result: BuildResult,
     reads: ["notes", "brief", "checks", "findings-to-answer", "report"],
     shape: ({ task }) => buildShape(task),
-    instructions: ({ task, defaultBranch }) => {
-      return `${task.updating ? `${updateInstructions(task.updating, defaultBranch)}\n` : ""}${BUILT_IN_ROLES.find((entry) => entry.id === "builder")!.instructions}
+    instructions: ctx => ROLE_CONTRACTS["builder"]!.withInstructions!(ctx, ctx.role.instructions),
+    withInstructions: ({ task, defaultBranch }, wording) => {
+      return `${task.updating ? `${updateInstructions(task.updating, defaultBranch)}\n` : ""}${wording}
 Run focused tests that cover the behavior you changed while you work. When applicable and available, also run the repository's fast focused static or type check for the changed code and typed tests. Do not assume a passing runtime test proves a separate static or type check will pass. Before handoff, do not rerun the full product checks or test suite: Petrina runs them on the finished work before review, records the results and sends any failures back to you. Run a broader check only when needed to diagnose a failure. In your report, name only the checks you actually ran, and say when a relevant static check was left to Petrina because no focused command was available.
 ${task.fixing ? `You are fixing the review findings listed below. Fix every Important one, unless you can show it is wrong. Several independent reports may describe the same underlying bug: fix it once and reuse that explanation, but answer every related finding id. Answer every finding by id in "answers": fixed and what you changed, or not fixed and why.${stepBack(task) ? `\nThis is fix round ${reviewRound(task) - 1} and the findings keep coming. Step back before patching again: reconsider the approach, and if a simpler design removes the whole class of problem, take it.` : ""}` : ""}
 Give "title": one line for the commit that carries this whole change, in the repository's own style (look at \`git log\` and any commit-message rules it has). Petrina keeps the branch as one commit with that title${task.delivery === "pull-request" ? ", and it is the pull request's title too" : ""}.
@@ -345,16 +354,18 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
     result: TestResult,
     reads: ["notes", "brief", "report", "check-results"],
     shape: ({ task }) => `{"summary": "How it went", "checks": [{"text": "An acceptance item", ${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"result": "pass", "evidence": "The exact scenario tried, expected and observed result, or the current applicable automated check"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
-    instructions: () => {
-      return `Run the product and check every acceptance item like a user would. Do not change files. For each item, report "result": "pass" when verified, "fail" when you reproduced a product defect, or "blocked" when you could not perform the check. ${ACCEPTANCE_EVIDENCE_RULE} For a blocked check, give a short "reason" naming what prevented verification. A blocked check is not a product failure, but it is not evidence that the item passes; do not guess or retry unchanged checks.\n${LEARN}`;
+    instructions: ({ role }) => {
+      return `Run the product and check every acceptance item like a user would.${role.canEdit ? "" : " Do not change files."} For each item, report "result": "pass" when verified, "fail" when you reproduced a product defect, or "blocked" when you could not perform the check. ${ACCEPTANCE_EVIDENCE_RULE} For a blocked check, give a short "reason" naming what prevented verification. A blocked check is not a product failure, but it is not evidence that the item passes; do not guess or retry unchanged checks.\n${LEARN}`;
     },
     withInstructions: (_context, wording) => `${wording}\n${ACCEPTANCE_EVIDENCE_RULE}`,
   },
   "code-reviewer": {
+    incrementalReview: true,
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
     shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know", "steps": "How to see it again", "sameBug": "<open follow-up card id, or none>"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
-    instructions: ({ task, base, branch, preparedReview }) => {
+    instructions: ctx => ROLE_CONTRACTS["code-reviewer"]!.withInstructions!(ctx, ctx.role.instructions),
+    withInstructions: ({ task, base, branch, preparedReview }, wording) => {
       const opening = reviewScope(task, base, branch, true, preparedReview);
       return `${opening} Your job is to try to prove that it is NOT done.${
         task.repositories
@@ -368,12 +379,14 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
 Check every acceptance item, look for bugs, missing tests, weakened tests and things that break existing behaviour.
 ${task.repositories ? "" : GUIDE_RULE(base, preparedReview)}
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again. Run a single test only when you need it to prove a finding.
-${BUILT_IN_ROLES.find((entry) => entry.id === "code-reviewer")!.instructions}
+${wording}
 ${LEARN}
 Do not change any files.`;
     },
   },
   "security-reviewer": {
+    awayFromBuilder: true,
+    incrementalReview: false,
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
     shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it", "steps": "How to see it again", "sameBug": "<open follow-up card id, or none>"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
@@ -409,6 +422,7 @@ Be strict both ways: a finding without real evidence is not real, and a real one
     },
   },
   "check-finder": {
+    withInstructions: (_ctx, wording) => wording,
     result: CheckFinderResult,
     reads: ["notes", "brief"],
     shape: `{"summary": "How this product is checked, in one sentence", "checks": [{"name": "Tests", "argv": ["dotnet", "test"], "why": "CI runs it on every pull request"}]}`,
@@ -420,6 +434,7 @@ You may run a command to confirm it works, but keep it quick, and do not change 
     },
   },
   "guide-keeper": {
+    withInstructions: (_ctx, wording) => wording,
     result: GuideResult,
     reads: [],
     shape: `{"missed": true, "line": "One point a reviewer can check on any change, in plain words", "why": "What was missed, and how this point would have caught it"}`,
@@ -456,27 +471,8 @@ export function contractFor(role: Role): RoleContract {
   if (role.id === "release-manager") return contract;
   const instructions = (ctx: PromptContext): string => {
     const original = contract.instructions(ctx);
-    if (builtIn && role.instructions === builtIn.instructions) {
-      // Changing a built-in reader to an editor must not leave its default "change nothing" wording in force.
-      if (role.canEdit && !builtIn.canEdit) return original
-        .replace("Do not change any files: your output is the design brief.", "Hand back the design brief.")
-        .replace("Do not change any files: describe the design in your notes.", "Describe the design in your notes.")
-        .replace(" Do not change any files.", "")
-        .replace(" Do not change files.", "");
-      return original;
-    }
-    // Keep runtime guidance and Petrina's fixed rules around the editable wording.
-    if (contract.withInstructions) return contract.withInstructions(ctx, role.instructions);
-    const defaultText = builtIn?.instructions;
-    if (defaultText && original.includes(defaultText)) return original.replace(defaultText, role.instructions);
-    if (role.result === "findings") {
-      const defaults = BUILT_IN_ROLES.find((entry) => entry.id === "code-reviewer")!.instructions;
-      return original.replace(defaults, role.instructions);
-    }
-    if (role.result === "plan") return `${role.instructions}\n\n${original.slice(original.indexOf("Roles you can use:"))}`;
-    if (role.result === "brief" && followingCall(ctx.task)) return `${role.instructions}\n\n${original}`;
-    if (role.result === "notes") return role.canEdit ? `${role.instructions}\nDo not commit, push or open pull requests: Petrina commits your work.` : role.instructions;
-    return role.instructions;
+    if (builtIn && role.instructions === builtIn.instructions) return original;
+    return contract.withInstructions ? contract.withInstructions(ctx, role.instructions) : role.instructions;
   };
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx);

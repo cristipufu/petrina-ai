@@ -1,3 +1,5 @@
+import { ReleasePrep } from "./release-prep.js";
+import { PrMonitor, type DeliveryLookup } from "./pr-monitor.js";
 import { executionFor, type RepositoryContext, type RepositoryWork } from "./repository-context.js";
 import { companionText, landingState, repositoryDelivered } from "@petrina/core";
 import { api } from "./source-github.js";
@@ -10,28 +12,25 @@ import { api } from "./source-github.js";
 // before it starts, and an interrupted delivery is looked up before anything goes out again: never twice.
 
 import {
+  CLEANUP_WORDS,
+  type Id,
   beginPetrinaStep,
   beginYouStep,
-  CLEANUP_WORDS,
   endAgentStep,
   endOpenStep,
   endPetrinaStep,
   endYouStep,
   JOURNEY_WORDS as W,
   lastIndexWhere,
-  needsPullRequestCheck,
   reviewerAt,
   openStep,
   petrinaMoment,
   type DeliveryMode,
-  type Id,
   type Product,
   type ShippingStep,
-  type Task,
   type TaskSource,
 } from "@petrina/core";
-import { realpathSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { realpathSync } from "node:fs";
 import * as git from "./git.js";
 import { sourcePr } from "./source-github.js";
 import { ReleaseNotesResult, TEXT_LIMITS } from "./roles.js";
@@ -42,7 +41,6 @@ import type { ProductChecks } from "./product-checks.js";
 import type { ToolChecks } from "./tool-checks.js";
 import type { Turns } from "./turn.js";
 import type { Updates } from "./update.js";
-import { declaredVersion, isVersionFile, lockWithVersion, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, ownCrates, parseVersion, withVersion } from "./version.js";
 
 /** Preparations started again because the default branch moved, before Petrina stops and asks. */
 const MAX_MOVES = 3;
@@ -52,8 +50,7 @@ const MAX_FAILURES = 2;
 export const CARRIED_OVER = "This delivery was interrupted before Petrina was updated";
 
 /** What the check before publishing found. `unknown`: GitHub could not be asked. `other`: something that is not this work is there. */
-type Delivery = { found: true; text: string; record: (signal: AbortSignal) => Promise<unknown> | unknown } | { found: false; text: string } | { found: "unknown" | "other"; text: string };
-type DeclaredVersion = { file: string; version?: string; text: string };
+type Delivery = DeliveryLookup;
 
 /** Publishing found new source commits, after ruling out an already completed push. */
 class SourceMoved extends Error {}
@@ -67,9 +64,6 @@ export function destination(task: { delivery: DeliveryMode; source?: TaskSource 
   const branch = product?.defaultBranch ?? "main";
   return task.delivery === "local" ? `${product?.path ?? ""}#${branch}` : `${product?.repo ?? ""}#${branch}`;
 }
-
-/** The most commits a release's notes are written from, when there is no previous release to start at. */
-const MAX_LOG = 200;
 
 /** Whether the delivery step needs an agent now: only a release, for its notes, until they are written. */
 export function needsReleaseManager(task: RepositoryWork): boolean {
@@ -89,15 +83,9 @@ function realPath(path: string): string {
   }
 }
 
-/** What the version files say, for a message: "package.json says 1.0.0, Cargo.toml says 2.0.0". */
-function says(entries: readonly { file: string; version?: string }[]): string {
-  return entries.map((entry) => `${entry.file} says ${entry.version ?? "something Petrina cannot read"}`).join(", ");
-}
-
 export class Shipping {
-  /** Cancelled tasks whose last publishing step is being looked up. */
-  private readonly looking = new Set<Id>();
-  private readonly following = new Set<Id>();
+  readonly releases: ReleasePrep;
+  readonly monitor: PrMonitor;
 
   constructor(
     private readonly k: Kernel,
@@ -106,7 +94,16 @@ export class Shipping {
     private readonly checks: ProductChecks,
     private readonly connections: Connections,
     private readonly tools: ToolChecks,
-  ) {}
+  ) {
+    this.releases = new ReleasePrep(k, turns, connections);
+    this.monitor = new PrMonitor(k, {
+      lookForDelivery: scope => this.lookForDelivery(scope),
+      noteCancelledLocal: scope => this.noteCancelledLocal(scope),
+      releaseRefs: scope => this.releaseRefs(scope, connections.savedRemote(scope)),
+      matchesPullRequest: (scope, pr, tested, base) => this.matchesPullRequest(scope, pr, tested, base),
+      finishMany: task => this.finishMany(task),
+    });
+  }
 
   /**
    * The delivery step. Interrupted while publishing: what went out is looked up first. Otherwise the work is
@@ -257,23 +254,6 @@ export class Shipping {
     this.k.schedule();
   }
 
-  /** Release previews contain text only; no version files change until shared approval. */
-  async previewRelease(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<void> {
-    const { task, work: repository } = scope;
-    if (!task.repositories || repository.delivery !== "release") return;
-    const start = await git.head(repository.worktree!);
-    if (repository.releasePreview?.start === start && repository.releasePreview.base === repository.baseSha) return;
-    repository.shipping = { moves: 0, failures: 0, start, base: repository.baseSha };
-    await this.chooseVersion(scope, signal);
-    const log = await this.sincePreviousRelease(scope, signal);
-    const result = await this.turns.turn(scope, "release-manager", stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE, () => [log], ReleaseNotesResult, signal);
-    const shipping = repository.shipping!;
-    repository.releasePreview = { start, base: repository.baseSha, version: shipping.version!, tag: shipping.tag!, after: shipping.after!, notes: result.notes, summary: result.summary };
-    delete repository.shipping;
-    this.k.finishStep(scope);
-    this.k.commitNow();
-  }
-
   /** A known-unpublished version commit is preparation, so it never reaches an editing role. */
   async clearUnpublishedVersion(scope: RepositoryContext): Promise<void> {
     const { work: repository } = scope;
@@ -382,10 +362,10 @@ export class Shipping {
       this.k.commitNow();
       return "ready";
     }
-    const declared = await this.chooseVersion(scope, signal);
+    const declared = await this.releases.chooseVersion(scope, signal);
     this.k.log(scope, "status", `Getting the release ready: Petrina sets the version to ${shipping.version}`);
     this.k.commitNow();
-    const tested = await this.setVersion(scope, declared);
+    const tested = await this.releases.setVersion(scope, declared);
     // A version commit changes what ships: the checks run on it too.
     if (tested !== start && (await this.checks.failing(scope, signal))) return this.preparationFailed(scope, `The product's checks fail with the version set to ${shipping.version}`, signal);
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
@@ -404,7 +384,7 @@ export class Shipping {
       this.k.commitNow();
       return "continue";
     }
-    const log = await this.sincePreviousRelease(scope, signal);
+    const log = await this.releases.sincePreviousRelease(scope, signal);
     const profileId = stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE;
     let by = profileId;
     const result = preview ?? await this.turns.turn(scope, "release-manager", profileId, () => [log], ReleaseNotesResult, signal, {
@@ -421,33 +401,6 @@ export class Shipping {
     this.k.log(scope, "done", `Ready to publish: ${tested.slice(0, 7)}, as ${shipping.tag}, with notes on everything since ${shipping.after || "the start"}`, "release-manager", by);
     this.k.commitNow();
     return "ready";
-  }
-
-  /**
-   * Every commit on the default branch since the previous release, up to this task's own, oldest first, with its
-   * message: what the Release Manager writes the notes from. With no previous release (or none Petrina can find here),
-   * the most recent ones, at most 200, saying so.
-   */
-  private async sincePreviousRelease(scope: RepositoryContext, signal: AbortSignal): Promise<{ title: string; body: string }> {
-    const { work: repository } = scope;
-    const product = this.k.repositoryOf(scope)!;
-    const shipping = repository.shipping!;
-    const worktree = repository.worktree!;
-    const branch = product.defaultBranch ?? "main";
-    let from: string | undefined;
-    if (shipping.after) {
-      const remote = await this.connections.requireConnection(scope, signal);
-      const refs = await this.connections.serial(product.id, () => git.remoteRefs(product.path!, remote, [`refs/tags/${shipping.after}`]));
-      if (!refs.ok) throw new Unreachable(`Petrina could not find ${shipping.after} on GitHub (${refs.error}), so it published nothing. Retry when GitHub is reachable.`);
-      const sha = refs.value.get(`refs/tags/${shipping.after}^{}`) ?? refs.value.get(`refs/tags/${shipping.after}`);
-      if (sha && (await git.revParse(worktree, sha))) from = sha;
-    }
-    const commits = await git.commitMessages(worktree, from ? `${from}..${shipping.start}` : shipping.start!, MAX_LOG);
-    const capped = !from && commits.length >= MAX_LOG;
-    const title = from
-      ? `Every commit on ${branch} since ${shipping.after}, oldest first (${commits.length})`
-      : `${shipping.after ? `The commit of ${shipping.after} is not in this copy, so: the` : "The first release:"} ${capped ? `${MAX_LOG} most recent commits` : "every commit"} on ${branch}, oldest first${capped ? " (older ones are left out)" : ` (${commits.length})`}`;
-    return { title, body: commits.map((commit) => `### ${commit.message.split("\n")[0]}\n${commit.message.split("\n").slice(1).join("\n").trim()}`.trim()).join("\n\n") || "(none)" };
   }
 
   /** The pull request's title: the builder's one-line commit title, else the task's. */
@@ -480,130 +433,6 @@ export class Shipping {
     // Only a count: an older problem a reviewer noted (a security one, say) is not for a public pull request.
     if (followUps.length) parts.push(`### Follow-ups\n${followUps.length === 1 ? "One older problem was" : `${followUps.length} older problems were`} noted for a follow-up, in Petrina.`);
     return fit(`${builder}\n\n${parts.join("\n\n")}`, TEXT_LIMITS.body);
-  }
-
-  /**
-   * Petrina sets the release's version itself, in the product's main version files (and the product's own
-   * entries in the Cargo.lock beside a Cargo.toml it changed), as one version commit on top of the work, and
-   * checks it: only the version changed, and every main version file says it. Anything it cannot set or check
-   * stops the release, with nothing published. Returns the commit to publish: the version commit, or the work
-   * itself when its files already say the version (a first release, or none to set).
-   */
-  private async setVersion(scope: RepositoryContext, declared: readonly DeclaredVersion[]): Promise<string> {
-    const { work: repository } = scope;
-    const worktree = repository.worktree!;
-    const shipping = repository.shipping!;
-    const start = shipping.start!;
-    const version = shipping.version!;
-    const stop = (why: string): never => {
-      throw new Error(`Petrina could not set the version to ${version}: ${why}. It published nothing. Set it there yourself (only the version) in a task, or release by hand, then retry.`);
-    };
-    const due = declared.filter((entry) => entry.version !== version);
-    if (!due.length) return start;
-    const before = new Map<string, string>();
-    const originals = new Map(declared.map(({ file, text }) => [file, text]));
-    for (const { file, version: from, text } of due) {
-      const next = withVersion(file, text, from!, version);
-      if (next === undefined) return stop(`${file} does not state it in a way Petrina can change on its own`);
-      before.set(file, from!);
-      writeFileSync(join(worktree, file), next);
-      // The product's own entries in the Cargo.lock beside it move with it.
-      if (file.endsWith("Cargo.toml")) {
-        const lockFile = join(dirname(file), "Cargo.lock").replace(/^\.\//, "");
-        const lock = await git.fileAt(worktree, start, lockFile);
-        if (lock !== undefined) {
-          originals.set(lockFile, lock);
-          const moved = lockWithVersion(lock, ownCrates(text), from!, version);
-          if (moved !== lock) {
-            before.set(lockFile, from!);
-            writeFileSync(join(worktree, lockFile), moved);
-          }
-        }
-      }
-    }
-    const conventional = /^[a-z]+(\([^)]+\))?!?: /.test(repository.report?.title ?? "");
-    const message = `${conventional ? `chore(release): ${shipping.tag}` : `Release ${shipping.tag}`}\n\nSet the version to ${version}.\n\nBy Petrina`;
-    const tested = await git.commitAll(worktree, message);
-    if (!tested) return start;
-    // Checked like anyone's version commit: only the version, and every main version file says it.
-    const changed = await git.changedFiles(worktree, start, tested);
-    const targets = new Map<string, Promise<string | undefined>>();
-    const targetAt = (file: string) => {
-      let read = targets.get(file);
-      if (!read) { read = git.fileAt(worktree, tested, file); targets.set(file, read); }
-      return read;
-    };
-    const [invalid, declaredAfter] = await Promise.all([
-      Promise.all(changed.map(async (file) => {
-        if (!isVersionFile(file)) return file;
-        const [source, target] = await Promise.all([originals.has(file) ? originals.get(file) : git.fileAt(worktree, start, file), targetAt(file)]);
-        return onlyVersionChanged(file, source, target, version, before.get(file)) ? undefined : file;
-      })),
-      this.declaredVersions(worktree, tested, targetAt),
-    ]);
-    const more = invalid.filter((file): file is string => file !== undefined);
-    const wrong = declaredAfter.filter((entry) => entry.version !== version);
-    if (more.length || wrong.length) {
-      await git.resetTo(worktree, start);
-      stop(more.length ? `the change in ${more.join(", ")} would be more than the version` : `${says(wrong)}`);
-    }
-    return tested;
-  }
-
-  /** Releases: the latest published release plus the product's bump, worked out now, with its tag still free on GitHub. */
-  private async chooseVersion(scope: RepositoryContext, signal: AbortSignal): Promise<DeclaredVersion[]> {
-    const { work: repository } = scope;
-    const product = this.k.repositoryOf(scope)!;
-    const shipping = repository.shipping!;
-    const remote = await this.connections.requireConnection(scope, signal);
-    const latest = await this.connections.serial(product.id, () => git.latestRelease(product.repo, this.k.options.gh));
-    if (!latest.ok) throw new Error(`Petrina could not read the latest release on GitHub (${latest.error}), so it published nothing. Retry when GitHub is reachable.`);
-    // The product's main version files, on the work as it is now.
-    const declared = await this.declaredVersions(repository.worktree!, shipping.start!);
-    const unreadable = declared.filter((entry) => !entry.version);
-    if (unreadable.length) throw new Error(`Petrina cannot read the version in ${unreadable.map((entry) => entry.file).join(", ")}, so it published nothing. Make it a version like 1.2.3, then retry.`);
-    let next: { version: string; tag: string } | undefined;
-    if (latest.value) {
-      const counted = nextVersion(latest.value, product.releaseBump ?? "patch");
-      if (!counted) throw new Error(`The latest release is ${latest.value}, and Petrina only counts up from versions like v1.2.3, so it published nothing.`);
-      // The version files follow the releases: at the latest one, or already at the next.
-      const current = parseVersion(latest.value)!.version;
-      const off = declared.filter((entry) => entry.version !== current && entry.version !== counted.version);
-      if (off.length) throw new Error(`The latest release is ${latest.value}, but the version files say otherwise (${says(off)}), so Petrina published nothing. Make them say ${current}, or release by hand, then retry.`);
-      next = counted;
-    } else {
-      // The first release: the version the product already declares, or 0.1.0.
-      const versions = [...new Set(declared.map((entry) => entry.version!))];
-      if (versions.length > 1) throw new Error(`This is the first release, but the version files disagree (${says(declared)}), so Petrina published nothing. Make them agree, then retry.`);
-      const version = parseVersion(versions[0] ?? "0.1.0")!.version;
-      next = { version, tag: `v${version}` };
-    }
-    const tags = await this.connections.serial(product.id, () => git.remoteRefs(product.path!, remote, [`refs/tags/${next.tag}`]));
-    if (!tags.ok) throw new Error(`Petrina could not check GitHub for the tag ${next.tag} (${tags.error}), so it published nothing. Retry when GitHub is reachable.`);
-    if (tags.value.size) throw new Error(`The tag ${next.tag} already exists on GitHub, but no release follows ${latest.value ?? "it"}. Petrina stopped rather than skip a version, and published nothing. Publish that release or remove the tag on GitHub, then retry.`);
-    shipping.version = next.version;
-    shipping.tag = next.tag;
-    shipping.after = latest.value ?? "";
-    return declared;
-  }
-
-  /** What the product's main version files say at a commit: those that state a version, and those Petrina cannot read (no `version`). */
-  private async declaredVersions(path: string, sha: string, read = (file: string) => git.fileAt(path, sha, file)): Promise<DeclaredVersion[]> {
-    const contents = await Promise.all(MAIN_VERSION_FILES.map(read));
-    return MAIN_VERSION_FILES.flatMap((file, index) => {
-      const text = contents[index];
-      if (text === undefined) return [];
-      const declared = declaredVersion(file, text);
-      return declared === "unreadable" ? [{ file, text }] : declared === "none" ? [] : [{ file, text, version: declared.version }];
-    });
-  }
-
-  /** A release's version commit on top of `start`: one parent, and only version files changed. */
-  private async isVersionCommit(path: string, sha: string, start: string): Promise<boolean> {
-    const parents = await git.parents(path, sha);
-    if (parents.length !== 1 || parents[0] !== start) return false;
-    const changed = await git.changedFiles(path, start, sha);
-    return changed.length > 0 && changed.every(isVersionFile);
   }
 
   /**
@@ -690,7 +519,7 @@ export class Shipping {
     }
     const start = repository.shipping?.start;
     const tip = await this.branchTip(scope);
-    if (start && tip && tip !== start && (await this.isVersionCommit(worktree, tip, start))) await git.resetTo(worktree, start);
+    if (start && tip && tip !== start && (await this.releases.isVersionCommit(worktree, tip, start))) await git.resetTo(worktree, start);
   }
 
   /** Where the task branch itself points: never just what a working copy has open. */
@@ -1329,75 +1158,6 @@ export class Shipping {
     this.k.onTaskDone?.(task);
   }
 
-  // ── Cancelled while publishing ─────────────────────────────────────────
-
-  /**
-   * A task cancelled during a publishing step: the same check as after any interruption looks up what went
-   * out and keeps its link, and nothing more is published. The task stays cancelled. When GitHub cannot be
-   * asked, Petrina asks again at the next check and after a restart, so nothing that went out stays hidden.
-   * `fromDriver`: called as the task's own driver ends; otherwise it waits for a running driver to end.
-   */
-  async settleCancelled(taskId: Id, fromDriver = false): Promise<void> {
-    const task = this.k.task(taskId);
-    const scope = task ? executionFor(task) : undefined;
-    if (this.k.stopped || task?.state !== "cancelled" || !scope!.work.shipping?.step || !scope!.work.shipping.prepared || this.looking.has(taskId)) return;
-    if (!fromDriver && (this.k.drivers.has(taskId) || this.k.settling.has(taskId))) return;
-    this.looking.add(taskId);
-    try {
-      const delivery = await this.lookForDelivery(scope!);
-      if (delivery.found === "unknown") return this.keepCancelledCopy(task);
-      if (delivery.found === true) {
-        if (scope!.work.delivery === "local" && scope!.work.source?.start.kind !== "pull-request") {
-          // The branch may have moved on this computer. That is not a completed push, and cancelling does not send one.
-          const reached = await this.noteCancelledLocal(scope!);
-          if (reached === "unknown") return this.keepCancelledCopy(task);
-        } else {
-          await delivery.record(new AbortController().signal);
-        }
-      }
-      else if (delivery.found === "other") this.k.log(task, "warn", `After you cancelled it, Petrina could not tell what went out: ${delivery.text}`);
-      else if (scope!.work.source?.start.kind === "pull-request") {
-        const start = scope!.work.source.start;
-        scope!.work.pr = { number: start.number, url: start.url, state: "open", openedAt: scope!.work.pr?.openedAt ?? Date.now() };
-        this.k.log(task, "status", `PR #${start.number} is still open. The checked work was not published: ${start.url}`);
-      }
-      else if (scope!.work.delivery === "release") await this.pushedWhileCancelled(task);
-      // Looked up: what went out is recorded, and the delivery is over.
-      delete scope!.work.shipping;
-      this.k.commitNow();
-    } catch (error) {
-      if (error instanceof Unreachable) return this.keepCancelledCopy(task);
-      this.k.log(task, "warn", `After you cancelled it, Petrina could not tell what went out: ${error instanceof Error ? error.message : String(error)}`);
-      delete scope!.work.shipping;
-      this.k.commitNow();
-    } finally {
-      this.looking.delete(taskId);
-      this.k.tidy(taskId);
-    }
-  }
-
-  /** Explain the retained copy once, including across retries and restarts, without an inbox item. */
-  private keepCancelledCopy(task: MTask): void {
-    const scope = executionFor(task);
-    if (scope.work.cleanup?.error !== undefined) return;
-    scope.work.cleanup = { error: CLEANUP_WORDS.unconfirmed };
-    this.k.log(task, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.unconfirmed));
-    this.k.commit();
-  }
-
-  settleCancelledTasks(): void {
-    for (const task of this.k.s.tasks) if (task.state === "cancelled" && executionFor(task).work.shipping?.step) void this.k.trackWork(this.settleCancelled(task.id));
-  }
-
-  /** A cancelled release with no release on GitHub: say so when its push of the default branch and tag went out. */
-  private async pushedWhileCancelled(task: MTask): Promise<void> {
-    const scope = executionFor(task);
-    const shipping = scope.work.shipping!;
-    const { tested } = shipping.prepared!;
-    const refs = await this.releaseRefs(scope, this.connections.savedRemote(scope));
-    if (refs.tag === tested) this.k.log(task, "status", `${this.k.repositoryOf(task)?.defaultBranch ?? "main"} and the tag ${shipping.tag} went out to GitHub at ${tested.slice(0, 7)} while you cancelled it, with no release for that tag`);
-  }
-
   // ── From before this version ───────────────────────────────────────────
 
   /**
@@ -1530,125 +1290,7 @@ export class Shipping {
     this.k.onTaskDone?.(task);
     this.k.commitNow();
     this.k.schedule();
-    void this.checkUnrecordedPullRequest(scope!);
+    void this.monitor.checkUnrecordedPullRequest(scope!);
     this.k.tidy(task.id);
-  }
-
-  /** An uncertain finished delivery: only GitHub can establish whether its copy is free, including after cancellation. */
-  private async checkUnrecordedPullRequest(scope: RepositoryContext): Promise<void> {
-    const { task, work: repository } = scope;
-    const finished = () => task.state === "done" || task.state === "cancelled";
-    if (this.k.stopped || !needsPullRequestCheck(task as Task) || !finished() || this.following.has(task.id)) return;
-    this.following.add(task.id);
-    try {
-      const product = this.k.repositoryOf(scope);
-      // Older local deliveries may have published something themselves, but a computer-only product has no GitHub to ask.
-      if (repository.delivery === "local" && product?.repo.startsWith("local/")) {
-        repository.cleanup = { ...repository.cleanup, pullRequest: "none" };
-        if (repository.cleanup.error === CLEANUP_WORDS.unconfirmedPr) delete repository.cleanup.error;
-        this.k.commit();
-        return;
-      }
-      const repo = product?.repo;
-      const result = repo && repository.branch ? await git.pullRequests(repo, repository.branch, this.k.options.gh) : undefined;
-      if (this.k.stopped || !finished()) return;
-      if (!result?.ok) {
-        if (!repository.cleanup?.error) this.k.log(scope, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.unconfirmedPr));
-        repository.cleanup = { ...repository.cleanup, error: CLEANUP_WORDS.unconfirmedPr };
-      } else {
-        const ours = result.value.filter((pr) => pr.head === repository.branch && !pr.fork);
-        const checked = repository.cleanup?.checkedDelivery;
-        let pr: git.PullRequestInfo | undefined;
-        if (checked) {
-          for (const candidate of ours) if (await this.matchesPullRequest(scope, candidate, checked.tested, checked.base)) { pr = candidate; break; }
-        } else {
-          // Older deliveries did not record a checked commit. Keep their existing conservative
-          // branch tracking so an open pull request can never lose its working copy.
-          pr = ours.find((entry) => entry.state === "open") ?? ours.sort((a, b) => b.number - a.number)[0];
-        }
-        if (this.k.stopped || !finished()) return;
-        const foreign = checked ? ours.find((entry) => entry.state === "open" && entry.number !== pr?.number) : undefined;
-        const previousForeign = repository.cleanup?.foreignPullRequest;
-        repository.cleanup = { ...repository.cleanup, pullRequest: "none" };
-        if (repository.cleanup.error === CLEANUP_WORDS.unconfirmedPr) delete repository.cleanup.error;
-        if (foreign) {
-          repository.cleanup.foreignPullRequest = { number: foreign.number, url: foreign.url };
-          if (previousForeign?.number !== foreign.number) this.k.log(scope, "warn", `Pull request #${foreign.number} uses this branch but is not the checked work. Its working copy is kept until that pull request closes`);
-        } else {
-          delete repository.cleanup.foreignPullRequest;
-          if (previousForeign) this.k.log(scope, "status", `The other pull request #${previousForeign.number} is no longer open on GitHub`);
-        }
-        if (pr) {
-          repository.pr = { number: pr.number, url: pr.url, state: pr.state, openedAt: Date.now() };
-          this.k.log(scope, "done", pr.state === "open" ? `Pull request #${pr.number} is still open on GitHub, so its working copy is kept` : pr.state === "merged" ? `Merged #${pr.number} on GitHub` : `Closed #${pr.number} without merging`);
-        }
-      }
-      this.k.commit();
-    } catch {
-      if (this.k.stopped || !finished()) return;
-      if (!repository.cleanup?.error) this.k.log(scope, "warn", CLEANUP_WORDS.failed(CLEANUP_WORDS.unconfirmedPr));
-      repository.cleanup = { ...repository.cleanup, pullRequest: "unconfirmed", error: CLEANUP_WORDS.unconfirmedPr };
-      this.k.commit();
-    } finally {
-      this.following.delete(task.id);
-      this.k.tidy(task.id);
-    }
-  }
-
-  /**
-   * Petrina never merges or closes a pull request; it only reads what happened on GitHub. A cancelled task is
-   * followed too while it keeps its working copy for an open pull request; it stays cancelled when that ends.
-   * Unless GitHub confirms the pull request ended, it is still open, and the copy stays.
-   */
-  async pollPullRequests(): Promise<void> {
-    for (const task of this.k.s.tasks.filter((entry) => entry.repositories)) {
-      if (this.k.stopped || this.k.drivers.has(task.id) || this.following.has(task.id)) continue;
-      this.following.add(task.id);
-      try {
-
-        const pending = task.repositories!.filter((work) => work.pr?.state === "open").map((work) => ({ work, pr: work.pr! }));
-        const states = await Promise.all(pending.map(({ work, pr }) => git.prState(work.source!.product.repo, pr.number, this.k.options.gh).catch(() => undefined)));
-        if (this.k.stopped || this.k.drivers.has(task.id)) continue;
-        for (const [index, { work, pr }] of pending.entries()) {
-          const state = states[index];
-          if (work.pr !== pr || pr.state !== "open") continue;
-          if (state === "merged" || state === "closed") {
-            work.pr.state = state;
-
-            this.k.log(task, "done", `${work.source!.product.name}: ${state === "merged" ? "Pull request merged" : "Pull request closed without merging"}`);
-          }
-        }
-        if ((task.state !== "cancelled" && task.repositories!.every(repositoryDelivered)) || task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) this.finishMany(task);
-      } finally { this.following.delete(task.id); }
-    }
-    const following = (task: MTask) => executionFor(task).work.pr?.state === "open" && !!executionFor(task).work.worktree && (task.state === "pr-open" || ((task.state === "done" || task.state === "cancelled") && executionFor(task).work.cleanup?.removedAt === undefined));
-    await Promise.all([...this.k.s.tasks.filter((task) => !task.repositories && needsPullRequestCheck(task as Task)).map((task) => this.checkUnrecordedPullRequest(executionFor(task))), ...this.k.s.tasks.filter((task) => !task.repositories && following(task)).map(async (task) => {
-      if (this.k.stopped || this.following.has(task.id)) return;
-      this.following.add(task.id);
-      try {
-        const repo = this.k.repositoryOf(task)?.repo;
-        const state = repo ? await git.prState(repo, executionFor(task).work.pr!.number, this.k.options.gh).catch(() => undefined) : undefined;
-        if (this.k.stopped || (state !== "merged" && state !== "closed") || !following(task)) return;
-        executionFor(task).work.pr!.state = state;
-        const words = state === "merged" ? `Merged #${executionFor(task).work.pr!.number} on GitHub` : `Closed #${executionFor(task).work.pr!.number} without merging`;
-        if (task.state === "pr-open") {
-          task.state = "done";
-          task.column = "done";
-          task.finishedAt = Date.now();
-          task.statusLine = words;
-          this.k.log(task, "done", words);
-          this.k.onTaskDone?.(task);
-        } else {
-          this.k.log(task, "done", words);
-        }
-        this.k.tracking.prSettled(task, state);
-        this.k.commit();
-        // Tasks waiting for this one to land can start now.
-        this.k.schedule();
-        this.k.tidy(task.id);
-      } finally {
-        this.following.delete(task.id);
-      }
-    })]);
   }
 }

@@ -409,7 +409,7 @@ it("keeps a peer's question visible while the other reviewer waits for and uses 
 });
 
 it.each([false, true])("keeps a replacement reviewer's position and conversation across a screen wait, tool recovery and restart (only one tool left: %s)", async (oneTool) => {
-  const f = await fixture("code reviewer", { limited: [{ model: "opus", role: "code reviewer", spendCap: true }] }, { toolPath: () => process.execPath, codexCommand: null });
+  const f = await fixture("code reviewer", { limited: [{ model: "opus", role: "code reviewer", spendCap: true }] }, { toolPath: () => process.execPath, usageCommands: { codex: null } });
   const replacement = oneTool ? "sol-high" : "grok-high";
   try {
     f.engine.setPoolLimit(1);

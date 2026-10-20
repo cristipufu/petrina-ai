@@ -134,12 +134,12 @@ describe("Antigravity agent sessions", () => {
   it("shares account refreshes with Analytics and keeps the reported model scopes", async () => {
     const dir = folder();
     const command = [process.execPath, fake, dir, "--tool=antigravity"];
-    const engine = new Engine(folder(), { agentCommand: () => [], antigravityCommand: command, toolPath: () => "/fake/tool" });
+    const engine = new Engine(folder(), { agentCommand: () => [], usageCommands: { antigravity: command }, toolPath: () => "/fake/tool" });
     try {
       await waitFor(() => engine.windowState().pool.usageReads?.antigravity?.state === "reported", "Antigravity's account reading");
       const before = engine.windowState().pool.usage!.filter(r => r.toolId === "antigravity");
       for (let n = 0; n < 3; n++) engine.usage({ view: "analytics", period: "today" });
-      await engine.antigravityUsage!.refresh(60_000);
+      await engine.usageCoordinator.readers.get("antigravity")!.refresh(60_000);
       expect(readFileSync(join(dir, "native-usage.jsonl"), "utf8").trim().split("\n")).toHaveLength(1);
       expect(before).toHaveLength(3);
       expect(engine.usage({ view: "analytics", period: "today" }).limits.tools.some(t => t.toolId === "antigravity")).toBe(true);

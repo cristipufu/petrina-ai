@@ -9,7 +9,7 @@ const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 for (const roleId of ["check-finder", "guide-keeper"]) it(`retains the main conversation across a restart inside ${roleId}`, async () => {
   const root = tempDir("petrina-side-step-"); roots.push(root);
-  const options = { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null };
+  const options = { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   };
   let engine = new Engine(root, options);
   try {
     engine.setPoolPaused(true);

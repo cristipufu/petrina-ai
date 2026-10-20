@@ -82,7 +82,7 @@ describe("the engine slows a tool down before its limit", () => {
     fakes.scenario({ planner: "short", builder: "plain", controlled: true });
     const repo = makeProduct(root);
     git(repo, "config", "branch.autoSetupMerge", "false");
-    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fakeAgent, fakes.dir], codexCommand: server.command, toolPath: () => "/bin/true" });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fakeAgent, fakes.dir], usageCommands: { codex: server.command }, toolPath: () => "/bin/true" });
     try {
       engine.setPoolPaused(true);
       engine.setPoolLimit(4);
@@ -95,7 +95,7 @@ describe("the engine slows a tool down before its limit", () => {
       // The charts and scheduler share one reader and the same recorded reports.
       engine.usage({ view: "analytics", period: "today" });
       engine.usage({ view: "analytics", period: "today" });
-      await engine.codexUsage!.refresh();
+      await engine.usageCoordinator.readers.get("codex")!.refresh();
       expect(server.asked().filter((entry) => entry.method === "account/rateLimits/read")).toHaveLength(2);
       const chart = engine.usage({ view: "analytics", period: "today" });
       expect(chart.limits.tools.find((tool) => tool.toolId === "codex")!.limits[0]!.readings.at(-1)!.used).toBe(0.85);

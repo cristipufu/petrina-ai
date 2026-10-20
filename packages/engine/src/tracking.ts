@@ -1,3 +1,4 @@
+import { ADAPTERS } from "./tools.js";
 import { executionOf, type RepositoryContext } from "./repository-context.js";
 // The work log's bookkeeping: one entry for every agent turn and every notable moment (a stage starting and
 // ending, a design round, a reviewer's verdict, a question to the coordinator, a failure, a retry, a task
@@ -30,13 +31,12 @@ export interface TurnAgent {
   waits: WaitClock;
 }
 
-const CODEX_AFTER_TURN_MS = 5 * 60_000;
-const CODEX_ON_PAGE_MS = 60_000;
+const ACCOUNT_AFTER_TURN_MS = 5 * 60_000;
+const ACCOUNT_ON_PAGE_MS = 60_000;
 
 export class Tracking {
   readonly log: WorkLog;
   private readonly openStages = new Map<Id, OpenStage>();
-  private codexRead = { at: 0, running: false };
   /** Errors already logged as a failure. */
   private readonly counted = new WeakSet<object>();
 
@@ -75,9 +75,7 @@ export class Tracking {
   /** The numbers one view needs, worked out from the work log. The log itself never leaves the engine. */
   usage<R extends UsageRequest>(request: R): UsageViewFor<R> {
     if (request.view === "analytics") {
-      void this.refreshCodexLimits(CODEX_ON_PAGE_MS);
-      this.k.readUsage("grok", CODEX_ON_PAGE_MS);
-      this.k.readUsage("antigravity", CODEX_ON_PAGE_MS);
+      this.k.readUsage(undefined, ACCOUNT_ON_PAGE_MS);
     }
     return usageView(this.log, request, { now: Date.now(), state: this.k.activeState(), task: (id) => this.k.task(id), taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id) });
   }
@@ -406,8 +404,7 @@ export class Tracking {
       finish(signal.aborted ? "stopped" : "agent-stopped", run.lastTurn);
       throw error;
     } finally {
-      if (profile.toolId === "codex") void this.refreshCodexLimits(CODEX_AFTER_TURN_MS);
-      if (profile.toolId === "grok") this.k.readUsage("grok", CODEX_AFTER_TURN_MS);
+      if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId, ACCOUNT_AFTER_TURN_MS);
     }
   }
 
@@ -419,16 +416,6 @@ export class Tracking {
     if (this.log.recordUsage(report)) this.changed();
   }
 
-  /** Refresh through the engine's shared reader, at most once per gap. */
-  private async refreshCodexLimits(gap: number): Promise<void> {
-    if (this.k.stopped || !this.k.codexUsage || this.codexRead.running || Date.now() - this.codexRead.at < gap) return;
-    this.codexRead = { at: Date.now(), running: true };
-    try {
-      await this.k.codexUsage.refresh();
-    } finally {
-      this.codexRead = { ...this.codexRead, running: false };
-    }
-  }
 }
 
 const retryKey = (taskId: Id, roleId: Id, plannedId: Id) => `${taskId}|${roleId}|${plannedId}`;

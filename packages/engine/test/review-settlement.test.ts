@@ -12,7 +12,7 @@ function fixture() {
   writeFileSync(join(second.clone, "SECOND.md"), "Only the second repository has this file.\n");
   git(second.clone, "add", "SECOND.md");
   git(second.clone, "commit", "-q", "-m", "Give the second repository distinct review evidence");
-  const engine = first.start({ agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  const engine = first.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   engine.setPoolPaused(true);
   engine.schedule = () => {};
   const products = [first, second].map((world, index) => ({ id: index ? "second" : "first", name: index ? "Second" : "First", repo: index ? "acme/second" : "acme/first", path: world.clone, tone: "blue" as const, delivery: "local" as const }));

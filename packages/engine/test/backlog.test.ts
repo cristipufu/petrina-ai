@@ -45,7 +45,7 @@ it("keeps reviewed requests out of agent work through a restart and queues them 
 it("saves a combination and its pictures before retiring the sources, and returns it after restart", async () => {
   const { mkdirSync, writeFileSync, readdirSync } = await import("node:fs");
   const data = join(root, "combine-data");
-  const options = { codexCommand: null, grokCommand: null, agentCommand: () => undefined };
+  const options = { usageCommands: { codex: null, grok: null },  agentCommand: () => undefined };
   let engine = new Engine(data, options);
   engine.setPoolPaused(true);
   try {

@@ -42,7 +42,7 @@ describe("the Learnings section of AGENTS.md", () => {
 describe("lessons agents pass on", () => {
   for (const state of ["before-copy", "deleted", "empty"] as const) it(`reads learning instructions from the authoritative version: ${state}`, async () => {
     const root = tempDir(`petrina-learning-source-${state}-`); roots.push(root);
-    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true);
     const repo = makeProduct(root), lesson = "Use the repository's focused greeting checks before the full suite.";
     writeFileSync(join(repo, "AGENTS.md"), `## Learnings\n\n- ${lesson}\n`);
@@ -69,7 +69,7 @@ describe("lessons agents pass on", () => {
   it("offers and saves a complete lesson, including the instructions beyond 240 characters", async () => {
     const root = tempDir("petrina-lessons-complete-");
     roots.push(root);
-    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
       const repo = makeProduct(root);
@@ -204,7 +204,7 @@ describe("repeated lessons", () => {
   it("offers changed instructions even when an existing, accepted or declined lesson shares most of their words", async () => {
     const root = tempDir("petrina-lessons-distinct-");
     roots.push(root);
-    const engine = new Engine(join(root, "data"), { codexCommand: null });
+    const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
       const repo = makeProduct(root);

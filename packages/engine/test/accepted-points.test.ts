@@ -13,7 +13,7 @@ afterAll(() => roots.forEach(removeDir));
 it("retires incorporated lessons and guide points after restart, preserving unpublished points and later coordinator edits", async () => {
   const root = tempDir("petrina-accepted-points-");
   roots.push(root);
-  let engine = new Engine(join(root, "data"), { codexCommand: null });
+  let engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
   try {
     engine.setPoolPaused(true);
     const repo = makeProduct(root);
@@ -40,7 +40,7 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
     product.learnings = [incorporated, pending].map((text) => ({ text, at: 0, fromTask: task.id, writtenOn: task.id }));
     product.reviewGuide = [incorporatedRule, pendingRule].map((text) => ({ text, at: 0, fromTask: task.id, writtenOn: task.id }));
     await engine.shutdown();
-    engine = new Engine(join(root, "data"), { codexCommand: null });
+    engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     await waitFor(() => {
       const saved = engine.getState().products.find((entry) => entry.id === productId)!;
       return saved.learnings?.length === 1 && saved.reviewGuide?.filter((line) => !line.incorporatedOn).length === 1;
@@ -70,7 +70,7 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
     expect(file).toContain(pending);
     expect(file).not.toContain(incorporated);
     await engine.shutdown();
-    engine = new Engine(join(root, "data"), { codexCommand: null });
+    engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     await new AcceptedPoints(engine).sweep();
     expect(engine.getState().products.find((entry) => entry.id === productId)!.learnings).toEqual([]);
     const guide = readFileSync(join(repo, "REVIEW.md"), "utf8");
@@ -92,7 +92,7 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
 it("keeps pending instructions when the default branch cannot be read", async () => {
   const root = tempDir("petrina-accepted-unavailable-");
   roots.push(root);
-  const engine = new Engine(join(root, "data"), { codexCommand: null });
+  const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
   try {
     engine.setPoolPaused(true);
     const productId = await engine.addProduct(makeProduct(root));

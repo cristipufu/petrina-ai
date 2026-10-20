@@ -20,7 +20,7 @@ afterAll(async () => {
 function fixture() {
   const home = tempDir("petrina-coordination-regression-");
   roots.push(home);
-  const e = new Engine(home, { agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  const e = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   engines.push(e);
   e.setPoolPaused(true);
   e.schedule = () => {};

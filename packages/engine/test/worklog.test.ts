@@ -26,7 +26,7 @@ const git = (cwd: string, ...args: string[]) => {
   return result.stdout.toString().trim();
 };
 // Each profile's agent behaves like its own tool: Claude Code or Codex.
-const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], codexCommand: [process.execPath, fakeCodex] };
+const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], usageCommands: { codex: [process.execPath, fakeCodex] } };
 
 afterAll(() => removeDir(temp));
 
@@ -318,7 +318,7 @@ describe("The work log of a real engine", () => {
       tasks: [started("task-3", "alive"), started("task-5", "repo")], inbox: [], pool: { limit: 2, paused: true, toolCaps: {} },
     });
     store.close();
-    const upgraded = new Engine(dir, { ...options, codexCommand: null });
+    const upgraded = new Engine(dir, { ...options, usageCommands: { codex: null } });
     try {
       // "repo" was removed before Petrina kept names: its id is protected, and it reads as a removed product.
       const db = new Database(join(dir, "petrina.db"));

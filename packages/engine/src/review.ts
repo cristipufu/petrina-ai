@@ -1,4 +1,4 @@
-import { executionFor, repositoryView, type RepositoryContext } from "./repository-context.js";
+import { executionFor, scopesFor, repositoryView, type RepositoryContext } from "./repository-context.js";
 import { beginRepair, productsFor } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
-import { VerifyResult, ReviewResult } from "./roles.js";
+import { contractFor, VerifyResult, ReviewResult } from "./roles.js";
 import { Kernel, type MStage, type MTask, ScreenWait } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
@@ -133,9 +133,8 @@ export class Reviews {
       // The work goes on top of the latest main before anyone reviews it: a conflict goes to the builder first,
       // so a port after the review (and a review of that port) stays the exception.
       let failedChecks = false;
-      for (const work of task.repositories ?? [undefined]) {
-        const scope: RepositoryContext = work ? { task, work } : executionFor(task);
-        if (work) task.activeProductId = work.productId;
+      for (const scope of scopesFor(task)) {
+        if (task.repositories) task.activeProductId = scope.work.productId;
         if ((await this.updates.upToDate(scope, signal)) === "conflict") return "continue";
         // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
         delete task.handChanges;
@@ -159,7 +158,7 @@ export class Reviews {
       }
       if (failedChecks) {
         // The check fix can reach beyond the port's conflicted files, so its review must be ordinary.
-        for (const work of task.repositories ?? [scope.work]) {
+        for (const { work } of scopesFor(task)) {
           delete work.portReview;
           delete work.reviewedTree;
         }
@@ -854,9 +853,11 @@ export class Reviews {
     noteRoundEnd(task, stage.id, open.length);
     // A port review is one round: whatever it found, the rounds after it are ordinary ones.
     const port = scope.work.portReview !== undefined;
+    const role = this.k.role(stage.roleId);
+    const incremental = role && contractFor(role).incrementalReview;
     delete scope.work.portReview;
     if (end.kind !== "passed") delete scope.work.reviewedTree;
-    else if (!task.repositories && stage.roleId === "code-reviewer") scope.work.reviewedTree = await git.treeOf(scope.work.worktree!);
+    else if (!task.repositories && incremental) scope.work.reviewedTree = await git.treeOf(scope.work.worktree!);
     if (task.repositories && end.kind === "passed") {
 
       const trees = await Promise.all(task.repositories.map((work) => work.worktree ? git.treeOf(work.worktree) : undefined));
@@ -866,7 +867,7 @@ export class Reviews {
     // Each shared reviewer sees every repository snapshot. Keep a separate anchor for each
     // one so a later repair reviews only work added since this completed round.
     // Security-only stages do not advance the code-review baseline; partial rounds never close here.
-    if (stage.roleId === "code-reviewer") {
+    if (incremental) {
       if (task.repositories) {
 
         const heads = await Promise.all(task.repositories.map((work) => work.worktree ? git.head(work.worktree).catch(() => undefined) : undefined));

@@ -19,7 +19,6 @@ import { combinedBacklogInput } from "@petrina/core";
 import { routeMessages } from "./messages.js";
 import {
   AFTER_WORDS,
-  CALL_WORDS,
   endYouStep,
   fixFor,
   isGuide,
@@ -38,7 +37,6 @@ import {
   syncWait,
   stopCheckProgress,
   validateProductSettings,
-  afterChangesAsked,
   type AskAnswer,
   type CheckId,
   type Clone,
@@ -71,7 +69,7 @@ import { Turns } from "./turn.js";
 import { GuideKeeper } from "./guide-keeper.js";
 import { Context } from "./context.js";
 import { ProductChecks } from "./product-checks.js";
-import { CARRIED_OVER, destination, Shipping } from "./shipping.js";
+import { CARRIED_OVER, Shipping } from "./shipping.js";
 import { Connections } from "./connection.js";
 import { Updates } from "./update.js";
 import { Learnings } from "./learnings.js";
@@ -81,8 +79,8 @@ import { Planning } from "./planning.js";
 import { Work } from "./work.js";
 import { TakeOver } from "./take-over.js";
 import { Sources } from "./sources.js";
-import { beginRepair } from "./repositories.js";
 import { Driver } from "./driver.js";
+import { Checkpoints } from "./checkpoints.js";
 import { Cleanup } from "./cleanup.js";
 import { FollowUps } from "./follow-ups.js";
 import { AcceptedPoints } from "./accepted-points.js";
@@ -110,6 +108,7 @@ export class Engine extends Kernel implements Commands {
   private readonly work: Work;
   private readonly takeover: TakeOver;
   private readonly driver: Driver;
+  private readonly checkpoints: Checkpoints;
   private readonly cleanup: Cleanup;
   private readonly followUps: FollowUps;
   private readonly acceptedPoints: AcceptedPoints;
@@ -131,6 +130,7 @@ export class Engine extends Kernel implements Commands {
     this.planning = new Planning(this, this.turns, this.sources);
     this.work = new Work(this, this.turns, this.context, this.guide, this.updates, this.learnings);
     this.takeover = new TakeOver(this);
+    this.checkpoints = new Checkpoints(this, this.sources, this.shipping);
     this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections, this.sources);
     this.cleanup = new Cleanup(this);
     this.followUps = new FollowUps(this);
@@ -152,8 +152,8 @@ export class Engine extends Kernel implements Commands {
     this.armScreenTimer();
     this.timers.push(
       setInterval(() => {
-        void this.shipping.pollPullRequests();
-        this.shipping.settleCancelledTasks();
+        void this.shipping.monitor.pollPullRequests();
+        this.shipping.monitor.settleCancelledTasks();
         // Apart from GitHub: a slow lookup never holds up removing copies.
         // Confirmed older bugs are linked before a finished task's pictures are removed.
         void this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep()));
@@ -170,8 +170,8 @@ export class Engine extends Kernel implements Commands {
         if (!this.stopped && this.s.tasks.some((task) => task.stepClock?.since !== undefined || Object.values(task.hunt?.work ?? {}).some((work) => work.clock?.since !== undefined))) this.save();
       }, 15_000),
     );
-    this.shipping.settleCancelledTasks();
-    void this.shipping.pollPullRequests();
+    this.shipping.monitor.settleCancelledTasks();
+    void this.shipping.monitor.pollPullRequests();
     this.schedule();
     this.readUsage();
     // Catch up at start: link any older bug saved only part-way, then remove finished working copies.
@@ -217,11 +217,8 @@ export class Engine extends Kernel implements Commands {
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
-    clearTimeout(this.limitTimer);
-    this.codexUsage?.stop();
-    this.grokUsage?.stop();
-    this.antigravityUsage?.stop();
-    clearTimeout(this.screenTimer);
+    this.usageCoordinator.stop();
+    this.screens.stop();
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
     this.shutdownDone = Promise.allSettled([this.tools.shutdown(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
@@ -793,7 +790,7 @@ export class Engine extends Kernel implements Commands {
     void this.cleanup.removeCaptures(taskId);
     // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now, then the copy goes.
     // With an agent still stopping, its driver removes the copy once it has let go of it.
-    void this.trackWork(this.shipping.settleCancelled(taskId).then(() => this.tidy(taskId)));
+    void this.trackWork(this.shipping.monitor.settleCancelled(taskId).then(() => this.tidy(taskId)));
     this.schedule();
   }
 
@@ -981,121 +978,12 @@ export class Engine extends Kernel implements Commands {
       this.allowScreen(this.s.inbox.find((entry) => entry.id === itemId)!.taskId);
       return;
     }
-    if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
-    const pending = this.s.inbox.find((entry) => entry.id === itemId);
-    const pendingTask = pending && this.task(pending.taskId);
-    if (pending?.kind === "plan" && pendingTask) this.sources.confirm(pendingTask);
-    const item = this.takeItem(itemId);
-    const task = item && this.task(item.taskId);
-    const scope = task ? executionFor(task) : undefined;
-    if (!item || !task) return;
-    if (["plan", "design", "delivery", "disagreement"].includes(item.kind)) this.tracking.answered(task, item, "approved");
-    switch (item.kind) {
-      case "plan":
-        this.log(task, "you", "You approved the plan");
-        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
-        task.stageIndex = 0;
-        break;
-      case "design":
-        this.log(task, "you", "You approved the design");
-        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
-        task.stageIndex += 1;
-        break;
-      case "delivery":
-        this.log(task, "you", "You approved the delivery");
-        endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
-        // The coordinator's approval: for the work they were shown, this delivery and where it goes. Saved right away.
-        if (scope!.work.checkedSha) scope!.work.approvedSha = scope!.work.checkedSha;
-        if (scope!.work.checkedPatch) scope!.work.approvedPatch = scope!.work.checkedPatch;
-        scope!.work.approvedFor = { by: "coordinator", mode: scope!.work.delivery, destination: destination(scope!.work, this.productOf(scope!)) };
-        if (task.repositories) {
-
-          for (const work of task.repositories) {
-            work.approvedSha = work.checkedSha;
-            work.approvedPatch = work.checkedPatch;
-            work.approvedFor = { by: "coordinator", mode: work.delivery, destination: destination(work, this.s.products.find((product) => product.id === work.productId)) };
-          }
-
-        }
-        // After review rounds ran out, the check was raised on the delivery stage itself.
-        if (task.plan?.stages[task.stageIndex]?.kind === "gate") task.stageIndex += 1;
-        break;
-      case "disagreement":
-        this.log(task, "you", "You sided with the architect");
-        endYouStep(task, { outcome: W.sided, reason: W.youSided }, Date.now());
-        for (const objection of task.objections) {
-          if (objection.status !== "open") continue;
-          objection.status = "rejected";
-          objection.decidedBy = "coordinator";
-        }
-        task.stageIndex += 1;
-        break;
-      default:
-        return;
-    }
-    task.sub = 0;
-    this.toWaiting(task);
-    this.commit();
-    this.schedule();
+    this.checkpoints.approve(itemId);
   }
 
   requestChanges(itemId: Id, note: string): void {
-    // Refused, not dropped: the window keeps the note to send again.
-    if (!this.s.inbox.some((entry) => entry.id === itemId)) throw new Error("That check isn't waiting any more, so your note wasn't applied. Send it again on the task.");
     this.takeover.notDrivingItem(itemId);
-    const item = this.takeItem(itemId);
-    const task = item && this.task(item.taskId);
-    const scope = task ? executionFor(task) : undefined;
-    if (!item || !task) return;
-    this.tracking.answered(task, item, "changes");
-    const call = item.kind === "disagreement";
-    this.log(task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
-    this.say(task, "you", note);
-    endYouStep(task, call ? { outcome: W.madeCall, reason: W.yourCall, tone: "back" } : { outcome: W.changes, reason: W.changesAsked, tone: "back" }, Date.now());
-    const id = this.id(task.id);
-    this.remember(task, note, id, item.kind);
-    // The call reaches the architect in a section of its own; any other note goes to the next agent.
-    if (!call) task.queued.push({ id, text: note, at: Date.now() });
-    // The change request starts the next step: it is the first thing that step keeps (a call is kept on the task).
-    // Nothing was working on a step at a check, so it leaves no record.
-    this.clearStep(task);
-    if (!call) this.stepNote(task, "changes", note, { id });
-    const fromCheck = task.stageIndex;
-    afterChangesAsked(task, item.kind, note, Date.now());
-    if (item.kind === "delivery") {
-      // A new coordinator request authorizes another bounded attempt at acceptance fixes.
-      delete scope!.work.acceptanceReturns;
-      delete task.acceptanceBlocked;
-      delete task.acceptanceUnverified;
-      // The Guide keeper looks for what reviewers missed, only when they had passed it: if Important findings
-      // were open (the rounds ran out), the reviewers had caught it, and nothing was missed.
-      if (!task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) task.miss = { note, at: Date.now() };
-      this.shipping.clearDelivery(scope!);
-      if (task.repositories) {
-
-        for (const work of task.repositories) if (!library.repositoryPublished(work)) delete work.acceptanceReturns;
-        const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
-        if (open.length) {
-          const review = task.plan!.stages.findIndex((stage, index) => index > task.stageIndex && stage.kind === "review-chain");
-          if (!beginRepair(this, task, "review", review)) {
-            task.stageIndex = fromCheck;
-            this.gate(task, "delivery");
-            return;
-          }
-        } else {
-          const products = task.repositories.filter((work) => !library.repositoryPublished(work)).map((work) => work.productId);
-          const lead = task.leadProductId;
-          if (lead && products.includes(lead)) products.splice(0, 0, ...products.splice(products.indexOf(lead), 1));
-          if (!products.length) { task.stageIndex = fromCheck; this.gate(task, "delivery"); return; }
-          task.repair = { products, index: 0, returnStage: task.stageIndex + 1, kind: "review" };
-          task.activeProductId = products[0]!;
-          task.fixing = true;
-        }
-      }
-    }
-    this.toWaiting(task);
-    this.commitNow();
-    this.schedule();
+    this.checkpoints.requestChanges(itemId, note);
   }
 
   // ── Delegated to the modules that own them ─────────────────────────────

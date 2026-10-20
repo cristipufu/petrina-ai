@@ -1,4 +1,4 @@
-import { executionFor, type RepositoryContext } from "./repository-context.js";
+import { executionFor, scopesFor, type RepositoryContext } from "./repository-context.js";
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
 
@@ -367,11 +367,11 @@ export class Driver {
               this.k.commit();
               return;
             }
-            const checking = current.repositories ?? [undefined];
+            const checking = scopesFor(current);
             let sentBack = false;
-            for (const work of checking) {
-              const scope: RepositoryContext = work ? { task: current, work } : executionFor(current);
-              if (work) { current.activeProductId = work.productId; if (work.pr || work.release || work.landed) continue; }
+            for (const scope of checking) {
+              const work = scope.work;
+              if (current.repositories) { current.activeProductId = work.productId; if (work.pr || work.release || work.landed) continue; }
               await this.guide.writeGuide(scope);
               await this.learnings.write(scope);
               // What the coordinator checks is the work as it would land: one commit on top of the latest main.
@@ -387,12 +387,12 @@ export class Driver {
               await this.learnings.offer(scope);
               if (scope.work.delivery === "release" && current.repositories) {
                 const releaseStage = current.plan!.stages.find((entry) => entry.kind === "do" && entry.roleId === "release-manager")!;
-                await this.shipping.previewRelease(scope, releaseStage, signal);
+                await this.shipping.releases.previewRelease(scope, releaseStage, signal);
               }
               const checkedHead = await git.head(scope.work.worktree!).catch(() => undefined);
               if (checkedHead) scope.work.checkedSha = checkedHead;
               else delete scope.work.checkedSha;
-              if (work) work.nothingToPublish = scope.work.delivery !== "release" && checkedHead === scope.work.baseSha;
+              if (current.repositories) work.nothingToPublish = scope.work.delivery !== "release" && checkedHead === scope.work.baseSha;
               const checkedPatch = checkedHead && checkedHead === scope.work.baseSha ? "empty" : await this.updates.patch(scope, checkedHead);
               if (checkedPatch) scope.work.checkedPatch = checkedPatch;
               else delete scope.work.checkedPatch;
@@ -461,16 +461,16 @@ export class Driver {
           // A saved Tester or Check finder first finishes the version it was already examining.
           let failed = false;
           let conflict = false;
-          for (const work of current.repositories ?? [undefined]) {
-            const scope: RepositoryContext = work ? { task: current, work } : executionFor(current);
-            if (work) current.activeProductId = work.productId;
+          for (const scope of scopesFor(current)) {
+            const work = scope.work;
+            if (current.repositories) current.activeProductId = work.productId;
             if (!scope.work.conversation && await this.updates.upToDate(scope, signal) === "conflict") { conflict = true; break; }
             failed = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal)) || failed;
 
           }
           if (conflict) continue;
           if (failed) {
-            for (const work of current.repositories ?? [scope.work]) {
+            for (const { work } of scopesFor(current)) {
               delete work.portReview;
               delete work.reviewedTree;
             }
@@ -539,7 +539,7 @@ export class Driver {
       if (this.k.task(taskId)?.state !== "waiting") this.preparedTesters.delete(taskId);
       if (this.k.drivers.get(taskId) === controller) this.k.drivers.delete(taskId);
       // Cancelled during a publishing step: what went out is looked up and kept.
-      if (signal.aborted && !this.k.stopped) await this.shipping.settleCancelled(taskId, true);
+      if (signal.aborted && !this.k.stopped) await this.shipping.monitor.settleCancelled(taskId, true);
     }
   }
 

@@ -1,12 +1,19 @@
-import { REPOSITORY_FIELDS, repositoryTaskView, type DeepMutable, type RepositoryState, type Task } from "@petrina/core";
+import { REPOSITORY_FIELDS, repositoryTaskView, type DeepMutable, type RepositoryState, type Task, type TaskRepository } from "@petrina/core";
 import type { MTask } from "./kernel.js";
 
-export type RepositoryWork = DeepMutable<RepositoryState>;
+/** Shared-only preparation/delivery metadata is absent on a single-product owner. */
+export type RepositoryWork = DeepMutable<RepositoryState> & Partial<DeepMutable<Omit<TaskRepository, keyof RepositoryState>>>;
 
 /** A stable owner for an operation, retained across every await and callback. */
 export interface RepositoryContext {
   readonly task: MTask;
   readonly work: RepositoryWork;
+}
+
+/** All canonical owners, in approved order. An unapproved empty map stays empty. */
+export function scopesFor(task: MTask, options: { includeExcluded?: boolean } = {}): RepositoryContext[] {
+  const included = task.repositories ?? (task.repository ? [task.repository] : []);
+  return [...included, ...(options.includeExcluded ? task.excludedRepositories ?? [] : [])].map((work) => ({ task, work }));
 }
 
 /** Bind once at a stage boundary. Every product has an independent execution record. */

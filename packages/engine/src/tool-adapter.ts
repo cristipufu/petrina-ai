@@ -1,0 +1,74 @@
+import type { AgentProfile, TurnReport } from "@petrina/core";
+import type { ClaudeSandbox } from "./sandbox.js";
+import type { UsageInfo } from "./usage.js";
+import type { UsageReader } from "./usage-reader.js";
+export interface AccountReading {
+  reports: UsageInfo[];
+  tokens?: { total: number; input: number; output: number; reasoning: number };
+}
+export interface LimitFailure { kind: "usage" | "rate" | "spend"; retryAfter?: number; reason?: string }
+export interface ReaderOptions {
+  command: readonly string[];
+  cwd: string;
+  env: () => NodeJS.ProcessEnv;
+  record: (reports: UsageInfo[]) => void;
+  log: (text: string) => void;
+  changed: () => void;
+}
+
+/** How Petrina drives one tool through ACP. */
+export interface ToolAdapter {
+  prepareEnv?: (env: NodeJS.ProcessEnv) => void;
+  prepareSessionMeta?: (meta: Record<string, unknown>, context: { cwd: string; browser: boolean }) => Promise<Record<string, unknown>>;
+  verifySessionSettings?: (profile: AgentProfile, settings: { model?: string; effort?: string }) => void;
+  parseTurnReport?: (response: unknown) => TurnReport | undefined;
+  parseUsageUpdate?: (meta: Record<string, unknown>) => { reports: UsageInfo[]; model?: string };
+  toolMetadata?: (meta: Readonly<Record<string, unknown>>) => Record<string, unknown> | undefined;
+  parseLimitError?: (data: Record<string, unknown>, message: string) => LimitFailure | null | undefined;
+  accountUsage?: {
+    command: string;
+    parse: (text: string) => AccountReading;
+    turnReport: (before: AccountReading | undefined, after: AccountReading | undefined) => TurnReport | undefined;
+  };
+  usageReader?: {
+    command: () => readonly string[];
+    create: (options: ReaderOptions) => UsageReader;
+    /** A live session already reports its own account usage. */
+    liveSession?: boolean;
+    /** Native startup reads may have a different refresh cadence. */
+    startGapMs?: number;
+  };
+  terminalArgs?: (input: { session: string; model: string; effort: string; mode: string }) => string[];
+  id: string;
+  name: string;
+  /** The adapter's entry point, resolved from node_modules. Unset when `command` is the agent itself. */
+  entry?: string;
+  /** The program to spawn when the agent is the ACP server. Otherwise Petrina runs `node` on `entry`. */
+  command?: readonly string[];
+  /** The CLI the tool needs on PATH, for detection and for taking over in a terminal. */
+  cli: string;
+  /** Additional native runtime needed alongside the terminal CLI. */
+  installed?: () => boolean;
+  /** Forget a disposable identity/account probe, only after its process has stopped. */
+  forgetProbe?: (sessionId: string, env: NodeJS.ProcessEnv) => Promise<void>;
+  /** Session config option ids the adapter exposes. `mode` is unset when the mode is session metadata instead. */
+  options: { model: string; effort: string; mode?: string };
+  /** The tool's own working mode; permission requests still reach the coordinator. */
+  mode: string;
+  /** Sent on `session/new`, `session/resume` and `session/load`. Grok's auto mode lives here, not in a config option. */
+  sessionMeta?: Readonly<Record<string, unknown>>;
+  /**
+   * How the tool says whether it is logged in, without a message to the AI. "report": its connector sends
+   * the login it runs on (`_auth/status_update`), and opens conversations either way. "open": it checks its
+   * login as a conversation opens and refuses with ACP's "log in first" error when there is none, so a
+   * conversation that opens is its own word.
+   */
+  login: "report" | "open";
+  models: readonly string[];
+  /**
+   * The session option that carries Claude Code's own sandbox settings to its adapter. Unset: the
+   * tool keeps its own setup (including Codex's workspace sandbox) and gets no sandbox settings from Petrina.
+   */
+  sandboxMeta?: (sandbox: ClaudeSandbox) => Record<string, unknown>;
+}
+

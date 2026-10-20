@@ -15,7 +15,7 @@ export async function acceptanceVersion(task: MTask): Promise<string | undefined
 }
 
 /** A pass visits only named owners. Each owner's applicable allowance is charged once before work starts. */
-export function beginRepair(k: Kernel, task: MTask, kind: "checks" | "acceptance" | "review", returnStage: number): boolean {
+export function beginRepair(k: Pick<Kernel, "role" | "commitNow">, task: MTask, kind: "checks" | "acceptance" | "review", returnStage: number): boolean {
   if (!task.repositories) return false;
 
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");

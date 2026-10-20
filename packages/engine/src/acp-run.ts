@@ -9,14 +9,10 @@ import { inFamily, type AgentProfile, type TokenCounts, type TurnReport } from "
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser } from "./browser.js";
-import { claudeBackground } from "./claude-background.js";
-import { BACKGROUND_FEATURES } from "./codex-background.js";
-import { join } from "node:path";
-import { grokTurnReport } from "./grok-usage.js";
 import { descendants, descendantsKnown } from "./process-tree.js";
-import { claudeReports, limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
+import { limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
 import { AgentMessages, type AgentMessage } from "./agent-messages.js";
-import { antigravityReading, antigravityTurnReport, type AntigravityReading } from "./antigravity-report.js";
+import type { AccountReading } from "./tool-adapter.js";
 
 export interface PermissionInfo {
   title: string;
@@ -116,7 +112,8 @@ function defined(counts: TokenCounts): TokenCounts {
  * Claude Code sends is never read.
  */
 export function reportOf(response: unknown, toolId?: string): TurnReport | undefined {
-  if (toolId === "grok") return grokTurnReport(response);
+  const adapter = toolId ? ADAPTERS[toolId] : undefined;
+  if (adapter?.parseTurnReport) return adapter.parseTurnReport(response);
   if (!response || typeof response !== "object") return undefined;
   const { usage, _meta } = response as { usage?: Record<string, unknown> | null; _meta?: { quota?: { model_usage?: unknown } } | null };
   const report: { main?: TokenCounts; models?: { model: string; counts: TokenCounts }[] } = {};
@@ -185,13 +182,16 @@ interface ToolActivity {
   _meta?: Record<string, unknown> | null;
 }
 
-function grokTool(update: ToolActivity): Record<string, unknown> | undefined {
-  const value = update._meta?.["x.ai/tool"];
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+function toolMetadata(update: ToolActivity): Record<string, unknown> | undefined {
+  if (!update._meta) return undefined;
+  for (const adapter of Object.values(ADAPTERS)) {
+    const metadata = adapter.toolMetadata?.(update._meta);
+    if (metadata) return metadata;
+  }
 }
 
 function browserAction(update: ToolActivity): { action: string; input: Record<string, unknown> } | undefined {
-  const metadata = grokTool(update);
+  const metadata = toolMetadata(update);
   let name = typeof metadata?.name === "string" ? metadata.name : update.title ?? "";
   let input = update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput) ? update.rawInput as Record<string, unknown> : {};
   if (/^(?:use_tool|call_tool)$/i.test(name)) {
@@ -242,7 +242,7 @@ const TOOL_NAMES: Record<string, string> = {
 
 function kindOf(update: ToolActivity): string {
   if (update.kind && update.kind !== "other") return update.kind;
-  const tool = grokTool(update);
+  const tool = toolMetadata(update);
   const kind = tool?.kind;
   if (typeof kind === "string") {
     if (["read", "search", "edit", "delete", "move", "execute", "think", "fetch"].includes(kind)) return kind;
@@ -309,7 +309,7 @@ function purposeOf(rawInput: unknown): string | undefined {
 const PLUMBING = /^(ToolSearch|TodoWrite|TodoRead|Task(Output|Stop|Create|Update|Get|List)?|Skill|EnterPlanMode|ExitPlanMode|ListMcpResourcesTool|ReadMcpResourceTool|todo_write|search_tool|enter_plan_mode|exit_plan_mode|get_task_output|get_command_or_subagent_output|wait_tasks|wait_commands_or_subagents|kill_task|kill_command_or_subagent)$/i;
 
 export function isPlumbing(update: ToolActivity): boolean {
-  const tool = grokTool(update);
+  const tool = toolMetadata(update);
   const name = typeof tool?.name === "string" ? tool.name : update.title ?? "";
   return kindOf(update) === "other" && (tool?.kind === "plan" || PLUMBING.test(name.trim()));
 }
@@ -409,7 +409,7 @@ async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: bo
 
 export class AgentRun {
   private notes: TurnNotes | undefined;
-  private accountBefore: AntigravityReading | undefined;
+  private accountBefore: AccountReading | undefined;
 
   private constructor(
     private readonly child: ChildProcess,
@@ -474,15 +474,8 @@ export class AgentRun {
 
     const [program, ...args] = options.command ?? adapter.command ?? ["node", adapterEntry(adapter)];
     const env = { ...(options.env ?? process.env) };
-    if (profile.toolId === "codex") {
-      env.CODEX_CONFIG = JSON.stringify({
-        ...JSON.parse(env.CODEX_CONFIG ?? "{}"),
-        ...Object.fromEntries(BACKGROUND_FEATURES.map((feature) => [`features.${feature}`, false])),
-      });
-      env.DISABLE_MCP_CONFIG_FILTERING = "true";
-      if (env.CODEX_PATH) env.PETRINA_CODEX_EXECUTABLE = env.CODEX_PATH;
-      env.CODEX_PATH = join(import.meta.dir, "codex-background.ts");
-    }
+    adapter.prepareEnv?.(env);
+
     // windowsHide: no console window flashes up on Windows when an agent starts.
     const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env, detached: process.platform !== "win32", windowsHide: true });
     options.onProcess?.(child);
@@ -609,11 +602,12 @@ export class AgentRun {
               break;
             case "usage_update": {
               const meta = update._meta ?? {};
-              const reports = claudeReports(profile.toolId, meta);
+              const native = adapter.parseUsageUpdate?.(meta);
+              const reports = native?.reports ?? [];
               for (const info of reports) callbacks.onUsage?.(info);
               // A rejected spend cap outranks an open session window from the same note.
               if (reports.length) state.latest = reports.find((info) => info.status === "rejected") ?? reports[0];
-              const seen = meta["_claude/model"];
+              const seen = native?.model;
               if (state.turn && typeof seen === "string") state.turn.modelSeen = seen;
               break;
             }
@@ -665,11 +659,8 @@ export class AgentRun {
       if (options.authenticate) await connection.authenticate({ methodId: options.authenticate });
       // Keep the tool's session mode (Grok's auto mode) and add sandbox settings only for Claude Code.
       // The same metadata goes to new, resumed and loaded conversations.
-      const sessionMeta: Record<string, unknown> = { ...adapter.sessionMeta, ...(options.sandbox && adapter.sandboxMeta ? adapter.sandboxMeta(options.sandbox) : {}) };
-      if (browser && profile.toolId === "claude-code") {
-        const claude = sessionMeta.claudeCode as { options?: Record<string, unknown> } | undefined;
-        sessionMeta.claudeCode = { ...claude, options: { ...claude?.options, ...await claudeBackground(cwd) } };
-      }
+      const baseMeta: Record<string, unknown> = { ...adapter.sessionMeta, ...(options.sandbox && adapter.sandboxMeta ? adapter.sandboxMeta(options.sandbox) : {}) };
+      const sessionMeta = adapter.prepareSessionMeta ? await adapter.prepareSessionMeta(baseMeta, { cwd, browser: !!browser }) : baseMeta;
       const meta = Object.keys(sessionMeta).length ? { _meta: sessionMeta } : {};
       const mcpServers = browser ? [browser.mcp] : [];
       if (sessionId === undefined) {
@@ -736,9 +727,7 @@ export class AgentRun {
       const automatic = adapter.sessionMeta !== undefined || (adapter.options.mode !== undefined && (await set(adapter.options.mode, adapter.mode)));
       if (!automatic) callbacks.onLog?.(`${adapter.name}'s automatic safety mode is not available here, so it will ask you before acting`);
       readSettings(sessionOptions);
-      if (profile.toolId === "antigravity" && !options.probe && (state.settings.model !== profile.modelId || state.settings.effort !== profile.effort)) {
-        throw new Error(`Antigravity did not confirm ${profile.model} with ${profile.effort} thinking. Check the models available to your Google account.`);
-      }
+      adapter.verifySessionSettings?.(profile, state.settings);
       return session;
     })();
     ready.catch(() => undefined);
@@ -746,7 +735,7 @@ export class AgentRun {
     try {
       const session = await Promise.race([ready, killed, deadline, stopped]);
       const agent = new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how, await browserReady, callbacks);
-      if (profile.toolId === "antigravity" && !options.probe) agent.accountBefore = await Promise.race([agent.readAccountUsage(), killed, deadline, stopped]);
+      if (adapter.accountUsage && !options.probe) agent.accountBefore = await Promise.race([agent.readAccountUsage(), killed, deadline, stopped]);
       clearTimeout(whole);
       return agent;
     } catch (error) {
@@ -783,9 +772,9 @@ export class AgentRun {
     });
     exited.catch(() => undefined);
     try {
-      if (this.profile.toolId === "antigravity") { const out = this.rejected(); if (out) throw out; }
+      if (ADAPTERS[this.profile.toolId]?.accountUsage) { const out = this.rejected(); if (out) throw out; }
       const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch(async (error: unknown) => {
-        if (this.profile.toolId === "antigravity") await this.readAccountUsage();
+        if (ADAPTERS[this.profile.toolId]?.accountUsage) await this.readAccountUsage();
         throw this.limitOf(error) ?? providerError(error);
       });
       if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
@@ -795,7 +784,8 @@ export class AgentRun {
           throw out;
         }
       }
-      const report = this.profile.toolId === "antigravity" ? antigravityTurnReport(this.accountBefore, await this.readAccountUsage()) : reportOf(response, this.profile.toolId);
+      const accounting = ADAPTERS[this.profile.toolId]?.accountUsage;
+      const report = accounting ? accounting.turnReport(this.accountBefore, await this.readAccountUsage()) : reportOf(response, this.profile.toolId);
       return { stopReason: response.stopReason, text: this.state.text, ...(this.state.messages.streamed ? { streamed: true } : {}), ...(report ? { report } : {}), ...notes() };
     } finally {
       this.child.removeListener("exit", onExit);
@@ -807,25 +797,27 @@ export class AgentRun {
     }
   }
 
-  /** Google's built-in account command: no AI call, no task message, no context-size estimates. */
-  async readAccountUsage(): Promise<AntigravityReading | undefined> {
-    if (this.profile.toolId !== "antigravity") return undefined;
+  /** The adapter's native account command: no AI call or task message. */
+  async readAccountUsage(): Promise<AccountReading | undefined> {
+    const adapter = ADAPTERS[this.profile.toolId];
+    const accounting = adapter?.accountUsage;
+    if (!accounting) return undefined;
     this.state.accountText = "";
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     try {
       await Promise.race([
-        this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text: "/usage" }] }),
-        new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new Error("Antigravity did not report usage in time")); }, 20_000); }),
+        this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text: accounting.command }] }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new Error(`${adapter!.name} did not report usage in time`)); }, 20_000); }),
       ]);
-      const reading = antigravityReading(this.state.accountText);
+      const reading = accounting.parse(this.state.accountText);
       for (const info of reading.reports) this.callbacks?.onUsage?.(info);
       this.accountBefore = reading;
       // The caller compares its saved baseline with this snapshot.
       return reading;
     } catch (error) {
       this.accountBefore = undefined;
-      this.callbacks?.onLog?.(error instanceof Error ? error.message : "Could not read Antigravity usage");
+      this.callbacks?.onLog?.(error instanceof Error ? error.message : `Could not read ${adapter!.name} usage`);
       // Do not leave an unanswered command racing a later turn.
       if (timedOut) await this.stop();
       return undefined;

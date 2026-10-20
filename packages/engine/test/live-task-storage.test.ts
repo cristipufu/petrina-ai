@@ -9,7 +9,7 @@ afterAll(() => roots.forEach(removeDir));
 
 it("coalesces streamed revisions and persists the final text on completion and shutdown", async () => {
   const root = tempDir("petrina-stream-revisions-"); roots.push(root);
-  const options = { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null };
+  const options = { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   };
   let engine = new Engine(root, options);
   try {
     await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
@@ -41,7 +41,7 @@ it("coalesces streamed revisions and persists the final text on completion and s
 
 it("selects design reviewers from the saved author's identity without querying turn history", async () => {
   const root = tempDir("petrina-design-admission-"); roots.push(root);
-  const engine = new Engine(root, { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null });
+  const engine = new Engine(root, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   });
   try {
     engine.s.products.push({ id: "p", name: "Product", repo: "local/p", tone: "blue" });
     const task = engine.task(engine.addTask({ productId: "p", title: "Design", backlog: true }))!;
@@ -64,7 +64,7 @@ it("selects design reviewers from the saved author's identity without querying t
 
 it("broadcasts summaries, fetches complete details, and saves one streaming task without serializing its peers", async () => {
   const root = tempDir("petrina-live-task-storage-"); roots.push(root);
-  const options = { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null };
+  const options = { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   };
   let engine = new Engine(root, options);
   try {
     engine.setPoolPaused(true);

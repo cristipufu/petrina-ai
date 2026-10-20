@@ -1,5 +1,7 @@
+import { ScreenCoordinator } from "./screen-coordinator.js";
+import { UsageCoordinator } from "./usage-coordinator.js";
 import { blockingDependencies, clearTaskStep, finishTaskStep, stopTaskActivity } from "@petrina/core";
-import { executionFor, executionOf, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
+import { executionFor, executionOf, scopesFor, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
 import * as library from "@petrina/core";
 // The engine's shared state and the few operations every part of it uses: lookups, the timeline and
 // session, the inbox, and saving. Feature modules get this, never the Engine itself.
@@ -8,12 +10,8 @@ import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { IdleSleepAssertion } from "./awake.js";
-import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, chooseWithRoom, headroom, kindWords, limitOf, nearLimit, endOpenStep, JOURNEY_WORDS as W, nextExpiry, onScreen, openStep, queueOf, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, UNKNOWN_LIMIT_MS, stepTag, untilWords, withLimit, withReport, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, usableAgentTools, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
+import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
-import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
-import { GrokUsage } from "./grok-usage.js";
-import { AntigravityUsage } from "./antigravity-usage.js";
-import { agentEnv } from "./env.js";
 import * as git from "./git.js";
 import type { Which } from "./setup.js";
 import { Store, settledHistoryTask } from "./store.js";
@@ -22,7 +20,6 @@ import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js"
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import type { UsageInfo, UsageLimited } from "./usage.js";
 import { Tracking } from "./tracking.js";
-import { stepBack } from "./roles.js";
 import { recoverBrowserTemps } from "./browser.js";
 
 /** Repository execution fields cannot be read or written on the runtime task. */
@@ -60,7 +57,7 @@ export function renameRoles(state: MState): void {
     }
     move(task.agent);
     for (const helper of task.helpers ?? []) move(helper);
-    for (const work of task.repositories ?? [task.repository!]) {
+    for (const { work } of scopesFor(task)) {
       move(work.conversation);
       for (const lesson of work.lessons ?? []) move(lesson);
     }
@@ -92,12 +89,8 @@ export interface EngineOptions {
   agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
   /** Tests: a fake GitHub instead of `gh`. */
   gh?: readonly string[];
-  /** Tests: a fake Codex app-server instead of `codex app-server` for reading Codex's usage. With fake agents and none given, it is not read. */
-  codexCommand?: readonly string[] | null;
-  /** Tests: a fake Grok ACP server for account usage. Disabled by default with fake agents. */
-  grokCommand?: readonly string[] | null;
-  /** Tests: native Antigravity account commands; disabled with fake agents unless supplied. */
-  antigravityCommand?: readonly string[] | null;
+  /** Tests: native account-reader commands by tool; null disables a reader. Fake agents disable defaults. */
+  usageCommands?: Readonly<Record<string, readonly string[] | null>>;
   /** Tests: a folder standing in for every product's copy on GitHub. Never from settings or saved data. */
   remote?: string;
   remotes?: Readonly<Record<string, string>>;
@@ -194,6 +187,8 @@ export function checksLine(task: Task): string | undefined {
 }
 
 export abstract class Kernel {
+  readonly screens = new ScreenCoordinator(this);
+  readonly usageCoordinator = new UsageCoordinator(this);
   /** Set by the Engine: what starts drivers and fills free slots. */
   abstract schedule(): void;
   abstract startDriver(taskId: Id, resume?: boolean): void;
@@ -264,35 +259,7 @@ export abstract class Kernel {
     this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
     this.tracking = new Tracking(this);
     this.tracking.start();
-    // Codex does not pass its usage on over ACP: Petrina reads it from Codex's app-server, with the agents' environment.
-    const codexCommand = options.codexCommand === undefined ? (options.agentCommand ? undefined : CODEX_USAGE_COMMAND) : options.codexCommand;
-    this.codexUsage = codexCommand
-      ? new CodexUsage({
-          command: codexCommand,
-          env: () => agentEnv(process.env),
-          record: (reports) => {
-            for (const info of reports) this.recordUsage(info);
-            // More or less room on Codex: waiting tasks may start, or hold.
-            this.schedule();
-          },
-          log: (text) => console.warn(`${new Date().toISOString()} ${text}`),
-          changed: () => this.commit(),
-        })
-      : undefined;
-    const grokCommand = options.grokCommand === undefined ? (options.agentCommand ? undefined : ADAPTERS.grok!.command) : options.grokCommand;
-    this.grokUsage = grokCommand ? new GrokUsage({
-      command: grokCommand,
-      env: () => agentEnv(process.env),
-      record: (reports) => { for (const info of reports) this.recordUsage(info); this.schedule(); },
-      log: (text) => console.warn(`${new Date().toISOString()} ${text}`),
-      changed: () => this.commit(),
-    }) : undefined;
-    const antigravityCommand = options.antigravityCommand === undefined ? (options.agentCommand ? undefined : ADAPTERS.antigravity!.command) : options.antigravityCommand;
-    this.antigravityUsage = antigravityCommand ? new AntigravityUsage({
-      command: antigravityCommand, cwd: join(this.dataDir, "checks"), env: () => agentEnv(process.env),
-      record: reports => { for (const info of reports) this.recordUsage(info); this.schedule(); },
-      log: text => console.warn(`${new Date().toISOString()} ${text}`), changed: () => this.commit(),
-    }) : undefined;
+    this.usageCoordinator.startReaders(this.dataDir, options);
   }
 
   waitUntilReady(): Promise<void> { return this.startupReady; }
@@ -303,10 +270,6 @@ export abstract class Kernel {
 
   /** The work log: every agent turn and notable moment, the permanent product list and the tools' limits. */
   readonly tracking: Tracking;
-  /** Reads Codex's usage, when Codex's usage can be read here. */
-  readonly codexUsage: CodexUsage | undefined;
-  readonly grokUsage: GrokUsage | undefined;
-  readonly antigravityUsage: AntigravityUsage | undefined;
 
   private readonly idleSleep: IdleSleepAssertion;
 
@@ -325,10 +288,10 @@ export abstract class Kernel {
   readonly helperRuns = new Map<Id, Set<AgentRun>>();
 
   /** A live review group can reopen its waiting screen member without stopping its peers. */
-  readonly screenGroups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void; yield?: (member: string) => void }>();
+  get screenGroups() { return this.screens.groups; }
 
   /** Discarded review copies finish cleaning up before the task can start fresh. */
-  readonly copyCleanups = new Map<Id, Promise<void>>();
+  get copyCleanups() { return this.screens.copyCleanups; }
 
   /** Finished-task working copies being removed. */
   readonly cleanupJobs = new Set<Id>();
@@ -343,15 +306,8 @@ export abstract class Kernel {
   /** Text already updated in memory, awaiting one bounded detail/persistence notification. */
   private readonly streamedTasks = new Set<MTask>();
   private streamTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly legacyReviewerTools = new WeakMap<MTask, { key: string; tools: Id[] }>();
-
-  /** Wakes the scheduler when the first usage limit in force ends. */
-  limitTimer: ReturnType<typeof setTimeout> | undefined;
 
   readonly timers: ReturnType<typeof setInterval>[] = [];
-
-  /** Turns For an hour off when it runs out. */
-  screenTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** Set by shutdown: work that ends afterwards (a turn cut off by the stop) changes nothing. */
   stopped = false;
@@ -474,9 +430,7 @@ export abstract class Kernel {
     // A terminal result must be in the archive before the window stops seeing its live body.
     if (!this.stopped && this.store.history.needsUpdate(this.s.tasks.filter(finishedTask) as Task[])) this.save();
     const tasks = this.s.tasks.filter((task) => !finishedTask(task)).map((task) => ({ ...taskView(task), detailsOmitted: true, detailsRevision: this.detailRevision(task.id), session: [], timeline: [], journey: undefined, designSessions: undefined, reviewSessions: undefined, handedBack: undefined })) as Task[];
-    const usageReads: NonNullable<State["pool"]["usageReads"]> = Object.fromEntries(
-      ([["codex", this.codexUsage], ["grok", this.grokUsage], ["antigravity", this.antigravityUsage]] as const).flatMap(([toolId, reader]) => reader?.snapshot() ? [[toolId, reader.snapshot()!]] : []),
-    );
+    const usageReads: NonNullable<State["pool"]["usageReads"]> = this.usageCoordinator.snapshot();
     const dependencies = this.stopped ? [] : [...new Set([...this.s.inbox.map((item) => item.taskId), ...this.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])].flatMap((id) => {
       const item = this.store.history.item(id);
       return item ? [item] : [];
@@ -623,22 +577,10 @@ export abstract class Kernel {
   }
 
   /** The agent tools the squad uses now: Ready ones, or if none is, those Petrina couldn't check. */
-  usableTools(): CheckId[] {
-    if (!this.s.setup?.checks.some((check) => ADAPTERS[check.id] !== undefined)) {
-      const installed = this.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id as CheckId);
-      if (installed.length) return installed;
-    }
-    return usableAgentTools(this.s.setup?.checks);
-  }
+  usableTools(): CheckId[] { return this.usageCoordinator.usableTools(); }
 
   /** The same kind of profile on a tool the squad can use. Unchanged when its tool is usable, or when none is. */
-  onUsable(profileId: Id): Id {
-    const profile = this.profile(profileId);
-    const usable = this.usableTools();
-    if (!profile || !usable.length || usable.includes(profile.toolId as CheckId)) return profileId;
-    const others = this.s.profiles.filter((entry) => entry.toolId === usable[0]);
-    return (others.find((entry) => entry.effort === profile.effort) ?? others[0])?.id ?? profileId;
-  }
+  onUsable(profileId: Id): Id { return this.usageCoordinator.onUsable(profileId); }
 
   remember(task: MTask, text: string, id?: Id, kind?: InboxKind): void {
     const stage = task.plan?.stages[task.stageIndex];
@@ -675,136 +617,32 @@ export abstract class Kernel {
   }
 
   /** A reopened reviewer or voter still works in its own copy, including during terminal take-over. */
-  agentWorktree(target: MTask | RepositoryContext): string {
-    const scope = executionOf(target);
-    const { task, work: repository } = scope;
-    const member = task.screen?.member;
-    return (member && task.hunt?.screenTurns?.[member]?.copy) || repository.worktree!;
-  }
+  agentWorktree(target: MTask | RepositoryContext): string{ return this.screens.agentWorktree(target); }
 
   /** Pause, cancel or failure discards saved screen conversations and their separate working copies. */
-  discardScreenTurns(task: MTask): void {
-    if (!Object.keys(task.hunt?.screenTurns ?? {}).length) return;
-    delete task.hunt!.screenTurns;
-    const owners = task.repositories ? [...task.repositories, ...(task.excludedRepositories ?? [])].map((work) => ({ productId: work.productId, root: work.source?.product.path })) : [{ productId: task.productId, root: this.productOf(task)?.path }];
-    if (!owners.some((owner) => owner.root)) return;
-    const stopped = this.settling.get(task.id);
-    const cleanup = Promise.all([stopped, this.copyCleanups.get(task.id)])
-      .then(async () => { for (const owner of owners) if (owner.root) await git.removeCopies(owner.root, join(this.dataDir, "worktrees", owner.productId, `${task.id}.copies`)); })
-      .catch((error: unknown) => this.log(task, "warn", `Could not remove the reviewers' working copies: ${error instanceof Error ? error.message : String(error)}`))
-      .finally(() => {
-        if (this.copyCleanups.get(task.id) === cleanup) this.copyCleanups.delete(task.id);
-        this.syncIdleSleep();
-      });
-    this.copyCleanups.set(task.id, cleanup);
-    this.syncIdleSleep();
-  }
+  discardScreenTurns(task: MTask): void { return this.screens.discardScreenTurns(task); }
 
   /**
    * The agent asked for the screen. Allowed and free: it has it now, in the same conversation. Otherwise its
    * conversation closes but is kept, its slot frees at once, and the task waits: for the coordinator's OK (with
    * a quiet inbox item), or for its turn.
    */
-  askScreen(task: MTask, roleId: Id, profileId: Id, reason: string, member?: string): boolean {
-    const now = Date.now();
-    task.screen = { reason, at: now, roleId, profileId, ...(member ? { member } : {}) };
-    this.log(task, "status", SCREEN_WORDS.asked(reason), roleId, profileId);
-    const allowed = screenAllowed(task as Task, this.s.pool as State["pool"], now);
-    // First asked, first served: an earlier allowed request still waiting goes first.
-    const free = !onScreen(this.s.tasks as Task[]) && !screenQueue(this.s.tasks as Task[]).some((other) => other.id !== task.id && screenAllowed(other, this.s.pool as State["pool"], now));
-    if (allowed && free) {
-      task.screen.granted = true;
-      this.log(task, "milestone", SCREEN_WORDS.using(reason), roleId, profileId);
-      return true;
-    }
-    // Other members of a review group finish their background work before its task waits.
-    if (member) return false;
-    this.waitForScreen(task);
-    return false;
-  }
+  askScreen(task: MTask, roleId: Id, profileId: Id, reason: string, member?: string): boolean { return this.screens.askScreen(task, roleId, profileId, reason, member); }
 
   /** Wait without a slot; a screen attempt that ran out of usage returns to the end of the queue. */
-  waitForScreen(task: MTask): void {
-    if (task.screen?.granted) {
-      task.screen.granted = false;
-      task.screen.heard = false;
-      task.screen.at = Date.now();
-      const pending = task.screen.member ? task.hunt?.screenTurns?.[task.screen.member] : undefined;
-      if (pending) pending.at = task.screen.at;
-    }
-    const group = task.screen?.member && this.screenGroups.get(task.id);
-    if (group && group.yield) {
-      // Release just this member's admission. A peer may still be starting or using its copy;
-      // exposing zero slots here would let other work start before that peer has settled.
-      group.yield(task.screen!.member!);
-      this.commitNow();
-      return;
-    }
-    task.state = "waiting";
-    task.holdsSlot = false;
-    delete task.agent;
-    task.column = this.columnFor(task);
-    this.syncScreen();
-    this.commitNow();
-  }
+  waitForScreen(task: MTask): void { return this.screens.waitForScreen(task); }
 
   /** Keep each waiting request's status line and quiet inbox item in step with who may use the screen now. */
-  syncScreen(): void {
-    const now = Date.now();
-    // For an hour ran out: it is Off from now on, without anyone touching it.
-    if (this.s.pool.screen && this.s.pool.screen.mode !== screenMode(this.s.pool as State["pool"], now)) this.s.pool.screen = { mode: "off" };
-    for (const task of this.s.tasks) {
-      this.selectScreen(task);
-      const wait = screenWait(task as Task, this.activeState(), now);
-      const item = this.s.inbox.find((entry) => entry.taskId === task.id && entry.kind === "screen");
-      if (wait === "ask" && !item) {
-        const request = task.screen!;
-        this.s.inbox.push({ id: this.id("inbox"), taskId: task.id, kind: "screen", title: SCREEN_WORDS.needs(request.reason), body: SCREEN_WORDS.body, at: request.at, blocking: false, roleId: request.roleId, profileId: request.profileId });
-      } else if (wait !== "ask" && item) {
-        this.s.inbox = this.s.inbox.filter((entry) => entry !== item);
-      }
-      if (wait === "ask") task.statusLine = SCREEN_WORDS.needs(task.screen!.reason);
-      else if (wait === "turn") task.statusLine = SCREEN_WORDS.turn;
-      // Its turn on the screen: it waits for a slot like any other task (the scheduler says which).
-      else if (task.state === "waiting" && task.screen && !task.screen.granted) task.statusLine = "Waiting for a free slot";
-    }
-  }
+  syncScreen(): void { return this.screens.syncScreen(); }
 
   /** Expose the group's earliest allowed request, including after usage requeues or permission changes. */
-  selectScreen(task: MTask): void {
-    if (task.screen?.granted || !["running", "waiting", "needs-you"].includes(task.state)) return;
-    const saved = task.hunt?.screenTurns;
-    const current = task.screen?.member && saved?.[task.screen.member];
-    if (current && task.screen?.allowed) current.allowed = true;
-    const group = this.screenGroups.get(task.id);
-    const pending = Object.entries(saved ?? {}).filter(([key]) => !group?.running(key)).sort((a, b) => a[1].at - b[1].at);
-    const byTask = screenAllowed({ ...task, screen: undefined } as Task, this.s.pool as State["pool"], Date.now());
-    const next = pending.find(([, request]) => byTask || request.allowed) ?? pending[0];
-    if (!next || next[0] === task.screen?.member) return;
-    const [member, request] = next;
-    task.screen = { member, reason: request.reason, at: request.at, roleId: request.conversation.roleId, profileId: request.conversation.profileId, ...(request.allowed ? { allowed: true } : {}) };
-    executionFor(task).work.conversation = request.conversation;
-  }
+  selectScreen(task: MTask): void { return this.screens.selectScreen(task); }
 
   /** The step's screen request ends with the step (or a pause, a cancel, a failure): the next request may have the screen. */
-  releaseScreen(task: MTask): void {
-    const held = task.screen?.granted;
-    delete task.screen;
-    this.s.inbox = this.s.inbox.filter((item) => !(item.taskId === task.id && item.kind === "screen"));
-    if (!held) return;
-    // The next request stops waiting its turn now. It starts after this task's own driver has taken
-    // its next step, so a screen request does not jump ahead of it.
-    this.syncScreen();
-    setTimeout(() => this.schedule(), 0);
-  }
+  releaseScreen(task: MTask): void { return this.screens.releaseScreen(task); }
 
   /** For an hour turns itself off when it runs out. */
-  armScreenTimer(): void {
-    clearTimeout(this.screenTimer);
-    const screen = this.s.pool.screen;
-    if (screen?.mode !== "hour" || screen.until === undefined) return;
-    this.screenTimer = setTimeout(() => this.schedule(), Math.max(0, screen.until - Date.now()) + 20);
-  }
+  armScreenTimer(): void { return this.screens.armScreenTimer(); }
 
   /** The step stops before handing back its result: its to-do item and clock go, and it starts fresh next time. */
   stopStep(task: MTask): void {
@@ -986,136 +824,14 @@ export abstract class Kernel {
   }
 
   /** Only Builders return to an earlier step's conversation; an interrupted Builder keeps its current one. */
-  builderConversation(target: MTask | RepositoryContext, plannedId: Id) {
-    const scope = executionOf(target);
-    const { task, work: repository } = scope;
-    const stage = task.plan?.stages[task.stageIndex];
-    if (stage?.kind !== "do") return undefined;
-    const current = repository.conversation;
-    const role = current?.roleId === stage.roleId && current.role ? current.role : this.role(stage.roleId);
-    if (role?.result !== "build") return undefined;
-    const own = repository.builderSession;
-    const saved = current
-      ? current.roleId === stage.roleId && current.briefed && current.step === stepKey(task) && (!current.plannedProfileId || current.plannedProfileId === plannedId) ? current : undefined
-      : (task.fixing || repository.updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === plannedId && !(task.fixing && stepBack(task as Task)) ? own : undefined;
-    const planned = this.profile(plannedId);
-    if (!saved || !planned) return undefined;
-    // The saved tool/model must still be offered. Prefer the planned effort for an earlier
-    // step; an active conversation already names the actual fallback profile it ran on.
-    const matches = (profile: AgentProfile) => profile.toolId === saved.toolId && (profile.modelId ?? profile.model) === saved.model;
-    const exact = current ? this.profile(current.profileId) : undefined;
-    const profile = exact && matches(exact) ? exact : this.s.profiles.find((profile) => matches(profile) && profile.effort === planned.effort) ?? this.s.profiles.find(matches);
-    return profile ? { sessionId: saved.sessionId, toolId: saved.toolId, model: saved.model, profile } : undefined;
-  }
+  builderConversation(target: MTask | RepositoryContext, plannedId: Id) { return this.usageCoordinator.builderConversation(target, plannedId); }
 
   /**
    * Who works a step planned for this profile right now: the planned one, or a stand-in while its tool or
    * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
    * yields to another tool that has one, so a cap kept for a tool that is out does not idle a pool slot.
    */
-  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id) => boolean, reviewerKey?: string): Choice | undefined {
-    const scope = target ? executionOf(target) : undefined;
-    const task = scope?.task;
-    const repository = scope?.work;
-    // A saved screen conversation is not swapped just for being near a limit. Other members of the
-    // same review group still choose from their own planned profiles.
-    const screen = task?.screen?.roleId === roleId && task?.screen?.profileId === plannedId
-      && (reviewerKey === undefined || !task.screen.member || task.screen.member === `review-${reviewerKey}`);
-    const planned = this.profile(plannedId);
-    if (!planned) return undefined;
-    const stage = task?.plan?.stages[task.stageIndex];
-    const round = task && stage ? task.rounds[stage.id] ?? 1 : 1;
-    const findings = roleId !== undefined && this.role(roleId)?.result === "findings";
-    // Security and port reviews follow the latest builder, including a replacement that did the port.
-    const builder = task?.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0];
-    let made: { toolId: Id; modelId?: string } | undefined = roleId === "security-reviewer" || (repository?.portReview && stage?.kind === "review-chain" && findings)
-      ? (repository?.builderSession ? { toolId: repository!.builderSession.toolId, modelId: repository!.builderSession.model } : builder ? this.profile(builder) : undefined)
-      : undefined;
-    if (task && stage?.kind === "converge" && task.sub === 1 && roleId === (stage.reviewerRoleId ?? "design-reviewer")) {
-      const saved = task.designSessions?.[JSON.stringify([stage.id, "author", repository!.productId])];
-      const author = saved ? undefined : this.tracking.log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
-      const legacy = task.session.findLast((line) => line.from === "agent" && line.roleId === stage.roleId)?.profileId;
-      made = saved ? { toolId: saved.toolId, modelId: saved.model } : author ? { toolId: author.toolId, modelId: author.modelRan ?? author.modelAsked } : this.profile(legacy ?? stage.profileIds[0] ?? "");
-    }
-    let peers: Id[] = [];
-    if (task && stage?.kind === "review-chain" && findings && !repository?.portReview) {
-      const hunt = task.hunt?.stageId === stage.id && task.hunt.round === round ? task.hunt : undefined;
-      const key = reviewerKey ?? String(stage.profileIds.indexOf(plannedId));
-      // Older rounds saved reports without the profiles at their positions. Their latest verdicts
-      // name the actual reviewers; replace the reported positions' planned tools with those tools.
-      let legacy: Id[] = [];
-      if (hunt && Object.keys(hunt.reported).some((key) => !hunt.profiles?.[key])) {
-        const stamp = JSON.stringify([stage.id, round, Object.keys(hunt.reported).sort()]);
-        const cached = this.legacyReviewerTools.get(task);
-        if (cached?.key === stamp) legacy = cached.tools;
-        else {
-          legacy = this.tracking.log.moments({ taskId: task.id, stageId: stage.id, round, kinds: ["verdict"] })
-            .slice(-Object.keys(hunt.reported).length)
-            .flatMap((entry) => { const profile = this.profile(entry.profileId ?? ""); return profile ? [profile.toolId] : []; });
-          this.legacyReviewerTools.set(task, { key: stamp, tools: legacy });
-        }
-      }
-      peers = stage.profileIds.flatMap((id, index) => {
-        if (String(index) === key) return [];
-        if (legacy.length && hunt?.reported[String(index)]) return [];
-        const peer = this.profile(hunt?.profiles?.[String(index)] ?? id);
-        return peer ? [peer.toolId] : [];
-      });
-      peers.push(...legacy);
-    }
-    const state = this.activeState();
-    const checked = state.setup?.checks.some((check) => ADAPTERS[check.id] !== undefined);
-    const usable = this.usableTools() as Id[];
-    // Usage stand-ins follow the same login checks as the plan: Ready tools first, otherwise the
-    // ones we couldn't check. Before checks have run, keep the existing installed-tool selection.
-    let candidates = checked ? {
-      ...state,
-      profiles: state.profiles.filter((profile) => usable.includes(profile.toolId)),
-      tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
-    } : state;
-    if (roleId !== undefined && this.role(roleId)?.result === "votes") {
-      // A voter owns one actual tool's place, not a nominal profile's place. Other tools have
-      // voters of their own: a model fallback stays on this tool; a usage limit drops its place.
-      // A full cap still waits, rather than giving a partner another vote.
-      const ready = candidates.tools.filter((tool) => tool.status === "ready");
-      if ((ready.length && !ready.some((tool) => tool.id === planned.toolId)) || !candidates.profiles.some((profile) => profile.toolId === planned.toolId)) return { kind: "none", waiting: "Waiting for a usable review tool" };
-      candidates = { ...candidates, profiles: candidates.profiles.filter((profile) => profile.toolId === planned.toolId) };
-    }
-    const reviewing = roleId !== undefined && ["findings", "objections", "votes"].includes(this.role(roleId)?.result ?? "");
-    const now = Date.now();
-    // A saved screen conversation is not swapped just for being near a limit. Reopen it on its tool
-    // while that tool is available; a replacement still follows the current independence rules.
-    if (screen) {
-      if (state.setup?.checks.some((check) => check.id === planned.toolId && notReady(check.status))) return { kind: "planned", profile: planned };
-      const saved = chooseWithRoom(candidates, planned, now, { keep: true }, room);
-      if (saved.kind === "planned") return saved;
-    }
-    const own = task && roleId !== undefined && roleId === stage?.roleId ? this.builderConversation(scope!, plannedId) : undefined;
-    if (own && !limitOf(state.pool, own.profile, now) && !nearLimit(state.pool, own.profile, now) && headroom(state.pool, own.profile, now) !== 0 && (!room || room(own.toolId))) {
-      const check = state.setup?.checks.find((check) => check.id === own.toolId);
-      // Recovery checks are bounded by the normal tool-check timeout. Checking is temporary;
-      // let it answer before replacing a healthy saved Builder with a permanent fresh start.
-      if (check?.checking) return { kind: "none", waiting: `Checking ${this.toolName(own.toolId)} before the Builder returns` };
-      if (candidates.profiles.some((profile) => profile.id === own.profile.id) && (!checked || usable.includes(own.toolId))) {
-        const ready = candidates.tools.filter((tool) => tool.status === "ready");
-        if (!ready.length || ready.some((tool) => tool.id === own.toolId)) return { kind: own.profile.id === plannedId ? "planned" : "substitute", profile: own.profile };
-      }
-    }
-    const rules = { keep: !!screen || reviewing, awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) };
-    const choice = chooseWithRoom(candidates, planned, now, rules, room);
-    if (own && room && choice.kind !== "none" && !room(choice.profile.toolId)) {
-      // A returning Builder must not get stuck on a full planned tool that recovered since
-      // its last handoff. Try tools with seats; if none can work, keep the normal wait.
-      const ready = candidates.tools.filter((tool) => tool.status === "ready");
-      const seated = (ready.length ? ready : candidates.tools).filter((tool) => room(tool.id));
-      if (seated.length) {
-        const available = { ...candidates, tools: seated.map((tool) => ({ ...tool, status: "ready" as const })), profiles: candidates.profiles.filter((profile) => seated.some((tool) => tool.id === profile.toolId)) };
-        const next = chooseWithRoom(available, planned, now, rules, room);
-        if (next.kind !== "none") return next;
-      }
-    }
-    return choice;
-  }
+  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id) => boolean, reviewerKey?: string): Choice | undefined { return this.usageCoordinator.choose(plannedId, target, roleId, room, reviewerKey); }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */
   named(profileId: Id): string {
@@ -1132,66 +848,22 @@ export abstract class Kernel {
    * says the tool is out keeps new agents off it until it resets, whether or not a turn fails on it (Codex's own
    * count comes from outside any turn).
    */
-  recordUsage(info: UsageInfo): void {
-    const now = Date.now();
-    const report = { ...info, at: now };
-    this.s.pool.usage = withReport(this.s.pool.usage, report) as MState["pool"]["usage"];
-    this.tracking.usageReported(report);
-    // Not when the tool goes on with usage paid beyond the plan: the window is spent, the usage line says so, and
-    // the balancer prefers tools with room, but the agents keep working.
-    if (info.status === "rejected" && !info.overage) {
-      const until = info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS;
-      this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: info.toolId, ...(info.model ? { model: info.model } : {}), until, reason: `${this.toolName(info.toolId)}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, at: now }) as MState["pool"]["limited"];
-      this.armLimitTimer();
-    }
-    this.commit();
-  }
+  recordUsage(info: UsageInfo): void { return this.usageCoordinator.recordUsage(info); }
 
   /**
    * An agent on this tool is starting, or the engine is (no tool): refresh the account
    * usage that the installed tool can report. The read runs on its own; nothing waits for it.
    */
-  readUsage(toolId?: Id, gap = 5 * 60_000): void {
-    if ((toolId === undefined || toolId === "grok") && this.s.tools.some((tool) => tool.id === "grok" && tool.status === "ready")) void this.grokUsage?.refresh(gap);
-    if ((toolId === undefined || toolId === "antigravity") && this.s.tools.some((tool) => tool.id === "antigravity" && tool.status === "ready")) void this.antigravityUsage?.refresh(gap);
-    if (toolId !== undefined && toolId !== "codex") return;
-    if (!this.s.tools.some((tool) => tool.id === "codex" && tool.status === "ready")) return;
-    void this.codexUsage?.refresh();
-  }
+  readUsage(toolId?: Id, gap?: number): void { return this.usageCoordinator.readUsage(toolId, gap); }
 
   /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */
-  recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void {
-    this.tracking.limitHit(task, roleId, profileId, error);
-    this.s.pool.limited = withLimit(this.s.pool.limited, { toolId: error.toolId, ...(error.model ? { model: error.model } : {}), ...(error.retry ? { retry: true } : {}), until: error.until, reason: error.reason, at: Date.now() }) as MState["pool"]["limited"];
-    const outcome = error.retry ? `could not continue (${error.reason}); retry after ${untilWords(error.until, Date.now())}` : `ran out of usage (${error.reason}), until ${untilWords(error.until, Date.now())}`;
-    this.log(task, "warn", `${this.role(roleId)?.name ?? roleId} on ${this.named(profileId)} ${outcome}`, roleId, profileId);
-    this.armLimitTimer();
-    this.commitNow();
-  }
+  recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void { return this.usageCoordinator.recordLimit(task, roleId, profileId, error); }
 
   /** Limits whose time has passed are dropped. True when any was. */
-  expireLimits(): boolean {
-    const before = this.s.pool.limited?.length ?? 0;
-    if (!before) return false;
-    const now = Date.now();
-    const kept = this.s.pool.limited!.filter((limit) => limit.until > now);
-    if (kept.length === before) return false;
-    if (kept.length) this.s.pool.limited = kept;
-    else delete this.s.pool.limited;
-    return true;
-  }
+  expireLimits(): boolean { return this.usageCoordinator.expireLimits(); }
 
   /** The scheduler runs again when the first limit in force ends: tasks waiting for usage start by themselves. */
-  armLimitTimer(): void {
-    clearTimeout(this.limitTimer);
-    this.limitTimer = undefined;
-    const at = nextExpiry(this.s.pool, Date.now());
-    if (at === undefined || this.stopped) return;
-    this.limitTimer = setTimeout(() => {
-      this.limitTimer = undefined;
-      if (!this.stopped) this.schedule();
-    }, Math.min(at - Date.now() + 50, 2 ** 31 - 1));
-  }
+  armLimitTimer(): void { return this.usageCoordinator.armLimitTimer(); }
 
   /** The task lets go of its slot and waits until a limit ends: the driver stops, and the scheduler starts it again. */
   waitForUsage(task: MTask, words: string): void {

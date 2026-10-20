@@ -232,7 +232,7 @@ describe("roles the coordinator edits and adds", () => {
   it("keeps added and built-in reviewers independent of each other's saved verdicts and the latest port builder", async () => {
     const root = tempDir("petrina-added-independence-");
     roots.push(root);
-    const engine = new Engine(join(root, "data"), { toolPath: () => "/bin/true", codexCommand: null });
+    const engine = new Engine(join(root, "data"), { toolPath: () => "/bin/true", usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
       const added = engine.addRole(start("security"));

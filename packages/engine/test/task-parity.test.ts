@@ -10,7 +10,7 @@ afterAll(async () => {
 });
 function pair() {
   const home = tempDir("petrina-parity-"); roots.push(home);
-  const engine = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, codexCommand: null, grokCommand: null, antigravityCommand: null, terminals: () => [] });
+  const engine = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
   engines.push(engine); engine.schedule = () => {}; engine.setPoolPaused(true);
   engine.s.products.push(
     { id: "a", name: "Shop", repo: "local/shop", tone: "blue", delivery: "local", approveDelivery: false },

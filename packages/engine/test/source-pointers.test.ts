@@ -11,7 +11,7 @@ import { git, makeProduct, removeDir, tempDir } from "./support.js";
 
 it("carries only bounded current source locations to design or a first builder, never independent reviewers", async () => {
   const root = tempDir("petrina-source-pointers-");
-  const engine = new Engine(join(root, "data"), { codexCommand: null, grokCommand: null });
+  const engine = new Engine(join(root, "data"), { usageCommands: { codex: null, grok: null },  });
   try {
     engine.setPoolPaused(true);
     const copy = makeProduct(root);

@@ -12,7 +12,7 @@ afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
 function fixture(name: string) {
   const world = makeWorld(`source-addition-${name}`);
   worlds.push(world);
-  const start = () => world.start({ agentCommand: () => undefined, codexCommand: null, grokCommand: null, terminals: () => [] });
+  const start = () => world.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   const engine = start();
   engine.setPoolPaused(true);
   const id = engine.addTask({ productId: "", title: "An approved addition", backlog: true });
