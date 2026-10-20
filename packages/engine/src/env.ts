@@ -28,6 +28,9 @@ const SESSION_VARS = [
   "CODEX_THREAD_ID",
   "GROK_AGENT",
   "GROK_SESSION_ID",
+  // One-shot hints for the engine's replacement launcher, never child engines or tools.
+  "PETRINA_LIFECYCLE_REPLACEMENT",
+  "PETRINA_RECONNECT_PORT",
 ];
 /** A GitHub token by its look, whatever the variable holding it is called (an npm registry's, say). */
 const GITHUB_TOKEN = /^\s*(gh[pousr]_|github_pat_)/;

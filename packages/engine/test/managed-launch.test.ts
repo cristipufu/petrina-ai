@@ -55,7 +55,7 @@ for (const toolId of ["claude-code", "codex", "grok", "antigravity"]) it(`${tool
   const fakes = new Fakes(cwd); fakes.scenario({ reopen: "resume" });
   const file = join(cwd, "received.json"), command = join(cwd, "capture.ts");
   await Bun.write(command, `await Bun.write(${JSON.stringify(file)}, JSON.stringify(process.env)); await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
-    const env = { PATH: process.env.PATH, CODEX_PATH: "/other-clone/codex-background.ts", PETRINA_CODEX_WRAPPER: "/other-clone/codex-background.ts", PETRINA_CODEX_EXECUTABLE: "/custom/codex", CLAUDECODE: "1", CODEX_THREAD_ID: "outer", GROK_SESSION_ID: "outer", GROK_MEMORY: "1" };
+  const env = { PATH: process.env.PATH, CODEX_PATH: "/other-clone/codex-background.ts", PETRINA_CODEX_WRAPPER: "/other-clone/codex-background.ts", PETRINA_CODEX_EXECUTABLE: "/custom/codex", CLAUDECODE: "1", CODEX_THREAD_ID: "outer", GROK_SESSION_ID: "outer", GROK_MEMORY: "1", PETRINA_LIFECYCLE_REPLACEMENT: "1", PETRINA_RECONNECT_PORT: "4317" };
   const options = { profile: { id: "fixture", toolId, model: "Opus", modelId: "opus", effort: "high" as const }, cwd, browser: false,
     env, command: [process.execPath, command, cwd], signal: new AbortController().signal,
     callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const },
@@ -68,7 +68,7 @@ for (const toolId of ["claude-code", "codex", "grok", "antigravity"]) it(`${tool
     run = await AgentRun.start({ ...options, reopen: session });
     expect(run.reopened).toBe("resume");
     const received = await Bun.file(file).json();
-    for (const key of ["CLAUDECODE", "CODEX_THREAD_ID", "GROK_SESSION_ID"]) expect(received[key]).toBeUndefined();
+    for (const key of ["CLAUDECODE", "CODEX_THREAD_ID", "GROK_SESSION_ID", "PETRINA_LIFECYCLE_REPLACEMENT", "PETRINA_RECONNECT_PORT"]) expect(received[key]).toBeUndefined();
     expect(ownSession(received).CODEX_PATH).toBe("/custom/codex");
     expect(received.GROK_MEMORY).toBe(toolId === "grok" ? "0" : "1");
     expect(env.GROK_MEMORY).toBe("1");
