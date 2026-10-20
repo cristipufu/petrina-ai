@@ -146,7 +146,9 @@ export class UsageCoordinator {
     // ones we couldn't check. Before checks have run, keep the existing installed-tool selection.
     let candidates = checked ? {
       ...state,
-      profiles: state.profiles.filter((profile) => usable.includes(profile.toolId)),
+      // With no usable tool at all, let the planned tool reach its readiness guard so
+      // the task gets a login/install request, rather than a misleading usage wait.
+      profiles: state.profiles.filter((profile) => usable.includes(profile.toolId) || (!usable.length && profile.id === plannedId)),
       tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
     } : state;
     if (roleId !== undefined && this.k.role(roleId)?.result === "votes") {
