@@ -36,10 +36,12 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) it(`stops its parallel work
   const record = join(fixture, `${signal}.json`);
   const test = join(fixture, `${signal}.test.ts`);
   writeFileSync(test, `import { it } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 it("waits to be interrupted", async () => {
-  writeFileSync(${JSON.stringify(record)}, JSON.stringify({ folder: tmpdir(), pid: process.pid }));
+  const record = ${JSON.stringify(record)};
+  writeFileSync(record + ".tmp", JSON.stringify({ folder: tmpdir(), pid: process.pid }));
+  renameSync(record + ".tmp", record);
   await Bun.sleep(60_000);
 }, 90_000);`);
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], { cwd: fixture, env: testGitEnv(), stdin: "ignore", stdout: "ignore", stderr: "ignore" });
