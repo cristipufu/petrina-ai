@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// petrina serve [--new-key] — start the engine and its local API by hand (keeps its key across restarts).
+// petrina serve [--new-key] [--debug-sql] — start the engine and its local API by hand (keeps its key across restarts).
 // petrina app     — the engine the desktop app starts (see launch.ts). Not for terminals.
 // petrina state   — print the engine's state (for scripts).
 // petrina do <action-json> — run one action, e.g. '{"name":"addTask","args":[{...}]}'.
@@ -60,8 +60,9 @@ async function open(dev: boolean): Promise<void> {
 
 const [command, ...rest] = process.argv.slice(2);
 const newKey = rest.includes("--new-key");
-if (command === "serve") await launch({ home, mode: "serve", port: Number(process.env.PETRINA_PORT || 4317), newKey, ...(existsSync(ui) ? { ui } : {}) });
-else if (command === "app") await launch({ home, mode: "app", ...(existsSync(ui) ? { ui } : {}) });
+const debugSql = rest.includes("--debug-sql") || process.env.PETRINA_DEBUG_SQL === "1";
+if (command === "serve") await launch({ home, mode: "serve", engine: { debugSql }, port: Number(process.env.PETRINA_PORT || 4317), newKey, ...(existsSync(ui) ? { ui } : {}) });
+else if (command === "app") await launch({ home, mode: "app", engine: { debugSql }, ...(existsSync(ui) ? { ui } : {}) });
 else if (command === "open") await open(rest.includes("--dev"));
 else if (command === "state") console.log(JSON.stringify(await call("/api/state"), null, 2));
 else if (command === "do") console.log(JSON.stringify(await call("/api/action", { method: "POST", body: rest.join(" ") }), null, 2));

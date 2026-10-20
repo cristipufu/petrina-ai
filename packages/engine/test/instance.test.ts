@@ -18,7 +18,7 @@ afterAll(() => removeDir(root));
 describe("one engine per Petrina folder", () => {
   it("is ready on a free port, tells only the shell its key, and writes the connection file for scripts", async () => {
     const home = newHome();
-    const engine = await app(home);
+    const engine = await EngineProcess.start(home, [CLI, "app", "--debug-sql"]);
     expect(engine.hello).toMatchObject({ type: "ready", owned: true });
     const connection = readConnection(home)!;
     if (engine.hello.type !== "ready") throw new Error("not ready");
@@ -38,6 +38,13 @@ describe("one engine per Petrina folder", () => {
     // The key is in no log and no other output.
     expect(log).not.toContain(connection.token);
     expect(await new Response(engine.proc.stderr).text()).not.toContain(connection.token);
+    const sql = readFileSync(join(home, "sql-executions.jsonl"), "utf8");
+    expect(sql).toContain('"sql":"');
+    expect(sql).not.toContain(connection.token);
+    expect(sql.trim().split("\n").every(line => {
+      const row = JSON.parse(line);
+      return typeof row.sql === "string" && typeof row.ms === "number" && new Date(row.at).toISOString() === row.at;
+    })).toBe(true);
   });
 
   it("steps aside for the engine that holds the folder, leaving its connection file and log alone", async () => {
@@ -47,13 +54,14 @@ describe("one engine per Petrina folder", () => {
     const logPath = join(home, "engine.log");
     const logBefore = { text: readFileSync(logPath, "utf8"), changed: statSync(logPath).mtimeMs };
 
-    const second = await app(home);
+    const second = await EngineProcess.start(home, [CLI, "app", "--debug-sql"]);
     if (first.hello.type !== "ready") throw new Error("not ready");
     expect(second.hello).toEqual({ type: "running", owned: false, url: first.hello.url, token: first.hello.token });
     expect(await second.exited(10_000)).toBe(0);
     expect(readFileSync(connectionPath(home), "utf8")).toBe(connectionBefore);
     expect(readFileSync(logPath, "utf8")).toBe(logBefore.text);
     expect(statSync(logPath).mtimeMs).toBe(logBefore.changed);
+    expect(existsSync(join(home, "sql-executions.jsonl"))).toBe(false);
 
     // Started by hand while it runs: a plain refusal.
     const byHand = spawnEngine([CLI, "serve"], home);

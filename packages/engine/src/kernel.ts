@@ -84,6 +84,8 @@ function newerWords(session: MTask["session"], index: number, line: MTask["sessi
 export const MAX_TIMELINE = 400;
 
 export interface EngineOptions {
+  /** Record every shared SQLite driver execution, without bindings or results, for local analysis. */
+  debugSql?: boolean;
   /** The launcher opens scheduling only once the local connection is ready. */
   admissionsClosed?: boolean;
   /** Tests: run a fake agent instead of the tool's adapter. */
@@ -236,7 +238,7 @@ export abstract class Kernel {
     // Launch awaits startupReady to report recovery failures. Consume an otherwise
     // unobserved rejection for direct Engine users while leaving the original promise rejectable.
     void this.startupReady.catch(() => undefined);
-    this.store = new Store(join(dataDir, "petrina.db"));
+    this.store = new Store(join(dataDir, "petrina.db"), { debugSql: options.debugSql });
     const loaded = this.store.loadActive((state) => { for (const task of state.tasks) restoreRepositoryState(task as MTask); renameRoles(state as MState); });
     this.s = (loaded ?? this.empty()) as MState;
     this.s.backgroundAgents = [];

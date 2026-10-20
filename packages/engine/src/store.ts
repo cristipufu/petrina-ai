@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { copyNoLongerNeeded, displayTask, finishedTask, type Id, type State, type Task } from "@petrina/core";
 import { TaskHistory } from "./history-store.js";
+import { logSqlExecutions, SqlExecutionLog } from "./sql-log.js";
 
 /** A stopped/finished task still involved in delivery or removing its copy stays in runtime state. */
 export function settledHistoryTask(task: Task): boolean {
@@ -22,9 +23,13 @@ export class Store {
   readonly history: TaskHistory;
   private activeIds: Set<Id>;
 
-  constructor(path: string) {
+  constructor(path: string, options: { debugSql?: boolean } = {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new Database(path, { create: true });
+    if (options.debugSql) {
+      try { logSqlExecutions(this.db, new SqlExecutionLog(dirname(path))); }
+      catch (error) { this.db.close(); throw error; }
+    }
     this.db.run("PRAGMA journal_mode = WAL");
     this.db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)");
     this.db.run("CREATE TABLE IF NOT EXISTS active_tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
