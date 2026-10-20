@@ -1223,7 +1223,7 @@ kbd {
 .assignment-reason { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--text-2); }
 .assignment-reason summary { cursor: pointer; width: fit-content; }
 .assignment-reason p { margin: 8px 0 0; max-width: 40rem; }
-.agent-selection { margin: 16px 0; padding: 12px 0; border-block: 1px solid var(--line); }
+.agent-selection { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
 .agent-selection p { margin: 8px 0; }
 /* Your messages waiting for the agent: in the conversation, outlined until they are delivered. */
 .msg.queued .name { flex-wrap: wrap; align-items: center; }
@@ -2086,10 +2086,13 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-review-group > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
 .journey-review-group > .note { margin-bottom: 8px; font-size: var(--fs-meta); }
 .journey-input-record { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
-.journey-input-record summary { color: var(--text); font-size: var(--fs-control); font-weight: 600; cursor: pointer; }
-.journey-input-record summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+.journey-agent-start { display: grid; gap: 8px; min-width: 0; }
+:is(.journey-input-record, .agent-selection) summary { color: var(--text); font-size: var(--fs-control); font-weight: 600; cursor: pointer; }
+:is(.journey-input-record, .agent-selection) summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
 .journey-input-record[open] summary { margin-bottom: 2px; }
 .journey-input-record h4 { margin: 0; color: var(--text-2); }
+.journey-input-record > div { margin-top: 12px; }
+.journey-input-record > div:not(.journey-input-updates), .journey-input-updates > div { display: grid; gap: 4px; }
 .journey-input-record .quiet-text { font-size: var(--fs-meta); }
 .journey-input-record p:not(.quiet-text):not(.note) { white-space: pre-wrap; }
 .journey-input-updates { display: grid; gap: 12px; }

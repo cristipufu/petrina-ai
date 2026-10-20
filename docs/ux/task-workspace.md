@@ -100,7 +100,7 @@ The scroll wheel pans the canvas independently of the task list and details; dra
 
 Clicking a box switches the right panel to that step: tool, model and effort, start, elapsed time, outcome, why it moved on, what it asked you, its part of the timeline and its conversation inline. Overview also shows that step’s findings, design objections or answers to objections, recorded at handoff so later rounds cannot rewrite them. Older details use available linked records and label their latest status.
 
-Plan assignments offer a collapsed “Why this agent” explanation. Each recorded node input keeps the original assignment, requested and selected profiles, the engine's selection reason and the tool's settings confirmed at startup. A coordinator edit is labelled as their choice; an older missing explanation is not invented.
+Plan assignments offer a collapsed “Why this agent” explanation. Node Overview has a separate collapsed “Agent choice” section for the original assignment, requested and selected profiles, the engine's selection reason and the tool's settings confirmed at startup. This information is recorded for the coordinator and stays outside the input given to the agent. A coordinator edit is labelled as their choice; an older missing explanation is not invented.
 
 The input disclosure shows the job instructions and context actually sent at that start, with later answers, messages, result corrections and interruption continuations below them. A repeated start keeps the earlier input. Instructions are captured when sent, so later role edits or task changes cannot rewrite that history; an older missing job is labelled as unrecorded.
 

@@ -259,6 +259,10 @@ describe('the journey in the task sheet', () => {
     expect(details.querySelector('.journey-job')?.textContent).toContain(fixInput.instructions);
     expect(details.querySelector('.journey-input-updates')?.textContent).toContain(fixInput.updates[0]!.text);
     expect(details.textContent).toContain('Agent choice');
+    const sentInput = details.querySelector('.journey-input-record')!;
+    expect(sentInput.querySelector('.agent-selection')).toBeNull();
+    expect(sentInput.textContent).not.toContain(fixInput.selectionReason);
+    expect(details.querySelector('.agent-selection')?.textContent).toContain(fixInput.selectionReason);
     expect(details.textContent).toContain('The planned profile reached its weekly limit.');
     expect(details.textContent).toContain('Tool confirmed at start: confirmed-model');
     expect(details.textContent).toContain('Type checks and all tests pass.');
