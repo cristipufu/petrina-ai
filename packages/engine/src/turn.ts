@@ -187,7 +187,7 @@ export class Turns {
   }
 
   /** Save the role-specific context at the moment it is handed to an agent, not reconstructed later. */
-  private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued", plannedId: Id, selectionReason?: string, reviewerKey?: string, confirmedSettings?: { model?: string; modelName?: string; effort?: string }): void {
+  private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued", plannedId: Id, selectionReason: string | undefined, reviewerKey: string | undefined, confirmedSettings: { model?: string; modelName?: string; effort?: string }, instructions: string): void {
     const { task } = scope;
     const step = openStep(task);
     if (step?.kind !== "agent") return;
@@ -197,9 +197,11 @@ export class Turns {
     const index = reviewerKey !== undefined ? Number(reviewerKey) : seats?.indexOf(plannedId) ?? -1;
     const assignedRole = designReview ? stage?.reviewerRoleId ?? "design-reviewer" : stage?.roleIds?.[index] ?? stage?.roleId;
     const assignment = assignedRole === roleId ? (designReview ? stage?.reviewerAssignments : stage?.assignments)?.[index] : undefined;
-    const previous = step.agentInputs?.find(entry => entry.roleId === roleId && entry.profileId === profileId && entry.reviewerKey === reviewerKey);
+    const previous = step.agentInputs?.findLast(entry => entry.roleId === roleId && entry.profileId === profileId && entry.reviewerKey === reviewerKey);
     const reason = selectionReason || previous?.selectionReason;
     const input = {
+      at: Date.now(),
+      instructions,
       requestedProfileId: plannedId,
       ...(reason ? { selectionReason: reason } : {}),
       ...(reviewerKey !== undefined ? { reviewerKey } : {}),
@@ -215,7 +217,8 @@ export class Turns {
       sections: sections.map(({ title, body }) => ({ title, body })),
       mode,
     } as const;
-    step.agentInputs = [...(step.agentInputs ?? []).filter((entry) => entry.roleId !== roleId || entry.profileId !== profileId || entry.reviewerKey !== reviewerKey), input];
+    // Another start on this seat is another input, never a rewrite of what it heard before.
+    step.agentInputs = [...(step.agentInputs ?? []), input];
     this.k.commitNow(scope);
   }
 
@@ -387,8 +390,7 @@ export class Turns {
           previous, design: options.designContext, knownSections: back?.knownSections,
         });
         const sections = prepared.sections;
-        this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings);
-        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole });
+        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole, recordJob: (job) => this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job) });
       } else if (picked) {
         // One line about the restart (or the hand back, or that it may now use the screen), then only what the conversation
         // has not heard: the answer to its open question, and messages still in line.
@@ -421,8 +423,7 @@ export class Turns {
         if ((role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
           await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true });
         }
-        this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings);
-        opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) });
+        opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, (job) => this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job));
       }
       if (screen) screen.heard = true;
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
@@ -620,9 +621,9 @@ export class Turns {
       const note: ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
       const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, note, { packet: options.reviewContext, previous: wentBack ? offered?.context : undefined });
       const sections = prepared.sections;
-      this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings);
       const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
-      const opening = wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole }) : buildPrompt(promptContext);
+      const recordJob = (job: string) => this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, job);
+      const opening = wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole, recordJob }) : buildPrompt(promptContext, recordJob);
       const result = await this.converse(scope, run, agent, opening, "first", role, profileId, schema, signal, {
         ...options,
         main: false,
@@ -666,11 +667,26 @@ export class Turns {
    * coordinator, and an unusable result back to it twice at most. Each parallel conversation hears
    * its own share of the coordinator's messages. An open question stays with the conversation that asked it.
    */
-  private async converse<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string }): Promise<T> {
+  private async converse<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string }): Promise<T> {
     const { task, work: repository } = scope;
     const by = { roleId: role.id, profileId };
     // Every message to the agent and the reply it waits for is one entry in the work log.
-    const send = (text: string, why: TurnReason) => this.k.tracking.turn(scope, agent, run, text, why, signal);
+    const send = (text: string, why: TurnReason) => {
+      if (signal.aborted) throw new Aborted();
+      if (why !== "first") {
+        const step = openStep(task);
+        if (step?.kind === "agent") {
+          let input = step.agentInputs?.findLast(entry => entry.roleId === role.id && entry.profileId === profileId && entry.reviewerKey === options.reviewerKey);
+          if (!input) {
+            input = { at: Date.now(), roleId: role.id, profileId, ...(options.reviewerKey !== undefined ? { reviewerKey: options.reviewerKey } : {}), taskTitle: task.title, mode: "continued", sections: [] };
+            step.agentInputs = [...(step.agentInputs ?? []), input];
+          }
+          input.updates = [...(input.updates ?? []), { at: Date.now(), reason: why, text }];
+          this.k.commitNow(scope);
+        }
+      }
+      return this.k.tracking.turn(scope, agent, run, text, why, signal);
+    };
     const sendQueued = (batch: ReturnType<typeof takeMessages>) => {
       for (const message of batch) if (message.firstDelivery) {
         this.k.say(scope, "you", message.text);

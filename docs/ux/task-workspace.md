@@ -102,6 +102,8 @@ Clicking a box switches the right panel to that step: tool, model and effort, st
 
 Plan assignments offer a collapsed “Why this agent” explanation. Each recorded node input keeps the original assignment, requested and selected profiles, the engine's selection reason and the tool's settings confirmed at startup. A coordinator edit is labelled as their choice; an older missing explanation is not invented.
 
+The input disclosure shows the job instructions and context actually sent at that start, with later answers, messages, result corrections and interruption continuations below them. A repeated start keeps the earlier input. Instructions are captured when sent, so later role edits or task changes cannot rewrite that history; an older missing job is labelled as unrecorded.
+
 Finding details keep the finding and its recorded review evidence together; the builder’s full messages belong in Conversation instead of a repeated metadata block. Every active agent node has a fixed footer on all three tabs: a message section collapsed by default, with the field above Queue/Interrupt and Send when opened, then a separate terminal takeover row. Collapsing keeps a draft; the Message shortcut opens and focuses it. Finished nodes have no live controls.
 
 Agent actions expand in place, collapsed by default. Clicking the same step again, the blank canvas, or Back to task returns to the previous task tab and reading position. Typed answers, messages and notes stay intact. Faint steps say what is planned and link to the Plan tab.

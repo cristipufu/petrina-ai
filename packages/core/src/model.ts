@@ -3,7 +3,7 @@ import type { Task } from "./task-model.js";
 // Everything here is plain data so it can be stored, diffed and rendered.
 import type { TaskSource, WorkChoice } from "./source.js";
 
-import type { WorkInfo } from "./worklog.js";
+import type { TurnReason, WorkInfo } from "./worklog.js";
 import type { CheckId, Setup } from "./setup.js";
 
 export type Id = string;
@@ -319,8 +319,9 @@ export interface JourneyProductCheck {
   detail?: string;
 }
 
-/** Plain-language context sections handed to one agent when its journey step starts. */
+/** The job and task context actually handed to one agent, captured before sending. */
 export interface JourneyAgentInput {
+  at?: number;
   roleId: Id;
   profileId: Id;
   /** Distinguishes reviewer seats even when their role and profile are identical. */
@@ -334,7 +335,11 @@ export interface JourneyAgentInput {
   /** Present when this start included the task request; continued prompts only add updated context. */
   taskDescription?: string;
   stageTitle?: string;
+  /** The role's job for this particular start, including runtime changes such as conflict repair. */
+  instructions?: string;
   sections: readonly { title: string; body: string }[];
+  /** Further instructions sent in this step: answers, repairs, messages and interruption resumes. */
+  updates?: readonly { at: number; reason: TurnReason; text: string }[];
   mode: "fresh" | "continued";
 }
 

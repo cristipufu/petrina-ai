@@ -121,6 +121,11 @@ describe.concurrent("work brought up to date with main", () => {
   it("sends a first-review conflict to the builder, then every planned reviewer looks at the whole change", async () => {
     const { task, fakes, repo, before, deliveryChecks } = await ship({}, { beforeBuild: (repo) => land(repo, "greeting.txt", "Hi from main\n", "A greeting on main") });
     const text = lines(task);
+    const updateStep = task.journey!.find(step => step.kind === "agent" && step.update)!;
+    const input = updateStep.agentInputs![0]!;
+    expect(input.instructions).toContain("these files still have git's conflict markers: greeting.txt");
+    expect(input.instructions).toContain("keep main's version of everything this task did not change");
+    expect(fakes.prompts("builder").some(prompt => prompt.includes(input.instructions!))).toBe(true);
     expect(text).toContain("Main moved on (1 new commit) and 1 file conflicts with this work, so the builder brings it up to date");
     expect(text).toContain("Brought up to date with main: Added a greeting.");
     // The builder was told what conflicts and where to learn what main changed.

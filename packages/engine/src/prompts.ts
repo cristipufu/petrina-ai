@@ -159,10 +159,12 @@ Browser output belongs only in ${directory}, outside product files. Named captur
 Results that hand back notes, objections, a build, acceptance checks or findings may include an optional "images" array: [{"path":"a capture filename or its absolute path in that folder","caption":"What the picture demonstrates, in plain language"}]. Choose only pictures you want the coordinator to see; each needs a nonempty caption. Tool images are not automatically attached. Petrina preserves validated chosen captures with your report, then removes temporary browser files.`;
 }
 
-export function buildPrompt(ctx: PromptContext): string {
+export function buildPrompt(ctx: PromptContext, recordJob?: (instructions: string) => void): string {
   if (ctx.sections.some((section) => section.title === PREPARED_REVIEW)) ctx = { ...ctx, preparedReview: true };
   const { task, product, role, worktree, branch } = ctx;
   const contract = contractFor(role);
+  const job = `${contract.instructions(ctx)}${roleCard(ctx)}`;
+  recordJob?.(job);
   const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
   const sections = [...map, ...ctx.sections].map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
   return `You are the ${role.name} in Petrina, a squad of AI agents working on the product "${product.name}" (${product.repo}).
@@ -182,7 +184,7 @@ ${INVESTIGATION_RULE}
 ${task.description || "(no further description)"}
 
 # Your job
-${contract.instructions(ctx)}${roleCard(ctx)}
+${job}
 
 ${sections}
 
@@ -194,10 +196,12 @@ ${RESULT_FOOTER(shapeFor(contract, ctx))}`;
  * For an agent going back to its own conversation with the next piece of work on the same task: what it
  * already knows still holds, so it gets its job as it stands now and the context, without the introduction.
  */
-export function continuePrompt(ctx: PromptContext, options: { refreshRole?: boolean } = {}): string {
+export function continuePrompt(ctx: PromptContext, options: { refreshRole?: boolean; recordJob?: (instructions: string) => void } = {}): string {
   if (ctx.sections.some((section) => section.title === PREPARED_REVIEW)) ctx = { ...ctx, preparedReview: true };
   const { task } = ctx;
   const contract = contractFor(ctx.role);
+  const job = `${contract.instructions(ctx)}${options.refreshRole ? roleCard(ctx) : ""}`;
+  options.recordJob?.(job);
   const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility" || section.title === "Current authoritative task context") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
   const sections = [...map, ...ctx.sections].map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
   return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}).${ctx.base ? ` The current base version is ${ctx.base}.` : ""} What you learned before still holds; here is where things stand now.
@@ -205,7 +209,7 @@ export function continuePrompt(ctx: PromptContext, options: { refreshRole?: bool
 # Your job now
 ${INVESTIGATION_RULE}
 
-${contract.instructions(ctx)}${options.refreshRole ? roleCard(ctx) : ""}
+${job}
 
 ${sections}
 

@@ -237,6 +237,8 @@ describe('the journey in the task sheet', () => {
     fixInput.requestedProfileId = state.profiles[0]!.id;
     fixInput.selectionReason = 'The planned profile reached its weekly limit.';
     fixInput.confirmedSettings = { model: 'confirmed-model', effort: 'high' };
+    fixInput.instructions = 'Correct the missing shipping fee, then check the total after changing delivery.';
+    fixInput.updates = [{ at: NOW, reason: 'answer', text: 'The coordinator answered: keep the selected delivery method.' }];
     task.findings = [...task.findings, { id: 'finding-fix-1', text: 'The checkout total drops the selected shipping fee.', severity: 'blocking', raisedBy: 'code-reviewer', confirmedBy: [], status: 'open', answer: { fixed: false, text: 'The work still needs a correction.', at: NOW }, evidence: 'The displayed total excludes shipping after changing the delivery method.' }];
     task.brief = { summary: 'Keep the checkout total accurate.', forUsers: [], areas: [], risks: [], acceptance: [
       { text: 'Type checks and all tests pass.', verification: 'failed', met: false },
@@ -254,6 +256,8 @@ describe('the journey in the task sheet', () => {
     expect(details.textContent).not.toContain('Task request');
     expect(details.textContent).not.toContain(task.description);
     expect(details.textContent).toContain('Input given to Builder');
+    expect(details.querySelector('.journey-job')?.textContent).toContain(fixInput.instructions);
+    expect(details.querySelector('.journey-input-updates')?.textContent).toContain(fixInput.updates[0]!.text);
     expect(details.textContent).toContain('Agent choice');
     expect(details.textContent).toContain('The planned profile reached its weekly limit.');
     expect(details.textContent).toContain('Tool confirmed at start: confirmed-model');

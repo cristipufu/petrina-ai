@@ -2091,6 +2091,8 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-input-record[open] summary { margin-bottom: 2px; }
 .journey-input-record h4 { margin: 0; color: var(--text-2); }
 .journey-input-record .quiet-text { font-size: var(--fs-meta); }
+.journey-input-record p:not(.quiet-text):not(.note) { white-space: pre-wrap; }
+.journey-input-updates { display: grid; gap: 12px; }
 .journey-check-list { list-style: none; display: grid; gap: 8px; padding: 0; margin: 0; }
 .journey-check-list li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }
 .journey-check-list li > span:not(.label) { color: var(--text-2); }

@@ -68,7 +68,7 @@ it("reuses unchanged context across companion base updates, but not a changed ap
     const task = createDemoState(1_000_000_000).tasks[0]!;
     const role = BUILT_IN_ROLES.find((entry) => entry.result === "build")!;
     const source = { product: { id: "api", name: "API", repo: "owner/api" }, start: { kind: "branch" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: "owner/api", branch: "main" }, confirmed: true };
-    const repository = { ...task.repository, productId: "api", source, baseSha: "old-main", worktree: "/copies/api" };
+    const repository = { productId: "api", delivery: task.delivery, completedStages: [], source, baseSha: "old-main", worktree: "/copies/api" };
     const shared = { ...task, repositories: [repository] };
     const sections = [{ title: "Design brief", body: "Keep this requirement" }, { title: "Current product checks", body: "All passing on the new main" }];
     const first = await builderContext(root, shared, role, "same-session", sections);

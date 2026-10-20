@@ -669,12 +669,12 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
           <p>{previousJourneyStep
             ? `${priorName ?? "The previous step"}${priorResult ? ` handed it on: ${priorResult}.` : " finished, so this step began."}`
             : "This was the first agent step in the plan."}</p>
-          {inputs.length > 0 ? inputs.map((input) => {
+          {inputs.length > 0 ? inputs.map((input, index) => {
             const inputRole = find.role(input.roleId)?.name ?? input.roleId;
             const profile = find.profile(input.profileId);
-            return <details className="journey-input-record" key={`${input.roleId}:${input.profileId}:${input.reviewerKey ?? "main"}`}>
+            return <details className="journey-input-record" key={`${input.roleId}:${input.profileId}:${input.reviewerKey ?? "main"}:${index}`}>
               <summary>Input given to {inputRole}{inputs.length > 1 && profile ? ` (${profileText(profile, find, true)})` : ""}</summary>
-              <p className="quiet-text">{input.mode === "continued" ? "Updated context for its existing conversation." : "Context for a fresh conversation."}{input.stageTitle ? ` Assigned stage: ${input.stageTitle}.` : ""}</p>
+              <p className="quiet-text">{input.mode === "continued" ? "Updated job and context for its existing conversation." : "Job and context for a fresh conversation."}{input.stageTitle ? ` Assigned stage: ${input.stageTitle}.` : ""}{input.at !== undefined ? ` Sent ${since(input.at, now)}.` : ""}</p>
               {input.requestedProfileId && <div className="agent-selection">
                 <h4>Agent choice</h4>
                 <p>Requested: {profileText(find.profile(input.requestedProfileId), find, true) || "A profile no longer in the Library"}</p>
@@ -689,10 +689,21 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
                 <h4>Task request</h4>
                 <p>{input.taskDescription}</p>
               </div>}
+              {input.instructions ? <div className="journey-job">
+                <h4>Job instructions</h4>
+                <p>{input.instructions}</p>
+              </div> : <p className="note">Job instructions were not recorded for this start.</p>}
               {input.sections.length ? input.sections.map((section) => <div key={section.title}>
                 <h4>{section.title}</h4>
                 <p>{section.body}</p>
               </div>) : <p className="note">No additional task context was recorded for this step.</p>}
+              {!!input.updates?.length && <div className="journey-input-updates">
+                <h4>Further instructions</h4>
+                {input.updates.map((update, updateIndex) => <div key={updateIndex}>
+                  <p className="quiet-text">{update.reason === "message" ? "Coordinator message" : update.reason === "answer" ? "Answer to its question" : update.reason === "redo" ? "Result correction" : "Continuation"} · {since(update.at, now)}</p>
+                  <p>{update.text}</p>
+                </div>)}
+              </div>}
             </details>;
           }) : <p className="note">The exact context given to this older step was not saved.</p>}
         </div>;

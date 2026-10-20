@@ -46,7 +46,7 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
 
 describe("the engine records each task's journey", () => {
   it("keeps separate input records for parallel reviewer seats on the same available profile", async () => {
-    const { engine, productId } = await setup();
+    const { engine, productId, fakes } = await setup();
     try {
       engine.setPoolPaused(true);
       await waitFor(() => !engine.s.setup?.checks.some(check => check.checking), "initial tool checks");
@@ -62,6 +62,7 @@ describe("the engine records each task's journey", () => {
       expect(inputs.map(input => input.reviewerKey).sort()).toEqual(["0", "1"]);
       expect(new Set(inputs.map(input => input.profileId)).size).toBe(1);
       expect(inputs.every(input => input.selectionReason)).toBe(true);
+      for (const input of inputs) expect(fakes.prompts().some(prompt => prompt.includes(input.instructions!))).toBe(true);
     } finally { await engine.shutdown(); }
   });
   it("names the planner that can run as tool readiness changes, including after a restart", async () => {
@@ -89,7 +90,7 @@ describe("the engine records each task's journey", () => {
   });
 
   it.each(["engine", "window"] as const)("one step per agent and check, with outcomes, reasons, questions and tagged lines (%s answer)", async (from) => {
-    const { engine, productId } = await setup();
+    const { engine, productId, fakes } = await setup();
     const id = engine.addTask({ productId, title: "Add a greeting", description: "A friendly greeting file." });
     await until(engine, (state) => ["done", "failed"].includes(state.tasks.find((task) => task.id === id)!.state), (squad, kind, itemId) => {
       if (kind !== "question") return false;
@@ -128,10 +129,15 @@ describe("the engine records each task's journey", () => {
         expect(input.requestedProfileId).toBeString();
         expect(input.selectionReason).toBeString();
         expect(input.confirmedSettings?.model).toBeString();
+        expect(input.instructions).toBeString();
+        expect(fakes.prompts().some(prompt => prompt.includes(input.instructions!))).toBe(true);
+        for (const update of input.updates ?? []) expect(fakes.prompts()).toContain(update.text);
       }
     }
     const builder = task.journey!.find((step) => step.roleId === "builder")!;
     expect(builder.agentInputs?.[0]).toMatchObject({ taskTitle: "Add a greeting", taskDescription: "A friendly greeting file.", stageTitle: "Build", roleId: "builder" });
+    const architectInput = task.journey!.find(step => step.roleId === "architect")!.agentInputs![0]!;
+    expect(architectInput.updates?.some(update => update.reason === "answer" && update.text.includes("The coordinator answered:"))).toBe(true);
     expect(task.timeline.find((entry) => entry.text.startsWith("You allowed"))?.step).toBe(builder.id);
     expect(journeyProblems(task)).toEqual([]);
     engine.shutdown();
