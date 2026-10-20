@@ -77,7 +77,7 @@ export function browserTarget(update: ToolActivity): string | undefined {
 const TOOL_NAMES: Record<string, string> = {
   read: "read", readfile: "read", hashlineread: "read", listdir: "read",
   grep: "search", hashlinegrep: "search", glob: "search",
-  bash: "execute", shell: "execute", execcommand: "execute", runterminalcmd: "execute", runterminalcommand: "execute", monitor: "execute",
+  bash: "execute", shell: "execute", execcommand: "execute", runcommand: "execute", runterminalcmd: "execute", runterminalcommand: "execute", monitor: "execute",
   edit: "edit", write: "edit", searchreplace: "edit", hashlineedit: "edit", strreplace: "edit", editnotebook: "edit", applypatch: "edit",
   delete: "delete", websearch: "fetch", webfetch: "fetch", xsearch: "fetch",
 };
@@ -139,7 +139,8 @@ export function describeTool(update: ToolActivity): string {
 /** The agent's own one-line description of a command, when its tool gives one. */
 function purposeOf(rawInput: unknown): string | undefined {
   if (!rawInput || typeof rawInput !== "object") return undefined;
-  const value = (rawInput as { description?: unknown }).description;
+  const input = rawInput as { description?: unknown; toolAction?: unknown; toolSummary?: unknown };
+  const value = input.description ?? input.toolAction ?? input.toolSummary;
   if (typeof value !== "string") return undefined;
   const text = value.trim().replace(/\s+/g, " ");
   if (text.length < 3) return undefined;
@@ -158,8 +159,8 @@ export function isPlumbing(update: ToolActivity): boolean {
 
 export function commandOf(rawInput: unknown): string | undefined {
   if (!rawInput || typeof rawInput !== "object") return undefined;
-  const input = rawInput as { command?: unknown; cmd?: unknown };
-  const value = input.command ?? input.cmd;
+  const input = rawInput as { command?: unknown; cmd?: unknown; CommandLine?: unknown };
+  const value = input.command ?? input.cmd ?? input.CommandLine;
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.filter((part) => typeof part === "string").join(" ");
   return undefined;

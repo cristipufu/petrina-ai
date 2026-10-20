@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { browserTarget, describeTool, isPlumbing } from "../src/tool-activity.js";
+import { browserTarget, commandOf, describeTool, isPlumbing } from "../src/tool-activity.js";
 
 // Grok's saved ACP calls put the kind here instead of in ACP's top-level field.
 const grok = (name: string, kind: string, rawInput: unknown = {}) => ({ title: name, rawInput, _meta: { "x.ai/tool": { version: 1, name, kind, namespace: "grok_build" } } });
@@ -65,6 +65,18 @@ describe("plain agent activity across tools", () => {
     ]) expect(describeTool(call)).toBe("Running the tests");
     expect(describeTool(grok("run_terminal_command", "execute", { command: "date" }))).toBe("Running a command");
     expect(describeTool(grok("monitor", "monitor", { command: "bun run build" }))).toBe("Checking that it builds");
+  });
+
+  it("keeps Antigravity's native command and purpose visible for activity and permission decisions", () => {
+    const rawInput = { CommandLine: "git status -s && git rev-parse HEAD", Cwd: "/shop", toolAction: "Checking repository state", toolSummary: "Check git status and commit SHA" };
+    expect(commandOf(rawInput)).toBe("git status -s && git rev-parse HEAD");
+    expect(describeTool({ kind: "execute", rawInput })).toBe("Checking repository state");
+    expect(describeTool({ title: "run_command", rawInput })).toBe("Checking repository state");
+    expect(describeTool({ title: "run_command", rawInput: { CommandLine: "bun test", toolSummary: "Check the changed behavior" } })).toBe("Check the changed behavior");
+    // The native permission request can omit the purpose and carry only CommandLine.
+    expect(describeTool({ kind: "execute", title: "printf probe", rawInput: { CommandLine: "bun test" } })).toBe("Running the tests");
+    expect(commandOf({ command: ["bun", "test"] })).toBe("bun test");
+    for (const input of [undefined, null, "run_command", { CommandLine: 42 }]) expect(commandOf(input)).toBeUndefined();
   });
 
   it("also covers Grok's file changes and web lookups", () => {
