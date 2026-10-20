@@ -14,6 +14,7 @@ import { limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } 
 import { AgentMessages, type AgentMessage } from "./agent-messages.js";
 import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, type ToolActivity } from "./tool-activity.js";
 import type { AccountReading } from "./tool-adapter.js";
+import { ownSession } from "./env.js";
 
 export interface PermissionInfo {
   title: string;
@@ -312,7 +313,7 @@ export class AgentRun {
     if (signal.aborted) throw new Error("Stopped before the agent started");
 
     const [program, ...args] = options.command ?? adapter.command ?? ["node", adapterEntry(adapter)];
-    const env = { ...(options.env ?? process.env) };
+    const env = ownSession(options.env ?? process.env);
     adapter.prepareEnv?.(env);
 
     // windowsHide: no console window flashes up on Windows when an agent starts.

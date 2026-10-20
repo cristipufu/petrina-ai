@@ -37,7 +37,7 @@ export function parseDescendants(stdout: string, roots: readonly number[]): numb
 }
 
 export function readProcessList(timeout: number): Promise<string | undefined> {
-  return new Promise((resolve) => {
+  return new Promise<string | undefined>((resolve) => {
     execFile("ps", ["-A", "-o", "pid=,ppid="], { timeout }, (error, stdout) => resolve(error ? undefined : stdout));
-  });
+  }).catch(() => undefined); // A sandbox can reject the spawn synchronously.
 }

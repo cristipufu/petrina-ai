@@ -40,8 +40,10 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     prepareEnv: env => {
       env.CODEX_CONFIG = JSON.stringify({ ...JSON.parse(env.CODEX_CONFIG ?? "{}"), ...Object.fromEntries(BACKGROUND_FEATURES.map(feature => [`features.${feature}`, false])) });
       env.DISABLE_MCP_CONFIG_FILTERING = "true";
-      if (env.CODEX_PATH) env.PETRINA_CODEX_EXECUTABLE = env.CODEX_PATH;
-      env.CODEX_PATH = join(import.meta.dir, "codex-background.ts");
+      // A nested launch may inherit another working copy's wrapper. Retain its
+      // real target; wrapping CODEX_PATH again would launch wrappers recursively.
+      if (env.CODEX_PATH && env.CODEX_PATH !== env.PETRINA_CODEX_WRAPPER) env.PETRINA_CODEX_EXECUTABLE = env.CODEX_PATH;
+      env.CODEX_PATH = env.PETRINA_CODEX_WRAPPER = join(import.meta.dir, "codex-background.ts");
     },
     usageReader: { command: () => CODEX_USAGE_COMMAND, create: options => new CodexUsage(options), startGapMs: 0 },
     terminalArgs: ({ session, model, effort }) => ["resume", session, "--model", model, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=user", "--no-daemon"],

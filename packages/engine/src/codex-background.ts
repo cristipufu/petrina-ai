@@ -5,6 +5,8 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
+import { realpath } from "node:fs/promises";
+import { resolve } from "node:path";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 
 export const BACKGROUND_FEATURES = ["apps", "plugins", "computer_use", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser"];
@@ -32,10 +34,16 @@ export function backgroundConfig(config: Record<string, unknown>, inherited: Rec
   return withoutNulls({ ...config, ...controls, mcp_servers: mcp }) as Record<string, unknown>;
 }
 
-async function main() {
+export async function backgroundCommand(executable: string | undefined): Promise<string[]> {
+  if (executable && await realpath(resolve(executable)).catch(() => resolve(executable)) === await realpath(import.meta.path)) {
+    throw new Error("Codex could not start because its launcher points back to itself. Restart Petrina before trying again.");
+  }
   const require = createRequire(adapterEntry(ADAPTERS.codex!));
-  const executable = process.env.PETRINA_CODEX_EXECUTABLE;
-  const command = executable ? [executable] : [process.execPath, require.resolve("@openai/codex/bin/codex.js")];
+  return executable ? [executable] : [process.execPath, require.resolve("@openai/codex/bin/codex.js")];
+}
+
+async function main() {
+  const command = await backgroundCommand(process.env.PETRINA_CODEX_EXECUTABLE);
   const args = [...process.argv.slice(2), ...BACKGROUND_FEATURES.flatMap((feature) => ["-c", `features.${feature}=false`])];
   const child = spawn(command[0]!, [...command.slice(1), ...args], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   child.stderr.pipe(process.stderr);

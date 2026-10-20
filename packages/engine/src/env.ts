@@ -61,6 +61,14 @@ export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export function ownSession(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const clean = { ...env };
   for (const name of SESSION_VARS) delete clean[name];
+  // Restore the user's executable before any provider is launched. A managed
+  // agent may start another engine or connector, including from another clone.
+  if (clean.PETRINA_CODEX_WRAPPER && clean.CODEX_PATH === clean.PETRINA_CODEX_WRAPPER) {
+    if (clean.PETRINA_CODEX_EXECUTABLE) clean.CODEX_PATH = clean.PETRINA_CODEX_EXECUTABLE;
+    else delete clean.CODEX_PATH;
+  }
+  delete clean.PETRINA_CODEX_WRAPPER;
+  delete clean.PETRINA_CODEX_EXECUTABLE;
   return clean;
 }
 
