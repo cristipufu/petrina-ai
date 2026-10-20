@@ -1,4 +1,5 @@
 import { repositoryView, type RepositoryContext } from "./repository-context.js";
+import { completeAll } from "./parallel.js";
 import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -214,7 +215,6 @@ export class Turns {
     if (!repository.worktree) mkdirSync(workingCopy, { recursive: true });
     const taskId = task.id;
     const worktree = options.copy ?? workingCopy;
-    const protectedCopies = task.repositories && !options.copy ? await Promise.all(task.repositories.filter((work) => work.worktree && work.productId !== repository.productId).map(async (work) => ({ path: work.worktree!, sha: await git.head(work.worktree!) }))) : [];
     // Paused, cancelled or stopped while getting here: no agent starts, and the task stays as the coordinator left it.
     if (signal.aborted) throw new Aborted();
     this.mustBeReady(profile);
@@ -300,7 +300,10 @@ export class Turns {
     // How its turns are written down in the work log, with its own waits for the coordinator left out of its time.
     const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
-    const head = same?.head ?? (worktree ? await git.head(worktree).catch(() => undefined) : undefined);
+    const [head, protectedCopies] = await Promise.all([
+      same?.head ?? (worktree ? git.head(worktree).catch(() => undefined) : undefined),
+      task.repositories && !options.copy ? Promise.all(task.repositories.filter((work) => work.worktree && work.productId !== repository.productId).map(async (work) => ({ path: work.worktree!, sha: await git.head(work.worktree!) }))) : [],
+    ]);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
     const start = (sessionId?: string, sandbox?: ClaudeSandbox, command = this.k.options.agentCommand?.(profile)): Promise<AgentRun> =>
       AgentRun.start({
@@ -502,22 +505,25 @@ export class Turns {
       this.k.syncIdleSleep();
       // Nothing the agent started may still write in the working copy once the step is over.
       await run.stop();
-      for (const copy of protectedCopies) {
-        const state = await git.worktreeStatus(copy.path);
-        if (state.head !== copy.sha) await git.resetTo(copy.path, copy.sha);
-        if (!state.clean) await git.discardChanges(copy.path);
-      }
-      // A read-only role runs in its tool's automatic mode, so it could change things: leave the
-      // working copy exactly as the step first found it, commits and uncommitted changes alike.
-      const state = !role.canEdit && headBefore ? await git.worktreeStatus(worktree) : undefined;
-      if (headBefore && state?.head !== headBefore) {
-        await git.resetTo(worktree, headBefore);
-        this.k.log(scope, "warn", `Undid commits from ${role.name}, which is read-only`);
-      }
-      if (state && !state.clean) {
-        await git.discardChanges(worktree);
-        this.k.log(scope, "warn", `Undid changes from ${role.name}, which is read-only`);
-      }
+      await completeAll([
+        ...protectedCopies.map(async (copy) => {
+          const state = await git.worktreeStatus(copy.path);
+          if (state.head !== copy.sha) await git.resetTo(copy.path, copy.sha);
+          if (!state.clean) await git.discardChanges(copy.path);
+        }),
+        // A read-only role leaves its primary copy as found, including commits and tracked changes.
+        ...(!role.canEdit && headBefore ? [(async () => {
+          const state = await git.worktreeStatus(worktree);
+          if (state.head !== headBefore) {
+            await git.resetTo(worktree, headBefore);
+            this.k.log(scope, "warn", `Undid commits from ${role.name}, which is read-only`);
+          }
+          if (!state.clean) {
+            await git.discardChanges(worktree);
+            this.k.log(scope, "warn", `Undid changes from ${role.name}, which is read-only`);
+          }
+        })()] : []),
+      ]);
     }
   }
 

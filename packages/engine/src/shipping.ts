@@ -346,7 +346,9 @@ export class Shipping {
     const approved = repository.approvedPatch ?? (repository.approvedSha ? await this.updates.patch(scope, repository.approvedSha) : undefined);
     const update = await this.updates.upToDate(scope, signal, true);
     if (update === "conflict") return "back";
-    if (approved && check >= 0 && (await this.updates.patch(scope)) !== approved) {
+    const sameCommit = approved && check >= 0 && update === "current" && repository.approvedSha
+      && await git.head(repository.worktree!).catch(() => undefined) === repository.approvedSha;
+    if (approved && check >= 0 && !sameCommit && (await this.updates.patch(scope)) !== approved) {
       return backToCheck(update === "moved" ? `${sourceName === "main" ? "Main" : sourceName} moved on, and on top of it this change reads differently from what you approved, so Petrina asks you again` : "The work changed after you approved the delivery, so Petrina asks you again");
     }
     if (await this.checks.checksBeforeShipping(scope, signal)) return "back";

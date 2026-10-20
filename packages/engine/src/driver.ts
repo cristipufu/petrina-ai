@@ -393,7 +393,7 @@ export class Driver {
               if (checkedHead) scope.work.checkedSha = checkedHead;
               else delete scope.work.checkedSha;
               if (work) work.nothingToPublish = scope.work.delivery !== "release" && checkedHead === scope.work.baseSha;
-              const checkedPatch = await this.updates.patch(scope);
+              const checkedPatch = checkedHead && checkedHead === scope.work.baseSha ? "empty" : await this.updates.patch(scope, checkedHead);
               if (checkedPatch) scope.work.checkedPatch = checkedPatch;
               else delete scope.work.checkedPatch;
 

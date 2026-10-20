@@ -28,6 +28,74 @@ async function fixture(name: string) {
 }
 
 describe("explicit repository execution contexts", () => {
+  for (const hooks of [false, true]) it(`restores checks with one combined inspection${hooks ? " and verifies a hook's reverted commit" : ", retaining untracked build output"}`, async () => {
+    const { engine, task } = await fixture(`post-check-${hooks}`);
+    const scope = executionFor(task, "first"), path = scope.work.worktree!;
+    const sha = git(path, "rev-parse", "HEAD"), tree = git(path, "rev-parse", "HEAD^{tree}");
+    const original = git(path, "show", "HEAD:README.md");
+    const inspections = spyOn(gitOps, "worktreeStatus"), heads = spyOn(gitOps, "head");
+    const checks = engine["checks"], hook = checks["runHooks"];
+    checks["runHooks"] = async () => {
+      if (hooks) {
+        writeFileSync(join(path, "README.md"), "A hook changed the product\n");
+        git(path, "add", "."); git(path, "commit", "-qm", "An unapproved hook commit");
+      }
+      return [];
+    };
+    if (!hooks) writeFileSync(join(path, "check-artifact.txt"), "Build output\n");
+    try {
+      expect(await engine["checks"]["runAll"](scope, [], { sha, tree, trackedChanged: false, hooks: hooks ? ["pre-commit"] : [], definition: "test" }, new AbortController().signal, new Map())).toBe(0);
+      expect(heads).not.toHaveBeenCalled();
+      expect(inspections).toHaveBeenCalledTimes(hooks ? 3 : 1);
+      expect(scope.work.checks).toMatchObject({ current: true, sha, tree, results: [] });
+      expect(git(path, "rev-parse", "HEAD")).toBe(sha);
+      expect(git(path, "show", "HEAD:README.md")).toBe(original);
+      if (!hooks) expect(git(path, "status", "--porcelain")).toContain("check-artifact.txt");
+    } finally { checks["runHooks"] = hook; heads.mockRestore(); inspections.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("does not attach current check evidence to the old commit when restoring a hook's commit fails", async () => {
+    const { engine, task } = await fixture("failed-post-check-restore");
+    const scope = executionFor(task, "first"), path = scope.work.worktree!, sha = git(path, "rev-parse", "HEAD");
+    scope.work.checks = { at: 1, current: true, sha, results: [] };
+    const checks = engine["checks"], hook = checks["runHooks"];
+    checks["runHooks"] = async () => {
+      writeFileSync(join(path, "README.md"), "A hook commit that cannot be reverted\n");
+      git(path, "add", "."); git(path, "commit", "-qm", "Unexpected commit");
+      return [];
+    };
+    const reset = spyOn(gitOps, "resetTo").mockResolvedValue(undefined);
+    try {
+      await expect(engine["checks"]["runAll"](scope, [], { sha, trackedChanged: false, hooks: ["pre-commit"], definition: "test" }, new AbortController().signal, new Map())).rejects.toThrow("could not restore the original work");
+      expect(scope.work.checks).toMatchObject({ sha, current: false });
+      expect(git(path, "rev-parse", "HEAD")).not.toBe(sha);
+    } finally { reset.mockRestore(); checks["runHooks"] = hook; await engine.shutdown(); }
+  });
+
+  for (const variant of ["unchanged", "changed commit", "moved source", "failed checks"] as const) it(`keeps delivery approval and checks authoritative: ${variant}`, async () => {
+    const { engine, task } = await fixture(`approval-${variant.replaceAll(" ", "-")}`);
+    const scope = executionFor(task, "first"), sha = git(scope.work.worktree!, "rev-parse", "HEAD");
+    scope.work.approvedSha = sha; scope.work.approvedPatch = "approved-patch";
+    task.plan = { rationale: "Approval test", plannerProfileId: "sol-high", stages: [
+      { id: "delivery-check", title: "Your delivery check", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] },
+      { id: "delivery", title: "Deliver", kind: "do", roleId: "release-manager", profileIds: ["sol-high"] },
+    ] };
+    task.stageIndex = 1;
+    const shipping = engine["shipping"], back = shipping["backToWork"];
+    shipping["backToWork"] = async () => {};
+    const update = spyOn(engine["updates"], "upToDate").mockResolvedValue(variant === "moved source" ? "moved" : "current");
+    const head = spyOn(gitOps, "head").mockResolvedValue(variant === "changed commit" ? "a".repeat(40) : sha);
+    const patch = spyOn(engine["updates"], "patch").mockResolvedValue("different-patch");
+    const checks = spyOn(engine["checks"], "checksBeforeShipping").mockResolvedValue(variant === "failed checks");
+    try {
+      const changed = variant === "changed commit" || variant === "moved source";
+      expect(await engine["shipping"]["readyToShip"](scope, new AbortController().signal)).toBe(variant === "unchanged" ? "ready" : "back");
+      expect(patch).toHaveBeenCalledTimes(changed ? 1 : 0);
+      expect(checks).toHaveBeenCalledTimes(changed ? 0 : 1);
+      if (changed) { expect(task.stageIndex).toBe(0); expect(scope.work.approvedSha).toBeUndefined(); }
+    } finally { checks.mockRestore(); patch.mockRestore(); head.mockRestore(); update.mockRestore(); shipping["backToWork"] = back; await engine.shutdown(); }
+  });
+
   it("inspects hand changes across products concurrently and records every result in product order", async () => {
     const { engine, task } = await fixture("hand-change-reads");
     await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
@@ -186,13 +254,14 @@ describe("explicit repository execution contexts", () => {
       const commands = [{ name: "Quick check", argv: [process.execPath, "-e", "console.log('Checked')"] }];
       engine.s.products.find((product) => product.id === "first")!.checks = commands;
       expect(await checks.failing(scope, signal, commands)).toBe(false);
-      expect(probe).toHaveBeenCalledTimes(1);
-      expect(await checks.failing(scope, signal, commands)).toBe(false);
+      // One gate observation plus one combined inspection after the command.
       expect(probe).toHaveBeenCalledTimes(2);
+      expect(await checks.failing(scope, signal, commands)).toBe(false);
+      expect(probe).toHaveBeenCalledTimes(3);
       expect(scope.work.checks!.current).toBe(true);
       writeFileSync(join(scope.work.worktree!, "README.md"), "A tracked change after the checks\n");
       expect(await checks.current(scope)).toBe(false);
-      expect(probe).toHaveBeenCalledTimes(3);
+      expect(probe).toHaveBeenCalledTimes(4);
     } finally { probe.mockRestore(); await engine.shutdown(); }
   });
 

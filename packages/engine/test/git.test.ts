@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import { addCopy, commitAll, commitTree, contains, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
+import { addCopy, commitAll, commitTree, contains, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { firstLine, removeDir, testGitEnv } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
@@ -55,6 +55,41 @@ describe("Petrina's own git steps", () => {
     const registered = git(repo, "worktree", "list", "--porcelain", "-z");
     expect(registered).toContain(realpathSync.native(active));
     expect(registered).not.toContain(old);
+  });
+
+  it("prunes deleted review copies in one batch, preserving saved screen copies and unrelated worktrees", async () => {
+    const repo = join(temp, "batch-copies"); mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Keep the product\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Initial");
+    const sha = git(repo, "rev-parse", "HEAD"), folder = join(temp, "batch.copies");
+    const kept = join(folder, "screen"), gone = [join(folder, "review-0"), join(folder, "review-1")], unrelated = join(temp, "other-task");
+    for (const copy of [kept, ...gone, unrelated]) await addCopy(repo, copy, sha);
+    writeFileSync(join(kept, "screen.txt"), "Keep the screen work");
+    rmSync(gone[0]!, { recursive: true, force: true }); // Recover a missing folder's fresh registration too.
+    await removeCopies(repo, folder, [kept]);
+    const registered = git(repo, "worktree", "list", "--porcelain", "-z");
+    expect(readFileSync(join(kept, "screen.txt"), "utf8")).toBe("Keep the screen work");
+    expect(registered).toContain(realpathSync.native(kept)); expect(registered).toContain(realpathSync.native(unrelated));
+    for (const copy of gone) { expect(existsSync(copy)).toBe(false); expect(registered).not.toContain(copy); }
+    await removeCopies(repo, folder);
+    expect(existsSync(folder)).toBe(false);
+    expect(git(repo, "worktree", "list", "--porcelain", "-z")).not.toContain(kept);
+    expect(checkedOut(join(unrelated, "README.md"))).toBe("Keep the product\n");
+  });
+
+  it("does not follow a replaced review parent while preserving a screen conversation", async () => {
+    const repo = join(temp, "batch-link"); mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Keep\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Initial");
+    const real = join(temp, "live.copies"), alias = join(temp, "replaced.copies");
+    const screen = join(real, "screen"), peer = join(real, "peer");
+    for (const copy of [screen, peer]) await addCopy(repo, copy, git(repo, "rev-parse", "HEAD"));
+    writeFileSync(join(peer, "unsaved.txt"), "Unrelated work");
+    symlinkSync(real, alias, process.platform === "win32" ? "junction" : "dir");
+    await removeCopies(repo, alias, [join(alias, "screen")]);
+    expect(existsSync(alias)).toBe(false);
+    expect(readFileSync(join(peer, "unsaved.txt"), "utf8")).toBe("Unrelated work");
+    expect(git(repo, "worktree", "list", "--porcelain", "-z")).toContain(realpathSync.native(screen));
   });
 
   for (const ownHome of [false, true]) it(`removes its private Git helpers on exit${ownHome ? " inside the engine home" : " in the system temp folder"}`, async () => {

@@ -250,6 +250,7 @@ export class ProductChecks {
     if (signal.aborted || this.k.stopped) throw new Aborted();
     if (!repository.worktree) return 0;
     task.statusLine = "Running the product's checks";
+    if (repository.checks) repository.checks.current = false;
     this.k.commit();
     // Checks and hooks are the repository's own code: whatever they commit or change, the work stays as it was.
     const before = state.sha ?? await git.head(repository.worktree);
@@ -272,6 +273,22 @@ export class ProductChecks {
       this.k.commit();
     };
     let results: CheckRun[];
+    let checksRestored = false;
+    let hooksStarted = false;
+    const restore = async (report = false) => {
+      const status = await git.worktreeStatus(repository.worktree!);
+      if (status.head !== before) {
+        await git.resetTo(repository.worktree!, before);
+        if (report) this.k.log(scope, "warn", "A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
+      } else if (status.trackedChanged) {
+        await git.restoreTracked(repository.worktree!);
+        if (report) this.k.log(scope, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
+      }
+      if (status.head !== before || status.trackedChanged) {
+        const restored = await git.worktreeStatus(repository.worktree!);
+        if (restored.head !== before || restored.trackedChanged) throw new Error("The check run could not restore the original work. Its results cannot count as current evidence.");
+      }
+    };
     try {
       const ran = kept ?? await runChecks(repository.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress(`check-${event.index}`, event));
       if (kept) {
@@ -286,14 +303,10 @@ export class ProductChecks {
         this.noteStopped(scope, ran, entries);
         throw new Aborted();
       }
-      if ((await git.head(repository.worktree).catch(() => "")) !== before) {
-        await git.resetTo(repository.worktree, before);
-        this.k.log(scope, "warn", "A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
-      } else if (await git.trackedChanged(repository.worktree)) {
-        await git.restoreTracked(repository.worktree);
-        this.k.log(scope, "warn", "A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
-      }
+      await restore(true);
+      checksRestored = true;
       const staticFailed = checks.some((check) => staticCheck(check) && ran.some((run) => !run.ok && run.command === commandText(check.argv)));
+      hooksStarted = !staticFailed && hooks.length > 0;
       const hooksRan = staticFailed ? [] : await this.runHooks(scope, hooks, env, signal, progress);
       if (signal.aborted) {
         this.noteStopped(scope, [...ran, ...hooksRan], entries);
@@ -302,13 +315,10 @@ export class ProductChecks {
       results = [...ran, ...hooksRan];
     } finally {
       // The hooks too: whatever they committed or changed in files git tracks is put back.
-      if (!repository.hooking) {
-        if ((await git.head(repository.worktree).catch(() => "")) !== before) await git.resetTo(repository.worktree, before);
-        else if (await git.trackedChanged(repository.worktree)) await git.restoreTracked(repository.worktree);
-      }
+      if (!repository.hooking && (!checksRestored || hooksStarted)) await restore();
     }
-    const [sha, tree] = await Promise.all([git.head(repository.worktree).catch(() => undefined), git.treeOf(repository.worktree)]);
-    repository.checks = { current: true, at: Date.now(), ...(sha ? { sha } : {}), ...(tree ? { tree } : {}), definition, results };
+    const tree = await git.treeOf(repository.worktree, before);
+    repository.checks = { current: true, at: Date.now(), ...(before ? { sha: before } : {}), ...(tree ? { tree } : {}), definition, results };
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     const failed = this.settleFindings(scope, results);

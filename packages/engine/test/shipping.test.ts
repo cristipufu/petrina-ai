@@ -94,12 +94,14 @@ describe.concurrent("shipping is never repeated blindly", () => {
     const store = new Store(join(run.home, "petrina.db"));
     const state = store.load()!;
     const saved = state.tasks.find((task) => task.id === run.taskId) as unknown as Record<string, unknown>;
-    for (const key of ["landed", "finishedAt"]) delete saved[key];
+    const repository = saved.repository as Record<string, unknown>;
+    delete repository.landed;
+    delete saved.finishedAt;
     Object.assign(saved, {
       state: "waiting",
       column: "ready",
-      shipping: { start: tested, base: run.w.initial, prepared: { tested, summary: "Ready." }, step: "update", boot: "an earlier run", moves: 0, failures: 0 },
     });
+    repository.shipping = { start: tested, base: run.w.initial, prepared: { tested, summary: "Ready." }, step: "update", boot: "an earlier run", moves: 0, failures: 0 };
     store.save(state);
     store.close();
 
@@ -127,13 +129,14 @@ describe.concurrent("shipping is never repeated blindly", () => {
       const store = new Store(join(run.home, "petrina.db"));
       const state = store.load()!;
       const saved = state.tasks.find((task) => task.id === run.taskId) as unknown as Record<string, unknown>;
-      delete saved.landed;
+      const repository = saved.repository as Record<string, unknown>;
+      delete repository.landed;
       delete saved.finishedAt;
       Object.assign(saved, {
         state: "cancelled",
         column: "done",
-        shipping: { start: tested, base: run.w.initial, prepared: { tested, summary: "Ready." }, step: "update", boot: "an earlier run", moves: 0, failures: 0 },
       });
+      repository.shipping = { start: tested, base: run.w.initial, prepared: { tested, summary: "Ready." }, step: "update", boot: "an earlier run", moves: 0, failures: 0 };
       store.save(state);
       store.close();
 

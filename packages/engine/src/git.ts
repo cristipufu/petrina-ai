@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { CLEANUP_WORDS } from "@petrina/core";
 import { withGitConfig, withoutCredentials } from "./env.js";
+import { completeAll } from "./parallel.js";
 
 export interface RunResult {
   code: number;
@@ -217,14 +218,16 @@ export function githubRepo(url: string): string | undefined {
 /** Read what Petrina needs about a local clone, from the folder or any folder inside it. */
 export async function repoInfo(path: string): Promise<RepoInfo> {
   const root = await must(["git", "rev-parse", "--show-toplevel"], path);
-  const remote = await remoteAddress(root);
+  const [remote, branch] = await Promise.all([
+    remoteAddress(root), run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root),
+  ]);
   // A folder on this computer (C:\ or C:/ on Windows included) has no host: the product goes by its own folder.
   const local = /^(?:[A-Za-z]:[\\/]|[\\/]|file:)/.test(remote ?? "");
   const match = local ? null : REMOTE.exec(remote ?? "");
   const segments = match?.[2]?.split("/").filter(Boolean) ?? [];
   const name = segments.at(-1) ?? root.split("/").at(-1) ?? "repo";
   const owner = segments.slice(0, -1).join("/") || "local";
-  const head = (await run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root)).stdout;
+  const head = branch.stdout;
   const defaultBranch = head.startsWith("origin/") ? head.slice("origin/".length) : (await run(["git", "rev-parse", "--abbrev-ref", "HEAD"], root)).stdout || "main";
   return { root, owner, name, defaultBranch, ...(remote ? { remote } : {}), github: !local && remote !== undefined && githubRepoOf(remote) !== undefined };
 }
@@ -897,16 +900,20 @@ export async function removeFinishedCopies(root: string, folder: string): Promis
 
 /** Remove copies and git's records, keeping only conversations that are waiting for the screen. */
 export async function removeCopies(root: string, folder: string, keep: readonly string[] = []): Promise<void> {
-  const names = await readdir(folder).catch(() => [] as string[]);
   const kept = new Set(keep);
   await oneAtATime(root, async () => {
-    for (const name of names) {
-      const copy = join(folder, name);
-      if (kept.has(copy)) continue;
-      await run(["git", "worktree", "remove", "--force", copy], root);
-      if (kept.size) await rm(copy, { recursive: true, force: true });
+    const entry = await lstat(folder).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    // A replaced parent is unlinked, never traversed into another task's working copies.
+    if (entry && !entry.isDirectory()) await rm(folder, { force: true });
+    else if (!kept.size) await rm(folder, { recursive: true, force: true });
+    else if (entry) {
+      const names = await readdir(folder);
+      await completeAll(names.map((name) => join(folder, name)).filter((copy) => !kept.has(copy))
+        .map((copy) => rm(copy, { recursive: true, force: true })));
     }
-    if (!kept.size) await rm(folder, { recursive: true, force: true });
+    // These copies are detached: one prune drops all missing unlocked registrations.
     await run(["git", "worktree", "prune"], root);
   });
 }

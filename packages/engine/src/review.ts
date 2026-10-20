@@ -18,6 +18,7 @@ import type { Learnings } from "./learnings.js";
 import { finishMessageGroup, routeMessages } from "./messages.js";
 import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
+import { completeAll } from "./parallel.js";
 
 /**
  * Keep each dispute with who and why. Status is settled after every reviewer reports, so an objection
@@ -138,8 +139,10 @@ export class Reviews {
         if ((await this.updates.upToDate(scope, signal)) === "conflict") return "continue";
         // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
         delete task.handChanges;
-        const problems = await git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!);
-        scope.work.tamper = { at: Date.now(), sha: await git.head(scope.work.worktree!), problems };
+        const [problems, sha] = await Promise.all([
+          git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!), git.head(scope.work.worktree!),
+        ]);
+        scope.work.tamper = { at: Date.now(), sha, problems };
         // Petrina's own findings settle on what it sees now, whatever anyone answered.
         for (const finding of task.findings) {
           if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(scope.work.productId)) && !problems.includes(finding.text)) finding.status = "fixed";
@@ -617,18 +620,17 @@ export class Reviews {
     const root = this.k.repositoryOf(scope)!.path!;
     const copyFolder = (productId: Id) => join(this.k.dataDir, "worktrees", productId, `${task.id}.copies`);
     const folder = copyFolder(scope.work.productId);
-    const restoreSha = await git.head(scope.work.worktree!);
-    const sha = task.hunt?.input?.heads[scope.work.productId] ?? restoreSha;
-
     // Pin all repositories before any reviewer starts. Every peer receives its own complete map.
     const versions = task.repositories ? await Promise.all(task.repositories.map(async (work) => {
       const restoreSha = await git.head(work.worktree!);
       return { productId: work.productId, root: work.source!.product.path!, path: work.worktree!, restoreSha, sha: task.hunt?.input?.heads[work.productId] ?? restoreSha };
     })) : [];
+    const restoreSha = versions.find((work) => work.productId === scope.work.productId)?.restoreSha ?? await git.head(scope.work.worktree!);
+    const sha = task.hunt?.input?.heads[scope.work.productId] ?? restoreSha;
     const copyOwners = versions.length ? versions.map((work) => ({ root: work.root, folder: copyFolder(work.productId) })) : [{ root, folder }];
     // Only saved screen conversations keep their copies; interrupted background peers start fresh.
     const keptCopies = () => Object.values(task.hunt?.screenTurns ?? {}).flatMap((entry) => [entry.copy, ...Object.values(entry.copies ?? {})]);
-    for (const owner of copyOwners) await git.removeCopies(owner.root, owner.folder, keptCopies());
+    await completeAll(copyOwners.map((owner) => git.removeCopies(owner.root, owner.folder, keptCopies())));
     // One fresh pull-request read is shared by reviewers; a usage replacement reads again on its attempt.
     await this.turns.refresh(scope);
     const pending = [...members];
@@ -682,27 +684,23 @@ export class Reviews {
         this.k.commitNow();
       };
       const done = Promise.resolve()
-        .then(() => continuing ? undefined : git.addCopy(root, copy, sha))
         .then(async () => {
           const copies: Record<string, string> = { [scope.work.productId]: copy };
-          for (const work of versions) if (work.productId !== scope.work.productId) {
-            const peer = join(copyFolder(work.productId), member.key);
-            if (!continuing) await git.addCopy(work.root, peer, work.sha);
-            copies[work.productId] = peer;
-          }
+          await completeAll([
+            continuing ? Promise.resolve() : git.addCopy(root, copy, sha),
+            ...versions.filter((work) => work.productId !== scope.work.productId).map(async (work) => {
+              const peer = join(copyFolder(work.productId), member.key);
+              if (!continuing) await git.addCopy(work.root, peer, work.sha);
+              copies[work.productId] = peer;
+            }),
+          ]);
           if (versions.length) this.turns.repositoryCopies.set(copy, copies);
           try { await member.work(copy, room, seat, used, agent, continuing, signal); }
           finally {
             const saved = task.hunt?.screenTurns?.[member.key];
             if (saved && versions.length) { saved.copies = copies; saved.conversation.repositoryCopies = copies; this.k.commitNow(); }
-            else for (const work of versions) if (work.productId !== scope.work.productId && copies[work.productId]) {
-              try { await git.removeWorktree(work.root, copies[work.productId]!); }
-              catch (error) {
-                // A cleanup failure cannot replace a saved report or the original review error.
-                // The group's final cleanup below still removes folders and prunes each repository.
-                this.k.log(task, "warn", `Could not remove a review copy yet: ${error instanceof Error ? error.message : String(error)}`);
-              }
-            }
+            // Primary and companion copies are reclaimed together by their owning repositories
+            // when the group settles; saved screen turns retain their complete map.
             this.turns.repositoryCopies.delete(copy);
           }
         })
@@ -800,22 +798,33 @@ export class Reviews {
       delete task.helpers;
       // A member who yielded the screen released its seat before its process exited.
       await this.turns.releasedStops();
-      for (const owner of copyOwners) await git.removeCopies(owner.root, owner.folder, keptCopies());
-      for (const work of versions) {
-        const state = await git.worktreeStatus(work.path);
-        if (state.head !== work.restoreSha) await git.resetTo(work.path, work.restoreSha);
-        if (!state.clean) await git.discardChanges(work.path);
-      }
-      // Copies share the repository's branches, so a read-only agent could still have moved the task's
-      // branch or written into its copy by path: the task's copy goes back to how the group found it.
-      if (scope.work.worktree && members.every((member) => !this.k.role(member.roleId)?.canEdit)) {
-        const state = await git.worktreeStatus(scope.work.worktree);
-        if (state.head !== restoreSha) {
-          await git.resetTo(scope.work.worktree, restoreSha);
-          this.k.log(task, "warn", `Undid commits from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
-        }
-        await this.k.undoReadOnly(scope, members[0]!.roleId, scope.work.worktree, state.clean);
-      }
+      // Every independent cleanup settles before failure is propagated. The primary copy's
+      // read-only recovery also supplies its status, rather than inspecting it twice.
+      const readOnly = members.every((member) => !this.k.role(member.roleId)?.canEdit);
+      await completeAll([
+        ...copyOwners.map(async (owner) => {
+          try { await git.removeCopies(owner.root, owner.folder, keptCopies()); }
+          catch (error) {
+            // Disposable-copy cleanup must not discard an accepted report or hide the
+            // agent's original failure. The normal cleanup sweep can reclaim it later.
+            this.k.log(task, "warn", `Could not remove a review copy: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }),
+        ...versions.filter((work) => !readOnly || work.path !== scope.work.worktree).map(async (work) => {
+          const state = await git.worktreeStatus(work.path);
+          if (state.head !== work.restoreSha) await git.resetTo(work.path, work.restoreSha);
+          if (!state.clean) await git.discardChanges(work.path);
+        }),
+        // Copies share branches: recover the original task copy too, after every agent stopped.
+        ...(scope.work.worktree && readOnly ? [(async () => {
+          const state = await git.worktreeStatus(scope.work.worktree!);
+          if (state.head !== restoreSha) {
+            await git.resetTo(scope.work.worktree!, restoreSha);
+            this.k.log(task, "warn", `Undid commits from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
+          }
+          await this.k.undoReadOnly(scope, members[0]!.roleId, scope.work.worktree!, state.clean);
+        })()] : []),
+      ]);
     }
   }
 
