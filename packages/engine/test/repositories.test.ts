@@ -2,10 +2,10 @@ import { executionFor } from "../src/repository-context.js";
 import type { RepositoryContext } from "../src/repository-context.js";
 import { createDemoState, draftOf, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { EngineOptions } from "../src/engine.js";
-import { ensureWorktree } from "../src/git.js";
+import { addCopy, ensureWorktree } from "../src/git.js";
 import { Sources } from "../src/sources.js";
 import type { Connections } from "../src/connection.js";
 import { Kernel, type MTask } from "../src/kernel.js";
@@ -326,6 +326,12 @@ describe.concurrent("one task across products", () => {
         task.repositories.push({ productId, worktree, branch, delivery: "local", completedStages: [], source: { product: { ...product, path: product.path! }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true } });
       }
       task.activeProductId = first;
+      // A crash can remove a review folder before its Git registration is cleaned up.
+      for (const work of task.repositories) {
+        const copy = join(shop.data, "worktrees", work.productId, `${id}.copies`, "review-0");
+        await addCopy(work.source!.product.path!, copy, git(work.worktree!, "rev-parse", "HEAD"));
+        rmSync(copy, { recursive: true });
+      }
       task.state = "cancelled";
       task.repositories[0]!.report = { summary: "Saved before cleanup", changes: [], tests: "Not run" };
       engine.commitNow();
@@ -336,6 +342,7 @@ describe.concurrent("one task across products", () => {
       expect(paths.some((path) => existsSync(path))).toBe(false);
       expect(activity).toEqual([{ active: true, copies: 2 }, { active: false, copies: 0 }]);
       expect(engine.cleanupJobs.size).toBe(0);
+      for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
     } finally { await engine.shutdown(); }
   });
 
@@ -430,6 +437,7 @@ describe.concurrent("one task across products", () => {
       for (const work of taskOf(engine.getState(), id).repositories!) {
         expect(copies.filter((match) => match[1] === work.productId).map((match) => match[3])).toEqual([`${work.baseSha}; last completed review: none; inspect the full change`, `${work.baseSha}; last completed review: none; inspect the full change`]);
         expect(copies.some((match) => match[2] === work.worktree)).toBe(false);
+        for (const match of copies.filter((entry) => entry[1] === work.productId)) expect(dirname(match[2]!)).toBe(join(shop.data, "worktrees", work.productId, `${id}.copies`));
       }
       engine.sendMessage(id, "Check the guest journey across both products", "queue");
       for (const review of reviews) writeFileSync(join(fakes.dir, `release-${review.session}`), "go");
@@ -438,6 +446,34 @@ describe.concurrent("one task across products", () => {
       expect(heard.map((entry) => entry.session).sort()).toEqual(reviews.map((entry) => entry.session).sort());
       expect(taskOf(state, id).queued).toEqual([]);
       for (const match of copies) expect(existsSync(match[2]!)).toBe(false);
+      for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
+    } finally { await engine.shutdown(); }
+  });
+
+  for (const decision of ["pause", "cancel"] as const) it(`cleans every product's saved review copies after restart and ${decision}`, async () => {
+    const { shop, api, start, fakes } = setup(`screen-copy-${decision}`);
+    let engine = start();
+    try {
+      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      fakes.scenario({ planner: "parallel", builder: "plain", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
+      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Keep each review copy with its product" });
+      await until(engine, (state) => !!taskOf(state, id).screen && !engine.drivers.has(id), coordinator(["plan", "design"]));
+      engine.setPoolPaused(true);
+      const saved = Object.values(engine.task(id)!.hunt!.screenTurns!);
+      expect(saved.length).toBeGreaterThan(0);
+      const copies = saved.flatMap((entry) => Object.entries(entry.copies!));
+      for (const [productId, copy] of copies) {
+        expect(dirname(copy)).toBe(join(shop.data, "worktrees", productId, `${id}.copies`));
+        expect(existsSync(copy)).toBe(true);
+      }
+      await engine.shutdown();
+      engine = start();
+      expect(Object.values(engine.task(id)!.hunt!.screenTurns!).flatMap((entry) => Object.entries(entry.copies!))).toEqual(copies);
+      engine[decision](id);
+      await Promise.all(engine.copyCleanups.values());
+      for (const [, copy] of copies) expect(existsSync(copy)).toBe(false);
+      for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
+      expect(engine.task(id)!.hunt?.screenTurns).toBeUndefined();
     } finally { await engine.shutdown(); }
   });
 

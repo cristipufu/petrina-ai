@@ -6,6 +6,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { State, Task, WorkTurn } from "@petrina/core";
+import type { Kernel, MStage, MTask } from "../src/kernel.js";
+import { Tracking } from "../src/tracking.js";
 import { AgentRun, reportOf } from "../src/acp-run.js";
 import { Engine } from "../src/engine.js";
 import { dispatch } from "../src/server.js";
@@ -27,6 +29,42 @@ const git = (cwd: string, ...args: string[]) => {
 const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], codexCommand: [process.execPath, fakeCodex] };
 
 afterAll(() => removeDir(temp));
+
+it("counts runs within the requested task and stage, including repeated runs after reopening the log", () => {
+  const db = new Database(":memory:");
+  try {
+    const log = new WorkLog(db);
+    for (const [id, taskId, stageId, kind] of [
+      ["first", "task-a", "build", "stage-start"], ["second", "task-a", "build", "stage-start"],
+      ["other-stage", "task-a", "test", "stage-start"], ["other-task", "task-b", "build", "stage-start"],
+      ["end", "task-a", "build", "stage-end"],
+    ] as const) log.addMoment({ id, taskId, productId: "p", stageId, kind, at: 1 });
+    expect(log.stageRuns("task-a", "build")).toBe(2);
+    expect(log.stageRuns("task-a", "test")).toBe(1);
+    expect(log.stageRuns("task-b", "build")).toBe(1);
+    expect(log.stageRuns("missing", "build")).toBe(0);
+    log.close();
+    expect(new WorkLog(db).stageRuns("task-a", "build")).toBe(2);
+  } finally { db.close(); }
+});
+
+it("attributes design answers to the last finished author in that stage and round", () => {
+  const db = new Database(":memory:");
+  try {
+    const tracking = new Tracking({ store: { database: db } } as Kernel);
+    const base: WorkTurn = { id: "original", taskId: "task-a", productId: "p", stageId: "design", stageTitle: "Design", stageKind: "converge", round: 2, fixing: false, roleId: "architect", toolId: "codex", profileId: "sol-high", sessionId: "session", reason: "first", startedAt: 1, mainOnly: false, helpers: 0 };
+    for (const [index, extra] of [
+      {}, { id: "replacement", profileId: "opus-high" }, { id: "later-round", round: 3 },
+      { id: "other-stage", stageId: "other" }, { id: "other-role", roleId: "design-reviewer" },
+      { id: "interrupted", profileId: "grok-high" }, { id: "other-task", taskId: "task-b" },
+    ].entries()) {
+      const turn = { ...base, ...extra, startedAt: index + 1 };
+      tracking.log.startTurn(turn);
+      if (turn.id !== "interrupted") tracking.log.endTurn(turn.id, { end: "finished", endedAt: index + 2, mainOnly: false, helpers: 0 }, []);
+    }
+    expect(tracking["author"]({ id: "task-a" } as MTask, { id: "design", roleId: "architect" } as MStage, 2)).toEqual({ roleId: "architect", profileId: "opus-high" });
+  } finally { db.close(); }
+});
 
 function makeRepo(parent: string, file = "README.md"): string {
   const repo = join(parent, "repo");

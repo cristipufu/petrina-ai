@@ -38,6 +38,8 @@ When a task finishes, confirmed unrelated older bugs become Backlog cards, with 
 
 Identity agents respect paused scheduling, usage limits and the ordinary global and per-tool pool caps, appear in the pool while matching, and stop with the engine. They compare only the supplied reports, in an empty temporary working folder.
 
+Identity matching deliberately prefers high effort for semantic judgment, then medium and low when high is unavailable, with extra high last. This avoids using the deepest reasoning by default without assuming the lightest effort can reliably identify the same underlying bug.
+
 Pictures needed by an unfinished follow-up are copied to that card before the original task's pictures are removed. A failed copy keeps its saved retry and original bytes across restarts. Cleanup reads archived bodies only for those saved pending links, rather than loading finished conversations just to remove their capture folders. Completing or cancelling the follow-up removes its picture bytes as usual.
 
 ## Checks, reviews and risk

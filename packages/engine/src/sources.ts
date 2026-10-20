@@ -103,8 +103,7 @@ export class Sources {
     task.workProposal = [...proposal];
     task.confirmWork = true;
     task.approvePlan = true;
-    task.workRows = [];
-    for (const raw of choices) {
+    const rows = choices.map((raw) => {
       const product = this.k.s.products.find((entry) => entry.id === raw.productId || (raw.repo && entry.repo.toLowerCase() === raw.repo.toLowerCase()));
       const choice = { ...raw, ...(product ? { productId: product.id, repo: product.repo } : {}) };
       const earlier = selected.find((entry) => entry.productId === choice.productId);
@@ -115,7 +114,12 @@ export class Sources {
         else if (!earlier) row.change = "added";
         else if (JSON.stringify(earlier.startFrom) !== JSON.stringify(choice.startFrom) || earlier.delivery !== choice.delivery) { row.change = "changed"; row.previous = earlier; }
       }
-      task.workRows.push(row);
+      return { row, product, earlier };
+    });
+    const pendingRows = rows.map(({ row }) => row);
+    task.workRows = pendingRows;
+    await Promise.all(rows.map(async ({ row, product }) => {
+      const { choice } = row;
       try {
         if (!product && !row.addition) {
           const repo = choice.repo ?? choice.productId;
@@ -124,6 +128,7 @@ export class Sources {
           if (read.code) throw new Error(`Could not check ${repo} on GitHub. Retry when it is accessible.`);
           const data = JSON.parse(read.stdout);
           if (data.nameWithOwner?.toLowerCase() !== repo.toLowerCase() || !data.defaultBranchRef?.name) throw new Error(`GitHub did not confirm ${repo} and its default branch.`);
+          if (task.workRows !== pendingRows) return;
           const candidate = { id: choice.productId || repo, name: repo.split("/")[1]!, repo, defaultBranch: data.defaultBranchRef.name, remote: `https://github.com/${repo}.git` };
           // Resolve branch and PR choices without cloning. A fork stays within this row.
           row.source = { product: candidate, start: { kind: "default", branch: candidate.defaultBranch }, destination: { mode: choice.delivery, kind: choice.delivery === "release" ? "release" : choice.delivery === "local" ? "branch" : "new-pr", repo, branch: candidate.defaultBranch, remote: candidate.remote }, confirmed: false };
@@ -132,7 +137,18 @@ export class Sources {
           row.error = "Needs adding: confirm this product’s name and permanent folder.";
         } else row.source = await this.resolve(task, choice);
       } catch (error) { row.error = error instanceof Error ? error.message : String(error); }
-      if (row.source && task.workRows.filter((entry) => entry.source?.product.repo.toLowerCase() === row.source!.product.repo.toLowerCase()).length > 1) row.error = "This repository is already included. Leave out the duplicate.";
+    }));
+    // Apply cross-product decisions in the original order, after every independent read has finished.
+    // A newer proposal owns its rows and validation flags; a late reply cannot replace them.
+    if (task.workRows !== pendingRows) return;
+    const seen = new Set<string>();
+    for (const { row, product, earlier } of rows) {
+      const { choice } = row;
+      if (row.source) {
+        const repo = row.source.product.repo.toLowerCase();
+        if (seen.has(repo)) row.error = "This repository is already included. Leave out the duplicate.";
+        seen.add(repo);
+      }
       if (!earlier && (product?.approveDelivery !== false) && !task.approveDelivery) {
         task.approveDelivery = true;
         task.approvalExplanation = `${product?.name ?? row.source?.product.name ?? choice.productId} asks before shipping, so shared delivery approval is on. You can change it here.`;

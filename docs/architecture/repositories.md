@@ -45,6 +45,8 @@ When a port does follow a review, the change itself was reviewed already: one re
 
 Prepared port material contains those port comparisons rather than regenerating the complete reviewed change. Lockfile comparisons are linked separately and retain their review scope. Each repository's temporary review copies are removed through that repository's own clone, including copies for products removed from the task.
 
+Every repository keeps its detached review copies under its own product directory. Review setup, saved screen turns, image previews and cleanup use that same location, so one product's cleanup never removes another product's folders through the wrong clone. Shared starting-point validation reads independent product rows together, then applies duplicate checks and approval decisions in proposal order; replies from a superseded proposal are ignored.
+
 Nothing at delivery rebases, merges or changes code; for a release Petrina adds only its own version commit. Petrina delivers the result itself, as a fast-forward, a pull request or a release.
 
 ## Shipping is never repeated blindly

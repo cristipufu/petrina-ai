@@ -185,8 +185,13 @@ describe("immutable review inputs", () => {
       const sections = await a.context.sectionsFor(a.scope, "code-reviewer", "review-0", { p: "/own/a", second: "/own/b" }, undefined, snapshot);
       expect(sections[0]!.body).toContain("copy: /own/a"); expect(sections[0]!.body).toContain("copy: /own/b");
       for (const artifact of snapshot.artifacts!) expect(readFileSync(artifact.file, "utf8")).toContain("Preserve the original rule.");
-      writeFileSync(snapshot.artifacts![0]!.file, "corrupt");
-      await expect(readReviewInput(ref)).rejects.toThrow("prepared review comparison changed");
+      for (const artifact of snapshot.artifacts!) {
+        const original = readFileSync(artifact.file, "utf8");
+        writeFileSync(artifact.file, "corrupt");
+        await expect(readReviewInput(ref)).rejects.toThrow("prepared review comparison changed");
+        writeFileSync(artifact.file, original);
+      }
+      expect(await readReviewInput(ref)).toEqual(snapshot);
     } finally { await a.engine.shutdown(); await b.engine.shutdown(); }
   });
 });

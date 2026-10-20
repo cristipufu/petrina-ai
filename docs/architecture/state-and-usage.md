@@ -26,6 +26,8 @@ SQLite stores active task bodies in separate rows. A streaming update marks only
 
 The store retains its active ids between saves and reloads them after rollback. Identical metadata avoids a write; changed checkpoint times still persist with task clocks. Unchanged usage readings are rejected before opening a write transaction, and startup computes the highest numeric task id inside SQLite.
 
+Author attribution filters turns by task, stage and round in SQL. Stage run counts use an indexed SQL count rather than loading moment bodies. Fixed parameterized statements already use Bun's compiled-query cache through `db.query`; there is no additional statement cache in the engine.
+
 Each window has at most one unacknowledged live snapshot, identified by a transport counter independent of task ids and the state's counter. It acknowledges in a microtask after applying the state, without depending on paints in a hidden desktop window, so background inbox notifications keep arriving. A suspended or slow window holds up only its own next snapshot.
 
 While it waits, the engine retains only a dirty flag and serializes the latest state when the window is ready; it never queues intermediate snapshots for that window. Commands and their replies remain independent, and another window can keep receiving updates. Dropped outgoing messages close the connection so pending calls fail and durable requests retain their normal retry identity. The app and engine use one current `petrina.v1` protocol.

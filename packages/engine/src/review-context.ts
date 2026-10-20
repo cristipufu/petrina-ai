@@ -124,9 +124,9 @@ export async function readReviewInput(ref: InputRef): Promise<ReviewInput> {
   const body = await readFile(ref.file, "utf8");
   if (digest(body) !== ref.digest) throw new Error("The saved review inputs changed. Try the review again.");
   const input = JSON.parse(body) as ReviewInput;
-  for (const artifact of input.artifacts ?? []) {
+  await Promise.all((input.artifacts ?? []).map(async (artifact) => {
     if (digest(await readFile(artifact.file, "utf8")) !== artifact.digest) throw new Error("The prepared review comparison changed. Start this review again.");
-  }
+  }));
   return input;
 }
 

@@ -255,7 +255,7 @@ export class Tracking {
 
   private author(task: MTask, stage: MStage, round: number): { roleId: Id; profileId?: Id } {
     // The last completed turn in this round produced the brief, including after a restart or a handover.
-    const author = this.log.turns({ taskId: task.id }).filter((turn) => turn.stageId === stage.id && turn.round === round && turn.roleId === stage.roleId && turn.end === "finished").at(-1);
+    const author = this.log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
     return { roleId: stage.roleId, ...(author ? { profileId: author.profileId } : {}) };
   }
 

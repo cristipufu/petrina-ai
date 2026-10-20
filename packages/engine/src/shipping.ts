@@ -499,6 +499,7 @@ export class Shipping {
     const due = declared.filter((entry) => entry.version !== version);
     if (!due.length) return start;
     const before = new Map<string, string>();
+    const originals = new Map(declared.map(({ file, text }) => [file, text]));
     for (const { file, version: from, text } of due) {
       const next = withVersion(file, text, from!, version);
       if (next === undefined) return stop(`${file} does not state it in a way Petrina can change on its own`);
@@ -509,6 +510,7 @@ export class Shipping {
         const lockFile = join(dirname(file), "Cargo.lock").replace(/^\.\//, "");
         const lock = await git.fileAt(worktree, start, lockFile);
         if (lock !== undefined) {
+          originals.set(lockFile, lock);
           const moved = lockWithVersion(lock, ownCrates(text), from!, version);
           if (moved !== lock) {
             before.set(lockFile, from!);
@@ -523,15 +525,22 @@ export class Shipping {
     if (!tested) return start;
     // Checked like anyone's version commit: only the version, and every main version file says it.
     const changed = await git.changedFiles(worktree, start, tested);
-    const more: string[] = [];
-    for (const file of changed) {
-      if (!isVersionFile(file)) more.push(file);
-      else {
-        const [source, target] = await Promise.all([git.fileAt(worktree, start, file), git.fileAt(worktree, tested, file)]);
-        if (!onlyVersionChanged(file, source, target, version, before.get(file))) more.push(file);
-      }
-    }
-    const wrong = (await this.declaredVersions(worktree, tested)).filter((entry) => entry.version !== version);
+    const targets = new Map<string, Promise<string | undefined>>();
+    const targetAt = (file: string) => {
+      let read = targets.get(file);
+      if (!read) { read = git.fileAt(worktree, tested, file); targets.set(file, read); }
+      return read;
+    };
+    const [invalid, declaredAfter] = await Promise.all([
+      Promise.all(changed.map(async (file) => {
+        if (!isVersionFile(file)) return file;
+        const [source, target] = await Promise.all([originals.has(file) ? originals.get(file) : git.fileAt(worktree, start, file), targetAt(file)]);
+        return onlyVersionChanged(file, source, target, version, before.get(file)) ? undefined : file;
+      })),
+      this.declaredVersions(worktree, tested, targetAt),
+    ]);
+    const more = invalid.filter((file): file is string => file !== undefined);
+    const wrong = declaredAfter.filter((entry) => entry.version !== version);
     if (more.length || wrong.length) {
       await git.resetTo(worktree, start);
       stop(more.length ? `the change in ${more.join(", ")} would be more than the version` : `${says(wrong)}`);
@@ -577,8 +586,8 @@ export class Shipping {
   }
 
   /** What the product's main version files say at a commit: those that state a version, and those Petrina cannot read (no `version`). */
-  private async declaredVersions(path: string, sha: string): Promise<DeclaredVersion[]> {
-    const contents = await Promise.all(MAIN_VERSION_FILES.map((file) => git.fileAt(path, sha, file)));
+  private async declaredVersions(path: string, sha: string, read = (file: string) => git.fileAt(path, sha, file)): Promise<DeclaredVersion[]> {
+    const contents = await Promise.all(MAIN_VERSION_FILES.map(read));
     return MAIN_VERSION_FILES.flatMap((file, index) => {
       const text = contents[index];
       if (text === undefined) return [];

@@ -86,6 +86,7 @@ const SCHEMA = [
   )`,
   "CREATE INDEX IF NOT EXISTS work_moments_at ON work_moments (at)",
   "CREATE INDEX IF NOT EXISTS work_moments_task ON work_moments (task_id, kind)",
+  "CREATE INDEX IF NOT EXISTS work_moments_stage_starts ON work_moments (task_id, json_extract(data, '$.stageId')) WHERE kind = 'stage-start'",
   "CREATE TABLE IF NOT EXISTS products_ever (id TEXT PRIMARY KEY, name TEXT, repo TEXT, added_at INTEGER, removed_at INTEGER)",
   // Readings of the tools' usage limits: the last thirty days, one row per change of reading.
   `CREATE TABLE IF NOT EXISTS usage_readings (
@@ -451,7 +452,7 @@ export class WorkLog implements WorkLogReader {
   }
 
   stageRuns(taskId: Id, stageId: Id): number {
-    return this.moments({ taskId, kinds: ["stage-start"] }).filter((moment) => moment.stageId === stageId).length;
+    return this.db.query<{ count: number }, [string, string]>("SELECT COUNT(*) AS count FROM work_moments WHERE task_id = ? AND json_extract(data, '$.stageId') = ? AND kind = 'stage-start'").get(taskId, stageId)!.count;
   }
 
   stageWork(taskId: Id, stageId: Id, since: number): number {

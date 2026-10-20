@@ -684,11 +684,11 @@ export abstract class Kernel {
   discardScreenTurns(task: MTask): void {
     if (!Object.keys(task.hunt?.screenTurns ?? {}).length) return;
     delete task.hunt!.screenTurns;
-    const roots = [...new Set([this.productOf(task)?.path, ...(task.repositories?.map((work) => work.source?.product.path) ?? [])].filter((path): path is string => !!path))];
-    if (!roots.length) return;
+    const owners = task.repositories ? [...task.repositories, ...(task.excludedRepositories ?? [])].map((work) => ({ productId: work.productId, root: work.source?.product.path })) : [{ productId: task.productId, root: this.productOf(task)?.path }];
+    if (!owners.some((owner) => owner.root)) return;
     const stopped = this.settling.get(task.id);
     const cleanup = Promise.all([stopped, this.copyCleanups.get(task.id)])
-      .then(async () => { for (const root of roots) await git.removeCopies(root, join(this.dataDir, "worktrees", task.productId, `${task.id}.copies`)); })
+      .then(async () => { for (const owner of owners) if (owner.root) await git.removeCopies(owner.root, join(this.dataDir, "worktrees", owner.productId, `${task.id}.copies`)); })
       .catch((error: unknown) => this.log(task, "warn", `Could not remove the reviewers' working copies: ${error instanceof Error ? error.message : String(error)}`))
       .finally(() => {
         if (this.copyCleanups.get(task.id) === cleanup) this.copyCleanups.delete(task.id);

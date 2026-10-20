@@ -615,7 +615,8 @@ export class Reviews {
     const stop = new AbortController();
     const signal = AbortSignal.any([parentSignal, stop.signal]);
     const root = this.k.repositoryOf(scope)!.path!;
-    const folder = join(this.k.dataDir, "worktrees", scope.work.productId, `${task.id}.copies`);
+    const copyFolder = (productId: Id) => join(this.k.dataDir, "worktrees", productId, `${task.id}.copies`);
+    const folder = copyFolder(scope.work.productId);
     const restoreSha = await git.head(scope.work.worktree!);
     const sha = task.hunt?.input?.heads[scope.work.productId] ?? restoreSha;
 
@@ -624,10 +625,10 @@ export class Reviews {
       const restoreSha = await git.head(work.worktree!);
       return { productId: work.productId, root: work.source!.product.path!, path: work.worktree!, restoreSha, sha: task.hunt?.input?.heads[work.productId] ?? restoreSha };
     })) : [];
+    const copyOwners = versions.length ? versions.map((work) => ({ root: work.root, folder: copyFolder(work.productId) })) : [{ root, folder }];
     // Only saved screen conversations keep their copies; interrupted background peers start fresh.
     const keptCopies = () => Object.values(task.hunt?.screenTurns ?? {}).flatMap((entry) => [entry.copy, ...Object.values(entry.copies ?? {})]);
-    await git.removeCopies(root, folder, keptCopies());
-    for (const work of versions) if (work.root !== root) await git.removeCopies(work.root, folder, keptCopies());
+    for (const owner of copyOwners) await git.removeCopies(owner.root, owner.folder, keptCopies());
     // One fresh pull-request read is shared by reviewers; a usage replacement reads again on its attempt.
     await this.turns.refresh(scope);
     const pending = [...members];
@@ -685,7 +686,7 @@ export class Reviews {
         .then(async () => {
           const copies: Record<string, string> = { [scope.work.productId]: copy };
           for (const work of versions) if (work.productId !== scope.work.productId) {
-            const peer = join(folder, `${member.key}-${work.productId}`);
+            const peer = join(copyFolder(work.productId), member.key);
             if (!continuing) await git.addCopy(work.root, peer, work.sha);
             copies[work.productId] = peer;
           }
@@ -799,8 +800,7 @@ export class Reviews {
       delete task.helpers;
       // A member who yielded the screen released its seat before its process exited.
       await this.turns.releasedStops();
-      await git.removeCopies(root, folder, keptCopies());
-      for (const work of versions) if (work.root !== root) await git.removeCopies(work.root, folder, keptCopies());
+      for (const owner of copyOwners) await git.removeCopies(owner.root, owner.folder, keptCopies());
       for (const work of versions) {
         const state = await git.worktreeStatus(work.path);
         if (state.head !== work.restoreSha) await git.resetTo(work.path, work.restoreSha);

@@ -28,6 +28,99 @@ async function fixture(name: string) {
 }
 
 describe("explicit repository execution contexts", () => {
+  it("reuses original version contents and reads each committed target once while validating a release", async () => {
+    const { engine, task } = await fixture("release-version-reads");
+    const scope = executionFor(task, "first"), path = scope.work.worktree!;
+    const files = [
+      { file: "package.json", text: '{"name":"demo","version":"1.0.0"}\n', version: "1.0.0" },
+      { file: "Cargo.toml", text: '[package]\nname = "demo"\nversion = "1.0.0"\n', version: "1.0.0" },
+    ];
+    const lock = 'version = 3\n\n[[package]]\nname = "demo"\nversion = "1.0.0"\n';
+    for (const file of files) writeFileSync(join(path, file.file), file.text);
+    writeFileSync(join(path, "Cargo.lock"), lock);
+    git(path, "add", "."); git(path, "commit", "-qm", "Record version files");
+    const start = git(path, "rev-parse", "HEAD");
+    scope.work.shipping = { start, version: "1.0.1", tag: "v1.0.1", moves: 0, failures: 0 };
+    const read = spyOn(gitOps, "fileAt");
+    try {
+      const tested = await engine["shipping"]["setVersion"](scope, files);
+      expect(tested).not.toBe(start);
+      for (const file of files) {
+        expect(read.mock.calls.filter(([, sha, name]) => sha === start && name === file.file)).toHaveLength(0);
+        expect(read.mock.calls.filter(([, sha, name]) => sha === tested && name === file.file)).toHaveLength(1);
+        expect(git(path, "show", `${tested}:${file.file}`)).toContain("1.0.1");
+      }
+      expect(read.mock.calls.filter(([, sha, name]) => sha === start && name === "Cargo.lock")).toHaveLength(1);
+      expect(read.mock.calls.filter(([, sha, name]) => sha === tested && name === "Cargo.lock")).toHaveLength(1);
+      expect(git(path, "show", `${tested}:Cargo.lock`)).toContain('version = "1.0.1"');
+      expect(git(path, "diff", "--name-only", start, tested).split("\n").sort()).toEqual(["Cargo.lock", "Cargo.toml", "package.json"]);
+    } finally { read.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("resolves shared source rows concurrently, retaining their order and independent errors", async () => {
+    const { engine, task } = await fixture("source-validation");
+    const sources = engine["sources"];
+    const choices = ["first", "second"].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "local" as const }));
+    const replies: { choice: string; resolve: (value: Awaited<ReturnType<typeof sources.resolve>>) => void; reject: (reason: Error) => void }[] = [];
+    const resolve = spyOn(sources, "resolve").mockImplementation((_task, choice) => new Promise((resolve, reject) => replies.push({ choice: choice.productId, resolve, reject })));
+    let pending: Promise<void> | undefined;
+    try {
+      pending = sources.propose(task, choices, true);
+      expect(replies.map((reply) => reply.choice)).toEqual(["first", "second"]);
+      const product = engine.s.products.find((product) => product.id === "second")!;
+      replies[1]!.resolve({ product, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: false });
+      await Promise.resolve();
+      expect(task.workValidating).toBe(true);
+      replies[0]!.reject(new Error("The first branch is unavailable."));
+      await pending;
+      expect(task.workRows!.map((row) => row.choice.productId)).toEqual(["first", "second"]);
+      expect(task.workRows![0]!.error).toBe("The first branch is unavailable.");
+      expect(task.workRows![1]!.source?.product.id).toBe("second");
+      expect(task.workRows![1]!.error).toBeUndefined();
+      expect(task.workError).toBe("The first branch is unavailable.");
+      expect(task.workValidating).toBe(false);
+    } finally {
+      for (const reply of replies) reply.reject(new Error("Test closed"));
+      await pending?.catch(() => {}); resolve.mockRestore(); await engine.shutdown();
+    }
+  });
+
+  it("rejects duplicate repository rows after concurrent validation finishes", async () => {
+    const { engine, task } = await fixture("duplicate-sources");
+    const sources = engine["sources"], product = engine.s.products[0]!;
+    const resolve = spyOn(sources, "resolve").mockImplementation(async (_task, choice) => ({ product: { ...product, id: choice.productId, repo: choice.productId === "first" ? product.repo : product.repo.toUpperCase() }, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: false }));
+    try {
+      await sources.propose(task, ["first", "second"].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "local" })), true);
+      expect(task.workRows![0]!.error).toBeUndefined();
+      expect(task.workRows![1]!.error).toContain("already included");
+      expect(task.workError).toContain("already included");
+    } finally { resolve.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("keeps a newer source proposal when older parallel reads finish late", async () => {
+    const { engine, task } = await fixture("superseded-sources");
+    const sources = engine["sources"];
+    const replies: (() => void)[] = [];
+    const resolve = spyOn(sources, "resolve").mockImplementation((_task, choice) => {
+      const product = engine.s.products.find((product) => product.id === choice.productId)!;
+      const result = { product, start: { kind: "default" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: product.repo, branch: "main" }, confirmed: false };
+      return choice.reason === "old" ? new Promise((resolve) => replies.push(() => resolve(result))) : Promise.resolve(result);
+    });
+    let pending: Promise<void> | undefined;
+    try {
+      pending = sources.propose(task, ["first", "second"].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "local", reason: "old" })), true);
+      expect(replies).toHaveLength(2);
+      await sources.propose(task, [{ productId: "second", startFrom: { kind: "default" }, delivery: "local", reason: "new" }], true);
+      const latest = structuredClone(task.workRows);
+      for (const reply of replies) reply();
+      await pending;
+      expect(task.workRows).toEqual(latest);
+      expect(task.workRows).toHaveLength(1);
+      expect(task.workError).toBeUndefined();
+      expect(task.workValidating).toBe(false);
+    } finally { for (const reply of replies) reply(); await pending?.catch(() => {}); resolve.mockRestore(); await engine.shutdown(); }
+  });
+
   it("reads shared PR states concurrently and ignores late replies after a driver starts", async () => {
     const { engine, task } = await fixture("parallel-pr-reads");
     await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
