@@ -287,7 +287,7 @@ describe("prompts", () => {
 
 import { addRole, draftOf, editRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS } from "@petrina/core";
 import { MAY_CHANGE, roleCard } from "../src/prompts.js";
-import { contractFor, plannerRoles } from "../src/roles.js";
+import { contractFor, plannerRoles, ROLE_CONTRACTS } from "../src/roles.js";
 import { promptContexts } from "./prompt-contexts.js";
 import before from "./today-prompts.json";
 
@@ -390,6 +390,19 @@ describe("saved role wording", () => {
       expect(text).toContain("resolving conflicts in: src/app.ts");
     }
   });
+  it("uses the contract's incremental scope for prompts as well as review baselines", () => {
+    const contract = ROLE_CONTRACTS["code-reviewer"]!, saved = contract.incrementalReview;
+    const ctx = contexts["code-reviewer-fix"] ?? contexts["code-reviewer"]!;
+    const task = { ...ctx.task, reviewedSha: "previous-review", rounds: { review: 2 }, stageIndex: 0,
+      plan: { rationale: "Review the fixes", plannerProfileId: "sol-high", stages: [{ id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 3 }] } };
+    try {
+      contract.incrementalReview = true;
+      expect(buildPrompt({ ...ctx, task })).toContain("Review only what changed since the last round");
+      contract.incrementalReview = false;
+      expect(buildPrompt({ ...ctx, task })).not.toContain("Review only what changed since the last round");
+    } finally { contract.incrementalReview = saved; }
+  });
+
   it("uses the permission of the step and the saved purpose and hands-back description", () => {
     const added = addRole(NO_ROLE_CHANGES, { ...ROLE_STARTS[2]!.draft, canEdit: true });
     const roles = libraryRoles(added.changes);

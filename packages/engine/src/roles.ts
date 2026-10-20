@@ -365,14 +365,15 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
     shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is wrong, in plain language", "where": "file:line", "severity": "important", "evidence": "How you know", "steps": "How to see it again", "sameBug": "<open follow-up card id, or none>"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
     instructions: ctx => ROLE_CONTRACTS["code-reviewer"]!.withInstructions!(ctx, ctx.role.instructions),
-    withInstructions: ({ task, base, branch, preparedReview }, wording) => {
-      const opening = reviewScope(task, base, branch, true, preparedReview);
+    withInstructions: ({ task, base, branch, preparedReview, role }, wording) => {
+      const incremental = contractFor(role).incrementalReview === true;
+      const opening = reviewScope(task, base, branch, incremental, preparedReview);
       return `${opening} Your job is to try to prove that it is NOT done.${
         task.repositories
           ? ""
           : task.portReview
           ? portClause(task.portReview, preparedReview)
-          : reviewRound(task) > 1 && task.reviewedSha
+          : incremental && reviewRound(task) > 1 && task.reviewedSha
             ? `\nThis is review round ${reviewRound(task)}: the rest was reviewed already. Review only what changed since the last round (${preparedReview ? "the prepared incremental comparison" : `\`git diff ${task.reviewedSha}..HEAD\``}) and whether the findings below were really fixed. Raise nothing about code that did not change since.`
             : ""
       }
@@ -390,14 +391,14 @@ Do not change any files.`;
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
     shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it", "steps": "How to see it again", "sameBug": "<open follow-up card id, or none>"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
-    withInstructions: ({ task, base, branch, preparedReview }, wording) => `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(task, base, branch, false, preparedReview)}${task.repositories ? "" : task.portReview ? portClause(task.portReview, preparedReview) : ""}
+    withInstructions: ({ task, base, branch, preparedReview, role }, wording) => `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(task, base, branch, contractFor(role).incrementalReview === true, preparedReview)}${task.repositories ? "" : task.portReview ? portClause(task.portReview, preparedReview) : ""}
 ${wording}
 ${task.repositories ? "" : GUIDE_RULE(base, preparedReview)}
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
 ${LEARN}
 Do not change any files.`,
-    instructions: ({ task, base, branch, preparedReview }) => {
-      return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(task, base, branch, false, preparedReview)} Review for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults.${task.repositories ? "" : task.portReview ? portClause(task.portReview, preparedReview) : ""}
+    instructions: ({ task, base, branch, preparedReview, role }) => {
+      return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(task, base, branch, contractFor(role).incrementalReview === true, preparedReview)} Review for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults.${task.repositories ? "" : task.portReview ? portClause(task.portReview, preparedReview) : ""}
 ${task.repositories ? "" : GUIDE_RULE(base, preparedReview)}
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
 ${BUILT_IN_ROLES.find((entry) => entry.id === "security-reviewer")!.instructions}
