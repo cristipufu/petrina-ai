@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Engine, recordDisputes } from "../src/engine.js";
 import { BriefResult, ReviewResult } from "../src/roles.js";
 import { addEvidence, checkReviewEvidence } from "../src/review.js";
-import { describeTool, isPlumbing } from "../src/acp-run.js";
+import { describeTool, isPlumbing } from "../src/tool-activity.js";
 
 const finding = (id: string, extra: Partial<Finding> = {}): Finding => ({ id, text: `Finding ${id}`, severity: "blocking", raisedBy: "sol-xhigh", confirmedBy: [], status: "open", ...extra });
 

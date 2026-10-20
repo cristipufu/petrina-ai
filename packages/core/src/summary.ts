@@ -173,8 +173,8 @@ function by(state: People, ...profileIds: readonly (Id | undefined)[]): string {
 }
 
 /** Whether a review round may still send the work back to the builder (a later round keeps doing so while it converges). */
-function canFixReview(task: Task, stage: Stage, index: number): boolean {
-  if (!task.plan!.stages.some((entry, at) => at < index && entry.roleId === "builder")) return false;
+function canFixReview(state: People, task: Task, stage: Stage, index: number): boolean {
+  if (!task.plan!.stages.some((entry, at) => at < index && state.roles.find((role) => role.id === entry.roleId)?.result === "build")) return false;
   const round = task.rounds[stage.id] ?? 1;
   if (round < (stage.maxRounds ?? 2)) return true;
   // Past them, only a round that ends with fewer blocking findings than the last one (and some left) sends it back.
@@ -182,10 +182,10 @@ function canFixReview(task: Task, stage: Stage, index: number): boolean {
 }
 
 /** The engine requires the coordinator's check when a review would end with blocking findings open, even if shipping normally needs no approval. */
-function needsReviewCheck(task: Task, index: number): boolean {
+function needsReviewCheck(state: People, task: Task, index: number): boolean {
   const stage = task.plan?.stages[index];
   const next = task.plan?.stages[index + 1];
-  return index === task.stageIndex && stage?.kind === "review-chain" && !!next && next.kind !== "gate" && reviewRoundEnd(task, stage, task.rounds[stage.id] ?? 1).kind === "used up";
+  return index === task.stageIndex && stage?.kind === "review-chain" && !!next && next.kind !== "gate" && reviewRoundEnd(task, stage, task.rounds[stage.id] ?? 1, state.roles).kind === "used up";
 }
 
 /**
@@ -235,20 +235,20 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
         const roleId = roles[0];
         const name = roles.length > 1 ? "review" : roleId && (WORK[roleId] ?? state.roles.find((role) => role.id === roleId)?.name.toLowerCase());
         if (reviewers.length) steps.push(`${port ? "a review of the port" : `${name || stage.title.toLowerCase()}${again}`}${by(state, ...reviewers.map((reviewer) => reviewer.profileId))}`);
-        if (needsReviewCheck(task, at)) steps.push(CHECKS.delivery);
+        if (needsReviewCheck(state, task, at)) steps.push(CHECKS.delivery);
         break;
       }
       case "do": {
         // After the first acceptance pass, the engine skips this stage in fix rounds and decides on
         // a final pass at the delivery check. A tester already on that final pass goes straight to the check.
-        if (stage.roleId === "tester" && task.testedPatch !== undefined && !(task.retest && at === task.stageIndex)) break;
+        if (state.roles.find((role) => role.id === stage.roleId)?.result === "checks" && task.testedPatch !== undefined && !(task.retest && at === task.stageIndex)) break;
         if (stage.roleId === "release-manager") {
           // Petrina publishes by itself: a release's notes come from the Release Manager first.
           if (task.delivery === "release") steps.push(`${WORK[stage.roleId]}${by(state, stage.profileIds[0])}`);
           steps.push(PUBLISH[task.delivery]);
           break;
         }
-        const fixing = at === task.stageIndex && task.fixing && stage.roleId === "builder";
+        const fixing = at === task.stageIndex && task.fixing && state.roles.find((role) => role.id === stage.roleId)?.result === "build";
         steps.push(`${fixing ? "fixes by the builder" : (WORK[stage.roleId] ?? stage.title.toLowerCase())}${by(state, stage.profileIds[0])}`);
         break;
       }
@@ -315,12 +315,12 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
     case "review-chain": {
       // Every reviewer looks at once, then voters settle what only one tool raised: what follows is the next stage.
       const after = upcoming(state, task, task.stageIndex + 1, 0);
-      if (needsReviewCheck(task, task.stageIndex)) return shaped([CHECKS.delivery, ...after]);
+      if (needsReviewCheck(state, task, task.stageIndex)) return shaped([CHECKS.delivery, ...after]);
       const mayNeedCheck = stages[task.stageIndex + 1] && stages[task.stageIndex + 1]!.kind !== "gate";
-      return shaped(after, canFixReview(task, stage, task.stageIndex) ? "fixes by the builder if blocking issues are found" : mayNeedCheck ? "your OK to ship if blocking issues are found" : undefined);
+      return shaped(after, canFixReview(state, task, stage, task.stageIndex) ? "fixes by the builder if blocking issues are found" : mayNeedCheck ? "your OK to ship if blocking issues are found" : undefined);
     }
     default:
-      if (task.retest && stage.roleId === "tester") {
+      if (task.retest && state.roles.find((role) => role.id === stage.roleId)?.result === "checks") {
         const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
         return shaped(upcoming(state, task, gate >= 0 ? gate : task.stageIndex + 1, 0), "fixes by the builder if acceptance checks fail");
       }

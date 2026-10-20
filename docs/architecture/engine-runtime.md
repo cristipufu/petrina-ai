@@ -19,14 +19,15 @@ Inside the engine, `Engine` (`engine.ts`) is a thin front with the coordinator's
 |---|---|
 | `driver.ts`, `checkpoints.ts` | Scheduling, the task loop, coordinator checkpoint decisions and recovery after a restart |
 | `planning.ts`, `design.ts`, `work.ts`, `review.ts` | The stage kinds: plan, converge, do, review chain with verification |
-| `turn.ts` | One agent working one step: its conversation, instructions, result and questions |
+| `turn.ts` | Agent turns and parallel members, sharing startup, callbacks, reopen fallback, context packets and screen persistence; admission remains specific to the seat owner |
+| `tool-activity.ts`, `check-log-read.ts`, `evidence-read.ts` | Public tool descriptions, verified diagnostic-file reading and bounded evidence pages |
 | `roles.ts`, `context.ts`, `prompts.ts` | Role contracts, what each role is shown, and the prompt around them |
 | `product-checks.ts`, `checks.ts` | The product's checks and running them |
 | `guide-keeper.ts`, `points.ts` | The review guide, and the files of points it shares with the learnings |
 | `learnings.ts`, `accepted-points.ts` | Lessons offered at delivery, written to AGENTS.md, and accepted instructions retired from the pending queue once incorporated |
 | `update.ts` | One commit per task, put on top of the latest main before the delivery check and before shipping |
 | `shipping.ts` | Delivery preparation, publishing and recovery gates; publishing is never repeated blindly |
-| `release-prep.ts`, `pr-monitor.ts` | Release version and notes preparation; observing PRs and settling cancelled deliveries without publishing |
+| `release-prep.ts`, `pr-monitor.ts`, `shipping-verifier.ts` | Release preparation; PR observation and cancelled settlement; shared local/GitHub delivery verification. Observations carry evidence; Shipping owns recording and publishing |
 | `screen-coordinator.ts` | Screen arbitration, waiting review members, screen timers and retained-copy cleanup |
 | `usage-coordinator.ts` | Account-reader registry, reports, limit timers and profile/stand-in choice |
 | `take-over.ts`, `terminal.ts` | Take over in the terminal |

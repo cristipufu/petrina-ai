@@ -4,6 +4,7 @@ import { onScreen, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenW
 import type { Kernel, MTask } from "./kernel.js";
 import { executionFor, executionOf, scopesFor, type RepositoryContext } from "./repository-context.js";
 import * as git from "./git.js";
+import { completeAll } from "./parallel.js";
 type ScreenHost = Pick<Kernel, "settling" | "dataDir" | "productOf" | "log" | "syncIdleSleep" | "s" | "columnFor" | "commitNow" | "id" | "activeState" | "schedule">;
 export class ScreenCoordinator {
   readonly groups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void; yield?: (member: string) => void }>();
@@ -28,7 +29,7 @@ export class ScreenCoordinator {
     if (!owners.some((owner) => owner.root)) return;
     const stopped = this.k.settling.get(task.id);
     const cleanup = Promise.all([stopped, this.copyCleanups.get(task.id)])
-      .then(async () => { for (const owner of owners) if (owner.root) await git.removeCopies(owner.root, join(this.k.dataDir, "worktrees", owner.productId, `${task.id}.copies`)); })
+      .then(async () => { await completeAll(owners.flatMap((owner) => owner.root ? [git.removeCopies(owner.root, join(this.k.dataDir, "worktrees", owner.productId, `${task.id}.copies`))] : [])); })
       .catch((error: unknown) => this.k.log(task, "warn", `Could not remove the reviewers' working copies: ${error instanceof Error ? error.message : String(error)}`))
       .finally(() => {
         if (this.copyCleanups.get(task.id) === cleanup) this.copyCleanups.delete(task.id);

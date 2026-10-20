@@ -7,7 +7,7 @@ import type { Sources } from "./sources.js";
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, pauseClock, plainTodo, resumeClock, startClock } from "@petrina/core";
+import { addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, startClock } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type PermissionInfo } from "./acp-run.js";
 import * as git from "./git.js";
@@ -123,7 +123,7 @@ export class Turns {
       this.k.tracking.attempt(scope, roleId, plannedId, profile, stopped !== undefined);
       options.used?.(profile.id);
       // Said where the coordinator will see it: a security review that could not stay off the builder's tool.
-      const builder = this.k.profile(task.plan?.stages.find((stage) => stage.roleId === "builder")?.profileIds[0] ?? "");
+      const builder = this.k.profile(task.plan?.stages.find((stage) => this.k.role(stage.roleId)?.result === "build")?.profileIds[0] ?? "");
       const builderTool = repository.builderSession?.toolId ?? builder?.toolId;
       if (roleId === "security-reviewer" && builderTool === profile.toolId && !task.timeline.some((entry) => entry.text.startsWith("Security review on the builder's tool"))) {
         this.k.log(scope, "warn", `Security review on the builder's tool (${this.k.named(profile.id)}): no other tool is available for this review`);
@@ -296,7 +296,6 @@ export class Turns {
     this.k.commitNow(scope);
 
     const live = () => this.k.task(taskId);
-    const env = this.envFor();
     // How its turns are written down in the work log, with its own waits for the coordinator left out of its time.
     const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
@@ -305,72 +304,11 @@ export class Turns {
       task.repositories && !options.copy ? Promise.all(task.repositories.filter((work) => work.worktree && work.productId !== repository.productId).map(async (work) => ({ path: work.worktree!, sha: await git.head(work.worktree!) }))) : [],
     ]);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
-    const start = (sessionId?: string, sandbox?: ClaudeSandbox, command = this.k.options.agentCommand?.(profile)): Promise<AgentRun> =>
-      AgentRun.start({
-        profile,
-        ...(command ? { command } : {}),
-        ...(env ? { env } : {}),
-        ...(sandbox ? { sandbox } : {}),
-        cwd: worktree,
-        browser: mayAskScreen(role),
-        browserRoot: join(this.k.dataDir, "browser-temp"),
-        signal,
-        ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
-        ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
-        callbacks: {
-          onMessage: this.messageStream(scope, roleId, profileId, signal, true),
-          onActivity: (line) => {
-            const current = live();
-            if (current) this.briefed(scope);
-            if (!current || current.state !== "running") return;
-            if (reviewWork) {
-              reviewWork.activity = line;
-              this.k.showReviewWork(current);
-            } else current.statusLine = line;
-            this.k.say(scope, "activity", line, roleId, profileId);
-            this.k.commit(scope);
-          },
-          // The to-do item is kept apart from the status line: tool activity never overwrites it, nor it the activity.
-          onPlanStep: (line) => {
-            const current = live();
-            const text = plainTodo(line);
-            if (!current || !text) return;
-            this.briefed(scope);
-            if (current.state !== "running" && current.state !== "needs-you") return;
-            if (reviewWork) {
-              if (reviewWork.todo === text) return;
-              reviewWork.todo = text;
-              this.k.showReviewWork(current);
-            } else {
-              if (current.todo === text) return;
-              current.todo = text;
-            }
-            if (current.timeline.at(-1)?.text !== text) this.k.log(scope, "status", text, roleId, profileId);
-            this.k.noteTodo(scope);
-          },
-          onPermission: (info) => this.permission(scope, info, signal, { roleId, profileId }, agent.waits, options.reviewKey),
-          onLog: (text) => void this.k.agentLog(taskId, text),
-          onCleanupIncomplete: () => { const current = live(); if (current) this.k.log(scope, "warn", CLEANUP_INCOMPLETE); },
-          onUsage: (info) => this.k.recordUsage(info),
-        },
-      }).catch(async (error: unknown) => {
-        // A fresh conversation that does not open is the tool's problem: name it, with its fix.
-        // Claude Code refusing its sandbox is not that: the caller opens the same conversation again without it.
-        if (sessionId !== undefined || signal.aborted || error instanceof SandboxUnavailable) throw error;
-        throw await this.tools.problem(profile.toolId, error);
-      });
-    let opened: { run: AgentRun; off?: string } | undefined;
-    let notBack: string | undefined;
-    if (reopen ?? back) {
-      try {
-        opened = await this.inSandbox(profile, (sandbox) => start((reopen ?? back)!.sessionId, sandbox));
-      } catch (error) {
-        if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
-        if (reopen) again = error.message;
-        else notBack = error.message;
-      }
-    }
-    opened ??= await this.inSandbox(profile, (sandbox) => start(undefined, sandbox));
+    const opened = await this.openAgentRun(scope, role, profile, worktree, signal, agent, {
+      main: true, reviewKey: options.reviewKey, sessionId: (reopen ?? back)?.sessionId,
+    });
+    const notBack = opened.reopenFailure;
+    if (reopen && opened.reopenFailure) again = opened.reopenFailure;
     const { run } = opened;
     options.started?.();
     this.k.runs.set(taskId, run);
@@ -429,14 +367,13 @@ export class Turns {
         // Its job as it stands now and the context, from the same sections a fresh conversation gets.
         const givenSections = await withBackground();
         const previous = back?.context ?? (repository.builderSession?.sessionId === run.sessionId ? repository.builderSession.context : undefined);
-        const prepared = role.result === "build" || options.designContext || options.reviewContext ? await builderContext(this.k.dataDir, repositoryView(scope), role, run.sessionId, givenSections, previous, { design: options.designContext, knownSections: back?.knownSections }) : { sections: givenSections };
+        const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, repository.conversation, {
+          packet: role.result === "build" || options.designContext || options.reviewContext,
+          previous, design: options.designContext, knownSections: back?.knownSections,
+        });
         const sections = prepared.sections;
-        if (repository.conversation && (role.result === "build" || options.designContext || options.reviewContext)) {
-          if ("snapshot" in prepared && prepared.snapshot) repository.conversation.context = prepared.snapshot;
-          else delete repository.conversation.context;
-        }
         this.recordJourneyInput(scope, roleId, profileId, sections, "continued");
-        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: !previous || !("snapshot" in prepared) || prepared.snapshot?.scope !== previous.scope });
+        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole });
       } else if (picked) {
         // One line about the restart (or the hand back, or that it may now use the screen), then only what the conversation
         // has not heard: the answer to its open question, and messages still in line.
@@ -467,9 +404,7 @@ export class Turns {
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(scope, roleId, tookOver.id, startedAt), refusal) });
         else if (where) sections.push({ title: forScreen ? WHERE_YOU_WERE_SCREEN : WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "", forScreen ? "screen" : "restart") });
         if ((role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
-          const prepared = await builderContext(this.k.dataDir, repositoryView(scope), role, run.sessionId, sections);
-          if (prepared.snapshot) repository.conversation.context = prepared.snapshot;
-          else delete repository.conversation.context;
+          await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true });
         }
         this.recordJourneyInput(scope, roleId, profileId, sections, "fresh");
         opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) });
@@ -479,20 +414,7 @@ export class Turns {
       if (signal.aborted || !live()) throw new Aborted();
       this.k.commitNow(scope);
       // A reopened conversation carries on after the interruption; a fresh one gets its first instructions.
-      const askScreen = options.member ? (reason: string) => {
-        const current = this.k.task(taskId);
-        if (!current?.hunt || !repository.conversation) return false;
-        const conversation = structuredClone(repository.conversation);
-        current.hunt.screenTurns = {
-          ...current.hunt.screenTurns,
-          [options.member!]: { reason, at: Date.now(), copy: worktree, conversation },
-        };
-        if (current.screen) this.k.log(scope, "status", SCREEN_WORDS.asked(reason), roleId, profileId);
-        const granted = !current.screen && this.k.askScreen(current, roleId, profileId, reason, options.member);
-        if (granted) repository.conversation = conversation;
-        this.k.commitNow(scope);
-        return granted;
-      } : undefined;
+      const askScreen = options.member ? (reason: string) => this.saveScreenTurn(scope, role, profile, options.member!, worktree, repository.conversation, reason) : undefined;
       const result = await this.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: !options.copy, ...(askScreen ? { askScreen } : {}) });
       if (repository.conversation) options.completed?.(repository.conversation, profile, role);
       return result;
@@ -655,60 +577,11 @@ export class Turns {
     }
     this.k.commit(scope);
     const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
-    const command = this.k.options.agentCommand?.(profile);
     const offered = typeof options.resume === "function" ? await options.resume(profile, role) : options.resume;
-    const start = (sessionId?: string) => this.inSandbox(profile, (sandbox) =>
-      AgentRun.start({
-        profile,
-        ...(command ? { command } : {}),
-        env: this.envFor(),
-        ...(sandbox ? { sandbox } : {}),
-        cwd: copy,
-        browser: mayAskScreen(role),
-        ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
-        browserRoot: join(this.k.dataDir, "browser-temp"),
-        signal,
-        ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}),
-        callbacks: {
-          onMessage: this.messageStream(scope, roleId, profileId, signal),
-          onActivity: (line) => {
-            const current = this.k.task(taskId);
-            const work = current?.hunt?.work?.[options.key];
-            if (!current || !work || signal.aborted || (current.state !== "running" && current.state !== "needs-you")) return;
-            work.activity = line;
-            this.k.showReviewWork(current);
-            this.k.say(scope, "activity", line, roleId, profileId);
-            this.k.commit(scope);
-          },
-          onPlanStep: (line) => {
-            const current = this.k.task(taskId);
-            const work = current?.hunt?.work?.[options.key];
-            const text = plainTodo(line);
-            if (!current || !work || !text || signal.aborted || work.todo === text || (current.state !== "running" && current.state !== "needs-you")) return;
-            work.todo = text;
-            this.k.showReviewWork(current);
-            this.k.log(scope, "status", text, roleId, profileId);
-            this.k.noteTodo(scope);
-          },
-          onPermission: (info) => this.permission(scope, info, signal, { roleId, profileId }, agent.waits, options.key),
-          onLog: (text) => void this.k.agentLog(taskId, text),
-          onCleanupIncomplete: () => { const current = this.k.task(taskId); if (current) this.k.log(scope, "warn", CLEANUP_INCOMPLETE); },
-          onUsage: (info) => this.k.recordUsage(info),
-        },
-      }),
-    ).catch(async (error: unknown) => {
-      if (signal.aborted || sessionId !== undefined) throw error;
-      throw await this.tools.problem(profile.toolId, error);
+    const opened = await this.openAgentRun(scope, role, profile, copy, signal, agent, {
+      main: false, reviewKey: options.key, sessionId: offered?.sessionId,
     });
-    let opened: Awaited<ReturnType<typeof start>> | undefined;
-    if (offered) {
-      try { opened = await start(offered.sessionId); }
-      catch (error) {
-        if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
-        this.k.log(scope, "status", `Could not go back to its own review conversation (${error.message}), so it started fresh`, roleId, profileId);
-      }
-    }
-    opened ??= await start();
+    if (opened.reopenFailure) this.k.log(scope, "status", `Could not go back to its own review conversation (${opened.reopenFailure}), so it started fresh`, roleId, profileId);
     const { run, off } = opened;
     options.started?.();
     const wentBack = offered !== undefined && run.reopened !== undefined;
@@ -727,27 +600,17 @@ export class Turns {
       const givenSections = [...await given(), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
       if (signal.aborted) throw new Aborted();
       if (options.took) givenSections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
-      const prepared = options.reviewContext ? await builderContext(this.k.dataDir, repositoryView(scope), role, run.sessionId, givenSections, wentBack ? offered?.context : undefined) : { sections: givenSections };
+      const note: ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
+      const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, note, { packet: options.reviewContext, previous: wentBack ? offered?.context : undefined });
       const sections = prepared.sections;
-      const note: import("@petrina/core").ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true, ...("snapshot" in prepared && prepared.snapshot ? { context: prepared.snapshot } : {}) };
       this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh");
       const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
-      const opening = wentBack ? continuePrompt(promptContext, { refreshRole: !offered?.context || note.context?.scope !== offered.context.scope }) : buildPrompt(promptContext);
+      const opening = wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole }) : buildPrompt(promptContext);
       const result = await this.converse(scope, run, agent, opening, "first", role, profileId, schema, signal, {
         ...options,
         main: false,
         reviewKey: options.key,
-        askScreen: (reason) => {
-          // Each member keeps its own request. Only the first can be represented by task.screen;
-          // the rest follow after it, without overwriting its conversation or permission.
-          const conversation = structuredClone(note);
-          task.hunt!.screenTurns = { ...task.hunt!.screenTurns, [options.member]: { reason, at: Date.now(), copy, conversation } };
-          if (task.screen) this.k.log(scope, "status", SCREEN_WORDS.asked(reason), roleId, profileId);
-          const granted = !task.screen && this.k.askScreen(task, roleId, profileId, reason, options.member);
-          if (granted) repository.conversation = conversation;
-          this.k.commitNow(scope);
-          return granted;
-        },
+        askScreen: (reason) => this.saveScreenTurn(scope, role, profile, options.member, copy, note, reason),
       });
       options.completed?.(note, profile, role);
       return result;
@@ -930,6 +793,93 @@ export class Turns {
       this.k.tracking.redo(current, role.id, agent.profile);
       reply = await send(repairPrompt(error ?? ""), "redo");
     }
+  }
+
+  /** Shared startup, callbacks and reopen fallback for main turns and parallel members. */
+  private async openAgentRun(scope: RepositoryContext, role: Role, profile: AgentProfile, cwd: string, signal: AbortSignal, agent: TurnAgent,
+    options: { main: boolean; reviewKey?: string; sessionId?: string }): Promise<{ run: AgentRun; off?: string; reopenFailure?: string }> {
+    const { task } = scope, roleId = role.id, profileId = profile.id;
+    const callbacks = {
+      onMessage: this.messageStream(scope, roleId, profileId, signal, options.main),
+      onActivity: (line: string) => {
+        const current = this.k.task(task.id);
+        if (!current || signal.aborted) return;
+        if (options.main) this.briefed(scope);
+        if (options.main ? current.state !== "running" : current.state !== "running" && current.state !== "needs-you") return;
+        const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
+        if (!options.main && !work) return;
+        if (work) { work.activity = line; this.k.showReviewWork(current); }
+        else current.statusLine = line;
+        this.k.say(scope, "activity", line, roleId, profileId);
+        this.k.commit(scope);
+      },
+      onPlanStep: (line: string) => {
+        const current = this.k.task(task.id), text = plainTodo(line);
+        if (!current || !text || signal.aborted) return;
+        if (options.main) this.briefed(scope);
+        if (current.state !== "running" && current.state !== "needs-you") return;
+        const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
+        if (!options.main && !work) return;
+        if (work) {
+          if (work.todo === text) return;
+          work.todo = text;
+          this.k.showReviewWork(current);
+        } else {
+          if (current.todo === text) return;
+          current.todo = text;
+        }
+        if (!options.main || current.timeline.at(-1)?.text !== text) this.k.log(scope, "status", text, roleId, profileId);
+        this.k.noteTodo(scope);
+      },
+      onPermission: (info: PermissionInfo) => this.permission(scope, info, signal, { roleId, profileId }, agent.waits, options.reviewKey),
+      onLog: (text: string) => void this.k.agentLog(task.id, text),
+      onCleanupIncomplete: () => { if (this.k.task(task.id)) this.k.log(scope, "warn", CLEANUP_INCOMPLETE); },
+      onUsage: (info: import("./usage.js").UsageInfo) => this.k.recordUsage(info),
+    };
+    const start = (sessionId?: string) => this.inSandbox(profile, (sandbox) => {
+      // Resolve the command for each process, including a fallback or sandbox retry.
+      const command = this.k.options.agentCommand?.(profile);
+      return AgentRun.start({ profile, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
+        cwd, browser: mayAskScreen(role), browserRoot: join(this.k.dataDir, "browser-temp"), signal,
+        ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
+        ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}), callbacks,
+      });
+    }).catch(async (error: unknown) => {
+      if (sessionId !== undefined || signal.aborted || error instanceof SandboxUnavailable) throw error;
+      throw await this.tools.problem(profile.toolId, error);
+    });
+    let reopenFailure: string | undefined;
+    if (options.sessionId) {
+      try { return await start(options.sessionId); }
+      catch (error) {
+        if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
+        reopenFailure = error.message;
+      }
+    }
+    return { ...await start(), ...(reopenFailure ? { reopenFailure } : {}) };
+  }
+
+  private async prepareTurnPrompt(scope: RepositoryContext, role: Role, sessionId: string, sections: Section[], note: ConversationNote | undefined,
+    options: { packet?: boolean; previous?: BuilderContext; design?: boolean; knownSections?: readonly string[] }): Promise<{ sections: Section[]; refreshRole: boolean }> {
+    if (!options.packet) return { sections, refreshRole: true };
+    const prepared = await builderContext(this.k.dataDir, repositoryView(scope), role, sessionId, sections, options.previous, { design: options.design, knownSections: options.knownSections });
+    if (note) {
+      if (prepared.snapshot) note.context = prepared.snapshot;
+      else delete note.context;
+    }
+    return { sections: prepared.sections, refreshRole: !options.previous || prepared.snapshot?.scope !== options.previous.scope };
+  }
+
+  private saveScreenTurn(scope: RepositoryContext, role: Role, profile: AgentProfile, member: string, copy: string, note: ConversationNote | undefined, reason: string): boolean {
+    const { task, work: repository } = scope;
+    if (!this.k.task(task.id)?.hunt || !note) return false;
+    const conversation = structuredClone(note);
+    task.hunt!.screenTurns = { ...task.hunt!.screenTurns, [member]: { reason, at: Date.now(), copy, conversation } };
+    if (task.screen) this.k.log(scope, "status", SCREEN_WORDS.asked(reason), role.id, profile.id);
+    const granted = !task.screen && this.k.askScreen(task, role.id, profile.id, reason, member);
+    if (granted) repository.conversation = conversation;
+    this.k.commitNow(scope);
+    return granted;
   }
 
   /** A tool known to be missing or logged out is not started: the coordinator gets its fix instead. */

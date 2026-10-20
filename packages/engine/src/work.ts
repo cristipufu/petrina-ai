@@ -34,6 +34,7 @@ export class Work {
     if (task.repositories && role?.canEdit && (repository.pr || repository.release || repository.landed)) throw new Error("This product has already been delivered. Its confirmed work is preserved; any further repair needs a separately reviewed follow-up.");
     const sections = () => this.context.sectionsFor(scope, roleId);
 
+    let testedVersions: Record<string, string> | undefined;
     if (role?.result === "build") {
       if (task.miss) await this.guide.proposeGuideLine(scope, signal);
       const updating = repository.updating;
@@ -112,7 +113,7 @@ export class Work {
         Date.now(),
       );
     } else if (role?.result === "checks") {
-      let testedVersions = task.repositories ? await versionsOf(task) : undefined;
+      testedVersions = task.repositories ? await versionsOf(task) : undefined;
       const rawResult = await this.turns.turn(scope, roleId, profileId, sections, TestResult, signal, {
         used,
         check: (value) => {
@@ -120,7 +121,10 @@ export class Work {
           return missing?.length ? `Report pass, fail, or blocked for every acceptance item, using its exact text. For blocked checks, include a reason naming what prevented verification. These are missing:\n${missing.map((item) => `- ${item.text}`).join("\n")}` : undefined;
         },
       });
-      if (role.canEdit) { await this.k.saveRoleEdits(scope, roleId, profileId);  testedVersions = task.repositories ? await versionsOf(task) : undefined; }
+      if (role.canEdit) {
+        await this.k.saveRoleEdits(scope, roleId, by);
+        testedVersions = task.repositories ? await versionsOf(task) : undefined;
+      }
       const result = { ...rawResult, checks: rawResult.checks.map((check) => {
         const productIds = productsFor(task, "productIds" in check ? check.productIds : undefined);
         if (task.repositories && !productIds.length) return { ...check, productIds: [], result: "blocked" as const, reason: "Together: no valid affected products were assigned. The coordinator must resolve ownership." };
@@ -169,7 +173,7 @@ export class Work {
         outcome: unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : W.checks(failed.length, result.checks.length),
         reason: unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : W.checksPassed,
       }, Date.now());
-      task.testedPatch = (await acceptanceVersion(task)) ?? (await this.updates.patch(scope)) ?? task.testedPatch;
+      task.testedPatch = (await acceptanceVersion(task, testedVersions)) ?? (await this.updates.patch(scope)) ?? task.testedPatch;
       if (testedVersions) task.testedVersions = testedVersions;
       task.acceptancePassed = failed.length === 0 && !unverified;
       task.acceptanceUnverified = unverified;
@@ -193,7 +197,7 @@ export class Work {
         delete task.retest;
         this.k.finishStep(scope);
         const stages = task.plan?.stages ?? [];
-        const builder = lastIndexWhere(stages, (entry) => entry.roleId === "builder" && entry.kind === "do");
+        const builder = lastIndexWhere(stages, (entry) => this.k.role(entry.roleId)?.result === "build" && entry.kind === "do");
         if (failed.length && !unverified && builder >= 0 && (repository.acceptanceReturns ?? 0) < 2) {
           repository.acceptanceReturns = (repository.acceptanceReturns ?? 0) + 1;
           task.stageIndex = builder;
@@ -221,13 +225,13 @@ export class Work {
       this.k.log(scope, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, by);
       endAgentStep(task, { outcome: W.wroteNotes, reason: W.notesReady }, Date.now());
     }
-    if (role?.result !== "build") await this.k.saveRoleEdits(scope, roleId, by);
+    if (role?.result !== "build" && role?.result !== "checks") await this.k.saveRoleEdits(scope, roleId, by);
     this.k.finishStep(scope);
     this.k.tracking.endStage(scope, "done");
     if (this.k.rerun(task)) return "continue";
     if (task.repositories && role?.canEdit) {
 
-      await invalidateAcceptance(task);
+      await invalidateAcceptance(task, testedVersions);
       const own = task.repositories.find((work) => work.productId === repository.productId)!;
       if (!task.repair) own.completedStages = [...new Set([...own.completedStages, stage.id])];
       if (task.repair) {

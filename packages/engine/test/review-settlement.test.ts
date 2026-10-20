@@ -34,15 +34,17 @@ describe("shared review settlement interleavings", () => {
     const { first, second, engine, task, stage } = fixture();
     task.activeProductId = active;
     stage.roleId = security ? "security-reviewer" : "code-reviewer";
-    const readHead = steps.head, readTree = steps.treeOf;
+    const readVersion = steps.commitVersion, readTree = steps.treeOf;
     const heads = [first, second].map((world) => git(world.clone, "rev-parse", "HEAD"));
     const trees = [first, second].map((world) => git(world.clone, "rev-parse", "HEAD^{tree}"));
     expect(heads[0]).not.toBe(heads[1]);
     expect(trees[0]).not.toBe(trees[1]);
-    const head = spyOn(steps, "head").mockImplementation(async (path) => { const result = await readHead(path); engine.activeState(); return result; });
+    const version = spyOn(steps, "commitVersion").mockImplementation(async (path) => { const result = await readVersion(path); engine.activeState(); return result; });
     const tree = spyOn(steps, "treeOf").mockImplementation(async (...args) => { const result = await readTree(...args); engine.activeState(); return result; });
     try {
       await engine["reviews"]["closeReviewRound"](task, stage, 1, "Nothing to fix");
+      expect(version).toHaveBeenCalledTimes(security ? 0 : 2);
+      expect(tree).toHaveBeenCalledTimes(security ? 2 : 0);
       expect(task.repositories!.map((work) => work.reviewedSha)).toEqual(security ? ["earlier-first", "earlier-second"] : heads);
       expect(task.repositories!.map((work) => work.reviewedTree)).toEqual(trees);
       const activeIndex = active === "first" ? 0 : 1;
@@ -53,7 +55,23 @@ describe("shared review settlement interleavings", () => {
       expect(saved.repositories!.map((work) => work.reviewedSha)).toEqual(security ? ["earlier-first", "earlier-second"] : heads);
       expect(saved.repositories!.map((work) => work.reviewedTree)).toEqual(trees);
       expect(saved.reviewedTree).toBeUndefined();
-    } finally { head.mockRestore(); tree.mockRestore(); await engine.shutdown(); }
+    } finally { version.mockRestore(); tree.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("preserves the existing code-review anchors when a single-product security round passes", async () => {
+    const { engine, task, stage } = fixture();
+    const owner = task.repositories![0]!;
+    delete task.repositories;
+    task.repository = owner;
+    stage.roleId = "security-reviewer";
+    const before = { tree: owner.reviewedTree, sha: owner.reviewedSha };
+    const version = spyOn(steps, "commitVersion"), tree = spyOn(steps, "treeOf");
+    try {
+      await engine["reviews"]["closeReviewRound"](task, stage, 1, "No security findings");
+      expect({ tree: owner.reviewedTree, sha: owner.reviewedSha }).toEqual(before);
+      expect(version).not.toHaveBeenCalled();
+      expect(tree).not.toHaveBeenCalled();
+    } finally { version.mockRestore(); tree.mockRestore(); await engine.shutdown(); }
   });
 
   for (const workFails of [false, true]) it(`keeps ${workFails ? "the original review failure" : "the saved review"} when removing a secondary snapshot fails`, async () => {

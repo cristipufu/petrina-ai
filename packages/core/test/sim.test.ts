@@ -1377,12 +1377,12 @@ describe("review rounds that converge", () => {
     }) as unknown as Task;
 
   it("sends the work back within the planned rounds, whatever the count", () => {
-    expect(reviewRoundEnd(task(4), stage, 1).kind).toBe("send back");
+    expect(reviewRoundEnd(task(4), stage, 1, BUILT_IN_ROLES).kind).toBe("send back");
   });
 
   it("uses the smaller count as progress for older tasks without finding snapshots", () => {
-    expect(reviewRoundEnd(task(2, [4]), stage, 2).kind).toBe("send back");
-    expect(reviewRoundEnd(task(1, [4, 2]), stage, 3).kind).toBe("send back");
+    expect(reviewRoundEnd(task(2, [4]), stage, 2, BUILT_IN_ROLES).kind).toBe("send back");
+    expect(reviewRoundEnd(task(1, [4, 2]), stage, 3, BUILT_IN_ROLES).kind).toBe("send back");
   });
 
   it("counts resolved findings as progress even when reviewers raise new blockers", () => {
@@ -1396,7 +1396,7 @@ describe("review rounds that converge", () => {
       ],
       blockingFindingsAfter: { review: [["old-1", "old-2"]] },
     } as unknown as Task;
-    expect(reviewRoundEnd(current, stage, 3)).toEqual({ kind: "send back", builder: 0, open: 2 });
+    expect(reviewRoundEnd(current, stage, 3, BUILT_IN_ROLES)).toEqual({ kind: "send back", builder: 0, open: 2 });
   });
 
   it("stops when the same blocking findings remain open", () => {
@@ -1408,7 +1408,7 @@ describe("review rounds that converge", () => {
       ],
       blockingFindingsAfter: { review: [["same-1", "same-2"]] },
     } as unknown as Task;
-    expect(reviewRoundEnd(current, stage, 3)).toEqual({ kind: "used up", open: 2 });
+    expect(reviewRoundEnd(current, stage, 3, BUILT_IN_ROLES)).toEqual({ kind: "used up", open: 2 });
   });
 
   it("records only the open blockers by ID after a round", () => {
@@ -1424,9 +1424,9 @@ describe("review rounds that converge", () => {
   });
 
   it("hands the coordinator a round that stopped making progress, and never goes past five rounds", () => {
-    expect(reviewRoundEnd(task(2, [2]), stage, 2).kind).toBe("used up");
-    expect(reviewRoundEnd(task(3, [2]), stage, 2).kind).toBe("used up");
-    expect(reviewRoundEnd(task(1, [5, 4, 3, 2]), stage, MAX_REVIEW_ROUNDS).kind).toBe("used up");
+    expect(reviewRoundEnd(task(2, [2]), stage, 2, BUILT_IN_ROLES).kind).toBe("used up");
+    expect(reviewRoundEnd(task(3, [2]), stage, 2, BUILT_IN_ROLES).kind).toBe("used up");
+    expect(reviewRoundEnd(task(1, [5, 4, 3, 2]), stage, MAX_REVIEW_ROUNDS, BUILT_IN_ROLES).kind).toBe("used up");
   });
 });
 

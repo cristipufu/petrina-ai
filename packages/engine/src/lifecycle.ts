@@ -1,10 +1,11 @@
+import { fingerprint } from "./evidence-read.js";
 // Durable lifecycle receipts outlive both the caller and an engine replacement.
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Engine } from "./engine.js";
 import { type FolderLock, processAlive, readConnection } from "./instance.js";
-import { drainStatus, fingerprint, serial, type Result, type LifecycleControl } from "./coordination.js";
+import { drainStatus, serial, type Result, type LifecycleControl } from "./coordination.js";
 
 export interface LifecycleOperation {
   id: string;

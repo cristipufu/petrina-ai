@@ -34,12 +34,27 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
 
   it("sends a delivery back to the builder, and a plan back to the planner", () => {
     const delivery = copy({ stageIndex: stages.length - 1, sub: 2 });
-    afterChangesAsked(delivery, "delivery", "The greeting is gone", 0);
+    afterChangesAsked(delivery, "delivery", "The greeting is gone", 0, BUILT_IN_ROLES);
     expect([delivery.stageIndex, delivery.fixing, delivery.sentBack, delivery.sub]).toEqual([at((stage) => stage.roleId === "builder"), true, 1, 0]);
 
     const plan = copy({ stageIndex: 0 });
-    afterChangesAsked(plan, "plan", "Smaller, please", 0);
+    afterChangesAsked(plan, "plan", "Smaller, please", 0, BUILT_IN_ROLES);
     expect([plan.stageIndex, plan.plan]).toEqual([-1, undefined]);
+  });
+
+  it("routes review and coordinator returns by the role's build result, regardless of its name", () => {
+    const builder = { ...BUILT_IN_ROLES.find(role => role.result === "build")!, id: "implementer", name: "Implementer" };
+    const misleading = { ...BUILT_IN_ROLES.find(role => role.result === "notes")!, id: "builder" };
+    const roles = [builder, misleading];
+    const review: Stage = { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: [], maxRounds: 2 };
+    const task = copy({ stageIndex: 2, findings: [important()], plan: { rationale: "Custom roles", plannerProfileId: "sol-high", stages: [
+      { id: "build", title: "Implement", kind: "do", roleId: "implementer", profileIds: [] },
+      { id: "notes", title: "Write notes", kind: "do", roleId: "builder", profileIds: [] }, review,
+    ] } });
+    expect(reviewRoundEnd(task, review, 1, roles)).toEqual({ kind: "send back", builder: 0, open: 1 });
+    afterChangesAsked(task, "delivery", "Fix this", 1, roles);
+    expect(task.stageIndex).toBe(0);
+    expect(task.fixing).toBe(true);
   });
 
   it("ends a design round settled, in another round, or with the architects disagreeing", () => {
@@ -52,8 +67,8 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
   it("ends a review round back at the builder, passed, or with rounds used up", () => {
     const chain = at((stage) => stage.kind === "review-chain");
     const review = { ...stages[chain]!, maxRounds: 2 };
-    expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important("fixed")] }, review, 1)).toEqual({ kind: "passed" });
-    expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important()] }, review, 1)).toEqual({ kind: "send back", builder: at((stage) => stage.roleId === "builder"), open: 1 });
-    expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important()] }, review, 2)).toEqual({ kind: "used up", open: 1 });
+    expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important("fixed")] }, review, 1, BUILT_IN_ROLES)).toEqual({ kind: "passed" });
+    expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important()] }, review, 1, BUILT_IN_ROLES)).toEqual({ kind: "send back", builder: at((stage) => stage.roleId === "builder"), open: 1 });
+    expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important()] }, review, 2, BUILT_IN_ROLES)).toEqual({ kind: "used up", open: 1 });
   });
 });

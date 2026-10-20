@@ -1,5 +1,5 @@
 import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, validateTaskDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
-import { executionFor } from "./repository-context.js";
+import { executionFor, scopesFor } from "./repository-context.js";
 // The real engine: the same state the UI renders, driven by real agents over ACP.
 // Each task runs as one async driver while it holds a pool slot. Gates and the queue
 // live in state; questions and permissions wait on the coordinator in code.
@@ -346,12 +346,8 @@ export class Engine extends Kernel implements Commands {
   setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) throw new Error("This product is no longer in Petrina.");
-    for (const task of this.s.tasks) {
-
-      const work = task.repositories?.find((entry) => entry.productId === productId);
-      if (work?.checks) work.checks.current = false;
-      const single = task.repository;
-      if (single?.productId === productId && single.checks) single.checks.current = false;
+    for (const task of this.s.tasks) for (const { work } of scopesFor(task)) {
+      if (work.productId === productId && work.checks) work.checks.current = false;
     }
     if (checks === null) {
       delete product.checks;

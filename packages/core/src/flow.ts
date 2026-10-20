@@ -65,7 +65,7 @@ export function gateStatus(task: Task, gate: GateKind): string {
  * and returns to this same check; on a delivery check, the work goes back to the builder; on a plan,
  * the planner starts over. Says whether the note was a call.
  */
-export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note: string, now: number): { call: boolean } {
+export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note: string, now: number, roles: readonly Role[]): { call: boolean } {
   const stages = task.plan?.stages ?? [];
   if (task.repositories && (kind === "design" || kind === "disagreement")) task.designRevision = (task.designRevision ?? 0) + 1;
   const call = kind === "disagreement" ? startCall(task as unknown as Task, note, now) : undefined;
@@ -88,7 +88,7 @@ export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note
     }
   } else if (kind === "delivery") {
     task.sentBack = (task.sentBack ?? 0) + 1;
-    const index = lastIndexWhere(stages, (stage) => stage.roleId === "builder" && stage.kind === "do");
+    const index = lastIndexWhere(stages, (stage) => roles.find((role) => role.id === stage.roleId)?.result === "build" && stage.kind === "do");
     if (index >= 0) {
       task.stageIndex = index;
       task.fixing = true;
@@ -118,10 +118,10 @@ export const MAX_REVIEW_ROUNDS = 5;
  * one previously open Important finding), up to MAX_REVIEW_ROUNDS. Only a round that stops making progress hands
  * the decision to the coordinator. Older saved tasks without finding snapshots use the count as a fallback.
  */
-export function reviewRoundEnd(task: Task, stage: Stage, round: number): ReviewRoundEnd {
+export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: readonly Role[]): ReviewRoundEnd {
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").length;
   if (open === 0) return { kind: "passed" };
-  const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
+  const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && roles.find((role) => role.id === entry.roleId)?.result === "build");
   if (builder < 0) return { kind: "used up", open };
   if (round < (stage.maxRounds ?? 2)) return { kind: "send back", builder, open };
   const previous = task.blockingFindingsAfter?.[stage.id]?.at(-1);

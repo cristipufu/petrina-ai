@@ -179,7 +179,7 @@ export class Context {
     if (!repository.report) return [];
     const sections = [{ title: "What the builder reports", body: [repository.report.summary, ...repository.report.changes.map((change) => `- ${change}`), repository.report.tests ? `Tests: ${repository.report.tests}` : ""].filter(Boolean).join("\n") }];
     // The builder keeps what goes out with the work current: what it wrote last time, to hand back as it should read now.
-    if (roleId === "builder" && repository.delivery === "pull-request" && repository.report.description) sections.push({ title: "The pull request description you wrote last time", body: repository.report.description });
+    if (this.k.role(roleId)?.result === "build" && repository.delivery === "pull-request" && repository.report.description) sections.push({ title: "The pull request description you wrote last time", body: repository.report.description });
     return sections;
   }
 

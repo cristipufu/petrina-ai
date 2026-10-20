@@ -20,10 +20,10 @@ export class Updates {
   /** The task's one commit message: the builder's title in the repository's style, what changed for users, who built it. */
   message(scope: RepositoryContext): string {
     const { task, work: repository } = scope;
-    const builder = task.plan?.stages.find((stage) => stage.roleId === "builder");
+    const builder = task.plan?.stages.find((stage) => this.k.role(stage.roleId)?.result === "build");
     const by = repository.builderSession?.profileId ?? builder?.profileIds[0];
     const changes = (repository.report?.changes ?? []).map((change) => `- ${change}`).join("\n");
-    return [repository.report?.title ?? task.title, repository.report?.summary ?? "", changes, `Built by Petrina${by ? `: ${this.k.describe("builder", by)}` : ""}`].filter(Boolean).join("\n\n");
+    return [repository.report?.title ?? task.title, repository.report?.summary ?? "", changes, `Built by Petrina${by ? `: ${this.k.describe(builder?.roleId ?? "builder", by)}` : ""}`].filter(Boolean).join("\n\n");
   }
 
   /** The branch as one commit on top of where it forked, with the same code and the task's message. */
@@ -132,7 +132,7 @@ export class Updates {
       this.k.commit();
       return "moved";
     }
-    const builder = lastIndexWhere(task.plan?.stages ?? [], (stage) => stage.roleId === "builder" && stage.kind === "do");
+    const builder = lastIndexWhere(task.plan?.stages ?? [], (stage) => this.k.role(stage.roleId)?.result === "build" && stage.kind === "do");
     if (builder < 0) throw new Error(`${sourceName === "main" ? "Main" : sourceName} moved on and the work conflicts with it, but the plan has no builder to bring it up to date`);
     // On disk before the working copy moves: a restart in between finds the update and opens it again.
     // Only a completed review of this exact code permits the later review to cover the port alone.

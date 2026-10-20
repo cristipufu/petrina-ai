@@ -849,36 +849,29 @@ export class Reviews {
   private async closeReviewRound(task: MTask, stage: MStage, round: number, outcome: string): Promise<"continue" | "stop"> {
     const scope = executionFor(task);
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
-    const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
+    const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, this.k.s.roles);
     noteRoundEnd(task, stage.id, open.length);
     // A port review is one round: whatever it found, the rounds after it are ordinary ones.
     const port = scope.work.portReview !== undefined;
     const role = this.k.role(stage.roleId);
     const incremental = role && contractFor(role).incrementalReview;
     delete scope.work.portReview;
-    if (end.kind !== "passed") delete scope.work.reviewedTree;
-    else if (!task.repositories && incremental) scope.work.reviewedTree = await git.treeOf(scope.work.worktree!);
-    if (task.repositories && end.kind === "passed") {
-
-      const trees = await Promise.all(task.repositories.map((work) => work.worktree ? git.treeOf(work.worktree) : undefined));
-      // Publish the completed round’s anchors together; snapshots never modify repository records.
-      task.repositories.forEach((work, index) => { if (work.worktree) work.reviewedTree = trees[index]; });
-    }
-    // Each shared reviewer sees every repository snapshot. Keep a separate anchor for each
-    // one so a later repair reviews only work added since this completed round.
-    // Security-only stages do not advance the code-review baseline; partial rounds never close here.
-    if (incremental) {
-      if (task.repositories) {
-
-        const heads = await Promise.all(task.repositories.map((work) => work.worktree ? git.head(work.worktree).catch(() => undefined) : undefined));
-        task.repositories.forEach((work, index) => {
-          const sha = heads[index];
-          if (sha) work.reviewedSha = sha;
-          else delete work.reviewedSha;
-        });
-      } else {
-        const sha = await git.head(scope.work.worktree!).catch(() => undefined);
-        if (sha) scope.work.reviewedSha = sha;
+    // Resolve each owner once. An incremental round records the HEAD and its tree
+    // together; security rounds keep their code-review anchors unchanged.
+    const scopes = scopesFor(task);
+    const anchors = await Promise.all(scopes.map(async ({ work }) => {
+      if (!work.worktree) return {};
+      if (incremental) return git.commitVersion(work.worktree);
+      return task.repositories && end.kind === "passed" ? { tree: await git.treeOf(work.worktree) } : {};
+    }));
+    for (const [index, { work }] of scopes.entries()) {
+      const anchor = anchors[index]!;
+      if (end.kind === "passed") {
+        if (work.worktree && (task.repositories || incremental)) work.reviewedTree = anchor.tree;
+      } else if (work === scope.work) delete work.reviewedTree;
+      if (incremental) {
+        if (anchor.head) work.reviewedSha = anchor.head;
+        else delete work.reviewedSha;
       }
     }
     this.k.tracking.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");

@@ -41,15 +41,12 @@ export class Driver {
   ) {}
 
   private testerCheckKey(task: MTask): string {
-    const scope = executionFor(task);
-
-    // A shared task's active product changes while preparing/checking copies. Its
-    // readiness belongs to the complete set, never to that temporary projection.
-    const evidence = task.repositories
-      ? task.repositories.map((work) => [work.productId, work.baseSha, work.checks?.at, work.checks?.current])
-      : [[scope.work.productId, scope.work.baseSha, scope.work.checks?.at, scope.work.checks?.current]];
+    const scopes = scopesFor(task);
+    // Evidence belongs to every approved owner, independent of the visible active product.
+    const evidence = scopes.map(({ work }) => [work.productId, work.baseSha, work.checks?.at, work.checks?.current]);
+    const productIds = new Set(scopes.map(({ work }) => work.productId));
     return JSON.stringify([stepKey(task), task.handChanges, evidence,
-      this.k.s.products.filter((product) => product.id === scope.work.productId || task.repositories?.some((work) => work.productId === product.id)).map((product) => [product.id, product.checks])]);
+      this.k.s.products.filter((product) => productIds.has(product.id)).map((product) => [product.id, product.checks])]);
   }
 
   private testerNeedsChecks(task: MTask): boolean {
@@ -339,7 +336,7 @@ export class Driver {
         }
         // Acceptance was tried on this change already. Fixes are reviewed, and the final code is tried once more
         // right before the delivery check, so a tester pass per fix round is spared.
-        if (stage?.kind === "do" && stage.roleId === "tester" && !current.retest && current.testedPatch !== undefined && (!current.repositories || current.acceptancePassed)) {
+        if (stage?.kind === "do" && this.k.role(stage.roleId)?.result === "checks" && !current.retest && current.testedPatch !== undefined && (!current.repositories || current.acceptancePassed)) {
           this.k.log(current, "milestone", "Acceptance will be tried once more on the final code, right before your delivery check");
           current.stageIndex += 1;
           current.sub = 0;
@@ -399,12 +396,12 @@ export class Driver {
 
             }
             if (sentBack) continue;
-            await invalidateAcceptance(current);
+            const versions = await invalidateAcceptance(current);
             // The tester tried an earlier version of the change: the final code gets one more pass first.
-            const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && entry.roleId === "tester");
+            const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && this.k.role(entry.roleId)?.result === "checks");
             const acceptanceFailed = current.acceptancePassed === false;
             const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || current.acceptanceUnverified === true;
-            if (tester >= 0 && current.testedPatch !== undefined && !acceptanceExhausted && (acceptanceFailed || (await this.checks.acceptanceVersion(scope)) !== current.testedPatch)) {
+            if (tester >= 0 && current.testedPatch !== undefined && !acceptanceExhausted && (acceptanceFailed || (await this.checks.acceptanceVersion(scope, versions)) !== current.testedPatch)) {
               current.retest = true;
               current.stageIndex = tester;
               current.sub = 0;
@@ -412,18 +409,11 @@ export class Driver {
               this.k.commit();
               continue;
             }
-            const { checkedSha: head, checkedPatch: patch } = scope.work;
             if (this.shipsUnasked(current)) {
-              if (head) scope.work.approvedSha = head;
-              if (patch) scope.work.approvedPatch = patch;
-              scope.work.approvedFor = { by: "task", mode: scope.work.delivery, destination: destination(scope.work, this.k.productOf(scope)) };
-              if (current.repositories) {
-
-                for (const work of current.repositories) {
-
-                  work.approvedSha = work.checkedSha; work.approvedPatch = work.checkedPatch;
-                  work.approvedFor = { by: "task", mode: work.delivery, destination: destination(work, this.k.s.products.find((product) => product.id === work.productId)) };
-                }
+              for (const { work } of scopesFor(current)) {
+                work.approvedSha = work.checkedSha;
+                work.approvedPatch = work.checkedPatch;
+                work.approvedFor = { by: "task", mode: work.delivery, destination: destination(work, this.k.s.products.find((product) => product.id === work.productId)) };
               }
               this.k.log(current, "milestone", "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
               current.stageIndex += 1;

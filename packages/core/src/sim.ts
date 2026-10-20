@@ -291,7 +291,7 @@ export class Simulator {
       this.say(d, task, "you", note);
       endYouStep(task, call ? { outcome: W.madeCall, reason: W.yourCall, tone: "back" } : { outcome: W.changes, reason: W.changesAsked, tone: "back" }, d.now);
       task.notes = [...(task.notes ?? []), { at: d.now, text: note }];
-      afterChangesAsked(task, item.kind, note, d.now);
+      afterChangesAsked(task, item.kind, note, d.now, d.roles);
       task.state = "waiting";
       task.statusLine = "Waiting for a free slot";
       task.column = this.columnFor(d, task);
@@ -1194,7 +1194,7 @@ export class Simulator {
       }
 
       const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
-      const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round);
+      const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, d.roles);
       noteRoundEnd(task, stage.id, open.length);
       // The round's step says what its reviewers raised, and where the work goes.
       const raised = task.findings.slice(task.hunt?.findings ?? 0);

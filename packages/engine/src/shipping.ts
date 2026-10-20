@@ -1,5 +1,6 @@
+import { ShippingVerifier, realPath, type DeliveryEvidence } from "./shipping-verifier.js";
 import { ReleasePrep } from "./release-prep.js";
-import { PrMonitor, type DeliveryLookup } from "./pr-monitor.js";
+import { PrMonitor } from "./pr-monitor.js";
 import { executionFor, type RepositoryContext, type RepositoryWork } from "./repository-context.js";
 import { companionText, landingState, repositoryDelivered } from "@petrina/core";
 import { api } from "./source-github.js";
@@ -30,9 +31,7 @@ import {
   type ShippingStep,
   type TaskSource,
 } from "@petrina/core";
-import { realpathSync } from "node:fs";
 import * as git from "./git.js";
-import { sourcePr } from "./source-github.js";
 import { ReleaseNotesResult, TEXT_LIMITS } from "./roles.js";
 import { WaitingForUsage } from "./usage.js";
 import { Aborted, type Kernel, type MStage, type MTask, RELEASE_MANAGER_PROFILE } from "./kernel.js";
@@ -48,9 +47,6 @@ const MAX_MOVES = 3;
 const MAX_FAILURES = 2;
 /** A delivery from before the update, which Petrina leaves to the coordinator. */
 export const CARRIED_OVER = "This delivery was interrupted before Petrina was updated";
-
-/** What the check before publishing found. `unknown`: GitHub could not be asked. `other`: something that is not this work is there. */
-type Delivery = DeliveryLookup;
 
 /** Publishing found new source commits, after ruling out an already completed push. */
 class SourceMoved extends Error {}
@@ -75,17 +71,11 @@ function fit(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-function realPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
 
 export class Shipping {
   readonly releases: ReleasePrep;
   readonly monitor: PrMonitor;
+  readonly verifier: ShippingVerifier;
 
   constructor(
     private readonly k: Kernel,
@@ -96,11 +86,9 @@ export class Shipping {
     private readonly tools: ToolChecks,
   ) {
     this.releases = new ReleasePrep(k, turns, connections);
-    this.monitor = new PrMonitor(k, {
-      lookForDelivery: scope => this.lookForDelivery(scope),
-      noteCancelledLocal: scope => this.noteCancelledLocal(scope),
-      releaseRefs: scope => this.releaseRefs(scope, connections.savedRemote(scope)),
-      matchesPullRequest: (scope, pr, tested, base) => this.matchesPullRequest(scope, pr, tested, base),
+    this.verifier = new ShippingVerifier(k, connections);
+    this.monitor = new PrMonitor(k, this.verifier, {
+      recordDelivery: (scope, evidence, signal) => this.recordDelivery(scope, evidence, signal),
       finishMany: task => this.finishMany(task),
     });
   }
@@ -471,7 +459,7 @@ export class Shipping {
     delete task.agent;
     // Nothing was handed back, so no record for estimates.
     this.k.clearStep(scope);
-    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry) => entry.roleId === "builder" && entry.kind === "do");
+    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry) => this.k.role(entry.roleId)?.result === "build" && entry.kind === "do");
     if (builder >= 0) {
       task.stageIndex = builder;
       task.sub = 0;
@@ -546,7 +534,7 @@ export class Shipping {
   private async publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again"> {
     const { work: repository } = scope;
     if (repository.source?.start.kind === "pull-request") return this.publishPrUpdate(scope, signal);
-    if (repository.source?.start.kind === "branch" && repository.delivery !== "release" && !(await this.sourceCurrent(scope, signal))) return this.prepareAgain(scope, "The approved starting branch moved on GitHub");
+    if (repository.source?.start.kind === "branch" && repository.delivery !== "release" && !(await this.verifier.sourceCurrent(scope, signal))) return this.prepareAgain(scope, "The approved starting branch moved on GitHub");
     if (repository.delivery === "pull-request") return this.publishPullRequest(scope, signal);
     if (repository.delivery === "release") return this.publishRelease(scope, signal);
     return this.publishLocal(scope, signal);
@@ -609,7 +597,7 @@ export class Shipping {
     this.stopIfAsked(signal);
     if (!opened.ok && !opened.exists) throw new Error(`GitHub did not open the pull request (${opened.error}). Retry: Petrina looks for it on GitHub before opening another.`);
     // Checked on GitHub itself: from this branch, into the default branch, at the tested commit.
-    const pr = await this.findPullRequest(scope);
+    const pr = await this.verifier.findPullRequest(scope);
     if (!pr) {
       throw new Error(
         opened.ok
@@ -620,41 +608,7 @@ export class Shipping {
     return this.recordPr(scope, pr, "opened");
   }
 
-  /** GitHub's listing for the task's branch: the pull request for this work, none, or a stop for anything else there. */
-  private async findPullRequest(scope: RepositoryContext, cancelled = false): Promise<git.PullRequestInfo | undefined> {
-    const { work: repository } = scope;
-    const product = this.k.repositoryOf(scope)!;
-    const tested = repository.shipping!.prepared!.tested;
-    const defaultBranch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
-    this.checking(scope, "Checking: looking for the pull request on GitHub");
-    const listed = await this.connections.serial(product.id, () => git.pullRequests(product.repo, repository.branch!, this.k.options.gh));
-    if (!listed.ok) throw new Unreachable(`Petrina could not check GitHub for this task's pull request (${listed.error}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
-    const ours = listed.value.filter((pr) => pr.head === repository.branch && !pr.fork);
-    // Cancellation publishes nothing more. Any open pull request from this branch needs its copy,
-    // even when someone changed its base or added commits while the last publishing step was stopping.
-    if (cancelled) return ours.find((pr) => pr.state === "open") ?? ours.find((pr) => pr.base === defaultBranch && pr.commit === tested);
-    let match: git.PullRequestInfo | undefined;
-    for (const pr of ours) {
-      if (await this.matchesPullRequest(scope, pr, tested, defaultBranch)) { match = pr; break; }
-    }
-    const other = ours.find((pr) => pr !== match);
-    if (other) {
-      throw new Error(
-        `GitHub already has pull request #${other.number} from this task's branch, but it is not this work (${other.base !== defaultBranch ? `it goes into ${other.base}` : `it is at ${other.commit.slice(0, 7)}, not ${tested.slice(0, 7)}`}). Petrina published nothing more. Look at it on GitHub, then retry or cancel.`,
-      );
-    }
-    return match;
-  }
 
-  /** A reused branch name is not evidence of this delivery: its checked work and base must match. */
-  private async matchesPullRequest(scope: RepositoryContext, pr: git.PullRequestInfo, tested: string, base: string): Promise<boolean> {
-    const { work: repository } = scope;
-    if (pr.base !== base) return false;
-    if (pr.commit === tested) return true;
-    const remote = this.connections.savedRemote(scope);
-    const tip = await this.remoteTip(scope, remote, repository.branch!);
-    return tip === pr.commit && await this.remoteContains(scope, remote, repository.branch!, tip, tested);
-  }
 
   private async publishRelease(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again"> {
     const { work: repository } = scope;
@@ -667,8 +621,8 @@ export class Shipping {
     const remote = await this.connections.requireConnection(scope, signal);
     if (!shipping.pushed) {
       this.checking(scope, `Checking: looking at ${branch} and the tag ${tag} on GitHub`);
-      const before = await this.releaseRefs(scope, remote);
-      if (before.tag === tested && (await this.onGitHub(scope, remote, before.main, tested))) {
+      const before = await this.verifier.releaseRefs(scope, remote);
+      if (before.tag === tested && (await this.verifier.onGitHub(scope, remote, before.main, tested))) {
         this.k.log(scope, "status", `Checked: ${branch} and the tag ${tag} are already on GitHub at ${tested.slice(0, 7)}`);
       } else {
         if (before.tag === tested) throw new Error(`The tag ${tag} is on GitHub at the tested commit, but ${branch} there does not have it. Petrina published nothing more. Look at it on GitHub, then retry or cancel.`);
@@ -691,8 +645,8 @@ export class Shipping {
           ),
         );
         if (!pushed.ok) {
-          const after = await this.releaseRefs(scope, remote);
-          if (!(after.tag === tested && (await this.onGitHub(scope, remote, after.main, tested)))) {
+          const after = await this.verifier.releaseRefs(scope, remote);
+          if (!(after.tag === tested && (await this.verifier.onGitHub(scope, remote, after.main, tested)))) {
             if (!after.tag && after.main !== shipping.base && after.main !== tested) return this.prepareAgain(scope, `${branch} moved on GitHub`);
             throw new Error(`GitHub refused the push of ${branch} and the tag ${tag}, so Petrina published nothing (${pushed.error}). Retry once that is sorted.`);
           }
@@ -706,7 +660,7 @@ export class Shipping {
     }
     // Retry and Ship it again come straight here: the release goes only on a tag still at the tested commit.
     this.checking(scope, `Checking: looking at the tag ${tag} on GitHub`);
-    const at = await this.releaseRefs(scope, remote);
+    const at = await this.verifier.releaseRefs(scope, remote);
     if (at.tag !== tested) {
       throw new Error(`The tag ${tag} on GitHub ${at.tag ? `is at ${at.tag.slice(0, 7)}` : "is gone"}, not at the tested commit ${tested.slice(0, 7)}, so Petrina created no release. Look at it on GitHub, then retry or cancel.`);
     }
@@ -714,48 +668,16 @@ export class Shipping {
     const created = await this.publishStep(scope, signal, "release", `Publishing: creating the release ${tag}`, () => git.createRelease(product.repo, tag, notes!, this.k.options.gh));
     this.stopIfAsked(signal);
     if (!created.ok && !created.exists) throw new Error(`GitHub did not create the release ${tag} (${created.error}). Retry: Petrina looks for it on GitHub before creating another.`);
-    const release = await this.findRelease(scope);
+    const release = await this.verifier.findRelease(scope);
     if (!release) throw new Error(`GitHub ${created.ok ? "said it created" : "says it already has"} the release ${tag}, but Petrina cannot find it. Retry to check again.`);
     // Checked on GitHub itself: the tag is at the tested commit.
-    const verified = await this.releaseRefs(scope, remote);
+    const verified = await this.verifier.releaseRefs(scope, remote);
     if (verified.tag !== tested) throw new Error(`The release ${tag} is on GitHub, but its tag is not at the tested commit ${tested.slice(0, 7)}. Look at it on GitHub.`);
     return this.recordRelease(scope, release, "published");
   }
 
-  /** Where the default branch and the release's tag are on GitHub, asked of GitHub itself. */
-  private async releaseRefs(scope: RepositoryContext, remote: git.Remote): Promise<{ main?: string; tag?: string }> {
-    const { work: repository } = scope;
-    const product = this.k.repositoryOf(scope)!;
-    const branch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
-    const tag = repository.shipping!.tag!;
-    const refs = await this.connections.serial(product.id, () => git.remoteRefs(product.path!, remote, [`refs/heads/${branch}`, `refs/tags/${tag}`]));
-    if (!refs.ok) throw new Unreachable(`Petrina could not check ${branch} and the tag ${tag} on GitHub (${refs.error}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
-    const main = refs.value.get(`refs/heads/${branch}`);
-    const at = refs.value.get(`refs/tags/${tag}^{}`) ?? refs.value.get(`refs/tags/${tag}`);
-    return { ...(main ? { main } : {}), ...(at ? { tag: at } : {}) };
-  }
 
-  /** Is `sha` in the history of the default branch on GitHub, now at `at`? */
-  private async onGitHub(scope: RepositoryContext, remote: git.Remote, at: string | undefined, sha: string): Promise<boolean> {
 
-    if (!at) return false;
-    if (at === sha) return true;
-    const product = this.k.repositoryOf(scope)!;
-    const fetched = await this.connections.serial(product.id, () => git.fetchBranch(product.path!, remote, product.defaultBranch ?? "main"));
-    if (!fetched.ok) throw new Unreachable(`Petrina could not check ${product.defaultBranch ?? "main"} on GitHub (${this.connections.why(scope, fetched)}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
-    return git.contains(product.path!, fetched.sha, sha);
-  }
-
-  private async findRelease(scope: RepositoryContext): Promise<{ tag: string; url: string } | undefined> {
-    const { work: repository } = scope;
-    const product = this.k.repositoryOf(scope)!;
-    const tag = repository.shipping!.tag!;
-    this.checking(scope, `Checking: looking for the release ${tag} on GitHub`);
-    const found = await this.connections.serial(product.id, () => git.findRelease(product.repo, tag, this.k.options.gh));
-    if (!found.ok) throw new Unreachable(`Petrina could not check GitHub for the release ${tag} (${found.error}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
-    if (found.value && (found.value.tag !== tag || found.value.draft)) throw new Error(`GitHub has a ${found.value.draft ? "draft " : ""}release for ${tag} that Petrina did not publish. Look at it on GitHub, then retry or cancel.`);
-    return found.value ? { tag: found.value.tag, url: found.value.url } : undefined;
-  }
 
   /** Local update and its push have separate saved evidence. */
   private async publishLocal(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again"> {
@@ -801,7 +723,7 @@ export class Shipping {
     const { work: repository } = scope;
     const product = this.k.repositoryOf(scope)!;
     const branch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
-    await this.verifyLocal(product.path!, branch, tested);
+    await this.verifier.verifyLocal(product.path!, branch, tested);
     if (repository.shipping) repository.shipping.localUpdated = tested;
     const connection = await this.connections.connection(scope, signal);
     const github = connection.ok && !!product.remote && git.sameRepo(product.remote, product.repo) && !product.repo.startsWith("local/");
@@ -819,14 +741,6 @@ export class Shipping {
     return this.recordLanded(scope, branch, tested, how);
   }
 
-  /** Checked in the main copy itself: the branch has the tested work, and its files match when it is checked out there. Returns where the branch is. */
-  private async verifyLocal(root: string, branch: string, tested: string): Promise<string> {
-    const at = await git.revParse(root, `refs/heads/${branch}`);
-    if (!at || !(await git.contains(root, at, tested))) throw new Error(`${branch} in the main copy does not have the tested work. Retry to check again.`);
-    const here = (await git.checkedOut(root, branch)).some((place) => realPath(place) === realPath(root));
-    if (here && ((await git.head(root)) !== at || (await git.changes(root, true)).length)) throw new Error(`${branch} has the tested work, but the files in the main copy at ${root} do not match it. Look at the main copy.`);
-    return at;
-  }
 
   /**
    * Only the saved tested commit is pushed. Newer local commits stay local until checked in their own right.
@@ -844,7 +758,7 @@ export class Shipping {
     const ref = `refs/heads/${branch}`;
     const there = await this.connections.serial(product.id, () => git.remoteRefs(product.path!, connection.remote, [ref]));
     if (!there.ok) throw new Unreachable(`Petrina could not check ${branch} on GitHub (${there.error}). Retry before publishing anything more.`);
-    if (await this.remoteContains(scope, connection.remote, branch, there.value.get(ref), at)) return true;
+    if (await this.verifier.remoteContains(scope, connection.remote, branch, there.value.get(ref), at)) return true;
     const checkMovement = async (tip: string | undefined): Promise<void> => {
       const base = repository.shipping?.base;
       if (!tip && repository.source?.start.kind === "branch") throw new Error(`${branch} is no longer available on GitHub. The checked work is preserved; nothing more was published.`);
@@ -857,8 +771,8 @@ export class Shipping {
     this.stopIfAsked(signal);
     const pushed = await this.publishStep(scope, signal, "push", `Publishing: pushing ${branch} to GitHub`, () => git.push(product.path!, connection.remote, [{ sha: at, ref }]));
     if (!pushed.ok) {
-      const tip = await this.remoteTip(scope, connection.remote, branch);
-      if (await this.remoteContains(scope, connection.remote, branch, tip, at)) return true;
+      const tip = await this.verifier.remoteTip(scope, connection.remote, branch);
+      if (await this.verifier.remoteContains(scope, connection.remote, branch, tip, at)) return true;
       await checkMovement(tip);
       throw new Error(`${branch} has the work in the main copy, but Petrina could not push it to GitHub (${pushed.error}). The checked work is preserved. Retry after access is restored.`);
     }
@@ -866,81 +780,26 @@ export class Shipping {
     return true;
   }
 
-  private destinationRemote(scope: RepositoryContext): git.Remote {
-    const { work: repository } = scope;
-    const source = repository.source!;
-    const target = source.destination;
-    if (!target.remote || !git.sameRepo(target.remote, target.repo)) throw new Error("The approved working repository has no usable saved GitHub address.");
-    const local = this.k.options.sourceRemotes?.[target.repo] ?? (target.repo === source.product.repo ? this.k.options.remote : undefined);
-    return local ? { url: local, local: true } : { url: target.remote };
-  }
 
-  private async approvedPr(scope: RepositoryContext): Promise<Awaited<ReturnType<typeof sourcePr>>> {
-    const { work: repository } = scope;
-    const source = repository.source!;
-    if (source.start.kind !== "pull-request") throw new Error("No approved pull request.");
-    const number = source.start.number;
-    const pr = await this.connections.serial(repository.productId, () => sourcePr(source.product.repo, number, this.k.options.gh));
-    if (pr.headRepo.toLowerCase() !== source.start.headRepo.toLowerCase() || pr.branch !== source.start.branch) throw new Error("The pull request's working repository or branch changed. The work is preserved and its destination was not changed.");
-    return pr;
-  }
 
-  /** A PR's existence alone proves nothing: its head must contain the exact tested commit. */
-  private async prContains(scope: RepositoryContext, pr: Awaited<ReturnType<typeof sourcePr>>, tested: string): Promise<boolean> {
-    const { task } = scope;
-    if (pr.head === tested) return true;
-    const product = this.k.repositoryOf(scope)!;
-    const ref = `refs/petrina/evidence/${task.id}`;
-    const result = await this.connections.serial(product.id, () => git.fetchRef(product.path!, this.connections.savedRemote(scope), `refs/pull/${pr.number}/head`, ref));
-    if (!result.ok) throw new Unreachable(`Could not confirm the tested work in PR #${pr.number}. Retry to check again; no further publishing will happen.`);
-    if (result.sha !== pr.head) throw new Unreachable(`PR #${pr.number} changed while Petrina was checking it. Retry to confirm which work reached it.`);
-    return git.contains(product.path!, result.sha, tested);
-  }
 
-  private async remoteTip(scope: RepositoryContext, remote: git.Remote, branch: string): Promise<string | undefined> {
 
-    const product = this.k.repositoryOf(scope)!;
-    const result = await this.connections.serial(product.id, () => git.remoteRefs(product.path!, remote, [`refs/heads/${branch}`]));
-    if (!result.ok) throw new Unreachable(`Could not check the approved destination (${result.error}). No further publishing will happen until Retry confirms it.`);
-    return result.value.get(`refs/heads/${branch}`);
-  }
 
-  private async remoteContains(scope: RepositoryContext, remote: git.Remote, branch: string, tip: string | undefined, tested: string): Promise<boolean> {
-    const { task, work: repository } = scope;
-    if (!tip) return false;
-    const root = this.k.repositoryOf(scope)!.path!;
-    if (tip === tested) return true;
-    const ref = `refs/petrina/deliveries/${task.id}`;
-    const fetched = await this.connections.serial(repository.productId, () => git.fetchRef(root, remote, `refs/heads/${branch}`, ref));
-    if (!fetched.ok) throw new Unreachable(`Could not confirm the tested work at its destination (${this.connections.why(scope, fetched)}). Retry to check again.`);
-    return git.contains(root, fetched.sha, tested);
-  }
-
-  private async sourceCurrent(scope: RepositoryContext, signal: AbortSignal): Promise<boolean> {
-    const { work: repository } = scope;
-    const connection = await this.connections.connection(scope, signal);
-    if (!connection.ok) { if (connection.missing && repository.delivery === "local") return true; throw new Error(connection.reason); }
-    const branch = repository.source?.start.branch ?? this.k.repositoryOf(scope)?.defaultBranch ?? "main";
-    const tip = await this.remoteTip(scope, connection.remote, branch);
-    if (!tip) throw new Error(`${branch} is no longer available on GitHub. The work is preserved and nothing more was published.`);
-    // A local destination may be ahead of GitHub already.
-    return tip === repository.shipping!.base || await git.contains(this.k.repositoryOf(scope)!.path!, repository.shipping!.base!, tip);
-  }
 
   private async publishPrUpdate(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again"> {
     const { work: repository } = scope;
-    const pr = await this.approvedPr(scope);
+    const pr = await this.verifier.approvedPr(scope);
     if (pr.state !== "open") throw new Error(`PR #${pr.number} is ${pr.state}. No more commits will be published; the work is preserved.`);
-    const remote = this.destinationRemote(scope);
+    const remote = this.verifier.destinationRemote(scope);
     const { tested } = repository.shipping!.prepared!;
-    const at = await this.remoteTip(scope, remote, pr.branch);
+    const at = await this.verifier.remoteTip(scope, remote, pr.branch);
     if (!at) throw new Error(`The working branch for PR #${pr.number} is unavailable. The work is preserved.`);
-    if (await this.remoteContains(scope, remote, pr.branch, at, tested)) return this.recordPr(scope, pr, "updated");
+    if (await this.verifier.remoteContains(scope, remote, pr.branch, at, tested)) return this.recordPr(scope, pr, "updated");
     if (at !== repository.shipping!.base) return this.prepareAgain(scope, `PR #${pr.number}'s working branch moved`);
     const pushed = await this.publishStep(scope, signal, "push", `Publishing: updating PR #${pr.number} in ${pr.headRepo} · ${pr.branch}`, () => git.push(this.k.repositoryOf(scope)!.path!, remote, [{ sha: tested, ref: `refs/heads/${pr.branch}` }]));
     this.stopIfAsked(signal);
-    const after = await this.remoteTip(scope, remote, pr.branch);
-    if (await this.remoteContains(scope, remote, pr.branch, after, tested)) return this.recordPr(scope, pr, "updated");
+    const after = await this.verifier.remoteTip(scope, remote, pr.branch);
+    if (await this.verifier.remoteContains(scope, remote, pr.branch, after, tested)) return this.recordPr(scope, pr, "updated");
     if (after !== at) return this.prepareAgain(scope, `PR #${pr.number}'s branch moved during publishing`);
     throw new Error(`GitHub refused the update to PR #${pr.number} in ${pr.headRepo} · ${pr.branch} (${pushed.ok ? "the tested work could not be confirmed" : pushed.error}). The work is preserved. Retry after access is restored.`);
   }
@@ -961,11 +820,11 @@ export class Shipping {
       task.statusLine = "Checking whether it already went out";
       this.k.commit();
     }
-    const delivery = await this.lookForDelivery(scope);
+    const delivery = await this.verifier.lookForDelivery(scope);
     if (signal.aborted) throw new Aborted();
     if (delivery.found === true) {
       this.k.log(scope, "done", `Found${when} that it had already gone out: ${delivery.text}`);
-      await delivery.record(signal);
+      await this.recordDelivery(scope, delivery.evidence, signal);
       return "stop";
     }
     if (delivery.found === false) {
@@ -986,52 +845,13 @@ export class Shipping {
     return "stop";
   }
 
-  /**
-   * Is the prepared delivery already out? Asked of GitHub for the product's own repository (never through a
-   * working copy's remote), or of the main copy for local delivery. Only a clear "not there" counts as
-   * nothing published; a lookup that fails is never taken for an empty answer.
-   */
-  private async lookForDelivery(scope: RepositoryContext): Promise<Delivery> {
-    const { task, work: repository } = scope;
-    const product = this.k.repositoryOf(scope)!;
-    const shipping = repository.shipping!;
-    const { tested } = shipping.prepared!;
-    const branch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
-    try {
-      if (repository.source?.start.kind === "pull-request") {
-        const pr = await this.approvedPr(scope);
-        if (await this.prContains(scope, pr, tested)) return { found: true, text: `Updated PR #${pr.number}`, record: () => this.recordPr(scope, pr, "updated") };
-        const remote = this.destinationRemote(scope);
-        const at = await this.remoteTip(scope, remote, pr.branch);
-        if (await this.remoteContains(scope, remote, pr.branch, at, tested)) return { found: true, text: `Updated PR #${pr.number}`, record: () => this.recordPr(scope, pr, "updated") };
-        if (pr.state !== "open") throw new Error(`PR #${pr.number} is ${pr.state}. The task's work is preserved; nothing more will be published.`);
-        if (!at) throw new Error(`The approved pull request working branch is unavailable. The task's work is preserved.`);
-        return { found: false, text: `PR #${pr.number} does not contain the tested work yet.` };
-      }
-      if (repository.delivery === "pull-request") {
-        const pr = await this.findPullRequest(scope, task.state === "cancelled");
-        if (pr) return { found: true, text: `pull request #${pr.number}`, record: () => this.recordPr(scope, pr) };
-        return { found: false, text: "No pull request is open for this work yet." };
-      }
-      if (repository.delivery === "release") {
-        const release = await this.findRelease(scope);
-        if (!release) return { found: false, text: `There is no release ${shipping.tag} on GitHub yet.` };
-        // Checked on GitHub itself: the release's tag is at the tested commit.
-        const refs = await this.releaseRefs(scope, this.connections.savedRemote(scope));
-        if (refs.tag !== tested) {
-          // Before Petrina's push, someone else's release makes this version stale: publishing gets it ready again.
-          if (!shipping.pushed) return { found: false, text: `GitHub has a release ${shipping.tag} that is not this work.` };
-          return { found: "other", text: `GitHub has a release ${shipping.tag}, but its tag is not at the tested commit ${tested.slice(0, 7)}. Look at it on GitHub.` };
-        }
-        return { found: true, text: `release ${release.tag}`, record: () => this.recordRelease(scope, release) };
-      }
-      const at = await git.revParse(product.path!, `refs/heads/${branch}`);
-      if (at && (await git.contains(product.path!, at, tested))) return { found: true, text: `${branch} has the work (${tested.slice(0, 7)})`, record: (signal) => this.landLocal(scope, signal, tested, "found") };
-      return { found: false, text: `${branch} does not have the work yet.` };
-    } catch (error) {
-      const text = error instanceof Error ? error.message : String(error);
-      return { found: error instanceof Unreachable ? "unknown" : "other", text };
-    }
+
+  /** Observations alone never complete publishing. The state machine owns recording and local recovery. */
+  private async recordDelivery(scope: RepositoryContext, evidence: DeliveryEvidence, signal: AbortSignal): Promise<"done" | "unknown"> {
+    if (evidence.kind === "pr") return this.recordPr(scope, evidence.pr, evidence.updated ? "updated" : undefined);
+    if (evidence.kind === "release") return this.recordRelease(scope, evidence.release);
+    if (scope.task.state === "cancelled") return await this.noteCancelledLocal(scope) === "unknown" ? "unknown" : "done";
+    return this.landLocal(scope, signal, evidence.tested, "found");
   }
 
   private recordPr(scope: RepositoryContext, pr: { number: number; url: string; state: "open" | "merged" | "closed" }, how?: "opened" | "updated"): "done" {
@@ -1076,25 +896,6 @@ export class Shipping {
     return "done";
   }
 
-  /** Whether GitHub already has this commit on the approved branch. Unknown when GitHub cannot be asked. */
-  private async githubHas(scope: RepositoryContext, branch: string, tested: string): Promise<boolean | "unknown"> {
-
-    const product = this.k.repositoryOf(scope)!;
-    if (!product.remote || product.repo.startsWith("local/") || !git.sameRepo(product.remote, product.repo)) return false;
-    let connection: Awaited<ReturnType<Connections["connection"]>>;
-    try {
-      connection = await this.connections.connection(scope, new AbortController().signal);
-    } catch {
-      return "unknown";
-    }
-    if (!connection.ok) return connection.missing ? false : "unknown";
-    try {
-      const tip = await this.remoteTip(scope, connection.remote, branch);
-      return await this.remoteContains(scope, connection.remote, branch, tip, tested);
-    } catch {
-      return "unknown";
-    }
-  }
 
   /**
    * A cancelled local move is recorded only after GitHub is asked. Seeing the commit on this computer
@@ -1105,7 +906,7 @@ export class Shipping {
     const product = this.k.repositoryOf(scope)!;
     const branch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
     const tested = repository.shipping!.prepared!.tested;
-    const reached = await this.githubHas(scope, branch, tested);
+    const reached = await this.verifier.githubHas(scope, branch, tested);
     if (reached === "unknown") {
       if (repository.localUpdate) repository.localUpdate.pushed = false;
       this.k.commit();

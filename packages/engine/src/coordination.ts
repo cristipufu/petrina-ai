@@ -1,13 +1,11 @@
 import { displayTask } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
-import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
-import { resolve, sep } from "node:path";
 import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSteps, taskProductIds, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { operation } from "./operations.js";
 import { offeredLessons } from "./learnings.js";
+import { cursor, fingerprint, paginate, readText } from "./evidence-read.js";
+import { readCheckLog } from "./check-log-read.js";
 import { readConversation } from "./conversation-read.js";
 
 export type Outcome =
@@ -31,7 +29,6 @@ export interface Result {
 }
 // Arguments have already passed the named operation's strict schema at the boundary.
 type Args = Record<string, any>;
-export const fingerprint = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
 const clone = <T>(value: T): T => structuredClone(value);
 const queues = new WeakMap<Engine, Promise<unknown>>();
 /** App actions and new decisions share this queue: inspecting a revision and applying it cannot race an edit. */
@@ -42,50 +39,6 @@ export function serial<T>(engine: Engine, run: () => T | Promise<T>): Promise<T>
     next.catch(() => undefined),
   );
   return next;
-}
-function cursor(value: unknown): string {
-  return Buffer.from(JSON.stringify(value)).toString("base64url");
-}
-function position(raw: string | undefined, key: string): number | undefined {
-  if (!raw) return 0;
-  try {
-    const data = JSON.parse(Buffer.from(raw, "base64url").toString());
-    return data.key === key && Number.isSafeInteger(data.at) && data.at >= 0 ? data.at : undefined;
-  } catch {
-    return undefined;
-  }
-}
-export function matchesCheckLogIdentity(expected: { device: string; inode: string }, actual: { dev: bigint; ino: bigint }): boolean {
-  return expected.device === actual.dev.toString() && expected.inode === actual.ino.toString();
-}
-function paginate<T>(items: readonly T[], a: Args, scope: unknown): Result {
-  const key = fingerprint([scope, items]);
-  const at = position(a.cursor, key);
-  if (at === undefined) return { outcome: "changed", message: "This page changed. Read the focused list again." };
-  const limit = a.limit ?? 25;
-  return {
-    outcome: "completed",
-    items: items.slice(at, at + limit),
-    total: items.length,
-    ...(at + limit < items.length ? { next: cursor({ key, at: at + limit }) } : {}),
-  };
-}
-function readText(value: unknown, a: Args, scope: unknown, extra: Record<string, unknown> = {}): Result {
-  if (value === undefined || value === null) return { outcome: "unavailable", message: "This evidence was not recorded or is no longer available.", ...extra };
-  const source = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  const key = fingerprint([scope, source]);
-  const at = position(a.cursor, key);
-  if (at === undefined) return { outcome: "changed", message: "This evidence changed. Read it again from the beginning." };
-  const limit = a.limit ?? 8000;
-  return {
-    outcome: "completed",
-    text: source.slice(at, at + limit),
-    offset: at,
-    total: source.length,
-    shortened: at + limit < source.length,
-    ...(at + limit < source.length ? { next: cursor({ key, at: at + limit }) } : {}),
-    ...extra,
-  };
 }
 
 export function taskSummary(engine: Engine, task: Task) {
@@ -377,7 +330,7 @@ export class Coordination {
         triggerEvidence: node?.trigger ? "recorded" : "unavailable",
       });
     }
-    if (name === "journey.check") return this.check(task!, a);
+    if (name === "journey.check") return readCheckLog(e.dataDir, task!, { nodeId: a.nodeId, index: a.index, section: a.section, cursor: a.cursor, limit: a.limit });
     if (name === "inbox.list")
       return paginate(
         this.inbox(a).map(({ id, taskId, kind, title, blocking, at }) => ({ id, taskId, kind, title, blocking, at })),
@@ -663,102 +616,6 @@ export class Coordination {
         return unavailable("This operation requires the running engine's lifecycle host.");
     }
     return done(a.taskId ? { taskId: a.taskId } : {});
-  }
-  private async check(task: Task, a: Args): Promise<Result> {
-    const node = a.nodeId ? task.journey?.find((node) => node.id === a.nodeId) : undefined;
-    if (a.nodeId && !node) return { outcome: "missing", message: "That journey node does not exist." };
-    const run = a.nodeId ? node?.productChecks?.[a.index]?.run : task.checks?.results[a.index];
-    const metadata = {
-      commandOutcome: !run ? "unavailable" : run.interrupted || run.cleanupIncomplete || run.timedOut ? "unfinished" : run.ok ? "passed" : "failed",
-      relevance: a.nodeId ? "historical" : task.checks?.sha || task.checks?.tree ? "recorded-version-only" : "unverified",
-      command: run?.command ?? null,
-    };
-    if (!run) return { outcome: "unavailable", ...metadata, completeness: "missing", message: "This older evidence has no original diagnostic link." };
-    const resultScope = [task.id, a.nodeId, a.index, "saved-result"];
-    if (a.section === "result")
-      return readText(run.output, a, resultScope, { ...metadata, source: "saved-result", completeness: "excerpt-only", unit: "characters" });
-    // Engine explanations (startup failures, deadlines and cleanup warnings) can exist only
-    // in the saved result. Show a bounded first page alongside the original process log.
-    const savedResult = { ...readText(run.output, { limit: Math.min(a.limit ?? 8000, 1000) }, resultScope), section: "result" };
-    const details = { ...metadata, savedResult };
-    const path = run.logPath && resolve(run.logPath);
-    if (!path || !path.startsWith(resolve(this.engine.dataDir, "checks", task.id) + sep))
-      return readText(run.output, a, [task.id, a.nodeId, a.index], {
-        ...details,
-        completeness: "excerpt-only",
-        message: "No complete diagnostic log was recorded. This is the saved excerpt.",
-      });
-    if (!run.logFileIdentity)
-      return readText(run.output, a, [task.id, a.nodeId, a.index, "unverified-log"], {
-        ...details,
-        completeness: run.logError || run.logComplete === false ? "incomplete" : "legacy-unverified",
-        message: "This saved run has no record of which file Petrina created. This is the saved excerpt.",
-      });
-    try {
-      const entry = await lstat(path, { bigint: true });
-      const directory = resolve(await realpath(this.engine.dataDir), "checks", task.id);
-      const canonical = await realpath(path);
-      if (!entry.isFile() || entry.nlink !== 1n || !canonical.startsWith(directory + sep)) throw new Error("The diagnostic is not an unshared regular file in this task's check folder.");
-      // Do not follow a substituted link. Use the opened file's identity and size for both
-      // pagination and reading; a replaced file invalidates its previous continuation.
-      // A second hard-link name can alias a private file, so both observations require one link.
-      // The saved file identity also proves this is the file Petrina created for this check;
-      // link counts alone are insufficient after an atomic replacement removes the other name.
-      const file = await open(canonical, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      try {
-        const exact = await file.stat({ bigint: true });
-        const info = await file.stat();
-        if (!exact.isFile() || exact.nlink !== 1n || exact.dev !== entry.dev || exact.ino !== entry.ino || !matchesCheckLogIdentity(run.logFileIdentity, exact) || !info.isFile()) throw new Error("The diagnostic file is not the file Petrina created for this check.");
-        const key = fingerprint([task.id, a.nodeId, a.index, path, exact.dev.toString(), exact.ino.toString(), info.size, info.mtimeMs]);
-        const completeness = run.logError || run.logComplete === false ? "incomplete" : run.logComplete ? "complete" : "legacy-unverified";
-        if (info.size === 0 && run.output)
-          return readText(run.output, a, [resultScope, path, info.dev, info.ino, info.mtimeMs], {
-            ...details, completeness, logError: run.logError ?? null, source: "saved-result", unit: "characters",
-            message: "The process log is empty. This is the saved result, including any failure to start.",
-          });
-        const at = position(a.cursor, key);
-        if (at === undefined) return { outcome: "changed", message: "The diagnostic changed. Read it again from the beginning." };
-        const buffer = Buffer.alloc((a.limit ?? 8000) * 4),
-          { bytesRead } = await file.read(buffer, 0, buffer.length, at);
-        // Limit text by characters while continuations retain exact byte positions. A page
-        // reads at most four bytes per requested character and never splits valid UTF-8.
-        let end = 0;
-        for (let characters = 0; characters < (a.limit ?? 8000) && end < bytesRead; characters++) {
-          const first = buffer[end]!;
-          let width = first >= 0xf0 && first <= 0xf4 ? 4 : first >= 0xe0 ? 3 : first >= 0xc2 ? 2 : 1;
-          if (end + width > bytesRead) {
-            if (at + bytesRead < info.size) break;
-            width = bytesRead - end;
-          }
-          for (let index = 1; index < width; index++)
-            if ((buffer[end + index]! & 0xc0) !== 0x80) {
-              width = 1;
-              break;
-            }
-          end += width;
-        }
-        return {
-          outcome: "completed",
-          ...details,
-          completeness,
-          logError: run.logError ?? null,
-          text: buffer.subarray(0, end).toString("utf8"),
-          offset: at,
-          total: info.size,
-          unit: "bytes",
-          shortened: at + end < info.size,
-          ...(at + end < info.size ? { next: cursor({ key, at: at + end }) } : {}),
-        };
-      } finally {
-        await file.close();
-      }
-    } catch {
-      return readText(run.output, a, [task.id, a.nodeId, a.index], {
-        ...details,
-        completeness: "missing-file",
-        message: "The original diagnostic file could not be verified or is unavailable. This is the saved excerpt.",
-      });
-    }
   }
   private async watch(a: Args): Promise<Result> {
     const e = this.engine,

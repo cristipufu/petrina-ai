@@ -1,3 +1,4 @@
+import type { ShippingVerifier, DeliveryEvidence } from "./shipping-verifier.js";
 // Observe PRs and interrupted cancelled deliveries. This module never publishes.
 import { CLEANUP_WORDS, needsPullRequestCheck, repositoryDelivered, type Id, type Task } from "@petrina/core";
 import * as git from "./git.js";
@@ -5,19 +6,15 @@ import type { Kernel, MTask } from "./kernel.js";
 import { executionFor, type RepositoryContext } from "./repository-context.js";
 import { Unreachable } from "./connection.js";
 
-export type DeliveryLookup = { found: true; text: string; record: (signal: AbortSignal) => Promise<unknown> | unknown } | { found: false; text: string } | { found: "unknown" | "other"; text: string };
-interface DeliveryObserver {
-  lookForDelivery(scope: RepositoryContext): Promise<DeliveryLookup>;
-  noteCancelledLocal(scope: RepositoryContext): Promise<boolean | "unknown">;
-  releaseRefs(scope: RepositoryContext): Promise<{ main?: string; tag?: string }>;
-  matchesPullRequest(scope: RepositoryContext, pr: git.PullRequestInfo, tested: string, base: string): Promise<boolean>;
+interface DeliveryRecorder {
+  recordDelivery(scope: RepositoryContext, evidence: DeliveryEvidence, signal: AbortSignal): Promise<"done" | "unknown">;
   finishMany(task: MTask): void;
 }
 type MonitorHost = Pick<Kernel, "task" | "stopped" | "drivers" | "settling" | "log" | "commitNow" | "commit" | "tidy" | "s" | "trackWork" | "repositoryOf" | "options" | "onTaskDone" | "tracking" | "schedule">;
 export class PrMonitor {
   private readonly looking = new Set<Id>();
   private readonly following = new Set<Id>();
-  constructor(private readonly k: MonitorHost, private readonly delivery: DeliveryObserver) {}
+  constructor(private readonly k: MonitorHost, private readonly verifier: ShippingVerifier, private readonly delivery: DeliveryRecorder) {}
 
   // ── Cancelled while publishing ─────────────────────────────────────────
 
@@ -34,16 +31,11 @@ export class PrMonitor {
     if (!fromDriver && (this.k.drivers.has(taskId) || this.k.settling.has(taskId))) return;
     this.looking.add(taskId);
     try {
-      const delivery = await this.delivery.lookForDelivery(scope!);
+      const delivery = await this.verifier.lookForDelivery(scope!);
       if (delivery.found === "unknown") return this.keepCancelledCopy(task);
       if (delivery.found === true) {
-        if (scope!.work.delivery === "local" && scope!.work.source?.start.kind !== "pull-request") {
-          // The branch may have moved on this computer. That is not a completed push, and cancelling does not send one.
-          const reached = await this.delivery.noteCancelledLocal(scope!);
-          if (reached === "unknown") return this.keepCancelledCopy(task);
-        } else {
-          await delivery.record(new AbortController().signal);
-        }
+        const recorded = await this.delivery.recordDelivery(scope!, delivery.evidence, new AbortController().signal);
+        if (recorded === "unknown") return this.keepCancelledCopy(task);
       }
       else if (delivery.found === "other") this.k.log(task, "warn", `After you cancelled it, Petrina could not tell what went out: ${delivery.text}`);
       else if (scope!.work.source?.start.kind === "pull-request") {
@@ -84,7 +76,7 @@ export class PrMonitor {
     const scope = executionFor(task);
     const shipping = scope.work.shipping!;
     const { tested } = shipping.prepared!;
-    const refs = await this.delivery.releaseRefs(scope);
+    const refs = await this.verifier.releaseRefs(scope);
     if (refs.tag === tested) this.k.log(task, "status", `${this.k.repositoryOf(task)?.defaultBranch ?? "main"} and the tag ${shipping.tag} went out to GitHub at ${tested.slice(0, 7)} while you cancelled it, with no release for that tag`);
   }
 
@@ -114,7 +106,7 @@ export class PrMonitor {
         const checked = repository.cleanup?.checkedDelivery;
         let pr: git.PullRequestInfo | undefined;
         if (checked) {
-          for (const candidate of ours) if (await this.delivery.matchesPullRequest(scope, candidate, checked.tested, checked.base)) { pr = candidate; break; }
+          for (const candidate of ours) if (await this.verifier.matchesPullRequest(scope, candidate, checked.tested, checked.base)) { pr = candidate; break; }
         } else {
           // Older deliveries did not record a checked commit. Keep their existing conservative
           // branch tracking so an open pull request can never lose its working copy.

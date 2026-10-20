@@ -556,9 +556,9 @@ export class ProductChecks {
     return runs;
   }
 
-  async acceptanceVersion(scope: RepositoryContext): Promise<string | undefined> {
+  async acceptanceVersion(scope: RepositoryContext, versions?: Record<string, string>): Promise<string | undefined> {
     const { task, work: repository } = scope;
-    if (task.repositories) return acceptanceVersion(task);
+    if (task.repositories) return acceptanceVersion(task, versions);
     const base = repository.baseSha ?? repository.base;
     return repository.worktree && base ? git.patchId(repository.worktree, (await git.mergeBase(repository.worktree, "HEAD", base)) ?? base, "HEAD") : undefined;
   }
@@ -567,7 +567,7 @@ export class ProductChecks {
   backToBuilder(scope: RepositoryContext, when: string): boolean {
     const { task, work: repository } = scope;
     if (task.repositories) return beginRepair(this.k, task, "checks", task.stageIndex);
-    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.roleId === "builder");
+    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && this.k.role(entry.roleId)?.result === "build");
     if (builder < 0 || (repository.checkReturns ?? 0) >= 2) return false;
     repository.checkReturns = (repository.checkReturns ?? 0) + 1;
     task.stageIndex = builder;

@@ -83,7 +83,7 @@ export class Checkpoints {
     this.k.clearStep(task);
     if (!call) this.k.stepNote(task, "changes", note, { id });
     const fromCheck = task.stageIndex;
-    afterChangesAsked(task, item.kind, note, Date.now());
+    afterChangesAsked(task, item.kind, note, Date.now(), this.k.s.roles);
     if (item.kind === "delivery") {
       // A new coordinator request authorizes another bounded attempt at acceptance fixes.
       delete scope!.work.acceptanceReturns;

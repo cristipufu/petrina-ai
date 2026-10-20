@@ -1141,7 +1141,7 @@ describe.concurrent("shared-task repair regressions", () => {
       engine["reviews"]["settleReviews"](task, stage);
       const expected = order === "both-pass" ? "fixed" : order === "dispute-without-confirmation" || order.startsWith("repeated-finding") ? "dismissed" : "open";
       expect(task.findings[0]!.status).toBe(expected);
-      expect(reviewRoundEnd(task, stage, 2).kind === "passed").toBe(expected !== "open" && !order.startsWith("repeated-finding"));
+      expect(reviewRoundEnd(task, stage, 2, engine.s.roles).kind === "passed").toBe(expected !== "open" && !order.startsWith("repeated-finding"));
       if (order.startsWith("repeated-finding")) {
         expect(task.findings).toHaveLength(2);
         expect(task.findings[1]!.status).toBe("open");

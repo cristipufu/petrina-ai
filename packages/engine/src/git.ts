@@ -459,6 +459,14 @@ export async function commitAll(path: string, message: string): Promise<string |
   return must(["git", "rev-parse", "HEAD"], path);
 }
 
+/** Resolve HEAD once, returning the commit and the tree it actually holds. */
+export async function commitVersion(path: string): Promise<{ head?: string; tree?: string }> {
+  const result = await run(["git", "show", "--no-patch", "--format=%H%n%T", "HEAD"], path);
+  if (result.code !== 0) return {};
+  const [head, tree] = result.stdout.split("\n");
+  return head && tree && SHA.test(head) && SHA.test(tree) ? { head, tree } : {};
+}
+
 /** The tree a commit holds: the same code, whichever commit carries it. */
 export async function treeOf(path: string, ref = "HEAD"): Promise<string | undefined> {
   const result = await run(["git", "rev-parse", "--verify", "--quiet", `${ref}^{tree}`], path);

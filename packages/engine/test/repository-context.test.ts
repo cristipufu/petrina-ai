@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as gitOps from "../src/git.js";
+import { versionsOf, invalidateAcceptance, acceptanceVersion } from "../src/repositories.js";
 import { Cleanup } from "../src/cleanup.js";
 import { scopesFor, detachRepositoryState, executionFor } from "../src/repository-context.js";
 import { Learnings } from "../src/learnings.js";
@@ -46,6 +47,142 @@ describe("explicit repository execution contexts", () => {
       expect(cleanup.mock.calls.map(call => call[0])).toEqual(paths);
       expect(task.hunt!.screenTurns).toBeUndefined();
     } finally { cleanup.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("waits for every owner's screen-copy cleanup even when one fails", async () => {
+    const { engine, task } = await fixture("concurrent-screen-cleanup");
+    const paths = task.repositories!.map(work => work.worktree!);
+    task.hunt = { stageId: "review", round: 1, reported: {}, findings: 0, screenTurns: { "review-0": {
+      copy: "saved", reason: "Check the page", at: 1,
+      conversation: { roleId: "code-reviewer", profileId: "sol-high", sessionId: "saved", toolId: "codex", model: "sol", step: "review", startedAt: 1 },
+    } } };
+    const gates = paths.map(() => Promise.withResolvers<void>());
+    const cleanup = spyOn(gitOps, "removeCopies").mockImplementation(async root => gates[paths.indexOf(root)]!.promise);
+    try {
+      engine.discardScreenTurns(task);
+      const pending = engine.copyCleanups.get(task.id)!;
+      await waitFor(() => cleanup.mock.calls.length === 2, "both owners to begin cleanup");
+      gates[0]!.reject(new Error("First owner cleanup failed"));
+      await Promise.resolve(); await Promise.resolve();
+      expect(engine.copyCleanups.get(task.id)).toBe(pending);
+      gates[1]!.resolve();
+      await pending;
+      expect(engine.copyCleanups.has(task.id)).toBe(false);
+      expect(task.timeline.some(line => line.text.includes("First owner cleanup failed"))).toBe(true);
+    } finally { gates.forEach(gate => gate.resolve()); cleanup.mockRestore(); await engine.shutdown(); }
+  });
+
+  for (const canEdit of [false, true]) it(`uses one acceptance snapshot per product${canEdit ? " after saving tester edits once" : " for a read-only tester"}`, async () => {
+    const { engine, task } = await fixture(`tester-versions-${canEdit}`);
+    const role = { ...engine.role("tester")!, id: "acceptance-specialist", name: "Acceptance specialist", canEdit };
+    engine.s.roles.push(role);
+    const stage = { id: "test", title: "Acceptance", kind: "do" as const, roleId: role.id, profileIds: ["sol-high"] };
+    task.plan = { rationale: "Verify both products", plannerProfileId: "sol-high", stages: [stage] };
+    task.stageIndex = 0;
+    task.brief = { summary: "Together", forUsers: [], areas: [], risks: [], acceptance: [{ text: "Both products work" }] };
+    const scope = executionFor(task);
+    const before = await versionsOf(task);
+    const turn = spyOn(engine["turns"], "turn").mockImplementation(async (_scope, _role, _profile, _given, schema, _signal, options) => {
+      options?.used?.("opus-high");
+      if (canEdit) writeFileSync(join(scope.work.worktree!, "tester-fix.txt"), "A focused tester repair\n");
+      return schema.parse({ summary: "Verified", checks: [{ text: "Both products work", result: "pass", productIds: task.repositories!.map(work => work.productId), evidence: "Exercised both products" }], learnings: [] });
+    });
+    const tree = spyOn(gitOps, "treeOf"), save = spyOn(engine, "saveRoleEdits");
+    try {
+      expect(await engine["work"].runDo(scope, stage, new AbortController().signal)).toBe("continue");
+      expect(tree).toHaveBeenCalledTimes(canEdit ? 4 : 2);
+      expect(save).toHaveBeenCalledTimes(canEdit ? 1 : 0);
+      if (canEdit) expect(save).toHaveBeenCalledWith(scope, role.id, "opus-high");
+      expect(task.acceptancePassed).toBe(true);
+      expect(task.testedPatch).toBe(JSON.stringify(task.testedVersions));
+      expect(task.brief.acceptance[0]!.versions).toEqual(task.testedVersions);
+      expect(task.brief.acceptance[0]!.verification).toBe("passed");
+      if (canEdit) expect(task.testedVersions![scope.work.productId]).not.toBe(before[scope.work.productId]);
+      else expect(task.testedVersions).toEqual(before);
+      const reads = tree.mock.calls.length;
+      expect(await invalidateAcceptance(task, task.testedVersions)).toEqual(task.testedVersions);
+      expect(await acceptanceVersion(task, task.testedVersions)).toBe(task.testedPatch);
+      expect(tree).toHaveBeenCalledTimes(reads);
+    } finally { turn.mockRestore(); tree.mockRestore(); save.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("routes check and final acceptance failures to a build-result role and retains its PR context", async () => {
+    const { engine, task } = await fixture("result-routing");
+    const repository = task.repositories![0]!;
+    delete task.repositories;
+    task.repository = repository;
+    repository.branch = "main";
+    repository.delivery = "pull-request";
+    repository.report = { summary: "Existing build", changes: [], title: "Custom builder title", description: "The custom builder's saved PR description" };
+    const builder = { ...engine.role("builder")!, id: "implementer", name: "Implementer" };
+    const tester = { ...engine.role("tester")!, id: "acceptance-specialist", name: "Acceptance specialist" };
+    engine.s.roles.push(builder, tester);
+    const build = { id: "build", title: "Implement", kind: "do" as const, roleId: builder.id, profileIds: ["sol-high"] };
+    const test = { id: "test", title: "Test", kind: "do" as const, roleId: tester.id, profileIds: ["sol-high"] };
+    task.plan = { rationale: "Custom result contracts", plannerProfileId: "sol-high", stages: [build, test, { id: "delivery", title: "Delivery", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] }] };
+    task.brief = { summary: "The task", forUsers: [], areas: [], risks: [], acceptance: [{ text: "The product works" }] };
+    const scope = executionFor(task);
+    task.stageIndex = 2;
+    expect(engine["checks"].backToBuilder(scope, "before testing")).toBe(true);
+    expect(task.stageIndex).toBe(0);
+    expect(repository.checkReturns).toBe(1);
+    expect(engine["updates"].message(scope)).toContain("Implementer on Codex");
+    expect(engine["context"]["report"](scope, builder.id)).toContainEqual({ title: "The pull request description you wrote last time", body: repository.report.description! });
+    task.stageIndex = 1;
+    task.retest = true;
+    const turn = spyOn(engine["turns"], "turn").mockImplementation(async (_scope, _role, _profile, _given, schema) =>
+      schema.parse({ summary: "A confirmed acceptance failure", checks: [{ text: "The product works", result: "fail", evidence: "Reproduced the broken behavior" }], learnings: [] }));
+    try {
+      expect(await engine["work"].runDo(scope, test, new AbortController().signal)).toBe("continue");
+      expect(task.stageIndex).toBe(0);
+      expect(task.fixing).toBe(true);
+      expect(repository.acceptanceReturns).toBe(1);
+      expect(task.findings.some(finding => finding.text.includes("Failed acceptance check") && finding.status === "open")).toBe(true);
+      task.stageIndex = 2;
+      repository.shipping = { moves: 0, failures: 0 };
+      expect(await engine["shipping"]["preparationFailed"](scope, "Version checks failed", new AbortController().signal)).toBe("continue");
+      expect(task.stageIndex).toBe(0);
+      expect(task.fixing).toBe(true);
+    } finally { turn.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("schedules a renamed tester's final pass once and reuses the verified version at delivery", async () => {
+    const { engine, task } = await fixture("custom-final-tester");
+    const repository = task.repositories![0]!;
+    delete task.repositories;
+    task.repository = repository;
+    const tester = { ...engine.role("tester")!, id: "acceptance-specialist", name: "Acceptance specialist" };
+    engine.s.roles.push(tester);
+    task.plan = { rationale: "Test final code", plannerProfileId: "sol-high", stages: [
+      { id: "test", title: "Acceptance", kind: "do", roleId: tester.id, profileIds: ["sol-high"] },
+      { id: "delivery", title: "Delivery", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] },
+    ] };
+    task.stageIndex = 0;
+    task.testedPatch = "earlier-version";
+    task.acceptancePassed = true;
+    task.state = "running";
+    engine.s.pool.paused = false;
+    engine.draining = false;
+    const updated = spyOn(engine["updates"], "upToDate").mockResolvedValue("current");
+    const checks = spyOn(engine["checks"], "checksBeforeDelivery").mockResolvedValue("passed");
+    const version = spyOn(engine["checks"], "acceptanceVersion").mockResolvedValue("final-version");
+    const reserve = engine["driver"]["reserveAgent"];
+    engine["driver"]["reserveAgent"] = () => true;
+    const work = spyOn(engine["work"], "runDo").mockImplementation(async (_scope, stage) => {
+      expect(stage.roleId).toBe(tester.id);
+      expect(task.retest).toBe(true);
+      task.testedPatch = "final-version";
+      delete task.retest;
+      task.stageIndex = 1;
+      return "continue";
+    });
+    try {
+      await engine["driver"]["drive"](task.id, true);
+      expect(task.error).toBeUndefined();
+      expect(engine.taskDetails(task.id)!.state).toBe("needs-you");
+      expect(work).toHaveBeenCalledTimes(1);
+      expect(engine.s.inbox.some(item => item.taskId === task.id && item.kind === "delivery")).toBe(true);
+    } finally { work.mockRestore(); engine["driver"]["reserveAgent"] = reserve; version.mockRestore(); checks.mockRestore(); updated.mockRestore(); await engine.shutdown(); }
   });
 
   it("enumerates canonical owners in approved order, opting into excluded owners without inventing an empty scope", async () => {
