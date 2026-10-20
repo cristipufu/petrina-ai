@@ -43,6 +43,8 @@ Shows occupied slots, agent summaries and the queue. Tools and terminal preferen
 
 Claude Code, Codex, Grok and Antigravity use the same readiness states and fixes as first run. GitHub CLI names its signed-in account; Git and Node.js appear when required. Entering Tools checks once. Only Check again starts another page-driven check; focus and visibility changes never do. An uncertain result offers details without claiming the login has expired.
 
+The installed-tools list uses locally bundled brand icons at a consistent size, alongside each tool's name and readiness status, without boxes around the icons. Icons remain recognizable in light and dark looks; readiness is always stated in words. First-run setup uses the same rows.
+
 ### Your terminal
 
 Choose where Take over in terminal opens, using the machine’s usual terminal by default. If no terminal is available, the same launcher can be copied. Antigravity explains that its terminal cannot open the agent’s ACP conversation.

@@ -1,11 +1,12 @@
 import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { mainLine, queueOf, slotUses, type State } from "@petrina/core";
 import { mode, sim } from "../engine";
-import { duration, profileText, TOOL_COLORS, type Lookup } from "../lib";
+import { duration, profileText, type Lookup } from "../lib";
 import { ProductName, RoleAvatar } from "./bits";
 import { LimitStepper } from "./Pool";
 import { drivingText, openHandBack } from "./TakeOver";
 import { CheckAgain, shownChecks, ToolList, useCheckOnEnter } from "./Tools";
+import { ToolIcon } from "./ToolIcon";
 import { RolesSection, type RolePanelTarget } from "./Roles";
 import type { SheetTab } from "./TaskCard";
 
@@ -176,8 +177,8 @@ function AgentTools({ state }: { state: State }) {
         {state.tools.map((tool) => (
           <div key={tool.id} className="tile" style={{ minHeight: 0 }}>
             <div className="row between">
-              <div className="row" style={{ gap: 8 }}>
-                <i style={{ width: 10, height: 10, borderRadius: 3, background: TOOL_COLORS[tool.id] ?? "var(--slate)" }} aria-hidden="true" />
+              <div className="row" style={{ gap: 12 }}>
+                <ToolIcon toolId={tool.id} />
                 <strong style={{ fontWeight: 600 }}>{tool.name}</strong>
               </div>
               <span className={`label ${tool.status === "ready" ? "ok" : "warn"}`} style={{ fontSize: "var(--fs-meta)", lineHeight: "var(--lh-meta)" }}>

@@ -1594,9 +1594,16 @@ kbd {
 /* ── Tools ─────────────────────────────────────────────────────────── */
 
 .tool-list { display: grid; list-style: none; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-.tool-row { display: grid; gap: 8px; padding: 12px 16px; }
+.tool-row { display: grid; grid-template-columns: 2rem minmax(0, 1fr); align-items: start; gap: 8px; padding: 8px 12px 8px 8px; }
 .tool-row + .tool-row { border-top: 1px solid var(--line); }
-.tool-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.tool-icon { display: grid; place-items: center; flex: none; width: 2rem; height: 2rem; color: var(--text-2); }
+.tool-icon img { display: block; width: 1.5rem; height: 1.5rem; object-fit: contain; }
+[data-theme="dark"] .tool-icon-codex img { filter: invert(1); }
+[data-theme="dark"] .tool-icon-grok img { filter: invert(1); }
+.tool-icon-antigravity img { width: 2rem; height: 2rem; }
+[data-theme="dark"] .tool-icon-gh img { filter: invert(1); }
+.tool-body { display: grid; gap: 8px; min-width: 0; }
+.tool-head { display: flex; min-height: 2rem; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }
 .tool-head strong { font-weight: 600; }
 .tool-head .label { font-size: var(--fs-control); line-height: var(--lh-control); }
 .tool-head .label.quiet, .tool-head .again { color: var(--text-3); font-weight: 400; }

@@ -3,10 +3,11 @@ import { Check, Copy, ExternalLink, RotateCw } from "lucide-react";
 import { agentTools, CHECK_LABELS, CHECK_NAMES, checkOf, fixFor, type CheckId, type Fix, type Platform, type ToolCheck } from "@petrina/core";
 import { desktop, mode, sim } from "../engine";
 import { safeUrl } from "../lib";
+import { ToolIcon } from "./ToolIcon";
 
 /**
- * The rows first run and the Library show: Claude Code, Codex and the GitHub CLI always, Grok once its
- * check finds it installed, and Git and Node.js only when they are missing.
+ * Shared rows for Agents and first run; optional agent tools appear once installed,
+ * with Git and Node.js only when they are missing.
  */
 export function shownChecks(checks: readonly ToolCheck[] | undefined): ToolCheck[] {
   const missing = (["git", "node"] as const).filter((id) => checkOf(checks, id).status === "not-installed");
@@ -50,14 +51,17 @@ function ToolRow({ check, platform }: { check: ToolCheck; platform: Platform }) 
   const name = CHECK_NAMES[check.id];
   return (
     <li className={`tool-row ${check.status}`} aria-label={`${name}: ${statusText(check)}`}>
-      <div className="tool-head">
-        <strong>{name}</strong>
-        <span className={`label ${TONE[check.status]}`} aria-live="polite">
-          {statusText(check)}
-          {check.checking && check.status !== "unchecked" && <span className="again"> · checking again…</span>}
-        </span>
+      <ToolIcon toolId={check.id} />
+      <div className="tool-body">
+        <div className="tool-head">
+          <strong>{name}</strong>
+          <span className={`label ${TONE[check.status]}`} aria-live="polite">
+            {statusText(check)}
+            {check.checking && check.status !== "unchecked" && <span className="again"> · checking again…</span>}
+          </span>
+        </div>
+        {fix && <FixSteps fix={fix} detail={check.detail} name={name} />}
       </div>
-      {fix && <FixSteps fix={fix} detail={check.detail} name={name} />}
     </li>
   );
 }
