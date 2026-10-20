@@ -17,8 +17,8 @@ describe("reported quota scopes, independent of provider identity", () => {
     expect(limitOf(p, alpha, now)).toBeDefined(); expect(limitOf(p, beta, now)).toBeUndefined();
     expect(nearLimit(p, beta, now)).toBe(false);
     expect(headroom(p, alpha, now)).toBe(0); expect(headroom(p, beta, now)).toBeGreaterThan(0);
-    expect(chooseProfile(state(p), alpha, now)).toEqual({ kind: "substitute", profile: beta });
-    expect(chooseProfile(state(p), beta, now)).toEqual({ kind: "planned", profile: beta });
+    expect(chooseProfile(state(p), alpha, now)).toEqual({ kind: "substitute", profile: beta, reason: expect.any(String) });
+    expect(chooseProfile(state(p), beta, now)).toEqual({ kind: "planned", profile: beta, reason: expect.any(String) });
     expect(balanced([seat("spent", alpha), seat("free", beta)], p, now).map(candidate => candidate.taskId)).toEqual(["free", "spent"]);
   });
 
@@ -58,11 +58,11 @@ describe("reported quota scopes, independent of provider identity", () => {
     const p = { ...pool([report("alpha", 0.85, now + hour), report("beta", 0)]), limited: [{ toolId: "unavailable", until: now + hour, reason: "Out" }] };
     const s = state(p, [alpha, alpha]);
     s.profiles = [planned, alpha, beta];
-    expect(chooseProfile(s, planned, now)).toEqual({ kind: "substitute", profile: alpha });
+    expect(chooseProfile(s, planned, now)).toEqual({ kind: "substitute", profile: alpha, reason: expect.any(String) });
     const chosen = chooseWithRoom(s, planned, now, {}, (toolId, profile) => extraSlot(s, toolId, profile));
-    expect(chosen).toEqual({ kind: "substitute", profile: beta });
-    expect(chooseWithRoom(s, planned, now, {}, () => false)).toEqual({ kind: "substitute", profile: alpha });
+    expect(chosen).toEqual({ kind: "substitute", profile: beta, reason: expect.any(String) });
+    expect(chooseWithRoom(s, planned, now, {}, () => false)).toEqual({ kind: "substitute", profile: alpha, reason: expect.any(String) });
     // A room-filtered candidate list cannot silently select its excluded planned profile.
-    expect(chooseWithRoom({ ...s, profiles: [beta] }, alpha, now, {}, (toolId, profile) => extraSlot(s, toolId, profile))).toEqual({ kind: "substitute", profile: beta });
+    expect(chooseWithRoom({ ...s, profiles: [beta] }, alpha, now, {}, (toolId, profile) => extraSlot(s, toolId, profile))).toEqual({ kind: "substitute", profile: beta, reason: expect.any(String) });
   });
 });

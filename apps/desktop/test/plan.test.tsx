@@ -12,6 +12,20 @@ let host: HTMLDivElement;
 afterEach(() => { act(() => root?.unmount()); host?.remove(); });
 
 describe('the Plan tab', () => {
+  it('shows a concise reason per seat and the original request when readiness changed its profile', async () => {
+    const state = createDemoState(1_000_000_000);
+    const original = state.tasks.find(task => task.plan)!;
+    const [requested, actual] = state.profiles;
+    const stage: Stage = { id: 'research', kind: 'do', title: 'Research', roleId: 'researcher', profileIds: [actual!.id], assignments: [{ profileId: requested!.id, by: 'planner', reason: 'High effort to investigate the scheduling evidence.', changeReason: 'The requested tool was unavailable.' }] };
+    const task = { ...original, stageIndex: -1, plan: { ...original.plan!, stages: [stage] } };
+    host = document.createElement('div'); document.body.append(host); root = createRoot(host);
+    await act(async () => root.render(<PlanView task={task} state={state} find={lookup(state)} />));
+    expect(host.querySelector('details')?.open).toBe(false);
+    expect(host.textContent).toContain('Why this agent');
+    expect(host.textContent).toContain('High effort to investigate the scheduling evidence.');
+    expect(host.textContent).toContain('The requested tool was unavailable.');
+    expect(host.textContent).toContain('Requested:');
+  });
   it('shows the name and icon of a reviewer added before the task was planned', async () => {
     const initial = createDemoState(1_000_000_000);
     const simulator = new Simulator({ ...initial, tasks: [], inbox: [] });

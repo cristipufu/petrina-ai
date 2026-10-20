@@ -1219,6 +1219,12 @@ kbd {
 .message-table { max-width: 100%; overflow-x: auto; }
 .message-table table { border-collapse: collapse; width: 100%; font-size: inherit; }
 .message-table :is(th,td) { padding: 8px 12px; border-bottom: 1px solid var(--field); text-align: left; overflow-wrap: normal; }
+.stage-profile { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.assignment-reason { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--text-2); }
+.assignment-reason summary { cursor: pointer; width: fit-content; }
+.assignment-reason p { margin: 8px 0 0; max-width: 40rem; }
+.agent-selection { margin: 16px 0; padding: 12px 0; border-block: 1px solid var(--line); }
+.agent-selection p { margin: 8px 0; }
 /* Your messages waiting for the agent: in the conversation, outlined until they are delivered. */
 .msg.queued .name { flex-wrap: wrap; align-items: center; }
 .msg.queued .queued-note { color: var(--text-3); font-weight: 400; font-size: var(--fs-meta); line-height: var(--lh-meta); }

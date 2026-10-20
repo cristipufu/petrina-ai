@@ -45,6 +45,25 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
 }
 
 describe("the engine records each task's journey", () => {
+  it("keeps separate input records for parallel reviewer seats on the same available profile", async () => {
+    const { engine, productId } = await setup();
+    try {
+      engine.setPoolPaused(true);
+      await waitFor(() => !engine.s.setup?.checks.some(check => check.checking), "initial tool checks");
+      engine.s.setup!.checks = [{ id: "codex", status: "ready" }, { id: "claude-code", status: "logged-out" }, { id: "grok", status: "logged-out" }, { id: "antigravity", status: "logged-out" }];
+      engine.s.tools = engine.s.tools.map(tool => ({ ...tool, status: tool.id === "codex" ? "ready" : "logged-out" }));
+      const id = engine.addTask({ productId, title: "Check the single-tool journey", description: "Keep reviewer seats separate." });
+      engine.setPoolPaused(false);
+      await until(engine, state => ["done", "failed"].includes(state.tasks.find(task => task.id === id)!.state));
+      const task = taskOf(engine, id);
+      expect(task.error).toBeUndefined();
+      const inputs = task.journey!.find(step => step.roleId === "code-reviewer")!.agentInputs!.filter(input => input.roleId === "code-reviewer");
+      expect(inputs).toHaveLength(2);
+      expect(inputs.map(input => input.reviewerKey).sort()).toEqual(["0", "1"]);
+      expect(new Set(inputs.map(input => input.profileId)).size).toBe(1);
+      expect(inputs.every(input => input.selectionReason)).toBe(true);
+    } finally { await engine.shutdown(); }
+  });
   it("names the planner that can run as tool readiness changes, including after a restart", async () => {
     const { engine, productId } = await setup({ controlled: true });
     const data = engine.dataDir;
@@ -105,6 +124,11 @@ describe("the engine records each task's journey", () => {
       expect(task.session.filter((line) => line.step === step.id).length).toBeGreaterThan(0);
       expect(step.agentInputs?.length).toBeGreaterThan(0);
       expect(step.agentInputs?.every((input) => input.sections.every((section) => section.title && section.body))).toBe(true);
+      for (const input of step.agentInputs ?? []) {
+        expect(input.requestedProfileId).toBeString();
+        expect(input.selectionReason).toBeString();
+        expect(input.confirmedSettings?.model).toBeString();
+      }
     }
     const builder = task.journey!.find((step) => step.roleId === "builder")!;
     expect(builder.agentInputs?.[0]).toMatchObject({ taskTitle: "Add a greeting", taskDescription: "A friendly greeting file.", stageTitle: "Build", roleId: "builder" });
@@ -120,6 +144,9 @@ describe("the engine records each task's journey", () => {
       await until(engine, (state) => ["done", "failed"].includes(state.tasks.find((task) => task.id === id)!.state));
       const task = taskOf(engine, id);
       expect(task.error).toBeUndefined();
+      const verifierInputs = task.journey!.filter(step => step.roleId === "verifier").flatMap(step => step.agentInputs ?? []);
+      expect(verifierInputs.length).toBeGreaterThan(0);
+      expect(verifierInputs.every(input => input.assignment === undefined)).toBe(true);
       const view = viewOf(engine, id);
       const reviews = view.nodes.filter((node) => node.roleId === "code-reviewer");
       expect(reviews.map((node) => node.name)).toEqual(["Code reviewers", "Code reviewers (round 2)"]);

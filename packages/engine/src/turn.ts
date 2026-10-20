@@ -41,6 +41,8 @@ type ConversationOptions = {
 
 /** `used` hears which profile worked each attempt: a stand-in when the planned one was out of usage. */
 interface TurnOptions<T> extends ConversationOptions {
+  requestedProfileId?: Id;
+  selectionReason?: string;
   status?: string;
   check?: Check<T>;
   copy?: string;
@@ -129,7 +131,7 @@ export class Turns {
         this.k.log(scope, "warn", `Security review on the builder's tool (${this.k.named(profile.id)}): no other tool is available for this review`);
       }
       try {
-        return await this.attempt(scope, roleId, plannedId, profile, given, schema, signal, options);
+        return await this.attempt(scope, roleId, plannedId, profile, given, schema, signal, { ...options, selectionReason: [options.selectionReason, choice.reason].filter(Boolean).join(" ") });
       } catch (error) {
         if (!(error instanceof UsageLimited) || signal.aborted) throw error;
         this.keepWords(scope, roleId, profile.id, error);
@@ -185,11 +187,24 @@ export class Turns {
   }
 
   /** Save the role-specific context at the moment it is handed to an agent, not reconstructed later. */
-  private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued"): void {
+  private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued", plannedId: Id, selectionReason?: string, reviewerKey?: string, confirmedSettings?: { model?: string; modelName?: string; effort?: string }): void {
     const { task } = scope;
     const step = openStep(task);
     if (step?.kind !== "agent") return;
+    const stage = task.plan?.stages[task.stageIndex];
+    const designReview = stage?.kind === "converge" && roleId === (stage.reviewerRoleId ?? "design-reviewer");
+    const seats = designReview ? stage?.reviewerProfileIds : stage?.profileIds;
+    const index = reviewerKey !== undefined ? Number(reviewerKey) : seats?.indexOf(plannedId) ?? -1;
+    const assignedRole = designReview ? stage?.reviewerRoleId ?? "design-reviewer" : stage?.roleIds?.[index] ?? stage?.roleId;
+    const assignment = assignedRole === roleId ? (designReview ? stage?.reviewerAssignments : stage?.assignments)?.[index] : undefined;
+    const previous = step.agentInputs?.find(entry => entry.roleId === roleId && entry.profileId === profileId && entry.reviewerKey === reviewerKey);
+    const reason = selectionReason || previous?.selectionReason;
     const input = {
+      requestedProfileId: plannedId,
+      ...(reason ? { selectionReason: reason } : {}),
+      ...(reviewerKey !== undefined ? { reviewerKey } : {}),
+      ...(assignment ? { assignment: structuredClone(assignment) } : {}),
+      ...(confirmedSettings ? { confirmedSettings } : {}),
       roleId,
       profileId,
       taskTitle: task.title,
@@ -200,7 +215,7 @@ export class Turns {
       sections: sections.map(({ title, body }) => ({ title, body })),
       mode,
     } as const;
-    step.agentInputs = [...(step.agentInputs ?? []).filter((entry) => entry.roleId !== roleId || entry.profileId !== profileId), input];
+    step.agentInputs = [...(step.agentInputs ?? []).filter((entry) => entry.roleId !== roleId || entry.profileId !== profileId || entry.reviewerKey !== reviewerKey), input];
     this.k.commitNow(scope);
   }
 
@@ -372,7 +387,7 @@ export class Turns {
           previous, design: options.designContext, knownSections: back?.knownSections,
         });
         const sections = prepared.sections;
-        this.recordJourneyInput(scope, roleId, profileId, sections, "continued");
+        this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings);
         opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole });
       } else if (picked) {
         // One line about the restart (or the hand back, or that it may now use the screen), then only what the conversation
@@ -406,7 +421,7 @@ export class Turns {
         if ((role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
           await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true });
         }
-        this.recordJourneyInput(scope, roleId, profileId, sections, "fresh");
+        this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings);
         opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) });
       }
       if (screen) screen.heard = true;
@@ -465,7 +480,7 @@ export class Turns {
     given: Given,
     schema: z.ZodType<T>,
     signal: AbortSignal,
-    options: ConversationOptions & { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id, profile: AgentProfile) => boolean; seat?: Id; reviewerKey?: string; key?: string; member?: string; agent?: ActiveAgent; refresh?: boolean } = {},
+    options: ConversationOptions & { check?: Check<T>; used?: (profileId: Id) => void; room?: (toolId: Id, profile: AgentProfile) => boolean; seat?: Id; selectionReason?: string; reviewerKey?: string; key?: string; member?: string; agent?: ActiveAgent; refresh?: boolean } = {},
   ): Promise<T> {
     const { task } = scope;
     if (!this.k.role(roleId) || !this.k.productOf(scope) || !this.k.profile(plannedId)) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
@@ -485,6 +500,7 @@ export class Turns {
       const accepted = first && options.seat ? this.k.profile(options.seat) : undefined;
       first = false;
       let profile: AgentProfile;
+      let selectionReason = options.selectionReason;
       if (accepted) profile = accepted;
       else {
         const choice = this.k.choose(plannedId, scope, roleId, options.room, options.reviewerKey);
@@ -495,6 +511,7 @@ export class Turns {
           throw new WaitingForUsage(choice.waiting);
         }
         profile = choice.profile;
+        selectionReason = choice.reason;
       }
       // A later stand-in still has to fit the seat this member already holds. With no room, the group waits.
       if (stopped && options.room && !options.room(profile.toolId, profile)) {
@@ -526,7 +543,7 @@ export class Turns {
       this.k.commitNow(scope);
       const since = Date.now();
       try {
-        return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
+        return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, selectionReason, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
       } catch (error) {
         if (!(error instanceof UsageLimited) || signal.aborted) throw error;
         refresh = true;
@@ -546,7 +563,7 @@ export class Turns {
   }
 
   /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
-  private async attemptTogether<T>(scope: RepositoryContext, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: ConversationOptions & { key: string; check?: Check<T>; member: string; plannedId: Id; took?: { from: string; words: string; refusal?: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
+  private async attemptTogether<T>(scope: RepositoryContext, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: ConversationOptions & { key: string; check?: Check<T>; member: string; plannedId: Id; selectionReason?: string; reviewerKey?: string; took?: { from: string; words: string; refusal?: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
     const { task, work: repository } = scope;
     const roleId = role.id;
     const product = this.k.repositoryOf(scope);
@@ -603,7 +620,7 @@ export class Turns {
       const note: ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
       const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, note, { packet: options.reviewContext, previous: wentBack ? offered?.context : undefined });
       const sections = prepared.sections;
-      this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh");
+      this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings);
       const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
       const opening = wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole }) : buildPrompt(promptContext);
       const result = await this.converse(scope, run, agent, opening, "first", role, profileId, schema, signal, {

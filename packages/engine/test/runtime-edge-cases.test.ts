@@ -55,7 +55,7 @@ it("surfaces the planned tool's login problem instead of a usage wait when no to
     engine.s.setup = { done: true, platform: "darwin", checks: (["claude-code", "codex", "grok", "antigravity"] as const).map(id => ({ id, status: "logged-out", at: Date.now() })) };
     const planned = engine.profile("opus-high")!;
     expect(engine.usableTools()).toEqual([]);
-    expect(engine.choose(planned.id, task, "planner")).toEqual({ kind: "planned", profile: planned });
+    expect(engine.choose(planned.id, task, "planner")).toEqual({ kind: "planned", profile: planned, reason: expect.stringContaining("No tool passed readiness checks") });
     engine.s.pool.limited = [{ toolId: planned.toolId, until: Date.now() + 60_000, reason: "Usage exhausted" }];
     expect(engine.choose(planned.id, task, "planner")?.kind).toBe("none");
   } finally { await engine.shutdown(); }

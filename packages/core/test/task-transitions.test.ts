@@ -94,6 +94,8 @@ describe("shared dependency and future plan rules", () => {
     expect(assignFutureProfile(task, DEFAULT_PROFILES, "review", "profileIds", 0, "missing")).toBeUndefined();
     expect(assignFutureProfile(task, DEFAULT_PROFILES, "review", "profileIds", 1, "codex-xhigh")).toBe("Review");
     expect(task.plan!.stages[1]!.profileIds).toEqual(["codex-high", "codex-xhigh", "codex-xhigh"]);
+    expect(task.plan!.stages[1]!.assignments?.[1]).toEqual({ profileId: "codex-xhigh", by: "coordinator", reason: "Chosen by you." });
+    expect(task.plan!.stages[1]!.assignments?.[2]).toEqual({ profileId: "codex-xhigh", by: "coordinator", reason: "Added to the review by you." });
   });
 });
 

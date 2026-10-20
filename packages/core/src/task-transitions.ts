@@ -95,6 +95,8 @@ export function assignFutureProfile(task: MutableTask, profiles: readonly AgentP
   const stage = task.plan?.stages[at], selected = stage?.[list];
   if (!stage || at <= task.stageIndex || !profiles.some((profile) => profile.id === profileId) || !selected || index < 0 || index >= selected.length) return;
   selected[index] = profileId;
+  const key = list === "profileIds" ? "assignments" : "reviewerAssignments";
+  stage[key] = selected.map((id, at) => at === index ? { profileId: id, by: "coordinator", reason: "Chosen by you." } : stage[key]?.[at] ?? { profileId: id, by: "engine" });
   return stage.title;
 }
 
@@ -104,6 +106,7 @@ export function appendFutureReviewer(task: MutableTask, profiles: readonly Agent
   if (!stage || stage.kind !== "review-chain" || at <= task.stageIndex || !profiles.some((profile) => profile.id === profileId)) return;
   if (stage.roleIds) stage.roleIds = [...stage.profileIds.map((_, index) => reviewerAt(stage as Stage, index)), "code-reviewer"];
   stage.profileIds.push(profileId);
+  stage.assignments = stage.profileIds.map((id, at) => at === stage.profileIds.length - 1 ? { profileId: id, by: "coordinator", reason: "Added to the review by you." } : stage.assignments?.[at] ?? { profileId: id, by: "engine" });
   return stage.title;
 }
 

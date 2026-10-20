@@ -65,7 +65,7 @@ export function clockTime(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-const EFFORT_LABEL: Record<Effort, string> = {
+export const EFFORT_LABEL: Record<Effort, string> = {
   low: "low effort",
   medium: "medium effort",
   high: "high effort",

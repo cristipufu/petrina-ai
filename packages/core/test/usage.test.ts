@@ -20,29 +20,39 @@ const out = (toolId: string, until: number, model?: string): UsageLimit => ({ to
 const report = (extra: Partial<UsageReport>): UsageReport => ({ toolId: "claude-code", kind: "seven_day", status: "allowed", at: now, ...extra });
 const choose = (planned: AgentProfile, p: Pool, list: AgentProfile[] = profiles, toolList: Tool[] = tools) => chooseProfile({ profiles: list, tools: toolList, pool: p }, planned, now);
 
+it("captures the selection cause before usage changes and names independence separately", () => {
+  const p = pool({ limited: [{ toolId: opus.toolId, until: now + 3600000, reason: "Weekly allowance exhausted" }] });
+  const selected = choose(opus, p);
+  expect(selected.kind !== "none" && selected.reason).toContain("Weekly allowance exhausted");
+  p.limited = [];
+  expect(selected.kind !== "none" && selected.reason).toContain("Weekly allowance exhausted");
+  const independent = chooseProfile({ profiles, tools, pool: p }, sol, now, { awayFrom: { toolId: sol.toolId, modelId: sol.modelId } });
+  expect(independent.kind !== "none" && independent.reason).toContain("independent");
+});
+
 describe("who works a step", () => {
   it("is the planned profile when nothing is out or close", () => {
-    expect(choose(opus, pool())).toEqual({ kind: "planned", profile: opus });
+    expect(choose(opus, pool())).toEqual({ kind: "planned", profile: opus, reason: expect.any(String) });
     // A limit that ended no longer counts.
-    expect(choose(opus, pool({ limited: [out("claude-code", now - 1)] }))).toEqual({ kind: "planned", profile: opus });
+    expect(choose(opus, pool({ limited: [out("claude-code", now - 1)] }))).toEqual({ kind: "planned", profile: opus, reason: expect.any(String) });
   });
 
   it("is another model on the same tool when only the planned model is out (Opus out, Sonnet)", () => {
-    expect(choose(opus, pool({ limited: [out("claude-code", now + HOUR, "opus")] }))).toEqual({ kind: "substitute", profile: sonnet });
+    expect(choose(opus, pool({ limited: [out("claude-code", now + HOUR, "opus")] }))).toEqual({ kind: "substitute", profile: sonnet, reason: expect.any(String) });
     // The other tool's profiles are not asked while the same tool has one.
-    expect(choose(opusX, pool({ limited: [out("claude-code", now + HOUR, "opus")] }))).toEqual({ kind: "substitute", profile: sonnet });
+    expect(choose(opusX, pool({ limited: [out("claude-code", now + HOUR, "opus")] }))).toEqual({ kind: "substitute", profile: sonnet, reason: expect.any(String) });
   });
 
   it("is a profile on another tool when the whole tool is out, preferring the same effort", () => {
     const limited = pool({ limited: [out("claude-code", now + HOUR)] });
-    expect(choose(opus, limited)).toEqual({ kind: "substitute", profile: sol });
-    expect(choose(opusX, limited)).toEqual({ kind: "substitute", profile: solX });
+    expect(choose(opus, limited)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
+    expect(choose(opusX, limited)).toEqual({ kind: "substitute", profile: solX, reason: expect.any(String) });
   });
 
   it("goes by the order of the profile list among equals, and never uses a profile that is not in it", () => {
     const limited = pool({ limited: [out("claude-code", now + HOUR)] });
-    expect(choose(opus, limited, [opus, solX, sol])).toEqual({ kind: "substitute", profile: sol });
-    expect(choose(opus, limited, [opus, solX])).toEqual({ kind: "substitute", profile: solX });
+    expect(choose(opus, limited, [opus, solX, sol])).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
+    expect(choose(opus, limited, [opus, solX])).toEqual({ kind: "substitute", profile: solX, reason: expect.any(String) });
     expect(choose(opus, limited, [opus]).kind).toBe("none");
   });
 
@@ -60,9 +70,9 @@ describe("who works a step", () => {
 
   it("prefers an equal profile on another tool once the planned tool is close to its limit", () => {
     const close = pool({ usage: [report({ status: "allowed_warning", resetsAt: now + HOUR })] });
-    expect(choose(opus, close)).toEqual({ kind: "substitute", profile: sol });
+    expect(choose(opus, close)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
     // At 90% with no warning.
-    expect(choose(opusX, pool({ usage: [report({ utilization: 0.9, resetsAt: now + HOUR })] }))).toEqual({ kind: "substitute", profile: solX });
+    expect(choose(opusX, pool({ usage: [report({ utilization: 0.9, resetsAt: now + HOUR })] }))).toEqual({ kind: "substitute", profile: solX, reason: expect.any(String) });
     expect(choose(opus, pool({ usage: [report({ utilization: 0.89, resetsAt: now + HOUR })] })).kind).toBe("planned");
     // Never the other way when that tool is close too, and never a stand-in profile for this.
     const both = pool({ usage: [report({ utilization: 0.95 }), report({ toolId: "codex", utilization: 0.95 })] });
@@ -75,14 +85,14 @@ describe("who works a step", () => {
     const toolList: Tool[] = [...tools, { id: "grok", name: "Grok", command: [], status: "ready", models: [] }];
     const state = { profiles: list, tools: toolList, pool: pool({ limited: [out("claude-code", now + HOUR)] }) };
     // Codex is the first equal stand-in, so it still wins while it has a seat.
-    expect(chooseWithRoom(state, opus, now)).toEqual({ kind: "substitute", profile: sol });
-    expect(chooseWithRoom(state, opus, now, {}, (toolId) => toolId !== "codex")).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseWithRoom(state, opus, now)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
+    expect(chooseWithRoom(state, opus, now, {}, (toolId) => toolId !== "codex")).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
     // Every stand-in is full: wait for the first of them, not for a usage limit.
-    expect(chooseWithRoom(state, opus, now, {}, () => false)).toEqual({ kind: "substitute", profile: sol });
+    expect(chooseWithRoom(state, opus, now, {}, () => false)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
     // The planned profile is never skipped just because its tool is full.
-    expect(chooseWithRoom({ ...state, pool: pool() }, opus, now, {}, () => false)).toEqual({ kind: "planned", profile: opus });
-    expect(chooseProfile(state, opus, now, { skipTools: new Set(["codex"]) })).toEqual({ kind: "substitute", profile: grok });
-    expect(chooseProfile({ ...state, pool: pool() }, opus, now, { skipTools: new Set(["claude-code"]) })).toEqual({ kind: "planned", profile: opus });
+    expect(chooseWithRoom({ ...state, pool: pool() }, opus, now, {}, () => false)).toEqual({ kind: "planned", profile: opus, reason: expect.any(String) });
+    expect(chooseProfile(state, opus, now, { skipTools: new Set(["codex"]) })).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
+    expect(chooseProfile({ ...state, pool: pool() }, opus, now, { skipTools: new Set(["claude-code"]) })).toEqual({ kind: "planned", profile: opus, reason: expect.any(String) });
     const allOut = pool({ limited: [out("claude-code", now + 2 * HOUR), out("codex", now + HOUR), out("grok", now + HOUR)] });
     expect(waitingWords({ tools: toolList, pool: allOut }, now)).toBe("Waiting for usage: Claude Code, Codex and Grok are out until 13:00");
   });
@@ -185,28 +195,28 @@ describe("balancing by what is left", () => {
     const state = (usage: UsageReport[]) => ({ profiles: list, tools: toolList, pool: pool({ limited: [claudeOut], usage }) });
     // Codex at 70% of a week, Grok at 20%: Grok has more room, so it takes the step.
     const codexBusy = [report({ toolId: "codex", utilization: 0.7, resetsAt: now + 100 * HOUR }), report({ toolId: "grok", utilization: 0.2, resetsAt: now + 100 * HOUR })];
-    expect(chooseProfile(state(codexBusy), opus, now)).toEqual({ kind: "substitute", profile: grok });
-    expect(chooseProfile(state(codexBusy), opusX, now)).toEqual({ kind: "substitute", profile: grokX });
+    expect(chooseProfile(state(codexBusy), opus, now)).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
+    expect(chooseProfile(state(codexBusy), opusX, now)).toEqual({ kind: "substitute", profile: grokX, reason: expect.any(String) });
     // The other way round, and the same effort still comes before room.
     const grokBusy = [report({ toolId: "codex", utilization: 0.2, resetsAt: now + 100 * HOUR }), report({ toolId: "grok", utilization: 0.7, resetsAt: now + 100 * HOUR })];
-    expect(chooseProfile(state(grokBusy), opus, now)).toEqual({ kind: "substitute", profile: sol });
-    expect(chooseProfile({ profiles: [opus, solX, grok], tools: toolList, pool: pool({ limited: [claudeOut], usage: codexBusy }) }, opus, now)).toEqual({ kind: "substitute", profile: grok });
-    expect(chooseProfile({ profiles: [opus, solX, grokX], tools: toolList, pool: pool({ limited: [claudeOut], usage: codexBusy }) }, opusX, now)).toEqual({ kind: "substitute", profile: grokX });
+    expect(chooseProfile(state(grokBusy), opus, now)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
+    expect(chooseProfile({ profiles: [opus, solX, grok], tools: toolList, pool: pool({ limited: [claudeOut], usage: codexBusy }) }, opus, now)).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
+    expect(chooseProfile({ profiles: [opus, solX, grokX], tools: toolList, pool: pool({ limited: [claudeOut], usage: codexBusy }) }, opusX, now)).toEqual({ kind: "substitute", profile: grokX, reason: expect.any(String) });
     // Reset time scales it: Codex at 70% resetting in two hours has more room per hour than Grok at 20% with four days to go.
     const codexSoon = [report({ toolId: "codex", utilization: 0.7, resetsAt: now + 2 * HOUR }), report({ toolId: "grok", utilization: 0.2, resetsAt: now + 96 * HOUR })];
-    expect(chooseProfile(state(codexSoon), opus, now)).toEqual({ kind: "substitute", profile: sol });
+    expect(chooseProfile(state(codexSoon), opus, now)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
     // A tool that said nothing is not pushed behind one that has: the list's order decides, as before.
-    expect(chooseProfile(state([report({ toolId: "codex", utilization: 0.7, resetsAt: now + 100 * HOUR })]), opus, now)).toEqual({ kind: "substitute", profile: sol });
+    expect(chooseProfile(state([report({ toolId: "codex", utilization: 0.7, resetsAt: now + 100 * HOUR })]), opus, now)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
     // Near a limit still loses to not near, whatever the room says.
     const codexNear = [report({ toolId: "codex", utilization: 0.92, resetsAt: now + HOUR }), report({ toolId: "grok", utilization: 0.5, resetsAt: now + 100 * HOUR })];
-    expect(chooseProfile(state(codexNear), opus, now)).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseProfile(state(codexNear), opus, now)).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
     // An equal profile for a tool that is near: the roomier of the others.
     const claudeNear = pool({ usage: [report({ utilization: 0.95, resetsAt: now + HOUR }), ...codexBusy] });
-    expect(chooseProfile({ profiles: list, tools: toolList, pool: claudeNear }, opus, now)).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseProfile({ profiles: list, tools: toolList, pool: claudeNear }, opus, now)).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
     // A review planned on Codex stays there (keep), and a security review still goes to another tool first.
-    expect(chooseProfile({ profiles: list, tools: toolList, pool: pool({ usage: codexBusy }) }, sol, now, { keep: true })).toEqual({ kind: "planned", profile: sol });
+    expect(chooseProfile({ profiles: list, tools: toolList, pool: pool({ usage: codexBusy }) }, sol, now, { keep: true })).toEqual({ kind: "planned", profile: sol, reason: expect.any(String) });
     // Codex out, Claude Code busy with the builder: Grok, even with less room than Claude Code's own stand-in would have.
-    expect(chooseProfile({ profiles: list, tools: toolList, pool: pool({ limited: [out("codex", now + HOUR)], usage: grokBusy }) }, solX, now, { awayFrom: { toolId: "claude-code", modelId: "opus" } })).toEqual({ kind: "substitute", profile: grokX });
+    expect(chooseProfile({ profiles: list, tools: toolList, pool: pool({ limited: [out("codex", now + HOUR)], usage: grokBusy }) }, solX, now, { awayFrom: { toolId: "claude-code", modelId: "opus" } })).toEqual({ kind: "substitute", profile: grokX, reason: expect.any(String) });
   });
 
   it("slows a tool down past 80% of a window: half its cap of new agents, rounded up, at least one", () => {
@@ -246,33 +256,33 @@ describe("reviews keep their independence", () => {
   it("keeps a replacement on a different tool from its partner, including when its independent seat is busy", () => {
     const state = { ...withGrok, pool: pool({ limited: [out("claude-code", now + HOUR)] }) };
     const rules = { keep: true, awayFromTools: ["codex"] };
-    expect(chooseProfile(state, opus, now, rules)).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseProfile(state, opus, now, rules)).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
     // A full pool (including a one-seat pool) waits; it must not collapse the pair onto Codex.
-    expect(chooseWithRoom(state, opus, now, rules, () => false)).toEqual({ kind: "substitute", profile: grok });
-    expect(chooseWithRoom(state, sol, now, rules, (tool) => tool === "codex")).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseWithRoom(state, opus, now, rules, () => false)).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
+    expect(chooseWithRoom(state, sol, now, rules, (tool) => tool === "codex")).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
     // The partner's actual replacement matters even when our planned tool still works.
-    expect(chooseProfile(state, sol, now, rules)).toEqual({ kind: "substitute", profile: grok });
+    expect(chooseProfile(state, sol, now, rules)).toEqual({ kind: "substitute", profile: grok, reason: expect.any(String) });
   });
 
   it("uses the best remaining tool when every independent tool is out or unavailable", () => {
     const rules = { keep: true, awayFromTools: ["codex"] };
     const state = { ...withGrok, pool: pool({ limited: [out("claude-code", now + HOUR), out("grok", now + HOUR)] }) };
-    expect(chooseProfile(state, opus, now, rules)).toEqual({ kind: "substitute", profile: sol });
+    expect(chooseProfile(state, opus, now, rules)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
     const unavailable = { ...withGrok, tools: withGrok.tools.map((tool) => tool.id === "grok" ? { ...tool, status: "not-installed" as const } : tool), pool: pool({ limited: [out("claude-code", now + HOUR)] }) };
-    expect(chooseProfile(unavailable, grok, now, rules)).toEqual({ kind: "substitute", profile: sol });
+    expect(chooseProfile(unavailable, grok, now, rules)).toEqual({ kind: "substitute", profile: sol, reason: expect.any(String) });
   });
 
   it("moves a still-available planned reviewer away from a builder that changed tools", () => {
     const rules = { keep: true, awayFrom: { toolId: "codex", modelId: solX.modelId! } };
-    expect(chooseProfile({ profiles, tools, pool: pool() }, solX, now, rules)).toEqual({ kind: "substitute", profile: opusX });
-    expect(chooseProfile({ profiles, tools, pool: pool({ limited: [out("claude-code", now + HOUR)] }) }, solX, now, rules)).toEqual({ kind: "planned", profile: solX });
+    expect(chooseProfile({ profiles, tools, pool: pool() }, solX, now, rules)).toEqual({ kind: "substitute", profile: opusX, reason: expect.any(String) });
+    expect(chooseProfile({ profiles, tools, pool: pool({ limited: [out("claude-code", now + HOUR)] }) }, solX, now, rules)).toEqual({ kind: "planned", profile: solX, reason: expect.any(String) });
   });
 
   it("moves a security review as far from the builder as it can, and never waits for that", () => {
     const fromOpus = { awayFrom: { toolId: "claude-code", modelId: "opus" } };
     // Planned on Codex because the builder is on Claude Code (Opus); Codex is out: Sonnet, not Opus.
     const codexOut = pool({ limited: [out("codex", now + HOUR)] });
-    expect(chooseProfile({ profiles, tools, pool: codexOut }, solX, now, fromOpus)).toEqual({ kind: "substitute", profile: sonnet });
+    expect(chooseProfile({ profiles, tools, pool: codexOut }, solX, now, fromOpus)).toEqual({ kind: "substitute", profile: sonnet, reason: expect.any(String) });
     // Only the builder's own model left: it still switches rather than wait.
     const onlyOpus = pool({ limited: [out("codex", now + HOUR), out("claude-code", now + HOUR, "sonnet")] });
     const last = chooseProfile({ profiles, tools, pool: onlyOpus }, solX, now, fromOpus);
@@ -281,6 +291,6 @@ describe("reviews keep their independence", () => {
 
   it("keeps a reviewer on its planned tool when that tool is only near its limit", () => {
     const busy = pool({ usage: [report({ status: "allowed_warning", utilization: 0.95 })] });
-    expect(chooseProfile({ profiles, tools, pool: busy }, opus, now, { keep: true })).toEqual({ kind: "planned", profile: opus });
+    expect(chooseProfile({ profiles, tools, pool: busy }, opus, now, { keep: true })).toEqual({ kind: "planned", profile: opus, reason: expect.any(String) });
   });
 });

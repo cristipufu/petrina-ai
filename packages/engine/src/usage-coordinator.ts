@@ -164,7 +164,7 @@ export class UsageCoordinator {
     // A saved screen conversation is not swapped just for being near a limit. Reopen it on its tool
     // while that tool is available; a replacement still follows the current independence rules.
     if (screen) {
-      if (state.setup?.checks.some((check) => check.id === planned.toolId && notReady(check.status))) return { kind: "planned", profile: planned };
+      if (state.setup?.checks.some((check) => check.id === planned.toolId && notReady(check.status))) return { kind: "planned", profile: planned, reason: "Kept the screen conversation's profile so its tool can report the readiness problem." };
       const saved = chooseWithRoom(candidates, planned, now, { keep: true }, room);
       if (saved.kind === "planned") return saved;
     }
@@ -176,11 +176,12 @@ export class UsageCoordinator {
       if (check?.checking) return { kind: "none", waiting: `Checking ${this.toolName(own.toolId)} before the Builder returns` };
       if (candidates.profiles.some((profile) => profile.id === own.profile.id) && (!checked || usable.includes(own.toolId))) {
         const ready = candidates.tools.filter((tool) => tool.status === "ready");
-        if (!ready.length || ready.some((tool) => tool.id === own.toolId)) return { kind: own.profile.id === plannedId ? "planned" : "substitute", profile: own.profile };
+        if (!ready.length || ready.some((tool) => tool.id === own.toolId)) return { kind: own.profile.id === plannedId ? "planned" : "substitute", profile: own.profile, reason: "Returned to the Builder's existing conversation on an available profile." };
       }
     }
     const rules = { keep: !!screen || reviewing, awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) };
     const choice = chooseWithRoom(candidates, planned, now, rules, room);
+    if (checked && !usable.length && choice.kind === "planned") return { ...choice, reason: "No tool passed readiness checks; kept the planned profile so its tool can report the login or installation problem." };
     if (own && room && choice.kind !== "none" && !room(choice.profile.toolId, choice.profile)) {
       // A returning Builder must not get stuck on a full planned tool that recovered since
       // its last handoff. Try tools with seats; if none can work, keep the normal wait.

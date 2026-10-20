@@ -30,8 +30,9 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
 
   const planner = find.profile(plan.plannerProfileId);
 
-  const select = (stage: Stage, list: "profileIds" | "reviewerProfileIds", index: number, value: string, editable: boolean) =>
-    editable ? (
+  const select = (stage: Stage, list: "profileIds" | "reviewerProfileIds", index: number, value: string, editable: boolean) => {
+    const assignment = (list === "profileIds" ? stage.assignments : stage.reviewerAssignments)?.[index];
+    return <div className="stage-profile">{editable ? (
       <select className="select" value={value} aria-label={`Who does ${stage.title.toLowerCase()}`} onChange={(event) => sim.setStageProfile(task.id, stage.id, list, index, event.target.value)}>
         {state.profiles.map((profile) => (
           <option key={profile.id} value={profile.id}>
@@ -41,7 +42,11 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
       </select>
     ) : (
       <ProfileText profile={find.profile(value)} find={find} full />
-    );
+    )}{assignment && <details className="assignment-reason"><summary>Why this agent</summary><p>{assignment.reason ?? "A reason was not recorded for this assignment."}</p>
+      {assignment.profileId !== value && <p>Requested: {find.profile(assignment.profileId) ? profileText(find.profile(assignment.profileId), find, true) : "a profile no longer in the Library"}.</p>}
+      {assignment.changeReason && <p>{assignment.changeReason}</p>}
+    </details>}</div>;
+  };
 
   return (
     <>
@@ -113,10 +118,10 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
                         {stage.profileIds.map((profileId, at) => {
                           const reviewer = stage.kind === "review-chain" ? find.role(reviewerAt(stage, at)) : undefined;
                           return (
-                            <span key={`${profileId}-${at}`} className={stage.kind === "review-chain" ? "stage-person" : "row"}>
+                            <div key={`${profileId}-${at}`} className={stage.kind === "review-chain" ? "stage-person" : "row"}>
                               {stage.kind === "review-chain" && <span className="stage-role"><RoleAvatar role={reviewer} size={20} />{reviewer?.name}</span>}
                               {select(stage, "profileIds", at, profileId, editable)}
-                            </span>
+                            </div>
                           );
                         })}
                         {stage.kind === "review-chain" && editable && (

@@ -100,6 +100,8 @@ The scroll wheel pans the canvas independently of the task list and details; dra
 
 Clicking a box switches the right panel to that step: tool, model and effort, start, elapsed time, outcome, why it moved on, what it asked you, its part of the timeline and its conversation inline. Overview also shows that step’s findings, design objections or answers to objections, recorded at handoff so later rounds cannot rewrite them. Older details use available linked records and label their latest status.
 
+Plan assignments offer a collapsed “Why this agent” explanation. Each recorded node input keeps the original assignment, requested and selected profiles, the engine's selection reason and the tool's settings confirmed at startup. A coordinator edit is labelled as their choice; an older missing explanation is not invented.
+
 Finding details keep the finding and its recorded review evidence together; the builder’s full messages belong in Conversation instead of a repeated metadata block. Every active agent node has a fixed footer on all three tabs: a message section collapsed by default, with the field above Queue/Interrupt and Send when opened, then a separate terminal takeover row. Collapsing keeps a draft; the Message shortcut opens and focuses it. Finished nodes have no live controls.
 
 Agent actions expand in place, collapsed by default. Clicking the same step again, the blank canvas, or Back to task returns to the previous task tab and reading position. Typed answers, messages and notes stay intact. Faint steps say what is planned and link to the Plan tab.

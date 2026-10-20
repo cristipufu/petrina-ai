@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { addRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS, type RoleChanges, type Stage } from "@petrina/core";
 import { normalizePlan } from "../src/plan.js";
-import type { PlanResult } from "../src/roles.js";
+import { PlanResult } from "../src/roles.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import type { z } from "zod";
 
@@ -23,6 +23,21 @@ function plan(stages: Raw[], approveDelivery = true) {
 const shape = (stages: readonly Stage[]) => stages.map((stage) => (stage.kind === "review-chain" ? `review: ${stage.profileIds.map((_, at) => stage.roleIds?.[at] ?? stage.roleId).join(", ")}` : `${stage.kind}: ${stage.roleId}`));
 
 describe("the planner's plan, made safe to run", () => {
+  it("retains reasons per seat, including duplicate profiles and an unavailable planned tool", () => {
+    const result = PlanResult.parse({ rationale: "Use independent roles.", stages: [
+      { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"], profileReasons: ["High effort to check the scheduling evidence."] },
+      build,
+      { ...review, profileIds: ["sol-high", "sol-high"], profileReasons: ["Inspect correctness.", "Independently inspect nearby cases."] },
+    ] });
+    const made = normalizePlan({ task: { id: "t", delivery: "local", approveDelivery: true }, result, roles, profiles: ENGINE_PROFILES, plannerProfileId: "opus-high", releaseManagerProfileId: "opus-high", onUsable: id => id === "opus-high" ? "grok-high" : id });
+    expect(made.stages[0]?.profileIds).toEqual(["grok-high"]);
+    expect(made.stages[0]?.assignments?.[0]).toMatchObject({ profileId: "opus-high", by: "planner", reason: "High effort to check the scheduling evidence.", changeReason: expect.stringContaining("unavailable") });
+    expect(made.stages.find(stage => stage.kind === "review-chain")?.assignments?.map(item => item.reason)).toEqual(["Inspect correctness.", "Independently inspect nearby cases."]);
+    expect(PlanResult.safeParse({ ...result, stages: [{ ...result.stages[0]!, profileReasons: ["One reason", "An extra reason"] }] }).success).toBe(false);
+    const moved = plan([build, { ...review, roleId: "researcher", profileIds: ["opus-high"], profileReasons: ["Check external scheduling evidence."] }]);
+    expect(moved.stages.find(stage => stage.roleId === "researcher")?.assignments?.[0]).toMatchObject({ profileId: "opus-high", by: "planner", reason: "Check external scheduling evidence." });
+    expect(moved.stages.find(stage => stage.kind === "review-chain")?.assignments?.[0]?.by).toBe("engine");
+  });
   for (const roleId of ["security-reviewer", "verifier", "check-finder", "guide-keeper"]) {
     it(`explains that Petrina brings in the ${roleId} itself, wherever the planner names it`, () => {
       const named = roles.find((role) => role.id === roleId)!;

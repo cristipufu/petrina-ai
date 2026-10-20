@@ -30,11 +30,16 @@ export const PlanResult = z.object({
         title: z.string().min(1).max(60),
         roleId: z.string(),
         profileIds: z.array(z.string()).default([]),
+        profileReasons: z.array(z.string().trim().min(3).max(300)).max(12).optional(),
         roleIds: z.array(z.string()).max(12).optional(),
         reviewerRoleId: z.string().optional(),
         reviewerProfileIds: z.array(z.string()).optional(),
+        reviewerProfileReasons: z.array(z.string().trim().min(3).max(300)).max(12).optional(),
         maxRounds: z.number().int().min(1).max(5).optional(),
         gate: z.enum(["plan", "design"]).optional(),
+      }).superRefine((stage, ctx) => {
+        if (stage.profileReasons && stage.profileReasons.length !== stage.profileIds.length) ctx.addIssue({ code: "custom", path: ["profileReasons"], message: "Give one profile reason for each profileIds entry." });
+        if (stage.reviewerProfileReasons && stage.reviewerProfileReasons.length !== (stage.reviewerProfileIds?.length ?? 0)) ctx.addIssue({ code: "custom", path: ["reviewerProfileReasons"], message: "Give one reviewer reason for each reviewerProfileIds entry." });
       }),
     )
     .min(1)
@@ -253,10 +258,10 @@ export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
     result: PlanResult,
     reads: [],
     shape: `{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request", "reason": "Why this product is involved", "builderProfileId": "<profile id>"}], "leadProductId": "<product id for shared repairs>", "rationale": "Why this plan, in one or two plain sentences", "stages": [
-  {"kind": "converge", "title": "Design", "roleId": "architect", "profileIds": ["<profile id>"], "reviewerRoleId": "design-reviewer", "reviewerProfileIds": ["<another tool's profile id>"], "maxRounds": 3},
+  {"kind": "converge", "title": "Design", "roleId": "architect", "profileIds": ["<profile id>"], "profileReasons": ["Why this role, model and effort suit this task"], "reviewerRoleId": "design-reviewer", "reviewerProfileIds": ["<another tool's profile id>"], "reviewerProfileReasons": ["Why this independent reviewer suits this design"], "maxRounds": 3},
   {"kind": "gate", "title": "Your design check", "roleId": "architect", "gate": "design"},
-  {"kind": "do", "title": "Build", "roleId": "builder", "profileIds": ["<profile id>"]},
-  {"kind": "review-chain", "title": "Review", "roleId": "code-reviewer", "profileIds": ["<profile id>", "<profile id on another tool>"], "maxRounds": 2}
+  {"kind": "do", "title": "Build", "roleId": "builder", "profileIds": ["<profile id>"], "profileReasons": ["Why this model and effort fit the implementation"]},
+  {"kind": "review-chain", "title": "Review", "roleId": "code-reviewer", "profileIds": ["<profile id>", "<profile id on another tool>"], "profileReasons": ["Why this first reviewer fits the change", "Why this independent reviewer complements it"], "maxRounds": 2}
 ], "sourcePointers": [], "risk": {"level": "medium", "why": "What it touches, in plain words"}}`,
     instructions: ctx => ROLE_CONTRACTS.planner!.withInstructions!(ctx, ctx.role.instructions),
     withInstructions: (ctx, wording) => {
@@ -281,6 +286,7 @@ Stage kinds:
 
 Rules:
 - ${SOURCE_POINTER_RULE}
+- For every agent seat, provide a short public reason for the role, model and effort: profileReasons aligned one-for-one with profileIds, and reviewerProfileReasons aligned with reviewerProfileIds. Explain the task need in at most 300 characters, without private reasoning or guessed quota information. The engine records any later substitution separately.
 - Size the plan to the task. A small fix can be a builder and two reviewers. Something new deserves research, a converge design, a design gate, a builder, maybe a tester, and a review chain.
 - Always include exactly one builder stage before the review chain.
 - Use findings roles only in review-chain stages. For a mix of roles, list roleIds in the same order as profileIds. Notes and checks roles work in do stages; only the Architect and Design reviewer work in converge stages.

@@ -233,6 +233,10 @@ describe('the journey in the task sheet', () => {
     tester.outcome = '1 acceptance check failed';
     const testerIndex = task.journey!.indexOf(tester);
     task.journey = [...task.journey!.slice(0, testerIndex + 1), { ...builder, id: 'builder-fix-test', fixing: true, startedAt: NOW - 100, endedAt: NOW, builderConversation: 'resumed', reason: undefined, outcome: 'Fixes ready', agentInputs: [{ roleId: 'builder', profileId: builder.profileId!, taskTitle: task.title, stageTitle: 'Build', sections: [{ title: 'Review findings', body: 'The checkout total drops the selected shipping fee.' }], mode: 'continued' }] }];
+    const fixInput = task.journey!.at(-1)!.agentInputs![0]!;
+    fixInput.requestedProfileId = state.profiles[0]!.id;
+    fixInput.selectionReason = 'The planned profile reached its weekly limit.';
+    fixInput.confirmedSettings = { model: 'confirmed-model', effort: 'high' };
     task.findings = [...task.findings, { id: 'finding-fix-1', text: 'The checkout total drops the selected shipping fee.', severity: 'blocking', raisedBy: 'code-reviewer', confirmedBy: [], status: 'open', answer: { fixed: false, text: 'The work still needs a correction.', at: NOW }, evidence: 'The displayed total excludes shipping after changing the delivery method.' }];
     task.brief = { summary: 'Keep the checkout total accurate.', forUsers: [], areas: [], risks: [], acceptance: [
       { text: 'Type checks and all tests pass.', verification: 'failed', met: false },
@@ -250,6 +254,9 @@ describe('the journey in the task sheet', () => {
     expect(details.textContent).not.toContain('Task request');
     expect(details.textContent).not.toContain(task.description);
     expect(details.textContent).toContain('Input given to Builder');
+    expect(details.textContent).toContain('Agent choice');
+    expect(details.textContent).toContain('The planned profile reached its weekly limit.');
+    expect(details.textContent).toContain('Tool confirmed at start: confirmed-model');
     expect(details.textContent).toContain('Type checks and all tests pass.');
     expect(details.textContent).not.toContain('Builder conversation');
     expect(details.textContent).toContain('Findings assigned to this fix');

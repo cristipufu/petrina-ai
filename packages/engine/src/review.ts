@@ -331,7 +331,7 @@ export class Reviews {
         roleId: reviewerAt(stage, Number(key)),
         profileId,
         reviewerKey: key,
-        work: async (copy, room, seat, onUsed, agent, continuing, signal) => {
+        work: async (copy, room, seat, onUsed, agent, continuing, signal, selectionReason) => {
           let by = profileId;
           const roleId = reviewerAt(stage, Number(key));
           const participant = this.participant(scope, stage, key, profileId);
@@ -339,7 +339,7 @@ export class Reviews {
           const given = () => this.context.sectionsFor(scope, roleId, `review-${key}`, this.turns.repositoryCopies.get(copy), undefined, input);
           const result = continuing
             ? await this.turns.turn(scope, roleId, profileId, given, ReviewResult, signal, { ...participant, check, copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key })
-            : await this.turns.parallel(scope, roleId, profileId, copy, given, ReviewResult, signal, { ...participant, check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, reviewerKey: key, agent, refresh: false });
+            : await this.turns.parallel(scope, roleId, profileId, copy, given, ReviewResult, signal, { ...participant, check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, selectionReason, reviewerKey: key, agent, refresh: false });
           await this.applyReview(scope, stage, result, by, roleId, key);
           this.k.finishReviewWork(task, `reviewer:${key}`);
           reported(key);
@@ -535,7 +535,7 @@ export class Reviews {
         reviewKey,
         roleId: "verifier",
         profileId,
-        work: async (copy, room, seat, used, agent, continuing, signal) => {
+        work: async (copy, room, seat, used, agent, continuing, signal, selectionReason) => {
           let by = seat;
           const missing = () => findings.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
           const given = async () => [...await this.context.sectionsFor(scope, "verifier", key, this.turns.repositoryCopies.get(copy), undefined, input), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }];
@@ -561,7 +561,7 @@ export class Reviews {
           else await this.turns.parallel(scope, "verifier", profileId, copy, given, VerifyResult, signal, {
             key: reviewKey,
             room,
-            seat,
+            seat, selectionReason,
             used: heard,
             member: key,
             check,
@@ -612,7 +612,7 @@ export class Reviews {
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
-  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
+  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selectionReason?: string) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
     const scope = executionFor(task);
     const stop = new AbortController();
     const signal = AbortSignal.any([parentSignal, stop.signal]);
@@ -672,7 +672,7 @@ export class Reviews {
       } else if (!running.size) uses = uses.filter((use) => use.taskId !== task.id);
       return pickStarts({ candidates: [{ ...profile, taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
     };
-    const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, continuing: boolean) => {
+    const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, continuing: boolean, selectionReason?: string) => {
       yielded.delete(member.key);
       const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0, reviewKey: member.reviewKey };
       let completed = false;
@@ -694,7 +694,7 @@ export class Reviews {
             }),
           ]);
           if (versions.length) this.turns.repositoryCopies.set(copy, copies);
-          try { await member.work(copy, room, seat, used, agent, continuing, signal); }
+          try { await member.work(copy, room, seat, used, agent, continuing, signal, selectionReason); }
           finally {
             const saved = task.hunt?.screenTurns?.[member.key];
             if (saved && versions.length) { saved.copies = copies; saved.conversation.repositoryCopies = copies; this.k.commitNow(); }
@@ -757,7 +757,7 @@ export class Reviews {
         const profile = this.k.profile(seat)!;
         if (!room(profile.toolId, profile)) break;
         pending.shift();
-        startMember(member, join(folder, member.key), room, seat, false);
+        startMember(member, join(folder, member.key), room, seat, false, choice?.reason);
       }
       this.k.commit();
     };

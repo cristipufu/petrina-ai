@@ -140,7 +140,7 @@ export function byRoom<T>(items: readonly T[], roomOf: (item: T) => number | und
   return [...items].sort((a, b) => key(b) - key(a));
 }
 
-export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile } | { kind: "none"; waiting: string };
+export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile; reason?: string } | { kind: "none"; waiting: string };
 
 /**
  * Which profile actually works a step planned for `planned`. The planned one when it is free to work and
@@ -191,16 +191,20 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
     // A builder may have switched tools since the plan was made. Keep this review independent
     // of the tool that actually built the change, even when its planned reviewer is still free.
     const independent = closest(state.profiles.filter((profile) => sameness(profile, rules) < sameness(planned, rules) && usable(profile)));
-    if (independent) return { kind: "substitute", profile: independent };
-    if (!near(planned) || rules.keep) return { kind: "planned", profile: planned };
+    if (independent) return { kind: "substitute", profile: independent, reason: "Selected a more independent tool or model for this review." };
+    if (!near(planned) || rules.keep) return { kind: "planned", profile: planned, reason: "The planned profile is available for this step." };
     const equal = closest(state.profiles.filter((profile) => profile.toolId !== planned.toolId && profile.effort === planned.effort && usable(profile) && !near(profile) && !profile.standby));
-    return equal ? { kind: "substitute", profile: equal } : { kind: "planned", profile: planned };
+    return equal ? { kind: "substitute", profile: equal, reason: "The planned profile is near a usage limit; selected another tool at the same effort with room available." } : { kind: "planned", profile: planned, reason: "Kept the planned profile; no equivalent alternative has more usable room." };
   }
   const sameTool = closest(state.profiles.filter((profile) => profile.id !== planned.id && profile.toolId === planned.toolId && usable(profile)));
   const other = closest(state.profiles.filter((profile) => profile.toolId !== planned.toolId && usable(profile)));
   // Another model on the planned tool first, unless that is less independent than what another tool offers.
   const pick = sameTool && (!other || sameness(sameTool, rules) <= sameness(other, rules)) ? sameTool : other;
-  if (pick) return { kind: "substitute", profile: pick };
+  if (pick) {
+    const limit = limitOf(pool, planned, now);
+    const why = limit ? `The planned profile is unavailable: ${limit.reason}.` : "The planned profile's tool is not ready or its profile is no longer offered.";
+    return { kind: "substitute", profile: pick, reason: `${why} Selected an available profile, preferring review independence, matching effort and usage headroom.` };
+  }
   return { kind: "none", waiting: waitingWords(state, now) };
 }
 
@@ -219,7 +223,8 @@ export function chooseWithRoom(state: Pick<State, "profiles" | "tools" | "pool">
     if (held?.kind === "substitute" && choice.kind !== "none" && sameness(choice.profile, rules) > sameness(held.profile, rules)) return held;
     if (!room || choice.kind !== "substitute" || room(choice.profile.toolId, choice.profile)) {
       if (choice.kind === "none" && held?.kind === "substitute") return held;
-      return choice;
+      return held?.kind === "substitute" && choice.kind === "substitute" && held.profile.id !== choice.profile.id
+        ? { ...choice, reason: `${choice.reason ?? "Selected an available substitute."} Another substitute had no free agent slot.` } : choice;
     }
     if (skip.has(choice.profile.id)) return choice;
     held ??= choice;

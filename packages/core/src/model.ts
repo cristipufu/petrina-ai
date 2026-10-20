@@ -117,6 +117,14 @@ export type StageKind = "do" | "converge" | "review-chain" | "gate";
 
 export type GateKind = "plan" | "design" | "delivery";
 
+export interface ProfileAssignment {
+  /** The profile requested by the person or agent making this assignment. */
+  profileId: Id;
+  by: "planner" | "coordinator" | "engine";
+  reason?: string;
+  changeReason?: string;
+}
+
 export interface Stage {
   id: Id;
   kind: StageKind;
@@ -125,11 +133,13 @@ export interface Stage {
   roleId: Id;
   /** `do`: one profile. `converge`: the author. `review-chain`: the reviewers, in order. */
   profileIds: readonly Id[];
+  assignments?: readonly ProfileAssignment[];
   /** `review-chain`: the role of each reviewer in `profileIds`, in order. Missing: `roleId`. */
   roleIds?: readonly Id[];
   /** `converge` only. */
   reviewerRoleId?: Id;
   reviewerProfileIds?: readonly Id[];
+  reviewerAssignments?: readonly ProfileAssignment[];
   maxRounds?: number;
   gate?: GateKind;
 }
@@ -313,6 +323,13 @@ export interface JourneyProductCheck {
 export interface JourneyAgentInput {
   roleId: Id;
   profileId: Id;
+  /** Distinguishes reviewer seats even when their role and profile are identical. */
+  reviewerKey?: Id;
+  requestedProfileId?: Id;
+  selectionReason?: string;
+  /** Settings confirmed by the native tool when this turn opened. */
+  confirmedSettings?: { model?: string; modelName?: string; effort?: string };
+  assignment?: ProfileAssignment;
   taskTitle: string;
   /** Present when this start included the task request; continued prompts only add updated context. */
   taskDescription?: string;

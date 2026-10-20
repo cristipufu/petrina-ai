@@ -4,7 +4,7 @@ import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useR
 import "@xyflow/react/dist/base.css";
 import { Ban, Check, Flag, GitBranch, Hourglass, LoaderCircle, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
 import { journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
-import { ago, duration, profileText, type Lookup } from "../lib";
+import { ago, duration, EFFORT_LABEL, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
 import { RoleAvatar } from "./bits";
 import { TimelineList } from "./Timeline";
@@ -672,9 +672,19 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
           {inputs.length > 0 ? inputs.map((input) => {
             const inputRole = find.role(input.roleId)?.name ?? input.roleId;
             const profile = find.profile(input.profileId);
-            return <details className="journey-input-record" key={`${input.roleId}:${input.profileId}`}>
+            return <details className="journey-input-record" key={`${input.roleId}:${input.profileId}:${input.reviewerKey ?? "main"}`}>
               <summary>Input given to {inputRole}{inputs.length > 1 && profile ? ` (${profileText(profile, find, true)})` : ""}</summary>
               <p className="quiet-text">{input.mode === "continued" ? "Updated context for its existing conversation." : "Context for a fresh conversation."}{input.stageTitle ? ` Assigned stage: ${input.stageTitle}.` : ""}</p>
+              {input.requestedProfileId && <div className="agent-selection">
+                <h4>Agent choice</h4>
+                <p>Requested: {profileText(find.profile(input.requestedProfileId), find, true) || "A profile no longer in the Library"}</p>
+                <p>Selected: {profileText(profile, find, true) || "A profile no longer in the Library"}</p>
+                {input.assignment && input.assignment.profileId !== input.requestedProfileId && <p>Original assignment: {profileText(find.profile(input.assignment.profileId), find, true) || "A profile no longer in the Library"}</p>}
+                {input.assignment?.reason && <p>{input.assignment.reason}</p>}
+                {input.assignment?.changeReason && <p>{input.assignment.changeReason}</p>}
+                {input.selectionReason && <p>{input.selectionReason}</p>}
+                {input.confirmedSettings?.model && <p className="quiet-text">Tool confirmed at start: {input.confirmedSettings.modelName ?? (input.confirmedSettings.model === profile?.modelId ? profile.model : input.confirmedSettings.model)}{input.confirmedSettings.effort ? ` · ${EFFORT_LABEL[input.confirmedSettings.effort as keyof typeof EFFORT_LABEL] ?? input.confirmedSettings.effort}` : ""}</p>}
+              </div>}
               {input.taskDescription && <div>
                 <h4>Task request</h4>
                 <p>{input.taskDescription}</p>
