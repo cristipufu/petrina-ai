@@ -132,7 +132,7 @@ See [the browser brief](../headless-browser.md) for the acceptance checklist.
 
 ### Checking the tools
 
-The engine checks Claude Code, Codex, Grok, Antigravity, the GitHub CLI, Git and Node.js when it starts, on entering Tools in Agents or first run, with Check again, and before a step or a delivery needs them. Window focus and visibility changes never launch tool checks. Each check has a time limit (8 seconds) and runs outside any product's folder; a slow one never holds the others.
+The engine checks Claude Code, Codex, Grok, Antigravity, the GitHub CLI, Git and Node.js when it starts, on entering Tools in Agents or first run, with Check again, and before a step or a delivery needs them. Window focus and visibility changes never launch tool checks. Agent checks allow up to 30 seconds to open their native session; GitHub CLI, Git and Node.js checks allow 8 seconds. Each returns as soon as it answers and runs outside any product's folder; a slow one never holds the others. Failed checks retain their cause before a bounded tail of the connector's diagnostic output.
 
 Programs are looked up the way Agents finds the agent tools, on the PATH as it is now, so an app opened from the Dock finds what Terminal finds. A tool that doesn't answer in time is Couldn't check at once and is stopped, forced after 2 seconds if it ignores being asked; the next check of that tool waits until it is gone, so Check again never piles up copies.
 

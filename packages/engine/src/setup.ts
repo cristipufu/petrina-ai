@@ -26,6 +26,8 @@ export type Which = (name: string) => string | null;
 
 /** How long one check may take before it counts as "Couldn't check". */
 export const CHECK_TIMEOUT_MS = 8_000;
+/** Native agents open a full session; cold startup can exceed a simple command's deadline. */
+export const AGENT_CHECK_TIMEOUT_MS = 30_000;
 
 const tail = (text: string) => text.trim().slice(-400);
 
@@ -70,7 +72,7 @@ export async function checkAgentTool(options: {
     if (!options.which(adapter.cli)) return { status: "not-installed" };
     if (adapter.installed && !adapter.installed()) return { status: "not-installed", detail: `${adapter.name}'s connector is missing. Run bun run petrina antigravity install.` };
   }
-  const limit = options.timeoutMs ?? CHECK_TIMEOUT_MS;
+  const limit = options.timeoutMs ?? AGENT_CHECK_TIMEOUT_MS;
   const controller = new AbortController();
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, { once: true });
@@ -113,7 +115,8 @@ export async function checkAgentTool(options: {
   } catch (error) {
     if (isAuthRequired(error)) return { status: "logged-out" };
     const message = controller.signal.aborted ? `${adapter.name} did not answer within ${Math.round(limit / 1000)} seconds.` : error instanceof Error ? error.message : String(error);
-    return { status: "unknown", detail: tail(`${message}\n${said}`) };
+    // Keep the cause first: a verbose connector must never displace it with debug output.
+    return { status: "unknown", detail: [message.slice(0, 400), tail(said)].filter(Boolean).join("\n") };
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", abort);

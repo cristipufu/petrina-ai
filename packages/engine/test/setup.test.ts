@@ -7,9 +7,10 @@ import { join, sep } from "node:path";
 import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
 import { Connections } from "../src/connection.js";
 import { Engine, type EngineOptions } from "../src/engine.js";
-import { checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
+import { AgentRun } from "../src/acp-run.js";
+import { AGENT_CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
 import { Store } from "../src/store.js";
-import { findProgram } from "../src/tools.js";
+import { ADAPTERS, ENGINE_PROFILES, findProgram } from "../src/tools.js";
 import { EngineProcess, FAKE_GH, Fakes, git, makeProduct, makeWorld, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
@@ -84,6 +85,30 @@ const toolsUsed = (engine: Engine, task: Task) => {
 };
 
 describe("Tool status", () => {
+  for (const timedOut of [false, true]) {
+    it(`keeps the ${timedOut ? "deadline" : "startup error"} ahead of noisy connector logs`, async () => {
+      let budget: number | undefined;
+      const starting = spyOn(AgentRun, "start").mockImplementation(async (options) => {
+        budget = options.startTimeoutMs;
+        options.callbacks.onLog?.("earlier debug\n".repeat(200) + "last connector diagnostic");
+        if (timedOut) await new Promise<void>((resolve) => options.signal.addEventListener("abort", () => resolve(), { once: true }));
+        throw new Error("The connector could not open a session.");
+      });
+      try {
+        const result = await checkAgentTool({
+          adapter: ADAPTERS["claude-code"]!, profile: ENGINE_PROFILES[0]!, command: ["test-only"],
+          cwd: temp, env: {}, which: () => null, ...(timedOut ? { timeoutMs: 500 } : {}),
+        });
+        expect(result.status).toBe("unknown");
+        expect(result.detail?.startsWith(timedOut ? "Claude Code did not answer within " : "The connector could not open a session.")).toBe(true);
+        expect(result.detail).toContain("last connector diagnostic");
+        expect(result.detail!.length).toBeLessThan(802);
+        expect(budget).toBe(timedOut ? 500 : AGENT_CHECK_TIMEOUT_MS);
+        expect(AGENT_CHECK_TIMEOUT_MS).toBe(30_000);
+      } finally { starting.mockRestore(); }
+    });
+  }
+
   it("tells Ready, Not logged in and Couldn't check apart for agent tools, without sending the AI a message", async () => {
     const fakes = new Fakes(fresh("fakes"));
     const data = fresh("data");
@@ -143,7 +168,7 @@ describe("Tool status", () => {
   });
 
   for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
-    it(`shows Couldn't check after 8 seconds for a tool that ${behaviour === "stubborn" ? "never opens a conversation" : "never reports its login"} and ignores being stopped, stops it, and never piles up copies`, async () => {
+    it(`honors an 8-second check deadline for a tool that ${behaviour === "stubborn" ? "never opens a conversation" : "never reports its login"} and ignores being stopped, stops it, and never piles up copies`, async () => {
       const fakes = new Fakes(fresh("fakes"));
       const command = agents({ "claude-code": behaviour, codex: behaviour }, fakes.dir)!;
       // Follow the actual children: historical PIDs can name another process after an exit on Windows.
@@ -164,6 +189,7 @@ describe("Tool status", () => {
       // for a copy to get going before the limit still counts it.
       let starts = 0;
       const engine = new Engine(fresh("data"), {
+        toolCheckTimeoutMs: 8_000,
         agentCommand: (profile) => {
           if (profile.toolId === "claude-code" || profile.toolId === "codex") starts += 1;
           return command(profile);
