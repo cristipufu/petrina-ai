@@ -824,7 +824,10 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       // Round 2 ran on the changes since round 1, kept its number, then acceptance was tried on the final code.
       const second = f.fakes.openings("code reviewer").slice(2);
       expect(second).toHaveLength(2);
-      for (const prompt of second) expect(prompt).toContain("This is review round 2: the rest was reviewed already.");
+      for (const prompt of second) {
+        expect(prompt).toContain("This is review round 2:");
+        expect(prompt).toContain(`Incremental comparison git diff ${anchor}..HEAD:`);
+      }
       expect(task.rounds[stage.id]).toBe(2);
       expect(task.blockingAfter?.[stage.id]).toEqual([1, 0]);
       expect(f.fakes.openings("tester")).toHaveLength(2);

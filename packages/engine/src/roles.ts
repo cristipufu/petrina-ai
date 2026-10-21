@@ -202,7 +202,7 @@ function portClause(port: NonNullable<Task["portReview"]>, prepared = false): st
 
 /** Each repository in a shared task has its own working copy, base, guide, and last reviewed commit. */
 function reviewScope(task: Task, base: string, branch: string, useCodeReviewBaseline = true, prepared = false): string {
-  if (prepared) return `${task.repositories && reviewRound(task) > 1 ? `This is review round ${reviewRound(task)}. ` : ""}Review ${task.repositories ? "every product in the complete approved map" : `the change on branch ${branch}`} using the exact commits and comparisons in the prepared review material below. Read that material and the relevant code before reporting.${task.repositories ? ` Name every affected product on each finding. ${GUIDE_RULE(base, true)}${task.repositories.map((work) => `\nFor ${work.source?.product.name ?? work.productId}: ${work.portReview ? portClause(work.portReview, true).trim() : useCodeReviewBaseline && work.reviewedSha ? "Review only the incremental comparison and whether the earlier findings are fixed." : "Review the complete change."}`).join("")}` : ""}`;
+  if (prepared) return `${task.repositories && reviewRound(task) > 1 ? `This is review round ${reviewRound(task)}. ` : ""}Review ${task.repositories ? "every product in the complete approved map" : `the change on branch ${branch}`} using the exact commits and comparisons in the prepared review material below. Read that material and the relevant code before reporting.${task.repositories ? ` Name every affected product on each finding. ${GUIDE_RULE(base, true)}${task.repositories.map((work) => `\nFor ${work.source?.product.name ?? work.productId}: ${work.portReview ? portClause(work.portReview, true).trim() : useCodeReviewBaseline && work.reviewedSha ? "Review the incremental comparison and whether the earlier findings are fixed. If your saved base advanced, also follow the base-update section and review the complete comparison and relevant incoming changes." : "Review the complete change."}`).join("")}` : ""}`;
   if (!task.repositories) return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it.`;
   const repositories = task.repositories.map((work) => {
     const name = work.source?.product.name ?? work.productId;
@@ -385,7 +385,7 @@ Do not commit, push or open pull requests: Petrina commits your work.`;
           : task.portReview
           ? portClause(task.portReview, preparedReview)
           : incremental && reviewRound(task) > 1 && task.reviewedSha
-            ? `\nThis is review round ${reviewRound(task)}: the rest was reviewed already. Review only what changed since the last round (${preparedReview ? "the prepared incremental comparison" : `\`git diff ${task.reviewedSha}..HEAD\``}) and whether the findings below were really fixed. Raise nothing about code that did not change since.`
+            ? `\nThis is review round ${reviewRound(task)}: review what changed since the last round (${preparedReview ? "the prepared incremental comparison" : `\`git diff ${task.reviewedSha}..HEAD\``}) and whether the findings below were really fixed. If your saved base advanced, follow the base-update section as well, including the complete comparison and relevant incoming changes; otherwise raise nothing about code that did not change since.`
             : ""
       }
 Check every acceptance item, look for bugs, missing tests, weakened tests and things that break existing behaviour.

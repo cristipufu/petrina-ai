@@ -213,6 +213,8 @@ export interface TaskReviewState {
     model: string;
     sessionId: string;
     context?: BuilderContext;
+    /** Immutable bases this seat last reviewed; older saved seats start fresh once. */
+    bases?: Readonly<Record<Id, string>>;
   }>>>>;
   /** A review round's parallel work so far, so a restart only redoes what had not finished. */
   hunt?: Hunt;

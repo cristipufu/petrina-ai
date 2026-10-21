@@ -403,9 +403,10 @@ describe("saved role wording", () => {
       plan: { rationale: "Review the fixes", plannerProfileId: "sol-high", stages: [{ id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 3 }] } };
     try {
       contract.incrementalReview = true;
-      expect(buildPrompt({ ...ctx, task })).toContain("Review only what changed since the last round");
+      expect(buildPrompt({ ...ctx, task })).toContain("review what changed since the last round");
+      expect(buildPrompt({ ...ctx, task })).toContain("If your saved base advanced, follow the base-update section as well, including the complete comparison and relevant incoming changes");
       contract.incrementalReview = false;
-      expect(buildPrompt({ ...ctx, task })).not.toContain("Review only what changed since the last round");
+      expect(buildPrompt({ ...ctx, task })).not.toContain("review what changed since the last round");
     } finally { contract.incrementalReview = saved; }
   });
 

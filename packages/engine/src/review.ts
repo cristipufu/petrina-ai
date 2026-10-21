@@ -17,7 +17,7 @@ import type { ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
 import { finishMessageGroup, routeMessages } from "./messages.js";
 import type { Updates } from "./update.js";
-import { prepareReviewInput, readReviewInput, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
+import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
 import { completeAll } from "./parallel.js";
 
 /**
@@ -250,9 +250,18 @@ export class Reviews {
       resume: async (actual: AgentProfile, role: Role) => {
         const prior = task.reviewSessions?.[stage.id]?.[seat];
         if (!prior || prior.round >= round) return;
+        if (!prior.bases) {
+          this.k.log(scope, "status", "Started a fresh review conversation: its saved repository bases are unavailable", role.id, actual.id);
+          return;
+        }
         if (prior.plannedProfileId === plannedId && prior.profileId === actual.id && prior.scope === reviewScopeKey(scope, stage.id, seat, role, planned, actual)) {
-          if (await reviewContextIntact(prior.context)) return prior;
-          this.k.log(scope, "status", "Started a fresh review conversation: its saved context is unavailable", role.id, actual.id);
+          if (!(await reviewContextIntact(prior.context))) {
+            this.k.log(scope, "status", "Started a fresh review conversation: its saved context is unavailable", role.id, actual.id);
+            return;
+          }
+          const updates = await reviewBaseUpdates(scope, prior.bases, task.hunt?.input?.heads ?? {});
+          if (updates.reason) this.k.log(scope, "status", `Started a fresh review conversation: ${updates.reason}`, role.id, actual.id);
+          else return { ...prior, continuedSections: updates.sections };
           return;
         }
         this.k.log(scope, "status", "Started a fresh review conversation: its role, profile, request or starting point changed", role.id, actual.id);
@@ -268,7 +277,7 @@ export class Reviews {
       completed: (note: ConversationNote, actual: AgentProfile, role: Role) => {
         task.reviewSessions = { ...task.reviewSessions, [stage.id]: {
           ...task.reviewSessions?.[stage.id],
-          [seat]: { scope: reviewScopeKey(scope, stage.id, seat, role, planned, actual), round, plannedProfileId: plannedId, profileId: actual.id, toolId: note.toolId, model: note.model, sessionId: note.sessionId, ...(note.context ? { context: note.context } : {}) },
+          [seat]: { scope: reviewScopeKey(scope, stage.id, seat, role, planned, actual), bases: reviewBases(scope), round, plannedProfileId: plannedId, profileId: actual.id, toolId: note.toolId, model: note.model, sessionId: note.sessionId, ...(note.context ? { context: note.context } : {}) },
         } };
         this.k.commitNow();
       },

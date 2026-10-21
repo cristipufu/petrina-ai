@@ -1,12 +1,12 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as gitOps from "../src/git.js";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, createDemoState, type DeepMutable, type Finding } from "@petrina/core";
+import { BUILT_IN_ROLES, createDemoState, type DeepMutable, type Finding, type Task } from "@petrina/core";
 import { Context } from "../src/context.js";
 import { Engine } from "../src/engine.js";
-import { executionFor, repositoryView } from "../src/repository-context.js";
-import { prepareReviewInput, readReviewInput, reviewConversationScope } from "../src/review-context.js";
+import { executionFor, repositoryView, scopesFor } from "../src/repository-context.js";
+import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewConversationScope } from "../src/review-context.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 import type { Scenario } from "./fake-agent.js";
@@ -220,13 +220,19 @@ describe("immutable review inputs", () => {
   });
 });
 
-async function run(reopen: Scenario["reopen"], options: { single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; seedFinding?: boolean } = {}) {
+const originalLines = Array.from({ length: 60 }, (_, index) => `Original line ${index}\n`).join("");
+async function run(reopen: Scenario["reopen"], options: { single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; seedFinding?: boolean; advance?: boolean } = {}) {
   const root = tempDir("petrina-review-resume-"); roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   const scenario: Scenario = { planner: options.single ? "short" : "pair", builder: "plain", reviewer: options.reviewer ?? "important", fixes: "change", controlled: true, reopen, limited: options.limited };
   fakes.scenario(scenario);
   const data = join(root, "data");
-  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null },   };
+  const hold = join(root, "hold-fixes"), script = join(root, "script.json");
+  if (options.advance) {
+    writeFileSync(hold, "");
+    writeFileSync(script, JSON.stringify({ hold: { title: "You are fixing the review findings", file: hold } }));
+  }
+  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`], toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null } };
   let engine = new Engine(data, engineOptions);
   engine.setPoolPaused(true); await engine.checkTools(); engine.setPoolLimit(options.limit ?? 2);
   const productId = await engine.addProduct(makeProduct(root)); engine.setProductDelivery(productId, "local", true);
@@ -237,11 +243,27 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
     second = await engine.addProduct(named, "Second");
     fakes.scenario({ ...scenario, affectedProducts: [productId, second] });
   }
+  if (options.advance) for (const product of engine.s.products) {
+    writeFileSync(join(product.path!, "REVIEW.md"), "OLD-BASE-GUIDE\n");
+    writeFileSync(join(product.path!, "overlap.txt"), originalLines);
+    git(product.path!, "add", "."); git(product.path!, "commit", "-qm", "Set the original review context");
+    product.checksBy = "coordinator";
+    product.checks = [{ name: "Exact code", argv: [process.execPath, "-e", `import { testGitEnv } from ${JSON.stringify(join(import.meta.dir, "test-git-env.ts"))}; console.log('CHECKED-CODE:' + Bun.spawnSync(['git','rev-parse','HEAD'], { env: testGitEnv() }).stdout.toString().trim()); if (require('node:fs').existsSync(${JSON.stringify(join(root, "fail-check"))})) process.exit(1);`], why: "Prove checks run on the current code" }];
+  }
   const taskId = engine.addTask({ productId, title: "Reuse independent reviewers", description: "ORIGINAL-REVIEW-REQUEST [no-check]", approvePlan: true, ...(second ? { worksOn: [productId, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "local" as const })) } : {}) });
   const task = () => engine.task(taskId)!;
+  if (options.advance) task().brief = { summary: "ORIGINAL-DESIGN-BRIEF", forUsers: [], areas: [], acceptance: [], risks: [] };
   if (options.seedFinding) task().findings.push(structuredClone(earlier));
+  const released = new Set<string>();
   const tick = (allow: (role: string, session: string) => boolean = () => true) => {
-    for (const entry of fakes.received()) if (allow(entry.role, entry.session)) writeFileSync(join(fakes.dir, `release-${entry.session}`), "go");
+    for (const entry of fakes.received()) if (allow(entry.role, entry.session) && !released.has(entry.session)) {
+      if (options.advance && entry.role === "builder" && !task().fixing) {
+        const { cwd } = JSON.parse(readFileSync(join(fakes.dir, "conversations", `${entry.session}.json`), "utf8")) as { cwd: string };
+        writeFileSync(join(cwd, "overlap.txt"), originalLines.replace("Original line 0\n", "Task changes the first line\n"));
+      }
+      writeFileSync(join(fakes.dir, `release-${entry.session}`), "go");
+      released.add(entry.session);
+    }
     for (const item of engine.getState().inbox) {
       if (item.kind === "plan") { const stage = task().plan!.stages.find((stage) => stage.kind === "review-chain")!; stage.maxRounds = 2; if (task().workRows?.some((row) => row.error)) throw new Error(JSON.stringify(task().workRows)); engine.approve(item.id); }
       else if (item.kind === "question") engine.answer(item.id, "Yes");
@@ -249,13 +271,97 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
     }
     if (task().state === "failed") throw new Error(task().error);
   };
-  const done = () => waitFor(() => { tick(); return engine.getState().inbox.some((item) => item.kind === "delivery") && task(); }, "the reviewed delivery");
+  const beforeFix = () => waitFor(() => { tick(); return existsSync(`${hold}.reached`); }, "the controlled Builder fix");
+  const advanceMain = (id = second ?? productId, conflict = false) => {
+    const product = engine.s.products.find((product) => product.id === id)!;
+    const before = git(product.path!, "rev-parse", "HEAD");
+    writeFileSync(join(product.path!, "REVIEW.md"), "NEW-BASE-GUIDE\n");
+    writeFileSync(join(product.path!, "overlap.txt"), originalLines.replace("Original line 59\n", "Main changes the last line\n"));
+    if (conflict) writeFileSync(join(product.path!, "greeting.txt"), "Main's incompatible greeting\n");
+    git(product.path!, "add", "."); git(product.path!, "commit", "-qm", "Advance main independently");
+    return { productId: id, before, base: git(product.path!, "rev-parse", "HEAD") };
+  };
+  const done = () => { rmSync(hold, { force: true }); return waitFor(() => { tick(); return engine.getState().inbox.some((item) => item.kind === "delivery") && task(); }, "the reviewed delivery"); };
   const restart = async () => { await engine.shutdown(); engine = new Engine(data, engineOptions); };
   engine.setPoolPaused(false);
-  return { engine: () => engine, fakes, task, tick, done, restart };
+  return { engine: () => engine, fakes, task, tick, done, restart, beforeFix, advanceMain, hold, root };
 }
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
+  for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`continues each own ${mode} reviewer after main advances, with current full and incremental evidence`, async () => {
+    const reopen = mode === "single" ? "load" : "resume";
+    const f = await run(reopen, { advance: true, single: mode === "single", shared: mode === "shared" });
+    try {
+      await f.beforeFix();
+      const moved = f.advanceMain();
+      const saved = structuredClone(f.task().reviewSessions!);
+      if (mode === "builder-update") {
+        const worktree = executionFor(f.task()).work.worktree!;
+        git(worktree, "add", "."); git(worktree, "commit", "-qm", "The Builder's fix");
+        git(worktree, "merge", "--no-edit", "-m", "The Builder brings main in itself", moved.base);
+      }
+      f.task().notes = [{ at: 1, text: "REFRESHED-COORDINATOR-INSTRUCTION" }];
+      const task = await f.done();
+      const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer");
+      expect(rounds).toHaveLength(2);
+      expect(rounds[0]!.agentInputs!.every((input) => input.mode === "fresh" && input.taskDescription?.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
+      expect(rounds[0]!.agentInputs!.every((input) => !input.sections.some((section) => section.title.startsWith("Findings so far")))).toBe(true);
+      const works = scopesFor(task).map(({ work }) => work);
+      const current = works.find((work) => work.productId === moved.productId)!;
+      const head = git(current.worktree!, "rev-parse", "HEAD");
+      expect(current.baseSha).toBe(moved.base);
+      expect(current.checks!.sha).toBe(head);
+      expect(current.checks!.results.every((run) => run.ok && run.output.includes(`CHECKED-CODE:${head}`))).toBe(true);
+      for (const input of rounds[1]!.agentInputs!) {
+        expect(input.mode).toBe("continued");
+        expect(input.taskDescription).toBeUndefined();
+        expect(input.sections.some((section) => section.title === "Design brief")).toBe(false);
+        expect(input.sections.some((section) => section.title === "Current product checks, run by Petrina itself")).toBe(true);
+        expect(input.at).toBeNumber();
+        expect(current.checks!.at).toBeLessThanOrEqual(input.at!);
+        const update = input.sections.find((section) => section.title === "The review base advanced since your last review")!.body;
+        for (const value of [moved.before, moved.base, head, "Main gained 1 commit.", "without an engine conflict port", "overlap.txt", "read their current versions again", "Main's incoming changes are not in the incremental comparison", "complete prepared comparison", "including beyond the files listed above"]) expect(update).toContain(value);
+        expect(update.match(/^### /gm)).toHaveLength(1);
+        expect(update).toContain(`(${moved.productId})`);
+        expect(input.sections.some((section) => section.body.includes("REFRESHED-COORDINATOR-INSTRUCTION"))).toBe(true);
+        const material = input.sections.find((section) => section.title === "Prepared review material")!.body;
+        const files = [...material.matchAll(/("[^"\n]+\.md") \(reference/g)].map((match) => JSON.parse(match[1]!) as string);
+        expect(files).toHaveLength(works.length * 2);
+        for (const work of works) {
+          expect(material).toContain(`base ${work.baseSha}`);
+          expect(work.baseSha).toBe(work.productId === moved.productId ? moved.base : Object.values(saved)[0]!["0"]!.bases![work.productId]);
+          expect(work.checks!.current).toBe(true);
+        }
+        const changedFiles = files.map((file) => ({ file, body: readFileSync(file, "utf8") })).filter(({ body }) => body.includes(`Product: ${moved.productId}\n`));
+        expect(changedFiles).toHaveLength(2);
+        for (const { body } of changedFiles) {
+          const guide = body.split(/## Complete change|## Changes since/)[0]!;
+          expect(guide).toContain("NEW-BASE-GUIDE"); expect(guide).not.toContain("OLD-BASE-GUIDE");
+          expect(body).toContain(`Reviewed commit: ${head}`);
+        }
+        const full = changedFiles.find(({ file }) => file.endsWith(".full.md"))!.body;
+        expect(full).toContain(`git diff ${moved.base}...${head}`);
+        expect(full).toContain("+Task changes the first line");
+        const delta = changedFiles.find(({ file }) => file.endsWith(".incremental.md"))!.body;
+        expect(delta).not.toContain("+Task changes the first line");
+        expect(delta).not.toContain("+Main changes the last line");
+        expect(delta).toContain("welcome.txt");
+      }
+      const sessions = Object.values(saved).flatMap((seats) => Object.values(seats));
+      expect(new Set(sessions.map((seat) => seat.sessionId)).size).toBe(mode === "single" ? 1 : 2);
+      for (const seat of sessions) {
+        expect(f.fakes.opens().filter((entry) => entry.session === seat.sessionId).map((entry) => entry.how)).toEqual(["new", reopen]);
+        const prompts = f.fakes.received("code reviewer").filter((entry) => entry.session === seat.sessionId);
+        expect(prompts).toHaveLength(2);
+        expect(prompts[1]!.text).not.toContain("ORIGINAL-REVIEW-REQUEST");
+        expect(prompts[1]!.text).not.toContain("ORIGINAL-DESIGN-BRIEF");
+      }
+      const voters = new Set(f.fakes.received("verifier").map((entry) => entry.session));
+      expect(voters.size).toBeGreaterThan(0);
+      expect(f.fakes.opens().filter((entry) => voters.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
+    } finally { await f.engine().shutdown(); }
+  });
+
   for (const single of [false, true]) it(`omits unchanged closed findings from the actual continued ${single ? "single" : "parallel"} reviewer input`, async () => {
     const f = await run("resume", { single, seedFinding: true });
     try {
@@ -322,8 +428,9 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
   });
 
   it("starts fresh with complete inputs when the harness cannot reopen a reviewer", async () => {
-    const f = await run(undefined);
+    const f = await run(undefined, { advance: true });
     try {
+      await f.beforeFix(); f.advanceMain();
       const task = await f.done();
       const second = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!;
       expect(second.agentInputs!.every((input) => input.mode === "fresh" && input.taskDescription!.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
@@ -331,19 +438,69 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
     } finally { await f.engine().shutdown(); }
   });
 
-  for (const changed of ["context", "profile"] as const) it(`starts only the affected seat fresh after its ${changed} changes`, async () => {
-    const f = await run("resume");
+  for (const changed of ["context", "profile", "source", "bases", "native session"] as const) it(`starts the affected seats fresh after ${changed} changes while main advances`, async () => {
+    const f = await run("resume", { advance: true });
     try {
-      await waitFor(() => { f.tick((role) => role !== "builder" || !f.task().fixing); return f.task().fixing && Object.keys(f.task().reviewSessions ?? {}).length && f.fakes.received("builder").some((entry) => entry.text.includes("Review findings")); }, "saved review sessions before fixes");
+      await f.beforeFix(); f.advanceMain();
       const stage = f.task().plan!.stages.find((entry) => entry.kind === "review-chain")!;
       const prior = f.task().reviewSessions![stage.id]!["0"]!;
       if (changed === "context") prior.context!.file += ".missing";
-      else f.engine().s.profiles = f.engine().s.profiles.map((profile) => profile.id === prior.profileId ? { ...profile, effort: "low" } : profile);
+      else if (changed === "profile") stage.profileIds[0] = "opus-xhigh";
+      else if (changed === "source") {
+        const work = executionFor(f.task()).work;
+        work.source!.initialSha = git(work.worktree!, "rev-parse", `${prior.bases![work.productId]}~1`);
+      } else if (changed === "bases") delete prior.bases;
+      else rmSync(join(f.fakes.dir, "conversations", `${prior.sessionId}.json`));
       const task = await f.done();
       const inputs = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!.agentInputs!;
-      expect(inputs.find((input) => input.profileId === prior.profileId)!.mode).toBe("fresh");
-      expect(inputs.find((input) => input.profileId !== prior.profileId)!.mode).toBe("continued");
+      expect(inputs.find((input) => input.reviewerKey === "0")!.mode).toBe("fresh");
+      expect(inputs.find((input) => input.reviewerKey === "1")!.mode).toBe(changed === "source" ? "fresh" : "continued");
       expect(inputs.find((input) => input.mode === "fresh")!.taskDescription).toContain("ORIGINAL-REVIEW-REQUEST");
+      expect(inputs.find((input) => input.mode === "fresh")!.sections.some((section) => section.title === "Design brief")).toBe(true);
+      expect(inputs.filter((input) => input.mode === "fresh").every((input) => !input.sections.some((section) => section.title === "The review base advanced since your last review"))).toBe(true);
+      const reason = changed === "context" ? "saved context is unavailable" : changed === "bases" ? "saved repository bases are unavailable" : changed === "native session" ? "Could not go back to its own review conversation" : "role, profile, request or starting point changed";
+      expect(task.timeline.some((entry) => entry.text.includes(reason))).toBe(true);
+    } finally { await f.engine().shutdown(); }
+  });
+
+  it("drops reviewer conversations when main conflicts and the Builder must port the change", async () => {
+    const f = await run("resume", { advance: true });
+    try {
+      await f.beforeFix(); f.advanceMain(undefined, true);
+      const sessions = Object.values(f.task().reviewSessions!).flatMap((seats) => Object.values(seats).map((seat) => seat.sessionId));
+      const task = await f.done();
+      expect(task.timeline.some((entry) => entry.text.includes("Reviewer conversations will start fresh") && entry.text.includes("port"))).toBe(true);
+      const inputs = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!.agentInputs!;
+      expect(inputs.every((input) => input.mode === "fresh" && input.taskDescription?.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
+      for (const session of sessions) expect(f.fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new"]);
+    } finally { await f.engine().shutdown(); }
+  });
+
+  it("stops before reopening reviewers when main replaces the saved base history", async () => {
+    const f = await run("resume", { advance: true });
+    try {
+      await f.beforeFix();
+      const product = f.engine().s.products[0]!;
+      git(product.path!, "reset", "--hard", "HEAD~1");
+      writeFileSync(join(product.path!, "replacement.txt"), "Different history\n");
+      git(product.path!, "add", "."); git(product.path!, "commit", "-qm", "Replace the source history");
+      await expect(f.done()).rejects.toThrow("history was replaced or diverged");
+      const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
+      expect(sessions.size).toBe(2);
+      expect(f.fakes.opens().filter((entry) => sessions.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
+    } finally { await f.engine().shutdown(); }
+  });
+
+  it("returns failed checks on updated code to the Builder before spending another review", async () => {
+    const f = await run("resume", { advance: true });
+    try {
+      await f.beforeFix(); f.advanceMain();
+      writeFileSync(join(f.root, "fail-check"), "");
+      const task = await f.done();
+      expect(task.journey!.filter((step) => step.roleId === "code-reviewer")).toHaveLength(1);
+      expect(executionFor(task).work.checks!.results.some((run) => !run.ok)).toBe(true);
+      expect(task.findings.some((finding) => finding.status === "open" && finding.text.startsWith("Check failed"))).toBe(true);
+      expect(task.timeline.some((entry) => entry.text.includes("before review"))).toBe(true);
     } finally { await f.engine().shutdown(); }
   });
 
@@ -387,4 +544,51 @@ it("invalidates only a changed reviewer identity or scope, while permitting a ne
   expect(key(task, { ...role, instructions: "Changed review rules" })).not.toBe(key());
   expect(key(task, role, { ...profile, effort: "low" })).not.toBe(key());
   expect(key(task, role, profile, "1")).not.toBe(key());
+});
+
+for (const shared of [false, true]) it(`keeps moving bases out of the ${shared ? "multi" : "single"}-product identity while retaining approved choices`, () => {
+  const demo = createDemoState(1_000_000_000).tasks[0]!;
+  const source: NonNullable<Task["source"]> = { product: { id: "p", name: "Product", repo: "local/product", path: "/clone" }, start: { kind: "default", branch: "main" }, destination: { mode: "local", repo: "local/product", branch: "main", kind: "branch" }, confirmed: true, initialSha: "initial" };
+  const work = { productId: "p", worktree: "/copy", source, delivery: "local" as const, baseSha: "original", completedStages: [] };
+  const stage = { id: "review", kind: "review-chain" as const, title: "Independent review", roleId: "code-reviewer", profileIds: ["sol-high"] };
+  const task = { ...demo, productId: "p", worktree: "/copy", source, baseSha: "original", repositories: shared ? [work, { ...work, productId: "companion", worktree: "/companion" }] : undefined, plan: { rationale: "Review", plannerProfileId: "sol-high", stages: [stage] } };
+  const role = BUILT_IN_ROLES.find((role) => role.id === "code-reviewer")!, profile = ENGINE_PROFILES[0]!;
+  const key = (value = task) => reviewConversationScope(value, "review", "0", role, profile, profile);
+  expect(key({ ...task, baseSha: "advanced", repositories: task.repositories?.map((work) => ({ ...work, baseSha: "advanced" })) })).toBe(key());
+  expect(key({ ...task, source: { ...source, start: { kind: "branch", branch: "main" } } })).not.toBe(key());
+  expect(key({ ...task, worktree: "/new-copy" })).not.toBe(key());
+  expect(key({ ...task, plan: { ...task.plan, stages: [{ ...stage, title: "Changed assignment" }] } })).not.toBe(key());
+  const port = { from: "old", head: "reviewed", onto: "new", files: ["greeting.txt"] };
+  expect(reviewConversationScope({ ...task, portReview: port }, "review", "0", role, profile, profile)).not.toBe(key());
+  expect(reviewConversationScope({ ...task, updating: port }, "review", "0", role, profile, profile)).not.toBe(key());
+  expect(reviewConversationScope(task, "review", "0", role, { ...profile, effort: "low" }, profile)).not.toBe(key());
+  if (task.repositories) {
+    expect(key({ ...task, repositories: task.repositories.slice(0, 1) })).not.toBe(key());
+    for (const change of [{ worktree: "/different-companion" }, { source: { ...source, initialSha: "changed-approved-source" } }, { portReview: port }]) {
+      expect(key({ ...task, repositories: task.repositories.map((work, index) => index ? { ...work, ...change } : work) })).not.toBe(key());
+    }
+  }
+});
+
+it("checks each seat's remembered bases, including missing, unchanged, forward, port and incompatible anchors", async () => {
+  const f = await bare();
+  try {
+    const bases = reviewBases(f.scope), heads = { p: f.first };
+    expect((await reviewBaseUpdates(f.scope, bases, heads)).sections).toEqual([]);
+    expect((await reviewBaseUpdates(f.scope, undefined, heads)).reason).toContain("saved repository bases");
+    f.scope.work.baseSha = f.first;
+    const moved = await reviewBaseUpdates(f.scope, bases, heads);
+    expect(moved.sections).toHaveLength(1);
+    expect(moved.sections[0]!.body).toContain("No incremental comparison is available");
+    f.scope.work.source = { product: { id: "p", name: "Product", repo: "local/product" }, start: { kind: "branch", branch: "release" }, destination: { mode: "local", repo: "local/product", branch: "release", kind: "branch" }, confirmed: true };
+    f.scope.work.reviewedSha = f.first;
+    const branch = await reviewBaseUpdates(f.scope, bases, heads);
+    expect(branch.sections[0]!.body).toContain("release gained 1 commit.");
+    expect(branch.sections[0]!.body).toContain("release's incoming changes are not in the incremental comparison");
+    expect((await reviewBaseUpdates(f.scope, { p: f.first }, heads)).sections).toEqual([]);
+    const unrelated = git(f.repo, "commit-tree", `${f.first}^{tree}`, "-m", "A base without the original history");
+    expect((await reviewBaseUpdates(f.scope, { p: unrelated }, heads)).reason).toContain("replaced or diverged");
+    f.scope.work.portReview = { from: f.base, head: f.first, onto: f.first, files: ["greeting.txt"] };
+    expect((await reviewBaseUpdates(f.scope, bases, heads)).reason).toContain("conflict port review");
+  } finally { await f.engine.shutdown(); }
 });

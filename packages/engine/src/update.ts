@@ -65,6 +65,7 @@ export class Updates {
     // The usual case: the branch forked at the base and main moved on since. Nothing to settle.
     if (!forward && baseInBranch) return { base, fork: base };
     repository.baseSha = met;
+    await this.carryReviewed(scope);
     this.k.log(
       scope,
       "warn",
@@ -123,11 +124,7 @@ export class Updates {
       repository.baseSha = latest.sha;
       repository.base = latest.ref;
       // The version the last round reviewed, carried onto the new base too, so the next round still sees only what changed since.
-      if (repository.reviewedSha) {
-        const carried = await this.carry(scope, repository.reviewedSha);
-        if (carried) repository.reviewedSha = carried;
-        else delete repository.reviewedSha;
-      }
+      await this.carryReviewed(scope);
       this.k.log(scope, "done", `Brought up to date with ${sourceName} (${commits} there), with no conflicts`);
       this.k.commit();
       return "moved";
@@ -138,6 +135,10 @@ export class Updates {
     // Only a completed review of this exact code permits the later review to cover the port alone.
     const head = reviewed ? await git.head(worktree) : undefined;
     repository.updating = { from: fork, onto: latest.sha, ...(head ? { head } : {}), files: merged.conflicts, ...(merged.notes.length ? { notes: merged.notes } : {}) };
+    if (task.reviewSessions) {
+      delete task.reviewSessions;
+      this.k.log(scope, "status", "Reviewer conversations will start fresh because the Builder must port the change after conflicts");
+    }
     // The builder ports the change by hand: whatever was approved before, the coordinator checks it again.
     delete repository.approvedSha;
     delete repository.approvedPatch;
@@ -170,6 +171,14 @@ export class Updates {
     const merged = await git.mergeTree(worktree, base, sha);
     if (!merged || merged.conflicts.length) return undefined;
     return git.commitTree(worktree, merged.tree, base, "The version the last review round saw, carried onto the latest main (Petrina's reference, on no branch)");
+  }
+
+  /** Keep the incremental comparison task-only, whoever advanced the execution base. */
+  private async carryReviewed(scope: RepositoryContext): Promise<void> {
+    if (!scope.work.reviewedSha) return;
+    const carried = await this.carry(scope, scope.work.reviewedSha);
+    if (carried) scope.work.reviewedSha = carried;
+    else delete scope.work.reviewedSha;
   }
 
   /** Before the builder starts on an update: the working copy as `upToDate` left it, even after a restart in between. */

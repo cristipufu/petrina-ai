@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import type { BuilderContext, Finding, Hunt, Id, Role, Task } from "@petrina/core";
 import type { Section } from "./context.js";
 import type { ContextPart } from "./roles.js";
-import { repositoryView, type RepositoryContext } from "./repository-context.js";
+import { repositoryView, scopesFor, type RepositoryContext } from "./repository-context.js";
 import * as git from "./git.js";
 
 import { PREPARED_REVIEW } from "./prompts.js";
@@ -113,7 +113,7 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
     }
     artifacts.push(...lockFiles);
   }
-  input.material = { title: PREPARED_REVIEW, body: `Petrina prepared the saved base's REVIEW.md and exact comparisons once for this round. Read the files appropriate to your scope; do not regenerate the same diffs or guide just to load context. Code reviewers on a fix round read the separate incremental file, without rereading the complete change. Security reviewers and Verifiers retain their full-change scope and use the full file. Lockfile patches are separate, linked from each comparison, never excluded from review scope. Port reviews use the full file's port comparison. Inspect the full code and run focused reproductions wherever needed. The engine's passing checks remain the automated evidence.\n${materials.join("\n")}` };
+  input.material = { title: PREPARED_REVIEW, body: `Petrina prepared the saved base's REVIEW.md and exact comparisons once for this round. Read the files appropriate to your scope; do not regenerate the same diffs or guide just to load context. Code reviewers on a fix round read the separate incremental file. When your saved base advanced, also follow the base-update section: read the complete comparison against the new base and revisit incoming changes and their interactions. Otherwise the complete change need not be reread. Security reviewers and Verifiers retain their full-change scope and use the full file. Lockfile patches are separate, linked from each comparison, never excluded from review scope. Port reviews use the full file's port comparison. Inspect the full code and run focused reproductions wherever needed. The engine's passing checks remain the automated evidence.\n${materials.join("\n")}` };
   input.artifacts = artifacts;
   signal.throwIfAborted();
   const saved = await immutable(folder, "json", JSON.stringify(input));
@@ -137,9 +137,41 @@ export async function reviewContextIntact(context: BuilderContext | undefined): 
 
 /** A changed patch is expected; a different role, request, profile or approved scope is a fresh review. */
 export function reviewConversationScope(task: Task, stageId: Id, seat: Id, role: Role, planned: unknown, actual: unknown): string {
-  return digest(JSON.stringify({ stageId, seat, role, planned, actual, title: task.title, request: task.description, productId: task.productId, path: task.worktree, source: task.source, base: task.baseSha, port: task.portReview, products: task.repositories?.map((work) => ({ productId: work.productId, path: work.worktree, source: work.source, base: work.baseSha, port: work.portReview })) }));
+  return digest(JSON.stringify({ stageId, seat, role, planned, actual, assignment: task.plan?.stages.find((stage) => stage.id === stageId)?.title, title: task.title, request: task.description, productId: task.productId, path: task.worktree, source: task.source, port: task.portReview, updating: task.updating, products: task.repositories?.map((work) => ({ productId: work.productId, path: work.worktree, source: work.source, port: work.portReview, updating: work.updating })) }));
 }
 
 export function reviewScopeKey(scope: RepositoryContext, stageId: Id, seat: Id, role: Role, planned: unknown, actual: unknown): string {
   return reviewConversationScope(repositoryView(scope), stageId, seat, role, planned, actual);
+}
+
+export function reviewBases(scope: RepositoryContext): Record<Id, string> {
+  return Object.fromEntries(scopesFor(scope.task).flatMap(({ work }) => work.baseSha ? [[work.productId, work.baseSha]] : []));
+}
+
+/** Forward execution bases are compatible, independently of the immutable approved source identity. */
+export async function reviewBaseUpdates(scope: RepositoryContext, bases: Readonly<Record<Id, string>> | undefined, heads: Readonly<Record<Id, string>>): Promise<{ sections: Section[]; reason?: string }> {
+  const scopes = scopesFor(scope.task);
+  if (!bases || Object.keys(bases).length !== scopes.length) return { sections: [], reason: "its saved repository bases are unavailable" };
+  const updates: string[] = [];
+  for (const { work } of scopes) {
+    const before = bases[work.productId], base = work.baseSha, head = heads[work.productId];
+    if (!before || !base || !head || !work.worktree) return { sections: [], reason: "its saved repository bases are unavailable" };
+    if (work.portReview || work.updating) return { sections: [], reason: "the change requires a conflict port review" };
+    if (before === base) continue;
+    if (!(await git.contains(work.worktree, base, before))) return { sections: [], reason: "its starting branch's history was replaced or diverged" };
+    const [incoming, changed, count] = await Promise.all([
+      git.changedFiles(work.worktree, before, base),
+      git.changedFiles(work.worktree, base, head),
+      output(work.worktree, ["rev-list", "--count", `${before}..${base}`]),
+    ]);
+    const overlap = incoming.filter((file) => changed.includes(file));
+    const commits = Number(count.trim());
+    if (!Number.isSafeInteger(commits) || commits < 1) throw new Error("Could not count the starting branch's incoming commits for review.");
+    const branch = work.source?.start.branch ?? "main", source = branch === "main" ? "Main" : branch;
+    const incremental = work.reviewedSha
+      ? `Read the incremental comparison too. ${source}'s incoming changes are not in the incremental comparison: it contains only this task's changes since the last round, carried onto the new base.`
+      : "No incremental comparison is available. Review the complete change.";
+    updates.push(`### ${work.source?.product.name ?? work.productId} (${work.productId})\nOld base: ${before}\nNew base: ${base}\n${source} gained ${commits} commit${commits === 1 ? "" : "s"}.\nExact commit under review: ${head}\nThe change was carried onto the new base without an engine conflict port.\nFiles the starting branch changed that this task also changes; read their current versions again:\n${overlap.map((file) => `- ${JSON.stringify(file)}`).join("\n") || "None."}\nRead the complete prepared comparison against ${base} and its current base review guide. ${incremental} Inspect the incoming range ${before}..${base} and its interactions wherever relevant, including beyond the files listed above. Review all code that now requires review, not only the Builder's fixes.`);
+  }
+  return { sections: updates.length ? [{ title: "The review base advanced since your last review", body: updates.join("\n\n") }] : [] };
 }
