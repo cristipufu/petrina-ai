@@ -267,6 +267,26 @@ export interface TaskActivity {
   received?: readonly Id[];
   /** Why the task failed, when it did. */
   error?: string;
+  /**
+   * Codex models that are full for this task, until the short retry. Not an account limit: usage meters ignore it.
+   * Every effort of `modelId` is full. Cleared when the time passes.
+   */
+  modelCapacity?: readonly { toolId: Id; modelId: string; profileId: Id; until: number }[];
+  /**
+   * Conversations to reopen after a model-capacity wait, one per reviewer or voter who does not own the task conversation.
+   * Cleared once that short continue is sent, or when the step ends.
+   */
+  capacityResume?: readonly { sessionId: string; profileId: Id; roleId: Id; toolId: Id; model: string; member?: string }[];
+  /**
+   * How many same-conversation continues this step has already sent for a full model.
+   * Kept when the short wait ends, so the next stop uses the next delay. Cleared when the step ends.
+   */
+  capacityRetries?: readonly { toolId: Id; modelId: string; profileId: Id; roleId: Id; member?: string; tried: number }[];
+  /**
+   * A short same-conversation retry is still waiting. `plannedId` is the profile the step was planned for,
+   * so a replacement keeps that step until its own short wait passes. Cleared when that time passes, or when the step ends.
+   */
+  capacityPaused?: readonly { toolId: Id; modelId: string; profileId: Id; roleId: Id; plannedId?: Id; member?: string }[];
 }
 
 /** Append-only evidence and provenance retained when the active task is archived. */

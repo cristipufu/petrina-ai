@@ -460,6 +460,8 @@ export interface ConversationNote {
   asked?: { itemId: Id; question: string; answer?: string };
   /** The agent has shown it received its opening instructions. Only then can a restart reopen the conversation. */
   briefed?: boolean;
+  /** The selected model was full. The next reopen of this conversation is a short continue, not the opening instructions. */
+  capacityContinue?: boolean;
   /** The coordinator handed the step back: the note of what changed, until the agent hears it. */
   handback?: string;
   /** Engine boot that paused this conversation; restart remains a fresh attempt. */

@@ -172,6 +172,7 @@ P pauses or resumes; on queued tasks it holds or releases them. Products is in t
 - **Only one agent tool:** every step runs on it, reviews included, and first run says so.
 - **A tool is not ready, logs out or won't start:** a "Stuck" inbox item names the tool, with its fix and Retry, which checks the tool again first. Tool readiness checks and agent startup have separate bounded waits; see [tool checking](architecture/agents.md#checking-the-tools). A tool that wouldn't start keeps its fix and what it said behind Details, even when its check passes again. The same for the GitHub CLI before a pull request or release ships.
 - **A usage limit is hit:** the engine uses an available stand-in, or waits with the reported reset time when no stand-in can run.
+- **The selected model is at capacity:** the timeline says so, and usage meters do not show the account as used up. The same conversation tries again after about five seconds, then ten, then thirty. After that, another model continues the step, or the task waits when a switch is not allowed.
 - **Closing the app with agents running:** stops the engine the desktop app owns and saves progress; an independently started engine keeps running.
 - **Two tasks touching the same area:** the planner warns ("Might overlap with Checkout revamp").
 

@@ -295,6 +295,11 @@ export function restartPrompt(where: WhereYouWere, unheard: { answer?: { questio
   return parts.join("\n\n");
 }
 
+/** The one line a conversation gets when its model was full and the same conversation continues. */
+export function capacityContinuePrompt(): string {
+  return "The selected model was at capacity. Continue where you left off. When you are done, end with the result block.";
+}
+
 /** The one line a conversation reopened for the screen gets, followed by what it has not heard yet. Nothing restarted. */
 export function screenPrompt(reason: string, messages: readonly string[]): string {
   const parts = [screenRules(reason), INVESTIGATION_RULE];

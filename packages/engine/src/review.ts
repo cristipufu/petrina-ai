@@ -10,7 +10,7 @@ import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { contractFor, VerifyResult, ReviewResult } from "./roles.js";
 import { Kernel, type MStage, type MTask, ScreenWait } from "./kernel.js";
-import { WaitingForUsage } from "./usage.js";
+import { CAPACITY_WAIT, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { ProductChecks } from "./product-checks.js";
@@ -456,10 +456,16 @@ export class Reviews {
       // independent tool, or leave a completed partner's ballot to settle the findings.
       // A cap, a pause or a drain never makes a usable participant disappear.
       const requiredTools = new Set(planned.map(id => this.k.profile(id)?.toolId));
+      const modelFull = (id: Id) => {
+        const choice = this.k.choose(id, task, "verifier");
+        return choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT);
+      };
       const available = planned.flatMap(id => {
         const tool = this.k.profile(id)?.toolId;
         if (covered.has(tool ?? "")) return [id];
         const choice = this.k.choose(id, task, "verifier");
+        // Every model on this tool is full. Keep the seat and wait. A partner's vote does not replace it.
+        if (modelFull(id)) return [id];
         if (!choice || choice.kind === "none") return covered.size ? [] : [id];
         if (choice.profile.toolId === tool) return [id];
         if (requiredTools.has(choice.profile.toolId) || covered.has(choice.profile.toolId)) return covered.size ? [] : [id];
@@ -467,7 +473,7 @@ export class Reviews {
         requiredTools.add(choice.profile.toolId);
         return [choice.profile.id];
       });
-      if (!covered.size && !available.some(id => this.k.choose(id, task, "verifier")?.kind !== "none")) {
+      if (!planned.some(modelFull) && !covered.size && !available.some(id => this.k.choose(id, task, "verifier")?.kind !== "none")) {
         // No complete ballot and every original tool is out: a newly recovered independent
         // tool may finish the missing verdicts, keeping the partial reasons already saved.
         for (const id of this.voters(stage)) {
@@ -484,6 +490,8 @@ export class Reviews {
     const voters = planned.flatMap((id) => {
       if (covered.has(this.k.profile(id)?.toolId ?? "")) return [];
       const choice = this.k.choose(id, task, "verifier");
+      // A full Codex model keeps this tool's seat. The vote waits instead of settling on the other tools.
+      if (choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT)) return [id];
       // Once admitted to the electorate, a missing independent tool cannot be replaced by a
       // finished partner's vote. Same-tool model substitutions retain that tool's seat.
       return choice && choice.kind !== "none" && choice.profile.toolId === this.k.profile(id)?.toolId ? [choice.profile.id] : [];
@@ -530,7 +538,9 @@ export class Reviews {
       task,
       voters.map((profileId) => {
         const plannedId = planned.find((id) => this.k.profile(id)?.toolId === this.k.profile(profileId)?.toolId) ?? profileId;
-        const key = `vote-${profileId}`;
+        // The seat stays the electorate's planned profile. A replacement saves its conversation and
+        // retry count there, and a later start of this vote has to find them under the same name.
+        const key = `vote-${plannedId}`;
         const reviewKey = `verifier:${plannedId}`;
         return {
         key,
@@ -559,8 +569,8 @@ export class Reviews {
             return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left, { complete: true })}` : undefined;
           };
           const heard = (id: Id) => { by = id; used(id); };
-          if (continuing) await this.turns.turn(scope, "verifier", profileId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room });
-          else await this.turns.parallel(scope, "verifier", profileId, copy, given, VerifyResult, signal, {
+          if (continuing) await this.turns.turn(scope, "verifier", plannedId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room });
+          else await this.turns.parallel(scope, "verifier", plannedId, copy, given, VerifyResult, signal, {
             key: reviewKey,
             room,
             seat, selectionReason,
@@ -710,7 +720,9 @@ export class Reviews {
           if (task.hunt?.screenTurns) delete task.hunt.screenTurns[member.key];
         })
         .catch((error: unknown) => {
-          if (error instanceof WaitingForUsage) noOne ??= error;
+          // A full model has to wait even when a partner already finished. A usage limit can leave that ballot to settle.
+          if (error instanceof WaitingForCapacity) noOne = error;
+          else if (error instanceof WaitingForUsage) noOne ??= error;
           else if (!(error instanceof ScreenWait)) {
             failure ??= error;
             // Stop question and permission waits too, so cleanup cannot wait on a dead peer.
@@ -751,7 +763,9 @@ export class Reviews {
         const room = roomFor(member.key);
         const choice = this.k.choose(member.profileId, task, member.roleId, room, member.reviewerKey);
         if (choice?.kind === "none") {
-          noOne ??= new WaitingForUsage(choice.waiting);
+          const waiting = waitingFor(choice.waiting);
+          if (waiting instanceof WaitingForCapacity) noOne = waiting;
+          else noOne ??= waiting;
           pending.shift();
           continue;
         }
@@ -781,13 +795,14 @@ export class Reviews {
         start();
       }
       if (failure !== undefined) throw failure;
-      if (!signal.aborted && Object.keys(task.hunt?.screenTurns ?? {}).length) {
+      if (!signal.aborted && !(noOne instanceof WaitingForCapacity) && Object.keys(task.hunt?.screenTurns ?? {}).length) {
         show();
         this.k.commitNow();
         throw new ScreenWait();
       }
-      // The rest looked at the change and reported; the ones left wait for usage, and the driver starts them again after.
-      if (noOne && !canFinishWithoutUsage()) {
+      // The rest looked at the change and reported; the ones left wait, and the driver starts them again after.
+      // A full model waits even when a partner already voted. A usage limit can leave that ballot to settle.
+      if (noOne && (noOne instanceof WaitingForCapacity || !canFinishWithoutUsage())) {
         this.k.waitForUsage(task, noOne.words);
         throw noOne;
       }

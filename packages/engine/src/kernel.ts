@@ -20,7 +20,7 @@ import { stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
 import { restoreProfileCatalog } from "@petrina/core";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
-import type { UsageInfo, UsageLimited } from "./usage.js";
+import type { ModelAtCapacity, UsageInfo, UsageLimited } from "./usage.js";
 import { Tracking } from "./tracking.js";
 import { recoverBrowserTemps } from "./browser.js";
 
@@ -500,6 +500,9 @@ export abstract class Kernel {
     const message = error instanceof Error ? error.message : String(error);
     this.tracking.failed(task, error);
     delete task.agent;
+    delete task.capacityResume;
+    delete task.capacityRetries;
+    delete task.capacityPaused;
     delete scope!.work.conversation;
     this.discardScreenTurns(task);
     this.releaseScreen(task);
@@ -559,6 +562,9 @@ export abstract class Kernel {
     const scope = executionOf(target);
     const { task, work: repository } = scope;
     finishTaskStep(task, repository, Date.now());
+    delete task.capacityResume;
+    delete task.capacityRetries;
+    delete task.capacityPaused;
     this.pendingAgentAdmissions.delete(task.id);
     this.releaseScreen(task);
   }
@@ -568,6 +574,9 @@ export abstract class Kernel {
     const scope = executionOf(target);
     const { task, work: repository } = scope;
     clearTaskStep(task, repository);
+    delete task.capacityResume;
+    delete task.capacityRetries;
+    delete task.capacityPaused;
     this.releaseScreen(task);
     this.stopStep(task);
   }
@@ -803,6 +812,9 @@ export abstract class Kernel {
 
   /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */
   recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void { return this.usageCoordinator.recordLimit(task, roleId, profileId, error); }
+
+  /** The selected Codex model is full for this task. Usage meters stay as they were, and the timeline says so. */
+  recordModelCapacity(task: MTask, roleId: Id, profileId: Id, error: ModelAtCapacity, waitMs?: number): void { return this.usageCoordinator.recordModelCapacity(task, roleId, profileId, error, waitMs); }
 
   /** Limits whose time has passed are dropped. True when any was. */
   expireLimits(): boolean { return this.usageCoordinator.expireLimits(); }

@@ -7,7 +7,7 @@ import { ADAPTERS } from "./tools.js";
 import type { UsageReader } from "./usage-reader.js";
 import { agentEnv } from "./env.js";
 import { join } from "node:path";
-import type { UsageInfo, UsageLimited } from "./usage.js";
+import { CAPACITY_RETRY_DELAYS_MS, capacityWaiting, MODEL_CAPACITY_WAIT_MS, type ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 type UsageHost = Pick<Kernel, "s" | "profile" | "role" | "tracking" | "activeState" | "stopped" | "schedule" | "commitNow" | "commit" | "log" | "named">;
 export class UsageCoordinator {
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -101,6 +101,9 @@ export class UsageCoordinator {
       if (task?.maintenance?.settingsDecision && !task.maintenance.settingsDecision.choice) return { kind: "none", waiting: "Waiting for your decision about the reported agent settings" };
       const limit = limitOf(this.k.s.pool, saved, Date.now());
       if (limit) return { kind: "none", waiting: "Waiting for usage on the saved maintenance profile" };
+      const full = this.capacityUntil(task, saved, Date.now());
+      // A scheduled run keeps its saved profile. A full model waits and retries that profile.
+      if (full) return { kind: "none", waiting: capacityWaiting(full, Date.now()) };
       if (!this.k.s.tools.some(t => t.id === saved.toolId && t.status === "ready")) return { kind: "none", waiting: "The saved maintenance tool is unavailable. Check it in Agents, then resume this run." };
       return { kind: "planned", profile: saved, reason: "Kept the profile saved in the maintenance routine." };
     }
@@ -148,6 +151,10 @@ export class UsageCoordinator {
       peers.push(...legacy);
     }
     const state = this.k.activeState();
+    const now = Date.now();
+    // A short retry is already waiting on this profile. Another free model does not take the step yet.
+    const held = this.holdingForShortRetry(task, roleId, planned, now);
+    if (held) return { kind: "none", waiting: capacityWaiting(held, now) };
     const checked = state.setup?.checks.some((check) => ADAPTERS[check.id] !== undefined);
     const usable = this.usableTools() as Id[];
     // Usage stand-ins follow the same login checks as the plan: Ready tools first, otherwise the
@@ -159,25 +166,41 @@ export class UsageCoordinator {
       profiles: state.profiles.filter((profile) => usable.includes(profile.toolId) || (!usable.length && profile.id === plannedId)),
       tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
     } : state;
+    const modelFull = (profile: AgentProfile) => this.capacityUntil(task, profile, now);
+    // The step waits for a full model only while the account has usage. An account limit keeps its own wait and words.
+    const fullOnly = (profile: AgentProfile) => limitOf(state.pool, profile, now) ? undefined : modelFull(profile);
     if (roleId !== undefined && this.k.role(roleId, task)?.result === "votes") {
       // A voter owns one actual tool's place, not a nominal profile's place. Other tools have
       // voters of their own: a model fallback stays on this tool; a usage limit drops its place.
-      // A full cap still waits, rather than giving a partner another vote.
+      // A full model stays on this tool too. Every model on it being full waits, rather than
+      // giving a partner another vote. A full cap still waits the same way.
       const ready = candidates.tools.filter((tool) => tool.status === "ready");
-      if ((ready.length && !ready.some((tool) => tool.id === planned.toolId)) || !candidates.profiles.some((profile) => profile.toolId === planned.toolId)) return { kind: "none", waiting: "Waiting for a usable review tool" };
-      candidates = { ...candidates, profiles: candidates.profiles.filter((profile) => profile.toolId === planned.toolId) };
+      const onTool = candidates.profiles.filter((profile) => profile.toolId === planned.toolId);
+      const open = onTool.filter((profile) => !modelFull(profile));
+      if (!open.length && !limitOf(state.pool, planned, now)) {
+        const until = onTool.map((profile) => modelFull(profile)).find((until) => until !== undefined) ?? modelFull(planned);
+        return until ? { kind: "none", waiting: capacityWaiting(until, now) } : { kind: "none", waiting: "Waiting for a usable review tool" };
+      }
+      if (ready.length && !ready.some((tool) => tool.id === planned.toolId)) return { kind: "none", waiting: "Waiting for a usable review tool" };
+      candidates = { ...candidates, profiles: open };
+    } else if (candidates.profiles.some((profile) => modelFull(profile))) {
+      // The full model is left out, including another effort of it. Seats and review independence
+      // still decide whether another model on this tool goes first. A full tool yields to one that can work.
+      candidates = { ...candidates, profiles: candidates.profiles.filter((profile) => !modelFull(profile)) };
     }
     const reviewing = roleId !== undefined && ["findings", "objections", "votes"].includes(this.k.role(roleId, task)?.result ?? "");
-    const now = Date.now();
     // A saved screen conversation is not swapped just for being near a limit. Reopen it on its tool
     // while that tool is available; a replacement still follows the current independence rules.
     if (screen) {
+      const full = fullOnly(planned);
+      // An agent that already has the screen retries the same profile. It does not hand the step to another model.
+      if (full) return { kind: "none", waiting: capacityWaiting(full, now) };
       if (state.setup?.checks.some((check) => check.id === planned.toolId && notReady(check.status))) return { kind: "planned", profile: planned, reason: "Kept the screen conversation's profile so its tool can report the readiness problem." };
       const saved = chooseWithRoom(candidates, planned, now, { keep: true }, room);
       if (saved.kind === "planned") return saved;
     }
     const own = task && roleId !== undefined && roleId === stage?.roleId ? this.builderConversation(scope!, plannedId) : undefined;
-    if (own && !limitOf(state.pool, own.profile, now) && !nearLimit(state.pool, own.profile, now) && headroom(state.pool, own.profile, now) !== 0 && (!room || room(own.toolId, own.profile))) {
+    if (own && !modelFull(own.profile) && !limitOf(state.pool, own.profile, now) && !nearLimit(state.pool, own.profile, now) && headroom(state.pool, own.profile, now) !== 0 && (!room || room(own.toolId, own.profile))) {
       const check = state.setup?.checks.find((check) => check.id === own.toolId);
       // Recovery checks are bounded by the normal tool-check timeout. Checking is temporary;
       // let it answer before replacing a healthy saved Builder with a permanent fresh start.
@@ -192,7 +215,17 @@ export class UsageCoordinator {
       candidates = { ...candidates, profiles: candidates.profiles.filter(profile => !(profile.toolId === author.toolId && profile.modelId === author.modelId && profile.effort === author.effort)) };
     }
     const rules = { keep: !!screen || reviewing, awayFromTools: peers, ...(made ? { awayFrom: { toolId: made.toolId, ...(made.modelId ? { modelId: made.modelId } : {}) } } : {}) };
+    // A model that took over and then filled up is owed its short continue, even once the planned model is free.
+    // It goes first only where the planned profile itself would be kept: with usage, a seat and the review's independence.
+    // Otherwise the usual choice applies, so a free tool takes the step instead of waiting for this one.
+    const owed = screen ? undefined : this.replacementOwedContinue(task, roleId, planned, reviewerKey);
+    if (owed && (!room || room(owed.toolId, owed))) {
+      const kept = chooseWithRoom(candidates, owed, now, rules, room);
+      if (kept.kind === "planned" && kept.profile.id === owed.id) return { kind: "substitute", profile: owed, reason: "Continued the conversation that was waiting out a full model." };
+    }
     const choice = chooseWithRoom(candidates, planned, now, rules, room);
+    const full = fullOnly(planned);
+    if (choice.kind === "none" && full) return { kind: "none", waiting: capacityWaiting(full, now) };
     if (checked && !usable.length && choice.kind === "planned") return { ...choice, reason: "No tool passed readiness checks; kept the planned profile so its tool can report the login or installation problem." };
     if (own && room && choice.kind !== "none" && !room(choice.profile.toolId, choice.profile)) {
       // A returning Builder must not get stuck on a full planned tool that recovered since
@@ -258,6 +291,50 @@ export class UsageCoordinator {
     }
   }
 
+  /** When this task learned that this profile's model is full, if that still holds. */
+  private capacityUntil(task: MTask | undefined, profile: AgentProfile, now: number): number | undefined {
+    return task?.modelCapacity?.find((entry) => entry.until > now && entry.toolId === profile.toolId && entry.modelId === (profile.modelId ?? profile.model))?.until;
+  }
+
+  /**
+   * A replacement's saved conversation still owes a short continue. The pause record is gone once the wait ends,
+   * so this is what keeps a replacement from being dropped when the originally planned model is free again.
+   * The planned profile's own conversation needs nothing here: the usual choice keeps the planned profile.
+   * One reviewer or voter does not pick up another's conversation.
+   */
+  private replacementOwedContinue(task: MTask | undefined, roleId: Id | undefined, planned: AgentProfile, reviewerKey: string | undefined): AgentProfile | undefined {
+    if (!task || roleId === undefined) return undefined;
+    const votes = this.k.role(roleId, task)?.result === "votes";
+    const seat = votes ? `vote-${planned.id}` : reviewerKey !== undefined ? `review-${reviewerKey}` : undefined;
+    const resumes = (task.capacityResume ?? []).filter((entry) => {
+      if (entry.roleId !== roleId) return false;
+      if (seat === undefined) return entry.member === undefined;
+      return entry.member === seat || entry.member === undefined;
+    });
+    const owed = resumes.filter((entry) => {
+      const tried = task.capacityRetries?.find((retry) => retry.roleId === entry.roleId && retry.profileId === entry.profileId && retry.member === entry.member)?.tried ?? 0;
+      return tried >= 1 && tried <= CAPACITY_RETRY_DELAYS_MS.length;
+    });
+    const entry = owed.findLast((item) => item.profileId !== planned.id);
+    return entry ? this.k.profile(entry.profileId) : undefined;
+  }
+
+  /**
+   * The short same-conversation retry is still waiting, so this step keeps its profile.
+   * A replacement holds the profile the step was planned for, and its own wait, not the first model's.
+   */
+  private holdingForShortRetry(task: MTask | undefined, roleId: Id | undefined, profile: AgentProfile, now: number): number | undefined {
+    if (!task || roleId === undefined) return undefined;
+    let until: number | undefined;
+    for (const entry of task.capacityPaused ?? []) {
+      if (entry.roleId !== roleId || (entry.plannedId !== profile.id && entry.profileId !== profile.id)) continue;
+      const paused = this.k.profile(entry.profileId);
+      const at = paused ? this.capacityUntil(task, paused, now) : undefined;
+      if (at !== undefined && (until === undefined || at < until)) until = at;
+    }
+    return until;
+  }
+
   /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */
   recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void {
     this.k.tracking.limitHit(task, roleId, profileId, error);
@@ -268,23 +345,63 @@ export class UsageCoordinator {
     this.k.commitNow();
   }
 
-  /** Limits whose time has passed are dropped. True when any was. */
-  expireLimits(): boolean {
-    const before = this.k.s.pool.limited?.length ?? 0;
-    if (!before) return false;
+  /**
+   * The selected Codex model is full for this task only. Usage meters are left unchanged.
+   * Every effort of that model stays out of this task until the short retry.
+   */
+  recordModelCapacity(task: MTask, roleId: Id, profileId: Id, error: ModelAtCapacity, waitMs = MODEL_CAPACITY_WAIT_MS): void {
     const now = Date.now();
-    const kept = this.k.s.pool.limited!.filter((limit) => limit.until > now);
-    if (kept.length === before) return false;
-    if (kept.length) this.k.s.pool.limited = kept;
-    else delete this.k.s.pool.limited;
-    return true;
+    const until = now + waitMs;
+    const next = { toolId: error.toolId, modelId: error.modelId, profileId, until };
+    const kept = (task.modelCapacity ?? []).filter((entry) => entry.until > now && !(entry.toolId === next.toolId && entry.modelId === next.modelId));
+    task.modelCapacity = [...kept, next];
+    this.k.log(task, "warn", `${this.k.role(roleId, task)?.name ?? roleId} on ${this.k.named(profileId)} stopped because the selected model is at capacity`, roleId, profileId);
+    this.armLimitTimer();
+    this.k.commitNow();
   }
 
-  /** The scheduler runs again when the first limit in force ends: tasks waiting for usage start by themselves. */
+  /** Limits whose time has passed are dropped, including a task's full-model retry. True when any was. */
+  expireLimits(): boolean {
+    const now = Date.now();
+    let changed = false;
+    const before = this.k.s.pool.limited?.length ?? 0;
+    if (before) {
+      const kept = this.k.s.pool.limited!.filter((limit) => limit.until > now);
+      if (kept.length !== before) {
+        changed = true;
+        if (kept.length) this.k.s.pool.limited = kept;
+        else delete this.k.s.pool.limited;
+      }
+    }
+    for (const task of this.k.s.tasks) {
+      if (task.modelCapacity?.length) {
+        const kept = task.modelCapacity.filter((entry) => entry.until > now);
+        if (kept.length !== task.modelCapacity.length) {
+          changed = true;
+          if (kept.length) task.modelCapacity = kept;
+          else delete task.modelCapacity;
+        }
+      }
+      if (!task.capacityPaused?.length) continue;
+      const active = new Set((task.modelCapacity ?? []).map((entry) => `${entry.toolId}\0${entry.modelId}`));
+      const paused = task.capacityPaused.filter((entry) => active.has(`${entry.toolId}\0${entry.modelId}`));
+      if (paused.length === task.capacityPaused.length) continue;
+      changed = true;
+      if (paused.length) task.capacityPaused = paused;
+      else delete task.capacityPaused;
+    }
+    return changed;
+  }
+
+  /** The scheduler runs again when the first limit, or the first full-model retry, ends. */
   armLimitTimer(): void {
     clearTimeout(this.timer);
     this.timer = undefined;
-    const at = nextExpiry(this.k.s.pool, Date.now());
+    const now = Date.now();
+    const times = [nextExpiry(this.k.s.pool, now)];
+    for (const task of this.k.s.tasks) for (const entry of task.modelCapacity ?? []) if (entry.until > now) times.push(entry.until);
+    const pending = times.filter((time): time is number => time !== undefined);
+    const at = pending.length ? Math.min(...pending) : undefined;
     if (at === undefined || this.k.stopped) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;

@@ -10,7 +10,7 @@ import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbo
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser } from "./browser.js";
 import { descendants, descendantsKnown } from "./process-tree.js";
-import { limitFromFailure, limitFromReport, type UsageInfo, type UsageLimited } from "./usage.js";
+import { codexCapacityFailure, codexModelAtCapacity, limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 import { AgentMessages, type AgentMessage } from "./agent-messages.js";
 import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, type ToolActivity } from "./tool-activity.js";
 import type { AccountReading } from "./tool-adapter.js";
@@ -663,7 +663,7 @@ export class AgentRun {
       const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch(async (error: unknown) => {
         endTools();
         if (ADAPTERS[this.profile.toolId]?.accountUsage) await this.readAccountUsage();
-        throw this.limitOf(error) ?? providerError(error);
+        throw this.capacityOf(error) ?? this.limitOf(error) ?? providerError(error);
       });
       endTools();
       if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
@@ -675,6 +675,9 @@ export class AgentRun {
       }
       const accounting = ADAPTERS[this.profile.toolId]?.accountUsage;
       const report = accounting ? accounting.turnReport(this.accountBefore, await this.readAccountUsage()) : reportOf(response, this.profile.toolId);
+      // A finished turn can carry the overloaded stop on the response itself, with no sentence in the agent's text.
+      const full = this.capacityOf(response);
+      if (full) throw full;
       return { stopReason: response.stopReason, text: this.state.text, ...(this.state.messages.streamed ? { streamed: true } : {}), ...(report ? { report } : {}), ...notes() };
     } finally {
       this.child.removeListener("exit", onExit);
@@ -725,6 +728,25 @@ export class AgentRun {
       clearTimeout(timer);
       delete this.state.accountText;
     }
+  }
+
+  /**
+   * Codex ended this turn because the selected model is full. A finished result after the sentence is not this.
+   * `source` is a thrown provider failure, the prompt response, or the turn text. A warning is Codex still working.
+   */
+  private capacityOf(source: unknown): ModelAtCapacity | undefined {
+    if (this.profile.toolId !== "codex") return undefined;
+    const fromSource: { retryAfterMs?: number } | undefined = typeof source === "string" ? (codexModelAtCapacity(source) ? {} : undefined) : codexCapacityFailure(source);
+    // The response can be a warning while the turn's own text still ends on the sentence.
+    const fromText: { retryAfterMs?: number } | undefined = codexModelAtCapacity(this.state.text) ? {} : undefined;
+    const found = fromSource ?? fromText;
+    if (!found) return undefined;
+    const out = new ModelAtCapacity(this.profile.toolId, this.profile.modelId ?? this.profile.model, this.profile.id, this.sessionId);
+    if (found.retryAfterMs !== undefined) out.retryAfterMs = found.retryAfterMs;
+    const said = this.state.text || (typeof source === "string" ? source : undefined);
+    if (said) out.said = said;
+    if (this.state.messages.streamed) out.streamed = true;
+    return out;
   }
 
   /** The usage limit a failed turn ran into, when that is why it failed. */

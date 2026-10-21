@@ -34,7 +34,7 @@ export interface Scenario {
   /** An added Security specialist passes instead of blocking once. */
   addedReviewer?: "pass";
   /** Retain scenarios used by source-start and screen coverage. */
-  planner?: "short" | "parallel" | "tester-after" | "tester-first" | "tester-with-design" | "research-first" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
+  planner?: "short" | "parallel" | "two-codex" | "tester-after" | "tester-first" | "tester-with-design" | "research-first" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
   notes?: "work";
   /** The architect leaves product changes for the engine to save, in rounds and after a call. */
   architect?: "writes";
@@ -126,6 +126,16 @@ export interface Scenario {
    * way Codex does, with a message. Only agents with this `role` when it is set.
    */
   limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean; afterRelease?: boolean; onScreen?: boolean }[];
+  /**
+   * The selected Codex model is full. The matching turn ends on Codex's own sentence, before any work
+   * (`partial` writes a draft first). `onScreen` waits for the screen prompt, then later continues on
+   * that session also count. `thrown` fails the turn instead of ending it normally. `native` ends the
+   * turn with Codex's overloaded stop and no sentence in the agent's text. `times` is how many turns
+   * of this conversation stop this way (default one). `retryAfterMs` is an explicit provider delay on a thrown stop.
+   */
+  capacity?: { model: string; role?: string; partial?: boolean; onScreen?: boolean; thrown?: boolean; native?: boolean; times?: number; retryAfterMs?: number; armed?: boolean }[];
+  /** The builder mentions the capacity sentence and still hands back a finished result. */
+  mentionCapacity?: boolean;
   /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
   usage?: { model: string; status: "allowed" | "allowed_warning" | "rejected"; utilization?: number; type?: string; resetsAt?: number; overage?: boolean }[];
 }
@@ -177,7 +187,16 @@ const recordedTool = process.argv.find((arg) => arg.startsWith("--record-tool=")
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
+/** Codex's own sentence when the selected model is full. The whole turn ends on it. */
+const CODEX_MODEL_CAPACITY = "Selected model is at capacity. Please try a different model.";
 const scenario = (): Scenario => (dir && existsSync(join(dir, "scenario.json")) ? (JSON.parse(readFileSync(join(dir, "scenario.json"), "utf8")) as Scenario) : {});
+/** How many capacity stops this conversation has already returned. One file per session, so two reviewers cannot overwrite each other. */
+function capacityProgress(sessionId: string): { used: number; armed?: boolean } {
+  if (!dir) return { used: 0 };
+  const path = join(dir, `capacity-${sessionId}.json`);
+  if (!existsSync(path)) return { used: 0 };
+  return JSON.parse(readFileSync(path, "utf8")) as { used: number; armed?: boolean };
+}
 const mark = (name: string) => dir && writeFileSync(join(dir, name), String(Date.now()));
 const marked = (name: string) => !!dir && existsSync(join(dir, name));
 /**
@@ -197,6 +216,8 @@ interface Reply {
   silent?: boolean;
   /** Claude Code: the per-model breakdown. */
   models?: { model: string; input: number; cached: number; write: number; output: number }[];
+  /** End the turn with Codex's overloaded session failure, instead of putting the sentence in the text. */
+  native?: boolean;
 }
 
 const conversationFile = (sessionId: string) => dir && join(dir, "conversations", `${sessionId}.json`);
@@ -528,6 +549,30 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);
   if (limit && until && !limit.afterRelease) await runOut(limit, until, session, sessionId, client);
+  const progress = capacityProgress(sessionId);
+  const capacity = (plan.capacity ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && !(entry.onScreen && !progress.armed && !text.includes("You may now use the screen for")) && progress.used < (entry.times ?? 1));
+  if (capacity) {
+    if (dir) writeFileSync(join(dir, `capacity-${sessionId}.json`), JSON.stringify({ used: progress.used + 1, armed: true }));
+    if (text.includes('Set "complete" to true only')) session.maintenance = true;
+    if (capacity.partial) writeFileSync(join(session.cwd, "capacity-draft.txt"), "A greeting draft\n");
+    const draft = capacity.partial ? "I drafted the greeting before the model filled up.\n\n" : "";
+    keep(sessionId);
+    if (capacity.thrown) {
+      throw acp.RequestError.internalError({
+        message: CODEX_MODEL_CAPACITY,
+        codexErrorInfo: "serverOverloaded",
+        codex_error_info: "server_overloaded",
+        ...(capacity.retryAfterMs ? { retryAfterMs: capacity.retryAfterMs } : {}),
+      }, "Internal error");
+    }
+    if (capacity.native) return { text: draft, native: true };
+    return { text: `${draft}${CODEX_MODEL_CAPACITY}` };
+  }
+  // A short continue does not repeat the job. The fake still needs the original instructions and finding ids.
+  if (text.startsWith("The selected model was at capacity.") && !plan.screen) {
+    const first = session.history.find((entry) => entry.sessionUpdate === "user_message_chunk" && entry.content.type === "text");
+    if (first?.sessionUpdate === "user_message_chunk" && first.content.type === "text" && !first.content.text.startsWith("The selected model was at capacity.")) text = `${first.content.text}\n\n${text}`;
+  }
   if (plan.reviewTodo && dir && ["code reviewer", "security reviewer", "verifier"].includes(session.role)) {
     const tag = `${session.role.replaceAll(" ", "-")}-${session.model}-${session.effort}`;
     const gate = async (name: string) => { while (!existsSync(join(dir, `${name}-${tag}`))) await Bun.sleep(20); };
@@ -778,13 +823,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
           ],
         });
-      if (plan.planner === "short" || plan.planner === "parallel")
+      if (plan.planner === "short" || plan.planner === "parallel" || plan.planner === "two-codex")
         return done({
           rationale: "A small change: build it, one reviewer.",
           ...riskOf(plan),
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"], maxRounds: plan.reviewRounds ?? 1 },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "parallel" ? ["opus-high", "sol-high"] : plan.planner === "two-codex" ? ["sol-high", "astra-xhigh"] : ["opus-high"], maxRounds: plan.reviewRounds ?? 1 },
           ],
         });
       return done({
@@ -860,6 +905,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       // This turn reports no usage at all.
       return { ...done({ objections: [] }), silent: true };
     case "builder": {
+      if (plan.mentionCapacity && session.turns === 1 && roleOf(text)) {
+        writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
+        return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed" }, `A note along the way said “${CODEX_MODEL_CAPACITY}” The work is finished.`);
+      }
       if (plan.builder === "fail-once" && dir) {
         if (roleOf(text) && !existsSync(join(dir, "builder-failed"))) {
           session.failing = true;
@@ -1274,7 +1323,20 @@ acp
       throw error;
     });
     if (reply.text) await send(ctx.client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply.text } });
-    return tool ? responseFor(reply, sessions.get(sessionId)!) : { stopReason: reply.stop ?? "end_turn" };
+    const base = tool ? responseFor(reply, sessions.get(sessionId)!) : { stopReason: reply.stop ?? "end_turn" as const };
+    if (!reply.native) return base;
+    // Codex's own stop: the turn completed with an overloaded error and no sentence in the agent's text.
+    return {
+      ...base,
+      _meta: {
+        jetbrains: {
+          air: {
+            version: 1,
+            sessionFailure: { id: "capacity", revision: 1, category: "service", severity: "error", title: CODEX_MODEL_CAPACITY, actions: ["retry"] },
+          },
+        },
+      },
+    };
   })
   .onNotification("session/cancel", (ctx) => {
     cancels.get(ctx.params.sessionId)?.();
