@@ -13,9 +13,10 @@ import { BuildResult } from "../src/roles.js";
 import { Cleanup } from "../src/cleanup.js";
 import { Fakes, git, makeWorld, removeDir, SLOW, waitFor } from "./support.js";
 
-const world = makeWorld("report-images");
+// Reports choose captures from each agent's browser folder, in this world's own browser folder.
+const world = makeWorld("report-images", { browser: true });
 const root = world.dir;
-afterAll(() => removeDir(root));
+afterAll(() => { removeDir(root); removeDir(world.browsers!); });
 
 it("removes finished and orphaned picture storage without depending on worktree cleanup or loading archive bodies", async () => {
   const world = makeWorld("report-picture-lifetime");
@@ -190,10 +191,11 @@ it("builder and read-only reports preserve only chosen images through correction
     await engine.waitUntilReady();
     expect(engine.task(id)!.session.find((line) => line.id === pendingId)).toEqual(accepted);
   } finally { scheduling?.mockRestore(); await engine.shutdown(); }
+  expect(readdirSync(world.browsers!)).toEqual([]);
 }, 90_000 * SLOW);
 
 it("delivers a message arriving during picture saving to every unfinished reviewer and keeps only their final pictures", async () => {
-  const world = makeWorld("report-picture-messages");
+  const world = makeWorld("report-picture-messages", { browser: true });
   const fakes = new Fakes(join(world.dir, "fake"));
   fakes.scenario({ planner: "parallel", builder: "plain", pictures: "valid", controlled: true });
   await sharp({ create: { width: 8, height: 8, channels: 3, background: "white" } }).png().toFile(join(fakes.dir, "picture.png"));
@@ -238,9 +240,12 @@ it("delivers a message arriving during picture saving to every unfinished review
     for (const report of reports.filter((line) => line.roleId === "code-reviewer"))
       expect(results.find((result) => result.profileId === report.profileId)?.images).toEqual(report.images);
     expect(readdirSync(history)).toHaveLength(3);
+    await engine.shutdown();
+    expect(readdirSync(world.browsers!)).toEqual([]);
   } finally {
     saving?.mockRestore();
     await engine.shutdown();
     removeDir(world.dir);
+    removeDir(world.browsers!);
   }
 }, 60_000 * SLOW);

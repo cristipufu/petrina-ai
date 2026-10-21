@@ -8,7 +8,7 @@ import { Engine } from "../src/engine.js";
 import { executionFor, repositoryView, scopesFor } from "../src/repository-context.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewConversationScope } from "../src/review-context.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "./support.js";
 import type { Scenario } from "./fake-agent.js";
 
 const roots: string[] = [];
@@ -223,6 +223,8 @@ describe("immutable review inputs", () => {
 const originalLines = Array.from({ length: 60 }, (_, index) => `Original line ${index}\n`).join("");
 async function run(reopen: Scenario["reopen"], options: { single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; seedFinding?: boolean; advance?: boolean } = {}) {
   const root = tempDir("petrina-review-resume-"); roots.push(root);
+  // Reviewers check browser instructions across reopened conversations and restarts in one browser folder.
+  const browsers = testBrowserRoot(); roots.push(browsers);
   const fakes = new Fakes(join(root, "fake"));
   const scenario: Scenario = { planner: options.single ? "short" : "pair", builder: "plain", reviewer: options.reviewer ?? "important", fixes: "change", controlled: true, reopen, limited: options.limited };
   fakes.scenario(scenario);
@@ -232,7 +234,7 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
     writeFileSync(hold, "");
     writeFileSync(script, JSON.stringify({ hold: { title: "You are fixing the review findings", file: hold } }));
   }
-  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`], toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null } };
+  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`], toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null }, browser: true, browserTempRoot: browsers };
   let engine = new Engine(data, engineOptions);
   engine.setPoolPaused(true); await engine.checkTools(); engine.setPoolLimit(options.limit ?? 2);
   const productId = await engine.addProduct(makeProduct(root)); engine.setProductDelivery(productId, "local", true);
@@ -284,7 +286,7 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
   const done = () => { rmSync(hold, { force: true }); return waitFor(() => { tick(); return engine.getState().inbox.some((item) => item.kind === "delivery") && task(); }, "the reviewed delivery"); };
   const restart = async () => { await engine.shutdown(); engine = new Engine(data, engineOptions); };
   engine.setPoolPaused(false);
-  return { engine: () => engine, fakes, task, tick, done, restart, beforeFix, advanceMain, hold, root };
+  return { engine: () => engine, fakes, task, tick, done, restart, beforeFix, advanceMain, hold, root, browsers };
 }
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
@@ -398,8 +400,8 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       for (const id of sessions) {
         expect(f.fakes.opens().filter((entry) => entry.session === id).map((entry) => entry.how)).toEqual(["new", reopen]);
         const prompts = f.fakes.received("code reviewer").filter((entry) => entry.session === id);
-        expect(prompts[0]!.text).toContain("Browser output belongs only in");
-        expect(prompts[1]!.text).toContain("Browser capture folder for this turn:");
+        expect(prompts[0]!.text).toContain(`Browser output belongs only in ${join(f.browsers, "petrina-browser-")}`);
+        expect(prompts[1]!.text).toContain(`Browser capture folder for this turn: ${join(f.browsers, "petrina-browser-")}`);
         expect(prompts[1]!.text).not.toContain("Browser output belongs only in");
       }
       const voterIds = new Set(f.fakes.received("verifier").map((entry) => entry.session));

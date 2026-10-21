@@ -348,7 +348,10 @@ export class AgentRun {
     /** When false, no browser is started. Identity checks do not look at a page. Defaults to true. */
     browser?: boolean;
     sandbox?: ClaudeSandbox;
+    /** Where the browser registers its temporary folder, so startup can recover it after a crash. */
     browserRoot?: string;
+    /** Tests: a fixture's own parent for the temporary browser folder, instead of the standard one. */
+    browserTempRoot?: string;
   }): Promise<AgentRun> {
     const { profile, cwd, callbacks, signal } = options;
     const adapter = ADAPTERS[profile.toolId];
@@ -373,7 +376,7 @@ export class AgentRun {
     // reopened builder, gets a new engine-owned browser within the opening deadline.
     // An identity check never opens a page, so it starts no browser.
     const showBrowser = !signal.aborted && !options.probe && options.browser !== false;
-    const browserReady = showBrowser ? AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog) : Promise.resolve(undefined);
+    const browserReady = showBrowser ? AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog, options.browserTempRoot) : Promise.resolve(undefined);
     browserReady.catch(() => undefined);
     let stopping: Promise<boolean> | undefined;
     let cleanupNoticeSent = false;

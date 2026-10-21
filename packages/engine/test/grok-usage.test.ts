@@ -8,9 +8,11 @@ import { Engine } from "../src/engine.js";
 import { grokReports, grokTurnReport, readGrokUsage } from "../src/grok-usage.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { WorkLog } from "../src/worklog.js";
-import { removeDir, tempDir, waitFor } from "./support.js";
+import { removeDir, tempDir, testBrowserRoot, waitFor } from "./support.js";
 
-const roots: string[] = [];
+// Conversations started here keep their browsers, in this file's own browser folder.
+const roots: string[] = [testBrowserRoot()];
+const browsers = roots[0]!;
 afterAll(() => roots.forEach(removeDir));
 const end = "2026-10-24T14:20:55.543+00:00";
 const billing = (percent = 11) => ({ config: { creditUsagePercent: percent, currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end }, prepaidBalance: { val: 12345 } } });
@@ -65,7 +67,7 @@ describe("Grok whole-prompt token accounting", () => {
 
   it("receives Grok metadata through a real ACP prompt and preserves a zero-token turn", async () => {
     const cwd = tempDir("petrina-grok-prompt-"); roots.push(cwd);
-    const run = await AgentRun.start({ profile: ENGINE_PROFILES.find(p => p.id === "grok-xhigh")!, cwd, command: [process.execPath, join(import.meta.dir, "fake-agent.ts"), "--tool=grok"], signal: new AbortController().signal, callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" } });
+    const run = await AgentRun.start({ profile: ENGINE_PROFILES.find(p => p.id === "grok-xhigh")!, cwd, browserTempRoot: browsers, command: [process.execPath, join(import.meta.dir, "fake-agent.ts"), "--tool=grok"], signal: new AbortController().signal, callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" } });
     try {
       const result = await run.prompt("You are the Researcher in Petrina. Hand back notes.");
       expect(turnTokens({ toolId: "grok", report: result.report }).tokens).toMatchObject({ input: 100, cacheRead: 1000, output: 50, total: 1150 });

@@ -14,7 +14,7 @@ import { dispatch } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { WaitClock, WorkLog } from "../src/worklog.js";
-import { removeDir, SLOW, testGitEnv } from "./support.js";
+import { removeDir, SLOW, testBrowserRoot, testGitEnv } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const fakeCodex = join(import.meta.dir, "fake-codex.ts");
@@ -28,7 +28,9 @@ const git = (cwd: string, ...args: string[]) => {
 // Each profile's agent behaves like its own tool: Claude Code or Codex.
 const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], usageCommands: { codex: [process.execPath, fakeCodex] } };
 
-afterAll(() => removeDir(temp));
+// Conversations started here keep their browsers, in this file's own browser folder.
+const browsers = testBrowserRoot();
+afterAll(() => { removeDir(temp); removeDir(browsers); });
 
 it("counts runs within the requested task and stage, including repeated runs after reopening the log", () => {
   const db = new Database(":memory:");
@@ -392,7 +394,7 @@ describe("An agent session", () => {
     const cwd = mkdtempSync(join(tmpdir(), "petrina-run-"));
     const profile = ENGINE_PROFILES.find((entry) => entry.id === "opus-high")!;
     const callbacks = { onActivity: () => undefined, onPlanStep: () => undefined, onPermission: async () => "deny" as const };
-    const start = (env: NodeJS.ProcessEnv) => AgentRun.start({ profile, cwd, callbacks, signal: new AbortController().signal, command: [process.execPath, fake, "--tool=claude-code"], env });
+    const start = (env: NodeJS.ProcessEnv) => AgentRun.start({ profile, cwd, callbacks, signal: new AbortController().signal, command: [process.execPath, fake, "--tool=claude-code"], env, browserTempRoot: browsers });
     const bare = await start({ ...process.env, FAKE_BARE_ACK: "1" });
     const echoed = await start(process.env);
     try {

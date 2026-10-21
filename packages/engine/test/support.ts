@@ -3,9 +3,9 @@ import { displayTask } from "@petrina/core";
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
 // stand-ins only through the Engine's constructor.
 import { setDefaultTimeout } from "bun:test";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import type { InboxKind, State, Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "../src/engine.js";
 import { readConnection } from "../src/instance.js";
@@ -13,6 +13,7 @@ import type { ShellMessage } from "../src/launch.js";
 import { Store } from "../src/store.js";
 import type { AgentScript, Scenario } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
+import { shortTempParent, TEST_BROWSERS } from "./temp-parent.js";
 import { testGitEnv } from "./test-git-env.js";
 export { testGitEnv } from "./test-git-env.js";
 
@@ -61,6 +62,18 @@ export const HARNESS = join(import.meta.dir, "harness.ts");
 
 export function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
+}
+
+/**
+ * A fixture's own parent for temporary browser folders, instead of the user's standard one. Run
+ * folders can be too long for macOS browser sockets, so the runner owns a short folder for these and
+ * reclaims it even after an interrupted run; a standalone script gets one in the system's short
+ * temporary folder. Pass it to every engine, browser and recovery of the fixture, and remove it once
+ * they have stopped.
+ */
+export function testBrowserRoot(): string {
+  const owned = process.env[TEST_BROWSERS];
+  return realpathSync(mkdtempSync(owned ? `${owned}${sep}` : join(shortTempParent(), "pb-")));
 }
 
 /** Windows keeps files open a moment after a process ends: cleaning up is best effort. */
@@ -423,6 +436,8 @@ export interface World {
   data: string;
   /** main on the stand-in GitHub when the world was made. */
   initial: string;
+  /** With `browser`, the world's own parent for its agents' browser folders. The test removes it once its engines stop. */
+  browsers?: string;
   /** `extra`: more options for this engine (a shorter once-a-minute check, say). */
   start(extra?: EngineOptions): Engine;
   github(): FakeGitHub;
@@ -433,8 +448,11 @@ export interface World {
   editSaved(change: (state: State) => void): void;
 }
 
-/** A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and scripted agents. */
-export function makeWorld(name: string, options: { version?: string; address?: string; objectFormat?: "sha1" | "sha256" } = {}): World {
+/**
+ * A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and scripted agents.
+ * Scripted agents get no browser; with `browser`, they get real ones in the world's own browser folder.
+ */
+export function makeWorld(name: string, options: { version?: string; address?: string; objectFormat?: "sha1" | "sha256"; browser?: boolean } = {}): World {
   const seed = repositorySeed(options.version, false, options.objectFormat);
   const dir = mkdtempSync(join(tmpdir(), `petrina-${name}-`));
   const remote = join(dir, "github.git");
@@ -448,13 +466,15 @@ export function makeWorld(name: string, options: { version?: string; address?: s
   const scriptPath = join(dir, "agents.json");
   writeFileSync(scriptPath, "{}");
   const data = join(dir, "data");
+  const browsers = options.browser ? testBrowserRoot() : undefined;
   return {
     dir,
     clone,
     remote,
     data,
     initial: seed.head,
-    start: (extra = {}) => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, awakeObserver: () => {}, ...extra }),
+    ...(browsers ? { browsers } : {}),
+    start: (extra = {}) => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, awakeObserver: () => {}, ...(browsers ? { browser: true, browserTempRoot: browsers } : {}), ...extra }),
     github: () => readGitHub(ghState),
     setGitHub: (change) => updateGitHub(ghState, change),
     script: () => JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript,

@@ -18,7 +18,7 @@ import { capacityRetryDelay, capacityWaiting, codexModelAtCapacity, MODEL_CAPACI
 import type { AgentMessage } from "./agent-messages.js";
 import { ADAPTERS } from "./tools.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
-import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, notReady, stepKey, ToolProblem } from "./kernel.js";
+import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, notReady, stepKey, ToolProblem, type EngineOptions } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
@@ -59,6 +59,11 @@ interface TurnOptions<T> extends ConversationOptions {
   member?: string;
   /** A parallel member replaces only its own reserved seat when it continues. */
   room?: (toolId: Id, profile: AgentProfile) => boolean;
+}
+
+/** Real agents get a browser in every role that may check pages. A scripted fake agent never opens a page, so it gets one only when its test asks. */
+export function opensBrowser(role: Role, options: Pick<EngineOptions, "agentCommand" | "browser">): boolean {
+  return mayAskScreen(role) && (options.browser ?? !options.agentCommand);
 }
 
 /** What an agent that may not ask for the screen hears when it asks anyway: it never pauses its step or its group. */
@@ -1039,11 +1044,14 @@ export class Turns {
       onUsage: (info: import("./usage.js").UsageInfo) => this.k.recordUsage(info),
       onAccountUsage: (reports: readonly import("./usage.js").UsageInfo[]) => this.k.recordAccountUsage(profile.toolId, reports),
     };
+    // New, reopened and replacement conversations share the engine's browser folders and recovery.
+    const browser = opensBrowser(role, this.k.options);
+    const browserTempRoot = this.k.options.browserTempRoot;
     const start = (sessionId?: string) => this.inSandbox(profile, (sandbox) => {
       // Resolve the command for each process, including a fallback or sandbox retry.
       const command = this.k.options.agentCommand?.(profile);
       return AgentRun.start({ profile, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
-        cwd, browser: mayAskScreen(role), browserRoot: join(this.k.dataDir, "browser-temp"), signal,
+        cwd, browser, browserRoot: join(this.k.dataDir, "browser-temp"), ...(browserTempRoot ? { browserTempRoot } : {}), signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}), callbacks,
       });

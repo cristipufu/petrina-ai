@@ -8,9 +8,11 @@ import { agentEnv } from "../src/env.js";
 import { claudeSandbox, sandboxFailure } from "../src/sandbox.js";
 import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
-import { engineEnv, EngineProcess, Fakes, makeProduct, removeDir, tempDir, traceTaskWait, waitFor, type Open } from "./support.js";
+import { engineEnv, EngineProcess, Fakes, makeProduct, removeDir, tempDir, testBrowserRoot, traceTaskWait, waitFor, type Open } from "./support.js";
 
-const roots: string[] = [];
+// Conversations started here keep their browsers, in this file's own browser folder.
+const roots: string[] = [testBrowserRoot()];
+const browsers = roots[0]!;
 afterAll(() => roots.forEach(removeDir));
 
 const REFUSED = "Running without Claude Code's sandbox: this computer lacks what it needs (bubblewrap (bwrap) not installed, socat not installed)";
@@ -297,6 +299,7 @@ describe("Claude Code's own sandbox", () => {
         cwd: root,
         env: agentEnv(engineEnv(join(root, "home"))),
         sandbox: claudeSandbox(),
+        browserTempRoot: browsers,
         signal: new AbortController().signal,
         ...(session ? { reopen: session } : {}),
         callbacks: { onActivity: () => {}, onPlanStep: () => {}, onPermission: async () => "deny" },
@@ -334,6 +337,7 @@ describe("Claude Code's own sandbox", () => {
         cwd: root,
         env: agentEnv(engineEnv(join(root, "home"))),
         sandbox: claudeSandbox(),
+        browserTempRoot: browsers,
         signal: new AbortController().signal,
         ...(session ? { reopen: session } : {}),
         callbacks: { onActivity: () => {}, onPlanStep: () => {}, onPermission: async () => "deny" },

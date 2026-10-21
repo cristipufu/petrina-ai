@@ -11,10 +11,14 @@ export class AgentBrowser {
   private closing?: Promise<void>;
   private constructor(readonly directory: string, private readonly child: ChildProcess, readonly mcp: McpServer, private readonly lifecycle: { used: boolean; closedUnused: boolean }, private readonly registration?: string) {}
 
-  static async start(parent: string | undefined, env: NodeJS.ProcessEnv, onLog?: (text: string) => void): Promise<AgentBrowser> {
+  /**
+   * `parent` registers the session folder for recovery after a crash. `root` holds session folders:
+   * the standard one unless a test fixture supplies its own, which startup recovery must use too.
+   */
+  static async start(parent: string | undefined, env: NodeJS.ProcessEnv, onLog?: (text: string) => void, root = browserTempRoot()): Promise<AgentBrowser> {
     // A short, uncrowded parent also leaves room for macOS browser sockets.
-    await mkdir(browserTempRoot(), { recursive: true, mode: 0o700 });
-    const directory = await realpath(await mkdtemp(join(browserTempRoot(), "petrina-browser-")));
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const directory = await realpath(await mkdtemp(join(root, "petrina-browser-")));
     const registration = parent ? join(parent, `${randomUUID()}.json`) : undefined;
     if (parent) {
       try {
@@ -215,17 +219,20 @@ export function browserTempRoot(): string {
   return process.platform === "darwin" ? join(homedir(), ".petrina", "b") : join(tmpdir(), "petrina-browsers");
 }
 
-/** Reap each registered browser before startup; only the session's own temp folder is eligible. */
-export async function recoverBrowserTemps(registry: string): Promise<void> {
+/**
+ * Reap each registered browser before startup; only the session's own temp folder is eligible.
+ * `root` is the parent the engine's sessions started in: a folder elsewhere is never reaped.
+ */
+export async function recoverBrowserTemps(registry: string, root = browserTempRoot()): Promise<void> {
   let entries: Dirent[];
   try { entries = await readdir(registry, { withFileTypes: true }); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
-  const tempRoot = await realpath(browserTempRoot()).catch((error: NodeJS.ErrnoException) => {
+  const tempRoot = await realpath(root).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
-    return resolve(browserTempRoot());
+    return resolve(root);
   });
   for (const entry of entries) {
     const registration = join(registry, entry.name);

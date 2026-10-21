@@ -89,6 +89,10 @@ export interface EngineOptions {
   admissionsClosed?: boolean;
   /** Tests: run a fake agent instead of the tool's adapter. */
   agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
+  /** Tests: whether eligible conversations get a browser. Real agents always do; fake agents only when this is true. */
+  browser?: boolean;
+  /** Tests: a fixture's own parent for temporary browser folders, instead of the standard one. Startup recovery uses it too. */
+  browserTempRoot?: string;
   /** Tests: a fake GitHub instead of `gh`. */
   gh?: readonly string[];
   /** Tests: native account-reader commands by tool; null disables a reader. Fake agents disable defaults. */
@@ -244,7 +248,7 @@ export abstract class Kernel {
     readonly dataDir: string,
     readonly options: EngineOptions = {},
   ) {
-    this.startupReady = recoverBrowserTemps(join(dataDir, "browser-temp")).then(() => {
+    this.startupReady = recoverBrowserTemps(join(dataDir, "browser-temp"), options.browserTempRoot).then(() => {
       this.startupComplete = true;
       if (this.startupSchedulePending && !this.stopped) this.schedule();
     });

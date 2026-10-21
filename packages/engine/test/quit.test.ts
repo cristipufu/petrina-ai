@@ -1,11 +1,15 @@
 // Quit the real engine process while fake agents are active, then restart: none may survive the old engine.
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { Engine } from "../src/engine.js";
 import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
-import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "./support.js";
+import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor, waitForFile } from "./support.js";
+
+// Conversations started here keep their browsers, in this file's own browser folder.
+const browsers = testBrowserRoot();
+afterAll(() => removeDir(browsers));
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const pidsIn = (path: string) => existsSync(path) ? readFileSync(path, "utf8").split("\n").map(Number).filter((pid) => Number.isSafeInteger(pid) && pid > 0) : [];
@@ -49,6 +53,7 @@ describe("Stopping during startup", () => {
       command: [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, "--hang", "--stubborn"],
       signal: controller.signal,
       probe,
+      browserTempRoot: browsers,
       callbacks: { onActivity: () => {}, onPlanStep: () => {}, onPermission: async () => "deny" },
       ...(probe ? { onGone: (stopped: Promise<void>) => { gone = stopped; } } : {}),
     }).then(() => "Opened unexpectedly", (error: Error) => error.message);

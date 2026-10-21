@@ -69,29 +69,36 @@ for (const passes of [true, false]) it(`cleans a parallel run's fixtures and Git
   const record = join(fixture, `${passes}.json`);
   const test = join(fixture, `${passes}.test.ts`);
   writeFileSync(test, `import { it, expect } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { run } from ${JSON.stringify(join(import.meta.dir, "../src/git.ts"))};
 import { browserTempRoot } from ${JSON.stringify(join(import.meta.dir, "../src/browser.ts"))};
-import { tempDir } from ${JSON.stringify(join(import.meta.dir, "support.ts"))};
+import { tempDir, testBrowserRoot } from ${JSON.stringify(join(import.meta.dir, "support.ts"))};
 it("leaves files for its parent to reclaim", async () => {
   const left = join(tmpdir(), "abandoned-fixture");
   mkdirSync(left);
   writeFileSync(join(left, "build-output"), "discard");
+  const browsers = testBrowserRoot();
+  mkdirSync(join(browsers, "petrina-browser-abandoned"));
   const result = await run(["git", "config", "--get", "core.hooksPath"], ${JSON.stringify(fixture)});
   if (result.code) throw new Error(result.stderr);
-  writeFileSync(${JSON.stringify(record)}, JSON.stringify({ folder: tmpdir(), helper: dirname(result.stdout.trim()), left, ordinary: tempDir("ordinary-"), browser: browserTempRoot(), env: [process.env.TMPDIR, process.env.TMP, process.env.TEMP] }));
+  writeFileSync(${JSON.stringify(record)}, JSON.stringify({ folder: tmpdir(), helper: dirname(result.stdout.trim()), left, ordinary: tempDir("ordinary-"), browser: browserTempRoot(), browsers, owned: realpathSync(process.env.PETRINA_TEST_BROWSERS!), env: [process.env.TMPDIR, process.env.TMP, process.env.TEMP] }));
   expect(${passes}).toBe(true);
 });`);
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], { cwd: fixture, env: { ...testGitEnv(), TMPDIR: parent, TMP: parent, TEMP: parent }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   expect(code, `${stdout}\n${stderr}`).toBe(passes ? 0 : 1);
-  const saved = JSON.parse(readFileSync(record, "utf8")) as { folder: string; helper: string; left: string; ordinary: string; browser: string; env: string[] };
+  const saved = JSON.parse(readFileSync(record, "utf8")) as { folder: string; helper: string; left: string; ordinary: string; browser: string; browsers: string; owned: string; env: string[] };
   expect(realpathSync(dirname(saved.folder))).toBe(realpathSync(parent));
   expect(dirname(saved.ordinary)).toBe(saved.folder);
   expect(saved.env).toEqual([saved.folder, saved.folder, saved.folder]);
   if (process.platform === "darwin") expect(saved.browser).toBe(join(homedir(), ".petrina", "b"));
+  // A fixture's private browser folder sits in the run's own short folder, which the run removes.
+  expect(dirname(saved.browsers)).toBe(saved.owned);
+  if (process.platform === "darwin") expect(Buffer.byteLength(join(saved.browsers, "petrina-browser-abcdef", "SingletonSocket"))).toBeLessThan(104);
+  expect(existsSync(saved.browsers)).toBe(false);
+  expect(existsSync(saved.owned)).toBe(false);
   expect(existsSync(saved.folder)).toBe(false);
   expect(existsSync(saved.helper)).toBe(false);
   expect(existsSync(saved.left)).toBe(false);
@@ -102,12 +109,18 @@ it("leaves files for its parent to reclaim", async () => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) it(`stops its parallel workers and reclaims their temporary folder on ${signal}`, async () => {
   const record = join(fixture, `${signal}.json`);
   const test = join(fixture, `${signal}.test.ts`);
-  writeFileSync(test, `import { it } from "bun:test";
-import { renameSync, writeFileSync } from "node:fs";
+  writeFileSync(test, `import { afterAll, it } from "bun:test";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { removeDir, testBrowserRoot } from ${JSON.stringify(join(import.meta.dir, "support.ts"))};
+// The fixture's own cleanup never runs when the run is interrupted.
+const browsers = testBrowserRoot();
+afterAll(() => removeDir(browsers));
 it("waits to be interrupted", async () => {
   const record = ${JSON.stringify(record)};
-  writeFileSync(record + ".tmp", JSON.stringify({ folder: tmpdir(), pid: process.pid }));
+  mkdirSync(join(browsers, "petrina-browser-interrupted"));
+  writeFileSync(record + ".tmp", JSON.stringify({ folder: tmpdir(), pid: process.pid, browsers, owned: process.env.PETRINA_TEST_BROWSERS }));
   renameSync(record + ".tmp", record);
   await Bun.sleep(60_000);
 }, 90_000);`);
@@ -116,12 +129,15 @@ it("waits to be interrupted", async () => {
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   try {
     await waitFor(() => existsSync(record), "the isolated test worker to start");
-    const saved = JSON.parse(readFileSync(record, "utf8")) as { folder: string; pid: number };
+    const saved = JSON.parse(readFileSync(record, "utf8")) as { folder: string; pid: number; browsers: string; owned: string };
     worker = saved.pid;
+    expect(existsSync(join(saved.browsers, "petrina-browser-interrupted"))).toBe(true);
     child.kill(signal);
     expect(await child.exited).toBe(signal === "SIGINT" ? 130 : 143);
     await waitFor(() => !alive(saved.pid), "the isolated test worker to stop");
     expect(existsSync(saved.folder)).toBe(false);
+    expect(existsSync(saved.browsers)).toBe(false);
+    expect(existsSync(saved.owned)).toBe(false);
     expect(realpathSync(dirname(saved.folder))).toBe(realpathSync(tmpdir()));
     expect(existsSync(tmpdir())).toBe(true);
   } finally {

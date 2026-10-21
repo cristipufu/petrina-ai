@@ -1,17 +1,18 @@
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AgentRun, ReopenFailed } from "../src/acp-run.js";
 import type { ChildProcess } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { descendantsKnown } from "../src/process-tree.js";
 import { BACKGROUND_FEATURES, backgroundConfig } from "../src/codex-background.js";
-import { removeDir, SLOW, tempDir } from "./support.js";
+import { removeDir, SLOW, tempDir, testBrowserRoot } from "./support.js";
 import { claudeSandbox } from "../src/sandbox.js";
 
 const root = tempDir("petrina-connector-browser-");
-afterAll(() => removeDir(root));
+const browsers = testBrowserRoot();
+afterAll(() => { removeDir(root); removeDir(browsers); });
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
 for (const toolId of ["claude-code", "codex"]) {
   for (const how of ["new", "resume", "load", "failed-reopen"] as const) {
@@ -23,7 +24,7 @@ for (const toolId of ["claude-code", "codex"]) {
       mkdirSync(join(cwd, ".claude"));
       writeFileSync(join(cwd, ".claude", "settings.json"), settings);
       const options = {
-        profile: { id: "test", toolId, model: "test", effort: "high" as const }, cwd, browserRoot: registry,
+        profile: { id: "test", toolId, model: "test", effort: "high" as const }, cwd, browserRoot: registry, browserTempRoot: browsers,
         sandbox: claudeSandbox(),
         callbacks, signal: signal.signal, command: [process.execPath, join(import.meta.dir, "browser-agent.ts")],
         env: { ...process.env, FAKE_REOPEN: how === "failed-reopen" ? "fail" : how, CODEX_CONFIG: JSON.stringify({ "features.computer_use": true, "features.plugins": true, "features.browser_use": true }) },
@@ -35,6 +36,8 @@ for (const toolId of ["claude-code", "codex"]) {
         run = await AgentRun.start(options);
       } else run = await AgentRun.start({ ...options, ...(how === "new" ? {} : { reopen: "old" }) });
       const directory = run.browser!.directory;
+      // New, reopened and replacement conversations all use the configured browser folder.
+      expect(dirname(directory)).toBe(browsers);
       try {
         const result = JSON.parse((await run.prompt("Describe supplied browser tools")).text);
         expect(result.tools).toContain("browser_navigate");
@@ -81,7 +84,7 @@ it("an aborted session stops its browser and removes its temporary folder", asyn
   const controller = new AbortController();
   const cwd = mkdtempSync(join(root, "abort-"));
   const registry = join(cwd, "registry");
-  const run = await AgentRun.start({ profile: { id: "abort", toolId: "claude-code", model: "test", effort: "high" }, cwd, browserRoot: registry, callbacks, signal: controller.signal, command: [process.execPath, join(import.meta.dir, "browser-agent.ts")] });
+  const run = await AgentRun.start({ profile: { id: "abort", toolId: "claude-code", model: "test", effort: "high" }, cwd, browserRoot: registry, browserTempRoot: browsers, callbacks, signal: controller.signal, command: [process.execPath, join(import.meta.dir, "browser-agent.ts")] });
   const directory = run.browser!.directory;
   controller.abort();
   await run.stop();
@@ -94,7 +97,7 @@ for (const how of ["stop", "abort"] as const) it.skipIf(process.platform === "wi
   const cwd = mkdtempSync(join(root, `${how}-page-`));
   const registry = join(cwd, "registry");
   let incomplete = 0;
-  const run = await AgentRun.start({ profile: { id: how, toolId: "claude-code", model: "test", effort: "high" }, cwd, browserRoot: registry, callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete += 1; } }, signal: signal.signal, command: [process.execPath, join(import.meta.dir, "browser-agent.ts")] });
+  const run = await AgentRun.start({ profile: { id: how, toolId: "claude-code", model: "test", effort: "high" }, cwd, browserRoot: registry, browserTempRoot: browsers, callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete += 1; } }, signal: signal.signal, command: [process.execPath, join(import.meta.dir, "browser-agent.ts")] });
   const browser = run.browser!;
   const child = (browser as unknown as { child: ChildProcess }).child;
   const endpoint = browser.mcp;

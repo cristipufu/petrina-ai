@@ -1,9 +1,8 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, linkSync, lstatSync, readFileSync, readdirSync, renameSync, symlinkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join, sep } from "node:path";
-import { homedir } from "node:os";
+import { chmodSync, existsSync, linkSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, symlinkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, sep } from "node:path";
 import * as os from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -12,11 +11,13 @@ import { AgentBrowser, browserTempRoot, recoverBrowserTemps } from "../src/brows
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { parseDescendants, readProcessList } from "../src/process-tree.js";
-import { engineEnv, Fakes, firstLine, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
+import { engineEnv, Fakes, firstLine, HARNESS, makeProduct, removeDir, SLOW, tempDir, testBrowserRoot, waitFor } from "./support.js";
 
 const root = tempDir("petrina-browser-");
-mkdirSync(browserTempRoot(), {recursive:true});
-afterAll(() => removeDir(root));
+// Sessions start in this file's own short browser folder, never the user's standard one.
+const browsers = testBrowserRoot();
+afterAll(() => { removeDir(root); removeDir(browsers); });
+const startBrowser = (parent: string, env: NodeJS.ProcessEnv = process.env, onLog?: (text: string) => void) => AgentBrowser.start(parent, env, onLog, browsers);
 
 export async function connectBrowser(browser: AgentBrowser) {
   if (!("url" in browser.mcp) || !("headers" in browser.mcp)) throw new Error("Expected an HTTP browser");
@@ -64,7 +65,7 @@ function requiredPid(pid: number | undefined, who: string): number {
 
 /** Open a real headless page, then run one shutdown and require every browser process it started to be gone. */
 async function expectBrowserStops(port: number, stop: (browser: AgentBrowser) => Promise<void>): Promise<void> {
-  const browser = await AgentBrowser.start(root, process.env);
+  const browser = await startBrowser(root);
   const child = (browser as unknown as { child: ChildProcess }).child;
   const controller = requiredPid(child.pid, "The browser controller");
   let client: Client | undefined;
@@ -98,7 +99,7 @@ async function expectBrowserStops(port: number, stop: (browser: AgentBrowser) =>
 }
 
 it("the browser server exposes page tools, confines output and stops cleanly even without opening a page", async () => {
-  const browser = await AgentBrowser.start(root, process.env);
+  const browser = await startBrowser(root);
   let client: Client | undefined;
   try {
     client = await connectBrowser(browser);
@@ -127,13 +128,13 @@ it("the browser server exposes page tools, confines output and stops cleanly eve
 it("restart reaps registered interrupted browser output and ignores outside paths", async () => {
   const registry = join(root, "registry");
   mkdirSync(registry);
-  const interrupted = mkdtempSync(join(browserTempRoot(), "petrina-browser-"));
+  const interrupted = mkdtempSync(join(browsers, "petrina-browser-"));
   writeFileSync(join(interrupted, "leftover.png"), "leftover");
   const product = join(root, "product-kept"); mkdirSync(product);
   writeFileSync(join(product, "keep.txt"), "product work");
   writeFileSync(join(registry, "interrupted.json"), JSON.stringify(interrupted));
   writeFileSync(join(registry, "outside.json"), JSON.stringify(product));
-  await recoverBrowserTemps(registry);
+  await recoverBrowserTemps(registry, browsers);
   expect(existsSync(interrupted)).toBe(false);
   expect(existsSync(registry)).toBe(false);
   expect(existsSync(join(product, "keep.txt"))).toBe(true);
@@ -141,16 +142,19 @@ it("restart reaps registered interrupted browser output and ignores outside path
 
 it("starts cleanly when no interrupted browser registry exists", async () => {
   const missing = join(root, "empty-browser-registry");
-  await recoverBrowserTemps(missing);
+  await recoverBrowserTemps(missing, browsers);
   expect(existsSync(missing)).toBe(false);
 });
 
-it.skipIf(process.platform !== "darwin")("recovers canonical browser folders when the home path is a symlink", async () => {
+it.skipIf(process.platform !== "darwin")("keeps the standard home browser folder and recovers it canonically when the home path is a symlink", async () => {
   const home = join(root, "real-home"), link = join(root, "home-link"), registry = join(root, "linked-home-registry");
   mkdirSync(home); symlinkSync(home, link); mkdirSync(registry);
   const mockedHome = spyOn(os, "homedir").mockReturnValue(link);
   try {
+    // Without a fixture's folder, sessions use the standard short folder in the home.
+    expect(browserTempRoot()).toBe(join(link, ".petrina", "b"));
     const browser = await AgentBrowser.start(registry, process.env);
+    expect(dirname(browser.directory)).toBe(realpathSync(join(home, ".petrina", "b")));
     const child = (browser as unknown as { child: ChildProcess }).child;
     const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
     child.kill("SIGKILL"); await exited;
@@ -172,7 +176,7 @@ it("discards a legacy directory and invalid browser registrations without follow
   symlinkSync(outside, join(registry, "outside-link"), process.platform === "win32" ? "junction" : "dir");
   writeFileSync(join(registry, "partial.json"), "{unfinished");
   writeFileSync(join(registry, "outside.json"), JSON.stringify(outside));
-  await recoverBrowserTemps(registry);
+  await recoverBrowserTemps(registry, browsers);
   expect(existsSync(registry)).toBe(false);
   expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("product work");
 });
@@ -181,7 +185,7 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
   const work = tempDir("petrina-browser-startup-pending-");
   const data = join(work, "data");
   const registry = join(data, "browser-temp");
-  const stale = mkdtempSync(join(browserTempRoot(), "petrina-browser-"));
+  const stale = mkdtempSync(join(browsers, "petrina-browser-"));
   const fakes = new Fakes(join(work, "fake"));
   mkdirSync(registry, { recursive: true });
   writeFileSync(join(registry, "stale.json"), JSON.stringify(stale));
@@ -198,7 +202,7 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
   }) as typeof processes.execFile);
   let engine: Engine | undefined;
   try {
-    engine = new Engine(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+    engine = new Engine(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], browser: true, browserTempRoot: browsers });
     await waitFor(() => releaseScan, "startup recovery to begin its owned process scan");
     const productId = await engine.addProduct(makeProduct(work));
     const taskId = engine.addTask({ productId, title: "A queued task", description: "[no-check]" });
@@ -243,7 +247,7 @@ for (const replacement of [false, true]) it(`does not advertise a ready engine o
   const fake = join(work, "fake");
   const bin = join(work, "bin");
   const registry = join(home, "browser-temp");
-  const session = mkdtempSync(join(browserTempRoot(), "petrina-browser-"));
+  const session = mkdtempSync(join(browsers, "petrina-browser-"));
   mkdirSync(registry, { recursive: true });
   mkdirSync(bin);
   mkdirSync(fake, { recursive: true });
@@ -252,7 +256,7 @@ for (const replacement of [false, true]) it(`does not advertise a ready engine o
   const lifecycle = replacement ? new LifecycleStore(home) : undefined;
   lifecycle?.begin("restart", { requestId: "browser-recovery" }, "paused");
   lifecycle?.finish("starting");
-  const proc = Bun.spawn([process.execPath, HARNESS, home, fake], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...engineEnv(home), PATH: `${bin}:${process.env.PATH ?? ""}`, ...(replacement ? { PETRINA_LIFECYCLE_REPLACEMENT: "1" } : {}) } });
+  const proc = Bun.spawn([process.execPath, HARNESS, home, fake, `--browser-root=${browsers}`], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...engineEnv(home), PATH: `${bin}:${process.env.PATH ?? ""}`, ...(replacement ? { PETRINA_LIFECYCLE_REPLACEMENT: "1" } : {}) } });
   try {
     const hello = JSON.parse(await firstLine(proc.stdout)) as { type: string; message?: string };
     expect(hello.type).toBe("error");
@@ -262,7 +266,7 @@ for (const replacement of [false, true]) it(`does not advertise a ready engine o
     expect(existsSync(session)).toBe(true);
     expect(await proc.exited).toBe(1);
     if (lifecycle) expect(lifecycle.receipt("browser-recovery")).toEqual(expect.objectContaining({ outcome: "failed", operation: expect.objectContaining({ phase: "failed" }) }));
-    await recoverBrowserTemps(registry);
+    await recoverBrowserTemps(registry, browsers);
     expect(existsSync(registry)).toBe(false);
     expect(existsSync(session)).toBe(false);
   } finally {
@@ -274,7 +278,7 @@ for (const replacement of [false, true]) it(`does not advertise a ready engine o
 });
 
 it("cleans output after the browser server is killed unexpectedly", async () => {
-  const browser = await AgentBrowser.start(root, process.env);
+  const browser = await startBrowser(root);
   const child = (browser as unknown as { child: ChildProcess }).child;
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   child.kill("SIGKILL");
@@ -352,7 +356,7 @@ import { descendantsKnown } from ${JSON.stringify(join(import.meta.dir, "../src/
 import { Client } from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/client/index.js"))};
 import { StreamableHTTPClientTransport } from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/client/streamableHttp.js"))};
 const registry = ${JSON.stringify(join(directory, "registry"))};
-const browser = await AgentBrowser.start(registry, process.env);
+const browser = await AgentBrowser.start(registry, process.env, undefined, ${JSON.stringify(browsers)});
 const child = (browser as any).child;
 const client = new Client({ name: "cleanup check", version: "1" });
 const savedPath = process.env.PATH;
@@ -397,7 +401,7 @@ console.log(JSON.stringify({ ...result, removedAfterRetry: !existsSync(browser.d
 
 it("stops unused endpoints and endpoints receiving their first connection", async () => {
   for (const connect of [false, true]) {
-    const browser = await AgentBrowser.start(root, process.env);
+    const browser = await startBrowser(root);
     const connecting = connect ? connectBrowser(browser).then((client) => client.close(), () => undefined) : undefined;
     try {
       await browser.close();
@@ -409,7 +413,7 @@ it("stops unused endpoints and endpoints receiving their first connection", asyn
 });
 
 it("waits for a cleanly exited unused helper's final stdout acknowledgement before cleanup", async () => {
-  const browser = await AgentBrowser.start(root, process.env);
+  const browser = await startBrowser(root);
   const child = browser["child"];
   const stdout = child.stdout!, readers = stdout.listeners("data"), chunks: Buffer[] = [];
   for (const reader of readers) stdout.removeListener("data", reader);
@@ -439,13 +443,11 @@ it("waits for a cleanly exited unused helper's final stdout acknowledgement befo
 });
 
 it("closes an acknowledged unused helper without scanning processes", async () => {
-  const browser = await AgentBrowser.start(root, process.env);
+  const browser = await startBrowser(root);
   const scan = spyOn(processes, "execFile");
   try {
-    if (process.platform === "darwin") {
-      expect(browser.directory.startsWith(join(homedir(), ".petrina", "b") + sep)).toBe(true);
-      expect(Buffer.byteLength(join(browser.directory, "SingletonSocket"))).toBeLessThan(104);
-    }
+    expect(browser.directory.startsWith(browsers + sep)).toBe(true);
+    if (process.platform === "darwin") expect(Buffer.byteLength(join(browser.directory, "SingletonSocket"))).toBeLessThan(104);
     await browser.close();
     expect(scan.mock.calls.filter(([program]) => program === "ps")).toHaveLength(0);
     expect(existsSync(browser.directory)).toBe(false);
@@ -481,7 +483,7 @@ console.error("BROWSER_LAUNCH_GUARD_READY");`).toString("base64")}`;
     ]) {
       let output = "";
       const inherited: NodeJS.ProcessEnv = { ...process.env, ...controls, BUN_OPTIONS: `--preload=${hook}` };
-      const browser = await AgentBrowser.start(root, inherited, (text) => { output += text; });
+      const browser = await startBrowser(root, inherited, (text) => { output += text; });
       let client: Client | undefined;
       let navigating: Promise<unknown> | undefined;
       try {
@@ -507,7 +509,7 @@ for (const opened of [false, true]) it.skipIf(opened && !process.env.PETRINA_BRO
   const product = join(root, `redirected-product-${opened}`);
   mkdirSync(product);
   writeFileSync(join(product, "keep.txt"), "Product files stay unchanged");
-  const browser = await AgentBrowser.start(root, process.env);
+  const browser = await startBrowser(root);
   const parked = `${browser.directory}-original`;
   let client: Client | undefined;
   try {
@@ -559,15 +561,15 @@ it.skipIf(!process.env.PETRINA_BROWSER_CHECK)("startup recovery retains a browse
   writeFileSync(join(bin, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
   writeFileSync(recoveryScript, `import { existsSync, readdirSync } from "node:fs";
 import { recoverBrowserTemps } from "../src/browser.js";
-const registry = process.argv[2]!;
+const [registry, browsers] = process.argv.slice(2) as [string, string];
 try {
-  await recoverBrowserTemps(registry);
+  await recoverBrowserTemps(registry, browsers);
   console.log(JSON.stringify({ failed: false }));
 } catch (error) {
   console.log(JSON.stringify({ failed: true, message: (error as Error).message, folder: readdirSync(registry).length, marker: existsSync(registry) }));
 }
 `);
-  const browser = await AgentBrowser.start(registry, process.env);
+  const browser = await startBrowser(registry);
   const child = (browser as unknown as { child: ChildProcess }).child;
   const controller = requiredPid(child.pid, "The browser controller");
   let client: Client | undefined;
@@ -585,14 +587,14 @@ try {
     child.kill("SIGKILL");
     await exited;
 
-    const failed = Bun.spawnSync([process.execPath, recoveryScript, registry], { cwd: import.meta.dir, env: { ...process.env, PATH: bin }, stdout: "pipe", stderr: "pipe" });
+    const failed = Bun.spawnSync([process.execPath, recoveryScript, registry, browsers], { cwd: import.meta.dir, env: { ...process.env, PATH: bin }, stdout: "pipe", stderr: "pipe" });
     expect(failed.exitCode, failed.stderr.toString()).toBe(0);
     expect(JSON.parse(failed.stdout.toString())).toMatchObject({ failed: true, message: "The headless browser did not stop." });
     expect(readdirSync(registry)).toHaveLength(1);
     expect(existsSync(browser.directory)).toBe(true);
     expect(owned.some(processAlive)).toBe(true);
 
-    await recoverBrowserTemps(registry);
+    await recoverBrowserTemps(registry, browsers);
     expect(existsSync(registry)).toBe(false);
     expect(existsSync(browser.directory)).toBe(false);
     for (const pid of owned) expect(processAlive(pid)).toBe(false);
@@ -620,8 +622,8 @@ it.skipIf(!process.env.PETRINA_BROWSER_CHECK)("real bundled Chromium: named and 
     }
     return new Response('<label>Name<input aria-label="Name"></label><button onclick="document.body.dataset.checked=1;console.log(\'clicked\')">Check</button><a id="ordinary" href="/download/ordinary.bin" download="ordinary.bin">Ordinary</a><a id="linked" href="/download/shortcut-download.png" download="shortcut-download.png">Linked</a><a id="shared" href="/download/hardlink-download.png" download="hardlink-download.png">Shared</a>', { headers: { "content-type": "text/html" } });
   } });
-  const first = await AgentBrowser.start(root, process.env);
-  const second = await AgentBrowser.start(root, process.env);
+  const first = await startBrowser(root);
+  const second = await startBrowser(root);
   const clients: Client[] = [];
   try {
     // Two simultaneous first connections must initialize the first agent's browser once.

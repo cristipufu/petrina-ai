@@ -10,6 +10,7 @@ import { Engine, type EngineOptions } from "../src/engine.js";
 import { AgentRun } from "../src/acp-run.js";
 import { AGENT_CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
 import { Store } from "../src/store.js";
+import { ToolChecks } from "../src/tool-checks.js";
 import { ADAPTERS, ENGINE_PROFILES, findProgram } from "../src/tools.js";
 import { EngineProcess, FAKE_GH, Fakes, git, makeProduct, makeWorld, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./support.js";
 
@@ -205,6 +206,16 @@ describe("Tool status", () => {
       // Every copy of Claude Code and Codex the engine starts. Counted as it starts them, so a machine too busy
       // for a copy to get going before the limit still counts it.
       let starts = 0;
+      let stopping = 0;
+      const start = AgentRun.start.bind(AgentRun);
+      const opening = spyOn(AgentRun, "start").mockImplementation((options) => start({
+        ...options,
+        onGone: (gone) => {
+          stopping += 1;
+          void gone.then(() => { stopping -= 1; });
+          options.onGone?.(gone);
+        },
+      }));
       const engine = new Engine(fresh("data"), {
         toolCheckTimeoutMs: 8_000,
         agentCommand: (profile) => {
@@ -227,20 +238,69 @@ describe("Tool status", () => {
         }
         expect(starts).toBe(2);
 
-        // Check again three times and come back to the window while the hung copies are still stopping:
-        // one new copy per tool, started only once the old one is gone.
+        // Cleanup may outlast a recheck's bounded wait on a busy machine. Wait for
+        // its completion here; controlled cases below cover rechecks while it is pending.
+        await waitFor(() => active.size === 0 && stopping === 0, "the first hung tools and their cleanup to finish", 6_000);
+        // Concurrent rechecks join one new check per tool once the old one is gone.
         await Promise.all([engine.checkTools(), engine.checkTools(), engine.checkTools()]);
         expect(most).toBeLessThanOrEqual(2);
         expect(starts).toBe(4);
         expect(status(engine, "claude-code")).toBe("unknown");
         // Every copy is stopped, though each ignored being asked.
-        await waitFor(() => active.size === 0, "the hung tools to be stopped", 6_000);
+        await waitFor(() => active.size === 0 && stopping === 0, "the hung tools and their cleanup to finish", 6_000);
       } finally {
-        engine.shutdown();
+        const shutdown = engine.shutdown();
         for (const child of active) child.kill("SIGKILL");
+        await shutdown;
+        opening.mockRestore();
         watching.mockRestore();
       }
     }, 60_000 * SLOW);
+  }
+
+  for (const releaseDuringCheck of [true, false]) {
+    it(`joins rechecks during cleanup and ${releaseDuringCheck ? "starts once cleanup finishes" : "reports still stopping, then recovers after cleanup"}`, async () => {
+      let release!: () => void;
+      const gone = new Promise<void>((done) => { release = done; });
+      const starting = spyOn(AgentRun, "start");
+      starting.mockImplementationOnce(async (options) => {
+        options.onGone?.(gone);
+        throw new Error("The tool could not open a conversation.");
+      });
+      starting.mockImplementationOnce(async (options) => {
+        options.onGone?.(Promise.resolve());
+        options.callbacks.onAuthStatus?.("account");
+        return { stop: async () => true } as unknown as AgentRun;
+      });
+      const engine = new Engine(fresh("data"), { agentCommand: agents({}) });
+      const tools = new ToolChecks(engine);
+      try {
+        await tools.check("codex");
+        expect(status(engine, "codex")).toBe("unknown");
+        const next = tools.check("codex");
+        expect(tools.check("codex")).toBe(next);
+        expect(tools.check("codex")).toBe(next);
+        await new Promise((done) => setImmediate(done));
+        expect(starting).toHaveBeenCalledTimes(1);
+        if (releaseDuringCheck) release();
+        await next;
+        if (!releaseDuringCheck) {
+          expect(starting).toHaveBeenCalledTimes(1);
+          expect(status(engine, "codex")).toBe("unknown");
+          expect(checkOf(engine.getState().setup?.checks, "codex").detail).toContain("still stopping after its last check");
+          release();
+          await gone;
+          await tools.check("codex");
+        }
+        expect(starting).toHaveBeenCalledTimes(2);
+        expect(status(engine, "codex")).toBe("ready");
+      } finally {
+        release();
+        await tools.shutdown();
+        await engine.shutdown();
+        starting.mockRestore();
+      }
+    });
   }
 
   it.skipIf(process.platform === "win32")("looks tools up on the PATH as it is now, as the Library does, so a Petrina opened from the Dock finds them", async () => {
