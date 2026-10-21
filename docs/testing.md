@@ -21,7 +21,7 @@ Every full run adds to task and review-loop duration. Use direct core tests for 
 
 Use explicit progress/release signals instead of sleeps and controlled clocks for time-independent decisions. Actual startup deadlines and stopping stubborn child processes need real wall-clock coverage. Measure costly new integration cases and the fully parallel run after fixture changes; report the results with the change. Do not trade away assertions, isolation or workers, or add retries and skips to obtain a faster result.
 
-The engine runner owns workers' temporary files and private Git helpers, reclaiming them after success, failure or interruption; Bun's isolated workers bypass exit hooks. Repository helpers copy immutable prepared seeds into independent object stores, refs and configuration. Never share mutable repositories, alternates or engine instances between tests.
+The engine runner owns workers' temporary files and private Git helpers, reclaiming them after success, failure or interruption; Bun's isolated workers bypass exit hooks. On macOS it puts each run under `~/.petrina/test-tmp` when the temporary parent is the normal session folder or system fallback, including their canonical paths and aliases. A custom temporary parent, including one inherited from an enclosing run, stays in place; only the run's own folder is removed. Browser files stay separately under `~/.petrina/b` for short socket paths and browser-owned recovery and cleanup. Repository helpers copy immutable prepared seeds into independent object stores, refs and configuration. Never share mutable repositories, alternates or engine instances between tests.
 
 ## Choose a focused test
 

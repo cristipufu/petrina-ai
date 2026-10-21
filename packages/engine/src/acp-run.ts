@@ -228,6 +228,10 @@ async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: bo
   }
   // Login probes never receive work. Stop their group at once, so a process lookup cannot hold
   // their forced stop past the tool check's deadline for starting the next probe.
+  // launch.ts forces engine exit after seven seconds. Reserve its last second for confirming
+  // the kill; process lookup and graceful stopping share the preceding six seconds.
+  const forceBy = Date.now() + 6_000;
+  const rescanBudget = collectPrograms ? 1_200 : 0;
   let complete = true;
   let pids = [child.pid];
   if (collectPrograms && running(child)) {
@@ -238,11 +242,13 @@ async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: bo
   }
   send([-child.pid], "SIGTERM");
   send(pids, "SIGTERM");
-  if (await exited([-child.pid, ...pids], graceMs)) return complete;
+  // A slow or failed first lookup must not let the grace wait consume the final lookup.
+  const graceLeft = Math.max(0, forceBy - rescanBudget - Date.now());
+  if (await exited([-child.pid, ...pids], Math.min(graceMs, graceLeft))) return complete;
   // Whatever ignored the request to stop is killed, with anything it started meanwhile.
   // Leave most of the lookup budget to the first snapshot on a busy machine; still fit the app's quit deadline.
   if (collectPrograms) {
-    const workers = await descendantsKnown(pids.filter(alive), 1_200);
+    const workers = await descendantsKnown(pids.filter(alive), Math.min(rescanBudget, Math.max(0, forceBy - Date.now())));
     if (workers === undefined) complete = false;
     else pids.push(...workers);
   }

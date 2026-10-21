@@ -116,18 +116,36 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     }
   });
 
-  it.skipIf(process.platform === "win32")("waits for a slow process lookup before removing a cancelled build's copy, and still quits on time", async () => {
+  for (const stubborn of [false, true]) it.skipIf(process.platform === "win32")(`waits for a slow process lookup before removing a cancelled build's copy, and still quits on time${stubborn ? " with an agent that ignores stopping" : ""}`, async () => {
     const dir = tempDir("petrina-slow-agent-stop-");
     const home = join(dir, "data");
     const fakes = new Fakes(join(dir, "fake"));
     const hold = join(dir, "hold");
     const slow = join(dir, "slow");
+    const scanned = join(dir, "scanned"), recover = join(dir, "recover");
     const buildPids = join(dir, "build-pids");
     const bin = join(dir, "bin");
     mkdirSync(bin);
     // Only this engine gets the delayed process-list stand-in, only once its background build is running.
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-    writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ -f ${quote(slow)} ]; then /bin/sleep 1.1; fi\nexec /bin/ps "$@"\n`);
+    writeFileSync(join(bin, "ps"), `#!/bin/sh
+if [ -f ${quote(slow)} ]; then
+  first=0
+  recovery=${quote(recover)}
+  if [ ! -f ${quote(scanned)} ]; then : > ${quote(scanned)}; first=1; fi
+  delay=${stubborn ? "3.9" : "1.1"}
+  if [ -f ${quote(recover)} ]; then delay=0.1; fi
+  /bin/sleep "$delay" &
+  sleeper=$!
+  trap 'if [ "$first" = 1 ]; then : > "$recovery"; fi; kill "$sleeper" 2>/dev/null; wait "$sleeper"; exit 143' TERM INT
+  wait "$sleeper"
+  /bin/ps "$@" &
+  sleeper=$!
+  wait "$sleeper"
+  exit $?
+fi
+exec /bin/ps "$@"
+`);
     chmodSync(join(bin, "ps"), 0o755);
     // Complete the Mac's first run of this fresh stand-in before measuring the
     // production stop deadline. The delayed scan itself must still run for real.
@@ -139,9 +157,12 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     writeFileSync(join(fakes.dir, "agents.json"), JSON.stringify({ hold: { title: "Long build", file: hold }, background: { title: "Long build", pids: buildPids } }));
     let engine: EngineProcess | undefined;
     try {
-      engine = await EngineProcess.start(home, [launcher, home, fakes.dir]);
+      engine = await EngineProcess.start(home, [launcher, home, fakes.dir, ...(stubborn ? ["--stubborn"] : [])]);
       const productId = await engine.act("addProduct", makeProduct(dir));
       for (const end of ["cancel", "quit"] as const) {
+        // A first lookup near its limit may time out under contention. Recovery must then
+        // be available; forcing every lookup past its deadline cannot prove child cleanup.
+        for (const file of [slow, scanned, recover]) rmSync(file, { force: true });
         rmSync(`${hold}.reached`, { force: true });
         const id = await engine.act("addTask", { productId, title: "Long build", description: "[quick]", delivery: "local" }) as string;
         await waitFor(async () => {
@@ -168,8 +189,10 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
           expect(agents.length).toBeGreaterThan(0);
           expect(await engine.quit()).toBeLessThan(10_000);
           expect([...pids, ...agents].filter(alive)).toEqual([]);
+          expect(readFileSync(join(home, "engine.log"), "utf8")).toContain("Petrina engine stopped");
           expect(existsSync(copy)).toBe(true);
         }
+        if (existsSync(recover)) console.info(`Recovered a timed-out first process scan during ${end}.`);
       }
     } finally {
       if (engine?.proc.exitCode === null) await engine.quit().catch(() => engine!.kill());

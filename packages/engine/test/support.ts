@@ -19,11 +19,6 @@ export { testGitEnv } from "./test-git-env.js";
 // Git's config environment is inherited by child processes even when Bun's mutable process.env is
 // cleaned up. Every test Git process gets its own explicitly sanitized environment instead.
 
-// Bun scans a script's ancestors on startup. The default macOS temp folder can hold tens of
-// thousands of entries; keep test fixtures and their child processes out of that crowded folder.
-// Leave an explicitly chosen temporary folder alone.
-if (process.platform === "darwin" && tmpdir().startsWith("/var/folders/")) process.env.TMPDIR = "/tmp";
-
 /**
  * How much longer the time limits are on this machine. A Windows runner takes several times longer to start
  * every engine, agent and git process these tests drive, and so does a machine busy with other work. The limits

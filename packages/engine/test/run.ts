@@ -3,12 +3,15 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { testTempParent } from "./temp-parent.js";
 
-const parent = process.platform === "darwin" && tmpdir().startsWith("/var/folders/") ? "/tmp" : tmpdir();
+const requested = tmpdir();
+const parent = testTempParent(requested);
+if (parent !== requested) mkdirSync(parent, { recursive: true, mode: 0o700 });
 const folder = mkdtempSync(join(parent, "petrina-tests-"));
-const home = join(folder, "home");
-mkdirSync(home);
 try {
+  const home = join(folder, "home");
+  mkdirSync(home);
   const child = Bun.spawn([process.execPath, "test", "--parallel", ...process.argv.slice(2)], {
     env: { ...process.env, TMPDIR: folder, TMP: folder, TEMP: folder, PETRINA_HOME: home },
     stdin: "inherit", stdout: "inherit", stderr: "inherit",
