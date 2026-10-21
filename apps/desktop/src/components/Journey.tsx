@@ -2,11 +2,12 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type Keybo
 import { createPortal } from "react-dom";
 import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { Ban, Check, Flag, GitBranch, Hourglass, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Activity, ArrowRight, Bot, ChevronRight, ClipboardCheck, Clock3, CornerDownRight, FileInput, MessageSquare, SlidersHorizontal, Timer, Ban, Check, Flag, GitBranch, Hourglass, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
 import { profileModelName, journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
 import { ago, duration, EFFORT_LABEL, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
 import { RoleAvatar } from "./bits";
+import { ToolIcon } from "./ToolIcon";
 import { TimelineList } from "./Timeline";
 import { StepConversation } from "./Session";
 import { FindingItem } from "./sheet/ReviewTab";
@@ -616,8 +617,8 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
         <dl className="journey-facts">
           {profiles.length > 0 && (
             <>
-              <dt>{node.legacy ? "Planned tool and model" : "Tool and model"}</dt>
-              <dd>{profiles.map((profile) => <span key={profile.id} className="journey-waits">{profileText(profile, find, true)}</span>)}</dd>
+              <dt><Bot size={14} aria-hidden="true" />{node.legacy ? "Planned tool and model" : "Tool and model"}</dt>
+              <dd>{profiles.map((profile) => <span key={profile.id} className="journey-agent-profile"><ToolIcon toolId={profile.toolId} /><span>{profileText(profile, find, true)}</span></span>)}</dd>
             </>
           )}
           {node.kind === "wait" && node.waitsOn?.length ? (
@@ -635,30 +636,28 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
               </dd>
             </>
           ) : null}
-          <dt>Started</dt>
+          <dt><Clock3 size={14} aria-hidden="true" />Started</dt>
           <dd className="num">{node.legacy || node.startedAt === undefined ? "Not recorded" : since(node.startedAt, now)}</dd>
           {time && (
             <>
-              <dt>{node.kind === "you" ? (node.endedAt === undefined ? "Waiting for" : "Waited") : node.endedAt === undefined ? "Elapsed so far" : "Elapsed"}</dt>
+              <dt><Timer size={14} aria-hidden="true" />{node.kind === "you" ? (node.endedAt === undefined ? "Waiting for" : "Waited") : node.endedAt === undefined ? "Elapsed so far" : "Elapsed"}</dt>
               <dd className="num">{node.kind === "you" ? time : `${time}, including any pauses and waiting`}</dd>
             </>
           )}
           {(outcome || node.live) && (
             <>
-              <dt>{outcome ? "Outcome" : "Now"}</dt>
+              <dt>{outcome ? <Flag size={14} aria-hidden="true" /> : <Activity size={14} aria-hidden="true" />}{outcome ? "Outcome" : "Now"}</dt>
               <dd>{outcome ?? node.live}</dd>
             </>
           )}
           {node.reason && (
             <>
-              <dt>{node.state === "failed" ? "Stopped because" : "Moved on"}</dt>
+              <dt><ArrowRight size={14} aria-hidden="true" />{node.state === "failed" ? "Stopped because" : "Moved on"}</dt>
               <dd className={node.tone === "back" ? "warn-text" : node.tone === "stuck" ? "bad-text" : ""}>{node.reason}</dd>
             </>
           )}
         </dl>
       )}
-
-      <StepUsage node={node} task={task} state={state} find={find} />
 
       {node.legacy && <p className="note">This step ran before Petrina kept each task's journey. Its saved profile is what was planned; who actually ran it, its time and outcome were not recorded.</p>}
 
@@ -675,10 +674,10 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
         for (const input of inputs) starts.set(seatKey(input), (starts.get(seatKey(input)) ?? 0) + 1);
         const seen = new Map<string, number>();
         return <div className="journey-context">
-          <h4>Why this step started</h4>
+          <div className="journey-trigger"><h4><CornerDownRight size={16} aria-hidden="true" />Why this step started</h4>
           <p>{previousJourneyStep
             ? `${priorName ?? "The previous step"}${priorResult ? ` handed it on: ${priorResult}.` : " finished, so this step began."}`
-            : "This was the first agent step in the plan."}</p>
+            : "This was the first agent step in the plan."}</p></div>
           {inputs.length > 0 ? inputs.map((input, index) => {
             const inputRole = find.role(input.roleId)?.name ?? input.roleId;
             const profile = find.profile(input.profileId);
@@ -688,8 +687,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
             const agentLabel = `${inputRole}${inputs.length > 1 && profile ? ` (${profileText(profile, find, true)})` : ""}${input.reviewerKey !== undefined ? ` · Seat ${Number(input.reviewerKey) + 1}` : ""}${starts.get(identity)! > 1 ? ` · Start ${start}` : ""}`;
             return <div className="journey-agent-start" key={`${input.roleId}:${input.profileId}:${input.reviewerKey ?? "main"}:${index}`}>
               <details className="agent-selection">
-                <summary>Agent choice{inputs.length > 1 ? ` · ${agentLabel}` : ""}</summary>
-                <p className="quiet-text">Recorded for you; these details are not instructions sent to the agent.</p>
+                <summary><SlidersHorizontal size={16} aria-hidden="true" /><span>Agent choice{inputs.length > 1 ? ` · ${agentLabel}` : ""}</span><ChevronRight className="journey-disclosure" size={16} aria-hidden="true" /></summary>
                 <p>Requested: {input.requestedProfileId ? profileText(find.profile(input.requestedProfileId), find, true) || "A profile no longer in the Library" : "Not recorded"}</p>
                 <p>Selected: {profileText(profile, find, true) || "A profile no longer in the Library"}</p>
                 {input.assignment && input.assignment.profileId !== input.requestedProfileId && <p>Original assignment: {profileText(find.profile(input.assignment.profileId), find, true) || "A profile no longer in the Library"}</p>}
@@ -699,7 +697,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
                 {input.confirmedSettings?.model && <p className="quiet-text">Tool confirmed at start: {input.confirmedSettings.modelName ?? (input.confirmedSettings.model === profile?.modelId ? profile.model : input.confirmedSettings.model)}{input.confirmedSettings.effort ? ` · ${EFFORT_LABEL[input.confirmedSettings.effort as keyof typeof EFFORT_LABEL] ?? input.confirmedSettings.effort}` : ""}</p>}
               </details>
               <details className="journey-input-record">
-                <summary>Input given to {agentLabel}</summary>
+                <summary><FileInput size={18} aria-hidden="true" /><span>Input given to {agentLabel}<span className="journey-input-mode">{input.mode === "continued" ? "Continued conversation" : "Fresh conversation"}</span></span><ChevronRight className="journey-disclosure" size={16} aria-hidden="true" /></summary>
                 <p className="quiet-text">{input.mode === "continued" ? "Updated job and context for its existing conversation." : "Job and context for a fresh conversation."}{input.stageTitle ? ` Assigned stage: ${input.stageTitle}.` : ""}{input.at !== undefined ? ` Sent ${since(input.at, now)}.` : ""}</p>
                 {input.taskDescription && <div>
                   <h4>Task request</h4>
@@ -726,6 +724,8 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
         </div>;
       })()}
 
+      <StepUsage node={node} task={task} state={state} find={find} />
+
       {node.kind === "agent" && role?.result === "build" && (
         <div className="journey-context">
           {node.fixing && (() => {
@@ -745,10 +745,10 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
               ?? [];
             return <>
               {failedChecks.length > 0 && <>
-                <h4>Failed checks that triggered this fix</h4>
+                <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Failed checks that triggered this fix</h4>
                 <ul className="journey-check-list">{failedChecks.map((check) => <li key={check.text}><strong>{check.text}</strong>{check.reason ? <span>{check.reason}</span> : null}</li>)}</ul>
               </>}
-              <h4>Findings assigned to this fix</h4>
+              <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Findings assigned to this fix</h4>
               {findings.length ? <ul className="journey-check-list">{findings.map((finding) => (
                 <li key={finding.id}><strong>{finding.text}</strong>{finding.answer ? <span>Builder’s last answer: {finding.answer.text}</span> : null}</li>
               ))}</ul> : <p className="note">This fix round’s assigned findings were not recorded.</p>}
@@ -758,18 +758,18 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
       )}
 
       {reviewGroups ? <ReviewRoundFindings groups={reviewGroups} find={find} {...(onOpen ? { onOpen } : {})} /> : findings !== undefined && <div className="journey-context">
-        <h4>Findings from this step</h4>
+        <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Findings from this step</h4>
         {findings.length ? <><p className="note">{node.result?.findings ? "As recorded when this step handed back its result." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
       </div>}
 
       {objections !== undefined && <div className="journey-context">
-        <h4>{role?.result === "brief" ? "Answers to objections" : "Objections from this step"}</h4>
+        <h4 className="journey-section-heading"><MessageSquare size={16} aria-hidden="true" />{role?.result === "brief" ? "Answers to objections" : "Objections from this step"}</h4>
         {objections.length ? <><p className="note">{node.result?.objections ? "As recorded when this step handed back its result." : "Latest recorded answers and status."}</p><ol className="issues">{objections.map((objection) => <ObjectionItem key={objection.id} objection={objection} find={find} />)}</ol></> : <p className="note">{node.result?.objections ? role?.result === "brief" ? "No objections needed an answer in this step." : "No objections were raised." : "This step's objection details were not recorded separately."}</p>}
       </div>}
 
       {acceptanceChecks.length ? (
         <div className="journey-context">
-          <h4>Acceptance checks</h4>
+          <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Acceptance checks</h4>
           <ul className="journey-check-list">
             {acceptanceChecks.map((check) => <li key={check.text}>
               <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" ? "bad" : "needs-you"}`}>{check.result === "pass" ? "Passed" : check.result === "fail" ? "Failed" : "Could not verify"}</span>
@@ -784,7 +784,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
       {(node.productChecks?.length || (node.kind === "petrina" && node.work === "checks")) && (() => {
         if (node.productChecks?.length) return <CheckAttempts checks={node.productChecks} find={find} now={now} />;
         if (currentCheckRuns?.length) return <div className="journey-context">
-          <h4>Automated check results</h4>
+          <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Automated check results</h4>
           <ul className="journey-check-list">{currentCheckRuns.map((check) => <li key={check.name}>
             <span className={`label ${check.ok ? "ok" : "bad"}`}>{check.ok ? "Passed" : check.timedOut ? "Timed out" : "Failed"}</span>
             <strong>{check.name}</strong>
@@ -792,14 +792,14 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
           </li>)}</ul>
         </div>;
         if (checkTimeline) return <div className="journey-context">
-          <h4>Automated check results</h4>
+          <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Automated check results</h4>
           <p>{checkTimeline.text}</p>
         </div>;
         return null;
       })()}
 
       {node.kind === "you" && node.waitsFor === "delivery" && currentCheckRuns?.some((check) => !check.ok) && <div className="journey-context">
-        <h4>Checks behind this delivery decision</h4>
+        <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Checks behind this delivery decision</h4>
         <ul className="journey-check-list">{currentCheckRuns.map((check) => <li key={check.name}>
           <span className={`label ${check.ok ? "ok" : "bad"}`}>{check.ok ? "Passed" : check.timedOut ? "Timed out" : "Failed"}</span>
           <strong>{check.name}</strong>
@@ -809,7 +809,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
 
       {node.asks.length > 0 && (
         <div className="journey-asked">
-          <h4>What it asked you</h4>
+          <h4 className="journey-section-heading"><MessageCircle size={16} aria-hidden="true" />What it asked you</h4>
           <ul>
             {node.asks.map((ask) => (
               <li key={ask.id} className={ask.endedAt === undefined ? "open" : ""}>

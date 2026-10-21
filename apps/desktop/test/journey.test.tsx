@@ -57,7 +57,7 @@ describe('the journey as a list, for screen readers and the keyboard', () => {
     const list = host.querySelector('ol')!;
     expect(list.getAttribute('aria-label')).toBe(`Journey, ${view.nodes.length} steps`);
     const items = [...list.querySelectorAll('li')].map((item) => item.textContent);
-    expect(items[3]).toBe('4. Code reviewer. Done. Codex · sol · high effort. 9m elapsed. 1 important. Moved on: sent back: 1 important.');
+    expect(items[3]).toBe('4. Code reviewer. Done. Codex · GPT-6.1 Sol · high effort. 9m elapsed. 1 important. Moved on: sent back: 1 important.');
     expect(items[7]).toMatch(/^8\. Your delivery check\. Waiting for you\. Waiting \d+m so far\. Reviews done/);
     expect(items[8]).toBe('9. Publish delivery. Next.');
   });
@@ -86,7 +86,7 @@ describe('the journey as a list, for screen readers and the keyboard', () => {
   it('says what a question or permission asked, and how you answered', () => {
     const asking = journeyView(taskOf(state, 'guest-checkout'), contextOf(state));
     const builder = asking.nodes.findIndex((node) => node.name === 'Builder');
-    expect(spokenStep(asking.nodes[builder]!, builder, find, state.now)).toMatch(/Builder\. Waiting for you\. Codex · sol · high effort\. \d+m elapsed so far\. Waiting for your permission\. Permission: Add a new package: Stripe\.js\. Waiting for you\.$/);
+    expect(spokenStep(asking.nodes[builder]!, builder, find, state.now)).toMatch(/Builder\. Waiting for you\. Codex · GPT-6.1 Sol · high effort\. \d+m elapsed so far\. Waiting for your permission\. Permission: Add a new package: Stripe\.js\. Waiting for you\.$/);
   });
 });
 
@@ -284,6 +284,9 @@ describe('the journey in the task sheet', () => {
     expect(details.querySelector('.journey-job')?.textContent).toContain(fixInput.instructions);
     expect(details.querySelector('.journey-input-updates')?.textContent).toContain(fixInput.updates[0]!.text);
     expect(details.textContent).toContain('Agent choice');
+    expect(details.textContent).not.toContain('Recorded for you;');
+    expect(details.querySelector('.journey-trigger h4')?.textContent).toBe('Why this step started');
+    expect(details.querySelector('.journey-input-mode')?.textContent).toBe('Continued conversation');
     const sentInput = details.querySelector('.journey-input-record')!;
     expect(sentInput.querySelector('.agent-selection')).toBeNull();
     expect(sentInput.textContent).not.toContain(fixInput.selectionReason);

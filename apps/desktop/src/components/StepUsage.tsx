@@ -1,3 +1,4 @@
+import { ChartNoAxesColumn } from "lucide-react";
 import { TOKEN_PARTS, tokenNumber, type JourneyNode, type State, type Task } from "@petrina/core";
 import type { Lookup } from "../lib";
 import { useUsage } from "../usage";
@@ -14,7 +15,7 @@ export function StepUsage({ node, task, state, find }: { node: JourneyNode; task
     : view.empty === "unreported" ? "The tool did not report token use for this step."
     : view.empty ? "No agent token use for this step." : undefined;
   return <section className="step-usage" aria-label="Usage">
-    <h4>Usage</h4>
+    <h4 className="journey-section-heading"><ChartNoAxesColumn size={16} aria-hidden="true" />Usage</h4>
     <div aria-live="polite" aria-atomic="true">
       {empty ? <p className="note">{empty}</p> : view && <>
         <p className="step-usage-total"><span>Total</span><strong className="num"><FigureText figure={view.tokens} kind="tokens" /></strong></p>

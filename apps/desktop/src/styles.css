@@ -977,8 +977,8 @@ kbd {
 .task-global-details:not([hidden]) { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
 .task-detail-panel .selected-step[hidden] { display: none; }
 .task-detail-panel .journey-details { border: 0; padding: 0; }
-.task-detail-panel .journey-facts { grid-template-columns: 1fr; gap: 3px; }
-.task-detail-panel .journey-facts dd { margin-bottom: 9px; }
+.task-detail-panel .journey-facts { grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr); gap: 8px 16px; }
+.task-detail-panel .journey-facts dd { margin: 0; }
 .task-detail-panel .journey-details-head h3 { align-items: flex-start; }
 .task-decisions .ask { margin: 0; }
 .task-workspace-switcher { display: none; }
@@ -1223,7 +1223,7 @@ kbd {
 .assignment-reason { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--text-2); }
 .assignment-reason summary { cursor: pointer; width: fit-content; }
 .assignment-reason p { margin: 8px 0 0; max-width: 40rem; }
-.agent-selection { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
+.agent-selection { padding: 0; }
 /* Your messages waiting for the agent: in the conversation, outlined until they are delivered. */
 .msg.queued .name { flex-wrap: wrap; align-items: center; }
 .msg.queued .queued-note { color: var(--text-3); font-weight: 400; font-size: var(--fs-meta); line-height: var(--lh-meta); }
@@ -2064,7 +2064,7 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-detail-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 .journey-detail-tabs button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .journey-tab-panel { display: grid; align-content: start; gap: 12px; min-width: 0; }
-.journey-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; }
+.journey-facts { display: grid; grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr); gap: 8px 16px; margin: 0; }
 .journey-facts dt { color: var(--text-3); }
 .journey-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 .journey-waits { display: block; }
@@ -2097,7 +2097,7 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-review-group > summary:hover { color: var(--accent); }
 .journey-review-group > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
 .journey-review-group > .note { margin-bottom: 8px; font-size: var(--fs-meta); }
-.journey-input-record { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
+.journey-input-record { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
 .journey-agent-start { display: grid; gap: 8px; min-width: 0; }
 :is(.journey-input-record, .agent-selection) summary { color: var(--text); font-size: var(--fs-control); font-weight: 600; cursor: pointer; }
 :is(.journey-input-record, .agent-selection) summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
@@ -2386,3 +2386,24 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .rail-group { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
 .rail-group + .rail-group { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
 .rail > a { flex-shrink: 0; }
+/* Step provenance: a handoff, compact selection metadata, then the actual input document. */
+.journey-facts dt { display: flex; align-items: baseline; gap: 6px; }
+.journey-facts dt > svg { align-self: start; flex-shrink: 0; margin-top: 3px; }
+.journey-agent-profile { display: flex; align-items: start; gap: 8px; }
+.journey-agent-profile + .journey-agent-profile { margin-top: 6px; }
+.journey-agent-profile .tool-icon, .journey-agent-profile .tool-icon img { width: 16px; height: 16px; flex: 0 0 16px; margin-top: 2px; }
+.journey-trigger { padding: 12px 14px; border-left: 2px solid var(--accent); background: var(--sunken); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.journey-trigger h4, .journey-section-heading { display: flex; align-items: center; gap: 8px; }
+.journey-context .journey-trigger h4 { margin: 0 0 6px; }
+.journey-section-heading > svg, .journey-trigger h4 > svg { flex-shrink: 0; color: var(--text-2); }
+.journey-agent-start { gap: 10px; }
+.journey-agent-start + .journey-agent-start { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 8px; }
+.journey-agent-start :is(.agent-selection, .journey-input-record) > summary { display: flex; align-items: center; gap: 8px; list-style: none; overflow-wrap: anywhere; min-height: 36px; }
+.journey-agent-start summary::-webkit-details-marker { display: none; }
+.journey-agent-start summary > span { flex: 1; min-width: 0; }
+.journey-agent-start summary > svg { flex-shrink: 0; color: var(--text-2); }
+.journey-agent-start .agent-selection > summary { color: var(--text-2); font-weight: 500; padding: 4px 0; }
+.journey-agent-start :is(.agent-selection, .journey-input-record) > summary:hover { color: var(--accent-text); }
+.journey-agent-start details[open] > summary > .journey-disclosure { transform: rotate(90deg); }
+.journey-input-mode { display: block; font-size: var(--fs-meta); color: var(--text-2); font-weight: 400; margin-top: 2px; }
+.journey-context .agent-selection p { font-size: var(--fs-control); margin: 8px 0; }
