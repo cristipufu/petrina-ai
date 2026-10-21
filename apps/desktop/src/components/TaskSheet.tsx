@@ -136,7 +136,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
           <button className="btn quiet small" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" /> Back</button>
           <div className="task-workspace-title">
             <h1 className="sheet-title" id="sheet-title" title={task.title}>{task.title}</h1>
-            <div className="sheet-meta"><ProductName product={product} />{task.source && <span className="source-label">{sourceLabel(task.source)}</span>}<span aria-hidden="true">·</span><span>{label}</span>{task.startedAt !== undefined && <span className="num">· started {duration(task.startedAt, state.now)} ago</span>}{task.screenAllowed && <span>· Screen allowed for this task</span>}</div>
+            <div className="sheet-meta"><ProductName product={product} />{task.source && <span className="source-label">{sourceLabel(task.source)}</span>}<span aria-hidden="true">·</span><span>{label}</span>{<span className="num">· {task.startedAt === undefined ? "created" : "started"} {duration(task.startedAt ?? task.createdAt, state.now)} ago</span>}{task.screenAllowed && <span>· Screen allowed for this task</span>}</div>
           </div>
           <div className="sheet-actions">
             {task.repositories ? <button className="btn quiet small" onClick={() => { taskDetails(); onTab("overview"); setPane("details"); }}>Deliveries · {task.repositories.filter((work) => work.pr || work.release || work.landed || work.nothingToPublish).length} of {task.repositories.length}</button> : prUrl && (

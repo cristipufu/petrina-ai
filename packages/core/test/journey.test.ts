@@ -835,3 +835,16 @@ describe("the demos", () => {
     expect(view.end?.state).toBe("done");
   });
 });
+
+it("never substitutes creation for an execution start on cancelled or waiting work", () => {
+  const state = createDemoState(1_000_000_000_000);
+  const base = { ...state.tasks[0]!, createdAt: 100, startedAt: undefined, journey: [], plan: undefined, agent: undefined, stageIndex: -1 };
+  const context = { roles: state.roles, profiles: state.profiles, tasks: [], inbox: [] };
+  const cancelled = journeyView({ ...base, state: "cancelled" }, context);
+  expect(cancelled.start).toEqual({ kind: "created", at: 100 });
+  expect(cancelled.nodes).toHaveLength(0); expect(cancelled.end!.text).toBe("Cancelled");
+  expect(journeyView({ ...base, state: "paused" }, context).start).toEqual({ kind: "created", at: 100 });
+  expect(journeyView({ ...base, state: "backlog" }, context).start).toEqual({ kind: "backlog" });
+  expect(journeyView({ ...base, state: "queued" }, context).start.kind).toBe("queued");
+  expect(journeyView({ ...base, state: "cancelled", startedAt: 500 }, context).start).toEqual({ kind: "started", at: 500 });
+});

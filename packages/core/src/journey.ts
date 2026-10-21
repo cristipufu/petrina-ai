@@ -538,7 +538,7 @@ export interface JourneyNode {
 }
 
 export interface JourneyView {
-  start: { kind: "started"; at: number } | { kind: "queued"; position: number } | { kind: "held" } | { kind: "backlog" };
+  start: { kind: "started" | "created"; at: number } | { kind: "queued"; position: number } | { kind: "held" } | { kind: "backlog" };
   nodes: JourneyNode[];
   /** Where it ended: delivered, awaiting merge, cancelled, or finished without a confirmed delivery. */
   end?: { text: string; state: "done" | "pending" | "cancelled" | "unconfirmed" };
@@ -750,7 +750,7 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
 
   const queue = queueOf(ctx.tasks);
   const start: JourneyView["start"] =
-    task.state === "backlog" ? { kind: "backlog" } : task.state === "queued" ? (task.held ? { kind: "held" } : { kind: "queued", position: Math.max(0, queue.findIndex((entry) => entry.id === task.id)) + 1 }) : { kind: "started", at: task.startedAt ?? task.createdAt };
+    task.state === "backlog" ? { kind: "backlog" } : task.state === "queued" ? (task.held ? { kind: "held" } : { kind: "queued", position: Math.max(0, queue.findIndex((entry) => entry.id === task.id)) + 1 }) : task.startedAt !== undefined ? { kind: "started", at: task.startedAt } : { kind: "created", at: task.createdAt };
   const writing = !finished && task.state !== "backlog" && task.stageIndex < 0 && !(open?.kind === "you" && open.waitsFor === "plan");
   const end = endOf(task);
   return {

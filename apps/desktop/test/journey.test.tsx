@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Simulator, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task } from '@petrina/core';
 import { App } from '../src/App';
-import { JourneyEdge, JourneyList, spokenStep } from '../src/components/Journey';
+import { JourneyEdge, JourneyList, spokenStep, startWords } from '../src/components/Journey';
 import { layoutJourney } from '../src/journeyLayout';
 import { deliveryText, lookup } from '../src/lib';
 import { repairedReviewFixture } from './reviewRoundFixture';
@@ -690,4 +690,11 @@ describe('the live arrow with reduced motion', () => {
       device.prefersReducedMotion = previous;
     }
   });
+});
+
+it("labels creation separately from the actual execution start", () => {
+  const state = createDemoState(NOW);
+  const view = journeyView({ ...state.tasks[0]!, state: "cancelled", startedAt: undefined, createdAt: NOW - 7_200_000, journey: [] }, contextOf(state));
+  expect(startWords(view, NOW)).toBe("Created 2h ago");
+  expect(startWords({ ...view, start: { kind: "started", at: NOW - 60_000 } }, NOW)).toBe("Started 1m ago");
 });

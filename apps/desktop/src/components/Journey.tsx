@@ -149,7 +149,8 @@ export function startWords(view: JourneyView, now: number): string {
   if (view.start.kind === "held") return "On hold";
   if (view.start.kind === "queued") return `#${view.start.position} in the queue`;
   const when = ago(view.start.at, now);
-  return when === "now" ? "Started just now" : `Started ${when} ago`;
+  const label = view.start.kind === "created" ? "Created" : "Started";
+  return when === "now" ? `${label} just now` : `${label} ${when} ago`;
 }
 
 function useReducedMotion(): boolean {
