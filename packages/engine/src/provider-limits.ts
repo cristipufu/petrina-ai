@@ -42,7 +42,9 @@ const CLAUDE_USAGE_PREFIXES = [
 
 export function claudeLimit(data: Record<string, unknown>, message: string): LimitFailure | undefined {
   if (typeof data.errorKind === "string" && CLAUDE_OUT.has(data.errorKind) || CLAUDE_USAGE_PREFIXES.some(prefix => message.includes(prefix))) {
-    return { kind: data.errorKind === "billing_error" ? "spend" : data.errorKind === "rate_limit" ? "rate" : "usage" };
+    return { kind: data.errorKind === "billing_error" ? "spend" : data.errorKind === "rate_limit" ? "rate" : "usage",
+      ...(data.errorKind === "billing_error" || data.errorKind === "account_on_hold" ? { independent: true } : {}),
+    };
   }
 }
 export function codexLimit(data: Record<string, unknown>): LimitFailure | undefined {

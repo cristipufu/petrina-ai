@@ -116,7 +116,7 @@ The `products_ever` table retains id, name, repository, when added and, if remov
 
 ### Readings of the tools' usage limits
 
-The `usage_readings` table records which limit, how much of it was used, its status, length and reset time, and when the tool said so. The last thirty days are kept, and a reading identical to the latest one of its limit is not written again, so a tool repeating itself on every turn leaves one row per change.
+The `usage_readings` table records which limit, how much of it was used, its status, length and reset time, and when the tool said so. The last thirty days are kept, and a reading identical to the latest one of its limit is not written again, so a tool repeating itself on every turn leaves one row per change. Analytics groups older and current Claude model-window names into the same line without rewriting saved readings.
 
 The tables live in the engine's SQLite file next to its state and survive restarts. Work history is retained; account readings keep the thirty-day window above. They hold only numbers, names and ids: no prompts, replies, commands or file paths. The dollar figure Claude Code sends is never read. The app never receives the log: the work-log state only carries a counter that changes when an entry is written and when tracking began.
 

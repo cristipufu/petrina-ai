@@ -503,8 +503,9 @@ export class AgentRun {
               const native = adapter.parseUsageUpdate?.(meta);
               const reports = native?.reports ?? [];
               for (const info of reports) callbacks.onUsage?.(info);
-              // A rejected spend cap outranks an open session window from the same note.
-              if (reports.length) state.latest = reports.find((info) => info.status === "rejected") ?? reports[0];
+              const windows = reports.filter(info => !info.claudeOverage);
+              if (windows.length) state.latest = windows.find((info) => info.status === "rejected" && !info.overage) ?? windows[0];
+              if (reports.some(info => info.claudeOverage === "unavailable") && state.latest?.overage) state.latest = { ...state.latest, overage: false };
               const seen = native?.model;
               if (state.turn && typeof seen === "string") state.turn.modelSeen = seen;
               break;
@@ -797,15 +798,21 @@ export class AgentRun {
 
   /** The usage limit a failed turn ran into, when that is why it failed. */
   private limitOf(error: unknown): UsageLimited | undefined {
-    const limited = this.rejected() ?? limitFromFailure(this.profile, error, this.state.text, Date.now());
-    if (limited && this.state.messages.streamed) limited.streamed = true;
+    const failure = limitFromFailure(this.profile, error, this.state.text, Date.now());
+    // A generic rate/quota refusal inherits the live window's scope and reset. Billing and
+    // account holds remain independent even when another subscription window is exhausted.
+    const limited = failure?.independent ? failure : this.rejected(failure ? "refusal" : "report") ?? failure;
+    if (limited) {
+      limited.said ??= this.state.text;
+      if (this.state.messages.streamed) limited.streamed = true;
+    }
     return limited;
   }
 
   /** Claude Code said, during this turn, that it is out. */
-  private rejected(): UsageLimited | undefined {
+  private rejected(source: "report" | "refusal" = "report"): UsageLimited | undefined {
     const info = this.state.latest ?? this.accountBefore?.reports.find(report => report.status === "rejected" && (report.resetsAt ?? 0) > Date.now() && (!report.model || inFamily(this.profile, report.model)));
-    return info?.status === "rejected" ? Object.assign(limitFromReport(this.profile, info, Date.now()), { said: this.state.text }) : undefined;
+    return info?.status === "rejected" && !info.overage && (!info.model || inFamily(this.profile, info.model)) && (info.resetsAt === undefined || info.resetsAt > Date.now()) ? Object.assign(limitFromReport(this.profile, info, Date.now(), source), { said: this.state.text }) : undefined;
   }
 
   /** Stop the current turn (the interrupt button). */

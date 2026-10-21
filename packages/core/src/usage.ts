@@ -45,6 +45,25 @@ export function kindWords(kind: string, minutes?: number, name?: string): string
   return name ? `${label}, ${name}` : label;
 }
 
+const CLAUDE_FAMILY_OF_KIND: Readonly<Record<string, string>> = { seven_day_opus: "opus", seven_day_sonnet: "sonnet", seven_day_overage_included: "fable" };
+const CLAUDE_KIND_OF_FAMILY = Object.fromEntries(Object.entries(CLAUDE_FAMILY_OF_KIND).map(([kind, family]) => [family, kind]));
+
+/** Account names and native kinds identify the same Claude model windows, including saved aliases. */
+export function claudeWindow<T extends Omit<UsageReport, "at">>(report: T): T {
+  if (report.toolId !== "claude-code") return report;
+  const family = CLAUDE_FAMILY_OF_KIND[report.kind] ?? (report.kind === "seven_day_model" ? report.model?.trim().toLowerCase() : undefined);
+  if (!family) return report;
+  const normalized = { ...report, kind: CLAUDE_KIND_OF_FAMILY[family] ?? "seven_day_model", model: family };
+  if (family === "opus" || family === "sonnet") {
+    delete normalized.name;
+    delete normalized.windowMinutes;
+  } else {
+    normalized.name = family;
+    normalized.windowMinutes = 10_080;
+  }
+  return normalized;
+}
+
 const modelWords = (family: string): string => family.charAt(0).toUpperCase() + family.slice(1);
 
 /** Whether a model family ("opus") is the profile's model. */
@@ -63,6 +82,17 @@ export function liveLimits(pool: Pool, now: number): readonly UsageLimit[] {
   return (pool.limited ?? []).filter((limit) => limit.until > now);
 }
 
+/** Show when each scope can work again; separate stored causes still keep their own expiry. */
+export function displayLimits(pool: Pool, now: number): UsageLimit[] {
+  const shown: UsageLimit[] = [];
+  for (const limit of liveLimits(pool, now)) {
+    const index = shown.findIndex(entry => entry.toolId === limit.toolId && (entry.model ?? "") === (limit.model ?? ""));
+    if (index < 0) shown.push(limit);
+    else if (limit.until > shown[index]!.until || limit.until === shown[index]!.until && limit.retry) shown[index] = limit;
+  }
+  return shown;
+}
+
 /** The limit that keeps this profile from working, if there is one. */
 export function limitOf(pool: Pool, profile: AgentProfile, now: number): UsageLimit | undefined {
   return liveLimits(pool, now).find((limit) => usageCovers(limit, profile));
@@ -74,9 +104,9 @@ export function nextExpiry(pool: Pool, now: number): number | undefined {
   return times.length ? Math.min(...times) : undefined;
 }
 
-/** The limits with this one added, replacing an older one for the same tool and model. */
+/** The limits with this one added, keeping request refusals separate from account readings. */
 export function withLimit(limits: readonly UsageLimit[] | undefined, limit: UsageLimit): UsageLimit[] {
-  const same = (entry: UsageLimit) => entry.toolId === limit.toolId && (entry.model ?? "") === (limit.model ?? "");
+  const same = (entry: UsageLimit) => entry.toolId === limit.toolId && (entry.model ?? "") === (limit.model ?? "") && (entry.source === "refusal") === (limit.source === "refusal");
   const kept = (limits ?? []).filter((entry) => !same(entry));
   const older = (limits ?? []).find(same);
   return [...kept, older && older.until > limit.until ? older : limit];
@@ -249,7 +279,7 @@ export function usagePauseWords(limit: UsageLimit, now: number): string {
 
 /** What a task waiting for usage says: who is out, and when work can be tried again. */
 export function waitingWords(state: Pick<State, "tools" | "pool">, now: number): string {
-  const limits = liveLimits(state.pool, now);
+  const limits = displayLimits(state.pool, now);
   if (!limits.length) return "Waiting for usage";
   const order = (toolId: Id) => state.tools.findIndex((tool) => tool.id === toolId);
   if (limits.some((limit) => limit.retry)) return `Waiting for usage: ${[...limits].sort((a, b) => order(a.toolId) - order(b.toolId)).map((limit) => `${toolName(state, limit.toolId)} ${usagePauseWords(limit, now)}`).join(" · ")}`;
@@ -286,7 +316,7 @@ export function usageLines(state: Pick<State, "tools" | "pool">, now: number): U
       .sort((a, b) => fullness(b) - fullness(a))
       .slice(0, 2)
       .map((report) => `${kindWords(report.kind, report.windowMinutes, report.name)} ${words(report)}${report.resetsAt !== undefined ? `, resets ${untilWords(report.resetsAt, now)}` : ""}`);
-    const out = liveLimits(state.pool, now)
+    const out = displayLimits(state.pool, now)
       .filter((limit) => limit.toolId === tool.id)
       .map((limit) => usagePauseWords(limit, now));
     const holding = !out.length && slowingDown(state.pool, tool.id, now);

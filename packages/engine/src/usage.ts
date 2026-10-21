@@ -42,7 +42,12 @@ export function capacityWaiting(until: number, now: number): string {
 }
 
 /** One report from a tool, before the engine stamps it with the time. */
-export type UsageInfo = Omit<UsageReport, "at">;
+export type UsageInfo = Omit<UsageReport, "at"> & {
+  /** Claude's separate paid allowance, not a subscription window. Consumed before storing pool readings. */
+  claudeOverage?: "available" | "unavailable";
+  /** Both shared windows and a valid explicit model list establish a complete account reading. */
+  claudeAccountComplete?: true;
+};
 
 /** A turn ended on a usage refusal. `until` is a reset, or a cooldown before retrying. */
 export class UsageLimited extends Error {
@@ -56,12 +61,15 @@ export class UsageLimited extends Error {
     readonly model?: string,
     /** The provider refused a request without reporting a reset; `until` is our retry time. */
     readonly retry?: boolean,
+    readonly source: "report" | "refusal" = "refusal",
   ) {
     super(retry ? reason : `${reason} is used up`);
   }
 
   /** What the agent had said in the turn before it stopped, when its tool lets that through. */
   said?: string;
+  /** A billing refusal or account hold is independent of any reported subscription window. */
+  independent?: true;
   /** The public text is already saved in the task's live conversation. */
   streamed?: boolean;
 }
@@ -116,9 +124,9 @@ export function waitingFor(words: string): WaitingForUsage {
 export { claudeReports, claudeReport } from "./claude-usage-report.js";
 
 /** The error for a turn that ended while the tool's latest report said it was out. */
-export function limitFromReport(profile: AgentProfile, info: UsageInfo, now: number): UsageLimited {
+export function limitFromReport(profile: AgentProfile, info: UsageInfo, now: number, source: "report" | "refusal" = "report"): UsageLimited {
   const tool = ADAPTERS[profile.toolId]?.name ?? profile.toolId;
-  return new UsageLimited(profile.toolId, info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS, `${tool}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, info.model);
+  return new UsageLimited(profile.toolId, info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS, `${tool}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, info.model, undefined, source);
 }
 
 /** "try again at 5:42 PM", or Claude's "resets 8:10pm": the next time the clock shows that. */
@@ -202,5 +210,7 @@ export function limitFromFailure(profile: AgentProfile, error: unknown, said: st
   if (!limit) return undefined;
   const tool = ADAPTERS[profile.toolId]?.name ?? profile.toolId;
   const reason = limit.reason ?? `${tool}'s ${limit.kind} limit`;
-  return new UsageLimited(profile.toolId, limit.retryAfter ? now + limit.retryAfter : clockTime(`${message}\n${said}`, now) ?? now + UNKNOWN_LIMIT_MS, reason, undefined, limit.retryAfter ? true : undefined);
+  const refusal = new UsageLimited(profile.toolId, limit.retryAfter ? now + limit.retryAfter : clockTime(`${message}\n${said}`, now) ?? now + UNKNOWN_LIMIT_MS, reason, undefined, limit.retryAfter ? true : undefined);
+  if (limit.independent) refusal.independent = true;
+  return refusal;
 }

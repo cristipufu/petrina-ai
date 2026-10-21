@@ -133,7 +133,7 @@ export interface Scenario {
    * Claude model reports a rejected rate limit of kind `type` (default "five_hour") first; "gpt-6.1-sol" fails the
    * way Codex does, with a message. Only agents with this `role` when it is set.
    */
-  limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean; afterRelease?: boolean; onScreen?: boolean }[];
+  limited?: { model: string; role?: string; type?: string; resetsInMs?: number; spendCap?: boolean; afterRelease?: boolean; onScreen?: boolean; refusal?: "synthetic" | "unrecognized" | "billing" | "hold" }[];
   /**
    * The selected Codex model is full. The matching turn ends on Codex's own sentence, before any work
    * (`partial` writes a draft first). `onScreen` waits for the screen prompt, then later continues on
@@ -145,7 +145,7 @@ export interface Scenario {
   /** The builder mentions the capacity sentence and still hands back a finished result. */
   mentionCapacity?: boolean;
   /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
-  usage?: { model: string; status: "allowed" | "allowed_warning" | "rejected"; utilization?: number; type?: string; resetsAt?: number; overage?: boolean }[];
+  usage?: { model: string; status: "allowed" | "allowed_warning" | "rejected"; utilization?: number; type?: string; resetsAt?: number; overage?: boolean; paidStatus?: "allowed" | "allowed_warning" | "rejected" }[];
 }
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
@@ -461,8 +461,8 @@ function releaseManager(cwd: string, text: string): string {
 }
 
 /** A usage report the way Claude Code sends it: a usage update that carries the rate limit in its notes. */
-const usageUpdate = (status: string, kind: string, utilization?: number, resetsAt?: number, overage?: boolean): acp.SessionNotification["update"] =>
-  ({ sessionUpdate: "usage_update", used: 100, size: 1000, _meta: { "_claude/rateLimit": { status, rateLimitType: kind, ...(utilization !== undefined ? { utilization } : {}), ...(resetsAt !== undefined ? { resetsAt } : {}), ...(overage ? { isUsingOverage: true } : {}) } } }) as acp.SessionNotification["update"];
+const usageUpdate = (status: string, kind: string, utilization?: number, resetsAt?: number, overage?: boolean, paidStatus?: string): acp.SessionNotification["update"] =>
+  ({ sessionUpdate: "usage_update", used: 100, size: 1000, _meta: { "_claude/rateLimit": { status, rateLimitType: kind, ...(utilization !== undefined ? { utilization } : {}), ...(resetsAt !== undefined ? { resetsAt } : {}), ...(overage ? { isUsingOverage: true } : {}), ...(paidStatus ? { overageStatus: paidStatus } : {}) } } }) as acp.SessionNotification["update"];
 
 /** Whether this model is out of usage now. The first time asks, the limit starts. */
 function outOfUsage(limit: NonNullable<Scenario["limited"]>[number]): number | undefined {
@@ -491,12 +491,14 @@ async function runOut(limit: NonNullable<Scenario["limited"]>[number], until: nu
   }
   await send(client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "I drafted notes.txt and started on the greeting file before running out." } });
   if (limit.spendCap) {
-    // The session window is open, but the separate spend cap is exhausted in the same update.
+    // Paid-usage status alone is informational. A real billing refusal still ends the turn.
     await send(client, sessionId, { sessionUpdate: "usage_update", used: 100, size: 1000, _meta: { "_claude/model": "claude-opus-5-5", "_claude/rateLimit": { status: "allowed", rateLimitType: "five_hour", utilization: 0.4, overageStatus: "rejected", overageResetsAt: Math.ceil(until / 1000) } } } as acp.SessionNotification["update"]);
+    throw acp.RequestError.internalError({ errorKind: "billing_error" }, "Internal error");
   } else {
     await send(client, sessionId, usageUpdate("rejected", limit.type ?? "five_hour", 1, Math.ceil(until / 1000)));
   }
-  throw new Error("Claude usage limit reached");
+  if (limit.refusal === "unrecognized") throw new Error("Claude usage limit reached");
+  throw acp.RequestError.internalError(limit.refusal === "synthetic" ? {} : { errorKind: limit.refusal === "billing" ? "billing_error" : limit.refusal === "hold" ? "account_on_hold" : "rate_limit" }, `You've hit your ${limit.type === "seven_day_opus" ? "Opus" : "usage"} limit`);
 }
 
 async function answer(sessionId: string, text: string, client: acp.AgentContext): Promise<Reply> {
@@ -553,7 +555,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     if (plan.followUpMatch === "unsure") return done({ groups: [], uncertain: keys });
     return { text: "could not tell" };
   }
-  for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage));
+  for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage, report.paidStatus));
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);
   if (limit && until && !limit.afterRelease) await runOut(limit, until, session, sessionId, client);

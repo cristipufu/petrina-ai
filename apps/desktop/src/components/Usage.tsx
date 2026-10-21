@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useLimitClock } from "../usage";
 import { TOOL_COLORS } from "../lib";
-import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, usageLines, usagePauseWords, agoText, limitWords, count, figureText, tokenNumber, type AboutCounts, type Figure, type WorkUsageLine, type State, type UsagePeriod, TOKEN_PARTS } from "@petrina/core";
+import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, displayLimits, usageLines, usagePauseWords, agoText, limitWords, count, figureText, tokenNumber, type AboutCounts, type Figure, type WorkUsageLine, type State, type UsagePeriod, TOKEN_PARTS } from "@petrina/core";
 
 /** Chart colours per tool: the app's tool colours, with their own step in dark mode. */
 export const toolColor = (toolId: string | undefined) => (toolId ? `var(--tool-${toolId}, var(--slate))` : "var(--slate)");
@@ -303,11 +303,12 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
   const lines = usageLines(state, now);
   if (expanded) {
     const tools = state.tools.filter((tool) => tool.status === "ready" || reports.some((report) => report.toolId === tool.id) || tool.id === "claude-code" || tool.id === "codex");
+    const limits = displayLimits(state.pool, now);
     return (
       <div className="usage-limits">
         {tools.map((tool) => {
           const own = reports.filter((report) => report.toolId === tool.id);
-          const out = (state.pool.limited ?? []).filter((limit) => limit.toolId === tool.id && limit.until > now);
+          const out = limits.filter((limit) => limit.toolId === tool.id);
           return (
             <div key={tool.id} className="limit-card">
               <div className="row">
@@ -338,7 +339,7 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
                 );
               })}
               {out.map((limit) => (
-                <div className="limit" key={limit.model ?? "all"}>
+                <div className="limit" key={`pause:${limit.model ?? ""}`}>
                   <div className="bad small">{usagePauseWords(limit, now)}</div>
                   {limit.retry && <div className="muted small">{limit.reason}</div>}
                   <div className="muted small">{limit.at === undefined ? "Report time not reported" : `Reported ${agoText(limit.at, now)}`}</div>

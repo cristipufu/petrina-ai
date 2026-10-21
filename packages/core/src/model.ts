@@ -947,6 +947,8 @@ export interface UsageReport {
 export interface UsageLimit {
   toolId: Id;
   model?: string;
+  /** Keep an actual request refusal separate from a restriction inferred from account readings. */
+  source?: "report" | "refusal";
   /** Milliseconds. */
   until: number;
   /** Plain words, for example "Claude Code's weekly Opus limit". */

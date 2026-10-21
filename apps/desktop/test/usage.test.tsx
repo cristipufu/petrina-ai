@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDemoState, untilWords, type State, type WorkUsageLine } from '@petrina/core';
+import { createDemoState, untilWords, usageLines, waitingWords, withLimit, type State, type UsageLimit, type WorkUsageLine } from '@petrina/core';
 import { SplitList, UsageList, usageNote } from '../src/components/Usage';
 
 vi.mock('../src/engine', () => ({ mode: 'demo', desktop: false, sim: {} }));
@@ -12,7 +12,7 @@ async function show(state: State, expanded = false) {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   await act(async () => root.render(<UsageList state={state} expanded={expanded} />));
 }
-afterEach(() => { act(() => root.unmount()); host.remove(); });
+afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
 
 const MINUTE = 60_000;
 
@@ -73,6 +73,54 @@ describe('usage by tool', () => {
     expect(host.textContent).toContain('reported just now');
     expect(host.textContent).toContain('out until');
     expect(host.textContent).toContain('Reported 2m ago');
+  });
+
+  it.each([
+    { refusalLonger: false, refusalFirst: true },
+    { refusalLonger: false, refusalFirst: false },
+    { refusalLonger: true, refusalFirst: true },
+    { refusalLonger: true, refusalFirst: false },
+  ])('shows one Analytics wait per scope, matching the pool through expiry: %j', async ({ refusalLonger, refusalFirst }) => {
+    const state = createDemoState(1_000_000_000);
+    vi.useFakeTimers();
+    vi.setSystemTime(state.now);
+    const short = state.now + 30 * MINUTE;
+    const long = state.now + 3 * 24 * 60 * MINUTE;
+    const refusal: UsageLimit = { toolId: 'codex', source: 'refusal', retry: true, until: refusalLonger ? long : short, at: state.now, reason: 'Codex refused the request' };
+    const reading: UsageLimit = { toolId: 'codex', source: 'report', until: refusalLonger ? short : long, at: state.now + 5_000, reason: "Codex's weekly limit" };
+    const limited = refusalFirst ? withLimit(withLimit([], refusal), reading) : withLimit(withLimit([], reading), refusal);
+    const current = { ...state, pool: { ...state.pool, limited, usage: [{ toolId: 'codex', kind: 'seven_day', status: 'rejected' as const, utilization: 1, resetsAt: reading.until, at: reading.at! }] } };
+    await show(current, true);
+    const card = () => [...host.querySelectorAll('.limit-card')].find((node) => node.querySelector('strong')?.textContent === 'Codex')!;
+    const pause = `${refusalLonger ? 'request refused; retry after' : 'out until'} ${untilWords(long, state.now)}`;
+    expect([...card().querySelectorAll('.bad.small')].map((node) => node.textContent)).toEqual([pause]);
+    expect(card().querySelector('[role="meter"]')?.getAttribute('aria-valuenow')).toBe('100');
+    expect(card().textContent?.includes(refusal.reason)).toBe(refusalLonger);
+    expect(waitingWords(current, state.now)).toContain(pause);
+    expect(usageLines(current, state.now).find((line) => line.toolId === 'codex')?.text).toContain(pause);
+    expect(current.pool.limited).toHaveLength(2);
+
+    // Repeated snapshots and the shorter expiry keep one row; both expiring remove it.
+    for (const now of [state.now, short, long]) {
+      await act(async () => root.render(<UsageList state={{ ...current, now }} expanded />));
+      vi.setSystemTime(now);
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect([...card().querySelectorAll('.bad.small')].map((node) => node.textContent)).toEqual(now === long ? [] : [pause]);
+    }
+  });
+
+  it('keeps separate model waits in Analytics when an overlapping tool wait recovers', async () => {
+    const state = createDemoState(1_000_000_000);
+    const shared: UsageLimit = { toolId: 'claude-code', source: 'report', until: state.now + 60 * MINUTE, reason: 'Shared quota used up' };
+    const refusal: UsageLimit = { ...shared, source: 'refusal', until: state.now + 5 * MINUTE };
+    const opus: UsageLimit = { ...shared, model: 'opus', until: state.now + 120 * MINUTE };
+    const sonnet: UsageLimit = { ...shared, model: 'sonnet', until: state.now + 180 * MINUTE };
+    const current = { ...state, pool: { ...state.pool, usage: [], limited: [refusal, shared, opus, sonnet] } };
+    await show(current, true);
+    const pauses = () => [...host.querySelectorAll('.limit-card .bad.small')].map((node) => node.textContent);
+    expect(pauses()).toEqual([`out until ${untilWords(shared.until, state.now)}`, `Opus out until ${untilWords(opus.until, state.now)}`, `Sonnet out until ${untilWords(sonnet.until, state.now)}`]);
+    await act(async () => root.render(<UsageList state={{ ...current, pool: { ...current.pool, limited: [refusal, opus, sonnet] } }} expanded />));
+    expect(pauses()).toEqual([`out until ${untilWords(refusal.until, state.now)}`, `Opus out until ${untilWords(opus.until, state.now)}`, `Sonnet out until ${untilWords(sonnet.until, state.now)}`]);
   });
 
   it('keeps an exhausted extra-usage limit beside an open five-hour allowance from the same report', async () => {

@@ -145,6 +145,26 @@ describe("Usage limits over time", () => {
   const week = periodRange("7d", NOW);
   const range = { from: week.from, to: week.to };
 
+  it("joins saved Claude model aliases with current readings without rewriting history", () => {
+    for (const [model, kind] of [["fable", "seven_day_overage_included"], ["opus", "seven_day_opus"], ["sonnet", "seven_day_sonnet"]]) {
+      const history = [0.05, 0.06, 0.08].map((utilization, index) => report({ kind: "seven_day_model", model, name: model, windowMinutes: 10_080,
+        utilization, at: NOW - (3 - index) * HOUR, resetsAt: NOW + HOUR,
+      }));
+      const before = history.map(entry => ({ ...entry }));
+      const current = [report({ kind, model, ...(model === "fable" ? { name: model, windowMinutes: 10_080 } : {}), utilization: 0.09, at: NOW - 1000, resetsAt: NOW + HOUR })];
+      const view = limitsOverTime(history, current, range, NOW, toolName);
+      expect(view.tools[0]!.limits).toHaveLength(1);
+      expect(view.tools[0]!.limits[0]!.readings.map(reading => reading.used)).toEqual([0.05, 0.06, 0.08, 0.09]);
+      expect(view.tools[0]!.limits[0]!.nextReset).toBe(NOW + HOUR);
+      expect(history).toEqual(before);
+      // A current copy of the last saved alias is not a second point, and the
+      // same names on another tool are not Claude aliases.
+      const duplicate = limitsOverTime([...history, ...current], current, range, NOW, toolName);
+      expect(duplicate).toEqual(view);
+      expect(limitsOverTime(history.map(entry => ({ ...entry, toolId: "other" })), current.map(entry => ({ ...entry, toolId: "other" })), range, NOW, toolName).tools[0]!.limits).toHaveLength(2);
+    }
+  });
+
   it("draws each limit's readings in the period, named plainly, with its resets", () => {
     const history = [
       report({ at: NOW - 10 * DAY, utilization: 0.9 }),

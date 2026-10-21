@@ -11,6 +11,14 @@ afterAll(() => roots.forEach(removeDir));
 const MINUTE = 60_000;
 const models = ["opus-high", "gpt-6.1-sol-high"];
 
+function hasReadAction(task: Task, seat?: string): boolean {
+  const agent = seat === undefined ? task.agent : [task.agent, ...(task.helpers ?? [])].find(agent => agent?.reviewKey === seat);
+  const activity = seat === undefined ? task.toolActivity : task.hunt?.work?.[seat]?.toolActivity;
+  return agent !== undefined && activity?.profileId === agent.profileId && activity.lastActivity === "Reading the code" && !activity.runningTool;
+}
+
+const reviewersHaveRead = (task: Task) => ["reviewer:0", "reviewer:1"].every(seat => hasReadAction(task, seat));
+
 async function setup(role: "code-reviewer" | "security-reviewer" = "code-reviewer", important = false) {
   const root = tempDir("petrina-group-summary-"); roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
@@ -64,7 +72,7 @@ describe("real grouped review summaries", () => {
         expect(mainLine(started)).toBe(todo);
         const first = started.agent!.profileId;
         for (const tag of tags) go(`action-1-${tag}`);
-        const state = await engine.until((state) => Object.values(find(state).hunt?.work ?? {}).every((work) => work.activity === "Continuing work"), "both read actions");
+        const state = await engine.until((state) => reviewersHaveRead(find(state)), "both read actions");
         const working = find(state);
         expect(mainLine(working)).toBe(todo);
         expect(working.statusLine).toBe("Continuing work");
@@ -129,7 +137,7 @@ describe("real grouped review summaries", () => {
       await run.approve();
       await Promise.all(tags.map((tag) => run.ready(tag)));
       for (const tag of tags) { run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`); }
-      await engine.until((state) => Object.values(run.find(state).hunt?.work ?? {}).every((work) => work.activity === "Continuing work"), "the review actions");
+      await engine.until((state) => reviewersHaveRead(run.find(state)), "the review actions");
       run.advance(5);
       run.go(`result-1-${tags[1]}`); run.go(`finish-${tags[1]}`);
       const partial = await engine.until((state) => !!run.find(state).hunt?.reported["1"], "the second reviewer to finish");
@@ -176,7 +184,7 @@ describe("real grouped review summaries", () => {
           });
         await Promise.all(tags.map((tag) => run.ready(tag)));
         for (const tag of tags) { go(`publish-1-${tag}`); go(`action-1-${tag}`); }
-        await engine.until((state) => Object.values(find(state).hunt!.work!).every((work) => work.activity === "Continuing work"), "both review actions");
+        await engine.until((state) => reviewersHaveRead(find(state)), "both review actions");
         run.advance(4);
         go(`ask-permission-${tags[0]}`); go(`ask-permission-twice-${tags[0]}`); go(`result-1-${tags[0]}`);
         const asked = await engine.until((state) => state.inbox.filter((item) => item.kind === "permission").length === 2, "both requests from one reviewer");
@@ -237,7 +245,7 @@ describe("real grouped review summaries", () => {
       const tag = "code-reviewer-opus-high";
       await run.ready(tag);
       run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`);
-      const working = await engine.until((state) => run.find(state).statusLine === "Continuing work", "the port review action");
+      const working = await engine.until((state) => hasReadAction(run.find(state)), "the port review action");
       expect(mainLine(run.find(working))).toBe("Checking the greeting");
       expect(run.find(working).stepClock!.roleId).toBe("code-reviewer");
       run.advance(8);
@@ -265,7 +273,7 @@ describe("real grouped review summaries", () => {
       for (const tag of tags.slice(0, -1)) run.go(`action-1-${tag}`);
       const hasAction = (state: State, seat: string) => {
         const work = run.find(state).hunt?.work?.[seat];
-        return work?.todo === "Checking the reported problem" && work.toolActivity?.lastActivity === "Reading the code";
+        return work?.todo === "Checking the reported problem" && hasReadAction(run.find(state), seat);
       };
       // The displayed voter can be ready while a peer is still waiting to act.
       // Hold that peer explicitly so this cannot rely on simultaneous delivery.
@@ -395,7 +403,7 @@ describe("real grouped review summaries", () => {
       await run.approve();
       await Promise.all(tags.map((tag) => run.ready(tag)));
       for (const tag of tags) { run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`); }
-      await engine.until((state) => Object.values(run.find(state).hunt!.work!).every((work) => work.activity === "Continuing work"), "both reviewers at work");
+      await engine.until((state) => reviewersHaveRead(run.find(state)), "both reviewers at work");
       run.advance(4);
       run.go(`ask-question-${tags[1]}`); run.go(`result-1-${tags[1]}`);
       const asked = await engine.until((state) => state.inbox.some((item) => item.kind === "question"), "the second reviewer's question");

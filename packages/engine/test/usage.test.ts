@@ -226,15 +226,15 @@ describe.concurrent("an agent that runs out of usage", () => {
     }
   });
 
-  it("keeps both limit reports and the turn's settings when the spend cap rejects an open session window", async () => {
+  it("keeps a real billing refusal and the turn's settings while the included session window is open", async () => {
     const run = await start({ planner: "claude-build", builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] });
     try {
       const task = await run.done();
       expect(run.engine.getState().pool.usage).toEqual(expect.arrayContaining([
         expect.objectContaining({ toolId: "claude-code", kind: "five_hour", status: "allowed", utilization: 0.4 }),
-        expect.objectContaining({ toolId: "claude-code", kind: "overage", status: "rejected", resetsAt: expect.any(Number) }),
       ]));
-      expect(run.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", reason: "Claude Code's extra usage limit", at: expect.any(Number) }]);
+      expect(run.engine.getState().pool.usage!.some(report => report.kind === "overage")).toBe(false);
+      expect(run.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", source: "refusal", reason: "Claude Code's spend limit", at: expect.any(Number) }]);
       const builders = run.engine.tracking.log.turns({ taskId: task.id }).filter((turn) => turn.roleId === "builder");
       expect(builders[0]).toMatchObject({ toolId: "claude-code", modelAsked: "opus", effortAsked: "high", modelRan: "opus", effortRan: "high", end: "agent-stopped", workMs: expect.any(Number) });
       expect(builders[0]!.tokens).toBeUndefined();
@@ -270,7 +270,10 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(lines(task)).toContain("Builder on Codex · sol took over from Claude Code · Opus 5.5, which ran out of usage");
       expect(task.session.some((line) => line.from === "system" && line.text.startsWith("Builder on Codex · sol took over from Claude Code"))).toBe(true);
       // Who is out is kept, and the plan is not rewritten.
-      expect(run.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", reason: "Claude Code's 5-hour limit" }]);
+      expect(run.engine.getState().pool.limited).toMatchObject([
+        { toolId: "claude-code", source: "report", reason: "Claude Code's 5-hour limit" },
+        { toolId: "claude-code", source: "refusal", reason: "Claude Code's 5-hour limit" },
+      ]);
       expect(task.plan!.stages.find((stage) => stage.roleId === "builder")!.profileIds).toEqual(["opus-high"]);
       const actual = task.builderSession!.profileId;
       expect(task.builderSession!.plannedProfileId).toBe("opus-high");
@@ -304,7 +307,10 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(builders).toHaveLength(2);
       expect(run.modelOf(builders[1]!.session)).toBe("sonnet");
       expect(lines(task)).toContain("Builder on Claude Code · Sonnet 5.5 took over from Claude Code · Opus 5.5, which ran out of usage");
-      expect(run.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", model: "opus", reason: "Claude Code's weekly Opus limit" }]);
+      expect(run.engine.getState().pool.limited).toMatchObject([
+        { toolId: "claude-code", model: "opus", source: "report", reason: "Claude Code's weekly Opus limit" },
+        { toolId: "claude-code", model: "opus", source: "refusal", reason: "Claude Code's weekly Opus limit" },
+      ]);
     } finally {
       run.engine.shutdown();
     }
@@ -346,8 +352,9 @@ describe.concurrent("an agent that runs out of usage", () => {
       // letting machine load consume a tiny quota window before the fake agent can report it.
       const resetAt = Date.now() + 1500;
       writeFileSync(join(run.fakes.dir, "limit-opus"), String(resetAt));
-      const claudeLimit = run.engine.s.pool.limited!.find((limit) => limit.toolId === "claude-code")!;
-      claudeLimit.until = resetAt;
+      const claudeLimits = run.engine.s.pool.limited!.filter((limit) => limit.toolId === "claude-code");
+      expect(claudeLimits.map(limit => limit.source).sort()).toEqual(["refusal", "report"]);
+      for (const limit of claudeLimits) limit.until = resetAt;
       run.engine.schedule();
 
       const task = await run.done();
@@ -428,6 +435,25 @@ describe.concurrent("an agent that runs out of usage", () => {
 });
 
 describe.concurrent("usage reports", () => {
+  it("keeps the planned Claude agent when repeated live reports reject only paid usage", async () => {
+    const run = await start({ planner: "claude-build", builder: "plain", usage: [{ model: "opus", status: "allowed", utilization: 0.05, type: "five_hour", paidStatus: "rejected" }] });
+    try {
+      const task = await waitFor(() => {
+        run.answer();
+        const task = run.find();
+        if (task.state === "failed") throw new Error(`The task failed: ${task.error}`);
+        return task.builderSession && task;
+      }, "Claude to finish the planned build with included quota");
+      expect(task.builderSession?.toolId).toBe("claude-code");
+      expect(run.fakes.received("builder")).toHaveLength(1);
+      expect(run.engine.getState().pool.limited ?? []).toEqual([]);
+      expect(run.engine.getState().pool.usage!.some(report => report.kind === "overage")).toBe(false);
+      const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
+      expect(details.failuresByReason).toEqual([]);
+      expect(details.retries).toBe(0);
+    } finally { await run.engine.shutdown(); }
+  });
+
   it("land in the pool, the latest per tool and kind of limit", async () => {
     const run = await start({ planner: "claude-build", builder: "plain", usage: [{ model: "opus", status: "allowed", utilization: 0.4, type: "seven_day" }] });
     try {
@@ -674,10 +700,10 @@ describe("what the tools say about usage", () => {
     expect(claudeReports("claude-code", { "_claude/rateLimit": { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000, isUsingOverage: true } })).toEqual([
       { toolId: "claude-code", kind: "seven_day", status: "rejected", resetsAt: 1_800_000_000_000, overage: true },
     ]);
-    // The spend cap is its own field. It can be rejected while the session window is still open.
+    // Paid status is separate from the included window; it is consumed before shared readings.
     expect(claudeReports("claude-code", { "_claude/rateLimit": { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.95, overageStatus: "rejected", overageResetsAt: 1_800_000_000 } })).toEqual([
       { toolId: "claude-code", kind: "five_hour", status: "allowed_warning", utilization: 0.95 },
-      { toolId: "claude-code", kind: "overage", status: "rejected", resetsAt: 1_800_000_000_000 },
+      { toolId: "claude-code", kind: "overage", status: "rejected", claudeOverage: "unavailable", resetsAt: 1_800_000_000_000 },
     ]);
     expect(claudeReport("claude-code", {})).toBeUndefined();
     expect(claudeReport("claude-code", { "_claude/rateLimit": { status: "whatever" } })).toBeUndefined();

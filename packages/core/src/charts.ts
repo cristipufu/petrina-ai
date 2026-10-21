@@ -3,7 +3,7 @@
 // the running total; and each usage limit's readings over the period with its reset moments.
 
 import type { Id, UsageReport } from "./model.js";
-import { kindWords } from "./usage.js";
+import { claudeWindow, kindWords } from "./usage.js";
 import { sameLimit } from "./usage-history.js";
 import { lineModelLabel, turnModelLabel, type TokenLine, type WorkTurn } from "./worklog.js";
 
@@ -222,8 +222,9 @@ function usedOf(report: UsageReport): number | undefined {
  */
 export function limitsOverTime(history: readonly UsageReport[], current: readonly UsageReport[], range: { from: number; to: number }, now: number, toolName: (toolId: Id) => string, toolOrder: readonly Id[] = []): LimitsOverTime {
   const inRange = (at: number) => at >= range.from && at < range.to;
-  const reports = history.filter((report) => inRange(report.at));
-  for (const report of current) {
+  const reports = history.filter((report) => inRange(report.at)).map(report => claudeWindow(report));
+  for (const raw of current) {
+    const report = claudeWindow(raw);
     if (!inRange(report.at)) continue;
     const last = reports.findLast((entry) => sameLimit(entry, report));
     if (!last || last.at < report.at) reports.push(report);

@@ -6,7 +6,7 @@ export interface AccountReading {
   reports: UsageInfo[];
   tokens?: { total: number; input: number; output: number; reasoning: number; cached?: number };
 }
-export interface LimitFailure { kind: "usage" | "rate" | "spend"; retryAfter?: number; reason?: string }
+export interface LimitFailure { kind: "usage" | "rate" | "spend"; retryAfter?: number; reason?: string; independent?: true }
 export interface ReaderOptions {
   command: readonly string[];
   cwd: string;

@@ -118,6 +118,26 @@ describe("who works a step", () => {
 });
 
 describe("limits and reports", () => {
+  it("shows the longest restriction for each scope while retaining independent lifetimes", () => {
+    for (const toolId of ["codex", "claude-code"]) for (const refusalLonger of [false, true]) for (const refusalFirst of [false, true]) {
+      const refused = { ...out(toolId, now + (refusalLonger ? 72 : 0.5) * HOUR), source: "refusal" as const, ...(refusalLonger ? { retry: true } : {}) };
+      const reported = { ...out(toolId, now + (refusalLonger ? 0.5 : 72) * HOUR), source: "report" as const };
+      const limits = refusalFirst ? withLimit(withLimit([], refused), reported) : withLimit(withLimit([], reported), refused);
+      const state = { tools, pool: pool({ limited: limits, usage: [report({ toolId, status: "rejected", utilization: 1, resetsAt: reported.until })] }) };
+      const name = toolId === "codex" ? "Codex" : "Claude Code";
+      const words = refusalLonger ? "request refused; retry after" : "out until";
+      expect(limits).toHaveLength(2);
+      expect(waitingWords(state, now)).toBe(`Waiting for usage: ${name}${refusalLonger ? "" : " is"} ${words} ${untilWords(now + 72 * HOUR, now)}`);
+      expect(usageLines(state, now).find(line => line.toolId === toolId)!.text).toBe(`weekly 100%, resets ${untilWords(reported.until, now)} · ${words} ${untilWords(now + 72 * HOUR, now)}`);
+      expect(nextExpiry(state.pool, now)).toBe(now + 0.5 * HOUR);
+      expect(liveLimits(state.pool, now + HOUR)).toEqual([refusalLonger ? refused : reported]);
+    }
+    // Distinct models and tools still have distinct waits; the earliest can resume first.
+    const state = { tools, pool: pool({ limited: [out("claude-code", now + HOUR, "opus"), out("claude-code", now + 2 * HOUR, "sonnet"), out("codex", now + 3 * HOUR)] }) };
+    expect(waitingWords(state, now)).toBe("Waiting for usage: Claude Code (Opus), Claude Code (Sonnet) and Codex are out until 13:00");
+    expect(usageLines(state, now)[0]!.text).toBe("Opus out until 13:00 · Sonnet out until 14:00");
+  });
+
   it("shows a refused request's cooldown separately from the account's weekly allowance", () => {
     const toolList = [...tools, { id: "grok", name: "Grok", command: [], status: "ready" as const, models: [] }];
     const refused = { toolId: "grok", until: now + 5 * 60_000, retry: true, reason: "Grok refused the request: Grok Build usage balance exhausted" };
@@ -142,6 +162,14 @@ describe("limits and reports", () => {
     expect(nextExpiry(pool(), now)).toBeUndefined();
     expect(withReport([report({ utilization: 0.5 })], report({ utilization: 0.6 }))).toEqual([report({ utilization: 0.6 })]);
     expect(withReport([report({})], report({ kind: "five_hour" }))).toHaveLength(2);
+  });
+
+  it("keeps a request refusal independent of a longer report-derived restriction", () => {
+    const refused = { ...out("claude-code", now + HOUR), source: "refusal" as const };
+    const reported = { ...out("claude-code", now + 2 * HOUR), source: "report" as const };
+    const limits = withLimit(withLimit(undefined, refused), reported);
+    expect(limits).toEqual([refused, reported]);
+    expect(withLimit(limits, { ...reported, until: now + 3 * HOUR })).toEqual([refused, { ...reported, until: now + 3 * HOUR }]);
   });
 });
 
