@@ -1,10 +1,11 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import { Plus } from "lucide-react";
 import { frequencyText, occurrenceText, routinePreview, routineReferenceProblem, type Routine, type RoutineDraft, type RoutineSchedule, type State } from "@petrina/core";
+import { EditorPanel } from "./EditorPanel";
 import { sim, useEngineStatus } from "../engine";
 import { profileText, type Lookup } from "../lib";
 import { followLink, routeHref } from "../routes";
-import { ConfirmDialog, RoleAvatar, useFocusTrap } from "./bits";
+import { ConfirmDialog, RoleAvatar } from "./bits";
 
 export function Routines({ state, find, product, onOpen, onDialogChange }: { state: State; find: Lookup; product: string; onOpen: (id: string) => void; onDialogChange?: (open: boolean) => void }) {
   const [editor, setEditor] = useState<Routine | "new">();
@@ -53,9 +54,8 @@ function RoutineEditor({ routine, state, find, product, connected, onClose }: { 
   const [initial] = useState<RoutineDraft>(() => routine ?? { name: `${roles[0]?.name ?? "Maintenance"} · ${find.product(product)?.name ?? state.products[0]?.name ?? ""}`, productId: product === "all" ? state.products[0]?.id ?? "" : product, roleId: roles[0]?.id ?? "", profileId: state.profiles.find(p => p.id === "sol-medium")?.id ?? state.profiles[0]?.id ?? "", focus: "", zone: Intl.DateTimeFormat().resolvedOptions().timeZone, schedule: { kind: "daily", time: "09:00" }, enabled: true });
   const [draft, setDraft] = useState(initial), [error, setError] = useState(""), [busy, setBusy] = useState(false), [discard, setDiscard] = useState(false);
   const [named, setNamed] = useState(!!routine);
-  const panel = useRef<HTMLElement>(null), id = useId();
-  const close = () => JSON.stringify(initial) !== JSON.stringify(draft) ? setDiscard(true) : onClose();
-  useFocusTrap(panel, close);
+  const id = useId();
+  const close = () => { if (!busy) { if (JSON.stringify(initial) !== JSON.stringify(draft)) setDiscard(true); else onClose(); } };
   const set = (change: Partial<RoutineDraft>) => setDraft(current => {
     const next = { ...current, ...change };
     if (!named && (change.productId || change.roleId)) next.name = `${find.role(next.roleId)?.name ?? "Maintenance"} · ${find.product(next.productId)?.name ?? ""}`;
@@ -73,10 +73,7 @@ function RoutineEditor({ routine, state, find, product, connected, onClose }: { 
   const schedule = (value: RoutineSchedule) => set({ schedule: value });
   const time = draft.schedule.kind === "cron" ? "09:00" : draft.schedule.time;
   const select = (label: string, key: "productId" | "roleId" | "profileId", choices: { id: string; name: string }[]) => <label className="form-field"><span className="field-label">{label}</span><select className="select" value={draft[key]} onChange={e => set({ [key]: e.target.value })}>{!choices.some(c => c.id === draft[key]) && <option value={draft[key]}>Choose an available {label.toLowerCase()}</option>}{choices.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>;
-  return <><div className="scrim" onClick={close} /><section ref={panel} className="sheet panel routine-panel" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); if (connected && !busy) void save(); } }}>
-    <div className="sheet-bar"><span>{routine ? "Edit routine" : "New routine"}</span><button className="btn quiet icon" aria-label="Close routine editor" onClick={close}><X size={18} /></button></div>
-    <div className="sheet-scroll"><header className="sheet-hero"><h1 id={`${id}-title`}>{routine ? "Edit routine" : "Schedule maintenance"}</h1></header>
-      <div className="sheet-body role-form">
+  return <><EditorPanel title={routine ? "Edit routine" : "New routine"} onClose={close} busy={busy} closeLabel="Close routine editor" className="routine-panel" bodyClassName="role-form" onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); if (connected && !busy) void save(); } }} footer={        <div className="routine-actions"><button className="btn lead" disabled={!connected || busy} onClick={() => void save()}>{busy ? "Saving…" : "Save routine"}</button><button className="btn" onClick={close}>Cancel</button></div>}>
         {select("Product", "productId", state.products.map(p => ({ id: p.id, name: p.name })))}
         {select("Maintenance role", "roleId", roles.map(r => ({ id: r.id, name: r.name })))}
         {select("Agent profile", "profileId", state.profiles.map(p => ({ id: p.id, name: profileText(p, find, true) })))}
@@ -93,8 +90,5 @@ function RoutineEditor({ routine, state, find, product, connected, onClose }: { 
         <label><input type="checkbox" checked={draft.enabled} onChange={e => set({ enabled: e.target.checked })} /> Enabled</label>
         {(error || referenceError) && <p className="error-text" role="alert">{error || referenceError}</p>}
         {!connected && <p role="status">Waiting for the engine to reconnect.</p>}
-        <div className="routine-actions"><button className="btn lead" disabled={!connected || busy} onClick={() => void save()}>{busy ? "Saving…" : "Save routine"}</button><button className="btn" onClick={close}>Cancel</button></div>
-      </div>
-    </div>
-  </section>{discard && <ConfirmDialog title="Discard routine changes?" children={<p>Your unsaved changes will be lost.</p>} confirm="Discard changes" cancel="Keep editing" onCancel={() => setDiscard(false)} onConfirm={onClose} />}</>;
+    </EditorPanel>{discard && <ConfirmDialog title="Discard routine changes?" children={<p>Your unsaved changes will be lost.</p>} confirm="Discard changes" cancel="Keep editing" onCancel={() => setDiscard(false)} onConfirm={onClose} />}</>;
 }

@@ -190,3 +190,5 @@ Off by default.
 - Attachments: screenshots and links.
 - "Add another" keeps the dialog open for brain dumps. Pasting a list creates one task per line.
 - New task and Add product open centred and stay inside the window at every size and at 200% zoom; when there is not enough room, the dialog scrolls inside itself.
+
+Creation editors for tasks, combined requests, routines, roles and products share a right-hand panel with one heading, a scrolling form and a fixed action footer. Profile editors use the same surface. Close, Cancel, outside click and Escape all preserve a changed draft until discard is confirmed; an in-flight save blocks dismissal. Small confirmations remain centered over the editor. First-run forms stay inside their guided setup steps.

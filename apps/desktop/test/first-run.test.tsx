@@ -88,7 +88,7 @@ describe('first run', () => {
     // Nothing to write a task for yet.
     expect(offers[1]!.disabled).toBe(true);
     await click(offers[0]!);
-    expect(host.querySelector('[role=dialog][aria-labelledby="add-product-title"]')).not.toBeNull();
+    expect(host.querySelector('[role=dialog][aria-label="Add a product"]')).not.toBeNull();
   });
 
   /** The Tools screen with these answers. */

@@ -260,8 +260,8 @@ describe('the app keyboard', () => {
       expect(host.querySelectorAll('.toast').length).toBe(2);
       const layer = (selector: string) => Number(getComputedStyle(el(selector)).zIndex);
       await key('n', { ctrlKey: true });
-      expect(layer('.toasts')).toBeLessThan(layer('.dialog-scrim'));
-      expect(layer('.toasts')).toBeLessThan(layer('.dialog'));
+      expect(layer('.toasts')).toBeLessThan(layer('.editor-scrim'));
+      expect(layer('.toasts')).toBeLessThan(layer('.editor-panel'));
       await key('Escape'); await key('k', { ctrlKey: true });
       expect(layer('.toasts')).toBeLessThan(layer('.palette-scrim'));
       await key('Escape'); await key('Enter');
@@ -520,7 +520,7 @@ describe('the app keyboard', () => {
     const count = simulator.getState().tasks.length;
     await palette('An entirely new task'); await key('Enter');
     expect(el<HTMLInputElement>('.title-input').value).toBe('An entirely new task');
-    expect(el<HTMLButtonElement>('.dialog .btn.lead').disabled).toBe(false);
+    expect(el<HTMLButtonElement>('.editor-panel .btn.lead').disabled).toBe(false);
     expect(host.querySelector('[role=radio][aria-checked=true].tone-violet')).toBeNull();
     await key('k', {ctrlKey:true}); expect(host.querySelector('.command-palette')).toBeNull();
     expect(simulator.getState().tasks.length).toBe(count);

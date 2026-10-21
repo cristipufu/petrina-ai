@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { EditorPanel } from "./EditorPanel";
 import { FolderGit2 } from "lucide-react";
 import { suggestProductName } from "@petrina/core";
 import { failureText, sim, useEngineStatus, useSim } from "../engine";
-import { useFocusTrap, WaitingLine } from "./bits";
+import { ConfirmDialog, WaitingLine } from "./bits";
 
 /**
  * Add a product from a local clone of its GitHub repository. A clone linked to GitHub opens on the
@@ -20,8 +21,8 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
   const [added, setAdded] = useState<{ id: string; already: boolean }>();
   const product = added && state.products.find((entry) => entry.id === added.id);
   const note = product && (added.already || product.delivery === "local");
-  const box = useRef<HTMLDivElement>(null);
-  useFocusTrap(box, onClose);
+  const [discard, setDiscard] = useState(false);
+  const close = () => { if (!busy) { if (!added && (path || name)) setDiscard(true); else onClose(); } };
 
   const done = useRef(onAdded);
   done.current = onAdded;
@@ -55,20 +56,23 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
 
   return (
     <>
-      <div className="dialog-scrim" onClick={onClose} />
-      <div ref={box} className="dialog" role="dialog" aria-modal="true" aria-labelledby="add-product-title" tabIndex={-1}>
+      <EditorPanel title="Add a product" description="Point Petrina at a local clone of the product's GitHub repository." icon={<FolderGit2 size={24} />} busy={busy} onClose={close} footer={<>
+
+          <span className="spacer" />
+          <button className="btn quiet" disabled={busy} onClick={close}>
+            {note ? "Close" : "Cancel"}
+          </button>
+          {note ? (
+            <button key="done" className="btn lead" autoFocus onClick={() => onAdded(product.id)}>
+              {added.already ? "Show it" : "Done"}
+            </button>
+          ) : (
+            <button key="add" className="btn lead" disabled={!path.trim() || !name.trim() || busy || !live || !!added} onClick={() => void add()}>
+              {busy || added ? "Adding…" : "Add product"}
+            </button>
+          )}
+      </>}>
         <WaitingLine text={waiting} />
-        <div className="row" style={{ gap: 12, marginBottom: 8 }}>
-          <span className="avatar tone-violet" style={{ width: 40, height: 40, borderRadius: 12 }} aria-hidden="true">
-            <FolderGit2 size={20} />
-          </span>
-          <div>
-            <h2 className="heading" id="add-product-title">
-              Add a product
-            </h2>
-            <p style={{ color: "var(--text-2)" }}>Point Petrina at a local clone of the product's GitHub repository.</p>
-          </div>
-        </div>
         <label className="product-field">
           Folder of the local clone
           <input
@@ -116,22 +120,9 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
             )}
           </p>
         )}
-        <div className="foot" style={{ marginTop: 16 }}>
-          <span className="left">Each task gets its own working copy, so your clone stays untouched.</span>
-          <button className="btn quiet" onClick={onClose}>
-            {note ? "Close" : "Cancel"}
-          </button>
-          {note ? (
-            <button key="done" className="btn lead" autoFocus onClick={() => onAdded(product.id)}>
-              {added.already ? "Show it" : "Done"}
-            </button>
-          ) : (
-            <button key="add" className="btn lead" disabled={!path.trim() || !name.trim() || busy || !live || !!added} onClick={() => void add()}>
-              {busy || added ? "Adding…" : "Add product"}
-            </button>
-          )}
-        </div>
-      </div>
+        <p className="note">Each task gets its own working copy, so your clone stays untouched.</p>
+      </EditorPanel>
+      {discard && <ConfirmDialog title="Discard product changes?" confirm="Discard changes" cancel="Keep editing" onCancel={() => setDiscard(false)} onConfirm={onClose}><p>This product has not been added. Your unsaved choices will be lost.</p></ConfirmDialog>}
     </>
   );
 }

@@ -69,7 +69,7 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "p") return;
       // Never the browser's Print. Like ⌘K it works over an open task, but not over another dialog.
       event.preventDefault();
-      if (!document.querySelector(".command-palette, .dialog")) setOpen(true);
+      if (!document.querySelector(".command-palette, .dialog, .editor-panel")) setOpen(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

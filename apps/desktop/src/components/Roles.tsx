@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, Eye, Lock, Pencil, Plus, X } from "lucide-react";
+import { ChevronDown, Eye, Lock, Pencil, Plus } from "lucide-react";
 import {
   activeRoles,
   addedFacts,
@@ -17,9 +17,10 @@ import {
   type RoleField,
   type State,
 } from "@petrina/core";
+import { EditorPanel } from "./EditorPanel";
 import { sim } from "../engine";
 import { COLUMN_LABEL, ICON_NAME, RESULT_WORDS, TONE_NAME } from "../lib";
-import { ConfirmDialog, ROLE_ICONS, useDismiss, useFocusTrap, useViewport } from "./bits";
+import { ConfirmDialog, ROLE_ICONS, useDismiss } from "./bits";
 
 export type RoleStart = (typeof ROLE_STARTS)[number]["id"];
 
@@ -165,14 +166,11 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [asking, setAsking] = useState<"discard" | "reset" | "remove">();
-  const panel = useRef<HTMLElement>(null);
   const id = useId();
-  const viewport = useViewport();
   const viewOnly = role?.id === RELEASE_MANAGER;
   const naming = !role || role.added;
   const dirty = !viewOnly && JSON.stringify(draft) !== JSON.stringify(initial);
-  const requestClose = () => (dirty ? setAsking("discard") : onClose());
-  useFocusTrap(panel, requestClose);
+  const requestClose = () => { if (!busy) { if (dirty) setAsking("discard"); else onClose(); } };
   // The role went away meanwhile (removed in another window): there is nothing left to edit.
   const gone = "roleId" in target && !role;
   useEffect(() => {
@@ -269,36 +267,40 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
 
   return (
     <>
-      <div className="scrim" onClick={requestClose} />
-      <section ref={panel} className={`sheet panel ${viewport.width < 900 ? "compact" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1} onKeyDown={onKeyDown}>
-        <div className="sheet-bar">
-          <div className="crumb">{crumb}</div>
-          <div className="sheet-actions">
-            <button className="btn quiet small icon" aria-label="Close" title="Close (Esc)" onClick={requestClose}>
-              <X size={18} />
+      <EditorPanel title={role?.name ?? "New role"} caption={role ? crumb : undefined} onClose={requestClose} busy={busy} onKeyDown={onKeyDown} bodyClassName="role-form" icon={<span className={`avatar tone-${draft.tone}`}><Icon size={20} /></span>}
+        description={viewOnly ? <p className="lock-note"><Lock size={16} aria-hidden="true" />The Release Manager writes release notes. Petrina handles delivery itself. It can't be edited here.</p> : undefined}
+        footer={<>
+          {error && (
+            <p className="error-text panel-error" role="alert">
+              {error}
+            </p>
+          )}
+          {role && !role.added && role.edited && !viewOnly && (
+            <button className="btn quiet" disabled={busy} onClick={() => setAsking("reset")}>
+              Reset to default
             </button>
-          </div>
-        </div>
-
-        <div className="sheet-scroll">
-          <header className="sheet-hero">
-            <div className="panel-name">
-              <span className={`avatar tone-${draft.tone}`} aria-hidden="true">
-                <Icon size={20} strokeWidth={2.2} />
-              </span>
-              <h1 className="panel-title" id={`${id}-title`}>
-                {role && !role.added ? role.name : draft.name.trim() || "New role"}
-              </h1>
-            </div>
-            {viewOnly && (
-              <p className="lock-note">
-                <Lock size={16} aria-hidden="true" />
-                The Release Manager writes release notes. Petrina handles delivery itself. It can't be edited here.
-              </p>
-            )}
-          </header>
-
-          <div className="sheet-body role-form">
+          )}
+          {role?.added && (
+            <button className="btn quiet danger" disabled={busy} onClick={() => setAsking("remove")}>
+              Remove role
+            </button>
+          )}
+          <span className="spacer" />
+          {viewOnly ? (
+            <button className="btn lead" onClick={onClose}>
+              Close
+            </button>
+          ) : (
+            <>
+              <button className="btn quiet" disabled={busy} onClick={requestClose}>
+                Cancel
+              </button>
+              <button className="btn lead" disabled={busy} onClick={save}>
+                {busy ? "Saving…" : "Save"} <kbd>⌘↵</kbd>
+              </button>
+            </>
+          )}
+</>}>
             {viewOnly && role ? (
               <>
                 {fact("What it's for", role.purpose)}
@@ -401,42 +403,7 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
 
             {fact("Where its tasks sit on the board", COLUMN_LABEL[facts.column])}
             {fact("What it sees", facts.sees)}
-          </div>
-        </div>
-
-        <div className="panel-foot">
-          {error && (
-            <p className="error-text panel-error" role="alert">
-              {error}
-            </p>
-          )}
-          {role && !role.added && role.edited && !viewOnly && (
-            <button className="btn quiet" disabled={busy} onClick={() => setAsking("reset")}>
-              Reset to default
-            </button>
-          )}
-          {role?.added && (
-            <button className="btn quiet danger" disabled={busy} onClick={() => setAsking("remove")}>
-              Remove role
-            </button>
-          )}
-          <span className="spacer" />
-          {viewOnly ? (
-            <button className="btn lead" onClick={onClose}>
-              Close
-            </button>
-          ) : (
-            <>
-              <button className="btn quiet" onClick={requestClose}>
-                Cancel
-              </button>
-              <button className="btn lead" disabled={busy} onClick={save}>
-                {busy ? "Saving…" : "Save"} <kbd>⌘↵</kbd>
-              </button>
-            </>
-          )}
-        </div>
-      </section>
+      </EditorPanel>
 
       {asking === "discard" && (
         <ConfirmDialog title="Discard your changes?" confirm="Discard changes" cancel="Keep editing" onCancel={() => setAsking(undefined)} onConfirm={onClose}>

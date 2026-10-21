@@ -1,9 +1,10 @@
-import { X, ChevronDown, Package, Search } from "lucide-react";
+import { ChevronDown, Package, Search } from "lucide-react";
+import { EditorPanel } from "./EditorPanel";
 import { StartFromFields } from "./TaskStart";
 import { useEffect, useId, useRef, useState } from "react";
 import { DELIVERY_LABEL, type DeliveryMode, type NewTaskInput, type State, type TaskKind, type WorkChoice } from "@petrina/core";
 import { failureText, mode, sim } from "../engine";
-import { useDismiss, useFocusTrap, WaitingLine } from "./bits";
+import { useDismiss, ConfirmDialog, WaitingLine } from "./bits";
 
 const KINDS: readonly { id: TaskKind; label: string; hint: string }[] = [
   { id: "feature", label: "Feature", hint: "Designed, built and reviewed" },
@@ -113,8 +114,12 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const titleRef = useRef<HTMLInputElement>(null);
   const focusNext = useRef(false);
   useEffect(() => { if (!saving && focusNext.current) { focusNext.current = false; titleRef.current?.focus(); } }, [saving]);
-  const box = useRef<HTMLDivElement>(null);
-  useFocusTrap(box, () => { if (!saving) onClose(); });
+  const [discard, setDiscard] = useState(false);
+  const baseline = useRef<string | undefined>(undefined);
+  const draftKey = (name = title, details = description, titles = batch) => JSON.stringify([name, details, kind, position, backlog, approvePlan, approveDelivery, choices, titles]);
+  baseline.current ??= draftKey();
+  const dirty = draftKey() !== baseline.current;
+  const close = () => { if (!saving) { if (dirty) setDiscard(true); else onClose(); } };
   const invalidSource = choices.some(({ startFrom, delivery }) => (startFrom.kind === "branch" && !startFrom.name.trim()) || (startFrom.kind === "pull-request" && !startFrom.value.trim()) || (delivery === "release" && startFrom.kind !== "default"));
   const add = async (another: boolean) => {
     if (adding.current || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)))) return;
@@ -127,19 +132,17 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
     try {
       while (request.confirmed < request.inputs.length) { await sim.addTask(request.inputs[request.confirmed]!); request.confirmed++; }
       pending.current = undefined;
-      if (request.another) { setTitle(""); setDescription(""); setBatch([]); focusNext.current = true; } else onCreated();
+      if (request.another) { baseline.current = draftKey("", "", []); setTitle(""); setDescription(""); setBatch([]); focusNext.current = true; } else onCreated();
     } catch (failure) { setError(failureText(failure)); } finally { adding.current = false; setSaving(false); }
   };
   const change = (id: string, update: Partial<WorkChoice>) => setChoices(choices.map((choice) => choice.productId === id ? { ...choice, ...update } : choice));
   const disabled = saving || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)));
   return <>
-    <div className="dialog-scrim" onClick={saving ? undefined : onClose} />
-    <div ref={box} className="dialog new-task-dialog" role="dialog" aria-modal="true" aria-label="New task" tabIndex={-1}>
-      <header className="new-task-head">
-        <div><h2>New task</h2><p>Describe the outcome. Choose where and when to work.</p></div>
-        <button className="btn quiet small icon" aria-label="Close new task" onClick={onClose} disabled={saving}><X size={20} /></button>
-      </header>
-      <div className="new-task-body">
+    <EditorPanel title="New task" description="Describe the outcome. Choose where and when to work." closeLabel="Close new task" className="new-task-dialog" bodyClassName="new-task-body" busy={saving} onClose={close} footer={<>
+
+        <button className="btn quiet" disabled={saving} onClick={close}>Cancel</button>
+        <div className="new-task-submit"><button className="btn quiet" onClick={() => void add(true)} disabled={disabled || pending.current !== undefined}>Add another <kbd>⇧↵</kbd></button><button className="btn lead" onClick={() => void add(false)} disabled={disabled}>{saving ? "Adding…" : pending.current ? "Retry confirmation" : backlog ? "Add to backlog" : "Add to queue"} <kbd>↵</kbd></button></div>
+      </>}>
         <WaitingLine text={waiting} />
         <section className="new-task-section new-task-request" aria-labelledby="request-heading">
           <label id="request-heading" htmlFor="task-title">What do you want done?</label>
@@ -186,11 +189,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
           {backlog && !supportsBacklog && <p className="note">Backlog will be available after the engine is updated.</p>}
         </section>
         {error && <p role="alert" className="note bad">{error} Retry confirms these same tasks, without adding duplicates.</p>}
-      </div>
-      <footer className="new-task-foot">
-        <button className="btn quiet" disabled={saving} onClick={onClose}>Cancel</button>
-        <div className="new-task-submit"><button className="btn quiet" onClick={() => void add(true)} disabled={disabled || pending.current !== undefined}>Add another <kbd>⇧↵</kbd></button><button className="btn lead" onClick={() => void add(false)} disabled={disabled}>{saving ? "Adding…" : pending.current ? "Retry confirmation" : backlog ? "Add to backlog" : "Add to queue"} <kbd>↵</kbd></button></div>
-      </footer>
-    </div>
+    </EditorPanel>
+    {discard && <ConfirmDialog title="Discard task changes?" confirm="Discard changes" cancel="Keep editing" onCancel={() => setDiscard(false)} onConfirm={onClose}><p>Your unsaved task request will be lost. Tasks already added stay saved.</p></ConfirmDialog>}
   </>;
 }
