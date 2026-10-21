@@ -1,3 +1,4 @@
+import { profileModelName } from "@petrina/core";
 import { landingOf, onScreen, SCREEN_WORDS, screenOn, screenWait, slotUses, type AgentProfile, type Column, type Effort, type Id, type Role, type RoleIcon, type RoleResult, type RunState, type State, type Task, type Tone, type Tool } from "@petrina/core";
 
 export function lookup(state: State) {
@@ -76,8 +77,8 @@ export const EFFORT_LABEL: Record<Effort, string> = {
 /** A profile in words: "Opus 5.5", or in full "Claude Code · Opus 5.5 · high effort". */
 export function profileText(profile: AgentProfile | undefined, find: Lookup, full = false): string {
   if (!profile) return "";
-  if (!full) return profile.model;
-  return `${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profile.model} · ${EFFORT_LABEL[profile.effort]}`;
+  if (!full) return profileModelName(profile);
+  return `${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profileModelName(profile)} · ${EFFORT_LABEL[profile.effort]}`;
 }
 
 /** Where delivered work stands, in words, or undefined before delivery. A closed pull request and "Mark as done" deliver nothing. */

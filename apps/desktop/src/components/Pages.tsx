@@ -1,3 +1,4 @@
+import { Profiles } from "./Profiles";
 import { Routines } from "./Routines";
 import { followLink, routeHref } from "../routes";
 import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
@@ -128,12 +129,6 @@ const TOOL_STATUS = { ready: "Ready", "logged-out": "Needs you to log in", "not-
 
 /** The squad's roles, the tools found on this machine, and the profiles built from them. */
 export function LibraryPage({ state, find, onRole, product = "all", view = "routines", onView, onOpen, onRoutineDialog }: { state: State; find: Lookup; onRole: (target: RolePanelTarget) => void; product?: string; view?: "routines" | "roles" | "profiles"; onView?: (view: "routines" | "roles" | "profiles") => void; onOpen: (id: string) => void; onRoutineDialog?: (open: boolean) => void }) {
-  const usage = (profileId: string) =>
-    state.tasks.reduce(
-      (count, task) =>
-        count + (task.plan?.stages.filter((stage) => stage.profileIds.includes(profileId) || stage.reviewerProfileIds?.includes(profileId)).length ?? 0),
-      0,
-    );
 
   return (
     <div className="page">
@@ -147,20 +142,7 @@ export function LibraryPage({ state, find, onRole, product = "all", view = "rout
       <nav className="library-views" aria-label="Library views">{(["routines", "roles", "profiles"] as const).map(tab => <a key={tab} className={`btn ${view === tab ? "on" : ""}`} aria-current={view === tab ? "page" : undefined} href={routeHref({ view: "library", product, libraryView: tab })} onClick={e => followLink(e, () => onView?.(tab))}>{tab[0]!.toUpperCase() + tab.slice(1)}</a>)}</nav>
       {view === "routines" && <Routines state={state} find={find} product={product} onOpen={onOpen} onDialogChange={onRoutineDialog} />}
       {view === "roles" && <RolesSection state={state} onOpen={onRole} />}
-      {view === "profiles" && <>
-
-
-      <h2 className="section-title">Profiles</h2>
-      <div className="grid">
-        {state.profiles.map((profile) => (
-          <div key={profile.id} className="tile" style={{ minHeight: 0 }}>
-            <strong style={{ fontWeight: 600 }}>{profileText(profile, find)}</strong>
-            <div style={{ color: "var(--text-2)" }}>
-              {find.tool(profile.toolId)?.name} running {profile.model} at {profile.effort === "xhigh" ? "extra high" : profile.effort} effort. Used in <span className="num">{usage(profile.id)}</span> stages and <span className="num">{(state.routines ?? []).filter(r => r.profileId === profile.id).length}</span> routines right now.
-            </div>
-          </div>
-        ))}
-      </div></>}
+      {view === "profiles" && <Profiles state={state} onDialogChange={onRoutineDialog} />}
     </div>
   );
 }

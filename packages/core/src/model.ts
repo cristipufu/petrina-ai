@@ -944,6 +944,8 @@ export interface State {
   profiles: readonly AgentProfile[];
   /** Removed profile definitions remain readable for historical records, never offered for new work. */
   retiredProfiles?: readonly AgentProfile[];
+  /** Defaults initialize once; saved edits and deletions survive restarts. */
+  profileCatalogSaved?: boolean;
   tasks: readonly Task[];
   inbox: readonly InboxItem[];
   pool: Pool;

@@ -102,6 +102,8 @@ export interface EngineOptions {
   reopenTimeoutMs?: number;
   /** Tests: how long a tool gets to start a fresh conversation. */
   startTimeoutMs?: number;
+  /** Tests: native profile configuration discovery, without opening a real tool. */
+  profileChoices?: (toolId: string, modelId?: string) => Promise<import("@petrina/core").ProfileChoices>;
   /** Tests: the tool's own app that a take-over opens, instead of the one on PATH. */
   toolPath?: (toolId: Id) => string | undefined;
   /** Tests: the terminals on this machine. */

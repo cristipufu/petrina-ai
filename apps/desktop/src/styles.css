@@ -2352,3 +2352,29 @@ ul.plain strong { color: var(--text); font-weight: 620; }
   .editor-header, .editor-body { padding: 16px; }
   .editor-footer { padding: 12px 16px; }
 }
+
+/* Models group their effort choices; provider identity and available profiles stay distinct. */
+.profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 20px; align-items: start; }
+.profile-card { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.profile-card > header { display: flex; gap: 12px; align-items: center; padding: 20px; border-bottom: 1px solid var(--line); }
+.profile-card h3 { margin: 0; font-size: var(--fs-body); font-weight: 600; overflow-wrap: anywhere; }
+.profile-card header p { margin: 4px 0 0; color: var(--text-2); font-size: var(--fs-meta); }
+.profile-card ul { margin: 0; padding: 0; list-style: none; }
+.profile-card li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px 12px 20px; }
+.profile-card li + li { border-top: 1px solid var(--line); }
+.profile-effort { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.profile-effort strong { display: block; font-size: var(--fs-control); font-weight: 500; }
+.profile-effort div > span { display: block; margin-top: 2px; color: var(--text-2); font-size: var(--fs-meta); }
+.effort-meter { display: flex; gap: 2px; align-items: end; height: 18px; flex-shrink: 0; }
+.effort-meter i { width: 4px; height: 6px; border-radius: 1px; background: var(--line); }
+.effort-meter i:nth-child(2) { height: 9px; }.effort-meter i:nth-child(3) { height: 12px; }.effort-meter i:nth-child(4) { height: 15px; }.effort-meter i:nth-child(5) { height: 18px; }
+.effort-meter i.filled { background: var(--text-2); }
+.profile-availability { display: flex; align-items: start; gap: 12px; }
+.profile-availability input { margin-top: 4px; }
+.profile-availability strong { display: block; font-weight: 500; }
+.profile-availability span > span { display: block; margin-top: 4px; color: var(--text-2); font-size: var(--fs-control); }
+.profile-editor-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; width: 100%; }
+.profile-editor-actions > span { flex: 1; }
+.profiles-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.profiles-heading h2 { margin: 0; font-size: var(--fs-panel); line-height: var(--lh-panel); }
+.profiles-heading p { margin: 6px 0 0; font-weight: 400; }

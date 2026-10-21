@@ -44,6 +44,9 @@ export interface SaidContext {
 }
 
 export interface Commands {
+  profileChoices(toolId: Id, modelId?: string, refresh?: boolean): Promise<import("./profiles.js").ProfileChoices>;
+  saveProfile(draft: import("./profiles.js").ProfileDraft, clientId: Id, profileId?: Id): Promise<Id>;
+  removeProfile(profileId: Id): void;
   saveRoutine(draft: import("./routines.js").RoutineDraft, routineId?: Id): Id;
   setRoutineEnabled(routineId: Id, enabled: boolean): void;
   removeRoutine(routineId: Id): void;
@@ -139,6 +142,7 @@ export type CommandName = keyof Commands;
 
 /** Every command by name, for the code that handles them all the same way. */
 export const COMMAND_NAMES = [
+  "profileChoices", "saveProfile", "removeProfile",
   "saveRoutine", "setRoutineEnabled", "removeRoutine", "resolveMaintenanceSettings",
   "historyPage", "taskDetails", "previewImage",
   "saveRole", "addRole", "resetRole", "removeRole",

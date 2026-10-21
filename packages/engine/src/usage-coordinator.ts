@@ -52,11 +52,11 @@ export class UsageCoordinator {
 
   /** The same kind of profile on a tool the squad can use. Unchanged when its tool is usable, or when none is. */
   onUsable(profileId: Id): Id {
-    const profile = this.k.profile(profileId);
+    const profile = this.k.s.profiles.find(profile => profile.id === profileId && !profile.standby);
     const usable = this.usableTools();
-    if (!profile || !usable.length || usable.includes(profile.toolId as CheckId)) return profileId;
-    const others = this.k.s.profiles.filter((entry) => entry.toolId === usable[0]);
-    return (others.find((entry) => entry.effort === profile.effort) ?? others[0])?.id ?? profileId;
+    if (profile && (!usable.length || usable.includes(profile.toolId as CheckId))) return profileId;
+    const others = this.k.s.profiles.filter(entry => !entry.standby && (!usable.length || usable.includes(entry.toolId as CheckId)));
+    return (others.find((entry) => entry.effort === profile?.effort) ?? others[0])?.id ?? this.k.s.profiles.find(entry => !entry.standby)?.id ?? profileId;
   }
 
   /** Only Builders return to an earlier step's conversation; an interrupted Builder keeps its current one. */
@@ -96,7 +96,7 @@ export class UsageCoordinator {
     const screen = task?.screen?.roleId === roleId && task?.screen?.profileId === plannedId
       && (reviewerKey === undefined || !task.screen.member || task.screen.member === `review-${reviewerKey}`);
     const saved = task?.maintenance && task.maintenance.role.id === roleId ? task.maintenance.profile : undefined;
-    const planned = saved ?? this.k.profile(plannedId);
+    const planned = saved ?? this.k.s.profiles.find(profile => profile.id === plannedId) ?? this.k.s.profiles.find(profile => profile.id === this.onUsable(plannedId));
     if (saved) {
       if (task?.maintenance?.settingsDecision && !task.maintenance.settingsDecision.choice) return { kind: "none", waiting: "Waiting for your decision about the reported agent settings" };
       const limit = limitOf(this.k.s.pool, saved, Date.now());

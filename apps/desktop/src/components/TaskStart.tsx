@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { deliveryLabel, sourceLabel, workSummary, type StartFrom, type State, type Task, type WorkChoice } from "@petrina/core";
+import { profileModelName, deliveryLabel, sourceLabel, workSummary, type StartFrom, type State, type Task, type WorkChoice } from "@petrina/core";
 import { sim } from "../engine";
 
 export function StartFromFields({ value, onChange, product }: { value: StartFrom; onChange: (value: StartFrom) => void; product?: string }) {
@@ -89,7 +89,7 @@ function ManyTaskStart({ task, state }: { task: Task; state: State }) {
         {editing === key && choice && <fieldset className="stack"><legend>Change {label}</legend>
           <StartFromFields product={label} value={choice.startFrom} onChange={(startFrom) => setChoice({ ...choice, startFrom })} />
           <label>When ready for {label}<select className="select" value={choice.delivery} onChange={(event) => setChoice({ ...choice, delivery: event.target.value as WorkChoice["delivery"] })}><option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option></select></label>
-          <label>Builder for {label}<select className="select" value={choice.builderProfileId ?? task.plan?.products?.find((owner) => owner.productId === key)?.builderProfileId ?? task.plan?.stages.find((stage) => state.roles.find(role => role.id === stage.roleId)?.result === "build")?.profileIds[0]} onChange={(event) => setChoice({ ...choice, builderProfileId: event.target.value })}>{state.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.model} · {profile.effort}</option>)}</select></label>
+          <label>Builder for {label}<select className="select" value={choice.builderProfileId ?? task.plan?.products?.find((owner) => owner.productId === key)?.builderProfileId ?? task.plan?.stages.find((stage) => state.roles.find(role => role.id === stage.roleId)?.result === "build")?.profileIds[0]} onChange={(event) => setChoice({ ...choice, builderProfileId: event.target.value })}>{state.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profileModelName(profile)} · {profile.effort}</option>)}</select></label>
           <label className="toggle"><input type="checkbox" checked={choice.lead ?? task.leadProductId === key} onChange={(event) => setChoice({ ...choice, lead: event.target.checked })} />Lead shared repairs for {label}</label>
           <button className="btn" disabled={saving || task.workValidating} onClick={() => void apply(() => sim.setTaskStart(task.id, choice), () => setEditing(undefined))}>Apply choices for {label}</button>
           <button className="btn quiet" onClick={() => setEditing(undefined)}>Cancel editing {label}</button>

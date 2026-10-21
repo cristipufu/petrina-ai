@@ -34,3 +34,38 @@ it("repairs duplicate future choices while preserving actual historical identiti
   restoreProfileCatalog(state);
   expect(JSON.stringify(state)).toBe(once);
 });
+
+import { demoProfileChoices, profileModelName, saveProfile, removeProfile } from "../src/profiles.js";
+const empty = () => ({ ...JSON.parse(JSON.stringify(createDemoState(1_000_000_000))), tasks: [], inbox: [] }) as DeepMutable<State>;
+it("persists edited and deleted defaults while retaining historical identities", () => {
+  const state = empty(); restoreProfileCatalog(state);
+  const original = state.profiles.find(profile => profile.id === "sol-high")!;
+  const choices = { toolId: "codex", modelId: "new-model", models: [{ id: "new-model", name: "Native model" }], efforts: ["medium" as const] };
+  const draft = { toolId: "codex", modelId: "new-model", effort: "medium" as const };
+  expect(saveProfile(state, draft, choices, "new-profile", original.id)).toBe("new-profile");
+  expect(saveProfile(state, draft, choices, "new-profile", original.id)).toBe("new-profile");
+  expect(state.retiredProfiles).toContainEqual(original);
+  removeProfile(state, "sol-xhigh");
+  const saved = JSON.stringify(state); restoreProfileCatalog(state); expect(JSON.stringify(state)).toBe(saved);
+  expect(state.profiles.some(profile => profile.id === "sol-high" || profile.id === "sol-xhigh")).toBe(false);
+});
+it("rejects unsupported choices, duplicate tuples and the removal of the last planned profile", () => {
+  const state = empty(), choices = demoProfileChoices("codex", "gpt-6.1-sol");
+  expect(() => saveProfile(state, { toolId: "codex", modelId: choices.modelId, effort: "low" }, choices, "bad")).toThrow("supported");
+  expect(() => saveProfile(state, { toolId: "codex", modelId: choices.modelId, effort: "high" }, choices, "duplicate")).toThrow("already exists");
+  state.profiles = [state.profiles.find(profile => profile.id === "sol-high")!];
+  expect(() => removeProfile(state, "sol-high")).toThrow("at least one");
+});
+it("protects unfinished repair paths and routine references, but permits history-only profiles", () => {
+  const state = JSON.parse(JSON.stringify(createDemoState(1_000_000_000))) as DeepMutable<State>;
+  const task = state.tasks.find(task => task.plan?.stages.some(stage => stage.profileIds.length))!;
+  task.state = "paused";
+  const id = task.plan!.stages.find(stage => stage.profileIds.length)!.profileIds[0]!;
+  expect(() => removeProfile(state, id)).toThrow("Reassign");
+  state.tasks.forEach(task => { task.state = "done"; });
+  expect(() => removeProfile(state, id)).not.toThrow();
+});
+it("normalizes native Codex labels without combining effort variants", () => {
+  expect(profileModelName(DEFAULT_PROFILES.find(p => p.id === "sol-high")!)).toBe("GPT-6.1 Sol");
+  expect(profileModelName(DEFAULT_PROFILES.find(p => p.id === "astra-xhigh")!)).toBe("GPT-6 Astra");
+});

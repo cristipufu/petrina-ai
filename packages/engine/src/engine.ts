@@ -1,3 +1,4 @@
+import { ProfileChoiceReader } from "./profile-choices.js";
 import { completeAll } from "./parallel.js";
 import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, validateTaskDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
 import { executionFor, scopesFor } from "./repository-context.js";
@@ -93,6 +94,7 @@ export { recordDisputes } from "./review.js";
 
 /** The engine: every command the window can send (Commands) is a method here. */
 export class Engine extends Kernel implements Commands {
+  private readonly profileReader: ProfileChoiceReader;
   private readonly tools: ToolChecks;
   private readonly sources: Sources;
   private readonly turns: Turns;
@@ -116,6 +118,7 @@ export class Engine extends Kernel implements Commands {
 
   constructor(dataDir: string, options: EngineOptions = {}) {
     super(dataDir, options);
+    this.profileReader = new ProfileChoiceReader(this);
     this.tools = new ToolChecks(this);
     this.connections = new Connections(this);
     this.sources = new Sources(this, this.connections);
@@ -183,6 +186,26 @@ export class Engine extends Kernel implements Commands {
     // Catch up at start: link any older bug saved only part-way, then remove finished working copies.
     void this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep()));
     void this.trackWork(this.acceptedPoints.sweep());
+  }
+
+  profileChoices(toolId: Id, modelId?: string, refresh = false) { return this.profileReader.read(toolId, modelId, refresh); }
+  async saveProfile(draft: library.ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
+    const choices = await this.profileChoices(draft.toolId, draft.modelId);
+    if (this.stopped) throw new Error("The engine is stopping.");
+    if (profileId) this.assertProfileNotRunning(profileId);
+    const id = library.saveProfile(this.s, draft, choices, clientId, profileId);
+    this.s.planner = this.onUsable(this.s.planner ?? "opus-high");
+    this.commitNow();
+    return id;
+  }
+  private assertProfileNotRunning(profileId: Id): void {
+    for (const task of this.s.tasks) if (this.drivers.has(task.id) && task.plan?.stages.some(stage => [...stage.profileIds, ...stage.reviewerProfileIds ?? []].includes(profileId))) throw new Error("Wait for this profile's task to finish stopping before changing it.");
+  }
+  removeProfile(profileId: Id): void {
+    this.assertProfileNotRunning(profileId);
+    library.removeProfile(this.s, profileId);
+    this.s.planner = this.onUsable(this.s.planner ?? "opus-high");
+    this.commitNow();
   }
 
   saveRoutine(draft: library.RoutineDraft, routineId?: Id): Id {
@@ -291,7 +314,7 @@ export class Engine extends Kernel implements Commands {
     this.screens.stop();
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
-    this.shutdownDone = Promise.allSettled([this.tools.shutdown(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
+    this.shutdownDone = Promise.allSettled([this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
     // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
     this.s.now = Date.now();
     for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); }

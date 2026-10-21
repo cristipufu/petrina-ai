@@ -340,3 +340,9 @@ Lessons are grouped by repository before reading its instructions once. With a w
 Matching ignores whitespace, bullets and sentence-ending punctuation, while preserving case, paths, flags and all words; changed wording stays for the coordinator to judge. Accepted ones join the "Learnings" section of AGENTS.md with the next delivery, in its one commit (`packages/engine/src/learnings.ts`). At startup and once a minute, accepted lessons already present in the product's default branch leave the pending queue.
 
 Accepted AGENTS.md rules need no separate prompt copy: Claude Code and Codex both load AGENTS.md by themselves, so a session Petrina starts and one the coordinator starts in the repository know the same things.
+
+## Profile catalog
+
+The initial profile catalog is seeded once. Coordinator edits and deletions are durable; changing launch settings creates a new identity and retains the old definition for history. Unfinished task plans, live conversations, helper seats and routines prevent mutation until reassigned. Frozen maintenance settings remain unchanged. Internal role defaults resolve to an active profile when their original default was removed.
+
+The profile editor discovers native ACP model options and the selected model's effort options in a disposable session, without a prompt or browser. Reads are joined and serialized per tool, cached for five minutes, bounded to thirty seconds and stopped during shutdown. Discovery does not hold the coordinator mutation queue. The engine validates saves against those reported choices; demonstrations use scripted capabilities through the same catalog transitions.

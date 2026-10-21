@@ -9,6 +9,7 @@ it("recovers duplicate profile choices once and retains the old definition only 
   try {
     engine.s.products.push({ id: "p", name: "Product", repo: "acme/product", tone: "blue" });
     const task = engine.task(engine.addTask({ productId: "p", title: "Saved plan", backlog: true }))!;
+    delete engine.s.profileCatalogSaved; // A catalog saved before profile editing was available.
     engine.s.profiles.push({ ...engine.profile("sol-high")!, id: "codex-high" });
     task.plan = { rationale: "Saved plan", plannerProfileId: "opus-high", stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["codex-high"] }] };
     engine.commitNow();

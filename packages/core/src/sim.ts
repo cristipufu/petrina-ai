@@ -1,3 +1,4 @@
+import { demoProfileChoices, saveProfile, removeProfile, type ProfileDraft } from "./profiles.js";
 import { saveRoutine, admitRoutines, prepareMaintenanceTask, type RoutineDraft } from "./routines.js";
 import { DEMO_RISK, DEMO_CHECKS, scriptFor, laterObjections, callAnswers, briefFor, capitalize, areaFromTitle, simReport, demoSource } from "./sim-script.js";
 import type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
@@ -102,6 +103,13 @@ export class Simulator {
     if (!state.work) this.state = { ...state, work: { version: 0, since: this.work.since() } };
   }
 
+  async profileChoices(toolId: Id, modelId?: string) { return demoProfileChoices(toolId, modelId); }
+  async saveProfile(draft: ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
+    let id = clientId;
+    this.update(state => { id = saveProfile(state, draft, demoProfileChoices(draft.toolId, draft.modelId), clientId, profileId); });
+    return id;
+  }
+  removeProfile(profileId: Id): void { this.update(state => removeProfile(state, profileId)); }
   getState = (): State => this.state;
 
   /** The simulator's work log (the demos read and shape it). */

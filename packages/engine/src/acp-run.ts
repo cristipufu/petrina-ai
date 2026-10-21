@@ -5,7 +5,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import { inFamily, type AgentProfile, type TokenCounts, type TurnReport } from "@petrina/core";
+import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, type TurnReport } from "@petrina/core";
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser } from "./browser.js";
@@ -251,6 +251,9 @@ async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: bo
 export class AgentRun {
   private notes: TurnNotes | undefined;
   private accountBefore: AccountReading | undefined;
+
+  /** Read native configuration without sending work to a model. Set when the session opens. */
+  profileChoices!: (modelId?: string) => Promise<ProfileChoices>;
 
   private constructor(
     private readonly child: ChildProcess,
@@ -588,6 +591,24 @@ export class AgentRun {
     try {
       const session = await Promise.race([ready, killed, deadline, stopped]);
       const agent = new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how, await browserReady, callbacks);
+      agent.profileChoices = async (requestedModel?: string): Promise<ProfileChoices> => {
+        const modelOption = () => sessionOptions.find(option => option.id === adapter.options.model);
+        const models = choices(modelOption()).map(choice => ({ id: choice.value, name: choice.name ?? choice.value }));
+        const modelId = requestedModel ?? (typeof modelOption()?.currentValue === "string" ? modelOption()!.currentValue as string : models[0]?.id);
+        if (!modelId || !models.some(model => model.id === modelId)) throw new Error(`${adapter.name} did not offer that model.`);
+        if (modelOption()?.currentValue !== modelId) {
+          const before = sessionOptions;
+          const response = await connection.setSessionConfigOption({ sessionId: session.sessionId, configId: adapter.options.model, value: modelId });
+          const echoed = (response as { configOptions?: ConfigOption[] }).configOptions;
+          if (Array.isArray(echoed)) sessionOptions = echoed;
+          else if (sessionOptions === before) throw new Error(`${adapter.name} did not confirm its model settings.`);
+        }
+        if (modelOption()?.currentValue !== modelId) throw new Error(`${adapter.name} did not confirm the selected model.`);
+        const known = new Set(["low", "medium", "high", "xhigh", "ultra"]);
+        const efforts = choices(sessionOptions.find(option => option.id === adapter.options.effort)).map(choice => choice.value).filter(value => known.has(value)) as AgentProfile["effort"][];
+        if (!efforts.length) throw new Error(`${adapter.name} did not report supported effort levels for this model.`);
+        return { toolId: profile.toolId, models, modelId, efforts };
+      };
       if (adapter.accountUsage && !options.probe) agent.accountBefore = await Promise.race([agent.readAccountUsage(), killed, deadline, stopped]);
       clearTimeout(whole);
       return agent;
