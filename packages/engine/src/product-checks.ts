@@ -1,9 +1,9 @@
-import { type RepositoryContext } from "./repository-context.js";
+import { executionFor, scopesFor, taskView, type RepositoryContext } from "./repository-context.js";
 import { beginRepair, acceptanceVersion } from "./repositories.js";
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
-import { beginPetrinaStep, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, type Id, type ProductCheck } from "@petrina/core";
+import { beginPetrinaStep, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -13,7 +13,7 @@ import type { CheckRun, DeepMutable, JourneyProductCheck } from "@petrina/core";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, expectedCheckCommands, orderedChecks, staticCheck, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
-import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait } from "./kernel.js";
+import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait, type MTask } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
@@ -322,6 +322,7 @@ export class ProductChecks {
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     const failed = this.settleFindings(scope, results);
+    if (!failed.length) await this.closeEpisode(scope, state);
     this.k.log(scope, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
     if (failed.length && this.k.role(openStep(task)?.roleId ?? "")?.result === "delivery") {
       endAgentStep(task, { outcome: W.interrupted, reason: W.checksFailed(failed.length), tone: "back", end: "failed" }, Date.now());
@@ -460,18 +461,17 @@ export class ProductChecks {
 
   /**
    * Right before the delivery check: the checks run again when the code changed since they last ran.
-   * A failure sends the work back to the builder, twice at most; after that the coordinator sees it.
-   * Exhausted returns are a failure, never permission to start final acceptance.
+   * A failure sends the work back to the builder while its failure episode has returns left; after that the
+   * coordinator sees it. Exhausted returns are a failure, never permission to start final acceptance.
    */
   async checksBeforeDelivery(scope: RepositoryContext, signal: AbortSignal): Promise<"passed" | "returned" | "exhausted"> {
-
     if (!(await this.failing(scope, signal))) return "passed";
     return this.backToBuilder(scope, "right before your delivery check") ? "returned" : "exhausted";
   }
 
   /**
-   * Right before shipping: the checks pass on exactly what ships. Failing, the work goes back to the builder,
-   * twice at most, and then to the coordinator's delivery check.
+   * Right before shipping: the checks pass on exactly what ships. Failing, the work goes back to the builder
+   * while the episode has returns left, and then to the coordinator's delivery check.
    */
   async checksBeforeShipping(scope: RepositoryContext, signal: AbortSignal): Promise<boolean> {
     const { task, work: repository } = scope;
@@ -498,7 +498,9 @@ export class ProductChecks {
     const state = await this.captureState(scope, checks);
     if (await this.ranOn(scope, checks, state)) {
       if (repository.checks) repository.checks.current = true;
+      // Rereading a saved failure is no new attempt; a saved pass on this code and these definitions is a genuine pass.
       const failed = this.settleFindings(scope, repository.checks!.results);
+      if (!failed.length) await this.closeEpisode(scope, state);
       this.k.commit();
       return failed.length > 0;
     }
@@ -568,13 +570,47 @@ export class ProductChecks {
     return repository.worktree && base ? git.patchId(repository.worktree, (await git.mergeBase(repository.worktree, "HEAD", base)) ?? base, "HEAD") : undefined;
   }
 
-  /** Failing checks send the work back to the builder, twice at most. */
+  /**
+   * A genuine pass ends the failure episode, and the next one starts afresh: every check failure of this product
+   * settled, on the code and the check definitions required now. A pass on checks or hooks replaced while it ran
+   * proves nothing about the current ones, so the spent returns stay.
+   */
+  private async closeEpisode(scope: RepositoryContext, state: CheckState): Promise<void> {
+    const { task, work } = scope;
+    if (work.checkReturns === undefined || !work.worktree) return;
+    if (task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(work.productId)))) return;
+    const product = this.k.productOf(scope);
+    const required = product ? checksFor(product, work.worktree) : [];
+    const { definition } = await this.definition(scope, required, await git.commitHookFiles(work.worktree), state.sha);
+    if (definition === state.definition) delete work.checkReturns;
+  }
+
+  /**
+   * Failing checks send the work back to the builder, twice at most in one failure episode. Each real send-back
+   * counts; rereading a saved failure does not. The fix walks forward from the builder through every stage up to
+   * the one these checks guard, so a fix made after reviews passed is reviewed again, and acceptance retried.
+   */
   backToBuilder(scope: RepositoryContext, when: string): boolean {
     const { task, work: repository } = scope;
-    if (task.repositories) return beginRepair(this.k, task, "checks", task.stageIndex);
+    if (task.repositories) {
+      // A shared repair pass returns to one stage. From the delivery check or shipping it returns through the
+      // first review after the builder, as a single product walks forward; nothing it changed is unreviewed.
+      const stages = task.plan?.stages ?? [];
+      const here = stages[task.stageIndex];
+      const late = here?.gate === "delivery" || this.k.role(here?.roleId ?? "", task)?.result === "delivery";
+      const builder = stages.findIndex((entry) => entry.kind === "do" && this.k.role(entry.roleId, task)?.result === "build");
+      const review = late && !task.repositories.some(repositoryPublished) ? stages.findIndex((entry, index) => index > builder && index < task.stageIndex && entry.kind === "review-chain") : -1;
+      if (!beginRepair(this.k, task, "checks", review >= 0 ? review : task.stageIndex)) return false;
+      // Through review, the delivery check asks again. A pass returning to shipping keeps the approval, so the
+      // changed work is compared with what was approved there and never ships on a withdrawn approval.
+      if (review >= 0) for (const work of task.repositories) if (!repositoryPublished(work)) withdrawApproval(work);
+      this.k.commitNow();
+      return true;
+    }
     const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && this.k.role(entry.roleId, task)?.result === "build");
     if (builder < 0 || (repository.checkReturns ?? 0) >= 2) return false;
     repository.checkReturns = (repository.checkReturns ?? 0) + 1;
+    withdrawApproval(repository);
     task.stageIndex = builder;
     task.sub = 0;
     task.fixing = true;
@@ -582,4 +618,93 @@ export class ProductChecks {
     this.k.commit();
     return true;
   }
+
+  /**
+   * The automatic returns of this failure episode are used up. The task waits at the step these checks guard
+   * (a pending review round keeps its number), and the coordinator gets a check problem: asking for changes
+   * gives the Builder one more turn, and approving never ships failing checks. Without a delivery check to ask
+   * again, an approval stops the task for Retry instead.
+   */
+  blocked(task: MTask): "stop" {
+    const stages = task.plan?.stages ?? [];
+    if (!stages.some((stage) => stage.kind === "gate" && stage.gate === "delivery") && scopesFor(task).some(({ work }) => work.approvedFor?.by === "coordinator")) {
+      throw new Error("The product's checks fail, and approving does not ship failing checks. Retry runs them again; a pass continues where the task stopped.");
+    }
+    const problem = this.checkProblem(task);
+    this.k.log(task, "warn", problem.line);
+    this.k.gate(task, "delivery", undefined, problem);
+    return "stop";
+  }
+
+  /** What the coordinator reads at a check problem: each failing check, the Builder's turns and answers, where the task stopped and what comes after. */
+  private checkProblem(task: MTask): { title: string; body: string; line: string } {
+    const stages = task.plan?.stages ?? [];
+    const shared = !!task.repositories;
+    const failing = scopesFor(task).flatMap((scope) => {
+      const runs = scope.work.checks?.results.filter((run) => !run.ok) ?? [];
+      return runs.length ? [{ scope, runs, name: this.k.productOf(scope)?.name ?? scope.work.productId }] : [];
+    });
+    const names = failing.flatMap(({ runs, name }) => runs.map((run) => shared ? `${name}: ${run.name}` : run.name));
+    const turns = (count: number) => `${count} automatic Builder ${count === 1 ? "turn" : "turns"}`;
+    const sections = failing.map(({ scope, runs, name }) => {
+      const attempts = scope.work.checkReturns ?? 0;
+      const lines = runs.map((run) => {
+        const finding = task.findings.findLast((entry) => entry.raisedBy === "petrina" && entry.text === `Check failed: ${run.name} (${run.command})` && (!shared || entry.productIds?.includes(scope.work.productId)));
+        const answer = (shared ? finding?.answers?.[scope.work.productId] : undefined) ?? finding?.answer;
+        return [
+          `• ${run.name} ${run.timedOut ? "did not finish" : "failed"}: ${diagnosticOf(run)}`,
+          ...(answer ? [`  The Builder's last answer${answer.fixed ? ", saying it fixed this" : ""}: “${answer.text.trim()}”`] : []),
+        ].join("\n");
+      });
+      return [`${shared ? `${name}: s` : "S"}till failing after ${turns(attempts)}.`, ...lines].join("\n");
+    });
+    const builder = lastIndexWhere(stages, (entry, index) => index < task.stageIndex && entry.kind === "do" && this.k.role(entry.roleId, task)?.result === "build");
+    const where = this.stoppedAt(task);
+    const reviews = new Set(stages.filter((stage) => stage.kind === "review-chain").map((stage) => stage.id));
+    const reviewed = Math.max(-Infinity, ...(task.journey ?? []).filter((step) => step.kind === "agent" && step.stageId && reviews.has(step.stageId) && step.endedAt !== undefined).map((step) => step.endedAt!));
+    const unconfirmed = task.findings.filter((finding) => finding.raisedBy !== "petrina" && finding.status !== "dismissed" && !/^(Failed|Could not verify) acceptance check:/.test(finding.text) && finding.answer?.fixed && finding.answer.at > reviewed).length;
+    const view = { ...taskView(task), ...(builder >= 0 ? { stageIndex: builder, fixing: false } : {}) } as Task;
+    const ahead = stepsFrom(this.k.s as unknown as State, view, builder >= 0 ? builder + 1 : task.stageIndex);
+    const body = [
+      ...sections,
+      [
+        `Stopped ${where}.`,
+        ...(unconfirmed ? [`A reviewer has not yet confirmed ${unconfirmed === 1 ? "1 fix" : `${unconfirmed} fixes`} the Builder made for review findings.`] : []),
+        ...(ahead.length ? [`${builder >= 0 ? "After the Builder's next turn, still to come" : "Still to come"}: ${ahead.join(", then ")}.`] : []),
+      ].join(" "),
+      `${builder >= 0 ? "Ask for changes to give the Builder one more turn with your note. " : ""}Approving does not ship while a check fails.`,
+    ].join("\n\n");
+    const attempts = shared ? "their automatic Builder turns" : turns(executionFor(task).work.checkReturns ?? 0);
+    return {
+      title: checkProblemTitle(task.title, names),
+      body,
+      line: `Checks still fail after ${attempts} (${names.join(", ")}), so Petrina waits for you ${where}`,
+    };
+  }
+
+  /** The step the failing checks guard, in the coordinator's words. */
+  private stoppedAt(task: MTask): string {
+    const stage = task.plan?.stages[task.stageIndex];
+    if (!stage) return "before delivery";
+    if (stage.kind === "gate") return stage.gate === "delivery" ? "before your delivery check" : `before ${stage.title.toLowerCase()}`;
+    if (stage.kind === "review-chain") {
+      const round = task.rounds[stage.id] ?? 1;
+      return `before the ${stage.title.toLowerCase()}${round > 1 ? ` (round ${round})` : ""}`;
+    }
+    const result = this.k.role(stage.roleId, task)?.result;
+    return result === "checks" ? "before acceptance testing" : result === "delivery" ? "before shipping" : `before ${stage.title.toLowerCase()}`;
+  }
+}
+
+/** The builder changes the work: whatever was approved before, the coordinator checks it again. */
+function withdrawApproval(work: { approvedSha?: string; approvedPatch?: string; approvedFor?: unknown }): void {
+  delete work.approvedSha;
+  delete work.approvedPatch;
+  delete work.approvedFor;
+}
+
+/** A failed run in a few lines: the failing tests and causes, else the end of its output. */
+function diagnosticOf(run: CheckRun): string {
+  const detail = checkDiagnostic(run.output) ?? run.output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-3).join("\n");
+  return (detail || "no output").slice(0, 600);
 }

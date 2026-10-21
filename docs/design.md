@@ -25,7 +25,7 @@ Petrina runs local coding agents on product repositories. The coordinator sets p
 
 A task moves from Backlog to Queue after review. Once admitted, it plans, designs when needed, builds, tests, reviews and delivers. An agent works only while it owns a pool seat. A checkpoint frees that seat; a mid-turn question may retain it. Finished and cancelled work moves to History.
 
-A failed automated check returns to the Builder within its allowance, then asks the coordinator. An unavailable acceptance probe remains unverified. Review findings, check failures and missing evidence have different meanings and must retain them throughout the flow.
+A failed automated check returns to the Builder at most twice in a row; a genuine pass on the current code and check definitions resets that allowance. When it runs out, the task waits at the step the checks guard and asks the coordinator. An unavailable acceptance probe remains unverified. Review findings, check failures and missing evidence have different meanings and must retain them throughout the flow.
 
 ## State ownership
 

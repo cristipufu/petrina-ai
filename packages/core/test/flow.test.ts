@@ -32,6 +32,17 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
     expect(gateStatus(task, "delivery")).toBe("1 acceptance check could not be verified. Your call");
   });
 
+  it("names the failing checks at a check problem instead of counting the findings they raise", () => {
+    const run = (name: string, ok: boolean) => ({ name, command: `bun run ${name.toLowerCase()}`, ok, output: ok ? "ok" : "failed", ms: 1 });
+    const task = copy({ findings: [important()], checks: { at: 1, results: [run("Tests", false), run("Typecheck", true)] } });
+    expect(gateTitle(task, "delivery")).toBe(`Your call on “${planned.title}”: a check still fails (Tests)`);
+    expect(gateStatus(task, "delivery")).toBe("Checks still fail. Your call");
+    const both = copy({ checks: { at: 1, results: [run("Tests", false), run("Build", false)] } });
+    expect(gateTitle(both, "delivery")).toBe(`Your call on “${planned.title}”: checks still fail (Tests, Build)`);
+    // Once the checks pass, open Important findings are counted as before.
+    expect(gateTitle(copy({ findings: [important()], checks: { at: 1, results: [run("Tests", true)] } }), "delivery")).toBe(`Your call on “${planned.title}”: 1 blocking finding still open`);
+  });
+
   it("sends a delivery back to the builder, and a plan back to the planner", () => {
     const delivery = copy({ stageIndex: stages.length - 1, sub: 2 });
     afterChangesAsked(delivery, "delivery", "The greeting is gone", 0, BUILT_IN_ROLES);

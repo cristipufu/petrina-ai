@@ -115,6 +115,8 @@ export interface Scenario {
   restarts?: number;
   /** "change": fixing review findings changes the code (by default the fix leaves it as it was). */
   fixes?: "change";
+  /** What the builder says about every finding it answers (default: fixed, "Fixed it."). */
+  answer?: { fixed: boolean; text: string };
   /** The first build writes a name the repository's pre-commit hook blocks; fixing removes it. */
   leak?: boolean;
   /** The first build merges main into the branch itself, which builders are told never to do. */
@@ -353,12 +355,12 @@ function riskOf(plan: Scenario) {
 }
 
 /** A builder in a fix round answers every finding it was given, by id. */
-function answersTo(text: string) {
+function answersTo(text: string, answer: { fixed: boolean; text: string } = { fixed: true, text: "Fixed it." }) {
   // Continued fixes receive the current open-ID index; unchanged records stay in native context.
   const index = section(text, "Current finding status index");
   const ids = index !== undefined ? [...index.matchAll(/^- ([^:\n]+): open,/gm)].map(match => match[1]!)
     : findingIds(text, "Review findings (answer every one by id; fix every Important one)");
-  return ids.map(id => ({ id, fixed: true, text: "Fixed it." }));
+  return ids.map(id => ({ id, ...answer }));
 }
 
 const NOTES = "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)";
@@ -1009,7 +1011,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           return hang(sessionId, "builder-todo");
         }
         writeFileSync(join(session.cwd, "greeting.txt"), "Hello\n");
-        return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
+        return done({ summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text, plan.answer) });
       }
       if (plan.builder === "work" && !earlierAttempt && session.restarts < (plan.restarts ?? 1)) {
         if (roleOf(text)) {
@@ -1074,7 +1076,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       const title = script.title ?? plan.title;
       const description = script.description ?? (text.includes('"description"') ? "Adds a greeting file.\n\nTested with the greeting test." : undefined);
-      return done({ ...(title ? { title } : {}), ...(description ? { description } : {}), summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text) });
+      return done({ ...(title ? { title } : {}), ...(description ? { description } : {}), summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text, plan.answer) });
     }
     case "code reviewer":
       if (plan.reviewer === "confirm-dismissed") {

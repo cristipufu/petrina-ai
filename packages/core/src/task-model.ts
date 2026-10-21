@@ -17,7 +17,10 @@ export interface RepositoryState {
   /** The tree is the code itself: a squash keeps it, so the checks still count. */
   /** The definition covers commands and hook inputs, separately from the code. */
   checks?: { current?: boolean; at: number; sha?: string; tree?: string; definition?: string; results: readonly CheckRun[] };
-  /** How many times failing checks sent the work back before review or delivery. */
+  /**
+   * Automatic Builder returns in the current check failure episode, twice at most. Only a passing run of every
+   * check and hook on the current code and check definitions ends the episode and clears it.
+   */
   checkReturns?: number;
   /** The base's commit when the working copy was made: reviews, the tamper check and the review guide go by it, whatever later happens to refs. */
   baseSha?: string;

@@ -800,3 +800,200 @@ describe("explicit repository execution contexts", () => {
     } finally { await engine.shutdown(); }
   });
 });
+
+describe("shared check repair episodes", () => {
+  const plan = () => ({ rationale: "Shared checks", plannerProfileId: "sol-high", stages: [
+    { id: "build", title: "Build", kind: "do" as const, roleId: "builder", profileIds: ["sol-high"] },
+    { id: "test", title: "Try it", kind: "do" as const, roleId: "tester", profileIds: ["sol-high"] },
+    { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 2 },
+    { id: "delivery", title: "Your delivery check", kind: "gate" as const, gate: "delivery" as const, roleId: "release-manager", profileIds: [] },
+    { id: "ship", title: "Commit to main", kind: "do" as const, roleId: "release-manager", profileIds: ["sol-high"] },
+  ] });
+  const command = (name: string, script: string) => ({ name, argv: [process.execPath, "-e", script] });
+  const passing = command("Tests", "console.log('All tests pass')");
+  const failing = command("Welcome page", "console.error('The welcome page is missing'); process.exit(1)");
+  /** The checks the coordinator set for a product: the ones a pass has to cover. */
+  const setChecks = (engine: Awaited<ReturnType<typeof fixture>>["engine"], productId: string, commands: readonly { name: string; argv: string[] }[]) => {
+    const product = engine.s.products.find((entry) => entry.id === productId)!;
+    product.checks = [...commands];
+    product.checksBy = "coordinator";
+  };
+
+  it("ends one product's failure episode on its own genuine pass, keeping the other's spent repairs", async () => {
+    const { engine, task } = await fixture("check-episodes");
+    try {
+      engine.setPoolPaused(false);
+      const first = executionFor(task, "first"), second = executionFor(task, "second");
+      const checks = engine["checks"], signal = new AbortController().signal;
+      setChecks(engine, "first", [passing, failing]);
+      setChecks(engine, "second", [passing]);
+      first.work.checkReturns = 2;
+      second.work.checkReturns = 1;
+      // One check fixed while another still fails continues the episode; nothing clears or extends it.
+      expect(await checks.runProductChecks(first, [passing, failing], signal)).toBe(1);
+      expect(first.work.checkReturns).toBe(2);
+      expect(await checks.runProductChecks(second, [passing], signal)).toBe(0);
+      expect(first.work.checkReturns).toBe(2);
+      expect(second.work.checkReturns).toBeUndefined();
+      // Rereading a saved failure is no new attempt; a saved pass on the same code and definitions is a genuine pass.
+      second.work.checkReturns = 1;
+      expect(await checks.failing(first, signal)).toBe(true);
+      expect(await checks.failing(second, signal)).toBe(false);
+      expect(first.work.checkReturns).toBe(2);
+      expect(second.work.checkReturns).toBeUndefined();
+      expect(first.work.checks!.results.map((run) => run.ok)).toEqual([true, false]);
+    } finally { await engine.shutdown(); }
+  });
+
+  it("returns a shared check repair from the delivery check or shipping through review, withdrawing approval", async () => {
+    const { engine, task } = await fixture("check-routes");
+    try {
+      task.plan = plan();
+      const second = executionFor(task, "second");
+      task.findings = [{ id: "check", text: "Check failed: Tests (bun test)", productIds: ["second"], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" }];
+      const attempt = (from: number) => {
+        for (const work of task.repositories!) {
+          work.approvedSha = "approved"; work.approvedPatch = "patch"; work.approvedFor = { by: "coordinator", mode: "local", destination: "main" };
+          delete work.checkReturns;
+        }
+        delete task.repair;
+        task.stageIndex = from;
+        expect(engine["checks"].backToBuilder(second, "in this test")).toBe(true);
+        expect(task.stageIndex).toBe(0);
+        expect(second.work.checkReturns).toBe(1);
+        return [task.repair!.returnStage, task.repositories!.map((work) => work.approvedPatch ?? "withdrawn").join()];
+      };
+      // From the delivery check or shipping: through review, as one product walks forward, and the delivery check
+      // asks again. Earlier gates return to themselves.
+      expect([3, 4, 2, 1].map(attempt)).toEqual([[2, "withdrawn,withdrawn"], [2, "withdrawn,withdrawn"], [2, "patch,patch"], [1, "patch,patch"]]);
+      expect(task.repair).toEqual({ products: ["second"], index: 0, returnStage: 1, kind: "checks" });
+      // Once a product has published, the rest returns to shipping as before, keeping the approval it is compared with.
+      task.repositories![0]!.landed = { branch: "main", sha: "a".repeat(40) };
+      expect(attempt(4)).toEqual([4, "patch,patch"]);
+    } finally { await engine.shutdown(); }
+  });
+
+  it("lists every product's failing checks, turns and answers at a shared check problem, and returns a change request there", async () => {
+    const { engine, task, id } = await fixture("check-problem");
+    try {
+      engine.setPoolPaused(false);
+      task.plan = plan();
+      task.stageIndex = 1;
+      const first = executionFor(task, "first"), second = executionFor(task, "second");
+      const checks = engine["checks"], signal = new AbortController().signal;
+      await checks.runProductChecks(first, [failing], signal);
+      await checks.runProductChecks(second, [command("Tests", "console.log('(fail) greeting > says hello'); console.error('error: expected Hello'); process.exit(1)")], signal);
+      first.work.checkReturns = 2;
+      second.work.checkReturns = 1;
+      // A run that did not finish (the Mac slept, say) is a failure of the same episode, and says so.
+      setChecks(engine, "first", [failing]);
+      first.work.checks!.results = [{ ...first.work.checks!.results[0]!, timedOut: true }];
+      expect(await checks.failing(first, signal)).toBe(true);
+      expect(first.work.checkReturns).toBe(2);
+      const answered = task.findings.find((finding) => finding.productIds?.includes("second"))!;
+      answered.answer = { fixed: false, text: "The suite timed out while the Mac slept.", at: Date.now() };
+      answered.answers = { second: answered.answer };
+      expect(checks.blocked(task)).toBe("stop");
+      const item = engine.s.inbox.find((entry) => entry.taskId === id && entry.kind === "delivery")!;
+      expect(item.title).toBe(`Your call on “${task.title}”: checks still fail (First: Welcome page, Second: Tests)`);
+      expect(item.body).toContain("First: still failing after 2 automatic Builder turns.\n• Welcome page did not finish: The welcome page is missing");
+      expect(item.body).toContain("Second: still failing after 1 automatic Builder turn.\n• Tests failed: (fail) greeting > says hello\nerror: expected Hello\n  The Builder's last answer: “The suite timed out while the Mac slept.”");
+      expect(item.body).toContain("Stopped before acceptance testing.");
+      expect(item.body).toContain("Approving does not ship while a check fails.");
+      expect(task.statusLine).toBe("Checks still fail. Your call");
+      expect(task.stageIndex).toBe(1);
+      expect(task.timeline.map((line) => line.text)).toContain("Checks still fail after their automatic Builder turns (First: Welcome page, Second: Tests), so Petrina waits for you before acceptance testing");
+      // Asking for changes at acceptance testing repairs both products, then returns there and on through review.
+      engine.requestChanges(item.id, "Fix both checks");
+      expect(task.repair).toEqual({ products: ["first", "second"], index: 0, returnStage: 1, kind: "review" });
+      expect(task.stageIndex).toBe(0);
+      expect(first.work.checkReturns).toBe(2);
+      expect(second.work.checkReturns).toBe(1);
+    } finally { await engine.shutdown(); }
+  });
+
+  it("opens the check problem instead of repairing a passing product for a deleted test, and bounds a real failure there", async () => {
+    const { engine, task } = await fixture("check-loop");
+    try {
+      engine.setPoolPaused(false);
+      task.plan = plan();
+      task.stageIndex = 2;
+      const first = executionFor(task, "first"), second = executionFor(task, "second");
+      const checks = engine["checks"], signal = new AbortController().signal;
+      setChecks(engine, "first", [passing]);
+      setChecks(engine, "second", [failing]);
+      expect(await checks.failing(first, signal)).toBe(false);
+      expect(await checks.failing(second, signal)).toBe(true);
+      second.work.checkReturns = 2;
+      // Petrina's deleted-test warning on the passing product is a blocking finding, but not a failing check.
+      task.findings.push({ id: "deleted", text: "A test file was deleted: greeting.test.ts", productIds: ["first"], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+      const gate = async () => {
+        // Each unchanged return rereads both saved results before the review gate decides.
+        expect(await checks.failing(first, signal)).toBe(false);
+        expect(await checks.failing(second, signal)).toBe(true);
+        const returned = checks.backToBuilder(second, "before review");
+        const products = task.repair?.products;
+        delete task.repair;
+        task.stageIndex = 2;
+        return returned ? products : "blocked";
+      };
+      expect(await gate()).toBe("blocked");
+      expect(task.findings.find((finding) => finding.id === "deleted")!.status).toBe("open");
+      // Control: a real failure on the first product gets its own two returns, and then the blocker opens too.
+      setChecks(engine, "first", [failing]);
+      expect(await checks.failing(first, signal)).toBe(true);
+      const turns = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        expect(await checks.failing(first, signal)).toBe(true);
+        expect(await checks.failing(second, signal)).toBe(true);
+        const returned = checks.backToBuilder(second, "before review");
+        turns.push(returned ? [task.repair!.products, first.work.checkReturns] : "blocked");
+        delete task.repair;
+        task.stageIndex = 2;
+      }
+      expect(turns).toEqual([[["first"], 1], [["first"], 2], "blocked"]);
+    } finally { await engine.shutdown(); }
+  });
+
+  it("ends an episode only when every check failure of the product is settled", async () => {
+    const { engine, task } = await fixture("check-settled");
+    try {
+      engine.setPoolPaused(false);
+      const first = executionFor(task, "first"), checks = engine["checks"], signal = new AbortController().signal;
+      // A pre-commit hook that failed before, and does not run on this work: the product's own checks pass.
+      const hook = join(first.work.worktree!, ".git", "hooks", "pre-commit");
+      writeFileSync(hook, "#!/bin/sh\nexit 1\n"); chmodSync(hook, 0o755);
+      task.findings.push({ id: "hook", text: "Check failed: Pre-commit hook (git hook run --ignore-missing pre-commit)", productIds: ["first"], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+      setChecks(engine, "first", [passing]);
+      first.work.checkReturns = 1;
+      expect(await checks.runProductChecks(first, [passing], signal)).toBe(0);
+      expect(task.findings.find((finding) => finding.id === "hook")!.status).toBe("open");
+      expect(first.work.checkReturns).toBe(1);
+    } finally { await engine.shutdown(); }
+  });
+
+  it("keeps spent repairs when the required checks are replaced while a passing run is under way", async () => {
+    const { engine, task } = await fixture("check-replaced");
+    try {
+      engine.setPoolPaused(false);
+      const scope = executionFor(task, "first"), checks = engine["checks"], signal = new AbortController().signal;
+      const started = join(dirname(scope.work.worktree!), "check-started"), release = join(dirname(scope.work.worktree!), "check-release");
+      const holding = command("Welcome page", `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(started)}, 'started'); const wait = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) { clearInterval(wait); console.log('The welcome page works'); } }, 20);`);
+      setChecks(engine, "first", [holding]);
+      scope.work.checkReturns = 2;
+      const run = checks.failing(scope, signal);
+      await waitFor(() => existsSync(started), "the original check to start");
+      setChecks(engine, "first", [failing]);
+      writeFileSync(release, "go");
+      // The original command passed, but it is no longer what the product requires.
+      expect(await run).toBe(false);
+      expect(scope.work.checkReturns).toBe(2);
+      expect(await checks.failing(scope, signal)).toBe(true);
+      expect(scope.work.checkReturns).toBe(2);
+      // Control: a pass on the checks required now does end the episode.
+      setChecks(engine, "first", [passing]);
+      expect(await checks.failing(scope, signal)).toBe(false);
+      expect(scope.work.checkReturns).toBeUndefined();
+    } finally { await engine.shutdown(); }
+  });
+});

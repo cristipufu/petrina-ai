@@ -281,6 +281,11 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
   return steps.slice(0, limit);
 }
 
+/** The plan's steps from stage `index` on, along the likely path, for a decision that says what is still to come. */
+export function stepsFrom(state: People, task: Task, index: number, limit = 6): string[] {
+  return upcoming(state, task, index, 0, limit);
+}
+
 export interface NextSteps {
   /** Up to two steps, each with who does it; one when it comes with an "or". */
   steps: readonly string[];

@@ -448,7 +448,8 @@ export abstract class Kernel {
     return true;
   }
 
-  gate(task: MTask, gate: GateKind, problem?: string): void {
+  /** `checks`: a check problem's own title and explanation, raised wherever the failing checks stopped the task. */
+  gate(task: MTask, gate: GateKind, problem?: string, checks?: { title: string; body: string }): void {
     delete task.agent;
     task.holdsSlot = false;
     beginYouStep(task, gate, Date.now());
@@ -457,9 +458,9 @@ export abstract class Kernel {
       ? (gate === "plan" ? task.workRows?.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error, row.addition ? `Will be added in ${row.addition.path}` : ""].filter(Boolean).join("\n")) : task.repositories?.map((entry) => [entry.source ? workSummary(entry.source) : entry.productId, entry.report?.summary, entry.checks?.results.length ? entry.checks.results.every((run) => run.ok) ? "Product checks passed" : "Product checks failed" : "Product checks: Not run", entry.releasePreview ? `Release ${entry.releasePreview.tag}: ${entry.releasePreview.notes}\nThis includes everything waiting on the default branch since the previous release.` : ""].filter(Boolean).join("\n")))?.join("\n\n") ?? ""
       : work ? workSummary(work) : "";
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(taskView(task)) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
-    const explanation = [problem, body].filter(Boolean).join("\n\n");
-    this.raise(task, gate, gateTitle(taskView(task), gate), false, explanation ? { body: explanation } : {});
-    task.statusLine = problem ? "Delivery preparation needs you" : gateStatus(taskView(task), gate);
+    const explanation = [problem, checks?.body, body].filter(Boolean).join("\n\n");
+    this.raise(task, gate, checks?.title ?? gateTitle(taskView(task), gate), false, explanation ? { body: explanation } : {});
+    task.statusLine = problem ? "Delivery preparation needs you" : checks ? library.CHECKS_STILL_FAIL : gateStatus(taskView(task), gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     // On disk before the window shows it: an answer to this check must find it after any restart.
     this.commitNow();

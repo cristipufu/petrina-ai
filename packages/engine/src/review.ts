@@ -163,16 +163,9 @@ export class Reviews {
           delete work.reviewedTree;
         }
         if (this.checks.backToBuilder(scope, "before review")) return "continue";
-        this.forgetSessions(task, stage.id);
-        // The same delivery decision used after final checks exhaust their builder returns.
-        const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.gate === "delivery");
-        task.stageIndex = delivery >= 0 ? delivery : task.plan!.stages.length - 1;
-        task.sub = 0;
-        this.k.log(task, "warn", "Checks still fail: the builder returns are used up, so the decision goes to you");
-        this.k.commitNow();
-        if (delivery >= 0) return "continue";
-        this.k.gate(task, "delivery");
-        return "stop";
+        // The round has not started: it waits here with its number, its reviewers' conversations and its
+        // incremental anchor, and runs once the checks pass. No review is assumed from the Builder's answers.
+        return this.checks.blocked(task);
       }
       if (task.repositories) task.activeProductId = task.leadProductId ?? task.repositories[0]!.productId;
       task.statusLine = "Preparing the review";

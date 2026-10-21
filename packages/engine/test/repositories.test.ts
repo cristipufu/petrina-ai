@@ -1206,6 +1206,42 @@ describe.concurrent("shared-task repair regressions", () => {
 });
 
 describe.concurrent("shared delivery and hand-back regressions", () => {
+  it("returns a shared check repair started right before shipping through review, acceptance and the delivery check", async () => {
+    const { shop, api, start, fakes } = setup("check-repair-before-shipping");
+    const engine = start();
+    try {
+      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const products = [first, second];
+      fakes.scenario({ planner: "tester-first", builder: "plain", reopen: "resume", affectedProducts: products, fixes: "change" });
+      const script = (name: string, body: string) => { const path = join(api.dir, name); writeFileSync(path, body); return `${process.execPath} ${path}`; };
+      engine.setProductChecks(second, [{ name: "Welcome", command: script("welcome-passes.cjs", "process.exit(0)") }]);
+      const id = engine.addTask({ productId: first, worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Welcome people in both products" });
+      const ready = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
+      expect(taskOf(ready, id).error).toBeUndefined();
+      const reviewers = fakes.openings("code reviewer").length, testers = fakes.openings("tester").length, builders = fakes.received("builder").length;
+      expect(testers).toBe(1);
+      // The API's checks change after approval and fail on what was about to ship.
+      engine.setProductChecks(second, [{ name: "Welcome", command: script("welcome-file.cjs", "process.exit(require('node:fs').existsSync('welcome.txt') ? 0 : 1)") }]);
+      const approved = itemOf(ready, id, "delivery")!.id;
+      engine.approve(approved);
+      const again = await until(engine, (state) => (!!itemOf(state, id, "delivery") && itemOf(state, id, "delivery")!.id !== approved) || !!taskOf(state, id).error || taskOf(state, id).state === "pr-open", coordinator(["plan", "design"]));
+      const task = taskOf(again, id);
+      expect(task.error).toBeUndefined();
+      expect(task.state).toBe("needs-you");
+      const lines = task.timeline.map((line) => line.text);
+      expect(lines.some((line) => line.startsWith("Checks: 1 of 1 failed (Welcome)"))).toBe(true);
+      // Only the API's Builder repaired it; the fix was reviewed again and acceptance tried on the final code.
+      expect(fakes.received("builder").length).toBeGreaterThan(builders);
+      expect(fakes.openings("code reviewer").length).toBeGreaterThan(reviewers);
+      expect(fakes.openings("tester")).toHaveLength(2);
+      const repaired = task.repositories!.find((work) => work.productId === second)!;
+      expect(repaired.checks!.results.every((run) => run.ok)).toBe(true);
+      expect(task.repositories!.map((work) => work.checkReturns)).toEqual([undefined, undefined]);
+      expect(task.repositories!.every((work) => !work.pr && !work.approvedFor)).toBe(true);
+      expect(itemOf(again, id, "delivery")!.title).toBe("Ready to ship “Welcome people in both products”");
+    } finally { await engine.shutdown(); }
+  });
+
   for (const decision of ["approve-again", "send-back"] as const) it(`cleans earlier unpublished release versions before shared ${decision} after a later preview mismatch`, async () => {
     const { shop, api, start, fakes } = setup(`release-preview-mismatch-${decision}`);
     for (const world of [shop, api]) {

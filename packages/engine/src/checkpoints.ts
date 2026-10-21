@@ -99,7 +99,9 @@ export class Checkpoints {
         const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
         if (open.length) {
           const review = task.plan!.stages.findIndex((stage, index) => index > task.stageIndex && stage.kind === "review-chain");
-          if (!beginRepair(this.k, task, "review", review)) {
+          // A check problem raised before the review (at acceptance testing) returns there, then walks on through review.
+          const back = review >= 0 && fromCheck > task.stageIndex && fromCheck < review ? fromCheck : review;
+          if (!beginRepair(this.k, task, "review", back)) {
             task.stageIndex = fromCheck;
             this.k.gate(task, "delivery");
             return;

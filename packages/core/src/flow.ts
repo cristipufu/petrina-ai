@@ -39,20 +39,30 @@ function stillBlocking(task: Task): number {
   return task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").length;
 }
 
-/** What a checkpoint is called in the inbox. A delivery with Important findings still open says so first. */
+/** A check problem names the checks that still fail, not a count of the findings they raise. */
+export function checkProblemTitle(title: string, failing: readonly string[]): string {
+  return `Your call on “${title}”: ${failing.length === 1 ? "a check still fails" : "checks still fail"} (${failing.join(", ")})`;
+}
+
+/** What a checkpoint is called in the inbox. Failing checks, then Important findings still open, say so first. */
 export function gateTitle(task: Task, gate: GateKind): string {
+  const failing = gate === "delivery" ? task.checks?.results.filter((run) => !run.ok).map((run) => run.name) ?? [] : [];
+  if (failing.length) return checkProblemTitle(task.title, failing);
   const open = gate === "delivery" ? stillBlocking(task) : 0;
   if (open) return `Your call on “${task.title}”: ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} still open`;
   const unverified = gate === "delivery" ? task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0 : 0;
   return unverified ? `Your call on “${task.title}”: ${unverified === 1 ? "1 acceptance check could not be verified" : `${unverified} acceptance checks could not be verified`}` : GATE_TITLE[gate](task.title);
 }
 
+/** The status line while a check problem waits for the coordinator. */
+export const CHECKS_STILL_FAIL = "Checks still fail. Your call";
+
 /** The task's status line while a checkpoint waits on the coordinator. */
 export function gateStatus(task: Task, gate: GateKind): string {
   if (gate === "plan") return "Plan ready. Waiting for your OK";
   if (gate === "design") return callOn(task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check";
   const open = stillBlocking(task);
-  if (task.checks?.results.some((run) => !run.ok)) return "Checks still fail. Your call";
+  if (task.checks?.results.some((run) => !run.ok)) return CHECKS_STILL_FAIL;
   // Never "done" while Important findings are open: the rounds ran out and the coordinator decides.
   if (open) return `Review rounds ran out with ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} open. Your call`;
   const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0;

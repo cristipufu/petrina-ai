@@ -382,8 +382,7 @@ export class Driver {
               const checkResult = await this.checks.checksBeforeDelivery(scope, signal);
               if (checkResult === "returned") { sentBack = true; break; }
               if (checkResult === "exhausted") {
-
-                this.k.gate(current, "delivery");
+                this.checks.blocked(current);
                 return;
               }
               await this.learnings.offer(scope);
@@ -470,13 +469,9 @@ export class Driver {
               delete work.reviewedTree;
             }
             if (this.checks.backToBuilder(scope, "before acceptance testing")) continue;
-            const delivery = current.plan!.stages.findIndex((entry, index) => index > current.stageIndex && entry.gate === "delivery");
-            if (delivery < 0) throw new Error("The product's checks fail before acceptance testing");
-            current.stageIndex = delivery;
-            current.sub = 0;
-            this.k.log(current, "warn", "Checks still fail: acceptance testing waits, and the decision goes to you");
-            this.k.commit();
-            continue;
+            // Acceptance testing waits here, and starts once the checks pass on the current code.
+            this.checks.blocked(current);
+            return;
           }
           this.preparedTesters.set(taskId, this.testerCheckKey(current));
           this.checks.releasePreparation(taskId);

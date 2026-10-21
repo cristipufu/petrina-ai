@@ -2,7 +2,7 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { displayTask, draftOf, journeyProblems, type DeepMutable, type State, type Task } from "@petrina/core";
+import { displayTask, draftOf, journeyProblems, journeyView, type DeepMutable, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "../src/store.js";
@@ -23,8 +23,11 @@ async function fixture(approveDelivery = true, scenario: Scenario = { planner: "
   const file = join(root, "check.ts");
   const log = join(root, "runs.txt");
   // Count actual command invocations outside the working copy, where restoring tracked files cannot hide one.
-  writeFileSync(file, `import { appendFileSync, existsSync } from "node:fs";
-const ok = process.argv.includes("--pass") || existsSync("welcome.txt");
+  // "--sequence=PFFP": the nth actual run passes or fails by its letter; later runs repeat the last one.
+  writeFileSync(file, `import { appendFileSync, existsSync, readFileSync } from "node:fs";
+const sequence = process.argv.find((arg) => arg.startsWith("--sequence="))?.slice(11);
+const earlier = existsSync(process.argv[2]) ? readFileSync(process.argv[2], "utf8").split("\\n").filter((line) => line === "passed" || line === "failed").length : 0;
+const ok = sequence ? sequence[Math.min(earlier, sequence.length - 1)] === "P" : process.argv.includes("--pass") || existsSync("welcome.txt");
 if (process.argv.includes("--hold")) {
   appendFileSync(process.argv[2], "started\\n");
   setInterval(() => {}, 1000);
@@ -68,6 +71,12 @@ process.exit(ok ? 0 : 1);
 
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 const checkSteps = (task: Task) => task.journey!.filter((step) => step.kind === "petrina" && step.work === "checks");
+const sentBack = (task: Task) => lines(task).filter((line) => line.startsWith("Sent back to the builder: the checks failed")).length;
+const reviewStage = (task: Task) => task.plan!.stages.findIndex((stage) => stage.kind === "review-chain");
+const ahead = (engine: Engine, task: Task) => {
+  const state = engine.getState();
+  return journeyView(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox }).nodes.filter((node) => node.state === "next" || node.state === "ahead").map((node) => node.name);
+};
 
 describe.concurrent("failed checks are evidence until something changes", () => {
   it("keeps an early static failure current across returns and restart, with heavy checks visibly skipped", async () => {
@@ -171,6 +180,9 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(journeyProblems(task as Task)).toEqual([]);
       expect(task.checkReturns).toBe(2);
       expect(task.findings.some((finding) => finding.text.startsWith("Check failed") && finding.status === "open")).toBe(true);
+      // Acceptance testing waits where the checks stopped it, and starts once they pass.
+      expect(task.plan!.stages[task.stageIndex]!.roleId).toBe("tester");
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain("Stopped before acceptance testing.");
     } finally { await f.engine.shutdown(); }
   });
 
@@ -286,6 +298,15 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(failure.status).toBe("open");
       expect(failure.evidence).toContain("captured failure");
       expect(f.fakes.prompts("builder").filter((text) => text.includes("captured failure"))).toHaveLength(2);
+      // Rereading the saved failure keeps its diagnostics: the saved log, the journey's run and the check problem.
+      const run = task.checks!.results[0]!;
+      expect(readFileSync(run.logPath!, "utf8")).toContain("captured failure");
+      expect(recordedChecks[0]!.productChecks![0]!.run?.logPath).toBe(run.logPath);
+      expect(task.stageIndex).toBe(reviewStage(task));
+      const blocker = itemOf(f.engine.getState(), f.taskId, "delivery")!;
+      expect(blocker.title).toBe("Your call on “Add a greeting”: a check still fails (Welcome)");
+      expect(blocker.body).toContain("• Welcome failed: The welcome page is missing (captured failure)");
+      expect(blocker.body).toContain("Stopped before the review.");
 
       await f.restart();
       expect(taskOf(f.engine.getState(), f.taskId).checks).toEqual(captured);
@@ -389,8 +410,9 @@ describe.concurrent("failed checks are evidence until something changes", () => 
   it("keeps a forced delivery decision and the coordinator's explicit Retry when automatic returns are used up", async () => {
     const f = await fixture(false);
     try {
-      await f.delivery();
+      const blocked = await f.delivery();
       expect(f.runs()).toEqual(["failed"]);
+      expect(blocked.stageIndex).toBe(reviewStage(blocked));
       // This task normally delivers without asking. Failed checks still bring it to the coordinator.
       f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
       let state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "failed", coordinator(["plan"]));
@@ -406,6 +428,8 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       f.engine.retry(itemOf(state, f.taskId, "stuck")!.id);
       await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       expect(f.runs()).toEqual(["failed", "failed", "passed"]);
+      // The passing run continued at the review the checks had held back; nothing shipped unreviewed.
+      expect(f.fakes.openings("code reviewer")).toHaveLength(1);
     } finally {
       f.engine.shutdown();
     }
@@ -722,4 +746,173 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       }
     });
   }
+});
+
+describe.concurrent("automatic check repairs belong to one failure episode", () => {
+  it("gives a later failure its own two repairs after a genuine pass, and reviews and retests a fix made after review passed", async () => {
+    const f = await fixture(true, { planner: "tester-first", builder: "plain", fixes: "change" }, { checkArgs: ["--sequence=FFP"] });
+    try {
+      let task = await f.delivery();
+      // Two automatic turns, then a real pass on the changed code closes the episode before acceptance testing.
+      expect(f.runs()).toEqual(["failed", "failed", "passed"]);
+      expect(sentBack(task)).toBe(2);
+      expect(task.checkReturns).toBeUndefined();
+      expect(f.fakes.openings("builder")).toHaveLength(3);
+      expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(2);
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.title).toBe("Ready to ship “Add a greeting”");
+
+      // A changed check fails on what was about to ship: the new episode has its own two returns again.
+      f.setCheck("--sequence=FFPFFP", "--later");
+      f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
+      task = await f.delivery();
+      expect(f.runs()).toEqual(["failed", "failed", "passed", "failed", "failed", "passed"]);
+      expect(sentBack(task)).toBe(4);
+      expect(task.checkReturns).toBeUndefined();
+      expect(f.fakes.openings("builder")).toHaveLength(5);
+      // The fix made after review passed is reviewed again and tried once more before the delivery check; nothing shipped.
+      expect(f.fakes.openings("code reviewer")).toHaveLength(4);
+      expect(f.fakes.openings("tester")).toHaveLength(2);
+      expect(task.state).toBe("needs-you");
+      expect(task.approvedSha).toBeUndefined();
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.title).toBe("Ready to ship “Add a greeting”");
+      expect(journeyProblems(task)).toEqual([]);
+      f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
+      await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
+      expect(f.runs()).toHaveLength(6);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("keeps a pending review round when check repairs run out, and runs it with its number after a passing fix", async () => {
+    const f = await fixture(true, { planner: "tester-first", builder: "plain", reviewer: "important", fixes: "change" }, { checkArgs: ["--sequence=PFFFP"] });
+    try {
+      let task = await f.delivery();
+      const review = reviewStage(task);
+      const stage = task.plan!.stages[review]!;
+      // Round 1 sent a finding back; its fix fails the checks three times in a row before round 2.
+      expect(f.runs()).toEqual(["passed", "failed", "failed", "failed"]);
+      expect(task.stageIndex).toBe(review);
+      expect(task.rounds[stage.id]).toBe(2);
+      expect(task.blockingAfter?.[stage.id]).toEqual([1]);
+      expect(task.checkReturns).toBe(2);
+      expect(sentBack(task)).toBe(2);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(2);
+      expect(f.fakes.openings("tester")).toHaveLength(1);
+      const anchor = task.reviewedSha;
+      expect(anchor).toBeDefined();
+      const item = itemOf(f.engine.getState(), f.taskId, "delivery")!;
+      expect(item.title).toBe("Your call on “Add a greeting”: a check still fails (Welcome)");
+      expect(task.statusLine).toBe("Checks still fail. Your call");
+      expect(item.body).toContain("Still failing after 2 automatic Builder turns.\n• Welcome failed: The welcome page is missing (captured failure)");
+      expect(item.body).toContain("The Builder's last answer, saying it fixed this: “Fixed it.”");
+      // The Builder answered round 1's Important finding and its nit; no reviewer has looked at either fix yet.
+      expect(item.body).toContain("Stopped before the review (round 2). A reviewer has not yet confirmed 2 fixes the Builder made for review findings.");
+      expect(item.body).toMatch(/After the Builder's next turn, still to come: code review again \([^)]*\), then final acceptance testing \([^)]*\) if the code changed, then your OK to ship/);
+      expect(item.body).toContain("Ask for changes to give the Builder one more turn with your note. Approving does not ship while a check fails.");
+      expect(item.body).toContain("Automated checks: 1 of 1 failed (Welcome).");
+      expect(lines(task)).toContain("Checks still fail after 2 automatic Builder turns (Welcome), so Petrina waits for you before the review (round 2)");
+      // The journey still shows the pending review round ahead of the delivery check.
+      const upcoming = ahead(f.engine, task);
+      expect(upcoming.indexOf("Code reviewers (round 2)")).toBeGreaterThanOrEqual(0);
+      expect(upcoming.indexOf("Code reviewers (round 2)")).toBeLessThan(upcoming.indexOf("Your delivery check"));
+      expect(journeyProblems(task)).toEqual([]);
+
+      f.engine.requestChanges(item.id, "Fix the welcome check");
+      task = await f.delivery();
+      expect(f.runs()).toEqual(["passed", "failed", "failed", "failed", "passed"]);
+      expect(task.checkReturns).toBeUndefined();
+      // Round 2 ran on the changes since round 1, kept its number, then acceptance was tried on the final code.
+      const second = f.fakes.openings("code reviewer").slice(2);
+      expect(second).toHaveLength(2);
+      for (const prompt of second) expect(prompt).toContain("This is review round 2: the rest was reviewed already.");
+      expect(task.rounds[stage.id]).toBe(2);
+      expect(task.blockingAfter?.[stage.id]).toEqual([1, 0]);
+      expect(f.fakes.openings("tester")).toHaveLength(2);
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.title).toBe("Ready to ship “Add a greeting”");
+      expect(journeyProblems(task)).toEqual([]);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("keeps the episode count across a restart, the blocker and its position after one, and the cleared count after a pass", async () => {
+    const f = await fixture(true, { planner: "short", builder: "plain", controlled: true });
+    const release = (session: string) => writeFileSync(join(f.fakes.dir, `release-${session}`), "go");
+    const releaseAll = (engine: Engine, state: State) => {
+      coordinator(["plan"])(engine, state);
+      for (const prompt of f.fakes.received()) release(prompt.session);
+    };
+    try {
+      // Hold the first automatic repair while it works, then restart in the middle of the episode.
+      await waitFor(() => {
+        coordinator(["plan"])(f.engine, f.engine.getState());
+        const builders = f.fakes.received("builder");
+        for (const prompt of f.fakes.received()) if (prompt.role !== "builder" || prompt.session === builders[0]?.session) release(prompt.session);
+        return builders.length >= 2;
+      }, "the first automatic repair to start");
+      expect(executionFor(f.engine.task(f.taskId)!).work.checkReturns).toBe(1);
+      await f.restart();
+      expect(executionFor(f.engine.task(f.taskId)!).work.checkReturns).toBe(1);
+      let state = await until(f.engine, (state) => !!itemOf(state, f.taskId, "delivery"), releaseAll);
+      let task = taskOf(state, f.taskId);
+      // One more automatic turn after the restart, never a fresh pair.
+      expect(task.checkReturns).toBe(2);
+      expect(sentBack(task)).toBe(2);
+      expect(f.runs()).toEqual(["failed"]);
+      const item = itemOf(state, f.taskId, "delivery")!;
+
+      await f.restart();
+      state = f.engine.getState();
+      task = taskOf(state, f.taskId);
+      expect(itemOf(state, f.taskId, "delivery")).toEqual(item);
+      expect(task.stageIndex).toBe(reviewStage(task));
+      expect(task.state).toBe("needs-you");
+      expect(task.statusLine).toBe("Checks still fail. Your call");
+      expect(task.checkReturns).toBe(2);
+
+      // The coordinator's turn is not a fresh allowance: a still-failing run returns straight to the blocker.
+      const builders = f.fakes.openings("builder").length;
+      f.engine.requestChanges(item.id, "Try once more");
+      state = await until(f.engine, (state) => !!itemOf(state, f.taskId, "delivery"), releaseAll);
+      task = taskOf(state, f.taskId);
+      expect(f.fakes.openings("builder").length).toBe(builders + 1);
+      expect(task.checkReturns).toBe(2);
+      expect(sentBack(task)).toBe(2);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(0);
+
+      f.fakes.scenario({ planner: "short", builder: "plain", controlled: true, fixes: "change" });
+      f.engine.requestChanges(itemOf(state, f.taskId, "delivery")!.id, "Make the actual fix");
+      state = await until(f.engine, (state) => itemOf(state, f.taskId, "delivery")?.title.startsWith("Ready to ship") ?? false, releaseAll);
+      expect(f.runs()).toEqual(["failed", "passed"]);
+      expect(taskOf(state, f.taskId).checkReturns).toBeUndefined();
+      await f.restart();
+      expect(taskOf(f.engine.getState(), f.taskId).checkReturns).toBeUndefined();
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("restores a saved task's spent allowance at its next verified pass", async () => {
+    const f = await fixture(true, { planner: "short", builder: "plain" }, { checkArgs: ["--pass"] });
+    try {
+      await f.delivery();
+      // Saved before episodes existed: both returns spent, although the checks pass now.
+      await f.restart((state) => { state.tasks.find((task) => task.id === f.taskId)!.checkReturns = 2; });
+      expect(taskOf(f.engine.getState(), f.taskId).checkReturns).toBe(2);
+      f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
+      const state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
+      expect(f.runs()).toEqual(["passed"]);
+      expect(taskOf(state, f.taskId).checkReturns).toBeUndefined();
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("keeps a check open when the Builder blames the environment, and shows that answer as its claim", async () => {
+    const claim = "Nothing to fix: the check failed because the Mac went to sleep.";
+    const f = await fixture(true, { planner: "short", builder: "plain", answer: { fixed: false, text: claim } });
+    try {
+      const task = await f.delivery();
+      expect(f.runs()).toEqual(["failed"]);
+      expect(task.checkReturns).toBe(2);
+      const failure = task.findings.find((finding) => finding.text.startsWith("Check failed"))!;
+      expect(failure).toEqual(expect.objectContaining({ status: "open", answer: expect.objectContaining({ fixed: false, text: claim }) }));
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain(`The Builder's last answer: “${claim}”`);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(0);
+    } finally { await f.engine.shutdown(); }
+  });
 });
