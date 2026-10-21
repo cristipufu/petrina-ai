@@ -301,6 +301,7 @@ export abstract class Kernel {
   readonly pendingAgentAdmissions = new Map<Id, { step: string; roleId: Id; profileId: Id }>();
 
   readonly runs = new Map<Id, AgentRun>();
+  readonly messageTurns = new Map<Id, Map<string, import("./messages.js").MessageTurn>>();
 
   /** Agents working beside a task's main one on the same step (reviewers hunting at once, voters). */
   readonly helperRuns = new Map<Id, Set<AgentRun>>();

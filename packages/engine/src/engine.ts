@@ -18,7 +18,8 @@ import { join } from "node:path";
 import { stat, mkdir, copyFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { combinedBacklogInput } from "@petrina/core";
-import { routeMessages } from "./messages.js";
+import { recoverMessages, routeMessages } from "./messages.js";
+import { messageRemovable } from "@petrina/core";
 import {
   AFTER_WORDS,
   endYouStep,
@@ -145,6 +146,7 @@ export class Engine extends Kernel implements Commands {
     for (const task of this.s.tasks) if (!task.journey && task.startedAt !== undefined) task.journey = legacyJourney(task as unknown as Task, this.s.inbox as InboxItem[], this.s.roles) as MTask["journey"];
     // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
     this.shipping.carryOverShipping();
+    for (const task of this.s.tasks) recoverMessages(task);
     this.driver.recover();
     // Recovered Builders get a short login check on their saved tool before fallback selection.
     // Other roles keep their existing recovery rules; the usual check timeout bounds this wait.
@@ -916,11 +918,11 @@ export class Engine extends Kernel implements Commands {
     this.schedule();
   }
 
-  sendMessage(taskId: Id, text: string, mode: "queue" | "interrupt" = "queue", clientId?: Id): Id | undefined {
+  sendMessage(taskId: Id, text: string, mode: "now" | "queue" | "interrupt" = "now", clientId?: Id): Id | undefined {
     const task = this.task(taskId);
     const trimmed = text.trim();
     if (!task || !trimmed || !this.firstTime(task, clientId)) return;
-    const message = { id: this.id(taskId), text: trimmed, at: Date.now() };
+    const message = { id: this.id(taskId), text: trimmed, at: Date.now(), mode };
     this.remember(task, trimmed, message.id);
     const run = this.runs.get(taskId);
     const runs = new Set(this.helperRuns.get(taskId) ?? []);
@@ -928,6 +930,7 @@ export class Engine extends Kernel implements Commands {
     const interrupt = mode === "interrupt" && runs.size > 0;
     this.stepNote(task, interrupt ? "interrupt" : "message", trimmed, { id: message.id });
     if (interrupt) {
+      // Heard next, ahead of notes that were already waiting.
       task.queued.unshift(message);
       this.say(task, "system", "You interrupted the current step");
     } else {
@@ -935,6 +938,7 @@ export class Engine extends Kernel implements Commands {
     }
     routeMessages(task, this.screenGroups.get(taskId)?.recipients() ?? Object.keys(task.hunt?.screenTurns ?? {}));
     this.commitNow(task);
+    if (mode === "now") for (const lane of this.messageTurns.get(taskId)?.values() ?? []) void lane.deliver();
     if (interrupt) for (const active of runs) void active.cancel();
     return message.id;
   }
@@ -942,10 +946,11 @@ export class Engine extends Kernel implements Commands {
   /** Take back a message before any agent got it. */
   removeQueued(taskId: Id, messageId: Id): void {
     const task = this.task(taskId);
-    if (!task || !task.queued.some((message) => message.id === messageId && !Object.values(message.recipients ?? {}).some(Boolean))) return;
+    if (!task || !task.queued.some((message) => message.id === messageId && messageRemovable(message))) return;
     task.queued = task.queued.filter((message) => message.id !== messageId);
     task.stepNotes = task.stepNotes?.filter((note) => note.id !== messageId);
     task.notes = task.notes?.filter((note) => note.id !== messageId);
+    task.session = task.session.filter(line => line.coordinatorMessageId !== messageId);
     this.commitNow(task);
   }
 

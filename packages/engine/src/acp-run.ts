@@ -255,6 +255,36 @@ async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: bo
 export class AgentRun {
   private notes: TurnNotes | undefined;
   private accountBefore: AccountReading | undefined;
+  private acceptsLiveInput = false;
+  onPromptStarted?: () => void;
+
+  get liveInput(): boolean { return this.acceptsLiveInput; }
+  get prompting(): boolean { return this.state.turn !== undefined; }
+
+  /** A lost reply is uncertain: it must never become an automatic second delivery. */
+  async guide(text: string, messageId: string): Promise<"unsupported" | "unknown" | "current-turn" | "accepted" | "separate-turn" | "prompt-required" | "rejected"> {
+    const live = ADAPTERS[this.profile.toolId]?.liveInput;
+    if (!live || !this.acceptsLiveInput || !this.prompting) return "unsupported";
+    const request = live.request(this.sessionId, text, messageId);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onExit!: () => void;
+    const gone = new Promise<never>((_, reject) => {
+      onExit = () => reject(new Error("The tool stopped before confirming live input"));
+      this.child.once("exit", onExit);
+      if (!running(this.child)) onExit();
+    });
+    try {
+      const response = await Promise.race([
+        this.connection.extMethod(request.method, request.params),
+        gone,
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Live input was not confirmed")), 10_000); }),
+      ]);
+      return live.receipt(response);
+    } catch (error) {
+      const code = (error as { code?: number } | null)?.code;
+      return code !== undefined && [-32600, -32601, -32602].includes(code) ? "rejected" : "unknown";
+    } finally { clearTimeout(timer); this.child.removeListener("exit", onExit); }
+  }
 
   /** Read native configuration without sending work to a model. Set when the session opens. */
   profileChoices!: (modelId?: string) => Promise<ProfileChoices>;
@@ -513,6 +543,7 @@ export class AgentRun {
       stream,
     );
 
+    let acceptsLiveInput = false;
     const open = async (): Promise<{ sessionId: string; configOptions?: unknown; how?: "resume" | "load" }> => {
       if (signal.aborted) throw new Error("Stopped before the agent started");
       // Notices let Codex announce a reroute as a typed update instead of text in the reply.
@@ -521,6 +552,12 @@ export class AgentRun {
         browserReady,
       ]);
       const sessionId = options.reopen;
+      const live = adapter.liveInput;
+      acceptsLiveInput = !options.probe && !!live?.supported(init);
+      if (acceptsLiveInput && live?.probe) {
+        const probe = live.probe;
+        acceptsLiveInput = await connection.extMethod(probe.method, probe.params).then(() => false, error => probe.recognizedError(error));
+      }
       if (options.authenticate) await connection.authenticate({ methodId: options.authenticate });
       // Keep the tool's session mode (Grok's auto mode) and add sandbox settings only for Claude Code.
       // The same metadata goes to new, resumed and loaded conversations.
@@ -600,6 +637,7 @@ export class AgentRun {
     try {
       const session = await Promise.race([ready, killed, deadline, stopped]);
       const agent = new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how, await browserReady, callbacks);
+      agent.acceptsLiveInput = acceptsLiveInput;
       agent.profileChoices = async (requestedModel?: string): Promise<ProfileChoices> => {
         const modelOption = () => sessionOptions.find(option => option.id === adapter.options.model);
         const models = choices(modelOption()).map(choice => ({ id: choice.value, name: choice.name ?? choice.value }));
@@ -660,7 +698,9 @@ export class AgentRun {
     exited.catch(() => undefined);
     try {
       if (ADAPTERS[this.profile.toolId]?.accountUsage) { const out = this.rejected(); if (out) throw out; }
-      const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch(async (error: unknown) => {
+      const pending = this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] });
+      this.onPromptStarted?.();
+      const response = await Promise.race([pending, exited]).catch(async (error: unknown) => {
         endTools();
         if (ADAPTERS[this.profile.toolId]?.accountUsage) await this.readAccountUsage();
         throw this.capacityOf(error) ?? this.limitOf(error) ?? providerError(error);

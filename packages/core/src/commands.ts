@@ -106,7 +106,7 @@ export interface Commands {
   resume(taskId: Id): void;
   cancel(taskId: Id): void;
   retry(itemId: Id): void;
-  sendMessage(taskId: Id, text: string, mode?: "queue" | "interrupt", clientId?: Id): void;
+  sendMessage(taskId: Id, text: string, mode?: "now" | "queue" | "interrupt", clientId?: Id): void;
   removeQueued(taskId: Id, messageId: Id): void;
   setStageProfile(taskId: Id, stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): void;
   addReviewer(taskId: Id, stageId: Id, profileId: Id): void;

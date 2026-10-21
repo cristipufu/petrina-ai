@@ -1,3 +1,4 @@
+import { messageDeliveryText, messageRemovalText, type QueuedMessage } from "@petrina/core";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { ArrowRight, ChevronDown, Send, ShieldCheck, ShieldOff, User } from "lucide-react";
 import type { ActiveAgent, Id, MessageMode, ReportImage, SessionLine, State, Task } from "@petrina/core";
@@ -82,9 +83,10 @@ export function StepConversation({ lines, find, now, live = false, taskId, repos
       ) : (
         <div key={group.id} className={`msg ${group.from === "you" ? "you" : "agent"}`}>
           {group.from === "you" ? <span className="avatar tone-slate" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span> : <RoleAvatar role={find.role(group.roleId)} size={28} />}
-          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}{group.productId && <> · {messageProduct(group.productId, find, repositories)}</>}<time>{when(group.at, now)}</time></div><div className="bubble"><MessageBody text={group.text} taskId={taskId} productId={group.productId} finished={finished} /></div>{group.images?.map((image) => <ReportPicture key={image.id} taskId={taskId} image={image} finished={finished} />)}</div>
+          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}{group.productId && <> · {messageProduct(group.productId, find, repositories)}</>}<time>{when(group.at, now)}</time>{group.coordinatorMessageId && <DeliveryStatus message={find.task(taskId)?.queued.find(message => message.id === group.coordinatorMessageId)} taskId={taskId} />}</div><div className="bubble"><MessageBody text={group.text} taskId={taskId} productId={group.productId} finished={finished} /></div>{group.images?.map((image) => <ReportPicture key={image.id} taskId={taskId} image={image} finished={finished} />)}</div>
         </div>
       ))}
+      {live && find.task(taskId)?.queued.filter(message => !lines.some(line => line.coordinatorMessageId === message.id)).map(message => <div key={message.id} className="msg you queued" data-queued><span className="avatar tone-slate" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span><div style={{ minWidth: 0 }}><div className="name">You <DeliveryStatus message={message} taskId={taskId} /></div><div className="bubble">{message.text}</div></div></div>)}
     </div>
   </section>;
 }
@@ -111,7 +113,7 @@ function Sandbox({ sandbox, toolId }: { sandbox: NonNullable<ActiveAgent["sandbo
 function Log({ task, state, find, scroller, onTab, step, onStepDone, active = true }: LogProps) {
   const role = find.role(task.agent?.roleId);
   const profile = find.profile(task.agent?.profileId);
-  const live = task.state === "running";
+  const live = task.state === "running" && !task.driving;
   // "You're driving" has its own controls in the footer.
   const asks = state.inbox.filter((item) => item.taskId === task.id && item.kind !== "driving");
   // Answers to something still waiting show with it below; the rest show here, in the conversation.
@@ -182,6 +184,7 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
             {stepStart(line)}
             {you ? "You" : (lineRole?.name ?? "Agent")}{line.productId && <> · {messageProduct(line.productId, find, task.repositories)}</>}
             <time className="num">{when(line.at, state.now)}</time>
+            {line.coordinatorMessageId && <DeliveryStatus message={task.queued.find(message => message.id === line.coordinatorMessageId)} taskId={task.id} />}
           </div>
           <div className="bubble"><MessageBody text={line.text} taskId={task.id} productId={line.productId} finished={task.state === "done" || task.state === "cancelled"} /></div>
           {line.images?.map((image) => <ReportPicture key={image.id} taskId={task.id} image={image} finished={task.state === "done" || task.state === "cancelled"} />)}
@@ -245,30 +248,15 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
             );
           return speaker(group);
         })}
-        {task.queued.map((message) => {
-          const recipients = Object.values(message.recipients ?? {});
-          const heard = recipients.filter(Boolean).length;
-          const note = heard ? `Sent to ${heard} of ${recipients.length} agents` : recipients.length ? `Queued for ${recipients.length} agents` : task.driving ? "Queued, delivered when you hand back" : live ? "Queued, delivered after the current step" : "Queued, delivered when an agent starts";
-          return (
+        {task.queued.filter(message => !task.session.some(line => line.coordinatorMessageId === message.id)).map(message => (
           <div key={message.id} className="msg you queued" data-queued>
-            <span className="avatar tone-violet" style={{ width: 28, height: 28 }} aria-hidden="true">
-              <User size={16} />
-            </span>
+            <span className="avatar tone-violet" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span>
             <div style={{ minWidth: 0 }}>
-              <div className="name">
-                You
-                <span className="queued-note">{note}</span>
-                <button className="btn ghost small" disabled={heard > 0} title={heard ? "An agent has already received this message" : undefined} onClick={() => sim.removeQueued(task.id, message.id)} aria-describedby={`queued-${message.id}`}>
-                  Remove
-                </button>
-              </div>
-              <div className="bubble" id={`queued-${message.id}`}>
-                {message.text}
-              </div>
+              <div className="name">You <DeliveryStatus message={message} taskId={task.id} /></div>
+              <div className="bubble" id={`queued-${message.id}`}>{message.text}</div>
             </div>
           </div>
-          );
-        })}
+        ))}
         {unsent.map((entry) => (
           <UnsentMessage key={entry.clientId} entry={entry} live={connected} />
         ))}
@@ -285,7 +273,12 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
   );
 }
 
-/** Messages queue until the agent finishes its step, or interrupt it. */
+function DeliveryStatus({ message, taskId }: { message?: QueuedMessage; taskId: Id }) {
+  const kept = message ? messageRemovalText(message) : undefined;
+  return <><span className="queued-note" role="status">{message ? messageDeliveryText(message) : "Heard"}</span>{message && <button className="btn ghost small" disabled={kept !== undefined} title={kept} onClick={() => sim.removeQueued(taskId, message.id)}>Remove</button>}</>;
+}
+
+/** Guidance can join active work, wait, or explicitly stop it first. */
 function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task; find: Lookup; drafts: TaskDrafts; focusRequest: boolean; onFocused: () => void }) {
   const text = useSyncExternalStore(drafts.subscribe, () => drafts.get(task.id));
   const onText = (value: string) => drafts.set(task.id, value);
@@ -298,14 +291,15 @@ function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task;
   useEffect(() => {
     if (focusRequest && expanded) { textarea.current?.focus(); onFocused(); }
   }, [focusRequest, expanded, onFocused]);
-  const [mode, setMode] = useState<MessageMode>("queue");
+  const [mode, setMode] = useState<MessageMode>("now");
   const role = find.role(task.agent?.roleId ?? task.driving?.roleId ?? task.conversation?.roleId);
-  const live = task.state === "running";
+  const live = task.state === "running" && !task.driving;
+  const tool = find.profile(task.agent?.profileId ?? task.conversation?.profileId)?.toolId;
   const recipient = (task.helpers?.length ?? 0) > 1 ? "all agents in this step" : `the ${role?.name.toLowerCase() ?? "agent"}`;
 
   const send = () => {
     if (!text.trim()) return;
-    sim.sendMessage(task.id, text, live ? mode : "queue");
+    sim.sendMessage(task.id, text, live ? mode : "now");
     onText("");
   };
 
@@ -336,11 +330,12 @@ function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task;
       <div className="composer-actions">
         {live && (
           <div className="segmented" role="radiogroup" aria-label="When to deliver">
+            <button type="button" role="radio" aria-checked={mode === "now"} className={mode === "now" ? "on" : ""} onClick={() => setMode("now")} title="Try to reach the working agent now">Send now</button>
             <button type="button" role="radio" aria-checked={mode === "queue"} className={mode === "queue" ? "on" : ""} onClick={() => setMode("queue")} title="Deliver after the current step">
-              Queue
+              Wait
             </button>
             <button type="button" role="radio" aria-checked={mode === "interrupt"} className={mode === "interrupt" ? "on" : ""} onClick={() => setMode("interrupt")} title="Stop the current step and deliver now">
-              Interrupt
+              Stop and send
             </button>
           </div>
         )}
@@ -352,8 +347,10 @@ function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task;
       <p className="hint" id={`${id}-hint`}>
         {live
           ? mode === "queue"
-            ? "Delivered when the agent finishes its current step. Enter sends, Shift+Enter starts a new line."
-            : "Stops the current step and delivers right away."
+            ? "Waits until the current turn finishes. Enter sends, Shift+Enter starts a new line."
+            : mode === "interrupt" ? "Stops the current turn, then sends your message."
+            : tool === "antigravity" ? "Antigravity cannot take live guidance. Your message waits until the turn finishes."
+            : "Tries to reach every agent still working in this step. Enter sends, Shift+Enter starts a new line."
           : task.driving
             ? "You're driving in your terminal. Delivered when you hand back."
             : "Delivered as soon as an agent starts on this task."}

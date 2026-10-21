@@ -1,4 +1,5 @@
 import { demoProfileChoices, saveProfile, removeProfile, type ProfileDraft } from "./profiles.js";
+import { messageRemovable } from "./message-delivery.js";
 import { saveRoutine, admitRoutines, prepareMaintenanceTask, type RoutineDraft } from "./routines.js";
 import { DEMO_RISK, DEMO_CHECKS, scriptFor, laterObjections, callAnswers, briefFor, capitalize, areaFromTitle, simReport, demoSource } from "./sim-script.js";
 import type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
@@ -535,10 +536,9 @@ export class Simulator {
   }
 
   /**
-   * Message the agent working on a task. Queued messages are delivered when the agent
-   * finishes its current step; an interrupt is delivered now.
+   * Live guidance stays in the current turn; explicit waiting and stopping use a new prompt.
    */
-  sendMessage(taskId: Id, text: string, mode: MessageMode = "queue"): void {
+  sendMessage(taskId: Id, text: string, mode: MessageMode = "now"): void {
     const trimmed = text.trim();
     if (!trimmed) return;
     this.updateTask(taskId, (d, task) => {
@@ -547,13 +547,30 @@ export class Simulator {
         this.deliver(d, task, trimmed, true);
         return;
       }
-      task.queued.push({ id: this.id(d, task.id), text: trimmed, at: d.now });
+      const message = { id: this.id(d, task.id), text: trimmed, at: d.now, mode };
+      const tool = d.profiles.find(profile => profile.id === task.agent?.profileId)?.toolId;
+      if (mode === "now" && task.agent && task.state === "running" && tool !== "antigravity") {
+        this.say(d, task, "you", trimmed);
+        task.session.at(-1)!.coordinatorMessageId = message.id;
+        this.log(d, task, "you", "You sent a message");
+        const step = task.journey?.at(-1);
+        const agent = task.agent;
+        if (step?.kind === "agent" && agent) {
+          if (!step.agentInputs?.length) step.agentInputs = [{ at: d.now, roleId: agent.roleId, profileId: agent.profileId, taskTitle: task.title, sections: [], mode: "fresh" }];
+          const input = step.agentInputs.at(-1)!;
+          input.updates = [...(input.updates ?? []), { at: d.now, reason: "message", text: trimmed, messageId: message.id, delivery: "accepted" }];
+        }
+        // Accepted, not heard, until this turn finishes. The next beat must not drop it.
+        task.queued.push({ ...message, recipients: { main: false }, deliveries: { main: { state: "accepted", via: "live", ...(tool ? { toolId: tool } : {}) } } });
+        return;
+      }
+      task.queued.push({ ...message, ...(mode === "now" && tool === "antigravity" ? { deliveries: { main: { state: "waiting" as const, reason: "unsupported" as const, toolId: tool } } } : {}) });
     });
   }
 
   removeQueued(taskId: Id, messageId: Id): void {
     this.updateTask(taskId, (_d, task) => {
-      if (task.queued.some((message) => message.id === messageId && Object.values(message.recipients ?? {}).some(Boolean))) return;
+      if (task.queued.some((message) => message.id === messageId && !messageRemovable(message))) return;
       task.queued = task.queued.filter((message) => message.id !== messageId);
     });
   }
@@ -899,9 +916,11 @@ export class Simulator {
     const agent = task.agent;
     if (!agent) return;
 
-    const message = task.queued.shift();
-    if (message) {
-      this.deliver(d, task, message.text);
+    const next = task.queued[0];
+    // Live guidance the tool already accepted stays until the turn finishes. A later note waits behind it.
+    if (next && next.deliveries?.main?.state !== "accepted") {
+      task.queued.shift();
+      this.deliver(d, task, next.text);
       return;
     }
 
@@ -1617,8 +1636,25 @@ export class Simulator {
     return quirk && (!quirk.toolId || quirk.toolId === toolId) ? quirk : {};
   }
 
+  /** The practice turn finished, so guidance the tool had accepted now counts as heard. */
+  private hearLive(task: DraftTask): void {
+    let heard = false;
+    for (const message of task.queued) {
+      const receipt = message.deliveries?.main;
+      if (receipt?.state !== "accepted") continue;
+      receipt.state = "applied";
+      (message.recipients ??= {}).main = true;
+      for (const step of task.journey ?? []) for (const input of step.agentInputs ?? []) for (const update of input.updates ?? []) {
+        if (update.messageId === message.id) update.delivery = "applied";
+      }
+      heard = true;
+    }
+    if (heard) task.queued = task.queued.filter(message => !message.recipients || !Object.values(message.recipients).every(Boolean));
+  }
+
   private endTurn(d: Draft, task: DraftTask, end: TurnEnd): void {
     const open = this.openTurns.get(task.id);
+    if ((end === "finished" || end === "interrupted") && open) this.hearLive(task);
     if (!open) return;
     this.openTurns.delete(task.id);
     const turn = this.work.turn(open.id);

@@ -18,6 +18,13 @@ export interface ReaderOptions {
 
 /** How Petrina drives one tool through ACP. */
 export interface ToolAdapter {
+  /** Provider-owned live input. No cancellation or personal settings changes. */
+  liveInput?: {
+    supported: (initialize: unknown) => boolean;
+    probe?: { method: string; params: Record<string, unknown>; recognizedError: (error: unknown) => boolean };
+    request: (sessionId: string, text: string, messageId: string) => { method: string; params: Record<string, unknown> };
+    receipt: (response: unknown) => "current-turn" | "accepted" | "separate-turn" | "prompt-required" | "rejected";
+  };
   prepareEnv?: (env: NodeJS.ProcessEnv) => void;
   prepareSessionMeta?: (meta: Record<string, unknown>, context: { cwd: string; browser: boolean }) => Promise<Record<string, unknown>>;
   verifySessionSettings?: (profile: AgentProfile, settings: { model?: string; effort?: string }) => void;
@@ -71,4 +78,3 @@ export interface ToolAdapter {
    */
   sandboxMeta?: (sandbox: ClaudeSandbox) => Record<string, unknown>;
 }
-

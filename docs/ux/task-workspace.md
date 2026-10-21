@@ -107,7 +107,7 @@ Plan assignments offer a collapsed “Why this agent” explanation. Node Overvi
 
 The input disclosure is a separate document card, with a Fresh conversation or Continued conversation label and a visible expand control. It shows the job instructions and context actually sent at that start, with later answers, messages, result corrections and interruption continuations below them. A repeated start keeps the earlier input. Instructions are captured when sent, so later role edits or task changes cannot rewrite that history; an older missing job is labelled as unrecorded.
 
-Finding details keep the finding and its recorded review evidence together; the builder’s full messages belong in Conversation instead of a repeated metadata block. Every active agent node has a fixed footer on all three tabs: a message section collapsed by default, with the field above Queue/Interrupt and Send when opened, then a separate terminal takeover row. Collapsing keeps a draft; the Message shortcut opens and focuses it. Finished nodes have no live controls.
+Finding details keep the finding and its recorded review evidence together; the builder’s full messages belong in Conversation instead of a repeated metadata block. Every active agent node has a fixed footer on all three tabs: a message section collapsed by default, with the field above Send now/Wait/Stop and send and Send when opened, then a separate terminal takeover row. Collapsing keeps a draft; the Message shortcut opens and focuses it. Finished nodes have no live controls.
 
 Agent actions expand in place, collapsed by default. Clicking the same step again, the blank canvas, or Back to task returns to the previous task tab and reading position. Typed answers, messages and notes stay intact. Faint steps say what is planned and link to the Plan tab.
 
@@ -128,9 +128,11 @@ This is the "open in terminal" experience, made friendly.
 - Session and node conversations render Markdown paragraphs, headings, emphasis, lists, read-only task checkboxes, quotations, tables and web links. Streamed edits stay in their original message. Screenshots retain the same inline preview; formatting adds no code viewer or remote image downloads.
 - New messages only scroll the conversation when you are already at the bottom, so reading earlier messages is never interrupted.
 - For Claude Code and Codex, the header shows **Sandboxed** or **Not sandboxed** next to the agent's status. Hovering (or focusing) it says what the tool's own sandbox covers, or why it is off. It is hidden while you drive in your terminal, which runs with your own setup. When Claude Code's sandbox can't start, the session also says so once: "Running without Claude Code's sandbox", with the reason.
-- The composer has two modes:
-  - **Queue** (default): delivered when the agent finishes its current step. Queued messages wait at the end of the conversation, outlined and marked as queued, each with Remove. During parallel reviews or verification, a message reaches every unfinished agent; its label shows how many have received it, and Remove becomes unavailable once any agent has heard it. They scroll with the conversation, so a long queue never pushes the composer or Send out of view, and sending always brings your message into view.
-  - **Interrupt**: stops the current step and delivers now.
+- The composer offers three choices:
+  - **Send now** (default): tries to reach every agent still working in the step through its tool’s live input. Claude Code, Codex and Grok support it; Antigravity says that guidance must wait until the turn finishes. The same step, work and personal tool settings remain in place.
+  - **Wait**: holds the message until the current turn finishes.
+  - **Stop and send**: explicitly stops the current turn, then sends waiting guidance in order.
+- Each message shows Waiting, Accepted by the tool, or Heard. Parallel recipients retain separate delivery records. One agent hearing a message does not consume another’s copy. Remove is available only before any tool may have accepted it. A tool accepting input without confirming that the agent heard it leaves the message visible and the step open; Petrina says it will not send it again automatically. Messages stay inside the scrolling conversation, including the active step’s Conversation tab, and sending brings the new message into view. The board keeps its short activity line.
 
 - Anything the task is waiting on (a question, a permission, a checkpoint) shows at the end of the conversation with the same wording and buttons as the inbox, so you can unblock without leaving the session. It scrolls with the conversation; the composer stays compact at the bottom.
 - Earlier agents of the task (previous stages) can be read the same way.

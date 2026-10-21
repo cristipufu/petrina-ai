@@ -125,8 +125,8 @@ export const OPERATIONS = [
   ),
   op(
     "task.message",
-    "Queue a coordinator message by default. Interrupt only when explicitly requested. Returns the saved message reference.",
-    { ...task, text, mode: z.enum(["queue", "interrupt"]).default("queue") },
+    "Send guidance into the active turn when supported. Queue waits for the turn to finish; interrupt explicitly stops it first. Returns the saved message reference.",
+    { ...task, text, mode: z.enum(["now", "queue", "interrupt"]).default("now") },
     true,
   ),
   op("task.remove-message", "Remove a queued message only before an agent receives it.", { ...task, messageId: id }, true),

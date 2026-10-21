@@ -1256,7 +1256,7 @@ input.select { cursor: text; }
 .composer-draft { color: var(--text-3); font-size: var(--fs-meta); font-weight: 400; }
 .composer-body { display: grid; min-width: 0; gap: 8px; }
 .composer-body[hidden] { display: none; }
-.composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.composer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .composer-actions > .btn { margin-left: auto; }
 .composer textarea {
   width: 100%;

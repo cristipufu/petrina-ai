@@ -66,4 +66,4 @@ export interface NewTask extends NewTaskInput {
   area?: string;
 }
 
-export type MessageMode = "queue" | "interrupt";
+export type MessageMode = "now" | "queue" | "interrupt";

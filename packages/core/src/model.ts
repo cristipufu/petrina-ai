@@ -239,6 +239,8 @@ export interface SessionLine {
   profileId?: Id;
   productId?: Id;
   text: string;
+  /** Links coordinator delivery status without copying the conversation into board activity. */
+  coordinatorMessageId?: Id;
   /** The journey step it belongs to. */
   step?: Id;
   images?: readonly ReportImage[];
@@ -386,7 +388,7 @@ export interface JourneyAgentInput {
   instructions?: string;
   sections: readonly { title: string; body: string }[];
   /** Further instructions sent in this step: answers, repairs, messages and interruption resumes. */
-  updates?: readonly { at: number; reason: TurnReason; text: string }[];
+  updates?: readonly { at: number; reason: TurnReason; text: string; messageId?: Id; delivery?: MessageDelivery["state"] }[];
   mode: "fresh" | "continued";
 }
 
@@ -394,8 +396,21 @@ export interface QueuedMessage {
   id: Id;
   text: string;
   at: number;
+  mode?: "now" | "queue" | "interrupt";
+  /** Transcript recording survives pruning of the compact conversation. */
+  recorded?: boolean;
   /** A grouped step keeps the message until every intended member has heard it. */
   recipients?: Readonly<Record<string, boolean>>;
+  /** Durable receipts belong to the participant, across process and tool replacements. */
+  deliveries?: Readonly<Record<string, MessageDelivery>>;
+}
+
+export interface MessageDelivery {
+  state: "waiting" | "sending" | "accepted" | "applied" | "unconfirmed";
+  via?: "prompt" | "live";
+  toolId?: Id;
+  sessionId?: string;
+  reason?: "unsupported" | "rejected" | "separate-turn" | "unknown";
 }
 
 /**

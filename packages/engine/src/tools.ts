@@ -12,9 +12,11 @@ import { GrokUsage, grokTurnReport } from "./grok-usage.js";
 import { AntigravityUsage } from "./antigravity-usage.js";
 import { antigravityReading, antigravityTurnReport } from "./antigravity-report.js";
 import { antigravityCommand, antigravityInstalled, forgetAntigravityProbe } from "./antigravity-runtime.js";
+import { interjection, steering } from "./live-input.js";
 
 export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
   "claude-code": {
+    liveInput: steering(true),
     parseLimitError: claudeLimit,
     parseUsageUpdate: meta => ({ reports: claudeReports("claude-code", meta), ...(typeof meta["_claude/model"] === "string" ? { model: meta["_claude/model"] } : {}) }),
     prepareSessionMeta: async (meta, { cwd, browser }) => {
@@ -36,6 +38,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     sandboxMeta: (sandbox) => ({ claudeCode: { options: { sandbox } } }),
   },
   codex: {
+    liveInput: steering(false),
     parseLimitError: codexLimit,
     prepareEnv: env => {
       env.CODEX_CONFIG = JSON.stringify({ ...JSON.parse(env.CODEX_CONFIG ?? "{}"), ...Object.fromEntries(BACKGROUND_FEATURES.map(feature => [`features.${feature}`, false])) });
@@ -58,6 +61,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     models: ["sol", "astra"],
   },
   grok: {
+    liveInput: interjection,
     // Shared native project memory can contain another task's obsolete rules.
     // Keep this conversation's history and skills; disable only persistent memory
     // for managed runs. The installed ACP route does not honor --no-memory.

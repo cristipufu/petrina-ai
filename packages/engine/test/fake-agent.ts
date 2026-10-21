@@ -20,6 +20,10 @@ import { testGitEnv } from "./test-git-env.js";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
+  live?: "injected" | "failed" | "null" | "refused" | "promptRequired" | "startedNewTurn" | "queued";
+  liveAckHeld?: boolean;
+  livePermission?: boolean;
+  liveProbe?: "null";
   maintenance?: { change?: boolean; commit?: boolean; withdraw?: boolean; incomplete?: boolean; mismatch?: boolean; mismatchReply?: "question" | "screen" | "invalid" | "validation" | "cancelled"; mismatchSetting?: "model" | "effort"; question?: boolean; unsupported?: boolean; unconfirmed?: boolean; readOnlyWrite?: boolean };
   affectedProducts?: string[];
   /** Mix a correctly assigned review finding with one left under Together. */
@@ -42,6 +46,8 @@ export interface Scenario {
   reviseBrief?: boolean;
   /** Scheduling tests: each fresh agent waits for its own release file before answering. */
   controlled?: boolean;
+  /** The first controlled turn ends when the engine cancels it, instead of waiting out that cancel. */
+  cancelHeld?: boolean;
   /**
    * "restart": ask a question, then work until cancelled, then finish once the step restarts. "plain": no questions.
    * "work": draft a file and work (through interruptions) until the step restarts `restarts` times.
@@ -605,8 +611,26 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   }
   if (plan.controlled && session.turns === 1 && dir) {
     await say(`${session.role} is working`);
-    while (!existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
+    if (plan.cancelHeld) {
+      let stopWaiting = false;
+      const cancelled = new Promise<boolean>((resolve) => cancels.set(sessionId, () => resolve(true)));
+      const released = (async () => {
+        while (!stopWaiting && !existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
+        return false;
+      })();
+      const stopped = await Promise.race([cancelled, released]);
+      stopWaiting = true;
+      cancels.delete(sessionId);
+      if (stopped) return { text: "", stop: "cancelled" };
+    } else {
+      while (!existsSync(join(dir, `release-${sessionId}`))) await Bun.sleep(20);
+    }
   }
+  if (plan.livePermission && session.turns === 1) await client.request(acp.methods.client.session.requestPermission, {
+    sessionId,
+    toolCall: { toolCallId: "live-permission", title: "Check the guest view", kind: "execute", status: "pending" },
+    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "reject", name: "Reject", kind: "reject_once" }],
+  });
   if (limit?.afterRelease && until) await runOut(limit, until, session, sessionId, client);
   if (plan.maintenance && (session.maintenance || text.includes('Set "complete" to true only'))) {
     session.maintenance = true;
@@ -1262,7 +1286,7 @@ acp
     if (!silentLogin) setImmediate(() => void ctx.client.notify("_auth/status_update", { authStatus: notLoggedIn ? { kind: "none", label: "Not logged in" } : { kind: "account", label: "Fake plan" } }).catch(() => undefined));
     const how = scenario().reopen;
     if (silent) await new Promise(() => undefined);
-    return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: how === "resume" || how === "load", ...(how === "resume" || how === "stall" ? { sessionCapabilities: { resume: {} } } : {}) } };
+    return { protocolVersion: acp.PROTOCOL_VERSION, ...(scenario().live ? { _meta: { steering: { supported: true } } } : {}), agentCapabilities: { loadSession: how === "resume" || how === "load", ...(how === "resume" || how === "stall" ? { sessionCapabilities: { resume: {} } } : {}) } };
   })
   .onRequest("session/new", async (ctx) => {
     if (loggedOut) throw acp.RequestError.authRequired();
@@ -1339,8 +1363,22 @@ acp
     };
   })
   .onNotification("session/cancel", (ctx) => {
+    if (dir) appendFileSync(join(dir, "cancelled.jsonl"), `${JSON.stringify(ctx.params)}\n`);
     cancels.get(ctx.params.sessionId)?.();
     cancels.delete(ctx.params.sessionId);
+  })
+  .onRequest("_session/steering", (value: unknown) => value as { sessionId: string; prompt: { text: string }[]; _meta?: unknown }, async (ctx) => {
+    const plan = scenario();
+    if (dir) appendFileSync(join(dir, "live.jsonl"), `${JSON.stringify({ ...ctx.params, text: ctx.params.prompt.map(part => part.text).join("\n") })}\n`);
+    if (plan.liveAckHeld && dir) while (!existsSync(join(dir, `ack-${ctx.params.sessionId}`))) await Bun.sleep(20);
+    if (plan.live === "refused") throw acp.RequestError.invalidRequest("Live guidance refused");
+    return plan.live === "null" ? null : { outcome: plan.live ?? "failed" };
+  })
+  .onRequest("_x.ai/interject", (value: unknown) => value as { sessionId: string; text: string; interjectionId?: string }, (ctx) => {
+    if (scenario().liveProbe === "null") return null;
+    if (!sessions.has(ctx.params.sessionId)) throw acp.RequestError.invalidParams("session not found");
+    if (dir) appendFileSync(join(dir, "live.jsonl"), `${JSON.stringify(ctx.params)}\n`);
+    return { status: "queued" };
   })
   .connect(acp.ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>, Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>));
 

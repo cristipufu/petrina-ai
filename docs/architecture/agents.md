@@ -114,7 +114,7 @@ ACP gives Petrina what it needs without per-tool code:
 | Need | ACP |
 |---|---|
 | Start a session in a working copy | `session/new` with `cwd` and the MCP servers to attach |
-| Send a message | `session/prompt` (one turn at a time, which is what makes queued messages natural) |
+| Send a message | Adapter-owned live input when supported; `session/prompt` for explicit waiting and safe idle fallback |
 | Interrupt | `session/cancel` |
 | Live activity for the status line | `session/update` notifications (messages, tool calls, plans) |
 | Permission prompts | `session/request_permission`, sent only when the tool's own safety check flags something; the coordinator answers |
@@ -225,8 +225,10 @@ Public ACP message chunks also stream into the saved task conversation while the
 
 Ordinary and parallel turns use the same path, and loading a saved conversation does not replay its history into the UI again. Review findings, design objections and the architect’s answers are copied onto the journey step at handoff, so later rounds cannot overwrite that step’s result.
 
-- Messages queue per task. When an agent’s current turn ends, queued messages are sent with `session/prompt`. During a parallel review or verification, each message targets every unfinished member, including members waiting for a slot or the screen. Delivery is saved per member, so one peer cannot consume another’s message; a fresh prompt acknowledges only its own share. Interrupt cancels every working member’s current turn and sends the instruction to each. A message can be removed only before any member receives it.
-- Interrupt sends `session/cancel`, then the message.
+- Send now tries the adapter’s supported live input on each active participant. Claude Code and Codex must advertise `_session/steering`; Claude opts into the host-owned `promptRequired` idle fallback, which uses one ordinary tracked prompt on the same step. Grok uses `_x.ai/interject` only after a no-model method-recognition probe. Its queued acknowledgement confirms acceptance, not consumption. Antigravity’s official connector has no confirmed live-input surface: its messages visibly wait, without changing personal settings.
+- Each message targets every unfinished participant, including parallel members waiting for startup, a slot or the screen. Persisted receipts retain the participant’s identity, tool and native session across restart and failover. Input is delivered in order. Rejected, failed and null acknowledgements remain waiting; explicit Wait also uses an ordinary tracked prompt after the current turn ends. Only confirmed current-turn completion marks live steering heard. A queued Grok acknowledgement, a separate Codex turn, a lost reply or a crash after possible acceptance stays unconfirmed and holds the step open on its existing work; it is never automatically sent again. A message does not consume review rounds or Builder returns.
+- A message can be removed only before any tool may have accepted it. Ordinary prompt input also remains saved until the tracked prompt answers. Waiting, accepted and heard states appear in the conversation; live attempts and their receipts appear in the step’s exact input updates. Board activity records only a short message event.
+- Stop and send explicitly sends `session/cancel` to each working participant, then sends waiting instructions in order. Unsupported live delivery never cancels a turn.
 - Every delivered message and reply is written to the session transcript the Session tab shows.
 
 ## The screen

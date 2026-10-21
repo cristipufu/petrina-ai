@@ -1,3 +1,4 @@
+import { messageRemovalText } from "@petrina/core";
 import { displayTask } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSteps, taskProductIds, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
@@ -578,12 +579,14 @@ export class Coordination {
         if (!messageId) return unavailable("The message was not queued. Supply text and a new request reference.");
         return done({ taskId: a.taskId, messageId });
       }
-      case "task.remove-message":
-        if (!t!.queued.some((m) => m.id === a.messageId)) return unavailable("That message is no longer queued.");
-        if (t!.queued.some((m) => m.id === a.messageId && Object.values(m.recipients ?? {}).some(Boolean)))
-          return unavailable("An agent has already received that message. It remains queued for the other agents.");
+      case "task.remove-message": {
+        const queued = t!.queued.find((m) => m.id === a.messageId);
+        if (!queued) return unavailable("That message is no longer queued.");
+        const kept = messageRemovalText(queued);
+        if (kept) return unavailable(kept);
         e.removeQueued(a.taskId, a.messageId);
         break;
+      }
       case "plan.assign":
       case "plan.add-reviewer": {
         const at = t!.plan?.stages.findIndex((s) => s.id === a.stageId) ?? -1,

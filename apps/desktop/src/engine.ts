@@ -535,7 +535,7 @@ export class EngineClient {
     if (!item) return;
     this.durable({ taskId: item.taskId, kind: "changes", text: note, itemId }, "requestChanges", () => [itemId, note]);
   };
-  sendMessage = (taskId: Id, text: string, mode: "queue" | "interrupt" = "queue") => {
+  sendMessage = (taskId: Id, text: string, mode: "now" | "queue" | "interrupt" = "now") => {
     const trimmed = text.trim();
     if (trimmed) this.durable({ taskId, kind: "message", text: trimmed }, "sendMessage", (id) => [taskId, trimmed, mode, id]);
   };

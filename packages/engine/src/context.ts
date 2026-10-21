@@ -59,7 +59,7 @@ export class Context {
       !review && reads.includes("check-results") && !!repository.checks?.results.length ? this.currentChecks(scope) : false,
       currentSourcePointers(repositoryView(scope), references),
     ]);
-    // Gather notes after the read, so notes received while Git worked are included before their queue is cleared.
+    // Gather notes after the read, so notes received while Git worked are included before reserving them for the opening prompt.
     // Preparing context to replay an accepted reply does not deliver instructions yet.
     const heldReply = task.maintenance?.role.id === roleId && task.maintenance.pendingReply && task.maintenance.settingsDecision?.choice === "keep";
     if (!heldReply) takeMessages(task, member, Infinity);

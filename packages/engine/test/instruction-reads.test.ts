@@ -88,7 +88,7 @@ describe("reading a product's committed files", () => {
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("Preserve the greeting.");
       expect(sections.find((section) => section.title === "Current product checks, run by Petrina itself")?.body).toContain("Quick: passed");
       expect(started).toEqual(["guide", "checks"]);
-      expect(scope.task.queued).toEqual([]);
+      expect(scope.task.queued[0]?.deliveries?.main).toEqual({ state: "sending", via: "prompt" });
     } finally { guideDone([]); checksDone(false); await reading?.catch(() => {}); await engine.shutdown(); }
   });
 
@@ -151,7 +151,7 @@ describe("reading a product's committed files", () => {
         expect(source).toContain("Update PR #7 contributor/demo · review-work");
         expect(executionFor(task).work.source?.confirmed).toBe(true);
       }
-      expect(task.queued).toEqual([]);
+      expect(task.queued[0]?.deliveries?.main).toEqual({ state: "sending", via: "prompt" });
     } finally {
       engine.shutdown();
     }
@@ -185,7 +185,7 @@ describe("reading a product's committed files", () => {
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("The welcome page must show who can see each greeting.");
       expect(sections.find((section) => section.title === "What earlier agents on this task handed back")?.body).toBe("Researcher, in “Research”: The welcome page is important.\n- Keep its greeting visible.");
       if (pullRequest) expect(sections.find((section) => section.title === "Approved starting point and delivery")?.body).toContain("Update PR #7 contributor/demo · review-work");
-      expect(task.queued).toHaveLength(0);
+      expect(task.queued[0]?.deliveries?.main).toEqual({ state: "sending", via: "prompt" });
     } finally {
       engine.shutdown();
     }

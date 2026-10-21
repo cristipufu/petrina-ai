@@ -24,7 +24,7 @@ import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
 import type { Section } from "./context.js";
-import { takeMessages } from "./messages.js";
+import { holdUnconfirmed, MessageTurn, recordMessage, takeMessages } from "./messages.js";
 import { preserveCaptures } from "./captures.js";
 import { builderContext } from "./builder-context.js";
 import { recordToolActivity } from "./record-tool-activity.js";
@@ -265,6 +265,7 @@ export class Turns {
     const worktree = options.copy ?? workingCopy;
     // Paused, cancelled or stopped while getting here: no agent starts, and the task stays as the coordinator left it.
     if (signal.aborted) throw new Aborted();
+    await holdUnconfirmed(this.k, scope, options.member, signal, options.reviewKey);
     this.mustBeReady(profile);
     if (role.result !== "plan") await this.sources.refresh(scope, !!repository.conversation || task.fixing);
 
@@ -469,8 +470,7 @@ export class Turns {
         const messages = heldReply ? [] : takeMessages(task, options.member);
         for (const message of messages) {
           if (!message.firstDelivery) continue;
-          this.k.say(scope, "you", message.text);
-          this.k.log(scope, "you", `You said: ${message.text}`);
+          recordMessage(this.k, scope, message);
         }
         const texts = messages.map((message) => message.text);
         const capacityContinue = !!repository.conversation?.capacityContinue && !handback && !forScreen;
@@ -662,6 +662,7 @@ export class Turns {
   /** One attempt of a parallel agent. `took`: whom it takes over from, and what that agent had said. */
   private async attemptTogether<T>(scope: RepositoryContext, role: Role, profile: AgentProfile, copy: string, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: ConversationOptions & { key: string; check?: Check<T>; member: string; plannedId: Id; selectionReason?: string; reviewerKey?: string; took?: { from: string; words: string; refusal?: string }; agent?: ActiveAgent; refresh?: boolean }): Promise<T> {
     const { task, work: repository } = scope;
+    await holdUnconfirmed(this.k, scope, options.member, signal, options.key);
     const roleId = role.id;
     const product = this.k.repositoryOf(scope);
     if (!role || !product) throw new Error(`Unknown role or profile: ${roleId} on ${profile.id}`);
@@ -768,6 +769,13 @@ export class Turns {
    * its own share of the coordinator's messages. An open question stays with the conversation that asked it.
    */
   private async converse<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void> }): Promise<T> {
+    const messages = options.main || options.member ? new MessageTurn(this.k, scope, run, agent.profile, role.id, options.member, options.reviewerKey, signal) : undefined;
+    messages?.start();
+    try { return await this.conversation(scope, run, agent, opening, reason, role, profileId, schema, signal, options, messages); }
+    finally { messages?.dispose(); }
+  }
+
+  private async conversation<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void> }, messages?: MessageTurn): Promise<T> {
     const { task, work: repository } = scope;
     const by = { roleId: role.id, profileId };
     // Every message to the agent and the reply it waits for is one entry in the work log.
@@ -797,13 +805,13 @@ export class Turns {
         if (error instanceof ModelAtCapacity && options.main) this.briefed(scope);
         throw error;
       }
+      await messages?.settled(reply);
       previousReply = reply;
       return reply;
     };
     const sendQueued = (batch: ReturnType<typeof takeMessages>) => {
       for (const message of batch) if (message.firstDelivery) {
-        this.k.say(scope, "you", message.text);
-        this.k.log(scope, "you", `You said: ${message.text}`);
+        recordMessage(this.k, scope, message);
       }
       this.k.commitNow(scope);
       const messages = batch.map((message, index) => `${index + 1}. ${message.text}`).join("\n");
@@ -858,12 +866,12 @@ export class Turns {
           throw new ScreenWait();
         }
         // Given at once, in this conversation: the agent keeps its slot.
+        await holdUnconfirmed(this.k, scope, options.member, signal, options.reviewKey);
         current.screen!.heard = true;
         const messages = takeMessages(current, options.member);
         for (const message of messages) {
           if (!message.firstDelivery) continue;
-          this.k.say(scope, "you", message.text);
-          this.k.log(scope, "you", `You said: ${message.text}`);
+          recordMessage(this.k, scope, message);
         }
         this.k.commitNow(scope);
         reply = await send(screenPrompt(current.screen!.reason, messages.map((message) => message.text)), "continue");
@@ -877,6 +885,7 @@ export class Turns {
         continue;
       }
       if (reply.stopReason === "cancelled") {
+        await holdUnconfirmed(this.k, scope, options.member, signal, options.reviewKey);
         reply = await send("Continue where you left off. When you are done, end with the result block.", "continue");
         continue;
       }
@@ -884,6 +893,7 @@ export class Turns {
         this.k.say(scope, "agent", parsed.question, role.id, profileId);
         this.k.log(scope, "warn", `Asked you: ${parsed.question}`, role.id, profileId);
         const answer = await this.wait(scope, "question", parsed.question, true, { options: parsed.options }, signal, "Waiting for your answer", by, options.main, options.reviewKey);
+        await holdUnconfirmed(this.k, scope, options.member, signal, options.reviewKey);
         // Heard from here on: a restart does not hand the answer over again.
         const note = repository.conversation;
         if (note && (options.main || (note.roleId === role.id && note.profileId === profileId))) delete note.asked;
@@ -891,6 +901,7 @@ export class Turns {
         reply = await send(`${heldQuestion ? `Question: ${parsed.question}\n\n` : ""}The coordinator answered: ${answer}\n\nContinue. When you are done, end with the result block.`, "answer");
         continue;
       }
+      await holdUnconfirmed(this.k, scope, options.member, signal, options.reviewKey);
       let error: string | undefined;
       if (reportLine) this.k.pendingReportIds.add(reportLine.id);
       try {
