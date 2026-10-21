@@ -84,7 +84,8 @@ describe("exact step usage", () => {
     expect(f.view().detail.input.value).toBeUndefined();
     f.turn("missing", { journeyId: "j1", tokens: undefined });
     expect(f.view().tokens).toEqual({ value: 100, atLeast: true });
-    expect(f.view().explanation).toContain("1 turn sent no token report");
+    expect(f.view().explanation).not.toContain("At least");
+    expect(f.view().explanation).not.toContain("turn sent no token report");
     f.log.endTurn("missing", { tokens: { total: 0, output: 0 } });
     expect(f.view().tokens).toEqual({ value: 100, atLeast: false });
     expect(f.view().detail.output).toEqual({ value: 0, atLeast: true });
@@ -168,7 +169,8 @@ it("uses plain missing-report states and keeps a pending turn out of completed b
   expect(f.view().breakdownIncomplete).toBe(false);
   expect(f.view().explanation).toContain("not reported yet");
   f.log.endTurn("second", { end: "finished", endedAt: 30 });
-  expect(f.view().explanation).toContain("1 turn sent no token report");
+  expect(f.view().explanation).not.toContain("At least");
+    expect(f.view().explanation).not.toContain("turn sent no token report");
   expect(f.view().breakdownIncomplete).toBe(false);
   f.log.endTurn("second", { tokens: { total: 200 } });
   expect(f.view().breakdownIncomplete).toBe(true);
@@ -213,5 +215,5 @@ it.each(["before tracking", "overlapping work"])("keeps complete reports distinc
   expect(view.tokens).toEqual({ value: 100, atLeast: true });
   expect(Object.values(view.detail).every(part => part.atLeast)).toBe(true);
   expect(view.breakdownIncomplete).toBe(false);
-  expect(view.explanation).toContain(reason === "before tracking" ? "before Petrina started keeping track" : "could not be separated");
+  expect(view.explanation).toContain(reason === "before tracking" ? "Earlier work is not included" : "could not be separated");
 });

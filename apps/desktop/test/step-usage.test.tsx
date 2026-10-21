@@ -66,15 +66,17 @@ it("explains untracked, future and non-agent steps without figures", async () =>
 it("names actual seats, tools, models and separate starts with partial report wording", async () => {
   const amount = { value: 600, atLeast: true };
   const view = reported(600); view.tokens = amount;
-  view.explanation = '“At least” because 1 turn sent no token report.';
+  view.detail.input = { value: 400, atLeast: true };
   view.runs = [1, 2].map(start => ({ key: `run-${start}`, roleId: "code-reviewer", toolId: start === 1 ? "codex" : "grok", model: start === 1 ? "sol" : "Grok 4.7", seat: 1, start, tokens: { value: 300, atLeast: false }, detail: view.detail, models: [] }));
   read.mockResolvedValue(view); await render();
-  expect(host.textContent).toContain("at least 600 tokens");
+  expect(host.textContent).toContain("> 600 tokens");
   expect(host.textContent).toContain("Seat 1 · Start 1");
   expect(host.textContent).toContain("Seat 1 · Start 2");
   expect(host.textContent).toContain("Codex · sol");
   expect(host.textContent).toContain("grok · Grok 4.7");
-  expect(host.textContent).toContain("1 turn sent no token report");
+  expect(host.textContent).toContain("> 400");
+  expect(host.textContent).not.toContain("At least");
+  expect(host.textContent).not.toContain("at least");
 });
 
 it.each(["pending", "unreported"] as const)("shows a plain message without missing-value rows for %s usage", async empty => {
@@ -93,7 +95,7 @@ it.each(["a turn still working", "older work left out"])("explains %s without bl
   view.breakdownIncomplete = false;
   view.explanation = reason === "a turn still working" ? "Token use for a turn still working is not reported yet." : "Some older turns could not be separated safely from nearby steps and are left out.";
   read.mockResolvedValue(view); await render();
-  expect(host.textContent).toContain("at least 100 tokens");
+  expect(host.textContent).toContain("> 100 tokens");
   expect(host.textContent).toContain(view.explanation);
   expect(host.textContent).not.toContain("The tool did not report every part");
 });

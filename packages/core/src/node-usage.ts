@@ -1,7 +1,7 @@
 // Usage belongs to a recorded step and an agent start, never a stage/round or native conversation.
 import { figures, type Detail, type UsageContext } from "./analytics.js";
 import type { Id, JourneyStep } from "./model.js";
-import { atLeastLine, listWords, type Figure } from "./numbers.js";
+import { listWords, type Figure } from "./numbers.js";
 import { tallyOf, turnModelLabel, lineModelLabel, type TokenLine, type WorkLogReader, type WorkTurn } from "./worklog.js";
 
 export const TOKEN_PARTS: readonly { key: keyof Detail; label: string }[] = [
@@ -99,7 +99,7 @@ export function nodeUsage(log: WorkLogReader, request: { taskId: Id; nodeId: Id 
   const missing = turns.filter(turn => turn.tokens?.total === undefined);
   const pending = missing.filter(turn => !turn.end).length;
   const explanation = [
-    atLeastLine({ noTokens: missing.filter(turn => turn.end && turn.end !== "lost").length, lost: missing.filter(turn => turn.end === "lost").length, beforeTracking, recorded: turns.length }),
+    beforeTracking ? "Earlier work is not included in this step’s recorded usage." : "",
     pending ? "Token use for a turn still working is not reported yet." : "",
     ambiguous ? "Some older turns could not be separated safely from nearby steps and are left out." : "",
     turns.some(turn => turn.mainOnly) ? "Some reports cover only the main agent; helper use may be missing." : "",
