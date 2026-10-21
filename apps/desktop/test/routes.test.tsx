@@ -183,6 +183,7 @@ describe("navigation in the app", () => {
 it("opens Routines as a first-party page and keeps Library focused on roles and profiles", async () => {
   await mount("/routines?demo=portfolio&product=shop");
   expect(host!.querySelector('.rail a[aria-current="page"]')?.textContent).toBe("Routines");
+  expect([...host!.querySelectorAll(".rail a")].map(node => node.getAttribute("title"))).toEqual(["Board (B)", "History", "Agents (A)", "Analytics", "Products", "Routines", "Library (L)", expect.stringContaining("Settings")]);
   expect(host!.querySelector(".library-views")).toBeNull();
   await click('.rail a[title="Library (L)"]');
   expect([...host!.querySelectorAll(".library-views a")].map(node => node.textContent)).toEqual(["Roles", "Profiles"]);

@@ -1,48 +1,32 @@
-// The sections down the left edge of the window.
-
-import { Bot, CalendarClock, Boxes, ChartColumn, History, LayoutGrid, Library, Settings } from "lucide-react";
+// Daily work first; product setup and reusable configuration stay together below it.
+import { Bot, Boxes, CalendarClock, ChartColumn, History, LayoutGrid, Library, Settings } from "lucide-react";
 import type { Page } from "@petrina/core";
 import { mod } from "../keyboard";
 import { followLink } from "../routes";
 
+const GROUPS = [
+  { label: "Work", items: [
+    { page: "board", label: "Board", title: "Board (B)", Icon: LayoutGrid },
+    { page: "history", label: "History", title: "History", Icon: History },
+    { page: "agents", label: "Agents", title: "Agents (A)", Icon: Bot },
+    { page: "analytics", label: "Analytics", title: "Analytics", Icon: ChartColumn },
+  ] },
+  { label: "Products and configuration", items: [
+    { page: "products", label: "Products", title: "Products", Icon: Boxes },
+    { page: "routines", label: "Routines", title: "Routines", Icon: CalendarClock },
+    { page: "library", label: "Library", title: "Library (L)", Icon: Library },
+  ] },
+] as const;
+
 export function Rail({ view, blocking, onGo, hrefFor }: { view: Page; blocking: number; onGo: (page: Page) => void; hrefFor: (page: Page) => string }) {
-  return (
-    <nav className="rail" aria-label="Sections">
-      <a href={hrefFor("board")} className={view === "board" ? "on" : ""} aria-current={view === "board" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("board"))} title="Board (B)">
-        <LayoutGrid size={20} aria-hidden="true" />
-        Board
-      </a>
-      <a href={hrefFor("history")} className={view === "history" ? "on" : ""} aria-current={view === "history" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("history"))} title="History">
-        <History size={20} aria-hidden="true" />
-        History
-      </a>
-      <a href={hrefFor("products")} className={view === "products" ? "on" : ""} aria-current={view === "products" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("products"))} title="Products">
-        <Boxes size={20} aria-hidden="true" />
-        Products
-      </a>
-      <a href={hrefFor("routines")} className={view === "routines" ? "on" : ""} aria-current={view === "routines" ? "page" : undefined} onClick={event => followLink(event, () => onGo("routines"))} title="Routines"><CalendarClock size={20} aria-hidden="true" />Routines</a>
-      <a href={hrefFor("agents")} className={view === "agents" ? "on" : ""} aria-current={view === "agents" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("agents"))} title="Agents (A)">
-        <Bot size={20} aria-hidden="true" />
-        Agents
-        {blocking > 0 && (
-          <span className="badge" aria-label={`${blocking} waiting on you`}>
-            {blocking}
-          </span>
-        )}
-      </a>
-      <a href={hrefFor("analytics")} className={view === "analytics" ? "on" : ""} aria-current={view === "analytics" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("analytics"))} title="Analytics">
-        <ChartColumn size={20} aria-hidden="true" />
-        Analytics
-      </a>
-      <a href={hrefFor("library")} className={view === "library" ? "on" : ""} aria-current={view === "library" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("library"))} title="Library (L)">
-        <Library size={20} aria-hidden="true" />
-        Library
-      </a>
-      <div className="rail-end" aria-hidden="true" />
-      <a href={hrefFor("settings")} className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={(event) => followLink(event, () => onGo("settings"))} title={`Settings (${mod},)`}>
-        <Settings size={20} aria-hidden="true" />
-        Settings
-      </a>
-    </nav>
-  );
+  return <nav className="rail" aria-label="Sections">
+    {GROUPS.map(group => <div key={group.label} className="rail-group" role="group" aria-label={group.label}>
+      {group.items.map(({ page, label, title, Icon }) => <a key={page} href={hrefFor(page)} className={view === page ? "on" : ""} aria-current={view === page ? "page" : undefined} onClick={event => followLink(event, () => onGo(page))} title={title}>
+        <Icon size={20} aria-hidden="true" />{label}
+        {page === "agents" && blocking > 0 && <span className="badge" aria-label={`${blocking} waiting on you`}>{blocking}</span>}
+      </a>)}
+    </div>)}
+    <div className="rail-end" aria-hidden="true" />
+    <a href={hrefFor("settings")} className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={event => followLink(event, () => onGo("settings"))} title={`Settings (${mod},)`}><Settings size={20} aria-hidden="true" />Settings</a>
+  </nav>;
 }
