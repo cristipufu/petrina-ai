@@ -7,7 +7,7 @@ import { profileText, type Lookup } from "../lib";
 import { followLink, routeHref } from "../routes";
 import { ConfirmDialog, RoleAvatar } from "./bits";
 
-export function Routines({ state, find, product, onOpen, onDialogChange }: { state: State; find: Lookup; product: string; onOpen: (id: string) => void; onDialogChange?: (open: boolean) => void }) {
+export function Routines({ state, find, product, onOpen, onRuns, onDialogChange }: { state: State; find: Lookup; product: string; onOpen: (id: string) => void; onRuns?: (id: string) => void; onDialogChange?: (open: boolean) => void }) {
   const [editor, setEditor] = useState<Routine | "new">();
   const [removing, setRemoving] = useState<Routine>();
   const [error, setError] = useState("");
@@ -40,7 +40,7 @@ export function Routines({ state, find, product, onOpen, onDialogChange }: { sta
         {routine.enabled && unavailable && <p className="note">The selected tool is unavailable. A queued run waits for its saved profile. Check the tool in Agents.</p>}
         {routine.enabled && state.pool.paused && <p className="note">The pool is paused. Tasks may join the Queue; agents and checks wait until it resumes.</p>}
         {routine.message && <p className="note">{routine.message} {routine.blockingTaskId && taskLink(routine.blockingTaskId, "View the unfinished run")}</p>}
-        <div>{routine.latestTaskId ? taskLink(routine.latestTaskId, "Latest queued run") : <span className="quiet-text">No runs queued yet</span>}</div>
+        <div className="routine-actions"><a href={routeHref({ view: "routines", product, routineRuns: { id: routine.id } })} onClick={event => { if (onRuns) followLink(event, () => onRuns(routine.id)); }}>View all runs</a>{routine.latestTaskId ? taskLink(routine.latestTaskId, "Latest queued run") : <span className="quiet-text">No runs queued yet</span>}</div>
         <div className="grow" /><div className="foot routine-actions"><button className="btn small" disabled={!connected} onClick={() => setEditor(routine)}>Edit</button><button className="btn small" disabled={!connected || !!attention && !routine.enabled} onClick={() => void act(() => sim.setRoutineEnabled(routine.id, !routine.enabled))}>{routine.enabled ? "Disable" : "Enable"}</button><button className="btn small" disabled={!connected} onClick={() => setRemoving(routine)}>Remove</button></div>
       </article>;
     })}</div>

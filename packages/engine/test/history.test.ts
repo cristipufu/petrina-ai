@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { blocksDependents, BUILT_IN_ROLES, historyAt, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
+import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, historyAt, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
 import { serve } from "../src/server.js";
 import { makeWorld, removeDir, tempDir, type World } from "./support.js";
@@ -543,4 +543,32 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
       } finally { engine.store.history.item = item; engine.store.history.get = get; }
     } finally { await engine.shutdown(); }
   });
+});
+
+it("indexes exact routine IDs across renamed or removed routines and pages summaries only", () => {
+  const { db, file } = store();
+  const demo = createDemoState(1_000_000);
+  const maintenance = { routineId: "daily", routineName: "Before rename", scheduledAt: 0, queuedAt: 0, zone: "UTC", focus: "Inspect", input: "Inspect", role: demo.roles[0]!, profile: demo.profiles[0]!, product: demo.products[0]! };
+  const tasks = Array.from({ length: 55 }, (_, index) => task(index, { maintenance: { ...maintenance, routineId: index === 54 ? "other" : "daily", routineName: index % 2 ? "After rename" : "Before rename" }, state: index % 3 ? "done" : "cancelled" }));
+  let expected: string[] = [];
+  try {
+    db.save(state(tasks));
+    const query = { routineId: "daily", productId: "one", limit: 7 };
+    const first = db.history.page(query);
+    expect(first).toEqual(demoHistoryPage(state(tasks), query));
+    expect(first.total).toBe(27);
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do { const page = db.history.page({ ...query, cursor }); ids.push(...page.items.map(task => task.id)); cursor = page.nextCursor; } while (cursor);
+    expect(new Set(ids).size).toBe(27);
+    expect(ids).not.toContain(tasks[54]!.id);
+    expect(db.history.page({ routineId: "missing" }).total).toBe(0);
+    expect(db.history.page({ routineId: "daily", query: "Finished change 5" })).toEqual(demoHistoryPage(state(tasks), { routineId: "daily", query: "Finished change 5" }));
+    const plan = db.database.query<{ detail: string }, []>("EXPLAIN QUERY PLAN SELECT h.item FROM task_history h WHERE json_extract(h.body, '$.maintenance.routineId') = 'daily' AND EXISTS (SELECT 1 FROM task_history_products p WHERE p.task_id=h.id AND p.product_id='one') ORDER BY h.finished_at DESC, h.id DESC LIMIT 24").all().map(row => row.detail).join(" ");
+    expect(plan).toContain("task_history_routine_newest");
+    expect(plan).not.toContain("TEMP B-TREE");
+    expected = db.history.page({ routineId: "daily" }).items.map(task => task.id);
+  } finally { db.close(); }
+  const reopened = new Store(file);
+  try { expect(reopened.history.page({ routineId: "daily" }).items.map(task => task.id)).toEqual(expected); } finally { reopened.close(); }
 });

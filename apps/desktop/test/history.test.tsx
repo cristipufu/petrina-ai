@@ -21,15 +21,16 @@ vi.mock("../src/engine", () => ({
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined; host = undefined; page.mockClear(); details.mockClear(); });
-async function mount(path = "/history?demo", active = false) {
+async function mount(path = "/history?demo", active = false, prepare?: (state: State) => State) {
   history.replaceState(null, "", path);
   const base = createDemoState(1_000_000_000_000);
   const template = base.tasks.find((task) => task.id === "guest-checkout")!;
   const tasks: Task[] = Array.from({ length: 55 }, (_, index) => ({ ...template, id: `archive-${index}`, title: `Finished task ${index}`, state: "done", column: "done", holdsSlot: false, productId: index % 2 ? "shop" : "billing", finishedAt: base.now - (55 - index) * 60_000 }));
   if (active) tasks[0] = { ...tasks[0]!, state: "running", column: "building", finishedAt: undefined };
-  simulator = new Simulator({ ...base, tasks, inbox: [], pool: { ...base.pool, paused: true } });
+  const initial = { ...base, tasks, inbox: [], pool: { ...base.pool, paused: true } };
+  simulator = new Simulator(prepare ? prepare(initial) : initial);
   // The live websocket contains no completed task bodies. Only an opened task may fetch one.
-  projection = { ...simulator.getState(), tasks: active ? [{ ...tasks[0]!, detailsOmitted: true, detailsRevision: "boot:1", timeline: [], session: [], journey: undefined }] : [], history: { revision: 1, total: tasks.length, products: [], reviews: reviewStats([]), reviewsByProduct: {}, steps: [] } };
+  projection = { ...simulator.getState(), tasks: simulator.getState().tasks.filter(task => task.state !== "done" && task.state !== "cancelled").map(task => ({ ...task, detailsOmitted: true, detailsRevision: "boot:1", timeline: [], session: [], journey: undefined })), history: { revision: 1, total: tasks.length, products: [], reviews: reviewStats([]), reviewsByProduct: {}, steps: [] } };
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   await act(async () => root!.render(<App />));
 }
@@ -153,4 +154,26 @@ describe("History", () => {
     expect(host!.querySelector(".fold, .done-list, .history-card")).toBeNull();
     expect(host!.querySelector(".board")).not.toBeNull();
   });
+});
+
+it("shows exact routine runs across current work and paginated history, and restores the runs route", async () => {
+  await mount("/routines/routine-one/runs?demo", false, state => ({ ...state, tasks: state.tasks.map((task, index) => ({ ...task, state: index === 0 ? "queued" : index === 1 ? "running" : index === 2 ? "cancelled" : "done", finishedAt: index < 2 ? undefined : task.finishedAt, maintenance: { routineId: index === 54 ? "other" : "routine-one", routineName: "Old routine name", scheduledAt: task.createdAt, queuedAt: task.createdAt, zone: "UTC", focus: "Inspect", input: "Inspect", role: state.roles[0]!, profile: state.profiles[0]!, product: state.products[0]! } })) }));
+  expect(page).toHaveBeenLastCalledWith({ routineId: "routine-one", limit: 24 });
+  expect(host!.querySelector("#routine-runs-title")?.textContent).toBe("Removed routine");
+  expect(host!.querySelectorAll(".routine-runs article[data-task-id]")).toHaveLength(2);
+  expect(host!.querySelectorAll(".history-card")).toHaveLength(24);
+  expect(host!.textContent).toContain("52 tasks in history");
+  expect(details).not.toHaveBeenCalled();
+  await button("Next");
+  const address = location.pathname + location.search;
+  await click(".history-card");
+  expect(new URL(location.href).searchParams.get("routine")).toBe("routine-one");
+  expect(host!.querySelectorAll(".task-list-item")).toHaveLength(26);
+  await click('.sheet [aria-label="Close"]');
+  expect(location.pathname + location.search).toBe(address);
+  await button("Previous");
+  expect(host!.querySelectorAll(".history-card")).toHaveLength(24);
+  await click('.rail a[title="Routines"]');
+  expect(location.pathname).toBe("/routines");
+  expect(host!.querySelector(".routine-runs")).toBeNull();
 });

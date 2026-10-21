@@ -1,3 +1,4 @@
+import { RoutineRuns } from "./components/RoutineRuns";
 import { Routines } from "./components/Routines";
 import { involvesProduct, taskProductIds } from "@petrina/core";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -95,6 +96,11 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const [boardKeyboard, setBoardKeyboard] = useState(false);
   const [inboxId, setInboxId] = useState<string>();
   const history = useHistoryPage(state, view === "history", product, route.history);
+  const runs = view === "routines" ? route.routineRuns : undefined;
+  const runHistory = useHistoryPage(state, !!runs, product, runs?.history, runs?.id);
+  const currentRuns = useMemo(() => runs ? state.tasks.filter(task => task.maintenance?.routineId === runs.id && task.state !== "done" && task.state !== "cancelled" && (product === "all" || involvesProduct(task, product))).sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)) : [], [runs?.id, state.tasks, product]);
+  const runTasks = useMemo(() => [...currentRuns, ...(runHistory.page?.items ?? [])], [currentRuns, runHistory.page]);
+  const setRunPosition = (position: HistoryPosition) => navigate(previous => ({ ...previous, routineRuns: previous.routineRuns ? { ...previous.routineRuns, history: position } : undefined, sheet: undefined }));
   const historyIds = useMemo(() => history.page?.items.map((task) => task.id) ?? [], [history.page]);
   const setHistoryPosition = (position: HistoryPosition) => navigate((previous) => ({ ...previous, history: position, sheet: undefined }));
   const [detailsRetry, setDetailsRetry] = useState(0);
@@ -151,7 +157,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const activeBoardIds = useMemo(() => boardOrder(state.tasks, visible, false), [state.tasks, visible]);
   const lastHistoryIds = useRef<readonly string[]>([]);
   if (history.page) lastHistoryIds.current = historyIds;
-  const boardIds = view === "history" ? history.page ? historyIds : lastHistoryIds.current : activeBoardIds;
+  const boardIds = view === "history" ? history.page ? historyIds : lastHistoryIds.current : runs ? runTasks.map(task => task.id) : activeBoardIds;
   const items = useMemo(() => inboxOrder(state), [state.inbox, state.tasks]);
   const inboxIds = useMemo(() => items.map((item) => item.id), [items]);
   const previousBoard = useRef(boardIds);
@@ -231,7 +237,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   useNotices({ onJump: requestJump, onToast: toastNotice });
 
   const go = (page: Page) => {
-    navigate((previous) => ({ ...previous, view: page, sheet: undefined, productSettings: undefined }));
+    navigate((previous) => ({ ...previous, view: page, sheet: undefined, productSettings: undefined, routineRuns: undefined }));
     setMessageFocus(undefined); setOwner("board"); focusArea.current = page === "board" || page === "history" ? "board" : undefined;
   };
   /** App settings, or a product's editor on Products. */
@@ -239,7 +245,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     navigate((previous) => ({ ...previous, view: productId ? "products" : "settings", sheet: undefined, productSettings: productId }));
     setMessageFocus(undefined); setOwner("board");
   };
-  const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, view === "history" ? "history" : "board"); if (tab === "session") setMessageFocus(id); };
+  const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, view === "history" || runs ? "history" : "board"); if (tab === "session") setMessageFocus(id); };
   const openLinked = useCallback((taskId: string) => {
     const known = find.task(taskId);
     const finished = !known || known.state === "done" || known.state === "cancelled";
@@ -266,7 +272,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const inboxKey = () => { close(); if (inboxOpen && owner === "inbox") closeInbox(false); else openInbox(); };
   const newTask = (title = "") => { setNewTitle(title); setCreating(true); };
   const pickProduct = (id: string) => {
-    navigate((previous) => ({ ...previous, product: id, view: previous.view === "analytics" || previous.view === "history" || previous.view === "routines" ? previous.view : "board", sheet: undefined, productSettings: undefined, history: undefined }));
+    navigate((previous) => ({ ...previous, product: id, view: previous.view === "analytics" || previous.view === "history" || previous.view === "routines" ? previous.view : "board", sheet: undefined, productSettings: undefined, history: undefined, routineRuns: previous.routineRuns ? { id: previous.routineRuns.id } : undefined }));
     setMessageFocus(undefined); setOwner("board");
     if (view === "history") focusArea.current = "board";
   };
@@ -380,7 +386,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       />
       {recovery && <EngineRecovery status={status} />}
 
-      <Rail view={view} blocking={blocking} onGo={go} hrefFor={(page) => routeHref({ ...route, view: page, sheet: undefined, productSettings: undefined })} />
+      <Rail view={view} blocking={blocking} onGo={go} hrefFor={(page) => routeHref({ ...route, view: page, sheet: undefined, productSettings: undefined, routineRuns: undefined })} />
       <main className="main" aria-label={missing ?? PAGE_NAMES[view]}>
         {missing && <div className="page route-missing"><p>This link is unavailable. It may have been removed or the address may be incomplete.</p><button className="btn outline" onClick={() => go("board")}>Go to Board</button></div>}
         {!missing && view === "board" && (
@@ -410,7 +416,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         )}
         {!missing && view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {!missing && view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
-        {!missing && view === "routines" && <div className="page"><Routines state={state} find={find} product={product} onOpen={open} onDialogChange={setRoutineDialog} /></div>}
+        {!missing && view === "routines" && (runs ? <RoutineRuns id={runs.id} state={state} product={product} find={find} current={currentRuns} history={runHistory} position={runs.history} onPosition={setRunPosition} onBack={() => go("routines")} onOpen={openBoard} hrefFor={id => routeHref({ ...route, sheet: { taskId: id, tab: "overview", list: "history" } })} drafts={drafts} /> : <div className="page"><Routines state={state} find={find} product={product} onOpen={open} onRuns={id => navigate(previous => ({ ...previous, routineRuns: { id }, sheet: undefined }))} onDialogChange={setRoutineDialog} /></div>)}
         {!missing && view === "library" && <LibraryPage state={state} onRole={setRolePanel} onEditorDialog={setRoutineDialog} product={product} view={route.libraryView ?? "roles"} onView={libraryView => navigate(previous => ({ ...previous, libraryView }))} />}
         {!missing && view === "settings" && <SettingsPage onShortcuts={() => setShortcuts(true)} theme={theme} onTheme={setTheme} />}
       </main>
@@ -425,7 +431,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       {sheet && !sheetTask && (loadingDetails || detailsError) && <TaskLoading error={detailsError} onRetry={() => setDetailsRetry((value) => value + 1)} onClose={close} />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} tasks={sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} onOpenTask={openLinked} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} hasDraft={Boolean(drafts[sheetTask.id])} drafts={draftStore} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
+        <TaskSheet task={sheetTask} tasks={runs ? runTasks : sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} onOpenTask={openLinked} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} hasDraft={Boolean(drafts[sheetTask.id])} drafts={draftStore} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
       )}
 
       {!missing && rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}

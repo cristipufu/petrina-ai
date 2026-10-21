@@ -58,7 +58,7 @@ const ARGS = {
   setRoutineEnabled: z.tuple([z.string(), z.boolean()]),
   removeRoutine: z.tuple([z.string()]),
   resolveMaintenanceSettings: z.tuple([TaskId, z.enum(["keep", "stop"])]),
-  historyPage: z.tuple([z.object({ productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
+  historyPage: z.tuple([z.object({ routineId: z.string().min(1).max(200).optional(), productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
   taskDetails: z.tuple([TaskId]),
   previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),
   saveRole: z.tuple([z.string(), RoleDraft]),

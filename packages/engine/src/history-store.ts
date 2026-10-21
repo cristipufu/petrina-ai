@@ -21,6 +21,7 @@ export class TaskHistory {
     )`);
     db.run("CREATE INDEX IF NOT EXISTS task_history_newest ON task_history(finished_at DESC, id DESC)");
     db.run("CREATE INDEX IF NOT EXISTS task_history_product_newest ON task_history(product_id, finished_at DESC, id DESC)");
+    db.run("CREATE INDEX IF NOT EXISTS task_history_routine_newest ON task_history(json_extract(body, '$.maintenance.routineId'), finished_at DESC, id DESC) WHERE json_extract(body, '$.maintenance.routineId') IS NOT NULL");
     db.run("CREATE INDEX IF NOT EXISTS task_history_client ON task_history(client_id) WHERE client_id IS NOT NULL");
     db.run("CREATE VIRTUAL TABLE IF NOT EXISTS task_history_search USING fts5(title)");
     db.run("CREATE TABLE IF NOT EXISTS task_history_rollups (scope TEXT PRIMARY KEY, body TEXT NOT NULL)");
@@ -237,9 +238,11 @@ export class TaskHistory {
     const size = Math.max(1, Math.min(100, Math.floor(Number.isFinite(request.limit) ? request.limit! : 24)));
     const args: SQLQueryBindings[] = [];
     const where: string[] = [];
-    const from = request.productId ? "task_history_products p JOIN task_history h ON h.id = p.task_id" : "task_history h";
-    const order = request.productId ? "p.finished_at, p.task_id" : "h.finished_at, h.id";
-    if (request.productId) { where.push("p.product_id = ?"); args.push(request.productId); }
+    const membership = request.productId && !request.routineId;
+    const from = membership ? "task_history_products p JOIN task_history h ON h.id = p.task_id" : "task_history h";
+    const order = membership ? "p.finished_at, p.task_id" : "h.finished_at, h.id";
+    if (request.productId) { where.push(membership ? "p.product_id = ?" : "EXISTS (SELECT 1 FROM task_history_products p WHERE p.task_id = h.id AND p.product_id = ?)"); args.push(request.productId); }
+    if (request.routineId) { where.push("json_extract(h.body, '$.maintenance.routineId') = ?"); args.push(request.routineId); }
     if (request.taskId) { where.push("h.id = ?"); args.push(request.taskId); }
     if (request.states) { where.push(`h.state IN (${request.states.map(() => "?").join(",")})`); args.push(...request.states); }
     if (request.held !== undefined) { where.push("json_extract(h.body, '$.held') = ?"); args.push(Number(request.held)); }
@@ -248,7 +251,7 @@ export class TaskHistory {
     const search = terms.map((term) => `"${term.replace(/"/g, '""')}"*`).join(" AND ");
     if (search) { where.push("h.rowid IN (SELECT rowid FROM task_history_search WHERE task_history_search MATCH ?)"); args.push(search); }
     const filter = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const total = search || request.taskId || request.states || request.held !== undefined
+    const total = search || request.routineId || request.taskId || request.states || request.held !== undefined
       ? this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total FROM ${from} ${filter}`).get(...args)!.total
       : (this.rollups.get(request.productId ?? "")?.total ?? 0);
     if (request.cursor) {

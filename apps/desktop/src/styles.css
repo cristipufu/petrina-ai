@@ -2407,3 +2407,13 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-agent-start details[open] > summary > .journey-disclosure { transform: rotate(90deg); }
 .journey-input-mode { display: block; font-size: var(--fs-meta); color: var(--text-2); font-weight: 400; margin-top: 2px; }
 .journey-context .agent-selection p { font-size: var(--fs-control); margin: 8px 0; }
+
+.routine-runs { display: grid; gap: 32px; }
+.routine-runs-header { display: grid; justify-items: start; gap: 12px; }
+.routine-runs-header h1 { display: flex; align-items: center; gap: 12px; font-size: 1.5rem; line-height: 1.35; overflow-wrap: anywhere; margin: 0; }
+.routine-runs-header h1 svg { flex-shrink: 0; }
+.routine-runs-header p { margin: 0; }
+.routine-runs .history-page { padding: 0; }
+.routine-runs { align-content: start; }
+.routine-runs > section { min-width: 0; }
+.routine-runs > section > .section-title { margin: 0 0 16px; }

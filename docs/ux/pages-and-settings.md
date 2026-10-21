@@ -88,6 +88,8 @@ Cards, board columns, the Agents page and the inbox show no usage numbers, so th
 
 ## Routines
 
+Each routine offers **View all runs** at `/routines/:id/runs`: current queued and active tasks above paginated finished and cancelled runs. Saved routine IDs keep this view exact through renames and removal. Product scope, search, page and task links survive navigation.
+
 Each card names its product, maintenance role, full tool/model/effort profile, frequency, saved time zone, dated next queue time with UTC offset and Enabled, Disabled or Needs attention state. Latest queued run is a separate task link. Scheduling messages explain catch-up, skipped triggers and the blocking task, paused scheduling or unavailable references without replacing that link. Edit and Remove remain available for missing references.
 
 Add a routine and Edit open the same responsive panel. Choose exactly one saved product, maintenance role and profile; the suggested name follows the role and product until edited. Focus instructions are optional. The time zone initially uses the Mac's regional zone and is editable on both creation and editing. Daily uses a local time; Weekly uses weekdays and a local time. Custom reveals five-field minute-based cron, with numeric values, lists, ranges and steps, a field guide and plain-language validation. When date and weekday are both restricted, either can match. Impossible dates and unknown zones cannot save; valid infrequent dates can.

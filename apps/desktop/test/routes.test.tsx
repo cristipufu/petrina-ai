@@ -194,3 +194,12 @@ it("opens Routines as a first-party page and keeps Library focused on roles and 
   expect(window.location.pathname).toBe("/routines");
   expect(new URL(window.location.href).searchParams.has("product")).toBe(false);
 });
+
+it("round-trips routine runs and their task links with independent History navigation", () => {
+  const route: AppRoute = { view: "routines", product: "shop", routineRuns: { id: "routine / daily", history: { cursor: "older", query: "check" } } };
+  expect(at(routeHref(route, "?demo=portfolio"))).toEqual(route);
+  const task: AppRoute = { ...route, sheet: { taskId: "run", tab: "overview", list: "history", stepId: "j2" } };
+  expect(at(routeHref(task, "?demo=portfolio"))).toEqual(task);
+  expect(routeHref({ view: "history", product: "all" }, "?routine=old&historyCursor=old&demo")).toBe("/history?demo=");
+  expect(at("/routines/one/runs/extra").missing).toBeDefined();
+});

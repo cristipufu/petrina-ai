@@ -16,25 +16,25 @@ export function TaskLoading({ error, onRetry, onClose }: { error?: string; onRet
 }
 
 /** The engine returns one indexed page. Completed task bodies are requested only when opened. */
-export function useHistoryPage(state: State, enabled: boolean, product: string, position?: HistoryPosition) {
+export function useHistoryPage(state: State, enabled: boolean, product: string, position?: HistoryPosition, routineId?: string) {
   const [result, setResult] = useState<{ key: string; page?: HistoryPage; error?: string }>();
   const [retry, setRetry] = useState(0);
   const cursor = position?.cursor;
   const query = position?.query;
   // The demo keeps its small fixture in memory. The engine sends only the archive revision.
   const revision = state.history?.revision ?? state.tasks.filter((task) => task.state === "done" || task.state === "cancelled").map((task) => `${task.id}:${task.finishedAt}`).join("|");
-  const key = JSON.stringify([product, cursor, query]);
+  const key = JSON.stringify([product, cursor, query, routineId]);
   const currentKey = useRef(key);
   currentKey.current = key;
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    Promise.resolve().then(() => sim.historyPage({ ...(product !== "all" ? { productId: product } : {}), ...(query ? { query } : {}), ...(cursor ? { cursor } : {}), limit: HISTORY_PAGE_SIZE })).then(
+    Promise.resolve().then(() => sim.historyPage({ ...(routineId ? { routineId } : {}), ...(product !== "all" ? { productId: product } : {}), ...(query ? { query } : {}), ...(cursor ? { cursor } : {}), limit: HISTORY_PAGE_SIZE })).then(
       (page) => { if (!cancelled && currentKey.current === key) setResult({ key, page }); },
       (error) => { if (!cancelled && currentKey.current === key) setResult({ key, error: failureText(error) }); },
     );
     return () => { cancelled = true; };
-  }, [enabled, product, cursor, query, revision, retry, key]);
+  }, [enabled, product, cursor, query, routineId, revision, retry, key]);
   return { page: result?.key === key ? result.page : undefined, error: result?.key === key ? result.error : undefined, reload: () => setRetry((value) => value + 1) };
 }
 
