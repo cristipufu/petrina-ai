@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
-import { ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, type RoleIcon, type Tone, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
+import { HISTORY_STATUSES, type HistoryStatus, ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, type RoleIcon, type Tone, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { Coordination, serial, type LifecycleControl } from "./coordination.js";
 
@@ -58,7 +58,7 @@ const ARGS = {
   setRoutineEnabled: z.tuple([z.string(), z.boolean()]),
   removeRoutine: z.tuple([z.string()]),
   resolveMaintenanceSettings: z.tuple([TaskId, z.enum(["keep", "stop"])]),
-  historyPage: z.tuple([z.object({ routineId: z.string().min(1).max(200).optional(), productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
+  historyPage: z.tuple([z.object({ status: z.enum(Object.keys(HISTORY_STATUSES) as HistoryStatus[]).optional(), routineId: z.string().min(1).max(200).optional(), productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
   taskDetails: z.tuple([TaskId]),
   previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),
   saveRole: z.tuple([z.string(), RoleDraft]),

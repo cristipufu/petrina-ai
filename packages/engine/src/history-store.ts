@@ -1,7 +1,7 @@
 // Completed tasks live outside the live snapshot. The board only reads the small current state;
 // history uses an index for its next page and reads a conversation only when it is opened.
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import { blocksDependents, combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyAt, historyCursor, historyItem, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryDependency, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
+import { blocksDependents, combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyStatus, historyAt, historyCursor, historyItem, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryDependency, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
 
 interface Rollup { total: number; done: number; cancelled: number; shared?: number; blocked?: number; reviews: ReviewStats }
 const emptyRollup = (): Rollup => ({ total: 0, done: 0, cancelled: 0, reviews: reviewStats([]) });
@@ -17,8 +17,25 @@ export class TaskHistory {
     db.run(`CREATE TABLE IF NOT EXISTS task_history (
       id TEXT PRIMARY KEY, product_id TEXT NOT NULL, title TEXT NOT NULL, finished_at INTEGER NOT NULL,
       state TEXT NOT NULL, client_id TEXT, item TEXT NOT NULL, body TEXT NOT NULL, reviews TEXT NOT NULL,
-      steps TEXT NOT NULL, roles TEXT NOT NULL
+      steps TEXT NOT NULL, roles TEXT NOT NULL, final_status TEXT NOT NULL DEFAULT 'marked-done'
     )`);
+    db.transaction(() => {
+      const columns = db.query<{ name: string }, []>("PRAGMA table_info(task_history)").all();
+      if (!columns.some(column => column.name === "final_status")) {
+        db.run("ALTER TABLE task_history ADD COLUMN final_status TEXT NOT NULL DEFAULT 'marked-done'");
+        // One schema upgrade, in bounded pages of card summaries; never deserialize task bodies.
+        const read = db.query<{ id: string; item: string }, [string]>("SELECT id, item FROM task_history WHERE id > ? ORDER BY id LIMIT 256");
+        const write = db.query("UPDATE task_history SET final_status = ? WHERE id = ?");
+        let after = "";
+        for (;;) {
+          const rows = read.all(after);
+          if (!rows.length) break;
+          for (const row of rows) write.run(historyStatus(JSON.parse(row.item)), row.id);
+          after = rows.at(-1)!.id;
+        }
+      }
+      db.run("CREATE INDEX IF NOT EXISTS task_history_status_newest ON task_history(final_status, finished_at DESC, id DESC)");
+    }).immediate();
     db.run("CREATE INDEX IF NOT EXISTS task_history_newest ON task_history(finished_at DESC, id DESC)");
     db.run("CREATE INDEX IF NOT EXISTS task_history_product_newest ON task_history(product_id, finished_at DESC, id DESC)");
     db.run("CREATE INDEX IF NOT EXISTS task_history_routine_newest ON task_history(json_extract(body, '$.maintenance.routineId'), finished_at DESC, id DESC) WHERE json_extract(body, '$.maintenance.routineId') IS NOT NULL");
@@ -49,6 +66,7 @@ export class TaskHistory {
     for (const task of tasks) {
       if (!finishedTask(task)) continue;
       const body = JSON.stringify(task);
+      const item = historyItem(task);
       const old = this.db.query<{ rowid: number; product_id: string; state: string; title: string; body: string; reviews: string; steps: string; roles: string }, [string]>("SELECT rowid, product_id, state, title, body, reviews, steps, roles FROM task_history WHERE id = ?").get(task.id);
       this.rememberShape(task);
       if (old?.body === body) continue;
@@ -58,11 +76,11 @@ export class TaskHistory {
       const reviews = reviewStats([task]);
       const steps = JSON.stringify(task.steps ?? []);
       const roles = JSON.stringify([...new Set((task.plan?.stages ?? []).flatMap((stage) => [stage.roleId, stage.reviewerRoleId, ...(stage.roleIds ?? [])]).filter((id): id is string => !!id))]);
-      this.db.query(`INSERT INTO task_history(id, product_id, title, finished_at, state, client_id, item, body, reviews, steps, roles)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+      this.db.query(`INSERT INTO task_history(id, product_id, title, finished_at, state, client_id, item, body, reviews, steps, roles, final_status)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
         product_id=excluded.product_id, title=excluded.title, finished_at=excluded.finished_at, state=excluded.state,
-        client_id=excluded.client_id, item=excluded.item, body=excluded.body, reviews=excluded.reviews, steps=excluded.steps, roles=excluded.roles`)
-        .run(task.id, task.productId, task.title, historyAt(task), task.state, task.clientId ?? null, JSON.stringify(historyItem(task)), body, JSON.stringify(reviews), steps, roles);
+        client_id=excluded.client_id, item=excluded.item, body=excluded.body, reviews=excluded.reviews, steps=excluded.steps, roles=excluded.roles, final_status=excluded.final_status`)
+        .run(task.id, task.productId, task.title, historyAt(task), task.state, task.clientId ?? null, JSON.stringify(item), body, JSON.stringify(reviews), steps, roles, historyStatus(item));
       const rowid = old?.rowid ?? this.db.query<{ rowid: number }, [string]>("SELECT rowid FROM task_history WHERE id = ?").get(task.id)!.rowid;
       if (!old || old.title !== task.title) {
         if (old) this.db.query("DELETE FROM task_history_search WHERE rowid = ?").run(rowid);
@@ -238,11 +256,12 @@ export class TaskHistory {
     const size = Math.max(1, Math.min(100, Math.floor(Number.isFinite(request.limit) ? request.limit! : 24)));
     const args: SQLQueryBindings[] = [];
     const where: string[] = [];
-    const membership = request.productId && !request.routineId;
+    const membership = request.productId && !request.routineId && !request.status;
     const from = membership ? "task_history_products p JOIN task_history h ON h.id = p.task_id" : "task_history h";
     const order = membership ? "p.finished_at, p.task_id" : "h.finished_at, h.id";
     if (request.productId) { where.push(membership ? "p.product_id = ?" : "EXISTS (SELECT 1 FROM task_history_products p WHERE p.task_id = h.id AND p.product_id = ?)"); args.push(request.productId); }
     if (request.routineId) { where.push("json_extract(h.body, '$.maintenance.routineId') = ?"); args.push(request.routineId); }
+    if (request.status) { where.push("h.final_status = ?"); args.push(request.status); }
     if (request.taskId) { where.push("h.id = ?"); args.push(request.taskId); }
     if (request.states) { where.push(`h.state IN (${request.states.map(() => "?").join(",")})`); args.push(...request.states); }
     if (request.held !== undefined) { where.push("json_extract(h.body, '$.held') = ?"); args.push(Number(request.held)); }
@@ -251,7 +270,7 @@ export class TaskHistory {
     const search = terms.map((term) => `"${term.replace(/"/g, '""')}"*`).join(" AND ");
     if (search) { where.push("h.rowid IN (SELECT rowid FROM task_history_search WHERE task_history_search MATCH ?)"); args.push(search); }
     const filter = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const total = search || request.routineId || request.taskId || request.states || request.held !== undefined
+    const total = search || request.status || request.routineId || request.taskId || request.states || request.held !== undefined
       ? this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total FROM ${from} ${filter}`).get(...args)!.total
       : (this.rollups.get(request.productId ?? "")?.total ?? 0);
     if (request.cursor) {

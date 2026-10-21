@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, historyAt, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
+import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, HISTORY_STATUSES, historyAt, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
 import { serve } from "../src/server.js";
 import { makeWorld, removeDir, tempDir, type World } from "./support.js";
@@ -571,4 +571,37 @@ it("indexes exact routine IDs across renamed or removed routines and pages summa
   } finally { db.close(); }
   const reopened = new Store(file);
   try { expect(reopened.history.page({ routineId: "daily" }).items.map(task => task.id)).toEqual(expected); } finally { reopened.close(); }
+});
+
+it("filters final outcomes with indexed pagination, updates evidence and upgrades saved summaries", () => {
+  const { db, file } = store();
+  const demo = createDemoState(1_000_000);
+  const tasks = Array.from({ length: 270 }, (_, n) => task(n, { state: n % 5 === 0 ? "cancelled" : "done", landed: n % 3 ? { branch: "main", sha: "abc" } : undefined, maintenance: n % 4 ? undefined : { routineId: "daily", routineName: "Daily", scheduledAt: 0, queuedAt: 0, zone: "UTC", focus: "Inspect", input: "Inspect", role: demo.roles[0]!, profile: demo.profiles[0]!, product: demo.products[0]! } }));
+  try {
+    db.save(state(tasks));
+    for (const status of Object.keys(HISTORY_STATUSES) as (keyof typeof HISTORY_STATUSES)[]) {
+      const query = { status, productId: "one", limit: 7 };
+      expect(db.history.page(query)).toEqual(demoHistoryPage(state(tasks), query));
+      const routineQuery = { ...query, routineId: "daily", productId: undefined };
+      expect(db.history.page(routineQuery)).toEqual(demoHistoryPage(state(tasks), routineQuery));
+    }
+    const first = db.history.page({ status: "cancelled", limit: 7 });
+    expect(first.nextCursor).toBeDefined();
+    expect(db.history.page({ status: "cancelled", cursor: first.nextCursor, limit: 7 })).toEqual(demoHistoryPage(state(tasks), { status: "cancelled", cursor: first.nextCursor, limit: 7 }));
+    const changed = { ...tasks[1]!, landed: undefined };
+    db.history.put([changed]);
+    expect(db.history.page({ status: "committed", taskId: changed.id }).total).toBe(0);
+    expect(db.history.page({ status: "marked-done", taskId: changed.id }).total).toBe(1);
+    const plan = db.database.query<{ detail: string }, []>("EXPLAIN QUERY PLAN SELECT h.item FROM task_history h WHERE h.final_status='committed' AND EXISTS (SELECT 1 FROM task_history_products p WHERE p.task_id=h.id AND p.product_id='one') ORDER BY h.finished_at DESC,h.id DESC LIMIT 24").all().map(row => row.detail).join(" ");
+    expect(plan).toContain("task_history_status_newest"); expect(plan).not.toContain("TEMP B-TREE");
+  } finally { db.close(); }
+  // Exercise the actual one-time schema upgrade, including its second bounded page.
+  const oldSchema = new Database(file);
+  try { oldSchema.run("DROP INDEX task_history_status_newest"); oldSchema.run("ALTER TABLE task_history DROP COLUMN final_status"); } finally { oldSchema.close(); }
+  const reopened = new Store(file);
+  try {
+    expect(reopened.history.page({ status: "cancelled" }).total).toBe(54);
+    expect(reopened.history.page({ status: "marked-done", taskId: tasks[1]!.id }).total).toBe(1);
+    expect(reopened.history.info().total).toBe(270);
+  } finally { reopened.close(); }
 });

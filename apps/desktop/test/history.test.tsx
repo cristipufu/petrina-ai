@@ -177,3 +177,27 @@ it("shows exact routine runs across current work and paginated history, and rest
   expect(location.pathname).toBe("/routines");
   expect(host!.querySelector(".routine-runs")).toBeNull();
 });
+
+it("keeps final status with search, pagination, task links and browser navigation", async () => {
+  await mount("/history?demo&historyStatus=cancelled", false, state => ({ ...state, tasks: state.tasks.map((task, i) => ({ ...task, state: i < 30 ? "cancelled" : "done" })) }));
+  expect(page).toHaveBeenLastCalledWith({ status: "cancelled", limit: 24 });
+  expect(host!.querySelectorAll(".history-card")).toHaveLength(24);
+  expect(host!.querySelector<HTMLSelectElement>('.history-status select')?.value).toBe("cancelled");
+  await button("Next");
+  expect(host!.querySelectorAll(".history-card")).toHaveLength(6);
+  const address = location.pathname + location.search;
+  await click(".history-card");
+  expect(new URL(location.href).searchParams.get("historyStatus")).toBe("cancelled");
+  await click('.sheet [aria-label="Close"]');
+  expect(location.pathname + location.search).toBe(address);
+  await act(async () => { const input = host!.querySelector<HTMLInputElement>('.history-search input')!; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Finished task 2'); input.dispatchEvent(new Event('input', { bubbles: true })); });
+  await button("Search");
+  expect(page).toHaveBeenLastCalledWith({ status: "cancelled", query: "Finished task 2", limit: 24 });
+  expect(new URL(location.href).searchParams.has("historyCursor")).toBe(false);
+  await act(async () => { const select = host!.querySelector<HTMLSelectElement>('.history-status select')!; select.value = 'marked-done'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(page).toHaveBeenLastCalledWith({ status: "marked-done", query: "Finished task 2", limit: 24 });
+  expect(host!.textContent).toContain("No finished tasks match these filters.");
+  await act(async () => { history.replaceState(null, '', address); window.dispatchEvent(new PopStateEvent('popstate')); });
+  expect(host!.querySelectorAll(".history-card")).toHaveLength(6);
+  expect(host!.querySelector<HTMLSelectElement>('.history-status select')?.value).toBe("cancelled");
+});

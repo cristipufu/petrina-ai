@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
-import type { Page, TaskList } from "@petrina/core";
+import { HISTORY_STATUSES, type HistoryStatus, type Page, type TaskList } from "@petrina/core";
 import type { HistoryPosition } from "./components/History";
 import type { SheetTab } from "./components/TaskCard";
 
 export const PAGE_NAMES: Record<Page, string> = { board: "Board", history: "History", products: "Products", routines: "Routines", agents: "Agents", analytics: "Analytics", library: "Library", settings: "Settings" };
 const TABS: readonly SheetTab[] = ["overview", "plan", "design", "review", "session"];
-const OWN_PARAMS = ["product", "from", "node", "historyCursor", "historyQuery", "historyPrevious", "routine"];
+const OWN_PARAMS = ["product", "from", "node", "historyCursor", "historyQuery", "historyPrevious", "historyStatus", "routine"];
 
 /** Keep the browser's open-in-new-tab and copy-link behaviour. */
 export function followLink(event: MouseEvent<HTMLAnchorElement>, navigate: () => void): void {
@@ -33,7 +33,9 @@ export function readRoute(address: URL): AppRoute {
     const cursor = address.searchParams.get("historyCursor") || undefined;
     const query = address.searchParams.get("historyQuery") || undefined;
     const previous = address.searchParams.getAll("historyPrevious");
-    return cursor || query || previous.length ? { history: { ...(cursor ? { cursor } : {}), ...(query ? { query } : {}), ...(previous.length ? { previous } : {}) } } : {};
+    const chosenStatus = address.searchParams.get("historyStatus");
+    const status = chosenStatus && Object.hasOwn(HISTORY_STATUSES, chosenStatus) ? chosenStatus as HistoryStatus : undefined;
+    return cursor || query || status || previous.length ? { history: { ...(status ? { status } : {}), ...(cursor ? { cursor } : {}), ...(query ? { query } : {}), ...(previous.length ? { previous } : {}) } } : {};
   };
   let parts: string[];
   try { parts = address.pathname.split("/").filter(Boolean).map(decodeURIComponent); }
@@ -65,6 +67,7 @@ export function routeHref(route: AppRoute, search = window.location.search): str
   for (const key of OWN_PARAMS) query.delete(key);
   if (route.product !== "all") query.set("product", route.product);
   const position = route.view === "history" ? route.history : route.view === "routines" ? route.routineRuns?.history : undefined;
+  if (position?.status) query.set("historyStatus", position.status);
   if (position?.cursor) query.set("historyCursor", position.cursor);
   if (position?.query) query.set("historyQuery", position.query);
   if (route.sheet) {

@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Ban, CheckCircle2, CircleMinus, Search, X } from "lucide-react";
-import { landingOf, type HistoryItem, type HistoryPage, type State } from "@petrina/core";
+import { HISTORY_STATUSES, historyDeliveryItem, type HistoryStatus, landingOf, type HistoryItem, type HistoryPage, type State } from "@petrina/core";
 import { failureText, sim } from "../engine";
 import { type Lookup } from "../lib";
 import { followLink } from "../routes";
 import { ProductName, useFocusTrap } from "./bits";
 
 export const HISTORY_PAGE_SIZE = 24;
-export interface HistoryPosition { cursor?: string; query?: string; previous?: readonly string[] }
+export interface HistoryPosition { status?: HistoryStatus; cursor?: string; query?: string; previous?: readonly string[] }
 
 export function TaskLoading({ error, onRetry, onClose }: { error?: string; onRetry: () => void; onClose: () => void }) {
   const panel = useRef<HTMLElement>(null);
@@ -21,33 +21,40 @@ export function useHistoryPage(state: State, enabled: boolean, product: string, 
   const [retry, setRetry] = useState(0);
   const cursor = position?.cursor;
   const query = position?.query;
+  const status = position?.status;
   // The demo keeps its small fixture in memory. The engine sends only the archive revision.
   const revision = state.history?.revision ?? state.tasks.filter((task) => task.state === "done" || task.state === "cancelled").map((task) => `${task.id}:${task.finishedAt}`).join("|");
-  const key = JSON.stringify([product, cursor, query, routineId]);
+  const key = JSON.stringify([product, cursor, query, routineId, status]);
   const currentKey = useRef(key);
   currentKey.current = key;
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    Promise.resolve().then(() => sim.historyPage({ ...(routineId ? { routineId } : {}), ...(product !== "all" ? { productId: product } : {}), ...(query ? { query } : {}), ...(cursor ? { cursor } : {}), limit: HISTORY_PAGE_SIZE })).then(
+    Promise.resolve().then(() => sim.historyPage({ ...(status ? { status } : {}), ...(routineId ? { routineId } : {}), ...(product !== "all" ? { productId: product } : {}), ...(query ? { query } : {}), ...(cursor ? { cursor } : {}), limit: HISTORY_PAGE_SIZE })).then(
       (page) => { if (!cancelled && currentKey.current === key) setResult({ key, page }); },
       (error) => { if (!cancelled && currentKey.current === key) setResult({ key, error: failureText(error) }); },
     );
     return () => { cancelled = true; };
-  }, [enabled, product, cursor, query, routineId, revision, retry, key]);
+  }, [enabled, product, cursor, query, routineId, status, revision, retry, key]);
   return { page: result?.key === key ? result.page : undefined, error: result?.key === key ? result.error : undefined, reload: () => setRetry((value) => value + 1) };
 }
 
+function recordedDelivery(item: HistoryItem): string | undefined {
+  if (item.deliveries?.length) return item.deliveries.map(work => `${item.products?.find(product => product.id === work.productId)?.name ?? work.productId}: ${work.nothingToPublish ? "Nothing to publish" : recordedDelivery(historyDeliveryItem(item, work)) ?? "Delivery not confirmed"}`).join(" · ");
+  if (item.release) return `Released ${item.release.tag}`;
+  if (item.landed) return item.localUpdate?.pushed ? `Committed to ${item.landed.branch} · pushed to GitHub` : `Committed locally to ${item.landed.branch}`;
+  if (item.pr?.state === "merged") return `Pull request #${item.pr.number} merged`;
+  if (item.pr?.state === "open" && item.state === "cancelled") return `Pull request #${item.pr.number} still open`;
+  if (item.pr && (item.pr.state === "closed" || landingOf(item) === "closed")) return `Pull request #${item.pr.number} closed without merging`;
+}
 function outcome(item: HistoryItem): string {
   if (item.combinedInto) return "Combined into another task";
-  if (item.deliveries?.length) return item.deliveries.map((work) => `${item.products?.find((product) => product.id === work.productId)?.name ?? work.productId}: ${work.nothingToPublish ? "Nothing to publish" : outcome({ ...item, ...work, deliveries: undefined })}`).join(" · ");
-  if (item.release) return `Released ${item.release.tag}`;
-  if (item.landed) return item.localUpdate?.pushed ? `Committed to ${item.landed.branch} · pushed to GitHub` : `Delivered locally to ${item.landed.branch}`;
-  if (item.pr?.state === "merged") return `Pull request #${item.pr.number} merged`;
-  if (item.pr && landingOf(item) === "closed") return `Pull request #${item.pr.number} closed without merging`;
+  const delivery = recordedDelivery(item);
+  if (item.state === "cancelled") return delivery ? `Cancelled · ${delivery}` : "Cancelled";
+  if (delivery) return delivery;
   if (landingOf(item) === "no-changes") return "Completed · No product changes";
   if (landingOf(item) === "marked-done") return "Marked as done · delivery not confirmed";
-  return item.state === "cancelled" ? "Cancelled" : "Completed";
+  return "Completed";
 }
 
 export function History({ page, error, reload, position, onPosition, find, selectedId, onFocus, onOpen, hrefFor, drafts }: {
@@ -59,24 +66,28 @@ export function History({ page, error, reload, position, onPosition, find, selec
   const [query, setQuery] = useState(position?.query ?? "");
   useEffect(() => setQuery(position?.query ?? ""), [position?.query]);
   const previous = position?.previous ?? [];
-  const search = (value: string) => onPosition(value.trim() ? { query: value.trim() } : {});
+  const newest = { ...(position?.status ? { status: position.status } : {}), ...(position?.query ? { query: position.query } : {}) };
+  const search = (value: string) => onPosition({ ...(position?.status ? { status: position.status } : {}), ...(value.trim() ? { query: value.trim() } : {}) });
   return <div className="history-page page" tabIndex={-1} onFocus={(event) => { if (!(event.target as HTMLElement).closest("[data-task-id]")) onFocus(); }}>
     <div className="history-toolbar">
       <p className="quiet-text">Completed and cancelled tasks, newest first.</p>
+      <div className="history-filters">
+      <label className="history-status"><span>Status</span><select className="select" aria-label="Status" value={position?.status ?? ""} onChange={event => onPosition({ ...(position?.query ? { query: position.query } : {}), ...(event.target.value ? { status: event.target.value as HistoryStatus } : {}) })}><option value="">All statuses</option>{Object.entries(HISTORY_STATUSES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <form className="history-search" role="search" onSubmit={(event) => { event.preventDefault(); search(query); }}>
         <Search size={16} aria-hidden="true" />
         <input type="search" aria-label="Search finished task titles" placeholder="Find a finished task" value={query} onChange={(event) => setQuery(event.target.value)} />
         {query && <button className="btn quiet small icon" type="button" aria-label="Clear history search" onClick={() => { setQuery(""); search(""); }}><X size={15} aria-hidden="true" /></button>}
         <button className="btn small outline" type="submit">Search</button>
       </form>
+      </div>
     </div>
-    {error ? <div className="history-empty" role="alert"><p>{error}</p><button className="btn outline" onClick={reload}>Try again</button>{position?.cursor && <button className="btn quiet" onClick={() => onPosition(position?.query ? { query: position.query } : {})}>Back to the newest tasks</button>}</div>
+    {error ? <div className="history-empty" role="alert"><p>{error}</p><button className="btn outline" onClick={reload}>Try again</button>{position?.cursor && <button className="btn quiet" onClick={() => onPosition(newest)}>Back to the newest tasks</button>}</div>
       : !page ? <p className="history-empty" role="status">Loading task history…</p>
       : <>
-        <div className="history-summary" aria-live="polite"><span className="num">{page.total.toLocaleString()} {page.total === 1 ? "task" : "tasks"}{position?.query ? ` matching “${position.query}”` : " in history"}</span></div>
+        <div className="history-summary" aria-live="polite"><span className="num">{page.total.toLocaleString()} {page.total === 1 ? "task" : "tasks"}{position?.status ? ` · ${HISTORY_STATUSES[position.status]}${position?.query ? ` matching “${position.query}”` : ""}` : position?.query ? ` matching “${position.query}”` : " in history"}</span></div>
         {page.items.length ? <div className="history-grid">{page.items.map((item) => {
           const date = item.finishedAt ?? item.createdAt;
-          const delivered = item.deliveries?.length ? item.deliveries.every((work) => work.nothingToPublish || landingOf({ ...item, ...work }) === "landed") : ["landed", "no-changes"].includes(landingOf(item));
+          const delivered = item.state !== "cancelled" && (item.deliveries?.length ? item.deliveries.every((work) => work.nothingToPublish || landingOf(historyDeliveryItem(item, work)) === "landed") : ["landed", "no-changes"].includes(landingOf(item)));
           const names = item.products?.map((product) => find.product(product.id)?.name ?? product.name);
           const Icon = item.state === "cancelled" ? Ban : delivered ? CheckCircle2 : CircleMinus;
           return <a key={item.id} href={hrefFor(item.id)} className={`history-card ${item.state} ${selectedId === item.id ? "selected" : ""}`} data-task-id={item.id} onFocus={() => onFocus(item.id)} onClick={(event) => followLink(event, () => onOpen(item.id))}>
@@ -85,11 +96,11 @@ export function History({ page, error, reload, position, onPosition, find, selec
             <div className={`history-outcome ${delivered ? "delivered" : "unconfirmed"}`}><Icon size={15} aria-hidden="true" /><span>{outcome(item)}</span></div>
             {drafts[item.id] && <span className="draft-note"><span className="draft-mark" aria-hidden="true" />Unsent message</span>}
           </a>;
-        })}</div> : <div className="history-empty"><p>{position?.query ? "No finished tasks match this search." : position?.cursor ? "There are no more tasks on this page." : "Completed and cancelled tasks will appear here."}</p>{position?.cursor && <button className="btn outline" onClick={() => onPosition(position?.query ? { query: position.query } : {})}>Back to the newest tasks</button>}</div>}
+        })}</div> : <div className="history-empty"><p>{position?.query || position?.status ? "No finished tasks match these filters." : position?.cursor ? "There are no more tasks on this page." : "Completed and cancelled tasks will appear here."}</p>{position?.cursor && <button className="btn outline" onClick={() => onPosition(newest)}>Back to the newest tasks</button>}</div>}
         <nav className="history-pagination" aria-label="History pages">
-          <button className="btn outline" disabled={!position?.cursor} onClick={() => { const cursors = [...previous]; const cursor = cursors.pop(); onPosition({ ...(position?.query ? { query: position.query } : {}), ...(cursor ? { cursor } : {}), ...(cursors.length ? { previous: cursors } : {}) }); }}><ArrowLeft size={15} aria-hidden="true" />{position?.cursor && !previous.length ? "Newest" : "Previous"}</button>
+          <button className="btn outline" disabled={!position?.cursor} onClick={() => { const cursors = [...previous]; const cursor = cursors.pop(); onPosition({ ...newest, ...(cursor ? { cursor } : {}), ...(cursors.length ? { previous: cursors } : {}) }); }}><ArrowLeft size={15} aria-hidden="true" />{position?.cursor && !previous.length ? "Newest" : "Previous"}</button>
           <span className="quiet-text num">{page.items.length} on this page</span>
-          <button className="btn outline" disabled={!page.nextCursor} onClick={() => onPosition({ ...(position?.query ? { query: position.query } : {}), cursor: page.nextCursor, previous: [...previous, position?.cursor ?? ""].slice(-50) })}>Next<ArrowRight size={15} aria-hidden="true" /></button>
+          <button className="btn outline" disabled={!page.nextCursor} onClick={() => onPosition({ ...newest, cursor: page.nextCursor, previous: [...previous, position?.cursor ?? ""].slice(-50) })}>Next<ArrowRight size={15} aria-hidden="true" /></button>
         </nav>
       </>}
   </div>;

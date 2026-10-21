@@ -2417,3 +2417,8 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .routine-runs { align-content: start; }
 .routine-runs > section { min-width: 0; }
 .routine-runs > section > .section-title { margin: 0 0 16px; }
+
+.history-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; min-width: 0; max-width: 100%; }
+.history-status { display: grid; gap: 6px; min-width: 0; max-width: 100%; color: var(--text-2); font-size: var(--fs-meta); }
+.history-status .select { max-width: 100%; }
+.history-filters .history-search { width: min(100%, 360px); }

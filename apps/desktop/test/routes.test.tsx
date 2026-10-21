@@ -196,10 +196,17 @@ it("opens Routines as a first-party page and keeps Library focused on roles and 
 });
 
 it("round-trips routine runs and their task links with independent History navigation", () => {
-  const route: AppRoute = { view: "routines", product: "shop", routineRuns: { id: "routine / daily", history: { cursor: "older", query: "check" } } };
+  const route: AppRoute = { view: "routines", product: "shop", routineRuns: { id: "routine / daily", history: { status: "cancelled", cursor: "older", query: "check" } } };
   expect(at(routeHref(route, "?demo=portfolio"))).toEqual(route);
   const task: AppRoute = { ...route, sheet: { taskId: "run", tab: "overview", list: "history", stepId: "j2" } };
   expect(at(routeHref(task, "?demo=portfolio"))).toEqual(task);
   expect(routeHref({ view: "history", product: "all" }, "?routine=old&historyCursor=old&demo")).toBe("/history?demo=");
   expect(at("/routines/one/runs/extra").missing).toBeDefined();
+});
+
+it("round-trips a final History status and ignores invalid filter bookmarks", () => {
+  const route: AppRoute = { view: "history", product: "shop", history: { status: "committed", query: "fix" }, sheet: { taskId: "finished", tab: "overview", list: "history" } };
+  expect(at(routeHref(route, '?demo'))).toEqual(route);
+  expect(at('/history?historyStatus=unknown')).toEqual({ view: "history", product: "all" });
+  expect(routeHref({ view: "board", product: "all" }, '?demo&historyStatus=cancelled')).toBe('/?demo=');
 });
