@@ -53,6 +53,17 @@ export function mainLine(task: Pick<Task, "state" | "todo" | "statusLine"> & Par
   return task.statusLine;
 }
 
+/** A restart or stopped step cannot leave a tool looking live. No outcome is inferred. */
+export function clearRunningTools(task: Pick<Task, "toolActivity" | "hunt" | "journey" | "state" | "statusLine">): void {
+  if (task.state === "running" && task.toolActivity?.runningTool?.description === task.statusLine) task.statusLine = "Continuing work";
+  if (task.toolActivity) delete task.toolActivity.runningTool;
+  for (const work of Object.values(task.hunt?.work ?? {})) if (work.toolActivity) {
+    if (work.activity === work.toolActivity.runningTool?.description) work.activity = "Continuing work";
+    delete work.toolActivity.runningTool;
+  }
+  for (const step of task.journey ?? []) for (const activity of Object.values(step.toolActivity ?? {})) delete activity.runningTool;
+}
+
 // ── How long ─────────────────────────────────────────────────────────────
 
 /** Steps of the same kind Petrina needs to have seen before it says how long one takes. */

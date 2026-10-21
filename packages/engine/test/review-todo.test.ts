@@ -64,10 +64,13 @@ describe("real grouped review summaries", () => {
         expect(mainLine(started)).toBe(todo);
         const first = started.agent!.profileId;
         for (const tag of tags) go(`action-1-${tag}`);
-        const state = await engine.until((state) => Object.values(find(state).hunt?.work ?? {}).every((work) => work.activity === "Reading the code"), "both read actions");
+        const state = await engine.until((state) => Object.values(find(state).hunt?.work ?? {}).every((work) => work.activity === "Continuing work"), "both read actions");
         const working = find(state);
         expect(mainLine(working)).toBe(todo);
-        expect(working.statusLine).toBe("Reading the code");
+        expect(working.statusLine).toBe("Continuing work");
+        expect(Object.values(working.hunt!.work!).every(work => work.toolActivity?.actionCount === 1 && work.toolActivity.lastActivity === "Reading the code" && !work.toolActivity.runningTool)).toBe(true);
+        const toolStep = working.journey!.find(step => Object.keys(step.toolActivity ?? {}).length === 2)!;
+        expect(new Set(toolStep.toolInvocations!.map(call => call.seat)).size).toBe(2);
         expect(working.agent!.profileId).toBe(first);
         expect(timeLeft(state, working)).toBeUndefined();
         const history = (count: number): State => ({ ...state, tasks: [...state.tasks, { ...working, id: "history", steps: Array.from({ length: count }, (_, at) => ({ roleId: role, repeat: false, worked: 60 * MINUTE, at })) }] });
@@ -126,7 +129,7 @@ describe("real grouped review summaries", () => {
       await run.approve();
       await Promise.all(tags.map((tag) => run.ready(tag)));
       for (const tag of tags) { run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`); }
-      await engine.until((state) => Object.values(run.find(state).hunt?.work ?? {}).every((work) => work.activity === "Reading the code"), "the review actions");
+      await engine.until((state) => Object.values(run.find(state).hunt?.work ?? {}).every((work) => work.activity === "Continuing work"), "the review actions");
       run.advance(5);
       run.go(`result-1-${tags[1]}`); run.go(`finish-${tags[1]}`);
       const partial = await engine.until((state) => !!run.find(state).hunt?.reported["1"], "the second reviewer to finish");
@@ -173,7 +176,7 @@ describe("real grouped review summaries", () => {
           });
         await Promise.all(tags.map((tag) => run.ready(tag)));
         for (const tag of tags) { go(`publish-1-${tag}`); go(`action-1-${tag}`); }
-        await engine.until((state) => Object.values(find(state).hunt!.work!).every((work) => work.activity === "Reading the code"), "both review actions");
+        await engine.until((state) => Object.values(find(state).hunt!.work!).every((work) => work.activity === "Continuing work"), "both review actions");
         run.advance(4);
         go(`ask-permission-${tags[0]}`); go(`ask-permission-twice-${tags[0]}`); go(`result-1-${tags[0]}`);
         const asked = await engine.until((state) => state.inbox.filter((item) => item.kind === "permission").length === 2, "both requests from one reviewer");
@@ -234,7 +237,7 @@ describe("real grouped review summaries", () => {
       const tag = "code-reviewer-opus-high";
       await run.ready(tag);
       run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`);
-      const working = await engine.until((state) => run.find(state).statusLine === "Reading the code", "the port review action");
+      const working = await engine.until((state) => run.find(state).statusLine === "Continuing work", "the port review action");
       expect(mainLine(run.find(working))).toBe("Checking the greeting");
       expect(run.find(working).stepClock!.roleId).toBe("code-reviewer");
       run.advance(8);
@@ -252,15 +255,34 @@ describe("real grouped review summaries", () => {
       await run.approve();
       for (const model of models) for (const name of ["publish-1", "action-1", "result-1", "finish"]) run.go(`${name}-code-reviewer-${model}`);
       const voting = await engine.until((state) => run.find(state).agent?.roleId === "verifier" && Object.keys(run.find(state).hunt?.work ?? {}).filter(key => key.startsWith("verifier:")).length === Object.keys(ADAPTERS).length, "every fresh voter");
-      const voters = [...new Set([run.find(voting).agent!, ...(run.find(voting).helpers ?? [])].map((agent) => {
+      const voters = [run.find(voting).agent!, ...(run.find(voting).helpers ?? [])].map((agent) => {
         const profile = voting.profiles.find((profile) => profile.id === agent.profileId)!;
-        return `${profile.modelId}-${profile.effort}`;
-      }))];
-      const tags = voters.map((model) => `verifier-${model}`);
+        return { seat: agent.reviewKey!, tag: `verifier-${profile.modelId}-${profile.effort}` };
+      });
+      const tags = voters.map(voter => voter.tag);
       await Promise.all(tags.map((tag) => run.ready(tag)));
-      for (const tag of tags) { run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`); }
-      const acting = await engine.until((state) => run.find(state).todo === "Checking the reported problem" && run.find(state).statusLine === "Reading the code", "the voters' items and actions");
+      for (const tag of tags) run.go(`publish-1-${tag}`);
+      for (const tag of tags.slice(0, -1)) run.go(`action-1-${tag}`);
+      const hasAction = (state: State, seat: string) => {
+        const work = run.find(state).hunt?.work?.[seat];
+        return work?.todo === "Checking the reported problem" && work.toolActivity?.lastActivity === "Reading the code";
+      };
+      // The displayed voter can be ready while a peer is still waiting to act.
+      // Hold that peer explicitly so this cannot rely on simultaneous delivery.
+      const early = await engine.until(state => voters.slice(0, -1).every(voter => hasAction(state, voter.seat)), "the released voters' activity");
+      expect(run.find(early).todo).toBe("Checking the reported problem");
+      expect(run.find(early).statusLine).toBe("Continuing work");
+      const last = voters.at(-1)!;
+      expect(run.find(early).hunt!.work![last.seat]!.toolActivity).toBeUndefined();
+      run.go(`action-1-${last.tag}`);
+      const acting = await engine.until(state => voters.every(voter => hasAction(state, voter.seat)), "every voter's item and action");
       expect(timeLeft(acting, run.find(acting))).toBeUndefined();
+      expect(Object.values(run.find(acting).hunt!.work!).filter(work => work.toolActivity?.lastActivity === "Reading the code")).toHaveLength(voters.length);
+      for (const voter of voters) {
+        const activity = run.find(acting).hunt!.work![voter.seat]!.toolActivity!;
+        expect(activity.actionCount).toBe(1);
+        expect(activity.runningTool).toBeUndefined();
+      }
       for (const tag of tags) { run.go(`result-1-${tag}`); run.go(`finish-${tag}`); }
       const done = run.find(await engine.until((state) => state.inbox.some((item) => item.kind === "delivery"), "the delivery check"));
       expect(done.steps!.filter((step) => step.roleId === "verifier")).toHaveLength(voters.length);
@@ -332,7 +354,7 @@ describe("real grouped review summaries", () => {
       const tags = ["code-reviewer-sonnet-high", "code-reviewer-gpt-6.1-sol-high"];
       await Promise.all(tags.map((tag) => run.ready(tag)));
       for (const tag of tags) { run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`); }
-      const acting = await engine.until((state) => Object.values(run.find(state).hunt?.work ?? {}).every((work) => work.activity === "Reading the code"), "the replacement reviewer's to-do and action");
+      const acting = await engine.until((state) => Object.values(run.find(state).hunt?.work ?? {}).every((work) => work.activity === "Continuing work"), "the replacement reviewer's to-do and action");
       const task = run.find(acting);
       const replacement = [task.agent!, ...(task.helpers ?? [])].find((agent) => agent.reviewKey === "reviewer:0")!;
       expect(acting.profiles.find((profile) => profile.id === replacement.profileId)!.modelId).toBe("sonnet");
@@ -356,7 +378,7 @@ describe("real grouped review summaries", () => {
       await run.approve();
       await Promise.all(tags.map((tag) => run.ready(tag)));
       for (const tag of tags) { run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`); }
-      await engine.until((state) => Object.values(run.find(state).hunt!.work!).every((work) => work.activity === "Reading the code"), "both reviewers at work");
+      await engine.until((state) => Object.values(run.find(state).hunt!.work!).every((work) => work.activity === "Continuing work"), "both reviewers at work");
       run.advance(4);
       run.go(`ask-question-${tags[1]}`); run.go(`result-1-${tags[1]}`);
       const asked = await engine.until((state) => state.inbox.some((item) => item.kind === "question"), "the second reviewer's question");

@@ -250,6 +250,7 @@ export interface TaskActivity {
   /** Agents working on the same step at the same time as `agent` (reviewers hunting at once, voters). Each holds a slot of its own. */
   helpers?: readonly ActiveAgent[];
   statusLine: string;
+  toolActivity?: import("./model.js").AgentToolActivity;
   /** Agent-owned current to-do, kept separate from changing tool activity. */
   todo?: string;
   stepClock?: StepClock;

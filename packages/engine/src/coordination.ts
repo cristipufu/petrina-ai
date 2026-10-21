@@ -53,7 +53,8 @@ export function taskSummary(engine: Engine, task: Task) {
     priority: task.priority,
     after: task.after ?? [],
     summary: mainLine(task),
-    workers: [task.agent, ...(task.helpers ?? [])].filter(Boolean),
+    activity: task.toolActivity ?? null,
+    workers: [task.agent, ...(task.helpers ?? [])].filter(Boolean).map(worker => ({ ...worker, activity: worker?.reviewKey ? task.hunt?.work?.[worker.reviewKey]?.toolActivity ?? null : task.toolActivity ?? null })),
     next: nextSteps(state, task) ?? null,
     waitingReason: ["backlog", "waiting", "needs-you", "paused", "queued", "failed"].includes(task.state) ? task.statusLine : null,
     inbox: state.inbox.filter((item) => item.taskId === task.id).map(({ id, kind }) => ({ id, kind })),
@@ -282,6 +283,15 @@ export class Coordination {
         name,
       );
     if (name === "task.inspect") return { outcome: "completed", task: taskSummary(e, task!) };
+    if (name === "task.activity") {
+      const node = a.nodeId ? task!.journey?.find(node => node.id === a.nodeId) : [...(task!.journey ?? [])].reverse().find(node => node.kind === "agent");
+      if (!node) return { outcome: "unavailable", message: "No tool activity was recorded for this step." };
+      const records = (node.toolInvocations ?? []).filter(record => !a.seat || record.seat === a.seat);
+      const workers = Object.fromEntries(Object.entries(node.toolActivity ?? {}).filter(([seat]) => !a.seat || seat === a.seat));
+      return { ...paginate(records, a, [name, a.taskId, node.id, a.seat]), nodeId: node.id, workers,
+        actionCount: Object.values(workers).reduce((total, activity) => total + activity.actionCount, 0),
+        evidence: node.toolActivity ? "recorded" : "unavailable" };
+    }
     if (name === "task.conversation") return readConversation(task!, a);
     if (name === "task.read")
       return readText(

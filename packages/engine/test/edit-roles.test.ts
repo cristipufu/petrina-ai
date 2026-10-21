@@ -146,7 +146,11 @@ describe("roles the coordinator edits and adds", () => {
           expect(during.hunt?.work?.[key]?.todo).toBe(`${reviewers.find((role) => role.id === roleId)!.name.toLowerCase()} is working`);
         }
         expect(mainLine(during)).toBe("code reviewer is working");
-        expect(during.statusLine).toBe(interruption === "usage replacement" ? "Editing notes.txt" : "2 reviewers looking at the change at once");
+        expect(during.statusLine).toBe(interruption === "usage replacement" ? "Continuing work" : "2 reviewers looking at the change at once");
+        if (interruption === "usage replacement") {
+          expect(during.toolActivity?.lastActivity).toBe("Editing notes.txt");
+          expect(during.toolActivity?.runningTool).toBeUndefined();
+        }
         for (const role of reviewers) for (const opening of fakes.openings(role.name.toLowerCase())) {
           expect(opening).toContain(role.instructions);
           expect(opening).not.toContain("Use this new wording in the next review.");

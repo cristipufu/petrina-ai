@@ -32,6 +32,33 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
 describe('what each task says at a glance', () => {
+  it('keeps completed command evidence private and counts repeated actions in the conversation', async () => {
+    const state = simulator.getState();
+    const task = structuredClone(state.tasks.find(task => task.id === 'login-loop')!);
+    task.todo = undefined;
+    task.statusLine = 'Continuing work';
+    task.toolActivity = { actionCount: 2, lastActivity: 'Running a command' };
+    const step = [...task.journey!].reverse().find(step => step.kind === 'agent')!;
+    step.toolActivity = { tester: task.toolActivity };
+    step.toolInvocations = [{ id: 'command', turnId: 'turn', toolCallId: 'native', description: 'Running a command', kind: 'execute', command: 'PRIVATE_COMMAND && PRIVATE_CODE', title: 'PRIVATE_TITLE', paths: ['/PRIVATE_PATH'], startedAt: state.now - 2, updatedAt: state.now - 1, endedAt: state.now - 1, status: 'completed', seat: 'tester', roleId: 'tester', profileId: 'sol-high', productId: task.productId }];
+    task.session = [1, 2].map(index => ({ id: `repeated-${index}`, toolInvocationId: `invocation-${index}`, at: state.now, from: 'activity', text: 'Running a command', step: step.id }));
+    simulator = new Simulator({ ...state, tasks: state.tasks.map(entry => entry.id === task.id ? task : entry) });
+    await act(async () => root.render(<App />));
+    expect(text(card(task.id).querySelector('.card-status'))).toBe('Continuing work');
+    expect(host.textContent).not.toContain('PRIVATE_');
+    await open(task.id);
+    expect(host.querySelector('.now')!.textContent).toContain('Continuing work');
+    expect(host.textContent).not.toContain('PRIVATE_');
+    await act(async () => host.querySelector<HTMLButtonElement>('#tab-session')!.click());
+    const group = host.querySelector<HTMLDetailsElement>('[data-line="repeated-1"]')!;
+    expect(text(group.querySelector('summary'))).toBe('2 agent actions');
+    await act(async () => { group.open = true; group.dispatchEvent(new Event('toggle')); });
+    expect(group.querySelectorAll('li')).toHaveLength(2);
+    expect(host.textContent).not.toContain('PRIVATE_');
+    await act(async () => host.querySelector<HTMLElement>('.journey-list [aria-current="step"]')!.click());
+    expect(host.textContent).not.toContain('PRIVATE_');
+  });
+
   it('keeps the to-do item on the card while its actions change, with Next only in the details', async () => {
     const working = card('login-loop');
     expect(text(working.querySelector('.card-status'))).toBe('Trying to prove “done” wrong');

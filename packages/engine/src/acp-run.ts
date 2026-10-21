@@ -15,6 +15,7 @@ import { AgentMessages, type AgentMessage } from "./agent-messages.js";
 import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, type ToolActivity } from "./tool-activity.js";
 import type { AccountReading } from "./tool-adapter.js";
 import { ownSession } from "./env.js";
+import { ToolInvocations, type ToolActivityEvent } from "./tool-invocations.js";
 
 export interface PermissionInfo {
   title: string;
@@ -32,6 +33,8 @@ export interface RunCallbacks {
   onMessage?(message: AgentMessage): void;
   /** A plain-language line about what the agent is doing. */
   onActivity(text: string): void;
+  /** Actual invocations and their streamed evidence, separate from public text. */
+  onToolActivity?(event: ToolActivityEvent): void;
   /** The step of its own plan the agent is on. */
   onPlanStep(text: string): void;
   onPermission(info: PermissionInfo): Promise<"allow" | "deny">;
@@ -177,6 +180,7 @@ interface RunState {
   messages: AgentMessages;
   lastActivity: string;
   activeToolCall?: string;
+  tools?: ToolInvocations;
   quiet: boolean;
   settings: SessionSettings;
   latest?: UsageInfo;
@@ -394,11 +398,14 @@ export class AgentRun {
         state.turn.rerouted = true;
       }
     };
-    const titles = new Map<string, ToolActivity>();
-    const publishTool = (call: ToolActivity) => {
+    const tools = state.tools = new ToolInvocations(event => {
+      if (event.isNew) state.messages.activity();
+      callbacks.onToolActivity?.(event);
+    });
+    const publishTool = (call: ToolActivity, isNew = false) => {
       if (isPlumbing(call)) return;
       const line = describeTool(call);
-      if (line === state.lastActivity) return;
+      if (!isNew && line === state.lastActivity) return;
       state.messages.activity();
       state.lastActivity = line;
       callbacks.onActivity(line);
@@ -410,7 +417,7 @@ export class AgentRun {
         async requestPermission(params) {
           if (state.quiet) return { outcome: { outcome: "cancelled" } };
           const call = params.toolCall;
-          const known = titles.get(call.toolCallId) ?? {};
+          const known = tools.known(call.toolCallId) ?? {};
           const merged = { ...known, ...call };
           const info: PermissionInfo = {
             title: describeTool(merged),
@@ -467,20 +474,22 @@ export class AgentRun {
               break;
             }
             case "tool_call": {
+              if (!state.turn) break;
               // A Codex agent starting a helper agent shows up as a tool call named spawnAgent.
               const input = update.rawInput as { receiverThreadIds?: unknown } | undefined;
               if (state.turn && (update.title === "spawnAgent" || Array.isArray(input?.receiverThreadIds))) state.turn.helpers.add(update.toolCallId);
-              titles.set(update.toolCallId, update);
+              tools.update(update, true);
               if (isPlumbing(update)) break;
               state.activeToolCall = update.toolCallId;
               state.messages.activity();
-              publishTool(update);
+              publishTool(update, true);
               break;
             }
             case "tool_call_update": {
-              const known = titles.get(update.toolCallId) ?? {};
+              if (!state.turn) break;
+              const known = tools.known(update.toolCallId) ?? {};
               const merged = { ...known, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== null && value !== undefined)) };
-              titles.set(update.toolCallId, merged);
+              tools.update(update, false);
               if (state.activeToolCall === update.toolCallId && [update.title, update.kind, update.rawInput, update.locations, update._meta].some(value => value !== null && value !== undefined)) publishTool(merged);
               break;
             }
@@ -638,8 +647,11 @@ export class AgentRun {
     const turn: NonNullable<RunState["turn"]> = { changed: {}, rerouted: false, helpers: new Set() };
     this.state.turn = turn;
     this.state.activeToolCall = undefined;
+    this.state.tools?.startTurn();
     this.notes = undefined;
     const notes = (): TurnNotes => ({ changed: { ...turn.changed }, rerouted: turn.rerouted, helpers: turn.helpers.size, ...(turn.modelSeen ? { modelSeen: turn.modelSeen } : {}) });
+    let toolsEnded = false;
+    const endTools = () => { if (!toolsEnded) { toolsEnded = true; this.state.tools?.endTurn(); } };
     let onExit!: (code: number | null) => void;
     const exited = new Promise<never>((_, reject) => {
       onExit = code => reject(new Error(`The agent stopped (exit ${code ?? "signal"})`));
@@ -649,9 +661,11 @@ export class AgentRun {
     try {
       if (ADAPTERS[this.profile.toolId]?.accountUsage) { const out = this.rejected(); if (out) throw out; }
       const response = await Promise.race([this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] }), exited]).catch(async (error: unknown) => {
+        endTools();
         if (ADAPTERS[this.profile.toolId]?.accountUsage) await this.readAccountUsage();
         throw this.limitOf(error) ?? providerError(error);
       });
+      endTools();
       if (response.stopReason !== "end_turn" && response.stopReason !== "cancelled") {
         const out = this.rejected();
         if (out) {
@@ -664,6 +678,7 @@ export class AgentRun {
       return { stopReason: response.stopReason, text: this.state.text, ...(this.state.messages.streamed ? { streamed: true } : {}), ...(report ? { report } : {}), ...notes() };
     } finally {
       this.child.removeListener("exit", onExit);
+      endTools();
       this.state.messages.boundary();
       this.notes = notes();
       this.state.turn = undefined;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, DESIGN_OBJECTION_RULE, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE } from "@petrina/core";
-import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, handBackPrompt, INVESTIGATION_RULE, LOGINS, mayAskScreen, parseResult, restartPrompt, screenPrompt, screenRules } from "../src/prompts.js";
+import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, handBackNote, handBackPrompt, INVESTIGATION_RULE, LOGINS, mayAskScreen, parseResult, restartPrompt, screenPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
 
 const task = createDemoState(1_000_000_000).tasks[0]!;
@@ -20,6 +20,13 @@ const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reaso
 const promptFor = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => buildPrompt(context(role, screen));
 
 describe("prompts", () => {
+  it("describes hand-back time from the supplied duration, independently of process startup", () => {
+    for (const [took, duration] of [[0, "less than a minute"], [29_999, "less than a minute"], [30_000, "1 minute"], [90_000, "2 minutes"], [90 * 60_000, "2 hours"]] as const) {
+      const note = handBackNote({ role: "Builder", tool: "Codex", took, commits: 0, files: [], leftovers: false, note: "" });
+      expect(note.split("\n")[0]).toBe(`Handed back after driving the Builder by hand in the terminal (Codex) for ${duration}.`);
+    }
+  });
+
   it("requires evidence and web research across roles and continuation paths without duplicating the rule", () => {
     const custom = { ...BUILT_IN_ROLES.find(role => role.id === "code-reviewer")!, id: "custom-review", name: "An added reviewer" };
     for (const role of [...BUILT_IN_ROLES, custom]) for (const prompt of [buildPrompt(context(role)), continuePrompt(context(role))]) {

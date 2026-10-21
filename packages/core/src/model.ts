@@ -178,6 +178,39 @@ export interface ActiveAgent {
   reviewKey?: string;
 }
 
+/** Only states actually reported by the harness. Missing means unreported. */
+export type ToolInvocationStatus = "pending" | "in_progress" | "completed" | "failed";
+
+/** Bounded diagnostic evidence, never rendered as app activity. */
+export interface ToolInvocation {
+  id: Id;
+  turnId: Id;
+  toolCallId: string;
+  description: string;
+  title?: string;
+  kind: string;
+  startedAt: number;
+  updatedAt: number;
+  status?: ToolInvocationStatus;
+  /** Set only when the harness reports completion or failure. */
+  endedAt?: number;
+  /** Observation ended without a reported outcome; this does not mean completion. */
+  turnEndedAt?: number;
+  command?: string;
+  paths?: readonly string[];
+  metadataShortened?: boolean;
+}
+
+/** Small, plain-language state safe for live window updates. */
+export interface AgentToolActivity {
+  actionCount: number;
+  roleId?: Id;
+  profileId?: Id;
+  productId?: Id;
+  lastActivity?: string;
+  runningTool?: Pick<ToolInvocation, "id" | "description" | "startedAt" | "status">;
+}
+
 export interface TimelineEntry {
   id: Id;
   at: number;
@@ -209,6 +242,8 @@ export interface SessionLine {
   /** The journey step it belongs to. */
   step?: Id;
   images?: readonly ReportImage[];
+  /** Distinct invocation identity; streamed metadata updates this line in place. */
+  toolInvocationId?: Id;
 }
 
 /** How an arrow out of a step reads: the work moved on, went back (a send-back, changes asked), or got stuck. */
@@ -281,6 +316,10 @@ export interface JourneyStep {
   agentResults?: readonly { roleId: Id; profileId: Id; at: number; value: unknown; images?: readonly ReportImage[]; productId?: Id; versions?: Readonly<Record<Id, string>> }[];
   /** The product checks Petrina ran during this checks step. */
   productChecks?: readonly JourneyProductCheck[];
+  /** Per seat, including finished members and usage replacements. */
+  toolActivity?: Readonly<Record<string, AgentToolActivity>>;
+  /** Recent calls across all seats, capped independently of lifetime action counts. */
+  toolInvocations?: readonly (ToolInvocation & { seat: string; roleId: Id; profileId: Id; productId: Id })[];
   /** `petrina`: what Petrina did. */
   work?: JourneyWork;
   /** `you`: what it waits for. */
@@ -670,6 +709,7 @@ export interface Hunt {
 export interface ReviewWork {
   todo?: string;
   activity?: string;
+  toolActivity?: AgentToolActivity;
   clock?: StepClock;
   attempts: number;
   waiting?: string;

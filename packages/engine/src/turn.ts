@@ -27,6 +27,8 @@ import type { Section } from "./context.js";
 import { takeMessages } from "./messages.js";
 import { preserveCaptures } from "./captures.js";
 import { builderContext } from "./builder-context.js";
+import { recordToolActivity } from "./record-tool-activity.js";
+import type { ToolActivityEvent } from "./tool-invocations.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
@@ -892,16 +894,30 @@ export class Turns {
     const { task } = scope, roleId = role.id, profileId = profile.id;
     const callbacks = {
       onMessage: this.messageStream(scope, roleId, profileId, signal, options.main),
-      onActivity: (line: string) => {
+      onActivity: () => {},
+      onToolActivity: (event: ToolActivityEvent) => {
         const current = this.k.task(task.id);
-        if (!current || signal.aborted) return;
-        if (options.main) this.briefed(scope);
-        if (options.main ? current.state !== "running" : current.state !== "running" && current.state !== "needs-you") return;
+        if (!current || (signal.aborted && event.turnEndedAt === undefined)) return;
+        if (options.main && event.invocation) this.briefed(scope);
         const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
-        if (!options.main && !work) return;
-        if (work) { work.activity = line; this.k.showReviewWork(current); }
-        else current.statusLine = line;
-        this.k.say(scope, "activity", line, roleId, profileId);
+        const summary = recordToolActivity(current, agent.journeyId, { seat: options.reviewKey ?? agent.agentSeat ?? roleId, roleId, profileId, productId: scope.work.productId }, event);
+        if (!summary) return;
+        const line = summary.runningTool?.description ?? "Continuing work";
+        const active = current.state === "running" || current.state === "needs-you";
+        if (work && active) {
+          work.toolActivity = summary;
+          work.activity = line;
+          this.k.showReviewWork(current);
+        } else if (options.main && active) {
+          current.toolActivity = summary;
+          if (current.state === "running") current.statusLine = line;
+        }
+        if (event.invocation) {
+          const invocation = event.invocation;
+          const existing = current.session.find(line => line.toolInvocationId === invocation.id);
+          if (existing) existing.text = invocation.description;
+          else if (event.isNew) this.k.say(scope, "activity", invocation.description, roleId, profileId, invocation.id);
+        }
         this.k.commit(scope);
       },
       onPlanStep: (line: string) => {

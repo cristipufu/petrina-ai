@@ -106,12 +106,18 @@ describe("shared step lifetime rules", () => {
     task.agent = { roleId: "builder", profileId: "sol-high", since: 100, step: 0 };
     task.helpers = [{ roleId: "code-reviewer", profileId: "opus-high", since: 100, step: 0 }];
     task.todo = "Fixing the footer"; task.stepClock = startClock(task, "builder", 100);
+    task.toolActivity = { actionCount: 1, lastActivity: "Running a command", runningTool: { id: "call", description: "Running a command", startedAt: 100 } };
+    task.journey = [{ id: "tools", kind: "agent", startedAt: 100, round: 1, sub: 0, toolActivity: { builder: task.toolActivity }, toolInvocations: [{ id: "call", turnId: "turn", toolCallId: "call", seat: "builder", roleId: "builder", profileId: "sol-high", productId: "a", description: "Running a command", kind: "execute", startedAt: 100, updatedAt: 100 }] }];
     task.queued = [{ id: "message", text: "Check narrow screens", at: 150 }];
     const execution = { conversation: { step: "build", roleId: "builder", startedAt: 100, sessionId: "session", profileId: "sol-high", toolId: "codex", model: "sol" } };
     expect(pauseTaskState(task, execution, 200)).toBe(true);
     expect(task.holdsSlot).toBe(false);
     expect(task.agent).toBeUndefined(); expect(task.helpers).toBeUndefined(); expect(task.todo).toBeUndefined();
     expect(execution.conversation).toBeUndefined();
+    expect(task.toolActivity).toBeUndefined();
+    expect(task.journey[0]!.toolActivity!.builder!.runningTool).toBeUndefined();
+    expect(task.journey[0]!.toolInvocations![0]!.status).toBeUndefined();
+    expect(task.journey[0]!.toolInvocations![0]!.endedAt).toBeUndefined();
     expect(task.queued[0]?.text).toBe("Check narrow screens");
     expect(task.title).toBe("Tidy the footer");
     expect(resumeTaskState(task, true)).toBe(true);

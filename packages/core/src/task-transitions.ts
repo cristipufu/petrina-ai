@@ -7,7 +7,7 @@ import type { AgentProfile, Id, Product, RepositoryState, Stage, TaskState } fro
 import type { WorkChoice } from "./source.js";
 import { blocksDependents } from "./repositories.js";
 import { reviewerAt } from "./roles.js";
-import { MAX_STEP_RECORDS, stepRecord } from "./summary.js";
+import { clearRunningTools, MAX_STEP_RECORDS, stepRecord } from "./summary.js";
 
 type MutableTask = DeepMutable<TaskState>;
 type Execution = DeepMutable<Pick<RepositoryState, "stepAttempts" | "conversation" | "sideStep">>;
@@ -112,9 +112,11 @@ export function appendFutureReviewer(task: MutableTask, profiles: readonly Agent
 
 /** Step-local activity is never allowed to outlive the step, including grouped reviewer clocks. */
 export function stopTaskActivity(task: MutableTask): void {
+  clearRunningTools(task);
+  delete task.toolActivity;
   delete task.todo; delete task.stepClock;
   for (const work of Object.values(task.hunt?.work ?? {})) {
-    delete work.todo; delete work.activity; delete work.clock; delete work.waiting;
+    delete work.todo; delete work.activity; delete work.toolActivity; delete work.clock; delete work.waiting;
   }
 }
 

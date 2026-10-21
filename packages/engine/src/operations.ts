@@ -84,6 +84,7 @@ export const OPERATIONS = [
     "Inspect one task's current summary, workers, next step, waiting reason, delivery confirmation and inbox references. Read longer evidence separately.",
     task,
   ),
+  op("task.activity", "Inspect reported tool activity and bounded recent invocations, including available command/file details. Defaults to the latest agent step; filter by node and worker seat. Missing status or command means unreported; turnEndedAt never means completion.", { ...task, nodeId: id.optional(), seat: id.optional(), ...page }),
   op(
     "task.conversation",
     "Read recent recorded messages, optionally for one Journey node or message. Activity is hidden by default. The character budget bounds message text; up to 100 messages. Items have stable IDs, text offsets, content revisions and mayChange (null if unknown). Poll with ifRevision to skip unchanged text; upsert by message ID and revision. activeMessages identifies each unfinished participant's latest bubble, even outside the page: read a changed one with messageId. Cursor reads older messages, survives appends, and rejects changes to unread text. Full original evidence remains available with task.read.",
@@ -143,7 +144,7 @@ export const OPERATIONS = [
   op("journey.list", "List recorded, reconstructed legacy and planned nodes separately, with stable bounded pagination.", { ...task, ...page }),
   op(
     "journey.node",
-    "Read one node's recorded trigger, input, results, questions, acceptance checks and original automated-check links. Never substitutes newer evidence.",
+    "Read one node's recorded trigger, input, results, questions, acceptance checks, original automated-check links, per-seat tool activity and recent tool invocations. Never substitutes newer evidence.",
     { ...task, nodeId: id, ...evidence },
   ),
   op(

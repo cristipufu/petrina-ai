@@ -182,22 +182,24 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
   const data = join(work, "data");
   const registry = join(data, "browser-temp");
   const stale = mkdtempSync(join(browserTempRoot(), "petrina-browser-"));
-  const bin = join(work, "bin");
-  const reached = join(work, "ps-reached");
-  const hold = join(work, "ps-hold");
-  const oldPath = process.env.PATH;
   const fakes = new Fakes(join(work, "fake"));
   mkdirSync(registry, { recursive: true });
-  mkdirSync(bin);
   writeFileSync(join(registry, "stale.json"), JSON.stringify(stale));
-  writeFileSync(hold, "");
-  writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ ! -f ${reached} ]; then touch ${reached}; while [ -f ${hold} ]; do sleep 0.01; done; fi\nexit 0\n`, { mode: 0o755 });
+  // The decision depends on recovery being pending, not on a fresh shell helper
+  // starting before the real process-scan deadline on a busy machine.
+  const originalExecFile = processes.execFile;
+  let releaseScan: (() => void) | undefined;
+  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+    if (args[0] !== "ps") return Reflect.apply(originalExecFile, processes, args);
+    const callback = args.at(-1) as (error: null, stdout: string, stderr: string) => void;
+    if (!releaseScan) releaseScan = () => callback(null, "", "");
+    else queueMicrotask(() => callback(null, "", ""));
+    return new processes.ChildProcess();
+  }) as typeof processes.execFile);
   let engine: Engine | undefined;
   try {
-    process.env.PATH = `${bin}:${oldPath ?? ""}`;
     engine = new Engine(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
-    await waitFor(() => existsSync(reached), "startup recovery to begin its owned process scan");
-    process.env.PATH = oldPath;
+    await waitFor(() => releaseScan, "startup recovery to begin its owned process scan");
     const productId = await engine.addProduct(makeProduct(work));
     const taskId = engine.addTask({ productId, title: "A queued task", description: "[no-check]" });
     const task = engine.task(taskId)!;
@@ -219,16 +221,17 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
     expect(engine.store.load()!.pool.screen?.mode).toBe("on");
     expect(fakes.opens()).toEqual([]);
     await engine.shutdown();
-    rmSync(hold, { force: true });
+    releaseScan!();
     await engine.waitUntilReady();
-    await Bun.sleep(100);
     expect(engine.stopped).toBe(true);
+    expect(engine.drivers.size).toBe(0);
     expect(fakes.opens()).toEqual([]);
     expect(existsSync(registry)).toBe(false);
   } finally {
-    process.env.PATH = oldPath;
-    rmSync(hold, { force: true });
+    releaseScan?.();
     await engine?.shutdown();
+    await engine?.waitUntilReady();
+    scan.mockRestore();
     removeDir(stale);
     removeDir(work);
   }

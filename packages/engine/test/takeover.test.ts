@@ -31,7 +31,15 @@ async function start(scenario: Scenario, description = "", open: (launcher: stri
   const bin = join(root, "bin");
   mkdirSync(bin);
   const app = join(bin, "agent-app");
-  writeFileSync(app, `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, "fake-cli.ts")}' '${fakes.dir}' "$@"\n`);
+  // Help is static fixture data. Answer in the wrapper so a cold Bun startup cannot
+  // consume the installed tool's real help deadline and silently select the fallback mode.
+  writeFileSync(app, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+  printf '%s\\n' '--permission-mode <mode> (choices: "manual", "default")'
+  exit 0
+fi
+exec '${process.execPath}' '${join(import.meta.dir, "fake-cli.ts")}' '${fakes.dir}' "$@"
+`);
   chmodSync(app, 0o755);
   const options: EngineOptions = {
     agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir],
@@ -166,7 +174,9 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(existsSync(takeoverDir(run.data, run.taskId))).toBe(false);
     expect(git(task.worktree!, "log", "-1", "--format=%s")).toBe("Add a greeting (changes made by hand)");
     const note = task.notes!.at(-1)!.text;
-    expect(note).toStartWith("Handed back after driving the Builder by hand in the terminal (Codex) for less than a minute.");
+    // This workflow checks the hand-back evidence, not how fast the machine finishes it.
+    // Duration wording is checked separately with explicit elapsed times.
+    expect(note).toMatch(/^Handed back after driving the Builder by hand in the terminal \(Codex\) for (?:less than a minute|\d+ minutes?|\d+ hours?)\./);
     expect(note).toContain("- Before the take-over, Petrina saved the Builder's unfinished work as one commit: 1 file (notes.txt).");
     expect(note).toContain("- Commits made while driving: 1.");
     expect(note).toContain("- Files added, changed or removed while driving: 3.");

@@ -129,6 +129,10 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
     writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ -f ${quote(slow)} ]; then /bin/sleep 1.1; fi\nexec /bin/ps "$@"\n`);
     chmodSync(join(bin, "ps"), 0o755);
+    // Complete the Mac's first run of this fresh stand-in before measuring the
+    // production stop deadline. The delayed scan itself must still run for real.
+    const ready = Bun.spawn([join(bin, "ps"), "-A", "-o", "pid=,ppid="], { stdout: "ignore", stderr: "pipe" });
+    expect(await ready.exited, await new Response(ready.stderr).text()).toBe(0);
     const launcher = join(dir, "engine.ts");
     writeFileSync(launcher, `process.env.PATH = ${JSON.stringify(bin)} + ":" + process.env.PATH; await import(${JSON.stringify(HARNESS)});`);
     writeFileSync(hold, "");

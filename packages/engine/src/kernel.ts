@@ -1,7 +1,7 @@
 import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
 import { UsageCoordinator } from "./usage-coordinator.js";
-import { blockingDependencies, clearTaskStep, finishTaskStep, stopTaskActivity } from "@petrina/core";
+import { blockingDependencies, clearRunningTools, clearTaskStep, finishTaskStep, stopTaskActivity } from "@petrina/core";
 import { executionFor, executionOf, scopesFor, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
 import * as library from "@petrina/core";
 // The engine's shared state and the few operations every part of it uses: lookups, the timeline and
@@ -263,7 +263,7 @@ export abstract class Kernel {
     if (loaded) {
       renameRoles(this.s);
       // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
-      for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); }
+      for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); clearRunningTools(task); }
     }
     this.s.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as MState["roleChanges"];
     this.s.roles = libraryRoles(this.s.roleChanges) as MState["roles"];
@@ -625,6 +625,8 @@ export abstract class Kernel {
     if (helpers.length) task.helpers = helpers;
     else delete task.helpers;
     const work = working(agent);
+    if (work?.toolActivity) task.toolActivity = work.toolActivity;
+    else delete task.toolActivity;
     if (work?.todo) task.todo = work.todo;
     else delete task.todo;
     if (work?.clock) task.stepClock = work.clock;
@@ -838,13 +840,13 @@ export abstract class Kernel {
     if (task.timeline.length > MAX_TIMELINE) task.timeline.splice(0, task.timeline.length - MAX_TIMELINE);
   }
 
-  say(target: MTask | RepositoryContext, from: Task["session"][number]["from"], text: string, roleId?: Id, profileId?: Id): void {
+  say(target: MTask | RepositoryContext, from: Task["session"][number]["from"], text: string, roleId?: Id, profileId?: Id, toolInvocationId?: Id): void {
     const scope = executionOf(target);
     const { task, work: repository } = scope;
     const last = task.session.at(-1);
-    if (from === "activity" && last?.from === "activity" && last.text === text) return;
+    if (from === "activity" && !toolInvocationId && last?.from === "activity" && last.text === text) return;
     const step = stepTag(task);
-    task.session.push({ ...(task.repositories ? { productId: repository.productId } : {}), id: this.id(task.id), at: Date.now(), from, text, ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
+    task.session.push({ ...(task.repositories ? { productId: repository.productId } : {}), id: this.id(task.id), at: Date.now(), from, text, ...(toolInvocationId ? { toolInvocationId } : {}), ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
     while (task.session.length > MAX_SESSION_LINES) {
       // Keep the newest line, saved pictures, a report whose pictures are still being checked,
       // and the latest words from each agent. Another update must not drop a report before its pictures are attached.

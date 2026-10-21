@@ -895,7 +895,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         const waitFor = async (name: string) => {
           while (!existsSync(join(dir, name))) await Bun.sleep(20);
         };
-        const tool = (id: string, update: Record<string, unknown>) => send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: `${id}-${session.turns}`, status: "completed", ...update } as acp.SessionNotification["update"]);
+        let calls = 0;
+        const tool = (id: string, update: Record<string, unknown>) => send(client, sessionId, { sessionUpdate: "tool_call", toolCallId: `${id}-${session.turns}-${calls++}`, status: "completed", ...update } as acp.SessionNotification["update"]);
         if (restarted) {
           mark("builder-back");
           await waitFor("go-todo");

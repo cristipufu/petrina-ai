@@ -108,7 +108,7 @@ export function kindOf(update: ToolActivity): string {
   return TOOL_NAMES[name.trim().replace(/_/g, "").toLowerCase()] ?? "other";
 }
 
-function fileOf(update: ToolActivity): string | undefined {
+export function fileOf(update: ToolActivity): string | undefined {
   const location = update.locations?.[0]?.path;
   if (location) return location;
   if (!update.rawInput || typeof update.rawInput !== "object") return undefined;

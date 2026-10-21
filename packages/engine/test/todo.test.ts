@@ -38,10 +38,15 @@ describe("the agent's to-do item", () => {
       const run = await start(reopen, false, reopen ? "grok" : undefined);
       let engine = run.engine;
       await waitFor(() => run.fakes.marked("builder-todo"), "the builder to start on its to-do list");
-      const working = run.find(await engine.until((state) => run.find(state).statusLine === "Reading the code", "the builder's latest action"));
+      const working = run.find(await engine.until((state) => run.find(state).statusLine === "Continuing work", "the builder's latest action"));
       // The first item in progress, as plain text; the latest action is the status line, and neither overwrote the other.
       expect(working.todo).toBe(ITEM);
       expect(working.state).toBe("running");
+      expect(working.toolActivity).toEqual(expect.objectContaining({ actionCount: reopen ? 4 : 2, lastActivity: "Reading the code" }));
+      expect(working.toolActivity!.runningTool).toBeUndefined();
+      const activityStep = working.journey!.find(step => step.toolActivity?.builder);
+      expect(activityStep!.toolInvocations).toHaveLength(reopen ? 4 : 2);
+      expect(activityStep!.toolInvocations!.every(call => call.status === "completed")).toBe(true);
       expect(mainLine(working)).toBe(ITEM);
       expect(working.session.filter((line) => line.from === "activity").map((line) => line.text)).toEqual(reopen
         ? ["Searching the code", "Reading notes.txt", "Running the tests", "Reading the code"]
@@ -64,6 +69,7 @@ describe("the agent's to-do item", () => {
       expect(back.todo).toBe(ITEM);
       expect(mainLine(back)).toBe(ITEM);
       expect(back.steps).toEqual(working.steps);
+      expect(back.toolActivity?.runningTool).toBeUndefined();
       run.go("go-todo");
       await engine.until((state) => run.find(state).todo === "Finishing the greeting", "the new agent's own item");
       run.go("go-finish");
