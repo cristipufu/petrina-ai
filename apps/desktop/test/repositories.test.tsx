@@ -91,8 +91,8 @@ describe("shared product controls", () => {
     await render(<History page={{ items: [historyItem(task)], total: 1 }} reload={() => {}} onPosition={() => {}} find={lookup(state)} onFocus={() => {}} onOpen={() => {}} hrefFor={() => "#"} drafts={{}} />);
     expect(host.textContent).toContain(state.products[0]!.name);
     expect(host.textContent).toContain(state.products[1]!.name);
-    expect(host.textContent).toContain("Delivered locally to main");
-    expect(host.textContent).toContain("Delivered locally to release");
+    expect(host.textContent).toContain("Committed locally to main");
+    expect(host.textContent).toContain("Committed locally to release");
     expect(host.querySelectorAll(".history-card")).toHaveLength(1);
   });
 

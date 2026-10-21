@@ -733,4 +733,3 @@ it("labels creation separately from the actual execution start", () => {
   expect(startWords(view, NOW)).toBe("Created 2h ago");
   expect(startWords({ ...view, start: { kind: "started", at: NOW - 60_000 } }, NOW)).toBe("Started 1m ago");
 });
-
