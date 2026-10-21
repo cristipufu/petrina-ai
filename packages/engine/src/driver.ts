@@ -622,7 +622,10 @@ export class Driver {
     const keep = (item: InboxItem) => {
       if (!item.blocking || item.kind === "maintenance-settings") return true;
       const task = this.k.task(item.taskId);
-      return item.kind === "question" && task?.state === "needs-you" && executionFor(task).work.conversation?.asked?.itemId === item.id;
+      return item.kind === "question" && task?.state === "needs-you" && (
+        executionFor(task).work.conversation?.asked?.itemId === item.id
+        || task.queued.some(message => Object.values(message.deliveries ?? {}).some(receipt => receipt.decisionId === item.id))
+      );
     };
     for (const item of this.k.s.inbox.filter((entry) => !keep(entry))) {
       const task = this.k.task(item.taskId);

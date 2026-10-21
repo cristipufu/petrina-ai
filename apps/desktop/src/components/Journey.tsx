@@ -714,7 +714,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
                 {!!input.updates?.length && <div className="journey-input-updates">
                   <h4>Further instructions</h4>
                   {input.updates.map((update, updateIndex) => <div key={updateIndex}>
-                    <p className="quiet-text">{update.reason === "message" ? "Coordinator message" : update.reason === "answer" ? "Answer to its question" : update.reason === "redo" ? "Result correction" : "Continuation"}{update.delivery && ` · ${update.delivery === "applied" ? "Heard" : update.delivery === "accepted" ? "Accepted by the tool" : update.delivery === "sending" ? "Sending" : update.delivery === "waiting" ? "Not accepted" : "Delivery unconfirmed"}`} · {since(update.at, now)}</p>
+                    <p className="quiet-text">{update.reason === "message" ? "Coordinator message" : update.reason === "answer" ? "Answer to its question" : update.reason === "redo" ? "Result correction" : "Continuation"}{update.delivery && ` · ${update.delivery === "applied" ? "Heard" : update.delivery === "accepted" ? "Accepted by the tool" : update.delivery === "sending" ? "Sending" : update.delivery === "waiting" ? "Not accepted" : update.delivery === "skipped" ? "Continued without confirmed delivery" : "Delivery unconfirmed"}`} · {since(update.at, now)}</p>
                     <p>{update.text}</p>
                   </div>)}
                 </div>}

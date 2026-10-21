@@ -11,7 +11,7 @@ import { executionFor } from "../src/repository-context.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 import type { Scenario } from "./fake-agent.js";
 import { standInBrowser } from "./message-browser.js";
-import { recoverMessages, routeMessages, takeMessages } from "../src/messages.js";
+import { holdUnconfirmed, MESSAGE_RECOVERY_OPTIONS, recoverMessages, routeMessages, takeMessages } from "../src/messages.js";
 import type { MTask } from "../src/kernel.js";
 
 const roots: string[] = [];
@@ -130,13 +130,14 @@ for (const result of ["refused", "failed", "null", "promptRequired"] as const) i
   } finally { await f.dispose(); }
 });
 
-for (const tool of ["codex", "grok"]) it(`holds ${tool} acceptance without resending or accepting the original result`, async () => {
+for (const tool of ["codex", "grok"]) it(`offers recovery for ${tool} acceptance without resending or accepting the original result`, async () => {
   const f = await fixture(tool === "grok" ? "queued" : "startedNewTurn", tool, tool === "codex");
   try {
     const messageId = f.engine.sendMessage(f.task.id, "Check the guest view too")!;
     await waitFor(() => f.liveRows().length === 1, "a live attempt");
     f.release(); f.acknowledge();
-    await waitFor(() => f.task.statusLine.includes("Waiting for the tool to confirm"), "the old result to be held");
+    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "an actionable delivery decision");
+    expect(decision.options).toEqual([...MESSAGE_RECOVERY_OPTIONS]);
     expect(f.task.queued[0]?.deliveries?.main?.state).toBe("accepted");
     expect(f.task.journey!.at(-1)!.agentResults).toBeUndefined();
     expect(f.fakes.received("builder")).toHaveLength(1);
@@ -155,6 +156,11 @@ for (const tool of ["codex", "grok"]) it(`holds ${tool} acceptance without resen
       expect(saved.queued[0]?.deliveries?.main?.sessionId).toBe(f.session);
       expect(f.liveRows()).toHaveLength(1);
       expect(f.fakes.received("builder")).toHaveLength(1);
+      expect(replacement.s.inbox.find(item => item.id === decision.id)?.options).toEqual([...MESSAGE_RECOVERY_OPTIONS]);
+      replacement.answer(decision.id, MESSAGE_RECOVERY_OPTIONS[0]);
+      await holdUnconfirmed(replacement, executionFor(saved), undefined, new AbortController().signal);
+      expect(saved.queued).toEqual([]);
+      expect(f.liveRows()).toHaveLength(1);
     } finally { await replacement.shutdown(); }
   } finally { await f.dispose(); }
 });
@@ -196,7 +202,8 @@ it("retains possibly accepted input when a different tool takes over", async () 
     const opens = f.fakes.opens().length;
     const profile = f.engine.s.profiles.find(profile => profile.toolId === "claude-code")!;
     const next = f.start(replacement.signal, profile.id); next.catch(() => {});
-    await waitFor(() => f.task.statusLine.includes("Waiting for the tool to confirm"), "failover to retain the receipt");
+    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "failover to offer a delivery decision");
+    expect(decision.options).toEqual([...MESSAGE_RECOVERY_OPTIONS]);
     expect(f.fakes.opens()).toHaveLength(opens);
     expect(f.fakes.received("builder")).toHaveLength(1);
     expect(f.task.queued[0]?.deliveries?.main?.toolId).toBe("codex");
@@ -337,4 +344,69 @@ it("recovers a lost acknowledgement as unconfirmed instead of sending it again",
       expect(f.liveRows()).toHaveLength(1);
     } finally { await recovered.shutdown(); }
   } finally { await f.dispose(); }
+});
+
+for (const choice of MESSAGE_RECOVERY_OPTIONS) it(`recovers Grok's accepted message with ${choice}`, async () => {
+  const f = await fixture("queued", "grok");
+  try {
+    f.engine.sendMessage(f.task.id, "Keep the guest view");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "Grok acceptance");
+    f.release();
+    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "delivery recovery");
+    expect(f.task.journey!.at(-1)!.agentResults).toBeUndefined();
+    f.engine.answer(decision.id, choice);
+    const result = await f.pending;
+    expect(result.summary).toBe("Added a greeting.");
+    expect(f.task.queued).toEqual([]);
+    expect(f.task.stepNotes?.some(note => note.kind === "answer" && note.text === choice)).not.toBe(true);
+    expect(f.liveRows()).toHaveLength(1);
+    expect(f.fakes.received("builder")).toHaveLength(choice === MESSAGE_RECOVERY_OPTIONS[1] ? 2 : 1);
+    const update = f.task.journey!.at(-1)!.agentInputs![0]!.updates!.find(update => update.messageId);
+    expect(update?.delivery).toBe(choice === MESSAGE_RECOVERY_OPTIONS[1] ? "applied" : "skipped");
+  } finally { await f.dispose(); }
+});
+
+it("requires an explicit resend choice and keeps later messages ordered", async () => {
+  const f = await fixture("queued", "grok");
+  try {
+    f.engine.sendMessage(f.task.id, "First guidance");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "acceptance");
+    f.engine.sendMessage(f.task.id, "Later guidance", "queue");
+    f.release();
+    const first = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "recovery");
+    f.engine.answer(first.id, "I am unsure");
+    const second = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question" && item.id !== first.id), "explicit choices again");
+    expect(f.fakes.received("builder")).toHaveLength(1);
+    f.engine.answer(second.id, MESSAGE_RECOVERY_OPTIONS[1]);
+    await f.pending;
+    const follow = f.fakes.received("builder")[1]!.text;
+    expect(follow.indexOf("First guidance")).toBeLessThan(follow.indexOf("Later guidance"));
+    expect(f.task.queued).toEqual([]);
+  } finally { await f.dispose(); }
+});
+
+it("resolves one reviewer's uncertain receipt without consuming its peer's decision", async () => {
+  const f = await fixture(undefined);
+  const controller = new AbortController();
+  try {
+    f.task.queued = [{ id: "parallel-note", at: Date.now(), text: "Check both views", recipients: { "review-0": false, "review-1": false }, deliveries: {
+      "review-0": { state: "accepted", via: "live", toolId: "grok" },
+      "review-1": { state: "accepted", via: "live", toolId: "codex" },
+    } }];
+    const first = holdUnconfirmed(f.engine, f.scope, "review-0", controller.signal, "reviewer:0");
+    const second = holdUnconfirmed(f.engine, f.scope, "review-1", controller.signal, "reviewer:1");
+    const decisions = f.engine.s.inbox.filter(item => item.taskId === f.task.id && item.kind === "question");
+    expect(decisions).toHaveLength(2);
+    const firstDecision = decisions.find(item => item.reviewKey === "reviewer:0")!;
+    const secondDecision = decisions.find(item => item.reviewKey === "reviewer:1")!;
+    f.engine.answer(firstDecision.id, MESSAGE_RECOVERY_OPTIONS[0]);
+    await first;
+    expect(f.task.queued[0]?.deliveries?.["review-0"]?.state).toBe("skipped");
+    expect(f.task.queued[0]?.deliveries?.["review-1"]?.state).toBe("accepted");
+    expect(f.engine.s.inbox.some(item => item.id === secondDecision.id)).toBe(true);
+    f.engine.answer(secondDecision.id, MESSAGE_RECOVERY_OPTIONS[1]);
+    await second;
+    expect(takeMessages(f.task, "review-0")).toEqual([]);
+    expect(takeMessages(f.task, "review-1").map(message => message.id)).toEqual(["parallel-note"]);
+  } finally { controller.abort(); await f.dispose(); }
 });

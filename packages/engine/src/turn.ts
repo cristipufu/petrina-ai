@@ -902,6 +902,13 @@ export class Turns {
         continue;
       }
       await holdUnconfirmed(this.k, scope, options.member, signal, options.reviewKey);
+      // A recovery decision may explicitly authorize resending. It must reach this
+      // participant before its earlier result can finish the step.
+      const recovered = options.main || options.member ? takeMessages(current, options.member) : [];
+      if (recovered.length) {
+        reply = await sendQueued(recovered);
+        continue;
+      }
       let error: string | undefined;
       if (reportLine) this.k.pendingReportIds.add(reportLine.id);
       try {

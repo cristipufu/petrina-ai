@@ -32,3 +32,11 @@ it("explains unsupported and explicit waiting without claiming acceptance", () =
   expect(messageRemovable(message)).toBe(true);
   expect(messageRemovalText(message)).toBeUndefined();
 });
+
+it("does not call a coordinator's decision to continue proof of hearing", () => {
+  const message: QueuedMessage = { id: "m", at: 1, text: "Keep the guest view", recipients: { first: true, second: false }, deliveries: { first: { state: "skipped" }, second: { state: "waiting" } } };
+  expect(messageDeliveryText(message)).toContain("Continued without confirmed delivery");
+  expect(messageDeliveryText(message)).not.toContain("Heard");
+  expect(messageRemovalText(message)).not.toContain("already received");
+  expect(messageRemovable(message)).toBe(false);
+});

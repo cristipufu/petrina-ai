@@ -109,6 +109,8 @@ The input disclosure is a separate document card, with a Fresh conversation or C
 
 Finding details keep the finding and its recorded review evidence together; the builder’s full messages belong in Conversation instead of a repeated metadata block. Every active agent node has a fixed footer on all three tabs: a message section collapsed by default, with the field above Send now/Wait/Stop and send and Send when opened, then a separate terminal takeover row. Collapsing keeps a draft; the Message shortcut opens and focuses it. Finished nodes have no live controls.
 
+When live message delivery cannot be confirmed, the Inbox names that uncertainty and shows the message. Continue without sending again lets the step proceed while retaining the uncertainty; Send again explicitly authorizes another copy. These choices survive restart and apply only to the affected agent. Journey records a decision to continue as Continued without confirmed delivery, never Heard.
+
 Agent actions expand in place, collapsed by default. Clicking the same step again, the blank canvas, or Back to task returns to the previous task tab and reading position. Typed answers, messages and notes stay intact. Faint steps say what is planned and link to the Plan tab.
 
 ### Accessible navigation

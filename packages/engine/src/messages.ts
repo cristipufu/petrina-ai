@@ -1,5 +1,5 @@
 // Coordinator instructions belong to durable participant seats, never a process or profile.
-import { openStep, type AgentProfile, type QueuedMessage } from "@petrina/core";
+import { addAsk, openStep, pauseClock, resumeClock, type AgentProfile, type QueuedMessage } from "@petrina/core";
 import { Aborted, type Kernel, type MTask } from "./kernel.js";
 import type { RepositoryContext } from "./repository-context.js";
 import type { AgentRun, TurnResult } from "./acp-run.js";
@@ -110,21 +110,80 @@ export function recordMessage(k: Kernel, scope: RepositoryContext, message: Queu
   k.log(scope, "you", via === "live" ? "You sent a message" : `You said: ${message.text}`);
 }
 
-/** On restart/failover a possibly accepted instruction stays with its original participant. */
+export const MESSAGE_RECOVERY_OPTIONS = ["Continue without sending again", "Send again"] as const;
+
+/** Uncertain input needs an explicit decision, never an endless wait or an automatic duplicate. */
 export async function holdUnconfirmed(k: Kernel, scope: RepositoryContext, member: string | undefined, signal: AbortSignal, reviewKey?: string): Promise<void> {
+  if (signal.aborted) throw new Aborted();
+  const { task } = scope;
+  const key = messageMember(member);
   // Only this participant. A peer may still be reserving its own prompt.
-  if (settleInterruptedDeliveries(scope.task, messageMember(member))) k.commitNow(scope);
-  if (!scope.task.queued.some(message => unresolved(message, messageMember(member)))) return;
-  const text = "Waiting for the tool to confirm your message; it will not be sent again automatically";
-  const work = reviewKey ? scope.task.hunt?.work?.[reviewKey] : undefined;
-  if (work) { work.activity = text; k.showReviewWork(scope.task); }
-  else scope.task.statusLine = text;
-  k.commitNow(scope);
-  await new Promise<never>((_, reject) => {
-    const abort = () => reject(new Aborted());
-    if (signal.aborted) abort();
-    else signal.addEventListener("abort", abort, { once: true });
-  });
+  if (settleInterruptedDeliveries(task, key)) k.commitNow(scope);
+  for (const message of task.queued) {
+    if (!unresolved(message, key)) continue;
+    const receipt = message.deliveries![key]!;
+    const work = reviewKey ? task.hunt?.work?.[reviewKey] : undefined;
+    const by = reviewKey ? [task.agent, ...(task.helpers ?? [])].find(agent => agent?.reviewKey === reviewKey) : task.agent;
+    try {
+      for (;;) {
+        if (signal.aborted) throw new Aborted();
+        const saved = task.journey?.flatMap(step => step.asks ?? []).find(ask => ask.id === receipt.decisionId);
+        let answer = saved?.answer;
+        if (!answer) {
+          let item = k.s.inbox.find(item => item.id === receipt.decisionId && item.taskId === task.id && item.kind === "question");
+          if (!item) {
+            const id = k.raise(scope, "question", "Could not confirm delivery of your message", true, {
+              body: "The tool may already have received this message. Continue without sending it again, or explicitly send another copy. Sending again may repeat an instruction the agent already received.",
+              detail: message.text, options: [...MESSAGE_RECOVERY_OPTIONS], ...(reviewKey ? { reviewKey } : {}),
+            }, by);
+            receipt.decisionId = id;
+            addAsk(task, { id, kind: "question", title: "Could not confirm delivery of your message", at: Date.now() });
+            item = k.s.inbox.find(item => item.id === id)!;
+          }
+          const status = "Your call on an unconfirmed message";
+          if (work) {
+            if (work.clock) work.clock = pauseClock(work.clock, Date.now());
+            work.waiting = status;
+            k.showReviewWork(task);
+          } else { k.pauseStep(task); task.statusLine = status; }
+          k.commitNow(scope);
+          answer = await k.waitForReply(item.id, signal);
+        }
+        if (signal.aborted) throw new Aborted();
+        if (answer === MESSAGE_RECOVERY_OPTIONS[0]) {
+          receipt.state = "skipped";
+          (message.recipients ??= {})[key] = true;
+          // Keep the uncertainty visible in the exact input, without claiming the agent heard it.
+          for (const step of task.journey ?? []) for (const input of step.agentInputs ?? []) for (const update of input.updates ?? []) {
+            const reviewer = key.startsWith("review-") ? key.slice("review-".length) : undefined;
+            if (update.messageId === message.id && input.reviewerKey === reviewer && k.profile(input.profileId)?.toolId === receipt.toolId) update.delivery = "skipped";
+          }
+          k.log(scope, "you", "You continued without sending an unconfirmed message again", by?.roleId, by?.profileId);
+          break;
+        }
+        if (answer === MESSAGE_RECOVERY_OPTIONS[1]) {
+          // Only this recipient retries, through the next ordinary tracked prompt.
+          message.deliveries![key] = { state: "waiting" };
+          k.log(scope, "you", "You asked to send an unconfirmed message again", by?.roleId, by?.profileId);
+          break;
+        }
+        // Free text must not silently authorize another delivery.
+        delete receipt.decisionId;
+      }
+    } finally {
+      if (work && !signal.aborted) {
+        const pending = k.s.inbox.find(item => item.taskId === task.id && item.blocking && item.reviewKey === reviewKey);
+        if (pending) work.waiting = pending.kind === "permission" ? "Waiting for your permission" : "Waiting for your answer";
+        else {
+          delete work.waiting;
+          if (work.clock) work.clock = resumeClock(work.clock, Date.now());
+        }
+        k.showReviewWork(task);
+      }
+      k.commitNow(scope);
+    }
+  }
+  removeHeard(task);
 }
 
 /** A queued instruction on the live task, writable the same way ordinary prompt handoff writes it. */

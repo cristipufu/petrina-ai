@@ -989,7 +989,9 @@ export class Engine extends Kernel implements Commands {
     const answerKind = context.decided ? "decided" : how;
     this.tracking.answered(task, item ?? itemId, answerKind);
     settleAsk(task, itemId, answerKind === "decided" ? "decided" : "answered", Date.now(), answer);
-    this.stepNote(task, "answer", answer, { ...(about ? { about } : {}) });
+    // Message recovery is an engine decision, not another instruction for the model.
+    const deliveryDecision = task.queued.some(message => Object.values(message.deliveries ?? {}).some(receipt => receipt.decisionId === itemId));
+    if (!deliveryDecision) this.stepNote(task, "answer", answer, { ...(about ? { about } : {}) });
     this.say(task, "you", answer);
     this.log(task, "you", `You answered: ${answer}`);
     const asked = scope!.work.conversation?.asked;

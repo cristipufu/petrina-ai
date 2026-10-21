@@ -406,11 +406,13 @@ export interface QueuedMessage {
 }
 
 export interface MessageDelivery {
-  state: "waiting" | "sending" | "accepted" | "applied" | "unconfirmed";
+  state: "waiting" | "sending" | "accepted" | "applied" | "unconfirmed" | "skipped";
   via?: "prompt" | "live";
   toolId?: Id;
   sessionId?: string;
   reason?: "unsupported" | "rejected" | "separate-turn" | "unknown";
+  /** An engine-owned recovery question, separate from the agent's own question. */
+  decisionId?: Id;
 }
 
 /**
