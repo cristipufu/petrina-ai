@@ -2378,3 +2378,8 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .profiles-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
 .profiles-heading h2 { margin: 0; font-size: var(--fs-panel); line-height: var(--lh-panel); }
 .profiles-heading p { margin: 6px 0 0; font-weight: 400; }
+.routine-preview-zone { margin: 0; color: var(--text-2); overflow-wrap: anywhere; font-size: var(--fs-control); }
+.routine-occurrences { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.routine-occurrences li { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: baseline; gap: 8px 16px; padding: 12px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.routine-occurrences time { min-width: 0; overflow-wrap: anywhere; }
+.routine-occurrences li > span { color: var(--text-2); font-size: var(--fs-control); white-space: nowrap; }

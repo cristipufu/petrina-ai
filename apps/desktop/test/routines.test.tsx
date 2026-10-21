@@ -43,7 +43,7 @@ describe("Library routines", () => {
     await click("Add a routine"); await change("Frequency", "cron");
     await change("Time zone", "UTC"); await change("Custom cron schedule", "0 0 */2 * *");
     const expected = ["2026-01-03T00:00Z", "2026-01-05T00:00Z", "2026-01-07T00:00Z"].map(Date.parse);
-    expect([...host.querySelectorAll("ol li")].map(node => node.textContent)).toEqual(expected.map(at => occurrenceText(at, "UTC")));
+    expect([...host.querySelectorAll("ol li")].map(node => node.getAttribute("aria-label"))).toEqual(expected.map(at => occurrenceText(at, "UTC")));
     await click("Save routine");
     expect(simulator.getState().routines![0]!.nextAt).toBe(expected[0]);
     await act(async () => simulator.tick(Date.parse("2026-01-02T00:00Z")));

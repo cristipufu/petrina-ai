@@ -2,7 +2,7 @@ import { taskProductIds } from "./repositories.js";
 import { boardSections } from "./board.js";
 import type { InboxItem, State, Task } from "./model.js";
 
-export type Page = "board" | "history" | "products" | "agents" | "analytics" | "library" | "settings";
+export type Page = "board" | "history" | "products" | "routines" | "agents" | "analytics" | "library" | "settings";
 export type KeyArea = "board" | "inbox";
 export type TaskList = KeyArea | "history" | undefined;
 

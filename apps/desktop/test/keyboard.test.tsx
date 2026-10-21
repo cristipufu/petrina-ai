@@ -587,7 +587,7 @@ describe('the app keyboard', () => {
     const button = (text: string) => { const found = Array.from(host.querySelectorAll('button')).find((entry) => entry.textContent?.trim() === text); expect(found, text).toBeDefined(); return found!; };
     const roles = simulator.getState().roles;
     await key('l');
-    expect(el('.library-views [aria-current="page"]').textContent).toBe('Routines');
+    expect(el('.library-views [aria-current="page"]').textContent).toBe('Roles');
     await click('.library-views a[href="/library/roles"]');
     expect(el('.library-views [aria-current="page"]').textContent).toBe('Roles');
     const opener = el(`[aria-label="Edit the ${roleName}"]`);

@@ -1,3 +1,4 @@
+import { Routines } from "./components/Routines";
 import { involvesProduct, taskProductIds } from "@petrina/core";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { boardOrder, inboxOrder, inboxTab, keyArea, matchesWords, reconcileHighlight, stepHighlight, type KeyArea, type Page, type State, type Task, type TaskList } from "@petrina/core";
@@ -265,7 +266,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const inboxKey = () => { close(); if (inboxOpen && owner === "inbox") closeInbox(false); else openInbox(); };
   const newTask = (title = "") => { setNewTitle(title); setCreating(true); };
   const pickProduct = (id: string) => {
-    navigate((previous) => ({ ...previous, product: id, view: previous.view === "analytics" ? "analytics" : previous.view === "history" ? "history" : "board", sheet: undefined, productSettings: undefined, history: undefined }));
+    navigate((previous) => ({ ...previous, product: id, view: previous.view === "analytics" || previous.view === "history" || previous.view === "routines" ? previous.view : "board", sheet: undefined, productSettings: undefined, history: undefined }));
     setMessageFocus(undefined); setOwner("board");
     if (view === "history") focusArea.current = "board";
   };
@@ -409,7 +410,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
         )}
         {!missing && view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
         {!missing && view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
-        {!missing && view === "library" && <LibraryPage state={state} find={find} onRole={setRolePanel} onRoutineDialog={setRoutineDialog} product={product} view={route.libraryView ?? "routines"} onView={libraryView => navigate(previous => ({ ...previous, libraryView }))} onOpen={open} />}
+        {!missing && view === "routines" && <div className="page"><Routines state={state} find={find} product={product} onOpen={open} onDialogChange={setRoutineDialog} /></div>}
+        {!missing && view === "library" && <LibraryPage state={state} onRole={setRolePanel} onEditorDialog={setRoutineDialog} product={product} view={route.libraryView ?? "roles"} onView={libraryView => navigate(previous => ({ ...previous, libraryView }))} />}
         {!missing && view === "settings" && <SettingsPage onShortcuts={() => setShortcuts(true)} theme={theme} onTheme={setTheme} />}
       </main>
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react
 import type { Page, TaskList } from "@petrina/core";
 import type { SheetTab } from "./components/TaskCard";
 
-export const PAGE_NAMES: Record<Page, string> = { board: "Board", history: "History", products: "Products", agents: "Agents", analytics: "Analytics", library: "Library", settings: "Settings" };
+export const PAGE_NAMES: Record<Page, string> = { board: "Board", history: "History", products: "Products", routines: "Routines", agents: "Agents", analytics: "Analytics", library: "Library", settings: "Settings" };
 const TABS: readonly SheetTab[] = ["overview", "plan", "design", "review", "session"];
 const OWN_PARAMS = ["product", "from", "node", "historyCursor", "historyQuery", "historyPrevious"];
 
@@ -19,7 +19,7 @@ export interface AppRoute {
   product: string;
   sheet?: TaskRoute;
   productSettings?: string;
-  libraryView?: "routines" | "roles" | "profiles";
+  libraryView?: "roles" | "profiles";
   history?: { cursor?: string; query?: string; previous?: readonly string[] };
   missing?: string;
 }
@@ -47,7 +47,7 @@ export function readRoute(address: URL): AppRoute {
   if (page && Object.hasOwn(PAGE_NAMES, page)) {
     const route = { ...base, view: page as Page, ...(page === "history" ? historyState() : {}) };
     if (parts.length === 1) return route;
-    if (page === "library" && ["routines", "roles", "profiles"].includes(id ?? "") && parts.length === 2) return { ...route, libraryView: id as AppRoute["libraryView"] };
+    if (page === "library" && ["roles", "profiles"].includes(id ?? "") && parts.length === 2) return { ...route, libraryView: id as AppRoute["libraryView"] };
     if (page === "products" && id && detail === "settings" && !extra) return { ...route, productSettings: id };
     // Bookmarks from before product settings moved out of app settings still open their editor.
     if (page === "settings" && id === "products" && detail && !extra) return { ...route, view: "products", productSettings: detail };

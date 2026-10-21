@@ -103,9 +103,15 @@ export function routinePreview(schedule: RoutineSchedule, zone: string, after: n
   for (let n = 0; n < 3; n++) times.push(nextOccurrence(schedule, zone, times.at(-1) ?? after));
   return times;
 }
-export function occurrenceText(at: number, zone: string): string {
-  return `${new Intl.DateTimeFormat(undefined, { timeZone: zone, dateStyle: "medium", timeStyle: "short" }).format(at)} · ${zone} · ${new Intl.DateTimeFormat("en", { timeZone: zone, timeZoneName: "longOffset" }).formatToParts(at).find(p => p.type === "timeZoneName")?.value}`;
+export function occurrenceParts(at: number, zone: string): { dateTime: string; zone: string; offset: string } {
+  return { dateTime: new Intl.DateTimeFormat(undefined, { timeZone: zone, dateStyle: "medium", timeStyle: "short" }).format(at), zone,
+    offset: new Intl.DateTimeFormat("en", { timeZone: zone, timeZoneName: "longOffset" }).formatToParts(at).find(p => p.type === "timeZoneName")!.value };
 }
+export function occurrenceText(at: number, zone: string): string {
+  const parts = occurrenceParts(at, zone);
+  return `${parts.dateTime} · ${parts.zone} · ${parts.offset}`;
+}
+
 export function frequencyText(schedule: RoutineSchedule): string {
   if (schedule.kind === "daily") return `Daily at ${schedule.time}`;
   if (schedule.kind === "weekly") return `${[...new Set(schedule.weekdays)].sort().map(n => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n]).join(", ")} at ${schedule.time}`;

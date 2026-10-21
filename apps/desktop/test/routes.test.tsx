@@ -22,7 +22,7 @@ const at = (path: string) => readRoute(new URL(path, "http://localhost:1430"));
 
 describe("addresses", () => {
   it("addresses all Library views while preserving product scope and demos", () => {
-    for (const libraryView of ["routines", "roles", "profiles"] as const) {
+    for (const libraryView of ["roles", "profiles"] as const) {
       const route: AppRoute = { view: "library", product: "shop", libraryView };
       const href = routeHref(route, "?demo=portfolio");
       expect(at(href)).toEqual(route);
@@ -65,7 +65,7 @@ describe("addresses", () => {
 });
 
 it("gives the routine editor the keyboard ahead of page shortcuts and returns focus", async () => {
-  await mount("/library/routines?demo");
+  await mount("/routines?demo");
   const add = [...host!.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes("Add a routine"))!;
   add.focus();
   await act(async () => add.click());
@@ -177,4 +177,19 @@ describe("navigation in the app", () => {
       expect(host!.querySelector(".portfolio")).not.toBeNull();
     }
   });
+});
+
+
+it("opens Routines as a first-party page and keeps Library focused on roles and profiles", async () => {
+  await mount("/routines?demo=portfolio&product=shop");
+  expect(host!.querySelector('.rail a[aria-current="page"]')?.textContent).toBe("Routines");
+  expect(host!.querySelector(".library-views")).toBeNull();
+  await click('.rail a[title="Library (L)"]');
+  expect([...host!.querySelectorAll(".library-views a")].map(node => node.textContent)).toEqual(["Roles", "Profiles"]);
+  expect(window.location.search).toContain("product=shop");
+  await click('.rail a[title="Routines"]');
+  expect(window.location.pathname).toBe("/routines");
+  await click(".switcher"); await click(".switcher-list > .switcher-row");
+  expect(window.location.pathname).toBe("/routines");
+  expect(new URL(window.location.href).searchParams.has("product")).toBe(false);
 });
