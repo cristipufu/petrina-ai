@@ -157,7 +157,10 @@ describe.concurrent("reviews that converge", () => {
     expect(builders[1]).toContain("Opened the welcome page");
     expect(builders[1]).not.toContain(evidence);
     expect(builders[2]).toContain(evidence);
-    expect(builders[2]).not.toContain("Opened the welcome page");
+    // Complete handoffs retain earlier proof, clearly labelled as historical rather than current support.
+    expect(builders[2]).toContain("Earlier decisions below are historical, not current support.");
+    expect(builders[2]).toContain("Opened the welcome page");
+    expect(builders[2]!.indexOf(evidence)).toBeLessThan(builders[2]!.indexOf("Opened the welcome page"));
     const original = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 1)!.result!.findings!.find((entry) => entry.id === finding.id)!;
     expect(original.evidence).toBe("Opened the welcome page");
     const store = new Store(join(root, "data", "petrina.db"));

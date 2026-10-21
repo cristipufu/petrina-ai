@@ -327,7 +327,11 @@ function riskOf(plan: Scenario) {
 
 /** A builder in a fix round answers every finding it was given, by id. */
 function answersTo(text: string) {
-  return findingIds(text, "Review findings (answer every one by id; fix every Important one)").map((id) => ({ id, fixed: true, text: "Fixed it." }));
+  // Continued fixes receive the current open-ID index; unchanged records stay in native context.
+  const index = section(text, "Current finding status index");
+  const ids = index !== undefined ? [...index.matchAll(/^- ([^:\n]+): open,/gm)].map(match => match[1]!)
+    : findingIds(text, "Review findings (answer every one by id; fix every Important one)");
+  return ids.map(id => ({ id, fixed: true, text: "Fixed it." }));
 }
 
 const NOTES = "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)";
