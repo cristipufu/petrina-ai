@@ -271,7 +271,7 @@ export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at:
   const fixingFindings = task.fixing && (task.maintenance?.role.id === roleId ? task.maintenance.role : roles.find(role => role.id === roleId))?.result === "build"
     ? { findingIds: (task.findings ?? []).filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id) }
     : {};
-  return push(task, { kind: "agent", ...key, ...fixingFindings, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
+  return push(task, { kind: "agent", usageTracked: true, ...key, ...fixingFindings, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
 }
 
 /** Keep a step's actual handoff independent of later replies and fixes. */

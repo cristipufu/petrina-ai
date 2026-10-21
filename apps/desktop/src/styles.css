@@ -2069,6 +2069,19 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .journey-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 .journey-waits { display: block; }
 .journey-asked h4, .journey-part h4 { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+/* Step usage fits the details column and follows the shared number wording. */
+.step-usage { min-width: 0; }
+.step-usage h4 { margin: 0 0 8px; font-size: var(--fs-control); line-height: var(--lh-control); }
+.step-usage p { margin: 0; overflow-wrap: anywhere; }
+.step-usage .note { margin-top: 6px; }
+.step-usage-total, .step-usage-run-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+.step-usage-parts { display: grid; gap: 4px; margin: 8px 0 0; }
+.step-usage-parts > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
+.step-usage-parts dt { color: var(--text-2); }
+.step-usage-parts dd { margin: 0; }
+.step-usage-runs { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+.step-usage-run-head { font-weight: 500; }
+
 .journey-context { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 8px; }
 .journey-context h4 { margin-top: 4px; font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
 .journey-context p { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }

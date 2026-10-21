@@ -123,6 +123,7 @@ const ARGS = {
   usage: z.tuple([
     z.discriminatedUnion("view", [
       z.object({ view: z.literal("task"), taskId: z.string().min(1).max(200) }).strict(),
+      z.object({ view: z.literal("node"), taskId: z.string().min(1).max(200), nodeId: z.string().min(1).max(200) }).strict(),
       z.object({ view: z.literal("products") }).strict(),
       z.object({ view: z.literal("today") }).strict(),
       z.object({ view: z.literal("analytics"), period: z.enum(["today", "7d", "30d"]), productId: z.string().min(1).max(200).optional() }).strict(),

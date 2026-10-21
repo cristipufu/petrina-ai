@@ -69,6 +69,11 @@ export interface WorkTurn {
   effortChangedTo?: string;
   /** The agent session the turn belongs to. */
   sessionId: Id;
+  /** Exact journey step and agent start, independent of reused native conversations. */
+  journeyId?: Id;
+  agentRunId?: Id;
+  /** Stable place in a parallel group, retained by a replacement. */
+  agentSeat?: Id;
   reason: TurnReason;
   startedAt: number;
   endedAt?: number;
@@ -82,6 +87,14 @@ export interface WorkTurn {
   workMs?: number;
   /** Missing when the tool sent no token report. */
   tokens?: TokenCounts;
+}
+
+/** The last saved turn of this exact start's work; native sessions can span other steps and jobs. */
+export function continuingAgentTurn(turns: readonly WorkTurn[], scope: Pick<WorkTurn, "taskId" | "journeyId" | "agentSeat" | "roleId" | "toolId"> & Partial<Pick<WorkTurn, "sessionId" | "profileId">>): WorkTurn | undefined {
+  if (!scope.journeyId) return undefined;
+  return turns.findLast(turn => turn.taskId === scope.taskId && turn.journeyId === scope.journeyId && turn.agentSeat === scope.agentSeat
+    && turn.roleId === scope.roleId && turn.toolId === scope.toolId && (scope.profileId === undefined || turn.profileId === scope.profileId)
+    && (scope.sessionId === undefined || turn.sessionId === scope.sessionId));
 }
 
 export type MomentKind =
@@ -430,6 +443,7 @@ export class MemoryWorkLog implements WorkLogReader {
     const index = this.turnList.findIndex((turn) => turn.id === turnId);
     if (index < 0) return;
     this.turnList[index] = { ...this.turnList[index]!, ...update };
+    for (let i = this.lineList.length - 1; i >= 0; i -= 1) if (this.lineList[i]!.turnId === turnId) this.lineList.splice(i, 1);
     for (const line of lines) this.lineList.push({ ...line, turnId });
   }
 

@@ -182,6 +182,10 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
 
     const done = await run.finished();
     const builder = run.fakes.received("builder");
+    const continued = engine.tracking.log.turns({ taskId: run.taskId }).filter(turn => turn.sessionId === session);
+    expect(continued).toHaveLength(2);
+    expect(new Set(continued.map(turn => turn.agentRunId)).size).toBe(1);
+
     // The same conversation, which now holds the turn typed in the terminal.
     expect(builder.every((entry) => entry.session === session)).toBe(true);
     expect(run.fakes.opens().filter((open) => open.session === session).map((open) => open.how)).toEqual(["new", "resume"]);

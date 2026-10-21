@@ -24,6 +24,7 @@ import {
   endYouStep,
   JOURNEY_WORDS as W,
   recordStepResult,
+  openStep,
   settleAsk,
   stepTag,
   syncWait,
@@ -57,7 +58,7 @@ import type { RoleDraft } from "./roles.js";
 import { onScreen, SCREEN_HOUR_MS, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenReady, screenReason, screenWait } from "./screen.js";
 import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js";
-import { askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type WorkMoment, type WorkStageKind } from "./worklog.js";
+import { continuingAgentTurn, askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type WorkMoment, type WorkStageKind } from "./worklog.js";
 import { SETUP_STEPS, type SetupStep } from "./setup.js";
 import { pauseClock, plainTodo, resumeClock, startClock } from "./summary.js";
 import { demoHistoryPage, type HistoryQuery } from "./history.js";
@@ -1565,6 +1566,12 @@ export class Simulator {
     const ran = quirk.notConfirmed ? undefined : (quirk.ran ?? (asked ? { model: asked, name: toolId === "codex" ? asked : (profile?.model ?? asked), effort: profile?.effort ?? "high" } : undefined));
     const id = this.entryId(`${task.id}-turn`);
     const first = !this.work.turns({ taskId: task.id }).some((turn) => turn.roleId === agent.roleId);
+    const journeyId = openStep(task)?.id;
+    const agentSeat = this.stage(task)?.kind === "review-chain" ? String(task.sub) : agent.roleId;
+    // Demo clocks can move; saved identities stay stable when the same work continues.
+    const previous = reason !== "first" ? continuingAgentTurn(this.work.turns({ taskId: task.id }), {
+      taskId: task.id, journeyId, agentSeat, roleId: agent.roleId, toolId, profileId: agent.profileId,
+    }) : undefined;
     this.work.addTurn({
       id,
       taskId: task.id,
@@ -1583,7 +1590,10 @@ export class Simulator {
       ...(ran ? { modelRan: ran.model, modelRanName: ran.name, effortRan: ran.effort } : {}),
       ...(first && quirk.changedTo?.model ? { modelChangedTo: quirk.changedTo.model } : {}),
       ...(first && quirk.changedTo?.effort ? { effortChangedTo: quirk.changedTo.effort } : {}),
-      sessionId: `${task.id}-agent-${agent.since}`,
+      sessionId: previous?.sessionId ?? `${task.id}-agent-${agent.since}`,
+      ...(journeyId ? { journeyId } : {}),
+      agentRunId: previous?.agentRunId ?? id,
+      agentSeat,
       reason,
       startedAt: d.now,
       mainOnly: false,

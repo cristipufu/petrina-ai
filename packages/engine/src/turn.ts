@@ -317,7 +317,7 @@ export class Turns {
 
     const live = () => this.k.task(taskId);
     // How its turns are written down in the work log, with its own waits for the coordinator left out of its time.
-    const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
+    const agent: TurnAgent = { roleId, profile, waits: new WaitClock(), journeyId: journeyStep.id, agentSeat: options.reviewerKey ?? options.reviewKey ?? roleId };
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const [head, protectedCopies] = await Promise.all([
       same?.head ?? (worktree ? git.head(worktree).catch(() => undefined) : undefined),
@@ -621,7 +621,7 @@ export class Turns {
     const journeyRole = stage?.kind === "review-chain" && !repository.portReview && stage.roleIds?.includes(roleId) ? stage.roleId : roleId;
     const group = openStep(task);
     const team = group?.kind === "agent" && group.roleId === journeyRole ? group.team ?? (group.profileId ? [group.profileId] : []) : [];
-    beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, [...new Set([...team, profileId])], repository);
+    const journeyStep = beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, [...new Set([...team, profileId])], repository);
     if (options.took) {
       const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ${options.took.refusal ? `could not continue (${options.took.refusal})` : "ran out of usage"}`;
       this.k.say(scope, "system", words, roleId, profileId);
@@ -631,7 +631,7 @@ export class Turns {
       this.k.log(scope, "milestone", `${role.name} started`, roleId, profileId);
     }
     this.k.commit(scope);
-    const agent: TurnAgent = { roleId, profile, waits: new WaitClock() };
+    const agent: TurnAgent = { roleId, profile, waits: new WaitClock(), journeyId: journeyStep.id, agentSeat: options.reviewerKey ?? options.key ?? roleId };
     const offered = typeof options.resume === "function" ? await options.resume(profile, role) : options.resume;
     const opened = await this.openAgentRun(scope, role, profile, copy, signal, agent, {
       main: false, reviewKey: options.key, sessionId: offered?.sessionId,

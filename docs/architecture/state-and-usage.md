@@ -74,7 +74,9 @@ Petrina records what the squad uses so the coordinator can see what work costs i
 
 ### One entry per agent turn
 
-Each message sent to an agent and its awaited reply becomes one `work_turns` row.
+Each message sent to an agent and its awaited reply becomes one `work_turns` row. New turns also retain the exact journey step, agent start and parallel seat. Starts are independent of native sessions, so a continued conversation can span several steps without sharing their usage. Continuations within the same step and seat recover their start from saved turns of that native conversation; a fresh job or a fresh conversation gets a new start. The simulator keeps the same identities when its clock is shifted. Each saved report replaces the turn’s token figures and model lines; repeated reports never add another copy.
+
+The node usage view reads only turns belonging to that step, including running turns with saved reports. Older turns without step marks count only when their whole lifetime fits one recorded agent step and the stage and actual role agree. Ambiguous overlaps and turns crossing step boundaries stay unassigned. Older steps with no separable evidence explain that their use cannot be shown on its own. Checkpoints and Petrina’s own work have no agent token figure.
 
 | Group | Recorded fields |
 |---|---|

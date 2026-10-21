@@ -262,6 +262,8 @@ export interface JourneyStep {
   result?: { objections?: readonly Objection[]; findings?: readonly Finding[] };
   /** Whether the builder continued its saved conversation or began a fresh one for this step. */
   builderConversation?: "resumed" | "new";
+  /** Created with exact per-turn usage attribution enabled. Older steps may need time-based evidence. */
+  usageTracked?: boolean;
   /** The builder bringing the work up to date with main. */
   update?: boolean;
   /** A review round that looks only at the builder's port of an already reviewed change onto a main that moved. */

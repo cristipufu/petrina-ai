@@ -1,6 +1,7 @@
 // What each view shows about the work log, worked out from the log itself. The app never
 // gets the log: it asks for one of these views and gets just its numbers.
 
+import { nodeUsage, type NodeUsage } from "./node-usage.js";
 import { limitsOverTime, tokensOverTime, type LimitsOverTime, type OverTimeView } from "./charts.js";
 import type { AgentProfile, Id, State, Task } from "./model.js";
 import { atLeastLine, count, durationText, type Figure, listWords } from "./numbers.js";
@@ -12,6 +13,7 @@ export const USAGE_PERIODS: readonly UsagePeriod[] = ["today", "7d", "30d"];
 
 export type UsageRequest =
   | { view: "task"; taskId: Id }
+  | { view: "node"; taskId: Id; nodeId: Id }
   | { view: "products" }
   | { view: "today" }
   | { view: "analytics"; period: UsagePeriod; productId?: Id };
@@ -187,9 +189,9 @@ export interface AnalyticsUsage {
   about: AboutCounts;
 }
 
-export type UsageView = TaskUsage | ProductsUsage | TodayUsage | AnalyticsUsage;
+export type UsageView = NodeUsage | TaskUsage | ProductsUsage | TodayUsage | AnalyticsUsage;
 
-export type UsageViewFor<R extends UsageRequest> = R extends { view: "task" } ? TaskUsage : R extends { view: "products" } ? ProductsUsage : R extends { view: "today" } ? TodayUsage : AnalyticsUsage;
+export type UsageViewFor<R extends UsageRequest> = R extends { view: "node" } ? NodeUsage : R extends { view: "task" } ? TaskUsage : R extends { view: "products" } ? ProductsUsage : R extends { view: "today" } ? TodayUsage : AnalyticsUsage;
 
 const TOOL_NAMES: Record<Id, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", antigravity: "Antigravity" };
 
@@ -766,6 +768,8 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
 /** Work out one view from the log. */
 export function usageView<R extends UsageRequest>(log: WorkLogReader, request: R, ctx: UsageContext): UsageViewFor<R> {
   switch (request.view) {
+    case "node":
+      return nodeUsage(log, request, ctx) as UsageViewFor<R>;
     case "task":
       return taskView(log, request.taskId, ctx) as UsageViewFor<R>;
     case "products":

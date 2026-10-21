@@ -82,6 +82,9 @@ Checking again for an interrupted delivery is Petrina's own look on GitHub, not 
 
 It ends saying what happened to them: "“Guest checkout” landed", or honestly when one did not ("did not land: cancelled", "did not land: closed without merging", "marked as done, delivery not confirmed").
 
+A selected step’s Overview includes Usage: its saved token total and any reported New input, Output, Reused from cache and Written to cache, using Analytics number wording. Several agents or starts show one line per actual seat and start, with the tool and confirmed model. Seats keep their recorded positions regardless of which agent reports first. With no token report, Usage explains whether it is still waiting or the tool did not report one. A pending turn does not make a previous complete breakdown incomplete; missing older work and omitted report parts carry their own explanations. Missing reports stay missing, partial figures say “at least”, and steps with no agent work show no token figure. Usage updates as turn reports are saved and remains available in History. Selecting another step or task clears the previous selection’s figures immediately.
+
+
 ### Transitions and activity
 
 Arrows say in a few words why the work moved on ("2 blocking objections", "sent back: 3 important", "you approved", "your call"). Send-backs and changes are amber, stuck is red. The live box is highlighted with its status line and running time, its border pulses subtly while work runs, and the arrow into it moves; a paused task or one waiting for a slot says so on its box, without the moving arrow.

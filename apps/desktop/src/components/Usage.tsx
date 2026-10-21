@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useLimitClock } from "../usage";
 import { TOOL_COLORS } from "../lib";
-import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, usageLines, usagePauseWords, agoText, limitWords, count, figureText, tokenNumber, type AboutCounts, type Detail, type Figure, type WorkUsageLine, type State, type UsagePeriod } from "@petrina/core";
+import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, usageLines, usagePauseWords, agoText, limitWords, count, figureText, tokenNumber, type AboutCounts, type Figure, type WorkUsageLine, type State, type UsagePeriod, TOKEN_PARTS } from "@petrina/core";
 
 /** Chart colours per tool: the app's tool colours, with their own step in dark mode. */
 export const toolColor = (toolId: string | undefined) => (toolId ? `var(--tool-${toolId}, var(--slate))` : "var(--slate)");
@@ -163,12 +163,7 @@ export function ColumnChart({ buckets, format, legend, label }: { buckets: reado
   );
 }
 
-const DETAIL_COLUMNS: readonly { key: keyof Detail; label: string }[] = [
-  { key: "input", label: "New input" },
-  { key: "cacheRead", label: "Reused from cache" },
-  { key: "cacheWrite", label: "Written to cache" },
-  { key: "output", label: "Output" },
-];
+const DETAIL_COLUMNS = TOKEN_PARTS;
 
 /** One split: a line per tool, model, role, product or task, largest first, each with a bar. */
 export function SplitList({

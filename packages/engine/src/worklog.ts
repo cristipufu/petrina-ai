@@ -152,6 +152,9 @@ interface TurnRow {
   model_changed_to: string | null;
   effort_changed_to: string | null;
   session_id: string;
+  journey_id: string | null;
+  agent_run_id: string | null;
+  agent_seat: string | null;
   reason: string;
   started_at: number;
   ended_at: number | null;
@@ -203,6 +206,9 @@ function turnOf(row: TurnRow): WorkTurn {
     ...opt("modelChangedTo", row.model_changed_to),
     ...opt("effortChangedTo", row.effort_changed_to),
     sessionId: row.session_id,
+    ...opt("journeyId", row.journey_id),
+    ...opt("agentRunId", row.agent_run_id),
+    ...opt("agentSeat", row.agent_seat),
     reason: row.reason as WorkTurn["reason"],
     startedAt: row.started_at,
     ...opt("endedAt", row.ended_at),
@@ -235,6 +241,8 @@ export class WorkLog implements WorkLogReader {
 
   constructor(private readonly db: Database) {
     for (const statement of SCHEMA) db.run(statement);
+    const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(work_turns)").all().map(row => row.name));
+    for (const column of ["journey_id", "agent_run_id", "agent_seat"]) if (!columns.has(column)) db.run(`ALTER TABLE work_turns ADD COLUMN ${column} TEXT`);
   }
 
   close(): void {
@@ -295,8 +303,8 @@ export class WorkLog implements WorkLogReader {
     this.db
       .query(
         `INSERT INTO work_turns (id, task_id, product_id, stage_id, stage_title, stage_kind, round, fixing, role_id, tool_id, profile_id,
-          model_asked, model_asked_name, effort_asked, model_ran, model_ran_name, effort_ran, session_id, reason, started_at, at, main_only, helpers)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+          model_asked, model_asked_name, effort_asked, model_ran, model_ran_name, effort_ran, session_id, reason, started_at, at, journey_id, agent_run_id, agent_seat, main_only, helpers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
       )
       .run(
         turn.id,
@@ -320,6 +328,9 @@ export class WorkLog implements WorkLogReader {
         turn.reason,
         turn.startedAt,
         turn.startedAt,
+        turn.journeyId ?? null,
+        turn.agentRunId ?? null,
+        turn.agentSeat ?? null,
       );
   }
 
@@ -350,6 +361,7 @@ export class WorkLog implements WorkLogReader {
           update.modelRan ?? null,
           turnId,
         );
+      this.db.query("DELETE FROM work_tokens WHERE turn_id = ?").run(turnId);
       const insert = this.db.query(
         `INSERT INTO work_tokens (turn_id, model, changed, input, cache_read, cache_write, output, reasoning, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(turn_id, model) DO UPDATE SET input = excluded.input, cache_read = excluded.cache_read, cache_write = excluded.cache_write, output = excluded.output, reasoning = excluded.reasoning, total = excluded.total`,

@@ -13,6 +13,7 @@ import { FindingItem } from "./sheet/ReviewTab";
 import { ObjectionItem } from "./sheet/DesignTab";
 import { reviewOutcome, reviewRoundGroups } from "../reviewRound";
 import { ReviewRoundFindings } from "./ReviewRoundFindings";
+import { StepUsage } from "./StepUsage";
 import { CheckAttempts } from "./CheckAttempts";
 
 // ── Words ───────────────────────────────────────────────────────────────────────────────
@@ -511,7 +512,7 @@ export function JourneyList({ view, find, now, onFocusStep, onSelect }: { view: 
 
 // ── A step's details, under the diagram ────────────────────────────────────────────────
 
-function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node: JourneyNode; task: Task; find: Lookup; now: number; onPlan: () => void; onClose?: () => void; onOpen?: (taskId: string) => void }) {
+function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: { node: JourneyNode; task: Task; state: State; find: Lookup; now: number; onPlan: () => void; onClose?: () => void; onOpen?: (taskId: string) => void }) {
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "conversation">("overview");
   useEffect(() => setActiveTab("overview"), [node.id]);
   const role = find.role(node.roleId);
@@ -655,6 +656,8 @@ function StepDetails({ node, task, find, now, onPlan, onClose, onOpen }: { node:
           )}
         </dl>
       )}
+
+      <StepUsage node={node} task={task} state={state} find={find} />
 
       {node.legacy && <p className="note">This step ran before Petrina kept each task's journey. Its saved profile is what was planned; who actually ran it, its time and outcome were not recorded.</p>}
 
@@ -1031,8 +1034,8 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
       <p className="sr-only" aria-live="polite">
         {chosen ? `${chosen.name}: its details are ${workspace ? "in the right panel" : "below the diagram"}.` : ""}
       </p>
-      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} {...(onOpenTask ? { onOpen: onOpenTask } : {})} /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null, detailsTarget) : chosen ? (
-        <StepDetails node={chosen} task={task} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />
+      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} node={chosen} task={task} state={state} find={find} now={state.now} onPlan={onPlan} {...(onOpenTask ? { onOpen: onOpenTask } : {})} /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null, detailsTarget) : chosen ? (
+        <StepDetails node={chosen} task={task} state={state} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />
       ) : (
         <p className="note journey-hint">Click a step to see its details here.</p>
       )}

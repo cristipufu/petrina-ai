@@ -154,6 +154,17 @@ describe("The work log of a real engine", () => {
     // The architect asked a question, so its stage took two turns: the first instructions, then the answer.
     expect(of("architect").map((turn) => turn.reason)).toEqual(["first", "answer"]);
     expect(new Set(of("architect").map((turn) => turn.sessionId)).size).toBe(1);
+    expect(turns.every(turn => turn.journeyId && turn.agentRunId && turn.agentSeat)).toBe(true);
+    expect(new Set(of("architect").map(turn => turn.agentRunId)).size).toBe(1);
+    const task = engine.taskDetails(taskId)!;
+    for (const step of task.journey ?? []) {
+      if (step.kind !== "agent") continue;
+      const own = turns.filter(turn => turn.journeyId === step.id);
+      if (!own.length) continue;
+      const view = engine.usage({ view: "node", taskId, nodeId: step.id });
+      expect(view.tokens.value).toBe(own.some(turn => turn.tokens?.total !== undefined) ? own.reduce((sum, turn) => sum + (turn.tokens?.total ?? 0), 0) : undefined);
+      expect(view.runs.reduce((sum, run) => sum + (run.tokens.value ?? 0), 0)).toBe(view.tokens.value ?? 0);
+    }
     // The builder asked for sol at xhigh; this Codex doesn't offer them, so it kept its own default.
     expect(of("builder")[0]).toMatchObject({ toolId: "codex", modelAsked: "gpt-6.1-sol", effortAsked: "xhigh", modelRan: "gpt-6.1", effortRan: "medium", fixing: false });
   });

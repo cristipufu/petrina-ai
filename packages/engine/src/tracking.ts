@@ -6,7 +6,7 @@ import { executionOf, type RepositoryContext } from "./repository-context.js";
 // names and ids go in. The window asks for the numbers one view needs (usage), never for the log itself.
 
 import { randomUUID } from "node:crypto";
-import { askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
+import { continuingAgentTurn, askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
 import type { AgentRun, TurnNotes, TurnResult } from "./acp-run.js";
 import type { Kernel, MStage, MTask } from "./kernel.js";
 import { UsageLimited, WaitingForUsage } from "./usage.js";
@@ -29,6 +29,10 @@ export interface TurnAgent {
   profile: AgentProfile;
   /** Time this agent spent waiting for the coordinator's permission answers, left out of its working time. */
   waits: WaitClock;
+  journeyId: Id;
+  /** Assigned once work starts, or restored from this exact saved conversation on continuation. */
+  agentRunId?: Id;
+  agentSeat: Id;
 }
 
 const ACCOUNT_AFTER_TURN_MS = 5 * 60_000;
@@ -346,6 +350,9 @@ export class Tracking {
     const id = randomUUID();
     const startedAt = Date.now();
     const waitedBefore = waits.of(task.id, startedAt);
+    agent.agentRunId ??= (reason === "continue" ? continuingAgentTurn(this.log.turns({ taskId: task.id }), {
+      taskId: task.id, journeyId: agent.journeyId, agentSeat: agent.agentSeat, roleId, toolId: profile.toolId, sessionId: run.sessionId,
+    })?.agentRunId : undefined) ?? randomUUID();
     this.log.startTurn({
       id,
       taskId: task.id,
@@ -365,6 +372,9 @@ export class Tracking {
       ...(settings.modelName ? { modelRanName: settings.modelName } : {}),
       ...(settings.effort ? { effortRan: settings.effort } : {}),
       sessionId: run.sessionId,
+      journeyId: agent.journeyId,
+      agentRunId: agent.agentRunId,
+      agentSeat: agent.agentSeat,
       reason,
       startedAt,
       mainOnly: false,

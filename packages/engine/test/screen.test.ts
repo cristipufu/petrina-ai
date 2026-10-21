@@ -116,6 +116,8 @@ describe("an agent that needs the screen", () => {
       const logged = f.engine.tracking.log.turns({ taskId: id }).filter((turn) => turn.roleId === "builder");
       expect(logged.map((turn) => [turn.reason, turn.end, turn.sessionId])).toEqual([["first", "finished", session], ["continue", "finished", session]]);
       expect(logged[1]!.startedAt).toBeGreaterThanOrEqual(logged[0]!.endedAt!);
+      expect(new Set(logged.map(turn => turn.agentRunId)).size).toBe(1);
+      expect(f.engine.usage({ view: "node", taskId: id, nodeId: logged[0]!.journeyId! }).runs).toHaveLength(1);
       const timeline = f.task(id).timeline.map((entry) => entry.text);
       expect(timeline).toContain(`Asked for the screen: ${REASON}`);
       expect(timeline).toContain("Picked up where it left off, now using the screen");
@@ -163,6 +165,9 @@ describe("an agent that needs the screen", () => {
       expect(f.fakes.received("builder").every((entry) => entry.session === session)).toBe(true);
       expect(f.fakes.opens().filter((open) => open.session === session).map((open) => open.how)).toEqual(["new", "resume"]);
       expect(f.fakes.received("builder")[1]!.text).toStartWith(screenRules(REASON));
+      const turns = f.engine.tracking.log.turns({ taskId: id }).filter(turn => turn.roleId === "builder");
+      expect(turns).toHaveLength(2);
+      expect(new Set(turns.map(turn => turn.agentRunId)).size).toBe(1);
       const timeline = f.task(id).timeline.map((entry) => entry.text);
       expect(timeline).toContain("You allowed the screen for this request");
       expect(timeline).toContain("Picked up where it left off, now using the screen");
@@ -405,6 +410,9 @@ describe("an agent that needs the screen", () => {
       expect(fresh).toContain("- added: notes.txt");
       expect(fresh).toContain(screenRules(REASON));
       expect(fresh).not.toContain("Petrina restarted");
+      const turns = f.engine.tracking.log.turns({ taskId: id }).filter(turn => turn.roleId === "builder");
+      expect(turns).toHaveLength(2);
+      expect(new Set(turns.map(turn => turn.agentRunId)).size).toBe(2);
       expect(f.task(id).timeline.map((entry) => entry.text)).toContain("Started this step again: Codex cannot reopen conversations");
       // Only the agent that has the screen is told it may use it.
       expect(f.fakes.openings("code reviewer")[0]).not.toContain("You may now use the screen for");
@@ -426,6 +434,9 @@ describe("an agent that needs the screen", () => {
       f.engine.resume(id);
       await waitFor(() => f.asking(id) && f.fakes.openings("builder").length === 2, "the builder to start fresh and ask again");
       expect(f.screenItems(id)).toHaveLength(1);
+      const turns = f.engine.tracking.log.turns({ taskId: id }).filter(turn => turn.roleId === "builder");
+      expect(turns).toHaveLength(2);
+      expect(new Set(turns.map(turn => turn.agentRunId)).size).toBe(2);
       f.engine.cancel(id);
       expect(f.state().inbox).toEqual([]);
       expect(f.task(id).screen).toBeUndefined();
