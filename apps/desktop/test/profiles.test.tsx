@@ -38,19 +38,19 @@ it("reads default choices once and refreshes only the explicit request", async (
   const read = vi.spyOn(simulator, "profileChoices");
   await click("New profile");
   expect(read).toHaveBeenCalledTimes(1);
-  expect(read).toHaveBeenLastCalledWith("claude-code", undefined, false);
+  expect(read).toHaveBeenLastCalledWith({ toolId: "claude-code", refresh: false });
   await click("Refresh choices");
   expect(read).toHaveBeenCalledTimes(2);
-  expect(read).toHaveBeenLastCalledWith("claude-code", "opus", true);
+  expect(read).toHaveBeenLastCalledWith({ toolId: "claude-code", modelId: "opus", refresh: true });
   await choose("Model", "fable");
   expect(read).toHaveBeenCalledTimes(3);
-  expect(read).toHaveBeenLastCalledWith("claude-code", "fable", false);
+  expect(read).toHaveBeenLastCalledWith({ toolId: "claude-code", modelId: "fable", refresh: false });
   await choose("Tool", "codex");
   expect(read).toHaveBeenCalledTimes(4);
-  expect(read).toHaveBeenLastCalledWith("codex", undefined, false);
+  expect(read).toHaveBeenLastCalledWith({ toolId: "codex", refresh: false });
   await choose("Model", "gpt-6-astra");
   expect(read).toHaveBeenCalledTimes(5);
-  expect(read).toHaveBeenLastCalledWith("codex", "gpt-6-astra", false);
+  expect(read).toHaveBeenLastCalledWith({ toolId: "codex", modelId: "gpt-6-astra", refresh: false });
 });
 it("ignores a slower previous tool's choices after changing tools", async () => {
   const original = simulator.profileChoices.bind(simulator);
@@ -58,7 +58,7 @@ it("ignores a slower previous tool's choices after changing tools", async () => 
   vi.spyOn(simulator, "profileChoices").mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await click("New profile");
   await choose("Tool", "codex");
-  await act(async () => finish(await original("claude-code")));
+  await act(async () => finish(await original({ toolId: "claude-code" })));
   expect(host.querySelector<HTMLSelectElement>('select[aria-label="Model"]')!.value).toBe("gpt-6.1-sol");
   expect(host.querySelector<HTMLSelectElement>('select[aria-label="Tool"]')!.value).toBe("codex");
 });

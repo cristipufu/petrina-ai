@@ -49,7 +49,7 @@ function ProfileEditor({ state, profile, onClose }: { state: State; profile?: Ag
     if (!connected) { setLoading(false); return; }
     const refresh = forceRefresh.current; forceRefresh.current = false;
     setLoading(true); setChoices(undefined); setError("");
-    void Promise.resolve().then(() => sim.profileChoices(request.toolId, request.modelId || undefined, refresh)).then(result => {
+    void Promise.resolve().then(() => sim.profileChoices({ toolId: request.toolId, ...(request.modelId ? { modelId: request.modelId } : {}), refresh })).then(result => {
       if (!current) return;
       setChoices(result);
       setDraft(previous => {

@@ -44,7 +44,7 @@ export interface SaidContext {
 }
 
 export interface Commands {
-  profileChoices(toolId: Id, modelId?: string, refresh?: boolean): Promise<import("./profiles.js").ProfileChoices>;
+  profileChoices(request: import("./profiles.js").ProfileChoiceRequest): Promise<import("./profiles.js").ProfileChoices>;
   saveProfile(draft: import("./profiles.js").ProfileDraft, clientId: Id, profileId?: Id): Promise<Id>;
   removeProfile(profileId: Id): void;
   saveRoutine(draft: import("./routines.js").RoutineDraft, routineId?: Id): Id;

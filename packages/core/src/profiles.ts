@@ -57,6 +57,9 @@ export function restoreProfileCatalog(state: import("./flow.js").DeepMutable<Sta
 }
 
 
+/** Named options keep omitted model choices unambiguous over JSON transports. */
+export interface ProfileChoiceRequest { toolId: string; modelId?: string; refresh?: boolean }
+
 /** Native choices for one selected model; models are reported by the installed harness. */
 export interface ProfileChoices {
   toolId: string;

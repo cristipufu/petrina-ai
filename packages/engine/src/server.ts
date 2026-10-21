@@ -51,7 +51,7 @@ const RoleDraft = z.object({
 
 const RoutineDraft = z.object({ name: z.string().max(100), productId: z.string(), roleId: z.string(), profileId: z.string(), focus: z.string().max(4000), zone: z.string().max(100), enabled: z.boolean(), schedule: z.discriminatedUnion("kind", [z.object({ kind: z.literal("daily"), time: z.string() }), z.object({ kind: z.literal("weekly"), time: z.string(), weekdays: z.array(z.number().int().min(0).max(6)).max(7) }), z.object({ kind: z.literal("cron"), expression: z.string().max(200) })]) });
 const ARGS = {
-  profileChoices: z.tuple([z.string().min(1).max(100), z.string().min(1).max(200).optional(), z.boolean().optional()]),
+  profileChoices: z.tuple([z.object({ toolId: z.string().min(1).max(100), modelId: z.string().min(1).max(200).optional(), refresh: z.boolean().optional() }).strict()]),
   saveProfile: z.tuple([z.object({ toolId: z.string().min(1).max(100), modelId: z.string().min(1).max(200), effort: z.enum(["low", "medium", "high", "xhigh", "ultra"]), standby: z.boolean().optional() }).strict(), ClientId, z.string().optional()]),
   removeProfile: z.tuple([z.string()]),
   saveRoutine: z.tuple([RoutineDraft, z.string().optional()]),
@@ -142,7 +142,7 @@ export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
   const method = engine[name] as (...args: unknown[]) => unknown;
   if (name === "profileChoices") return await method.apply(engine, checked);
   // Native discovery must not hold the coordinator mutation queue while a tool opens.
-  if (name === "saveProfile") { const draft = checked[0] as Parameters<Commands["saveProfile"]>[0]; await engine.profileChoices(draft.toolId, draft.modelId); }
+  if (name === "saveProfile") { const draft = checked[0] as Parameters<Commands["saveProfile"]>[0]; await engine.profileChoices({ toolId: draft.toolId, modelId: draft.modelId }); }
   return await serial(engine, async () => {
     const before = engine.s?.inbox.map(item => item.id) ?? [];
     const result = await method.apply(engine, checked);

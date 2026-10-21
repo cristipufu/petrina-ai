@@ -188,9 +188,9 @@ export class Engine extends Kernel implements Commands {
     void this.trackWork(this.acceptedPoints.sweep());
   }
 
-  profileChoices(toolId: Id, modelId?: string, refresh = false) { return this.profileReader.read(toolId, modelId, refresh); }
+  profileChoices({ toolId, modelId, refresh = false }: library.ProfileChoiceRequest) { return this.profileReader.read(toolId, modelId, refresh); }
   async saveProfile(draft: library.ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
-    const choices = await this.profileChoices(draft.toolId, draft.modelId);
+    const choices = await this.profileChoices({ toolId: draft.toolId, modelId: draft.modelId });
     if (this.stopped) throw new Error("The engine is stopping.");
     if (profileId) this.assertProfileNotRunning(profileId);
     const id = library.saveProfile(this.s, draft, choices, clientId, profileId);

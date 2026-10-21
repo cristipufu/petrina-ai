@@ -103,7 +103,7 @@ export class Simulator {
     if (!state.work) this.state = { ...state, work: { version: 0, since: this.work.since() } };
   }
 
-  async profileChoices(toolId: Id, modelId?: string) { return demoProfileChoices(toolId, modelId); }
+  async profileChoices({ toolId, modelId }: import("./profiles.js").ProfileChoiceRequest) { return demoProfileChoices(toolId, modelId); }
   async saveProfile(draft: ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
     let id = clientId;
     this.update(state => { id = saveProfile(state, draft, demoProfileChoices(draft.toolId, draft.modelId), clientId, profileId); state.planner = this.planner(state); });
