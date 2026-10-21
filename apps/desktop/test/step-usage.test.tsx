@@ -99,3 +99,18 @@ it.each(["a turn still working", "older work left out"])("explains %s without bl
   expect(host.textContent).toContain(view.explanation);
   expect(host.textContent).not.toContain("The tool did not report every part");
 });
+
+it("shows every reported model split for a single start", async () => {
+  const view = reported(15_100);
+  view.runs = [{ key: "one", roleId: "builder", toolId: "claude-code", model: "Opus, Haiku", start: 1, tokens: view.tokens, detail: view.detail, models: [{ label: "Opus", tokens: 12_000 }, { label: "Haiku", tokens: 3_100 }] }];
+  read.mockResolvedValue(view); await render();
+  expect(host.textContent).toContain("Opus: 12k · Haiku: 3.1k");
+  expect(host.querySelector('.step-usage-runs')).toBeNull();
+});
+it("names frozen maintenance roles in separate starts even after deletion from Library", async () => {
+  const role = { ...base.roles[0]!, id: "retired-maintainer", name: "Original maintainer" };
+  const saved = { ...task, maintenance: { routineId: "daily", routineName: "Daily", scheduledAt: 0, queuedAt: 0, zone: "UTC", focus: "Inspect", input: "Inspect", role, profile: base.profiles[0]!, product: base.products[0]! } };
+  const view = reported(); view.runs = [1, 2].map(start => ({ key: `start-${start}`, roleId: role.id, toolId: "codex", model: "sol", start, tokens: view.tokens, detail: view.detail, models: [] }));
+  read.mockResolvedValue(view); await render(node, base, saved);
+  expect(host.textContent).toContain("Original maintainer · Start 1"); expect(host.textContent).toContain("Original maintainer · Start 2");
+});

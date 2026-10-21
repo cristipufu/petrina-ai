@@ -34,3 +34,31 @@ it("closes an untouched editor without a false discard prompt and refuses duplic
   await click("New profile"); await click("Cancel"); expect(host.querySelector('[role="dialog"]')).toBeNull();
   await click("New profile"); await click("Save profile"); expect(host.querySelector('[role="alert"]')?.textContent).toContain("already exists");
 });
+it("reads default choices once and refreshes only the explicit request", async () => {
+  const read = vi.spyOn(simulator, "profileChoices");
+  await click("New profile");
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(read).toHaveBeenLastCalledWith("claude-code", undefined, false);
+  await click("Refresh choices");
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenLastCalledWith("claude-code", "opus", true);
+  await choose("Model", "fable");
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(read).toHaveBeenLastCalledWith("claude-code", "fable", false);
+  await choose("Tool", "codex");
+  expect(read).toHaveBeenCalledTimes(4);
+  expect(read).toHaveBeenLastCalledWith("codex", undefined, false);
+  await choose("Model", "gpt-6-astra");
+  expect(read).toHaveBeenCalledTimes(5);
+  expect(read).toHaveBeenLastCalledWith("codex", "gpt-6-astra", false);
+});
+it("ignores a slower previous tool's choices after changing tools", async () => {
+  const original = simulator.profileChoices.bind(simulator);
+  let finish!: (result: Awaited<ReturnType<typeof original>>) => void;
+  vi.spyOn(simulator, "profileChoices").mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await click("New profile");
+  await choose("Tool", "codex");
+  await act(async () => finish(await original("claude-code")));
+  expect(host.querySelector<HTMLSelectElement>('select[aria-label="Model"]')!.value).toBe("gpt-6.1-sol");
+  expect(host.querySelector<HTMLSelectElement>('select[aria-label="Tool"]')!.value).toBe("codex");
+});

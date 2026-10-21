@@ -1,5 +1,5 @@
 import { ChartNoAxesColumn } from "lucide-react";
-import { TOKEN_PARTS, tokenNumber, type JourneyNode, type State, type Task } from "@petrina/core";
+import { TOKEN_PARTS, tokenNumber, roleForTask, type NodeUsageRun, type JourneyNode, type State, type Task } from "@petrina/core";
 import type { Lookup } from "../lib";
 import { useUsage } from "../usage";
 import { FigureText } from "./Usage";
@@ -25,14 +25,18 @@ export function StepUsage({ node, task, state, find }: { node: JourneyNode; task
         {view.breakdownIncomplete && <p className="note">The tool did not report every part of the breakdown.</p>}
         {view.runs.length > 1 && <ul className="step-usage-runs" aria-label="Agent starts">
           {view.runs.map(run => <li key={run.key}>
-            <div className="step-usage-run-head"><span>{find.role(run.roleId)?.name ?? run.roleId}{run.seat !== undefined ? ` · Seat ${run.seat}` : ""} · Start {run.start}</span><span className="num"><FigureText figure={run.tokens} kind="tokens" /></span></div>
+            <div className="step-usage-run-head"><span>{roleForTask(state.roles, run.roleId, task)?.name ?? run.roleId}{run.seat !== undefined ? ` · Seat ${run.seat}` : ""} · Start {run.start}</span><span className="num"><FigureText figure={run.tokens} kind="tokens" /></span></div>
             <p className="note">{find.tool(run.toolId)?.name ?? run.toolId} · {run.model}</p>
-            {run.models.length > 1 && <p className="note">{run.models.map(model => `${model.label}: ${tokenNumber(model.tokens)}`).join(" · ")}</p>}
+            <ModelSplit models={run.models} />
           </li>)}
         </ul>}
-        {view.runs.length === 1 && <p className="note">{find.tool(view.runs[0]!.toolId)?.name ?? view.runs[0]!.toolId} · {view.runs[0]!.model}</p>}
+        {view.runs.length === 1 && <><p className="note">{find.tool(view.runs[0]!.toolId)?.name ?? view.runs[0]!.toolId} · {view.runs[0]!.model}</p><ModelSplit models={view.runs[0]!.models} /></>}
       </>}
       {view?.explanation && <p className="note">{view.explanation}</p>}
     </div>
   </section>;
+}
+
+function ModelSplit({ models }: { models: NodeUsageRun["models"] }) {
+  return models.length > 1 ? <p className="note">{models.map(model => `${model.label}: ${tokenNumber(model.tokens)}`).join(" · ")}</p> : null;
 }

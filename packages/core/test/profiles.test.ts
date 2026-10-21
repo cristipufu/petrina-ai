@@ -69,3 +69,28 @@ it("normalizes native Codex labels without combining effort variants", () => {
   expect(profileModelName(DEFAULT_PROFILES.find(p => p.id === "sol-high")!)).toBe("GPT-6.1 Sol");
   expect(profileModelName(DEFAULT_PROFILES.find(p => p.id === "astra-xhigh")!)).toBe("GPT-6 Astra");
 });
+
+import { Simulator } from "../src/sim.js";
+it("protects projected single-product stand-in conversations and saved builder sessions", () => {
+  const state = empty();
+  const task = JSON.parse(JSON.stringify(createDemoState(1_000_000_000).tasks[0]!)) as DeepMutable<State>["tasks"][number];
+  state.tasks = [task]; task.state = "paused"; task.plan = undefined; task.repository = undefined; task.repositories = undefined; task.maintenance = undefined; task.agent = undefined; task.helpers = undefined;
+  task.conversation = { step: "build", roleId: "builder", profileId: "fable-xhigh", toolId: "claude-code", model: "fable", sessionId: "stand-in", startedAt: 0 };
+  expect(() => removeProfile(state, "fable-xhigh")).toThrow("Reassign");
+  task.conversation = undefined;
+  task.builderSession = { stageId: "build", profileId: "fable-xhigh", toolId: "claude-code", model: "fable", sessionId: "stand-in" };
+  expect(() => removeProfile(state, "fable-xhigh")).toThrow("Reassign");
+  const simulator = new Simulator(state);
+  expect(() => simulator.removeProfile("fable-xhigh")).toThrow("Reassign");
+});
+it("keeps the demo planner on an active non-standby profile after edits and removal", async () => {
+  const state = empty(); state.planner = "opus-high";
+  const simulator = new Simulator(state);
+  await simulator.saveProfile({ toolId: "claude-code", modelId: "opus", effort: "medium" }, "edited", "opus-high");
+  const planner = simulator.getState().planner!;
+  expect(planner).not.toBe("opus-high");
+  expect(simulator.getState().profiles.some(profile => profile.id === planner && !profile.standby)).toBe(true);
+  simulator.removeProfile(planner);
+  expect(simulator.getState().planner).not.toBe(planner);
+  expect(simulator.getState().profiles.some(profile => profile.id === simulator.getState().planner && !profile.standby)).toBe(true);
+});

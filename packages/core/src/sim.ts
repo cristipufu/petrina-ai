@@ -106,10 +106,10 @@ export class Simulator {
   async profileChoices(toolId: Id, modelId?: string) { return demoProfileChoices(toolId, modelId); }
   async saveProfile(draft: ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
     let id = clientId;
-    this.update(state => { id = saveProfile(state, draft, demoProfileChoices(draft.toolId, draft.modelId), clientId, profileId); });
+    this.update(state => { id = saveProfile(state, draft, demoProfileChoices(draft.toolId, draft.modelId), clientId, profileId); state.planner = this.planner(state); });
     return id;
   }
-  removeProfile(profileId: Id): void { this.update(state => removeProfile(state, profileId)); }
+  removeProfile(profileId: Id): void { this.update(state => { removeProfile(state, profileId); state.planner = this.planner(state); }); }
   getState = (): State => this.state;
 
   /** The simulator's work log (the demos read and shape it). */
@@ -808,7 +808,8 @@ export class Simulator {
 
   /** The profile the planner runs on, kept in the state so a queued task's journey can name it. */
   private planner(d: Draft): Id {
-    return d.planner ?? PLANNER_PROFILE;
+    const id = d.planner ?? PLANNER_PROFILE;
+    return d.profiles.find(profile => profile.id === id && !profile.standby)?.id ?? d.profiles.find(profile => !profile.standby)?.id ?? id;
   }
 
   /** Who should be working right now, given the stage and the sub-step. */

@@ -872,9 +872,10 @@ export function Journey(props: JourneyProps) {
 }
 
 function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false, detailsTarget, onSelectionChange, selectedStep }: JourneyProps) {
-  const viewKey = journeyViewKey(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) });
+  const profiles = useMemo(() => [...(task.maintenance ? [task.maintenance.profile] : []), ...state.profiles, ...(state.retiredProfiles ?? [])], [state.profiles, state.retiredProfiles, task.maintenance?.profile]);
+  const viewKey = journeyViewKey(task, { roles: state.roles, profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) });
   const view = useMemo(
-    () => journeyView(task, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) }),
+    () => journeyView(task, { roles: state.roles, profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) }),
     // A WebSocket update replaces every task object, including the long conversation history. Only
     // rebuild the diagram when one of the small set of fields that affects it actually changes.
     [viewKey], // eslint-disable-line react-hooks/exhaustive-deps

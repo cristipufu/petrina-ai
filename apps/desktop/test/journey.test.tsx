@@ -534,6 +534,19 @@ describe('the journey in the task sheet', () => {
     expect(host.querySelector('.journey-list')?.getAttribute('aria-label')).toBe('Journey, 20 steps');
     expect(host.querySelector('.journey-flow')?.getAttribute('aria-hidden')).toBe('true');
   });
+it('uses retired profiles to show an independent reviewer for a port', async () => {
+  const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh');
+  const oldBuilder = { ...state.profiles.find(profile => profile.id === 'sol-high')!, id: 'retired-builder' };
+  const oldReviewer = { ...state.profiles.find(profile => profile.id === 'opus-high')!, id: 'retired-reviewer' };
+  state.retiredProfiles = [oldBuilder, oldReviewer];
+  task.state = 'paused'; task.journey = []; task.builderSession = undefined;
+  task.plan = { rationale: 'Port', plannerProfileId: 'opus-high', stages: [{ id: 'build', kind: 'do', title: 'Build', roleId: 'builder', profileIds: [oldBuilder.id] }, { id: 'review', kind: 'review-chain', title: 'Review', roleId: 'code-reviewer', profileIds: [oldReviewer.id, 'sol-high'] }] };
+  task.stageIndex = 1; task.reviewedTree = 'reviewed'; task.portReview = { from: 'before', head: 'after', onto: 'main', files: ['app.ts'] };
+  await mount(state); await openTask(task.id);
+  const review = [...host.querySelectorAll('.journey-list li')].find(node => node.textContent?.includes('Code reviewer'))!;
+  expect(review.textContent).toContain('Claude Code');
+  expect(review.textContent).not.toContain('Codex');
+});
 it('shows the frozen maintenance role and profile when the Library no longer contains their settings', async () => {
   const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh');
   const frozen = { ...state.roles.find(role => role.result === 'build')!, id: 'saved-maintainer', name: 'Saved maintainer', category: 'maintenance' as const };
