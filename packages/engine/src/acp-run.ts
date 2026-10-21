@@ -176,6 +176,7 @@ interface RunState {
   text: string;
   messages: AgentMessages;
   lastActivity: string;
+  activeToolCall?: string;
   quiet: boolean;
   settings: SessionSettings;
   latest?: UsageInfo;
@@ -391,6 +392,14 @@ export class AgentRun {
       }
     };
     const titles = new Map<string, ToolActivity>();
+    const publishTool = (call: ToolActivity) => {
+      if (isPlumbing(call)) return;
+      const line = describeTool(call);
+      if (line === state.lastActivity) return;
+      state.messages.activity();
+      state.lastActivity = line;
+      callbacks.onActivity(line);
+    };
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
 
     const connection = new acp.ClientSideConnection(
@@ -424,6 +433,7 @@ export class AgentRun {
           const update = params.update;
           switch (update.sessionUpdate) {
             case "agent_message_chunk":
+              state.activeToolCall = undefined;
               if (update.content.type === "text") {
                 const source = "messageId" in update && typeof update.messageId === "string" ? update.messageId : undefined;
                 if (state.messages.push(update.content.text, source) && state.text) state.text += "\n\n";
@@ -431,6 +441,7 @@ export class AgentRun {
               }
               break;
             case "agent_thought_chunk":
+              state.activeToolCall = undefined;
               state.messages.activity();
               if (update.content.type === "text" && /rerouted/i.test(update.content.text)) noteReroute(update.content.text);
               break;
@@ -458,20 +469,20 @@ export class AgentRun {
               if (state.turn && (update.title === "spawnAgent" || Array.isArray(input?.receiverThreadIds))) state.turn.helpers.add(update.toolCallId);
               titles.set(update.toolCallId, update);
               if (isPlumbing(update)) break;
+              state.activeToolCall = update.toolCallId;
               state.messages.activity();
-              const line = describeTool(update);
-              if (line !== state.lastActivity) {
-                state.lastActivity = line;
-                callbacks.onActivity(line);
-              }
+              publishTool(update);
               break;
             }
             case "tool_call_update": {
               const known = titles.get(update.toolCallId) ?? {};
-              titles.set(update.toolCallId, { ...known, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== null && value !== undefined)) });
+              const merged = { ...known, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== null && value !== undefined)) };
+              titles.set(update.toolCallId, merged);
+              if (state.activeToolCall === update.toolCallId && [update.title, update.kind, update.rawInput, update.locations, update._meta].some(value => value !== null && value !== undefined)) publishTool(merged);
               break;
             }
             case "plan": {
+              state.activeToolCall = undefined;
               state.messages.activity();
               const current = update.entries.find((entry) => entry.status === "in_progress");
               if (current) callbacks.onPlanStep(current.content);
@@ -605,6 +616,7 @@ export class AgentRun {
     delete this.state.latest;
     const turn: NonNullable<RunState["turn"]> = { changed: {}, rerouted: false, helpers: new Set() };
     this.state.turn = turn;
+    this.state.activeToolCall = undefined;
     this.notes = undefined;
     const notes = (): TurnNotes => ({ changed: { ...turn.changed }, rerouted: turn.rerouted, helpers: turn.helpers.size, ...(turn.modelSeen ? { modelSeen: turn.modelSeen } : {}) });
     let onExit!: (code: number | null) => void;
