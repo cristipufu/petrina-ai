@@ -942,6 +942,8 @@ export interface State {
   roleChanges?: RoleChanges;
   tools: readonly Tool[];
   profiles: readonly AgentProfile[];
+  /** Removed profile definitions remain readable for historical records, never offered for new work. */
+  retiredProfiles?: readonly AgentProfile[];
   tasks: readonly Task[];
   inbox: readonly InboxItem[];
   pool: Pool;

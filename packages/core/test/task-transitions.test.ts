@@ -85,17 +85,17 @@ describe("shared dependency and future plan rules", () => {
     const task = request();
     task.stageIndex = 0;
     task.plan = { rationale: "A focused review", plannerProfileId: "sonnet-medium", stages: [
-      { id: "build", kind: "do", roleId: "builder", title: "Build", profileIds: ["codex-high"] },
-      { id: "review", kind: "review-chain", roleId: "code-reviewer", title: "Review", profileIds: ["codex-high", "opus-high"], roleIds: ["security-reviewer"], maxRounds: 2 },
+      { id: "build", kind: "do", roleId: "builder", title: "Build", profileIds: ["sol-high"] },
+      { id: "review", kind: "review-chain", roleId: "code-reviewer", title: "Review", profileIds: ["sol-high", "opus-high"], roleIds: ["security-reviewer"], maxRounds: 2 },
     ] };
     expect(assignFutureProfile(task, DEFAULT_PROFILES, "build", "profileIds", 0, "opus-high")).toBeUndefined();
-    expect(appendFutureReviewer(task, DEFAULT_PROFILES, "review", "codex-xhigh")).toBe("Review");
+    expect(appendFutureReviewer(task, DEFAULT_PROFILES, "review", "sol-xhigh")).toBe("Review");
     expect(task.plan!.stages[1]!.roleIds).toEqual(["security-reviewer", "code-reviewer", "code-reviewer"]);
     expect(assignFutureProfile(task, DEFAULT_PROFILES, "review", "profileIds", 0, "missing")).toBeUndefined();
-    expect(assignFutureProfile(task, DEFAULT_PROFILES, "review", "profileIds", 1, "codex-xhigh")).toBe("Review");
-    expect(task.plan!.stages[1]!.profileIds).toEqual(["codex-high", "codex-xhigh", "codex-xhigh"]);
-    expect(task.plan!.stages[1]!.assignments?.[1]).toEqual({ profileId: "codex-xhigh", by: "coordinator", reason: "Chosen by you." });
-    expect(task.plan!.stages[1]!.assignments?.[2]).toEqual({ profileId: "codex-xhigh", by: "coordinator", reason: "Added to the review by you." });
+    expect(assignFutureProfile(task, DEFAULT_PROFILES, "review", "profileIds", 1, "sol-xhigh")).toBe("Review");
+    expect(task.plan!.stages[1]!.profileIds).toEqual(["sol-high", "sol-xhigh", "sol-xhigh"]);
+    expect(task.plan!.stages[1]!.assignments?.[1]).toEqual({ profileId: "sol-xhigh", by: "coordinator", reason: "Chosen by you." });
+    expect(task.plan!.stages[1]!.assignments?.[2]).toEqual({ profileId: "sol-xhigh", by: "coordinator", reason: "Added to the review by you." });
   });
 });
 
@@ -103,11 +103,11 @@ describe("shared step lifetime rules", () => {
   it("releases paused agent seats and clears stale activity while preserving the request and queued instructions", () => {
     const task = request();
     task.state = "running"; task.holdsSlot = true;
-    task.agent = { roleId: "builder", profileId: "codex-high", since: 100, step: 0 };
+    task.agent = { roleId: "builder", profileId: "sol-high", since: 100, step: 0 };
     task.helpers = [{ roleId: "code-reviewer", profileId: "opus-high", since: 100, step: 0 }];
     task.todo = "Fixing the footer"; task.stepClock = startClock(task, "builder", 100);
     task.queued = [{ id: "message", text: "Check narrow screens", at: 150 }];
-    const execution = { conversation: { step: "build", roleId: "builder", startedAt: 100, sessionId: "session", profileId: "codex-high", toolId: "codex", model: "sol" } };
+    const execution = { conversation: { step: "build", roleId: "builder", startedAt: 100, sessionId: "session", profileId: "sol-high", toolId: "codex", model: "sol" } };
     expect(pauseTaskState(task, execution, 200)).toBe(true);
     expect(task.holdsSlot).toBe(false);
     expect(task.agent).toBeUndefined(); expect(task.helpers).toBeUndefined(); expect(task.todo).toBeUndefined();

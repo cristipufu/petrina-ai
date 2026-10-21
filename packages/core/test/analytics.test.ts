@@ -43,9 +43,9 @@ function task(id: string, productId: string, extra: Partial<Task> = {}): Task {
       plannerProfileId: "sonnet-medium",
       rationale: "",
       stages: [
-        { id: `${id}:design`, kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-high"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["codex-xhigh"], maxRounds: 3 },
-        { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["codex-high"] },
-        { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "codex-xhigh"], maxRounds: 2 },
+        { id: `${id}:design`, kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-high"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 3 },
+        { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-high"] },
+        { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-xhigh"], maxRounds: 2 },
       ],
     },
     ...extra,
@@ -165,7 +165,7 @@ describe("Counting tokens", () => {
     expect(counted.mainOnly).toBe(false);
     expect(turnTokens({ toolId: "grok" }).tokens).toBeUndefined();
 
-    const grok = turn({ taskId: "grok-task", roleId: "builder", profileId: "codex-high", toolId: "grok", modelRan: "grok-code", modelRanName: "Grok Code", tokens: counted.tokens, helpers: 1 });
+    const grok = turn({ taskId: "grok-task", roleId: "builder", profileId: "sol-high", toolId: "grok", modelRan: "grok-code", modelRanName: "Grok Code", tokens: counted.tokens, helpers: 1 });
     const log = logWith([{ turn: grok, lines: counted.lines }]);
     const ctx = { now: NOW, state: state([task("grok-task", "shop")]) };
     const analytics = usageView(log, { view: "analytics", period: "today" }, ctx);
@@ -210,7 +210,7 @@ describe("Counting tokens", () => {
 
 describe("The task sheet", () => {
   it("groups Grok's verified session alias with its response model without treating alias resolution as a fallback", () => {
-    const a = turn({ taskId: "grok", roleId: "builder", profileId: "codex-high", toolId: "grok", modelAsked: "grok-4.7", modelAskedName: "Grok 4.7", modelRan: "grok-4.7-build", modelRanName: "grok-4.7", tokens: { total: 100 } });
+    const a = turn({ taskId: "grok", roleId: "builder", profileId: "sol-high", toolId: "grok", modelAsked: "grok-4.7", modelAskedName: "Grok 4.7", modelRan: "grok-4.7-build", modelRanName: "grok-4.7", tokens: { total: 100 } });
     const b = turn({ ...a, id: "alias-turn", sessionId: "another-session", modelRan: "grok-4.7", tokens: { total: 200 } });
     const log = logWith([{ turn: a, lines: [line(a.id, "grok-4.7-build", 100)] }, { turn: b, lines: [line(b.id, "grok-4.7", 200)] }]);
     const ctx = { now: NOW, state: state([task("grok", "shop")]) };
@@ -232,8 +232,8 @@ describe("The task sheet", () => {
     const plan = turn({ taskId: "a", roleId: "planner", profileId: "sonnet-medium", stageId: "a:plan", stageTitle: "Planning", stageKind: "plan" });
     const arch1 = turn({ taskId: "a", roleId: "architect", profileId: "opus-high", stageId: "a:design", stageKind: "converge", stageTitle: "Design", round: 1 });
     const arch2 = turn({ taskId: "a", roleId: "architect", profileId: "opus-high", stageId: "a:design", stageKind: "converge", stageTitle: "Design", round: 2 });
-    const build = turn({ taskId: "a", roleId: "builder", profileId: "codex-high" });
-    const fix = turn({ taskId: "a", roleId: "builder", profileId: "codex-high", round: 2, fixing: true });
+    const build = turn({ taskId: "a", roleId: "builder", profileId: "sol-high" });
+    const fix = turn({ taskId: "a", roleId: "builder", profileId: "sol-high", round: 2, fixing: true });
     const old = turn({ taskId: "a", roleId: "researcher", profileId: "sonnet-medium", stageId: "a:research", stageTitle: "Research", startedAt: NOW - 3 * HOUR });
     const log = logWith([
       { turn: build },
@@ -261,8 +261,8 @@ describe("The task sheet", () => {
   });
 
   it("says what ran when it differs from what was asked, or that it wasn't confirmed", () => {
-    const off = turn({ taskId: "b", roleId: "design-reviewer", profileId: "codex-xhigh", stageId: "b:design", modelRan: "gpt-6.1", modelRanName: "gpt-6.1", effortRan: "medium" });
-    const unknown = turn({ taskId: "b", roleId: "builder", profileId: "codex-high", modelRan: undefined, modelRanName: undefined, effortRan: undefined });
+    const off = turn({ taskId: "b", roleId: "design-reviewer", profileId: "sol-xhigh", stageId: "b:design", modelRan: "gpt-6.1", modelRanName: "gpt-6.1", effortRan: "medium" });
+    const unknown = turn({ taskId: "b", roleId: "builder", profileId: "sol-high", modelRan: undefined, modelRanName: undefined, effortRan: undefined });
     const view = usageView(logWith([{ turn: off }, { turn: unknown }]), { view: "task", taskId: "b" }, { now: NOW, state: state([task("b", "shop")]) });
     const agents = view.stages.flatMap((stage) => stage.agents);
     expect(agents.find((agent) => agent.roleId === "design-reviewer")?.settings).toBe("asked for sol at xhigh, ran gpt-6.1 at medium");
@@ -280,10 +280,10 @@ describe("The task sheet", () => {
 
 describe("“At least”", () => {
   it("reads “at least” only when whole turns are missing, judged separately for tokens and time", () => {
-    const silent = turn({ taskId: "c", roleId: "builder", profileId: "codex-high", end: "stopped", tokens: undefined });
-    const lost = turn({ taskId: "d", roleId: "builder", profileId: "codex-high", end: "lost", endedAt: undefined, workMs: undefined, tokens: undefined });
+    const silent = turn({ taskId: "c", roleId: "builder", profileId: "sol-high", end: "stopped", tokens: undefined });
+    const lost = turn({ taskId: "d", roleId: "builder", profileId: "sol-high", end: "lost", endedAt: undefined, workMs: undefined, tokens: undefined });
     const mainOnly = turn({ taskId: "e", roleId: "builder", profileId: "opus-high", mainOnly: true });
-    const helpers = turn({ taskId: "e", roleId: "builder", profileId: "codex-high", helpers: 2, mainOnly: true });
+    const helpers = turn({ taskId: "e", roleId: "builder", profileId: "sol-high", helpers: 2, mainOnly: true });
     const log = logWith([{ turn: silent }, { turn: lost }, { turn: mainOnly }, { turn: helpers }]);
     const s = state([task("c", "shop"), task("d", "shop"), task("e", "shop")]);
     const c = usageView(log, { view: "task", taskId: "c" }, { now: NOW, state: s });
@@ -301,7 +301,7 @@ describe("“At least”", () => {
   });
 
   it("keeps work from before tracking began “at least”, and periods that start before it", () => {
-    const log = logWith([{ turn: turn({ taskId: "f", roleId: "builder", profileId: "codex-high" }) }], [], NOW - 3 * 24 * HOUR);
+    const log = logWith([{ turn: turn({ taskId: "f", roleId: "builder", profileId: "sol-high" }) }], [], NOW - 3 * 24 * HOUR);
     log.markUntracked("f", "shop");
     const s = state([task("f", "shop")]);
     const f = usageView(log, { view: "task", taskId: "f" }, { now: NOW, state: s });
@@ -314,7 +314,7 @@ describe("“At least”", () => {
     expect(products.products.find((entry) => entry.productId === "notes")?.tokens).toEqual({ value: 0, atLeast: false });
     // The page gives its reason once, not on every line.
     expect(products.atLeast).toContain("before Petrina started keeping track");
-    const fresh = usageView(logWith([{ turn: turn({ taskId: "g", roleId: "builder", profileId: "codex-high" }) }]), { view: "products" }, { now: NOW, state: state([task("g", "shop")]) });
+    const fresh = usageView(logWith([{ turn: turn({ taskId: "g", roleId: "builder", profileId: "sol-high" }) }]), { view: "products" }, { now: NOW, state: state([task("g", "shop")]) });
     expect(fresh.atLeast).toBe("");
   });
 
@@ -333,7 +333,7 @@ describe("“At least”", () => {
     const shop = usageView(log, { view: "products" }, { now: NOW, state: s }).products.find((entry) => entry.productId === "shop")!;
     expect([figureText(shop.tokens, "tokens"), figureText(shop.time, "time")]).toEqual(["not known", "not known"]);
     // A turn cut off when Petrina stopped: its tokens and time aren't known either.
-    const lost = turn({ taskId: "z", roleId: "builder", profileId: "codex-high", end: "lost", endedAt: undefined, workMs: undefined, tokens: undefined });
+    const lost = turn({ taskId: "z", roleId: "builder", profileId: "sol-high", end: "lost", endedAt: undefined, workMs: undefined, tokens: undefined });
     const z = usageView(logWith([{ turn: lost }]), { view: "task", taskId: "z" }, { now: NOW, state: state([task("z", "shop")]) });
     expect([figureText(z.tokens, "tokens"), figureText(z.time, "time")]).toEqual(["not known", "not known"]);
     const lostModel = usageView(logWith([{ turn: lost }]), { view: "analytics", period: "today" }, { now: NOW, state: s }).byModel[0]!;
@@ -356,7 +356,7 @@ describe("“At least”", () => {
 
   it("keeps the warning on every split when the period starts before tracking began", () => {
     const since = NOW - 3 * 24 * HOUR;
-    const early = turn({ taskId: "f", roleId: "builder", profileId: "codex-high" });
+    const early = turn({ taskId: "f", roleId: "builder", profileId: "sol-high" });
     const later = turn({ taskId: "n", productId: "notes", roleId: "code-reviewer", profileId: "opus-high", stageId: "n:review", stageKind: "review-chain" });
     const log = logWith([{ turn: early, lines: [line(early.id, "gpt-6.1-sol", 10_000)] }, { turn: later, lines: [line(later.id, "claude-opus-5-5", 10_000)] }], [], since);
     log.markUntracked("f", "shop");
@@ -389,9 +389,9 @@ describe("Analytics", () => {
   const opus = turn({ taskId: "g", roleId: "builder", profileId: "opus-high" });
   const fallback = turn({ taskId: "g", roleId: "code-reviewer", profileId: "opus-high", modelChangedTo: "Sonnet 5.5", stageId: "g:review", stageKind: "review-chain" });
   const unconfirmed = turn({ taskId: "h", productId: "notes", roleId: "builder", profileId: "sonnet-medium", modelRan: undefined, modelRanName: undefined, effortRan: undefined });
-  const codex = turn({ taskId: "h", productId: "notes", roleId: "code-reviewer", profileId: "codex-xhigh", stageId: "h:review", stageKind: "review-chain" });
-  const rerouted = turn({ taskId: "h", productId: "notes", roleId: "code-reviewer", profileId: "codex-high", modelChangedTo: "gpt-6.1-mini", stageId: "h:review", stageKind: "review-chain", round: 2 });
-  const removed = turn({ taskId: "r", productId: "gone", roleId: "builder", profileId: "codex-high", helpers: 1, mainOnly: true });
+  const codex = turn({ taskId: "h", productId: "notes", roleId: "code-reviewer", profileId: "sol-xhigh", stageId: "h:review", stageKind: "review-chain" });
+  const rerouted = turn({ taskId: "h", productId: "notes", roleId: "code-reviewer", profileId: "sol-high", modelChangedTo: "gpt-6.1-mini", stageId: "h:review", stageKind: "review-chain", round: 2 });
+  const removed = turn({ taskId: "r", productId: "gone", roleId: "builder", profileId: "sol-high", helpers: 1, mainOnly: true });
   const noBreakdown = turn({ taskId: "g", roleId: "planner", profileId: "sonnet-medium", stageId: "g:plan", stageKind: "plan", mainOnly: true });
   const log = logWith([
     { turn: opus, lines: [line(opus.id, "claude-opus-5-5", 9000), line(opus.id, "claude-haiku-5-5", 1000)] },
@@ -441,7 +441,7 @@ describe("Analytics", () => {
   it("only credits a profile with stages that ran on its own model and effort", () => {
     const reviews: WorkMoment[] = [
       { id: "v1", at: NOW - HOUR, kind: "verdict", taskId: "g", productId: "shop", stageId: "g:review", round: 1, roleId: "code-reviewer", profileId: "opus-high", count: 2, blocking: 1 },
-      { id: "v2", at: NOW - HOUR, kind: "verdict", taskId: "h", productId: "notes", stageId: "h:review", round: 1, roleId: "code-reviewer", profileId: "codex-xhigh", count: 1, blocking: 1 },
+      { id: "v2", at: NOW - HOUR, kind: "verdict", taskId: "h", productId: "notes", stageId: "h:review", round: 1, roleId: "code-reviewer", profileId: "sol-xhigh", count: 1, blocking: 1 },
     ];
     const withVerdicts = logWith(
       [
@@ -552,7 +552,7 @@ describe("The squad", () => {
       { ...base, id: "14", at, kind: "task-end", outcome: "delivered" },
       { ...base, id: "15", at, kind: "task-end", outcome: "cancelled" },
     ];
-    const log = logWith([{ turn: turn({ taskId: "k", roleId: "builder", profileId: "codex-high", end: "interrupted" }) }], moments);
+    const log = logWith([{ turn: turn({ taskId: "k", roleId: "builder", profileId: "sol-high", end: "interrupted" }) }], moments);
     const squad = usageView(log, { view: "analytics", period: "today" }, { now: NOW, state: state([task("k", "shop")]) }).squad;
     expect(squad).toMatchObject({ stagesRun: 3, turnsRun: 1, delivered: 1, cancelled: 1 });
     // Deliveries are charted per day, Today included: one column for today, not one per hour.
@@ -587,8 +587,8 @@ describe("Unanswered requests", () => {
 
 describe("Today", () => {
   it("adds up since local midnight across products, per tool", () => {
-    const yesterday = turn({ taskId: "m", roleId: "builder", profileId: "codex-high", startedAt: NOW - 20 * HOUR });
-    const log = logWith([{ turn: turn({ taskId: "m", roleId: "builder", profileId: "codex-high" }) }, { turn: turn({ taskId: "n", productId: "notes", roleId: "builder", profileId: "opus-high" }) }, { turn: yesterday }]);
+    const yesterday = turn({ taskId: "m", roleId: "builder", profileId: "sol-high", startedAt: NOW - 20 * HOUR });
+    const log = logWith([{ turn: turn({ taskId: "m", roleId: "builder", profileId: "sol-high" }) }, { turn: turn({ taskId: "n", productId: "notes", roleId: "builder", profileId: "opus-high" }) }, { turn: yesterday }]);
     const s = { ...state([task("m", "shop"), task("n", "notes")]), work: { version: 1, since: 0 } };
     const today = usageView(log, { view: "today" }, { now: NOW, state: s });
     expect(today.tokens.value).toBe(20_000);

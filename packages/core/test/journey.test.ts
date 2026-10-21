@@ -47,7 +47,7 @@ it("keeps a review's actual findings and objection answers when later rounds cha
   const record = { ...task, journey: [step] };
   delete step.endedAt;
   const objection = { ...task.objections[0]!, answer: "This round's answer." };
-  const finding = { id: "finding", text: "The adjacent flow breaks.", severity: "blocking" as const, raisedBy: "codex-high", confirmedBy: [], status: "open" as const };
+  const finding = { id: "finding", text: "The adjacent flow breaks.", severity: "blocking" as const, raisedBy: "sol-high", confirmedBy: [], status: "open" as const };
   recordStepResult(record, { objections: [objection], findings: [finding] });
   objection.answer = "A later answer.";
   finding.text = "A later report.";
@@ -236,7 +236,7 @@ describe("a task's journey", () => {
     expect(view.nodes.filter((node) => node.tone === "back").map((node) => node.name)).toEqual(["Design reviewer", "Code reviewers"]);
     expect(view.nodes[2]!.outcome).toBe("2 objections, 1 blocking");
     // Every reviewer of a round looks at once: one box for all of them, saying what the round raised.
-    expect(view.nodes[8]).toMatchObject({ team: ["opus-high", "codex-xhigh"], outcome: "1 important, 1 nit · 1 follow-up" });
+    expect(view.nodes[8]).toMatchObject({ team: ["opus-high", "sol-xhigh"], outcome: "1 important, 1 nit · 1 follow-up" });
     expect(view.nodes[11]!.outcome).toBe("Nothing to fix");
     expect(view.nodes[7]).toMatchObject({ kind: "petrina", work: "checks", outcome: "All 3 checks pass" });
     expect(view.nodes[9]!.outcome).toBe("Fixed 1 finding");
@@ -272,7 +272,7 @@ describe("a task's journey", () => {
     let view = viewOf(sim, id);
     const ahead = view.nodes.filter((node) => node.state === "next" || node.state === "ahead");
     expect(view.nodes.find((node) => node.state === "you")?.name).toBe("Your design check");
-    expect(ahead.map((node) => `${node.name} ${(node.team ?? [node.profileId ?? ""]).join(" ")}`.trim())).toEqual(["Builder codex-high", "Code reviewers opus-high codex-xhigh", "Your delivery check", "Publish delivery"]);
+    expect(ahead.map((node) => `${node.name} ${(node.team ?? [node.profileId ?? ""]).join(" ")}`.trim())).toEqual(["Builder sol-high", "Code reviewers opus-high sol-xhigh", "Your delivery check", "Publish delivery"]);
     expect(ahead.at(-1)).toMatchObject({ kind: "petrina", work: "delivery" });
     expect(ahead[0]!.state).toBe("next");
     expect(ahead.every((node) => node.outcome === undefined && node.reason === undefined && node.startedAt === undefined)).toBe(true);
@@ -282,7 +282,7 @@ describe("a task's journey", () => {
     sim.addReviewer(id, `${id}:review`, "sonnet-medium");
     view = viewOf(sim, id);
     expect(view.nodes.find((node) => node.name === "Builder")?.profileId).toBe("opus-high");
-    expect(view.nodes.find((node) => node.name === "Code reviewers")?.team).toEqual(["opus-high", "codex-xhigh", "sonnet-medium"]);
+    expect(view.nodes.find((node) => node.name === "Code reviewers")?.team).toEqual(["opus-high", "sol-xhigh", "sonnet-medium"]);
   });
 
   it("puts the coordinator's call on the path, and the architect who follows it", () => {

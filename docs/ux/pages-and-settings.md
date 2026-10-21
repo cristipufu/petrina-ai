@@ -114,7 +114,7 @@ A card per role with its icon, purpose, what it may change, what it sees and wha
 
 ### Profiles
 
-One shared catalog supplies the engine and demos. Existing profiles and selections remain available, including for maintenance. Codex additionally offers GPT-6 Astra Ultra, GPT-6.1 Sol Ultra and GPT-6.1 Sol Medium. Ultra and Extra High are distinct. Cards show active stage and routine counts.
+One shared catalog supplies the engine and demos, with one active profile per tool, native model and effort. Removed definitions remain available for reading historical records, outside planning and profile pickers. Equivalent future saved choices use the canonical profile, including in routines. Codex additionally offers GPT-6 Astra Ultra, GPT-6.1 Sol Ultra and GPT-6.1 Sol Medium. Ultra and Extra High are distinct. Cards show active stage and routine counts.
 
 If a maintenance tool reports different model or effort settings, Inbox shows requested and reported settings with Keep this run and Stop this run. Keeping accepts only that turn's work and retains normal delivery gates; stopping cancels and cleans up. Neither changes the routine's profile. The task's Scheduled routine section retains its frozen request, times, findings and settings decision after routine edits or deletion.
 

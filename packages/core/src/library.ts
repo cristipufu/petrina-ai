@@ -272,7 +272,7 @@ const designStages = (taskId: string): Stage[] => [
     roleId: "architect",
     profileIds: ["opus-high"],
     reviewerRoleId: "design-reviewer",
-    reviewerProfileIds: ["codex-xhigh"],
+    reviewerProfileIds: ["sol-xhigh"],
     maxRounds: 3,
   },
   { id: `${taskId}:design-ok`, kind: "gate", title: "Your design check", roleId: "planner", profileIds: [], gate: "design" },
@@ -334,7 +334,7 @@ function basePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery
         rationale: "A focused fix: one builder, then two reviewers on different tools, so a miss by one is caught by the other.",
         stages: [
           { id: `${id}:build`, kind: "do", title: "Fix", roleId: "builder", profileIds: ["opus-high"] },
-          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["codex-xhigh", "sonnet-medium"], maxRounds: 2 },
+          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-xhigh", "sonnet-medium"], maxRounds: 2 },
           ...deliveryGate(),
         ],
       };
@@ -344,7 +344,7 @@ function basePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery
         rationale: "Small and low risk: a quick build and one careful reviewer.",
         stages: [
           { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["sonnet-medium"] },
-          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["codex-high"], maxRounds: 2 },
+          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 2 },
           ...deliveryGate(),
         ],
       };
@@ -359,7 +359,7 @@ function basePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery
           ...designStages(id).slice(1),
           { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
           { id: `${id}:test`, kind: "do", title: "Test", roleId: "tester", profileIds: ["sonnet-medium"] },
-          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sonnet-medium", "codex-xhigh"], maxRounds: 2 },
+          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sonnet-medium", "sol-xhigh"], maxRounds: 2 },
           ...deliveryGate(),
         ],
       };
@@ -369,8 +369,8 @@ function basePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery
         rationale: "A feature users will see: the architects agree on a design before anyone builds, then two reviewers on different tools check it.",
         stages: [
           ...designStages(id),
-          { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["codex-high"] },
-          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "codex-xhigh"], maxRounds: 2 },
+          { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-high"] },
+          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-xhigh"], maxRounds: 2 },
           ...deliveryGate(),
         ],
       };

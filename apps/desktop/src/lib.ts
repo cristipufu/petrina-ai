@@ -2,7 +2,7 @@ import { landingOf, onScreen, SCREEN_WORDS, screenOn, screenWait, slotUses, type
 
 export function lookup(state: State) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
-  const profiles = new Map(state.profiles.map((profile) => [profile.id, profile]));
+  const profiles = new Map([...(state.retiredProfiles ?? []), ...state.profiles].map((profile) => [profile.id, profile]));
   const tools = new Map(state.tools.map((tool) => [tool.id, tool]));
   const products = new Map(state.products.map((product) => [product.id, product]));
   const tasks = new Map(state.tasks.map((task) => [task.id, task]));

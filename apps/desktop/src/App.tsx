@@ -74,7 +74,7 @@ export function App() {
 }
 
 function Workspace({ state, status }: { state: State; status: EngineStatus }) {
-  const find = useMemo(() => lookup(state), [state.roles, state.profiles, state.tools, state.products, state.tasks, state.history?.dependencies]);
+  const find = useMemo(() => lookup(state), [state.roles, state.profiles, state.retiredProfiles, state.tools, state.products, state.tasks, state.history?.dependencies]);
   const viewport = useViewport();
   const [route, navigate] = useAppRoute();
   const { view, product, sheet, productSettings } = route;
@@ -172,7 +172,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   // Only the open historical task joins this view of the sheet. The board and Analytics keep the engine projection.
   const detailTasks = useMemo(() => sheetTask && sheetTask !== liveSheetTask ? [...state.tasks.filter((task) => task.id !== sheetTask.id), sheetTask] : state.tasks, [state.tasks, sheetTask, liveSheetTask]);
   const detailState = useMemo(() => detailTasks === state.tasks ? state : { ...state, tasks: detailTasks }, [state, detailTasks]);
-  const detailFind = useMemo(() => lookup(detailState), [detailState.roles, detailState.profiles, detailState.tools, detailState.products, detailState.tasks, detailState.history?.dependencies]);
+  const detailFind = useMemo(() => lookup(detailState), [detailState.roles, detailState.profiles, detailState.retiredProfiles, detailState.tools, detailState.products, detailState.tasks, detailState.history?.dependencies]);
   const missing = route.missing ? "Page not found"
     : sheet && !sheetTask && !loadingDetails && !detailsError ? "Task not found"
     : productSettings && !find.product(productSettings) ? "Product not found" : undefined;

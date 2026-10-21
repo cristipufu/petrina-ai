@@ -157,7 +157,7 @@ function attachSampleFollowUps(tasks: Task[], products: readonly Product[], now:
     tracking,
   });
   const first = finding(`${source.id}-about`, about, "opus-high", "code-reviewer", { taskId: "footer-follow-up" });
-  const second = finding(`${source.id}-about-again`, other, "codex-xhigh", "security-reviewer", { taskId: "footer-follow-up" });
+  const second = finding(`${source.id}-about-again`, other, "sol-xhigh", "security-reviewer", { taskId: "footer-follow-up" });
   const missed = finding(`${source.id}-year`, "The copyright line is a year behind.", "opus-high", "code-reviewer", { reason: "unmatched" });
   source.findings = [...source.findings, first, second, missed];
   const reports = [first, second].map((entry) => ({

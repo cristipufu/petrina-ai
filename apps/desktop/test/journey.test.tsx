@@ -125,13 +125,13 @@ describe('the journey in the task sheet', () => {
     const task = taskOf(state, 'guest-checkout');
     const role = state.roles.find((entry) => entry.id === roleId)!;
     task.state = 'running';
-    task.agent = { roleId, profileId: 'codex-high', since: NOW - 1000, step: 0 };
+    task.agent = { roleId, profileId: 'sol-high', since: NOW - 1000, step: 0 };
     task.holdsSlot = true;
     delete task.helpers;
     delete task.conversation;
     state.inbox = state.inbox.filter((item) => item.taskId !== task.id);
     const prior = { ...task.journey![0]!, id: 'earlier', roleId: 'researcher', endedAt: NOW - 1000 };
-    task.journey = [prior, { ...prior, id: 'active', roleId, profileId: 'codex-high', startedAt: NOW - 1000, endedAt: undefined, outcome: undefined, reason: undefined }];
+    task.journey = [prior, { ...prior, id: 'active', roleId, profileId: 'sol-high', startedAt: NOW - 1000, endedAt: undefined, outcome: undefined, reason: undefined }];
     await mount(state);
     await openTask(task.id);
     await act(async () => host.querySelector<HTMLElement>('.journey-list [aria-current="step"]')!.click());

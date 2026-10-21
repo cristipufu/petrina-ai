@@ -18,6 +18,7 @@ import type { Which } from "./setup.js";
 import { Store } from "./store.js";
 import { stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
+import { restoreProfileCatalog } from "@petrina/core";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import type { UsageInfo, UsageLimited } from "./usage.js";
 import { Tracking } from "./tracking.js";
@@ -264,7 +265,7 @@ export abstract class Kernel {
     }
     this.s.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as MState["roleChanges"];
     this.s.roles = libraryRoles(this.s.roleChanges) as MState["roles"];
-    this.s.profiles = ENGINE_PROFILES as MState["profiles"];
+    restoreProfileCatalog(this.s);
     // Tests stand in the tools' own apps: those count as installed.
     this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
     this.s.setup = setupOf(loaded) as MState["setup"];
@@ -759,7 +760,7 @@ export abstract class Kernel {
   }
 
   profile(id: Id): AgentProfile | undefined {
-    return this.s.profiles.find((profile) => profile.id === id) as AgentProfile | undefined;
+    return (this.s.profiles.find((profile) => profile.id === id) ?? this.s.retiredProfiles?.find(profile => profile.id === id)) as AgentProfile | undefined;
   }
 
   /** Only Builders return to an earlier step's conversation; an interrupted Builder keeps its current one. */

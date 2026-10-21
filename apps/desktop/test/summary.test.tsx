@@ -89,7 +89,7 @@ describe('what each task says at a glance', () => {
     await act(async () => host.querySelector<HTMLButtonElement>('.sheet [role="tab"][id="tab-plan"]')!.click());
     const who = host.querySelector<HTMLSelectElement>('select[aria-label="Who does design"]')!;
     expect(who).not.toBeNull();
-    await act(async () => { who.value = 'codex-xhigh'; who.dispatchEvent(new Event('change', { bubbles: true })); });
+    await act(async () => { who.value = 'sol-xhigh'; who.dispatchEvent(new Event('change', { bubbles: true })); });
     await act(async () => host.querySelector<HTMLButtonElement>('.sheet [role="tab"][id="tab-overview"]')!.click());
     expect(host.querySelector('.now')!.textContent).toContain('Next: design (Codex · sol), then design review (Codex · sol)');
   });

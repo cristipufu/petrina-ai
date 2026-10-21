@@ -278,7 +278,7 @@ function names(state: State, log: WorkLogReader, task?: UsageContext["task"], ta
   const tasks = new Map(state.tasks.map((task) => [task.id, task]));
   const roles = new Map(state.roles.map((role) => [role.id, role]));
   const tools = new Map(state.tools.map((tool) => [tool.id, tool]));
-  const profiles = new Map(state.profiles.map((profile) => [profile.id, profile]));
+  const profiles = new Map([...(state.retiredProfiles ?? []), ...state.profiles].map((profile) => [profile.id, profile]));
   return {
     tool: (id: Id) => tools.get(id)?.name ?? TOOL_NAMES[id] ?? id,
     role: (id: Id) => roles.get(id)?.name ?? id,

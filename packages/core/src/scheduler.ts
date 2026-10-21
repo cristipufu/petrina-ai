@@ -78,8 +78,8 @@ export function balanced(candidates: readonly Candidate[], pool: Pool, now: numb
 
 /** The slots in use: one per task holding a slot, and one more for each agent working beside its main one. */
 export function slotUses(state: State): SlotUse[] {
-  const toolOf = new Map(state.profiles.map((profile) => [profile.id, profile.toolId]));
-  const profiles = new Map(state.profiles.map(profile => [profile.id, profile]));
+  const toolOf = new Map([...(state.retiredProfiles ?? []), ...state.profiles].map((profile) => [profile.id, profile.toolId]));
+  const profiles = new Map([...(state.retiredProfiles ?? []), ...state.profiles].map(profile => [profile.id, profile]));
   return [...state.tasks
     .filter((task) => task.holdsSlot)
     .flatMap((task) => [
