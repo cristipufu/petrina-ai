@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as gitOps from "../src/git.js";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, createDemoState, type DeepMutable, type Finding, type Task } from "@petrina/core";
+import { beginAgentStep, BUILT_IN_ROLES, createDemoState, type DeepMutable, type Finding, type Task } from "@petrina/core";
 import { Context } from "../src/context.js";
 import { Engine } from "../src/engine.js";
 import { executionFor, repositoryView, scopesFor } from "../src/repository-context.js";
@@ -38,6 +38,32 @@ async function bare() {
 }
 
 describe("immutable review inputs", () => {
+  it("records a passed round against its saved snapshot, and omits unknown versions on older inputs", async () => {
+    const f = await bare();
+    try {
+      const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high"] };
+      f.task.plan = { rationale: "Review", plannerProfileId: "sol-high", stages: [stage] };
+      f.task.stageIndex = 0; f.task.findings = [];
+      const signal = new AbortController().signal;
+      const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
+      const originalTree = git(f.repo, "rev-parse", "HEAD^{tree}");
+      expect(input.trees).toEqual({ p: originalTree });
+      f.task.hunt = { stageId: stage.id, round: 1, reported: { "0": true }, input };
+      beginAgentStep(f.task, "code-reviewer", "sol-high", Date.now(), f.engine.s.roles, undefined, f.scope.work);
+      writeFileSync(join(f.repo, "later.txt"), "Different current code\n");
+      git(f.repo, "add", "."); git(f.repo, "commit", "-qm", "Later contents");
+      await f.engine["reviews"].runReview(f.task, stage, signal);
+      expect(f.task.journey!.at(-1)!.checkReviews?.map((review) => review.tree)).toEqual([originalTree]);
+      expect(originalTree).not.toBe(git(f.repo, "rev-parse", "HEAD^{tree}"));
+      f.task.stageIndex = 0;
+      const { trees: _trees, ...olderInput } = input;
+      f.task.hunt = { stageId: stage.id, round: 1, reported: { "0": true }, input: olderInput };
+      beginAgentStep(f.task, "code-reviewer", "sol-high", Date.now(), f.engine.s.roles, undefined, f.scope.work);
+      await f.engine["reviews"].runReview(f.task, stage, signal);
+      expect(f.task.journey!.at(-1)!.checkReviews).toBeUndefined();
+    } finally { await f.engine.shutdown(); }
+  });
+
   it("gives queued voters complete reproduction evidence without current peer ballots", async () => {
     const f = await bare();
     const reviews = f.engine["reviews"];
@@ -319,6 +345,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
         expect(input.taskDescription).toBeUndefined();
         expect(input.sections.some((section) => section.title === "Design brief")).toBe(false);
         expect(input.sections.some((section) => section.title === "Current product checks, run by Petrina itself")).toBe(true);
+        expect(input.sections.some((section) => section.title === "Related check evidence")).toBe(false);
         expect(input.at).toBeNumber();
         expect(current.checks!.at).toBeLessThanOrEqual(input.at!);
         const update = input.sections.find((section) => section.title === "The review base advanced since your last review")!.body;
@@ -333,6 +360,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
           expect(material).toContain(`base ${work.baseSha}`);
           expect(work.baseSha).toBe(work.productId === moved.productId ? moved.base : Object.values(saved)[0]!["0"]!.bases![work.productId]);
           expect(work.checks!.current).toBe(true);
+          expect(task.journey!.flatMap((step) => step.checkReviews ?? [])).toContainEqual(expect.objectContaining({ productId: work.productId, tree: work.checks!.tree, round: rounds[1]!.round }));
         }
         const changedFiles = files.map((file) => ({ file, body: readFileSync(file, "utf8") })).filter(({ body }) => body.includes(`Product: ${moved.productId}\n`));
         expect(changedFiles).toHaveLength(2);

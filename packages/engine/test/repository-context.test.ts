@@ -211,21 +211,22 @@ describe("explicit repository execution contexts", () => {
     } finally { work.mockRestore(); engine["driver"]["reserveAgent"] = reserve; version.mockRestore(); checks.mockRestore(); updated.mockRestore(); await engine.shutdown(); }
   });
 
-  it("reuses captured tree and commit message for hooks, keeping message files inside the task diagnostics folder", async () => {
-    const { engine, task } = await fixture("captured-hook-inputs");
+  for (const changed of [false, true]) it(`reuses captured tree and commit message for hooks${changed ? " when the hook changes during its run" : ", keeping message files inside the task diagnostics folder"}`, async () => {
+    const { engine, task } = await fixture(`captured-hook-inputs-${changed}`);
     const scope = executionFor(task), path = scope.work.worktree!, base = git(path, "rev-parse", "HEAD");
     writeFileSync(join(path, "hooked.txt"), "A product change\n");
     git(path, "add", "."); git(path, "commit", "-qm", "The checked commit message");
     scope.work.baseSha = base; scope.work.branch = "main";
     const hook = join(path, ".git", "hooks", "commit-msg"), recorded = join(engine.dataDir, "hook-message-path"), body = join(engine.dataDir, "hook-message-body");
     const quote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
-    writeFileSync(hook, `#!/bin/sh\nprintf '%s' "$1" > ${quote(recorded)}\ncat "$1" > ${quote(body)}\n`, { mode: 0o755 });
+    writeFileSync(hook, `#!/bin/sh\nprintf '%s' "$1" > ${quote(recorded)}\ncat "$1" > ${quote(body)}\n${changed ? `printf '# Changed hook definition\\n' >> "$0"\n` : ""}`, { mode: 0o755 });
     const messages = spyOn(gitOps, "message");
     const state = await engine["checks"]["captureState"](scope, []);
     const heads = spyOn(gitOps, "head"), trees = spyOn(gitOps, "treeOf");
     try {
+      engine.setPoolPaused(false);
       expect(state.message).toBe("The checked commit message");
-      expect(await engine["checks"]["runAll"](scope, [], state, new AbortController().signal, new Map())).toBe(0);
+      expect(await engine["checks"].runProductChecks(scope, [], new AbortController().signal, undefined, state)).toBe(0);
       expect(messages).toHaveBeenCalledTimes(1);
       expect(heads).not.toHaveBeenCalled(); expect(trees).not.toHaveBeenCalled();
       expect(readFileSync(body, "utf8")).toBe("The checked commit message\n");
@@ -233,6 +234,7 @@ describe("explicit repository execution contexts", () => {
       expect(dirname(dirname(messagePath))).toBe(join(engine.dataDir, "checks", task.id));
       expect(existsSync(messagePath)).toBe(false);
       expect(scope.work.checks).toMatchObject({ current: true, sha: state.sha, tree: state.tree });
+      expect(task.journey!.at(-1)!.checkAttempts![0]).toMatchObject({ passed: !changed, sha: state.sha, tree: state.tree, definition: state.definition });
     } finally { messages.mockRestore(); heads.mockRestore(); trees.mockRestore(); await engine.shutdown(); }
   });
 
@@ -603,12 +605,16 @@ describe("explicit repository execution contexts", () => {
       expect(await checks.failing(scope, signal, commands)).toBe(false);
       // One gate observation plus one combined inspection after the command.
       expect(probe).toHaveBeenCalledTimes(2);
+      const attempt = task.journey!.at(-1)!.checkAttempts![0]!;
+      expect(attempt).toMatchObject({ passed: true, sha: scope.work.checks!.sha, tree: scope.work.checks!.tree, definition: scope.work.checks!.definition });
       expect(await checks.failing(scope, signal, commands)).toBe(false);
       expect(probe).toHaveBeenCalledTimes(3);
+      expect(task.journey!.at(-1)!.checkAttempts).toHaveLength(1);
       expect(scope.work.checks!.current).toBe(true);
       writeFileSync(join(scope.work.worktree!, "README.md"), "A tracked change after the checks\n");
       expect(await checks.current(scope)).toBe(false);
       expect(probe).toHaveBeenCalledTimes(4);
+      expect(attempt.passed).toBe(true);
     } finally { probe.mockRestore(); await engine.shutdown(); }
   });
 
@@ -988,12 +994,14 @@ describe("shared check repair episodes", () => {
       // The original command passed, but it is no longer what the product requires.
       expect(await run).toBe(false);
       expect(scope.work.checkReturns).toBe(2);
+      expect(task.journey!.at(-1)!.checkAttempts![0]!.passed).toBe(false);
       expect(await checks.failing(scope, signal)).toBe(true);
       expect(scope.work.checkReturns).toBe(2);
       // Control: a pass on the checks required now does end the episode.
       setChecks(engine, "first", [passing]);
       expect(await checks.failing(scope, signal)).toBe(false);
       expect(scope.work.checkReturns).toBeUndefined();
+      expect(task.journey!.at(-1)!.checkAttempts![0]!.passed).toBe(true);
     } finally { await engine.shutdown(); }
   });
 });

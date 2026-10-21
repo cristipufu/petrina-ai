@@ -14,6 +14,7 @@ import { currentSourcePointers } from "./source-pointers.js";
 import type { ReviewInput } from "./review-context.js";
 import * as git from "./git.js";
 import { verificationContext } from "./verification-context.js";
+import { relatedCheckEvidence } from "./related-check-evidence.js";
 
 export interface Section {
   title: string;
@@ -83,6 +84,8 @@ export class Context {
     }
     sections.push(...(review ? review.handedBack : this.handedBack(scope)));
     if (!review && reads.includes("report")) sections.push(...await verificationContext(this.k.dataDir, repositoryView(scope), role?.result === "checks" ? Object.fromEntries(await Promise.all((task.repositories ?? [repository]).map(async (work) => [work.productId, work.checks?.current && work.checks.tree ? work.checks.tree : work.worktree ? await git.treeOf(work.worktree) : undefined]))) : undefined));
+    // Optional navigation must never prevent the task's ordinary repair handoff.
+    if (!review && role?.result === "build" && task.fixing) sections.push(...await relatedCheckEvidence(this.k, scope).catch(() => []));
     return sections;
   }
 

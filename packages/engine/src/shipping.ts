@@ -843,8 +843,10 @@ export class Shipping {
     return "done";
   }
 
-  private recordRelease(scope: RepositoryContext, release: { tag: string; url: string }, how?: "published"): "done" {
+  private async recordRelease(scope: RepositoryContext, release: { tag: string; url: string }, how?: "published"): Promise<"done"> {
     const { task, work: repository } = scope;
+    const sha = repository.shipping?.prepared?.tested;
+    if (sha) await this.rememberDelivery(scope, sha, repository.source?.destination.branch ?? this.k.repositoryOf(scope)?.defaultBranch ?? "main");
     repository.release = release;
     delete repository.shipping;
     if (task.state === "cancelled") this.k.log(scope, "status", `Release ${release.tag} went out while you cancelled it: ${release.url}`);
@@ -876,12 +878,13 @@ export class Shipping {
     }
     const owes = Boolean(repository.localUpdate) || Boolean(product.remote && !product.repo.startsWith("local/") && git.sameRepo(product.remote, product.repo));
     if (owes) repository.localUpdate = { branch, sha: tested, pushed: reached };
-    this.recordLanded(scope, branch, tested, "found");
+    await this.recordLanded(scope, branch, tested, "found");
     return reached;
   }
 
-  private recordLanded(scope: RepositoryContext, branch: string, sha: string, how?: "found" | "moved"): "done" {
+  private async recordLanded(scope: RepositoryContext, branch: string, sha: string, how?: "found" | "moved"): Promise<"done"> {
     const { task, work: repository } = scope;
+    if (!repository.localUpdate || repository.localUpdate.pushed) await this.rememberDelivery(scope, sha, branch);
     repository.landed = { branch, sha: sha.slice(0, 7) };
     // A local move is not a push. `localUpdate.pushed` is set only after GitHub is shown to have the commit.
     delete repository.shipping;
@@ -898,6 +901,15 @@ export class Shipping {
     }
     this.saveOutcome();
     return "done";
+  }
+
+  /** Preserve complete confirmed contents before shipping's preparation and working copy are removed. */
+  private async rememberDelivery(scope: RepositoryContext, sha: string, branch: string): Promise<void> {
+    const product = this.k.repositoryOf(scope);
+    const path = scope.work.worktree ?? product?.path;
+    if (!path || !product || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha)) return;
+    const tree = await git.run(["git", "rev-parse", "--verify", `${sha}^{tree}`], path, undefined, { timeoutMs: 1000 }).catch(() => undefined);
+    if (tree?.code === 0 && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(tree.stdout)) scope.work.confirmedDelivery = { sha, tree: tree.stdout, branch, repo: product.repo, at: Date.now() };
   }
 
   /** The verified delivery stays completed even when saving fails: removing its copy may free the disk. */

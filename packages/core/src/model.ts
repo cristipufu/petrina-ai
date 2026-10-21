@@ -318,6 +318,14 @@ export interface JourneyStep {
   agentResults?: readonly { roleId: Id; profileId: Id; at: number; value: unknown; images?: readonly ReportImage[]; productId?: Id; versions?: Readonly<Record<Id, string>> }[];
   /** The product checks Petrina ran during this checks step. */
   productChecks?: readonly JourneyProductCheck[];
+  /** Immutable run versions; unlike the repository's latest checks these survive subsequent runs. */
+  checkAttempts?: readonly CheckAttemptEvidence[];
+  /** Check-specific answers from a completed build result, bound before that repair started. */
+  checkRepairs?: readonly CheckRepairEvidence[];
+  buildVersions?: Readonly<Record<Id, string>>;
+  buildProductId?: Id;
+  /** Passed applicable review rounds, without any reviewer conclusions. */
+  checkReviews?: readonly { productId: Id; tree: string; at: number; stageId: Id; round: number }[];
   /** Per seat, including finished members and usage replacements. */
   toolActivity?: Readonly<Record<string, AgentToolActivity>>;
   /** Recent calls across all seats, capped independently of lifetime action counts. */
@@ -358,6 +366,8 @@ export interface JourneyProductCheck {
   attemptId?: string;
   queuedAt?: number;
   productId?: Id;
+  findingId?: Id;
+  namedFailures?: readonly { name: string; file?: string }[];
   /** Original run, including its complete diagnostic link. Never points to a later run. */
   run?: CheckRun;
   name: string;
@@ -366,6 +376,31 @@ export interface JourneyProductCheck {
   endedAt?: number;
   /** A short diagnostic from the failed run, saved with the step for later review. */
   detail?: string;
+}
+
+export interface CheckAttemptEvidence {
+  id: string;
+  productId: Id;
+  sha?: string;
+  tree?: string;
+  /** Product commands only; hook inputs deliberately do not define a peer match. */
+  commands: readonly string[];
+  definition: string;
+  /** Every required command and hook passed on this exact version and definition. */
+  passed?: boolean;
+}
+
+export interface CheckRepairEvidence {
+  productId: Id;
+  failureNode: Id;
+  checkId: string;
+  attemptId: string;
+  findingId: Id;
+  sha: string;
+  tree: string;
+  definition: string;
+  commands: readonly string[];
+  answer: { fixed: boolean; text: string };
 }
 
 /** The job and task context actually handed to one agent, captured before sending. */
@@ -704,7 +739,7 @@ export interface Hunt {
   stageId: Id;
   round: number;
   /** Immutable round inputs and prepared repository evidence. Bodies stay outside live window state. */
-  input?: { file: string; digest: string; heads: Readonly<Record<Id, string>> };
+  input?: { file: string; digest: string; heads: Readonly<Record<Id, string>>; trees?: Readonly<Record<Id, string>> };
   /** Per reviewer position in the stage, what it reported. */
   reported: Readonly<Record<Id, true>>;
   /** Each reviewer position’s verdict on repaired shared findings, settled only after everyone reports. */

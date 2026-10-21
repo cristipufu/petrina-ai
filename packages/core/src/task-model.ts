@@ -16,7 +16,7 @@ export interface RepositoryState {
   /** The last time Petrina ran the product's checks on this task, and on which commit. */
   /** The tree is the code itself: a squash keeps it, so the checks still count. */
   /** The definition covers commands and hook inputs, separately from the code. */
-  checks?: { current?: boolean; at: number; sha?: string; tree?: string; definition?: string; results: readonly CheckRun[] };
+  checks?: { current?: boolean; at: number; sha?: string; tree?: string; definition?: string; results: readonly CheckRun[]; provenance?: { nodeId: Id; attemptId: string } };
   /**
    * Automatic Builder returns in the current check failure episode, twice at most. Only a passing run of every
    * check and hook on the current code and check definitions ends the episode and clears it.
@@ -77,6 +77,8 @@ export interface RepositoryState {
   release?: { tag: string; url: string };
   /** Set when commit delivery advanced the approved branch and confirmed its push, if it has GitHub. */
   landed?: { branch: string; sha: string };
+  /** Full confirmed delivery identity for evidence inclusion, separate from display labels. */
+  confirmedDelivery?: { sha: string; tree: string; repo: string; branch: string; at: number };
   /** The destination was advanced locally; its push is a separate, possibly unfinished step. */
   localUpdate?: { branch: string; sha: string; pushed: boolean };
   /** How many times the current step has started. */
@@ -96,7 +98,7 @@ export const REPOSITORY_FIELDS = [
   "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
   "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
   "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
-  "cleanup", "conversation", "sideStep", "stepAttempts", "acceptanceReturns", "releasePreview"
+  "cleanup", "conversation", "sideStep", "stepAttempts", "acceptanceReturns", "releasePreview", "confirmedDelivery"
 ] as const;
 export type RepositoryField = typeof REPOSITORY_FIELDS[number];
 export type TaskRepository = RepositoryState & {

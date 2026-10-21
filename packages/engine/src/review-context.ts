@@ -63,6 +63,7 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
   const { task } = scope;
   const folder = join(dataDir, "contexts", task.id, "reviews");
   const heads: Record<Id, string> = {};
+  const trees: Record<Id, string> = {};
   const materials: string[] = [];
   const artifacts: { file: string; digest: string }[] = [];
   for (const work of task.repositories ?? [scope.work]) {
@@ -70,6 +71,8 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
     const path = work.worktree!;
     const head = await git.head(path), base = work.baseSha ?? work.base!;
     heads[work.productId] = head;
+    const tree = await git.treeOf(path, head);
+    if (tree) trees[work.productId] = tree;
     const full = `${base}...${head}`;
     const delta = !work.portReview && work.reviewedSha ? `${work.reviewedSha}..${head}` : undefined;
     const [guide, change, fixes] = await Promise.all([
@@ -117,7 +120,7 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
   input.artifacts = artifacts;
   signal.throwIfAborted();
   const saved = await immutable(folder, "json", JSON.stringify(input));
-  return { ...saved, heads };
+  return { ...saved, heads, trees };
 }
 
 export async function readReviewInput(ref: InputRef): Promise<ReviewInput> {

@@ -9,7 +9,8 @@ import { CheckFinderResult } from "./roles.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { CheckRun, DeepMutable, JourneyProductCheck } from "@petrina/core";
+import type { CheckAttemptEvidence, CheckRun, DeepMutable, JourneyProductCheck } from "@petrina/core";
+import { namedCheckFailures } from "./related-check-evidence.js";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, expectedCheckCommands, orderedChecks, staticCheck, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
@@ -257,6 +258,12 @@ export class ProductChecks {
     const { hooks, definition } = state;
     const env = { ...withoutCredentials(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
     const step = openStep(task);
+    const attemptId = entries.values().next().value?.attemptId;
+    const provenance: DeepMutable<CheckAttemptEvidence> | undefined = attemptId && step ? {
+      id: attemptId, productId: repository.productId, sha: before, tree: state.trackedChanged ? undefined : state.tree,
+      commands: checks.filter((check) => check.argv.length).map((check) => commandText(check.argv)), definition,
+    } : undefined;
+    if (step && provenance) step.checkAttempts = [...(step.checkAttempts ?? []), provenance];
     const progress = (id: string, event: CheckProgress) => {
       if (this.k.stopped || signal.aborted || step?.endedAt !== undefined || openStep(task)?.id !== step?.id) return;
       const check = entries.get(id);
@@ -267,6 +274,7 @@ export class ProductChecks {
         check.result = event.run.ok ? "pass" : event.run.timedOut ? "did-not-finish" : signal.aborted ? "stopped" : "fail";
         check.endedAt = event.at;
         if (!event.run.ok) check.detail = checkDiagnostic(event.run.output);
+        if (!event.run.ok && id.startsWith("check-")) check.namedFailures = namedCheckFailures(event.run.output);
       }
       const running = step!.productChecks!.filter((entry) => entry.result === "running").map((entry) => entry.name);
       task.statusLine = running.length ? `Running checks: ${running.join(", ")}` : "Finishing the check run";
@@ -318,10 +326,25 @@ export class ProductChecks {
       if (!repository.hooking && (!checksRestored || hooksStarted)) await restore();
     }
     const tree = state.sha === before && state.tree ? state.tree : await git.treeOf(repository.worktree, before);
-    repository.checks = { current: true, at: Date.now(), ...(before ? { sha: before } : {}), ...(tree ? { tree } : {}), definition, results };
+    repository.checks = { current: true, at: Date.now(), ...(before ? { sha: before } : {}), ...(tree ? { tree } : {}), definition, results, ...(step && attemptId ? { provenance: { nodeId: step.id, attemptId } } : {}) };
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     const failed = this.settleFindings(scope, results);
+    for (const entry of entries.values()) if (entry.run && !entry.run.ok) {
+      entry.findingId = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === `Check failed: ${entry.run!.name} (${entry.run!.command})` && (!task.repositories || finding.productIds?.includes(repository.productId)))?.id;
+    }
+    if (provenance && !failed.length && provenance.tree) {
+      const required = this.k.productOf(scope);
+      // Restoration already verified the captured commit and tracked contents. Recheck only definitions
+      // that can change during a run, retaining the immutable commit's captured message too.
+      const current = await git.commitHookFiles(repository.worktree)
+        .then((files) => this.definition(scope, required ? checksFor(required, repository.worktree!) : [], files, before, state.message))
+        .catch(() => undefined);
+      const commands = [...orderedChecks(checks).map((check) => commandText(check.argv)), ...hooks.map((hook) => hook === "pre-commit" ? "git hook run --ignore-missing pre-commit" : "git hook run commit-msg")];
+      provenance.passed = current?.definition === definition
+        && JSON.stringify(commands) === JSON.stringify(results.map((run) => run.command))
+        && results.every((run) => run.ok && !run.interrupted && !run.timedOut && !run.cleanupIncomplete);
+    }
     if (!failed.length) await this.closeEpisode(scope, state);
     this.k.log(scope, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
     if (failed.length && this.k.role(openStep(task)?.roleId ?? "")?.result === "delivery") {
@@ -380,12 +403,12 @@ export class ProductChecks {
   }
 
   /** The commands and hook inputs: a new definition needs a fresh run, even on the same tree. */
-  private async definition(scope: RepositoryContext, checks: readonly ProductCheck[], hooks: Awaited<ReturnType<typeof git.commitHookFiles>>, sha?: string): Promise<{ definition: string; message?: string }> {
+  private async definition(scope: RepositoryContext, checks: readonly ProductCheck[], hooks: Awaited<ReturnType<typeof git.commitHookFiles>>, sha?: string, capturedMessage?: string): Promise<{ definition: string; message?: string }> {
     const { work: repository } = scope;
     const hash = createHash("sha256").update(JSON.stringify(checks.filter((check) => check.argv.length).map((check) => check.argv)));
     const [bodies, message] = await Promise.all([
       Promise.all(hooks.map((hook) => readFile(hook.path))),
-      hooks.some((hook) => hook.name === "commit-msg") ? git.message(repository.worktree!, sha) : undefined,
+      hooks.some((hook) => hook.name === "commit-msg") ? capturedMessage ?? git.message(repository.worktree!, sha) : undefined,
     ]);
     for (const [index, hook] of hooks.entries()) {
       hash.update(JSON.stringify([hook.name, hook.path])).update(bodies[index]!);
@@ -403,6 +426,15 @@ export class ProductChecks {
     // The reusable tree and message must belong to the same observed commit.
     const [tree, definition] = await Promise.all([status.head ? git.treeOf(path, status.head) : undefined, this.definition(scope, checks, files, status.head)]);
     return { sha: status.head, tree, trackedChanged: status.trackedChanged, hooks, ...definition };
+  }
+
+  /** Capture a candidate's own definition, never borrow one from its later checks. */
+  async repairVersion(scope: RepositoryContext): Promise<(Pick<CheckState, "sha" | "tree" | "definition"> & { commands: string[] }) | undefined> {
+    if (!scope.work.worktree) return;
+    const product = this.k.productOf(scope);
+    const checks = product ? checksFor(product, scope.work.worktree) : [];
+    const state = await this.captureState(scope, checks);
+    return state.trackedChanged ? undefined : { sha: state.sha, tree: state.tree, definition: state.definition, commands: checks.filter((check) => check.argv.length).map((check) => commandText(check.argv)) };
   }
 
   /** Whether the last run used the same code and definitions. A squash keeps its evidence, pass or fail. */

@@ -1,6 +1,7 @@
 // Completed tasks live outside the live snapshot. The board only reads the small current state;
 // history uses an index for its next page and reads a conversation only when it is opened.
 import type { Database, SQLQueryBindings } from "bun:sqlite";
+import { EVIDENCE_STEP_LIMIT, EVIDENCE_TASK_LIMIT, type CheckEvidenceTask } from "./related-check-evidence.js";
 import { blocksDependents, combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyStatus, historyAt, historyCursor, historyItem, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryDependency, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
 
 interface Rollup { total: number; done: number; cancelled: number; shared?: number; blocked?: number; reviews: ReviewStats }
@@ -135,6 +136,30 @@ export class TaskHistory {
   get(id: Id): Task | undefined {
     const row = this.db.query<{ body: string }, [string]>("SELECT body FROM task_history WHERE id = ?").get(id);
     return row ? JSON.parse(row.body) as Task : undefined;
+  }
+
+  /** Bounded product seek and a restricted projection: never return archived prompts or reports. */
+  checkEvidence(productId: Id): CheckEvidenceTask[] {
+    const tail = (field: string, limit: number) => `json((SELECT json_group_array(json(value)) FROM
+      (SELECT value FROM json_each(step.value, '$.${field}') WHERE json_extract(value, '$.productId') = recent.scoped_product
+        ORDER BY CAST(key AS INTEGER) DESC LIMIT ${limit})))`;
+    const rows = this.db.query<{ id: string; state: Task["state"]; held: number; journey: string; delivery: string | null }, [string, number, string, string]>(`
+      WITH recent AS (SELECT h.id, h.state, h.body, p.product_id AS scoped_product FROM task_history_products p JOIN task_history h ON h.id = p.task_id
+        WHERE p.product_id = ? ORDER BY p.finished_at DESC, p.task_id DESC LIMIT ?)
+      SELECT id, state, json_extract(body, '$.held') AS held,
+        (SELECT json_group_array(json_object('id', json_extract(step.value, '$.id'), 'kind', json_extract(step.value, '$.kind'),
+          'startedAt', json_extract(step.value, '$.startedAt'), 'endedAt', json_extract(step.value, '$.endedAt'), 'end', json_extract(step.value, '$.end'),
+          'productChecks', ${tail("productChecks", 32)}, 'checkAttempts', ${tail("checkAttempts", 8)},
+          'checkRepairs', ${tail("checkRepairs", 8)}, 'checkReviews', ${tail("checkReviews", 8)},
+          'buildVersions', json((SELECT json_group_object(key, value) FROM json_each(step.value, '$.buildVersions') WHERE key = recent.scoped_product)),
+          'buildProductId', CASE WHEN json_extract(step.value, '$.buildProductId') = recent.scoped_product THEN recent.scoped_product END))
+          FROM (SELECT value FROM json_each(recent.body, '$.journey') ORDER BY CAST(key AS INTEGER) DESC LIMIT ${EVIDENCE_STEP_LIMIT}) step) AS journey,
+        COALESCE((SELECT json_extract(value, '$.confirmedDelivery') FROM json_each(body, '$.repositories') WHERE json_extract(value, '$.productId') = ?),
+          CASE WHEN json_extract(body, '$.repository.productId') = ? THEN json_extract(body, '$.repository.confirmedDelivery') END) AS delivery
+      FROM recent`).all(productId, EVIDENCE_TASK_LIMIT, productId, productId);
+    return rows.map((row) => ({ id: row.id, state: row.state, held: !!row.held,
+      journey: (JSON.parse(row.journey) as CheckEvidenceTask["journey"]).slice().reverse(),
+      ...(row.delivery ? { delivery: JSON.parse(row.delivery) } : {}) }));
   }
 
   item(id: Id): HistoryPage["items"][number] | undefined {

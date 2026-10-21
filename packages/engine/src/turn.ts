@@ -342,6 +342,7 @@ export class Turns {
     const journeyRole = options.copy && stage?.kind === "review-chain" && !repository.portReview && stage.roleIds?.includes(roleId) ? stage.roleId : roleId;
     const team = previous?.kind === "agent" && previous.roleId === journeyRole ? previous.team ?? (previous.profileId ? [previous.profileId] : []) : [];
     const journeyStep = beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, options.copy ? [...new Set([...team, profileId])] : undefined, repository);
+    if (role.result === "build") journeyStep.buildProductId = repository.productId;
     if (role.result === "checks" && task.retest && !journeyStep.agentInputs?.length) journeyStep.trigger = { ...journeyStep.trigger, reason: "Final acceptance testing after review: the final code needs current acceptance evidence" };
     if (saved) {
       task.statusLine = options.status ?? `${role.name} is getting back to work`;
@@ -688,6 +689,7 @@ export class Turns {
     const group = openStep(task);
     const team = group?.kind === "agent" && group.roleId === journeyRole ? group.team ?? (group.profileId ? [group.profileId] : []) : [];
     const journeyStep = beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, [...new Set([...team, profileId])], repository);
+    if (role.result === "build") journeyStep.buildProductId = repository.productId;
     if (options.took) {
       const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ${options.took.refusal ? `could not continue (${options.took.refusal})` : "ran out of usage"}`;
       this.k.say(scope, "system", words, roleId, profileId);

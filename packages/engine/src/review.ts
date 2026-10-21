@@ -199,8 +199,9 @@ export class Reviews {
       return "continue";
     }
     const outcome = vote ? this.tally(task, vote.findings) : this.raised(task);
+    const reviewedVersions = task.hunt?.input?.trees;
     delete task.hunt;
-    return this.closeReviewRound(task, stage, round, outcome);
+    return this.closeReviewRound(task, stage, round, outcome, reviewedVersions);
   }
 
   /** What this round's reviewers raised, in plain counts. */
@@ -866,7 +867,7 @@ export class Reviews {
    * The end of a review round: back to the builder with what is Important, or on towards delivery. `outcome`: what
    * the round's last box (its reviewers', or its voters') says.
    */
-  private async closeReviewRound(task: MTask, stage: MStage, round: number, outcome: string): Promise<"continue" | "stop"> {
+  private async closeReviewRound(task: MTask, stage: MStage, round: number, outcome: string, reviewedVersions?: Readonly<Record<Id, string>>): Promise<"continue" | "stop"> {
     const scope = executionFor(task);
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
     const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, this.k.s.roles);
@@ -888,6 +889,9 @@ export class Reviews {
       const anchor = anchors[index]!;
       if (end.kind === "passed") {
         if (work.worktree && (task.repositories || incremental)) work.reviewedTree = anchor.tree;
+        const step = openStep(task);
+        const reviewed = reviewedVersions?.[work.productId];
+        if (step && reviewed) step.checkReviews = [...(step.checkReviews ?? []), { productId: work.productId, tree: reviewed, at: Date.now(), stageId: stage.id, round }];
       } else if (work === scope.work) delete work.reviewedTree;
       if (incremental) {
         if (anchor.head) work.reviewedSha = anchor.head;

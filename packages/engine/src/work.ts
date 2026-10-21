@@ -14,6 +14,8 @@ import type { Context } from "./context.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
+import type { ProductChecks } from "./product-checks.js";
+import { assignedCheckFailures } from "./related-check-evidence.js";
 
 /** A pull request's description must fit where GitHub puts it, beside Petrina's own part: the builder shortens it, never Petrina. */
 function tooLong(value: { description?: string | undefined }): string | undefined {
@@ -22,7 +24,7 @@ function tooLong(value: { description?: string | undefined }): string | undefine
 }
 
 export class Work {
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly updates: Updates, private readonly learnings: Learnings) {}
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly updates: Updates, private readonly learnings: Learnings, private readonly checks: ProductChecks) {}
 
   async runDo(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const { task, work: repository } = scope;
@@ -56,6 +58,8 @@ export class Work {
       if (updating) await this.updates.reopen(scope);
       // In a fix round the builder answers every finding it was given, by id.
       const given = task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(repository.productId))) : [];
+      // Bind to the failure attempt now; mutable finding ids can be reused by a later check run.
+      const checkFailures = assignedCheckFailures(scope);
       // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
       const own = repository.builderSession;
       const back = (task.fixing || updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
@@ -105,6 +109,17 @@ export class Work {
       if (repository.checks) repository.checks.current = repository.checks.tree === builtTree;
       const buildReport = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
       if (buildReport && builtTree) buildReport.versions = { [repository.productId]: builtTree };
+      const completedStep = openStep(task);
+      if (completedStep && builtTree) completedStep.buildVersions = { ...completedStep.buildVersions, [repository.productId]: builtTree };
+      if (completedStep && checkFailures.length) {
+        const version = await this.checks.repairVersion(scope).catch(() => undefined);
+        if (version?.sha && version.tree) completedStep.checkRepairs = checkFailures.flatMap((failure) => {
+          if (!completedStep.findingIds?.includes(failure.check.findingId!) || !given.some((finding) => finding.id === failure.check.findingId)) return [];
+          const answer = result.answers.find((answer) => answer.id === failure.check.findingId);
+          return answer?.text.trim() ? [{ productId: repository.productId, failureNode: failure.nodeId, checkId: failure.check.id!, attemptId: failure.attempt.id, findingId: answer.id,
+            sha: version.sha!, tree: version.tree!, definition: version.definition, commands: version.commands, answer: { fixed: answer.fixed, text: answer.text.slice(0, 600) } }] : [];
+        });
+      }
       // The next fix round or update goes back to the conversation that really completed this build.
       const conversation = repository.conversation;
       if (conversation?.briefed && conversation.roleId === roleId) repository.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId, ...(conversation.context ? { context: conversation.context } : {}) };
