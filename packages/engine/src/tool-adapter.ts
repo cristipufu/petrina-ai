@@ -2,6 +2,7 @@ import type { AgentProfile, TurnReport } from "@petrina/core";
 import type { ClaudeSandbox } from "./sandbox.js";
 import type { UsageInfo } from "./usage.js";
 import type { UsageReader } from "./usage-reader.js";
+import type { ToolInterruptions } from "./provider-interruptions.js";
 export interface AccountReading {
   reports: UsageInfo[];
   tokens?: { total: number; input: number; output: number; reasoning: number; cached?: number };
@@ -32,6 +33,11 @@ export interface ToolAdapter {
   parseUsageUpdate?: (meta: Record<string, unknown>) => { reports: UsageInfo[]; model?: string };
   toolMetadata?: (meta: Readonly<Record<string, unknown>>) => Record<string, unknown> | undefined;
   parseLimitError?: (data: Record<string, unknown>, message: string) => LimitFailure | null | undefined;
+  /**
+   * How this tool's connector reports a terminal capacity stop and its own native retries, in the reporting
+   * mode Petrina uses. Unset: the tool exposes neither, and its failures keep their usual handling.
+   */
+  interruptions?: ToolInterruptions;
   accountUsage?: {
     command: string;
     parse: (text: string) => AccountReading;

@@ -680,6 +680,8 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
   const latestCompletedTester = recorded.reduce((latest, step, index) => ((step.kind === "agent" && ctx.roles.find(role => role.id === step.roleId)?.result === "checks") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
   const finished = FINISHED.includes(task.state);
   const run: JourneyNode["run"] = task.state === "running" ? "working" : task.state === "paused" ? "paused" : "waiting";
+  // The live step's line. A native retry comes ahead of the latest action, as on the card (summary.ts mainLine).
+  const nowText = task.state === "running" && task.retrying ? task.retrying : task.statusLine;
 
   const nodes: JourneyNode[] = recorded.map((step, index) => {
     let state: JourneyNodeState;
@@ -696,7 +698,7 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...flowStepMarks(step, name, earlier),
       state,
       ...(state === "now" ? { run } : {}),
-      ...(live && task.statusLine ? { live: task.statusLine } : {}),
+      ...(live && nowText ? { live: nowText } : {}),
       ...(step.roleId ? { roleId: step.roleId } : {}),
       ...(step.profileId ? { profileId: step.profileId } : {}),
       ...(step.team ? { team: step.team } : {}),

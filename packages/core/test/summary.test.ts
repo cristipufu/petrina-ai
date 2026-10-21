@@ -5,7 +5,8 @@ import type { Stage, State, StepRecord, Task } from "../src/model.js";
 import { Simulator } from "../src/sim.js";
 import { reviewRoundEnd } from "../src/flow.js";
 import { CALL_WORDS } from "../src/call.js";
-import { TODO_MAX, leftWords, mainLine, nextLine, pauseClock, plainTodo, resumeClock, startClock, timeLeft, workedSoFar } from "../src/summary.js";
+import { OTHERS_CONTINUE, TODO_MAX, clearRunningTools, leftWords, mainLine, nextLine, pauseClock, plainTodo, resumeClock, retryingWords, startClock, timeLeft, workedSoFar } from "../src/summary.js";
+import { journeyView } from "../src/journey.js";
 
 const MINUTE = 60_000;
 
@@ -100,6 +101,46 @@ describe("a card's main line", () => {
     const task = taskOf(sim, id);
     for (const line of lines) expect(task.timeline.some((entry) => entry.text === line)).toBe(true);
     expect(task.session.some((line) => line.from === "activity" && line.text === "Editing 3 files")).toBe(true);
+  });
+});
+
+describe("a tool that retries by itself", () => {
+  const reconnecting = retryingWords("Codex", "network");
+  const base = { statusLine: "Reading the code", todo: "Working out what the engine records per step", retrying: reconnecting };
+
+  it("names the tool, and claims a lost connection only when the tool reported one", () => {
+    expect(reconnecting).toBe("Reconnecting to Codex. Trying automatically.");
+    expect(retryingWords("Grok", "transient")).toBe("Grok hit a temporary problem. Retrying automatically.");
+    expect(retryingWords("Grok", "transient")).not.toMatch(/connect/i);
+  });
+
+  it("comes ahead of the saved to-do item and the latest action while the task works", () => {
+    expect(mainLine({ ...base, state: "running" })).toBe(reconnecting);
+    // A wait for the coordinator still comes first.
+    expect(mainLine({ ...base, state: "needs-you", statusLine: "Waiting for your permission" })).toBe("Waiting for your permission");
+    // Once useful work resumes, the to-do item is the main line again.
+    const { retrying: _retrying, ...resumed } = base;
+    expect(mainLine({ ...resumed, state: "running" })).toBe(base.todo);
+    expect(OTHERS_CONTINUE).toBe("The others continue.");
+  });
+
+  it("shows on the live flow step instead of the stale action", () => {
+    const sim = new Simulator(createDemoState(1_000_000_000));
+    const task: Task = { ...taskOf(sim, "login-loop") };
+    const context = { roles: sim.getState().roles, profiles: sim.getState().profiles, inbox: sim.getState().inbox, tasks: sim.getState().tasks };
+    const liveText = (view: ReturnType<typeof journeyView>) => view.nodes.find((node) => node.state === "now")?.live;
+    expect(liveText(journeyView(task, context))).toBe(task.statusLine);
+    task.retrying = reconnecting;
+    expect(liveText(journeyView(task, context))).toBe(reconnecting);
+  });
+
+  it("does not survive a restart or a stopped step, on the task or on any agent working at once", () => {
+    const task = { state: "running" as const, statusLine: reconnecting, retrying: reconnecting, hunt: { stageId: "s", round: 1, reported: {}, work: { "review-0": { attempts: 1, retrying: reconnecting, activity: "Reading the code" } } } };
+    clearRunningTools(task);
+    expect(task.retrying).toBeUndefined();
+    expect(task.statusLine).toBe("Continuing work");
+    expect(task.hunt.work["review-0"].retrying).toBeUndefined();
+    expect(task.hunt.work["review-0"].activity).toBe("Reading the code");
   });
 });
 

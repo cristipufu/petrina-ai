@@ -42,7 +42,8 @@ function nowSentence(task: Task, role: Role | undefined, state: State): string {
 /**
  * Right now, in lines: what the agent is working on (its to-do item, with the time it has worked on
  * this step), or what it waits for; then, quieter, its latest action, or the to-do item it was on
- * when it stopped to wait for the coordinator. Each is left out when it says nothing new.
+ * when it stopped to wait for the coordinator. Each is left out when it says nothing new. While its
+ * tool retries by itself, that is the line, and the stale action and to-do item are left out.
  */
 function nowLines(task: Task, state: State): { first: string; time?: string; second?: string } {
   const working = task.state === "running";
@@ -56,7 +57,7 @@ function nowLines(task: Task, state: State): { first: string; time?: string; sec
         ? duration(state.now - workedSoFar(task.stepClock, state.now), state.now)
         : duration(task.agent.since, state.now);
   const first = mainLine(task);
-  if (working) return { first, ...(time ? { time } : {}), ...(task.statusLine !== first ? { second: task.statusLine } : {}) };
+  if (working) return { first, ...(time ? { time } : {}), ...(task.statusLine !== first && !task.retrying ? { second: task.statusLine } : {}) };
   return { first: task.statusLine, ...(time ? { time } : {}), ...(waitingOnYou && task.todo && task.todo !== task.statusLine ? { second: task.todo } : {}) };
 }
 

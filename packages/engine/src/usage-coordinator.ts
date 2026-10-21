@@ -402,7 +402,7 @@ export class UsageCoordinator {
   }
 
   /**
-   * The selected Codex model is full for this task only. Usage meters are left unchanged.
+   * The selected model is full for this task only. Usage meters are left unchanged.
    * Every effort of that model stays out of this task until the short retry.
    */
   recordModelCapacity(task: MTask, roleId: Id, profileId: Id, error: ModelAtCapacity, waitMs = MODEL_CAPACITY_WAIT_MS): void {

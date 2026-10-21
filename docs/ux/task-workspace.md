@@ -14,7 +14,7 @@ Below it, Tasks, Task flow and the details tabs share one 56px header row with a
 
 #### Overview
 
-Anything waiting for you, what you asked for, who is on it right now (role, tool, model and effort in words), and the timeline: one row per event with its time aligned on the left, and a clear break at each stage change. **Right now** puts the current to-do item first, with the time worked on this step. The latest action sits below in quiet small text, left out if it repeats the first line. While the agent waits for your answer or permission, the first line says what it waits for and the second keeps the to-do item it was on. Time waiting for you does not count. Next is always shown in full below, when a step follows.
+Anything waiting for you, what you asked for, who is on it right now (role, tool, model and effort in words), and the timeline: one row per event with its time aligned on the left, and a clear break at each stage change. **Right now** puts the current to-do item first, with the time worked on this step. The latest action sits below in quiet small text, left out if it repeats the first line. While the agent waits for your answer or permission, the first line says what it waits for and the second keeps the to-do item it was on. While its tool reconnects or retries by itself, the first line says so and the stale action and to-do item are left out; the live step in the flow says the same. Time waiting for you does not count. Next is always shown in full below, when a step follows.
 
 #### Plan
 

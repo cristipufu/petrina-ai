@@ -6,7 +6,7 @@ import { Engine } from "../src/engine.js";
 import { executionFor } from "../src/repository-context.js";
 import { failureReason } from "../src/tracking.js";
 import { capacityRetryDelay, capacityWaiting, CODEX_MODEL_CAPACITY, codexCapacityFailure, codexModelAtCapacity, limitFromFailure, ModelAtCapacity, WaitingForCapacity, WaitingForUsage } from "../src/usage.js";
-import type { Scenario } from "./fake-agent.js";
+import type { NativeStep, Scenario } from "./fake-agent.js";
 import { Fakes, FAKE_AGENT, git, makeProduct, makeWorld, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
@@ -100,8 +100,7 @@ async function releaseCapacity(engine: Engine, taskId: string, modelId: string |
   engine.schedule();
 }
 
-async function sameModelWaits(run: Run, delays: readonly number[]) {
-  const modelId = "gpt-6.1-sol";
+async function sameModelWaits(run: Run, delays: readonly number[], modelId = "gpt-6.1-sol") {
   for (const [index, delay] of delays.entries()) {
     const expectedTried = index + 1;
     await waitFor(() => {
@@ -131,11 +130,11 @@ function expectShortContinues(prompts: { text: string }[]) {
   }
 }
 
-function assertNotAccountLimit(run: Run, task: Task) {
+function assertNotAccountLimit(run: Run, task: Task, toolId = "codex") {
   expect(task.error).toBeUndefined();
   expect(task.state).not.toBe("failed");
   expect(run.engine.getState().pool.limited ?? []).toEqual([]);
-  expect(usageLines(run.engine.getState(), Date.now()).find((line) => line.toolId === "codex")?.tone).not.toBe("out");
+  expect(usageLines(run.engine.getState(), Date.now()).find((line) => line.toolId === toolId)?.tone).not.toBe("out");
   expect(task.timeline.some((entry) => entry.text.includes("ran out of usage") || entry.text.includes("Waiting for usage"))).toBe(false);
   expect(run.engine.tracking.log.moments({ taskId: run.taskId, kinds: ["failure"] }).some((moment) => moment.outcome === "limit")).toBe(false);
   expect(run.fakes.prompts().some((text) => text.includes("Your result block could not be used"))).toBe(false);
@@ -605,6 +604,84 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(task.timeline.some((entry) => entry.text.includes("ran out of usage"))).toBe(true);
       expect(task.timeline.some((entry) => entry.text.includes("at capacity"))).toBe(false);
       expect(usageLines(run.engine.getState(), Date.now()).find((line) => line.toolId === "codex")?.tone).toBe("out");
+    } finally { await run.engine.shutdown(); }
+  });
+});
+
+/** Grok's own retry notice for a lost connection, as its recorded conversations carry it. */
+const grokLostConnection: NativeStep = { notice: { method: "_x.ai/session/update", params: { update: { sessionUpdate: "retry_state", type: "retrying", attempt: 1, max_retries: 15, reason: "request error: error sending request for url (https://cli-chat-proxy.grok.com/v1/responses): client error (Connect): dns error: failed to lookup address information", error_type: "http" } } } };
+
+describe.concurrent("a Claude Code or Grok model that is at capacity", () => {
+  it("retries Claude's own conversation after its explicit overload, then continues the step on another model", async () => {
+    const run = await start({ planner: "claude-build", builder: "plain", reopen: "resume", capacity: [{ model: "opus", role: "builder", shape: "claude", times: 4 }] });
+    try {
+      await sameModelWaits(run, SHORT_WAITS, "opus");
+      const task = await run.done();
+      assertNotAccountLimit(run, task, "claude-code");
+      expect(task.timeline.some((entry) => entry.text.includes("stopped because the selected model is at capacity"))).toBe(true);
+      const builders = run.fakes.received("builder");
+      const first = builders[0]!;
+      const same = builders.filter((entry) => entry.session === first.session);
+      const next = builders.find((entry) => entry.session !== first.session)!;
+      expect(same).toHaveLength(4);
+      expect(same[0]!.text).toContain("# Your job");
+      expectShortContinues(same.slice(1));
+      expect(run.fakes.opens().filter((entry) => entry.session === first.session).map((entry) => entry.how)).toEqual(["new", "resume", "resume", "resume"]);
+      expect(run.modelOf(first.session)).toBe("opus");
+      expect(run.modelOf(next.session)).not.toBe("opus");
+      expect(next.text).toContain("could not continue (the selected model is at capacity)");
+      expect(roundOf(task, "code-reviewer")).toBe(1);
+    } finally { await run.engine.shutdown(); }
+  });
+
+  it("retries Grok's conversation after a mid-turn overload, keeps its draft, and does not bring back a replayed reconnect", async () => {
+    const run = await start({
+      planner: "grok-build", builder: "plain", reopen: "load",
+      // Grok lost its connection and recovered by itself earlier in the same turn. That does not explain the stop.
+      nativeRetry: [{ role: "builder", model: "grok-4.7", steps: [grokLostConnection, { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Back on the greeting." } } }] }],
+      capacity: [{ model: "grok-4.7", role: "builder", shape: "grok", partial: true }],
+    });
+    try {
+      const waiting = await expectCapacityWait(run.engine, run.taskId, () => { run.answer(); return run.find(); }, 5_000, 2_000, "grok-4.7");
+      expect(readFileSync(join(waiting.worktree!, "capacity-draft.txt"), "utf8")).toBe("A greeting draft\n");
+      expect(waiting.session.some((line) => line.from === "agent" && line.text.includes("I drafted the greeting before the model filled up."))).toBe(true);
+      expect(waiting.retrying).toBeUndefined();
+      await releaseCapacity(run.engine, run.taskId, "grok-4.7");
+      const task = await run.done();
+      const builders = run.fakes.received("builder");
+      expect(builders).toHaveLength(2);
+      expect(builders.every((entry) => entry.session === builders[0]!.session)).toBe(true);
+      expect(run.fakes.opens().filter((entry) => entry.session === builders[0]!.session).map((entry) => entry.how)).toEqual(["new", "load"]);
+      expectShortContinues(builders.slice(1));
+      // One line for the live notice. Reopening replays it as history, and it does not come back.
+      expect(task.timeline.filter((entry) => entry.text.includes("Reconnecting to Grok")).length).toBe(1);
+      expect(task.retrying).toBeUndefined();
+      assertNotAccountLimit(run, task, "grok");
+      expect(roundOf(task, "code-reviewer")).toBe(1);
+    } finally { await run.engine.shutdown(); }
+  });
+
+  it("waits about five minutes after Grok's short retries when no other tool can take the step", async () => {
+    const run = await start({ planner: "grok-build", builder: "plain", reopen: "load", capacity: [{ model: "grok-4.7", role: "builder", shape: "grok", times: 4 }] }, {
+      before: (engine) => { engine.s.setup!.checks = [{ id: "claude-code", status: "logged-out" }, { id: "codex", status: "logged-out" }, { id: "grok", status: "ready" }, { id: "antigravity", status: "logged-out" }]; },
+    });
+    try {
+      await sameModelWaits(run, SHORT_WAITS, "grok-4.7");
+      const waiting = await expectCapacityWait(run.engine, run.taskId, () => { run.answer(); return run.find(); }, 5 * 60_000, 60_000, "grok-4.7");
+      expect(waiting.statusLine).not.toContain("Waiting for usage");
+      const session = run.fakes.received("builder")[0]!.session;
+      expect(waiting.conversation?.sessionId).toBe(session);
+      assertNotAccountLimit(run, waiting, "grok");
+      await releaseCapacity(run.engine, run.taskId, "grok-4.7");
+      // The review needs another tool; it starts once one is ready again.
+      run.engine.s.setup!.checks = run.engine.s.setup!.checks.map((check) => ({ ...check, status: "ready" as const }));
+      const task = await run.done();
+      const builders = run.fakes.received("builder");
+      expect(builders).toHaveLength(5);
+      expect(builders.every((entry) => entry.session === session)).toBe(true);
+      expectShortContinues(builders.slice(1));
+      expect(roundOf(task, "code-reviewer")).toBe(1);
+      assertNotAccountLimit(run, task, "grok");
     } finally { await run.engine.shutdown(); }
   });
 });

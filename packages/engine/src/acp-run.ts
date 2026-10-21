@@ -10,7 +10,8 @@ import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbo
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser } from "./browser.js";
 import { descendants, descendantsKnown } from "./process-tree.js";
-import { codexCapacityFailure, codexModelAtCapacity, limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
+import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
+import type { RetryCause, SessionNotice } from "./provider-interruptions.js";
 import { AgentMessages, type AgentMessage } from "./agent-messages.js";
 import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, type ToolActivity } from "./tool-activity.js";
 import type { AccountReading } from "./tool-adapter.js";
@@ -47,6 +48,22 @@ export interface RunCallbacks {
   onAccountUsage?(reports: readonly UsageInfo[]): void;
   /** What the tool says it is logged in with, when it says: "none" means not logged in. */
   onAuthStatus?(kind: string): void;
+  /**
+   * The tool reported that it is retrying the current turn by itself, or (undefined) that the retry is over:
+   * fresh model output or a new tool call arrived, or the turn ended. Sent only when that changes.
+   * Petrina does not retry on top of it.
+   */
+  onRetrying?(report: NativeRetryReport | undefined): void;
+}
+
+/** A native retry, as the shared contract carries it: which tool, model and conversation, and why. */
+export interface NativeRetryReport {
+  toolId: string;
+  profileId: string;
+  sessionId: string;
+  cause: RetryCause;
+  /** An explicit delay the tool named before its next try. */
+  retryAfterMs?: number;
 }
 
 /** The notification Claude Code's and Codex's connectors send, unasked, with the login they run on. */
@@ -186,6 +203,12 @@ interface RunState {
   latest?: UsageInfo;
   /** Native account command output is never an agent message or part of the task conversation. */
   accountText?: string;
+  /** The conversation this run owns, once it is open. Another session's notices are not this participant's. */
+  sessionId?: string;
+  /** The tool is retrying the current turn by itself, and why. Cleared by fresh model output, a new tool call or the turn's end. */
+  retrying?: RetryCause;
+  /** The current turn's prompt request, until its answer arrives. */
+  promptId?: acp.JsonRpcId;
   turn?: { changed: { model?: string; effort?: string }; rerouted: boolean; helpers: Set<string>; modelSeen?: string; next?: SessionSettings };
 }
 
@@ -437,6 +460,41 @@ export class AgentRun {
         state.turn.rerouted = true;
       }
     };
+    // Native retries are read in the order the tool sent its messages. The ACP library hands each message to its
+    // handler without waiting for the previous one, and an extension route (Grok's retry state) passes more
+    // handlers than a session update: read there, a notice could land after the work or the answer that followed it.
+    const retryReport = (cause: RetryCause, sessionId: string, retryAfterMs?: number): NativeRetryReport =>
+      ({ toolId: profile.toolId, profileId: profile.id, sessionId, cause, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) });
+    const retryOver = () => {
+      if (state.retrying === undefined) return;
+      delete state.retrying;
+      callbacks.onRetrying?.(undefined);
+    };
+    /** One incoming message, as it arrives. Only this run's own conversation, during a turn whose answer has not come. */
+    const arrived = (message: acp.AnyMessage) => {
+      if (!("method" in message)) {
+        // The turn's own answer: later notices belong to no turn.
+        if ("id" in message && message.id === state.promptId) delete state.promptId;
+        return;
+      }
+      if ("id" in message || !state.turn || state.quiet || state.promptId === undefined || state.sessionId === undefined) return;
+      const params = message.params as { sessionId?: unknown; update?: unknown } | undefined;
+      if (params?.sessionId !== state.sessionId) return;
+      const update = message.method === acp.methods.client.session.update ? params.update as { sessionUpdate?: unknown; content?: { type?: unknown; text?: unknown } } | undefined : undefined;
+      const notice: SessionNotice = update ? { kind: "update", sessionId: state.sessionId, update } : { kind: "extension", method: message.method, params };
+      const read = adapter.interruptions?.notice?.(notice);
+      if (read) {
+        if ("stopped" in read) return retryOver();
+        if (state.retrying === read.retrying) return;
+        state.retrying = read.retrying;
+        callbacks.onRetrying?.(retryReport(read.retrying, state.sessionId, read.retryAfterMs));
+        return;
+      }
+      // Fresh model output or a new tool call: useful work is under way again. An update to an earlier call is not.
+      const kind = update?.sessionUpdate;
+      const text = (kind === "agent_message_chunk" || kind === "agent_thought_chunk") && update?.content?.type === "text" && typeof update.content.text === "string" && update.content.text.length > 0;
+      if (text || kind === "tool_call") retryOver();
+    };
     const tools = state.tools = new ToolInvocations(event => {
       if (event.isNew) state.messages.activity();
       callbacks.onToolActivity?.(event);
@@ -449,7 +507,25 @@ export class AgentRun {
       state.lastActivity = line;
       callbacks.onActivity(line);
     };
-    const stream = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
+    const raw = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
+    const outgoing = raw.writable.getWriter();
+    const stream: acp.Stream = {
+      readable: raw.readable.pipeThrough(new TransformStream<acp.AnyMessage, acp.AnyMessage>({
+        transform(message, controller) {
+          try { arrived(message); } catch (error) { callbacks.onLog?.(`Could not read a retry notice: ${error instanceof Error ? error.message : String(error)}`); }
+          controller.enqueue(message);
+        },
+      })),
+      writable: new WritableStream<acp.AnyMessage>({
+        write(message) {
+          // The turn's own request, so its answer can be told from a live-input reply. An account read is not a turn.
+          if ("method" in message && "id" in message && message.method === acp.methods.agent.session.prompt && state.turn && state.accountText === undefined) state.promptId = message.id;
+          return outgoing.write(message);
+        },
+        close: () => outgoing.close(),
+        abort: (reason) => outgoing.abort(reason),
+      }),
+    };
 
     const connection = new acp.ClientSideConnection(
       () => ({
@@ -646,6 +722,7 @@ export class AgentRun {
 
     try {
       const session = await Promise.race([ready, killed, deadline, stopped]);
+      state.sessionId = session.sessionId;
       const agent = new AgentRun(child, connection, session.sessionId, state, profile, stop, session.how, await browserReady, callbacks);
       agent.acceptsLiveInput = acceptsLiveInput;
       agent.profileChoices = async (requestedModel?: string): Promise<ProfileChoices> => {
@@ -694,6 +771,7 @@ export class AgentRun {
     delete this.state.latest;
     const turn: NonNullable<RunState["turn"]> = { changed: {}, rerouted: false, helpers: new Set() };
     this.state.turn = turn;
+    delete this.state.retrying;
     this.state.activeToolCall = undefined;
     this.state.tools?.startTurn();
     this.notes = undefined;
@@ -735,6 +813,12 @@ export class AgentRun {
       this.state.messages.boundary();
       this.notes = notes();
       this.state.turn = undefined;
+      delete this.state.promptId;
+      // The turn ended, however it ended: its result or error decides what happens next.
+      if (this.state.retrying !== undefined) {
+        delete this.state.retrying;
+        this.callbacks?.onRetrying?.(undefined);
+      }
       // Later turns run on whatever the tool switched the session to. A Codex reroute is per turn.
       if (turn.next) this.state.settings = turn.next;
     }
@@ -781,20 +865,18 @@ export class AgentRun {
   }
 
   /**
-   * Codex ended this turn because the selected model is full. A finished result after the sentence is not this.
-   * `source` is a thrown provider failure, the prompt response, or the turn text. A warning is Codex still working.
+   * The tool's connector says this turn ended because the selected model is full. `source` is a thrown
+   * provider failure or the prompt response. A native retry warning earlier in the turn is not evidence:
+   * only this ending counts. An account limit the tool reported during the turn keeps its own path.
    */
   private capacityOf(source: unknown): ModelAtCapacity | undefined {
-    if (this.profile.toolId !== "codex") return undefined;
-    const fromSource: { retryAfterMs?: number } | undefined = typeof source === "string" ? (codexModelAtCapacity(source) ? {} : undefined) : codexCapacityFailure(source);
-    // The response can be a warning while the turn's own text still ends on the sentence.
-    const fromText: { retryAfterMs?: number } | undefined = codexModelAtCapacity(this.state.text) ? {} : undefined;
-    const found = fromSource ?? fromText;
+    const read = ADAPTERS[this.profile.toolId]?.interruptions?.capacity;
+    if (!read || this.rejected()) return undefined;
+    const found = read(source, this.state.text);
     if (!found) return undefined;
     const out = new ModelAtCapacity(this.profile.toolId, this.profile.modelId ?? this.profile.model, this.profile.id, this.sessionId);
     if (found.retryAfterMs !== undefined) out.retryAfterMs = found.retryAfterMs;
-    const said = this.state.text || (typeof source === "string" ? source : undefined);
-    if (said) out.said = said;
+    if (this.state.text) out.said = this.state.text;
     if (this.state.messages.streamed) out.streamed = true;
     return out;
   }

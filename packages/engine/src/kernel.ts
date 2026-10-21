@@ -1,7 +1,7 @@
 import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
 import { UsageCoordinator } from "./usage-coordinator.js";
-import { blockingDependencies, clearRunningTools, clearTaskStep, finishTaskStep, stopTaskActivity } from "@petrina/core";
+import { blockingDependencies, clearRunningTools, clearTaskStep, finishTaskStep, OTHERS_CONTINUE, stopTaskActivity } from "@petrina/core";
 import { executionFor, executionOf, scopesFor, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
 import * as library from "@petrina/core";
 // The engine's shared state and the few operations every part of it uses: lookups, the timeline and
@@ -629,24 +629,34 @@ export abstract class Kernel {
     }
   }
 
-  /** One steady member's summary, switching to whoever needs the coordinator while they wait. */
+  /**
+   * One steady member's summary: whoever needs the coordinator while they wait, then one whose own tool is
+   * retrying by itself, then one working. A retry names its tool, and says the others continue only when one does.
+   */
   showReviewWork(task: MTask): void {
     const agents = [task.agent, ...(task.helpers ?? [])].filter((agent): agent is DeepMutable<ActiveAgent> => agent?.reviewKey !== undefined);
     if (!agents.length) return;
     const working = (agent: (typeof agents)[number]) => task.hunt?.work?.[agent.reviewKey!];
-    const agent = agents.find((entry) => working(entry)?.waiting) ?? agents.find((entry) => working(entry)) ?? agents[0]!;
+    const agent = agents.find((entry) => working(entry)?.waiting) ?? agents.find((entry) => working(entry)?.retrying) ?? agents.find((entry) => working(entry)) ?? agents[0]!;
     task.agent = agent;
     const helpers = agents.filter((entry) => entry !== agent);
     if (helpers.length) task.helpers = helpers;
     else delete task.helpers;
     const work = working(agent);
+    const before = task.retrying;
+    // Working now: its clock runs, and it neither waits for the coordinator nor retries. A capacity wait pauses the clock.
+    const continuing = helpers.some((entry) => { const other = working(entry); return !!other && !other.waiting && !other.retrying && other.clock?.since !== undefined; });
+    if (work?.retrying && !work.waiting) task.retrying = continuing ? `${work.retrying} ${OTHERS_CONTINUE}` : work.retrying;
+    else delete task.retrying;
     if (work?.toolActivity) task.toolActivity = work.toolActivity;
     else delete task.toolActivity;
     if (work?.todo) task.todo = work.todo;
     else delete task.todo;
     if (work?.clock) task.stepClock = work.clock;
     else delete task.stepClock;
-    if (task.state === "running" && work?.activity) task.statusLine = work.activity;
+    if (task.state === "running" && (task.retrying ?? work?.activity)) task.statusLine = task.retrying ?? work!.activity!;
+    // The retry ended before this member's first tool call: its words do not stay on as the latest action.
+    else if (task.state === "running" && before !== undefined && task.statusLine === before) task.statusLine = "Continuing work";
     else if (task.state === "needs-you" && work?.waiting) task.statusLine = work.waiting;
   }
 
@@ -819,7 +829,7 @@ export abstract class Kernel {
   /** A turn ended because its tool ran out: who is out and until when is kept, and the task's timeline says so. */
   recordLimit(task: MTask, roleId: Id, profileId: Id, error: UsageLimited): void { return this.usageCoordinator.recordLimit(task, roleId, profileId, error); }
 
-  /** The selected Codex model is full for this task. Usage meters stay as they were, and the timeline says so. */
+  /** The selected model is full for this task. Usage meters stay as they were, and the timeline says so. */
   recordModelCapacity(task: MTask, roleId: Id, profileId: Id, error: ModelAtCapacity, waitMs?: number): void { return this.usageCoordinator.recordModelCapacity(task, roleId, profileId, error, waitMs); }
 
   /** Limits whose time has passed are dropped. True when any was. */

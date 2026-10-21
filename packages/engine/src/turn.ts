@@ -7,14 +7,14 @@ import type { Sources } from "./sources.js";
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, startClock } from "@petrina/core";
+import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, retryingWords, startClock } from "@petrina/core";
 import type { z } from "zod";
-import { AgentRun, ReopenFailed, type PermissionInfo, type TurnResult } from "./acp-run.js";
+import { AgentRun, ReopenFailed, type NativeRetryReport, type PermissionInfo, type TurnResult } from "./acp-run.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
 import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox.js";
 import { browserPrompt, buildPrompt, capacityContinuePrompt, continuePrompt, currentStepAssignment, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere, mayAskScreen, screenPrompt, WHERE_YOU_WERE_SCREEN } from "./prompts.js";
-import { capacityRetryDelay, capacityWaiting, codexModelAtCapacity, MODEL_CAPACITY_WAIT_MS, ModelAtCapacity, sameCapacityModel, UsageLimited, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
+import { capacityRetryDelay, capacityWaiting, MODEL_CAPACITY_WAIT_MS, ModelAtCapacity, sameCapacityModel, UsageLimited, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
 import type { AgentMessage } from "./agent-messages.js";
 import { ADAPTERS } from "./tools.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
@@ -643,6 +643,8 @@ export class Turns {
         if (error instanceof ModelAtCapacity) {
           refresh = true;
           work.clock = pauseClock(work.clock, Date.now());
+          // This member stopped working: a peer's retry no longer says the others continue.
+          this.k.showReviewWork(task);
           this.keepWords(scope, roleId, profile.id, error);
           // Peers keep working. The group waits only once this member's short retries, or its stand-in, are exhausted.
           if (this.deferCapacity(scope, roleId, profile.id, error, plannedId, options.member)) throw new WaitingForCapacity(this.capacityWords(scope, profile.id));
@@ -653,6 +655,7 @@ export class Turns {
         refresh = true;
         // This member has stopped, even while its peers keep working. A stand-in resumes its clock.
         work.clock = pauseClock(work.clock, Date.now());
+        this.k.showReviewWork(task);
         this.keepWords(scope, roleId, profile.id, error);
         this.k.recordLimit(task, roleId, profile.id, error);
         stopped = { profileId: profile.id, error, at: since };
@@ -839,9 +842,11 @@ export class Turns {
     if (options.main && (!accepted || run.reopened)) this.briefed(scope);
     for (let repairs = 0; ; ) {
       if (signal.aborted) throw new Aborted();
-      // The whole ending is the capacity sentence, with no finished result after it. Do not ask for a repair.
-      if (agent.profile.toolId === "codex" && codexModelAtCapacity(reply.text)) {
+      // The whole ending is the tool's capacity stop, with no finished result after it. Do not ask for a repair.
+      const fullText = ADAPTERS[agent.profile.toolId]?.interruptions?.capacity?.(reply.text, reply.text);
+      if (fullText) {
         const full = new ModelAtCapacity(agent.profile.toolId, agent.profile.modelId ?? agent.profile.model, profileId, run.sessionId);
+        if (fullText.retryAfterMs !== undefined) full.retryAfterMs = fullText.retryAfterMs;
         full.said = reply.text;
         full.streamed = reply.streamed;
         if (options.main) this.briefed(scope);
@@ -1012,7 +1017,8 @@ export class Turns {
           this.k.showReviewWork(current);
         } else if (options.main && active) {
           current.toolActivity = summary;
-          if (current.state === "running") current.statusLine = line;
+          // While the tool retries by itself, an update to an earlier call does not replace that status.
+          if (current.state === "running" && !current.retrying) current.statusLine = line;
         }
         if (event.invocation) {
           const invocation = event.invocation;
@@ -1040,6 +1046,7 @@ export class Turns {
         if (!options.main || current.timeline.at(-1)?.text !== text) this.k.log(scope, "status", text, roleId, profileId);
         this.k.noteTodo(scope);
       },
+      onRetrying: (report?: NativeRetryReport) => this.showRetrying(scope, role, profile, report, signal, options),
       onPermission: (info: PermissionInfo) => this.permission(scope, info, signal, { roleId, profileId }, agent.waits, options.reviewKey),
       onLog: (text: string) => void this.k.agentLog(task.id, text),
       onCleanupIncomplete: () => { if (this.k.task(task.id)) this.k.log(scope, "warn", CLEANUP_INCOMPLETE); },
@@ -1070,6 +1077,39 @@ export class Turns {
       }
     }
     return { ...await start(), ...(reopenFailure ? { reopenFailure } : {}) };
+  }
+
+  /**
+   * The agent's own tool says it is retrying the turn by itself, or (no report) that the retry is over. Petrina
+   * only shows it: no prompt, no retry loop of its own and no capacity record. Only this agent's own run clears its status.
+   */
+  private showRetrying(scope: RepositoryContext, role: Role, profile: AgentProfile, report: NativeRetryReport | undefined, signal: AbortSignal, options: { main: boolean; reviewKey?: string }): void {
+    const current = this.k.task(scope.task.id);
+    if (!current || (report && signal.aborted)) return;
+    const tool = this.k.s.tools.find((entry) => entry.id === profile.toolId)?.name ?? ADAPTERS[profile.toolId]?.name ?? profile.toolId;
+    const words = report ? retryingWords(tool, report.cause) : undefined;
+    const work = options.reviewKey ? current.hunt?.work?.[options.reviewKey] : undefined;
+    const starting = words !== undefined && (work ? work.retrying : current.retrying) === undefined;
+    if (work) {
+      if (work.retrying === words) return;
+      if (words) work.retrying = words;
+      else delete work.retrying;
+      this.k.showReviewWork(current);
+    } else if (options.main) {
+      const before = current.retrying;
+      if (before === words) return;
+      if (words) {
+        current.retrying = words;
+        if (current.state === "running") current.statusLine = words;
+      } else {
+        delete current.retrying;
+        // Useful work resumed, or the turn ended: drop the retry words. What comes next sets the line again.
+        if (current.state === "running" && current.statusLine === before) current.statusLine = "Continuing work";
+      }
+    } else return;
+    // One timeline line when a retry starts, not one per notice or change of cause.
+    if (starting) this.k.log(scope, "warn", `${role.name}: ${words}`, role.id, profile.id);
+    this.k.commit(scope);
   }
 
   private async prepareTurnPrompt(scope: RepositoryContext, role: Role, sessionId: string, sections: Section[], note: ConversationNote | undefined,

@@ -128,6 +128,9 @@ const LANDING_WORDS: Record<ReturnType<typeof landingOf>, string> = {
   open: "not landed yet",
 };
 
+/** A line said as one sentence: its own closing period is not doubled. */
+const unstopped = (text: string) => text.replace(/\.+$/, "");
+
 /** One list item for screen readers: number, name, state, tool and model, time, outcome and why it moved on. */
 export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: number): string {
   const marks = [node.roundMark ? `round ${node.roundMark}` : "", node.updateMark ? "update" : "", node.fixMark ? `fix ${node.fixMark}` : "", node.portMark ? "port review" : "", node.callMark ? "your call" : "", node.repeatMark ? "repeated" : ""].filter(Boolean);
@@ -139,7 +142,7 @@ export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: 
   if (time) parts.push(node.kind === "you" ? (node.endedAt === undefined ? `Waiting ${time} so far` : `Waited ${time}`) : node.endedAt === undefined ? `${time} elapsed so far` : `${time} elapsed`);
   const outcome = reviewOutcome(node, find.role(node.roleId));
   if (outcome) parts.push(outcome);
-  else if (node.live && node.state !== "ahead") parts.push(node.live);
+  else if (node.live && node.state !== "ahead") parts.push(unstopped(node.live));
   if (node.reason) parts.push(`${node.state === "failed" ? "Stopped because" : "Moved on"}: ${node.reason}`);
   for (const ask of node.asks) parts.push(`${askKind(ask)}: ${ask.title}. ${askOutcome(ask)}`);
   return `${parts.join(". ")}.`;
@@ -602,7 +605,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
               : node.kind === "petrina"
                 ? "Planned: Petrina publishes the checked work itself."
                 : `Planned: ${visibleStepName(node)}${profiles.length ? ` on ${profiles.map((profile) => profileText(profile, find, true)).join(" and ")}` : ""}.`}
-            {node.live ? ` ${node.live}.` : ""}
+            {node.live ? ` ${unstopped(node.live)}.` : ""}
           </p>
           {node.kind === "agent" && (
             <p className="note">

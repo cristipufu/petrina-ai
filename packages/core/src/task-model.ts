@@ -260,6 +260,12 @@ export interface TaskActivity {
   toolActivity?: import("./model.js").AgentToolActivity;
   /** Agent-owned current to-do, kept separate from changing tool activity. */
   todo?: string;
+  /**
+   * The agent's own tool reported it is retrying the turn by itself (a lost connection, or another passing
+   * problem): what the task says instead of its latest action and to-do item, until useful work resumes.
+   * For agents working at once, the one shown, naming its tool. Never inferred from silence.
+   */
+  retrying?: string;
   stepClock?: StepClock;
   queued: readonly QueuedMessage[];
   /** What the coordinator said during the current step, in order. Cleared when the step finishes. */
@@ -275,7 +281,7 @@ export interface TaskActivity {
   /** Why the task failed, when it did. */
   error?: string;
   /**
-   * Codex models that are full for this task, until the short retry. Not an account limit: usage meters ignore it.
+   * Models that are full for this task, as their tool reported, until the short retry. Not an account limit: usage meters ignore it.
    * Every effort of `modelId` is full. Cleared when the time passes.
    */
   modelCapacity?: readonly { toolId: Id; modelId: string; profileId: Id; until: number }[];

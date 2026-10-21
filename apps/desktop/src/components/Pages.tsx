@@ -58,7 +58,7 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
               <div className="title">{task.title}</div>
               <p className="card-status">
                 <span className={`dot ${waiting ? "needs-you" : work ? "running" : task.state}`} aria-hidden="true" />
-                <span>{work?.waiting ?? work?.todo ?? work?.activity ?? mainLine(task)}</span>
+                <span>{work?.waiting ?? work?.retrying ?? work?.todo ?? work?.activity ?? mainLine(task)}</span>
               </p>
               <div className="grow" />
               <div className="foot">

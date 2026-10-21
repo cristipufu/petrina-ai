@@ -8,6 +8,7 @@ import { BACKGROUND_FEATURES } from "./codex-background.js";
 import { claudeReports } from "./claude-usage-report.js";
 import { CLAUDE_USAGE_COMMAND, ClaudeUsage } from "./claude-usage.js";
 import { claudeLimit, codexLimit, grokLimit } from "./provider-limits.js";
+import { claudeInterruptions, codexInterruptions, grokInterruptions } from "./provider-interruptions.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { GrokUsage, grokTurnReport } from "./grok-usage.js";
 import { AntigravityUsage } from "./antigravity-usage.js";
@@ -20,6 +21,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     usageReader: { command: () => CLAUDE_USAGE_COMMAND, create: options => new ClaudeUsage(options) },
     liveInput: steering(true),
     parseLimitError: claudeLimit,
+    interruptions: claudeInterruptions,
     parseUsageUpdate: meta => ({ reports: claudeReports("claude-code", meta), ...(typeof meta["_claude/model"] === "string" ? { model: meta["_claude/model"] } : {}) }),
     prepareSessionMeta: async (meta, { cwd, browser }) => {
       if (!browser) return meta;
@@ -42,6 +44,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
   codex: {
     liveInput: steering(false),
     parseLimitError: codexLimit,
+    interruptions: codexInterruptions,
     prepareEnv: env => {
       env.CODEX_CONFIG = JSON.stringify({ ...JSON.parse(env.CODEX_CONFIG ?? "{}"), ...Object.fromEntries(BACKGROUND_FEATURES.map(feature => [`features.${feature}`, false])) });
       env.DISABLE_MCP_CONFIG_FILTERING = "true";
@@ -69,6 +72,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     // for managed runs. The installed ACP route does not honor --no-memory.
     prepareEnv: env => { env.GROK_MEMORY = "0"; },
     parseLimitError: grokLimit,
+    interruptions: grokInterruptions,
     parseTurnReport: grokTurnReport,
     toolMetadata: meta => {
       const value = meta["x.ai/tool"];

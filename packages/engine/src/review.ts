@@ -493,7 +493,7 @@ export class Reviews {
     const voters = planned.flatMap((id) => {
       if (covered.has(this.k.profile(id)?.toolId ?? "")) return [];
       const choice = this.k.choose(id, task, "verifier");
-      // A full Codex model keeps this tool's seat. The vote waits instead of settling on the other tools.
+      // A full model keeps this tool's seat. The vote waits instead of settling on the other tools.
       if (choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT)) return [id];
       // Once admitted to the electorate, a missing independent tool cannot be replaced by a
       // finished partner's vote. Same-tool model substitutions retain that tool's seat.

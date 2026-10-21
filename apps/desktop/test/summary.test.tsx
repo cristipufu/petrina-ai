@@ -128,6 +128,44 @@ describe('what each task says at a glance', () => {
     expect(tiles).toContain('Waiting for your permission');
   });
 
+  it('shows a tool reconnecting by itself ahead of its stale action and to-do item on the card, Right now and the live step', async () => {
+    const words = 'Reconnecting to Codex. Trying automatically.';
+    const state = simulator.getState();
+    simulator = new Simulator({ ...state, tasks: state.tasks.map((task) => task.id === 'login-loop' ? { ...task, retrying: words, statusLine: words } : task) });
+    await act(async () => root.render(<App />));
+    expect(text(card('login-loop').querySelector('.card-status'))).toBe(words);
+    await open('login-loop');
+    expect(text(host.querySelector('.task-list-item[aria-current="true"] .task-list-status'))).toBe(words);
+    expect(text(host.querySelector('.now .what'))?.startsWith(`${words} · `)).toBe(true);
+    const lines = [...host.querySelectorAll('.now .now-line')].map(text);
+    expect(lines).not.toContain('Reading the code');
+    expect(lines).not.toContain('Trying to prove “done” wrong');
+    expect(text(host.querySelector('.journey-list [aria-current="step"]'))).toContain(words);
+  });
+
+  it('gives each Agents page tile its own participant, and the task names the one reconnecting while the others continue', async () => {
+    const words = 'Reconnecting to Codex. Trying automatically.';
+    const state = simulator.getState();
+    const source = state.tasks.find((task) => task.id === 'login-loop')!;
+    const stage = source.plan!.stages[source.stageIndex]!;
+    simulator = new Simulator({ ...state, tasks: state.tasks.map((task) => task.id === 'login-loop' ? {
+      ...task, retrying: `${words} The others continue.`, statusLine: `${words} The others continue.`,
+      agent: { roleId: 'code-reviewer', profileId: 'sol-high', since: state.now, step: 0, reviewKey: 'review-0' },
+      helpers: [{ roleId: 'code-reviewer', profileId: 'opus-high', since: state.now, step: 0, reviewKey: 'review-1' }],
+      hunt: { stageId: stage.id, round: 1, reported: {}, work: {
+        'review-0': { attempts: 1, retrying: words, todo: 'Checking the greeting', activity: 'Reading the code' },
+        'review-1': { attempts: 1, todo: 'Checking the guest view', activity: 'Reading README.md' },
+      } },
+    } : task) });
+    await act(async () => root.render(<App />));
+    expect(text(card('login-loop').querySelector('.card-status'))).toBe(`${words} The others continue.`);
+    await act(async () => host.querySelector<HTMLAnchorElement>('.rail a[title="Agents (A)"]')!.click());
+    const tiles = [...host.querySelectorAll('.tile .card-status')].map(text);
+    expect(tiles).toContain(words);
+    expect(tiles).toContain('Checking the guest view');
+    expect(tiles).not.toContain('Checking the greeting');
+  });
+
   it('keeps following your call visible without a to-do list and shows the latest action in the sheet', async () => {
     const state = simulator.getState();
     const source = state.tasks.find((task) => task.id === 'gift-cards')!;

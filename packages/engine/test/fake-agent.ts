@@ -38,7 +38,7 @@ export interface Scenario {
   /** An added Security specialist passes instead of blocking once. */
   addedReviewer?: "pass";
   /** Retain scenarios used by source-start and screen coverage. */
-  planner?: "short" | "parallel" | "two-codex" | "tester-after" | "tester-first" | "tester-with-design" | "research-first" | "limits" | "claude-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
+  planner?: "short" | "parallel" | "two-codex" | "tester-after" | "tester-first" | "tester-with-design" | "research-first" | "limits" | "claude-build" | "grok-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
   notes?: "work";
   /** The architect leaves product changes for the engine to save, in rounds and after a call. */
   architect?: "writes";
@@ -141,12 +141,29 @@ export interface Scenario {
    * turn with Codex's overloaded stop and no sentence in the agent's text. `times` is how many turns
    * of this conversation stop this way (default one). `retryAfterMs` is an explicit provider delay on a thrown stop.
    */
-  capacity?: { model: string; role?: string; partial?: boolean; onScreen?: boolean; thrown?: boolean; native?: boolean; times?: number; retryAfterMs?: number; armed?: boolean }[];
+  capacity?: { model: string; role?: string; partial?: boolean; onScreen?: boolean; thrown?: boolean; native?: boolean; times?: number; retryAfterMs?: number; armed?: boolean; shape?: "claude" | "grok" | "grok-busy" | "claude-server" }[];
+  /**
+   * The agent's own tool reports native retries during the first turn of a conversation with this role (on
+   * `model` only, when set). Each step sends a session update, sends a notice on the tool's own route, waits for
+   * a file in dir, drops a marker there (`{session}` becomes the conversation id), or ends the turn with an error.
+   * The turn then goes on as the role usually does.
+   */
+  nativeRetry?: { role: string; model?: string; steps: NativeStep[] }[];
   /** The builder mentions the capacity sentence and still hands back a finished result. */
   mentionCapacity?: boolean;
   /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
   usage?: { model: string; status: "allowed" | "allowed_warning" | "rejected"; utilization?: number; type?: string; resetsAt?: number; overage?: boolean; paidStatus?: "allowed" | "allowed_warning" | "rejected" }[];
 }
+
+/** One scripted step of a tool's own retry (see Scenario.nativeRetry). */
+export type NativeStep =
+  | { update: acp.SessionNotification["update"] }
+  | { notice: { method: string; params: Record<string, unknown> } }
+  | { wait: string }
+  | { mark: string }
+  /** Ask the coordinator's permission, and go on once answered. */
+  | { permission: string }
+  | { fail: { code: number; message: string; data?: unknown } };
 
 /** A conversation, kept on disk so a fake started by the next engine can reopen it. */
 interface Conversation {
@@ -159,6 +176,8 @@ interface Conversation {
   restarts: number;
   /** Everything it sent and was sent, for load to replay. */
   history: acp.SessionNotification["update"][];
+  /** Notices it sent on its own route, which Grok's load replays too. */
+  notices?: { method: string; params: Record<string, unknown> }[];
   /** Turns the coordinator added in the tool's own app, in their terminal (see fake-cli.ts). */
   terminal?: number;
   /** The model Petrina chose for it ("opus", "gpt-6.1-sol"). */
@@ -296,6 +315,29 @@ async function send(client: acp.AgentContext, sessionId: string, update: acp.Ses
   sessions.get(sessionId)?.history.push(update);
   keep(sessionId);
   await client.notify(acp.methods.client.session.update, { sessionId, update });
+}
+
+/** Run a tool's scripted native retry steps. A `fail` step ends the turn the way that tool's connector does. */
+async function nativeSteps(client: acp.AgentContext, sessionId: string, steps: readonly NativeStep[]): Promise<void> {
+  const name = (file: string) => file.replaceAll("{session}", sessionId);
+  for (const step of steps) {
+    if ("update" in step) await send(client, sessionId, step.update);
+    else if ("notice" in step) {
+      const params = { sessionId, ...step.notice.params };
+      const session = sessions.get(sessionId);
+      if (session) session.notices = [...(session.notices ?? []), { method: step.notice.method, params }];
+      keep(sessionId);
+      await client.notify(step.notice.method as typeof acp.methods.client.session.update, params as never);
+    } else if ("wait" in step) { if (dir) while (!existsSync(join(dir, name(step.wait)))) await Bun.sleep(20); }
+    else if ("mark" in step) mark(name(step.mark));
+    else if ("permission" in step) {
+      await client.request(acp.methods.client.session.requestPermission, {
+        sessionId,
+        toolCall: { toolCallId: `native-permission-${sessionId}`, title: step.permission, kind: "execute", status: "pending" },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "reject", name: "Reject", kind: "reject_once" }],
+      });
+    } else throw new acp.RequestError(step.fail.code, step.fail.message, step.fail.data);
+  }
 }
 
 /** The settings Petrina sets: model, effort (each tool's name for it) and the automatic safety mode. */
@@ -559,6 +601,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);
   if (limit && until && !limit.afterRelease) await runOut(limit, until, session, sessionId, client);
+  const retry = session.turns === 1 ? (plan.nativeRetry ?? []).find((entry) => entry.role === session.role && (!entry.model || entry.model === session.model)) : undefined;
+  if (retry) await nativeSteps(client, sessionId, retry.steps);
   const progress = capacityProgress(sessionId);
   const capacity = (plan.capacity ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && !(entry.onScreen && !progress.armed && !text.includes("You may now use the screen for")) && progress.used < (entry.times ?? 1));
   if (capacity) {
@@ -567,6 +611,18 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     if (capacity.partial) writeFileSync(join(session.cwd, "capacity-draft.txt"), "A greeting draft\n");
     const draft = capacity.partial ? "I drafted the greeting before the model filled up.\n\n" : "";
     keep(sessionId);
+    if (capacity.shape) {
+      // What was said before the stop reaches the conversation, as each tool streams it.
+      if (draft) await send(client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: draft.trim() } });
+      // claude-agent-acp without AIR failure records: ACP's internal error with Claude's own error kind.
+      if (capacity.shape === "claude") throw acp.RequestError.internalError({ errorKind: "overloaded" }, 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}');
+      // A server error is a generic provider failure, not a full model.
+      if (capacity.shape === "claude-server") throw acp.RequestError.internalError({ errorKind: "server_error" }, "API Error: 500 Internal server error");
+      // Grok's own capacity sentence is the whole message, with no data.
+      if (capacity.shape === "grok") throw new acp.RequestError(-32603, "Model is temporarily overloaded. Try again in a moment.");
+      // A busy service Grok files under its rate-limit category: not this sentence.
+      throw acp.RequestError.internalError({ message: "The service is busy. Please try again later.", http_status: 503 });
+    }
     if (capacity.thrown) {
       throw acp.RequestError.internalError({
         message: CODEX_MODEL_CAPACITY,
@@ -703,6 +759,14 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     await say("Thinking for a very long time");
     await new Promise(() => undefined);
   }
+  // Direct session tests: run these native retry steps, then end the turn with the rest of the text.
+  if (text.startsWith("NATIVE-STEPS ")) {
+    const { steps, reply, late } = JSON.parse(text.slice("NATIVE-STEPS ".length)) as { steps: NativeStep[]; reply?: string; late?: NativeStep[] };
+    await nativeSteps(client, sessionId, steps);
+    // Steps after the turn has ended: a late notice from a turn that is over.
+    if (late) setTimeout(() => void nativeSteps(client, sessionId, late).catch(() => undefined), 0);
+    return { text: reply ?? "" };
+  }
   if (text.includes("SWITCH-THEN-STOP")) {
     // The tool confirms a switch to Sonnet at low effort, then stops before it replies.
     for (const [id, value] of [["model", "sonnet"], ["effort", "low"]] as const) session.options.find((option) => option.id === id)!.currentValue = value;
@@ -764,6 +828,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: plan.reviewer === "confirm" ? 2 : 1 },
+          ],
+        });
+      if (plan.planner === "grok-build")
+        return done({
+          rationale: "Build it on Grok, one reviewer on Claude Code.",
+          ...riskOf(plan),
+          stages: [
+            { kind: "do", title: "Build", roleId: "builder", profileIds: ["grok-xhigh"] },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
           ],
         });
       if (plan.planner === "two-opus")
@@ -1316,6 +1389,8 @@ acp
     const conversation = reopen(ctx.params.sessionId, "load", ctx.params._meta);
     // Load streams the whole conversation back before it answers.
     for (const update of conversation.history) await ctx.client.notify(acp.methods.client.session.update, { sessionId: ctx.params.sessionId, update });
+    // Grok's load replays its own route as well, retry notices included: they are history.
+    for (const notice of conversation.notices ?? []) await ctx.client.notify(notice.method as typeof acp.methods.client.session.update, notice.params as never);
     return { configOptions: conversation.options };
   })
   .onRequest("session/set_config_option", (ctx) => {

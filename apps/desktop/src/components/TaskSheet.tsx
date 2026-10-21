@@ -15,7 +15,7 @@ import { DesignView } from "./sheet/DesignTab";
 import { ReviewView } from "./sheet/ReviewTab";
 import type { TaskDrafts } from "../drafts";
 
-export type TaskListEntry = Pick<Task, "id" | "productId" | "title" | "state" | "statusLine"> & Partial<Pick<Task, "held" | "source" | "todo">>;
+export type TaskListEntry = Pick<Task, "id" | "productId" | "title" | "state" | "statusLine"> & Partial<Pick<Task, "held" | "source" | "todo" | "retrying">>;
 
 interface SheetProps {
   task: Task;

@@ -42,22 +42,35 @@ export function plainTodo(text: string): string | undefined {
   return `${(space > TODO_MAX - 25 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
+/** What a task says while its agent's own tool retries the turn by itself. `network`: the tool reported a lost connection. */
+export function retryingWords(tool: string, cause: "network" | "transient"): string {
+  return cause === "network" ? `Reconnecting to ${tool}. Trying automatically.` : `${tool} hit a temporary problem. Retrying automatically.`;
+}
+
+/** Added when one of the agents working at once is retrying and the others keep working. */
+export const OTHERS_CONTINUE = "The others continue.";
+
 /**
  * A card's one main line: while the agent works, the to-do item it is on; otherwise, or for a tool
  * that shares no to-do list, the status line (its latest action, or what the task waits for).
+ * While its tool reports it is retrying by itself, that comes first: the to-do item and action are stale.
  */
-export function mainLine(task: Pick<Task, "state" | "todo" | "statusLine"> & Partial<Pick<Task, "plan" | "stageIndex" | "sub" | "call">>): string {
+export function mainLine(task: Pick<Task, "state" | "todo" | "statusLine"> & Partial<Pick<Task, "plan" | "stageIndex" | "sub" | "call" | "retrying">>): string {
   if (task.state !== "running") return task.statusLine;
+  if (task.retrying) return task.retrying;
   if (task.todo) return task.todo;
   if (task.stageIndex !== undefined && task.sub === 0 && followingCall({ ...task, stageIndex: task.stageIndex })) return CALL_WORDS.following;
   return task.statusLine;
 }
 
-/** A restart or stopped step cannot leave a tool looking live. No outcome is inferred. */
-export function clearRunningTools(task: Pick<Task, "toolActivity" | "hunt" | "journey" | "state" | "statusLine">): void {
-  if (task.state === "running" && task.toolActivity?.runningTool?.description === task.statusLine) task.statusLine = "Continuing work";
+/** A restart or stopped step cannot leave a tool looking live, or still retrying. No outcome is inferred. */
+export function clearRunningTools(task: Pick<Task, "toolActivity" | "hunt" | "journey" | "state" | "statusLine"> & Partial<Pick<Task, "retrying">>): void {
+  if (task.state === "running" && (task.toolActivity?.runningTool?.description === task.statusLine || (task.retrying !== undefined && task.retrying === task.statusLine))) task.statusLine = "Continuing work";
+  delete task.retrying;
   if (task.toolActivity) delete task.toolActivity.runningTool;
-  for (const work of Object.values(task.hunt?.work ?? {})) if (work.toolActivity) {
+  for (const work of Object.values(task.hunt?.work ?? {})) {
+    delete work.retrying;
+    if (!work.toolActivity) continue;
     if (work.activity === work.toolActivity.runningTool?.description) work.activity = "Continuing work";
     delete work.toolActivity.runningTool;
   }

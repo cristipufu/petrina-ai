@@ -763,6 +763,8 @@ export interface Hunt {
 export interface ReviewWork {
   todo?: string;
   activity?: string;
+  /** This agent's tool is retrying its turn by itself. Only this agent's own fresh work or turn end clears it. */
+  retrying?: string;
   toolActivity?: AgentToolActivity;
   clock?: StepClock;
   attempts: number;
