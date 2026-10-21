@@ -353,8 +353,25 @@ describe("real grouped review summaries", () => {
       await run.approve();
       const tags = ["code-reviewer-sonnet-high", "code-reviewer-gpt-6.1-sol-high"];
       await Promise.all(tags.map((tag) => run.ready(tag)));
-      for (const tag of tags) { run.go(`publish-1-${tag}`); run.go(`action-1-${tag}`); }
-      const acting = await engine.until((state) => Object.values(run.find(state).hunt?.work ?? {}).every((work) => work.activity === "Continuing work"), "the replacement reviewer's to-do and action");
+      const reviewersActing = (state: State) => ["reviewer:0", "reviewer:1"].every(key => {
+        const work = run.find(state).hunt?.work?.[key];
+        return work?.todo === "Checking the greeting" && work.activity === "Continuing work" && work.toolActivity?.lastActivity === "Reading the code";
+      });
+      // The failed attempt's completed tool already left "Continuing work". Hold the
+      // replacement's own progress so that old activity cannot satisfy this check.
+      run.go(`publish-1-${tags[1]}`); run.go(`action-1-${tags[1]}`);
+      const inherited = await engine.until(state => {
+        const work = run.find(state).hunt?.work;
+        return work?.["reviewer:0"]?.attempts === 2 && ["reviewer:0", "reviewer:1"].every(key => work[key]?.activity === "Continuing work");
+      }, "the replacement to retain the previous attempt's progress while its peer works");
+      expect(mainLine(run.find(inherited))).toBe("Drafting the greeting");
+      expect(reviewersActing(inherited)).toBe(false);
+      run.go(`publish-1-${tags[0]}`);
+      const named = await engine.until(state => run.find(state).hunt?.work?.["reviewer:0"]?.todo === "Checking the greeting", "the replacement's own to-do item");
+      expect(mainLine(run.find(named))).toBe("Checking the greeting");
+      expect(reviewersActing(named)).toBe(false);
+      run.go(`action-1-${tags[0]}`);
+      const acting = await engine.until(reviewersActing, "both reviewers' own to-do items and read actions");
       const task = run.find(acting);
       const replacement = [task.agent!, ...(task.helpers ?? [])].find((agent) => agent.reviewKey === "reviewer:0")!;
       expect(acting.profiles.find((profile) => profile.id === replacement.profileId)!.modelId).toBe("sonnet");

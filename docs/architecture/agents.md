@@ -30,6 +30,8 @@ The engine refuses an unknown role, any change to the Release Manager, a locked 
 
 ### What an agent is told
 
+Planned participants receive the current step's saved title as an explicit assignment alongside their role and task context. The full request, approved brief and role duties remain authoritative, including when the title is generic. Selection explanations and the rest of the plan stay out of this assignment; an unrecorded title stays unknown. Fresh Journey inputs include the assignment actually sent. Continued context packets retain it, send changed assignments, and omit unchanged background; short interruption and capacity continuations restate the current assignment without repeating the request. Side errands retain their own jobs.
+
 The agent receives its role's wording, inside Petrina's fixed rules for its kind of result (never its name, so an added role gets the rules of the built-in role it works like), then its purpose, one sentence on what it may change in this step and what it hands back, with the task, the coordinator's notes and the result format as before. Role contracts render saved wording into explicit templates; they never search or splice rendered English to retain runtime rules. The planner's fixed rules (the roles and profiles it may use with what each one does, the stage kinds and the rules) come after its wording and can't be replaced by it. Review independence and incremental scope belong to contract capabilities, so added findings roles inherit the same policy as the code-review contract. The Release Manager keeps its fixed delivery contract.
 
 ### Every step that may change the product comes before the final review
