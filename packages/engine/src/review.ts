@@ -521,7 +521,9 @@ export class Reviews {
   private async vote(task: MTask, findings: Task["findings"], voters: readonly Id[], signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
     const input = task.hunt?.input ? await this.input(task, signal) : undefined;
-    const ids = new Set(findings.map((finding) => finding.id));
+    // Every voter sees the same claims, never a faster peer’s current ballot.
+    const claims = structuredClone(findings).map(({ votes: _votes, verification: _verification, ...finding }) => finding);
+    const ids = new Set(claims.map((finding) => finding.id));
     // Keep each review position stable through model fallbacks and restarts.
     const planned = task.hunt?.voterProfiles ?? this.voters(task.plan!.stages[task.stageIndex]!);
     await this.together(
@@ -537,8 +539,8 @@ export class Reviews {
         profileId,
         work: async (copy, room, seat, used, agent, continuing, signal, selectionReason) => {
           let by = seat;
-          const missing = () => findings.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
-          const given = async () => [...await this.context.sectionsFor(scope, "verifier", key, this.turns.repositoryCopies.get(copy), undefined, input), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing()) }];
+          const missing = () => claims.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
+          const given = async () => [...await this.context.sectionsFor(scope, "verifier", key, this.turns.repositoryCopies.get(copy), undefined, input), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing(), { complete: true }) }];
           const check = (value: z.infer<typeof VerifyResult>) => {
             const toolId = this.k.profile(by)!.toolId;
             for (const verdict of value.verdicts) {
@@ -554,7 +556,7 @@ export class Reviews {
             recordStepResult(task, { findings: task.findings.filter((finding) => ids.has(finding.id)) });
             this.k.commitNow();
             const left = missing();
-            return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left)}` : undefined;
+            return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left, { complete: true })}` : undefined;
           };
           const heard = (id: Id) => { by = id; used(id); };
           if (continuing) await this.turns.turn(scope, "verifier", profileId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room });

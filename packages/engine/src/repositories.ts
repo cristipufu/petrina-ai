@@ -26,7 +26,7 @@ export function beginRepair(k: Pick<Kernel, "role" | "commitNow">, task: MTask, 
     return !repositoryPublished(work) && (!field || (work[field] ?? 0) < 2);
   });
   if (!products.length) return false;
-  const builder = task.plan?.stages.findIndex((stage) => stage.kind === "do" && k.role(stage.roleId)?.result === "build") ?? -1;
+  const builder = task.plan?.stages.findIndex((stage) => stage.kind === "do" && k.role(stage.roleId, task)?.result === "build") ?? -1;
   if (builder < 0) return false;
   for (const id of products) {
     const work = task.repositories.find((entry) => entry.productId === id)!;

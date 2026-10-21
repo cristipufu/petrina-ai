@@ -12,6 +12,7 @@ import type { GuideKeeper } from "./guide-keeper.js";
 import { takeMessages } from "./messages.js";
 import { currentSourcePointers } from "./source-pointers.js";
 import type { ReviewInput } from "./review-context.js";
+import * as git from "./git.js";
 import { verificationContext } from "./verification-context.js";
 
 export interface Section {
@@ -81,7 +82,7 @@ export class Context {
       if (cards.length) sections.push({ title: "Open follow-up cards", body: `${cards.map((card) => `- ${card.id}: ${card.title}\n  ${card.problem}`).join("\n")}\nIf this is the same bug as one of these cards, set "sameBug" to that card's id. If it is none of them, set "sameBug" to "none".` });
     }
     sections.push(...(review ? review.handedBack : this.handedBack(scope)));
-    if (!review && reads.includes("report")) sections.push(...await verificationContext(this.k.dataDir, repositoryView(scope), role?.result === "checks" ? Object.fromEntries((task.repositories ?? [repository]).map((work) => [work.productId, work.checks?.current && work.checks.tree ? work.checks.tree : "unavailable"])) : undefined));
+    if (!review && reads.includes("report")) sections.push(...await verificationContext(this.k.dataDir, repositoryView(scope), role?.result === "checks" ? Object.fromEntries(await Promise.all((task.repositories ?? [repository]).map(async (work) => [work.productId, work.checks?.current && work.checks.tree ? work.checks.tree : work.worktree ? await git.treeOf(work.worktree) : undefined]))) : undefined));
     return sections;
   }
 
@@ -113,7 +114,7 @@ export class Context {
 
   private handedBack(scope: RepositoryContext): Section[] {
     const { task } = scope;
-    return task.handedBack?.length ? [{ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId)?.name ?? "An earlier role"}${entry.productId ? ` · ${task.repositories?.find((work) => work.productId === entry.productId)?.source?.product.name ?? entry.productId}` : ""}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") }] : [];
+    return task.handedBack?.length ? [{ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId, task)?.name ?? "An earlier role"}${entry.productId ? ` · ${task.repositories?.find((work) => work.productId === entry.productId)?.source?.product.name ?? entry.productId}` : ""}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") }] : [];
   }
 
   /**
@@ -142,7 +143,7 @@ export class Context {
   /** The design's objections; for the architect following the coordinator's call, the call and what it must answer. */
   private objections(scope: RepositoryContext, roleId: Id): Section[] {
     const { task } = scope;
-    const call = this.k.role(roleId)?.result === "brief" ? followingCall(task as unknown as Task) : undefined;
+    const call = this.k.role(roleId, task)?.result === "brief" ? followingCall(task as unknown as Task) : undefined;
     if (!call) return task.objections.length ? [{ title: "Objections so far", body: formatObjections(task.objections as Task["objections"]) }] : [];
     const due = dueAnswers(task.objections as Task["objections"], call);
     const open = due.filter((objection) => objection.status === "open");
@@ -176,7 +177,7 @@ export class Context {
       return [saved, error, !run.logPath && !run.logError ? `- ${run.name}: This older run has only the saved output excerpt; no complete log was saved.` : ""].filter(Boolean);
     }) ?? [];
     return open.length ? [
-      { title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"]) },
+      { title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(open as Task["findings"], { complete: true }) },
       ...(logs.length ? [{ title: "Saved failed-check output (search these exact files for the failure; do not rerun just to recover the error)", body: logs.join("\n") }] : []),
     ] : [];
   }

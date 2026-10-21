@@ -25,6 +25,9 @@ it("links earlier evidence to its node, code and confirmed settings without pres
     expect(sections[0]!.body).not.toContain("Native settings and browser proof");
     expect(sections[1]!.body).toContain("Products with changed trees: api.");
     expect(sections[1]!.body).toContain("old passes never automatically satisfy this run");
+    const unknown = await verificationContext(root, task, { api: undefined, web: "same-tree" });
+    expect(unknown[1]!.body).not.toContain("Products with changed trees: api");
+    expect(unknown[1]!.body).toContain("tree comparison is unknown: api");
     const before = await readFile(file, "utf8");
     task.journey[0]!.agentResults![0]!.value = { summary: "Different later report", changes: [] };
     await verificationContext(root, task);

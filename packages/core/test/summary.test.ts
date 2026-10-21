@@ -186,6 +186,13 @@ describe("what comes next", () => {
     const maintenance: Task = { ...progressed, plan: { ...progressed.plan!, stages: progressed.plan!.stages.map((entry) => state.roles.find((role) => role.id === entry.roleId)?.result === "build" ? { ...entry, roleId: maintenanceRole.id } : entry) }, maintenance: { routineId: "routine", routineName: "Maintenance", scheduledAt: 0, queuedAt: 0, zone: "UTC", focus: "Inspect", input: "Inspect", role: maintenanceRole, profile: state.profiles[0]!, product: state.products[0]! } };
     expect(reviewRoundEnd(maintenance, stage, 3, state.roles).kind).toBe("send back");
     expect(nextLine(state, maintenance)).toContain("or fixes by the builder");
+    const buildIndex = maintenance.plan!.stages.findIndex(entry => entry.roleId === maintenanceRole.id);
+    for (const status of ["waiting", "paused"] as const) {
+      const fixing: Task = { ...maintenance, state: status, agent: undefined, fixing: true, stageIndex: buildIndex };
+      expect(nextLine(state, fixing)).toContain("Next: fixes by the builder");
+      // The task's frozen build contract takes precedence over later Library edits too.
+      expect(nextLine({ ...state, roles: [...state.roles, { ...maintenanceRole, result: "notes" }] }, fixing)).toContain("Next: fixes by the builder");
+    }
   });
 
   it("follows the design loop: review, another round, the reviewer's last round", () => {

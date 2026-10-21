@@ -38,6 +38,30 @@ async function bare() {
 }
 
 describe("immutable review inputs", () => {
+  it("gives queued voters complete reproduction evidence without current peer ballots", async () => {
+    const f = await bare();
+    const reviews = f.engine["reviews"];
+    const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high", "opus-high"] };
+    f.task.plan = { rationale: "Verify", plannerProfileId: "sol-high", stages: [stage] }; f.task.stageIndex = 0;
+    f.task.findings = [{ ...structuredClone(earlier), status: "open", answer: undefined, evidence: "Original full diagnostic ".repeat(100), steps: "Exact reproduction" }];
+    const signal = new AbortController().signal;
+    const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
+    f.task.hunt = { stageId: stage.id, round: 1, reported: {}, findings: 1, input };
+    const bodies: string[] = [];
+    const turn = spyOn(f.engine["turns"], "parallel").mockImplementation(async (_scope, _role, _profile, _copy, given) => {
+      bodies.push(JSON.stringify(await given()));
+      f.task.findings[0]!.votes = [{ by: "sol-high", toolId: "codex", verdict: "real", reason: "CURRENT-PEER-BALLOT" }];
+      return undefined as never;
+    });
+    const together = spyOn(reviews as unknown as { together: typeof reviews["together"] }, "together").mockImplementation(async (_task, members) => {
+      for (const member of members) await member.work(f.repo, () => true, member.profileId, () => {}, {} as never, false, signal);
+    });
+    try {
+      await reviews["vote"](f.task, f.task.findings, stage.profileIds, signal);
+      expect(bodies).toHaveLength(2);
+      for (const body of bodies) { expect(body).toContain("Exact reproduction"); expect(body).toContain(f.task.findings[0]!.evidence!); expect(body).not.toContain("CURRENT-PEER-BALLOT"); }
+    } finally { together.mockRestore(); turn.mockRestore(); await f.engine.shutdown(); }
+  });
   it("omits settled native failures while retaining open failures and settled agent findings", async () => {
     const f = await bare();
     try {

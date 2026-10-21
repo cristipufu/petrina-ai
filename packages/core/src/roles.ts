@@ -348,6 +348,6 @@ export function planUses(task: Pick<Task, "plan">, roleId: Id): boolean {
 export function workflowRoles(roles: readonly Role[]): Role[] { return activeRoles(roles).filter(role => role.category !== "maintenance"); }
 
 /** Execution uses the role wording frozen when a routine queued its task. */
-export function roleForTask(roles: readonly Role[], id: Id, task?: Pick<Task, "maintenance">): Role | undefined {
+export function roleForTask<R extends Pick<Role, "id">>(roles: readonly R[], id: Id, task?: Pick<Task, "maintenance">): R | Role | undefined {
   return task?.maintenance?.role.id === id ? task.maintenance.role : roles.find(role => role.id === id);
 }

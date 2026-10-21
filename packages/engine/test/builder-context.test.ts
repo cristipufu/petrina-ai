@@ -7,6 +7,27 @@ import { formatFindings } from "../src/prompts.js";
 import { Cleanup } from "../src/cleanup.js";
 import { makeWorld, removeDir, tempDir } from "./support.js";
 
+it("keeps complete repair evidence for fresh Builders and sends only changed repair records on continuation", async () => {
+  const root = tempDir("builder-repair-evidence-");
+  try {
+    const role = BUILT_IN_ROLES.find(entry => entry.result === "build")!;
+    const finding = { id: "repair", text: "The failure", evidence: "Diagnostic ".repeat(300), steps: "Reproduce the reported case", status: "open" as const, severity: "blocking" as const, raisedBy: "sol-high", confirmedBy: ["opus-high"], votes: [{ by: "grok-high", toolId: "grok", verdict: "real" as const, reason: "Specific independent proof" }] };
+    const task = { ...createDemoState(1_000_000_000).tasks[0]!, findings: [finding], fixing: true };
+    const sections = () => [{ title: "Review findings (answer every one by id; fix every Important one)", body: formatFindings(task.findings, { complete: true }) }];
+    const first = await builderContext(root, task, role, "builder", sections());
+    expect(first.sections[0]!.body).toContain(finding.evidence);
+    expect(first.sections[0]!.body).toContain("Specific independent proof");
+    const continued = await builderContext(root, task, role, "builder", sections(), first.snapshot);
+    expect(continued.sections.map(section => section.body).join("\n")).not.toContain(finding.evidence);
+    expect(continued.sections[1]!.body).toContain("Answer every open finding by id");
+    task.findings[0] = { ...finding, evidence: "New current reproduction" };
+    const changed = await builderContext(root, task, role, "builder", sections(), continued.snapshot);
+    expect(changed.sections.at(-1)!.body).toContain("New current reproduction");
+    expect(changed.sections.at(-1)!.body).toContain("Specific independent proof");
+    expect((await builderContext(root, task, role, "replacement", sections(), changed.snapshot)).sections).toEqual(sections());
+  } finally { removeDir(root); }
+});
+
 it("reduces unchanged finding records only within an intact native conversation and carries every changed field", async () => {
   const root = tempDir("review-finding-deltas-");
   try {

@@ -123,6 +123,10 @@ describe("a task's journey", () => {
     const context = { ...contextOf(state), roles };
     expect(beginAgentStep(task, roleId("build"), "sol-high", 100, roles).findingIds).toEqual(["fix"]);
     expect(portReviewerIndex(task, ["sol-high", "opus-high"], id => state.profiles.find(profile => profile.id === id)?.toolId, roles)).toBe(1);
+    const frozen = { ...roles.find(role => role.result === "build")!, id: "saved-maintenance" };
+    task.maintenance = { routineId: "routine", routineName: "Routine", scheduledAt: 0, queuedAt: 0, zone: "UTC", focus: "Inspect", input: "Inspect", role: frozen, profile: state.profiles[0]!, product: JSON.parse(JSON.stringify(state.products[0]!)) };
+    task.plan!.stages[0]!.roleId = frozen.id;
+    expect(portReviewerIndex(task, ["sol-high", "opus-high"], id => state.profiles.find(profile => profile.id === id)?.toolId, roles)).toBe(1);
     task.testedPatch = "earlier";
     expect(journeyView(task, context).nodes.some(node => node.state === "next" && node.roleId === roleId("checks"))).toBe(false);
     endAgentStep(task, { outcome: W.built }, 101);

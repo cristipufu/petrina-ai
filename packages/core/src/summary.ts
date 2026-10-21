@@ -203,7 +203,7 @@ function reviewersOf(task: Task, state: People, stage: Stage, at: number, from: 
 /** Final preparation resolves single-product patch equivalence; until then name the conditional test. */
 function finalTesting(state: People, task: Task): string | undefined {
   if (task.retest || task.testedPatch === undefined || task.acceptanceUnverified || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
-  const tester = task.plan?.stages.find((stage) => stage.kind === "do" && state.roles.find((role) => role.id === stage.roleId)?.result === "checks");
+  const tester = task.plan?.stages.find((stage) => stage.kind === "do" && roleForTask(state.roles, stage.roleId, task)?.result === "checks");
   if (!tester) return undefined;
   const versions = task.repositories?.every((work) => work.checks?.current && work.checks.tree && task.testedVersions?.[work.productId])
     ? task.repositories.map((work) => work.checks!.tree === task.testedVersions![work.productId]) : undefined;
@@ -246,7 +246,7 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
         const port = reviewers.length === 1 && task.portReview !== undefined && stage.profileIds.length > 1;
         const roles = [...new Set(reviewers.map((reviewer) => reviewer.roleId))];
         const roleId = roles[0];
-        const name = roles.length > 1 ? "review" : roleId && (WORK[roleId] ?? state.roles.find((role) => role.id === roleId)?.name.toLowerCase());
+        const name = roles.length > 1 ? "review" : roleId && (WORK[roleId] ?? roleForTask(state.roles, roleId, task)?.name.toLowerCase());
         if (reviewers.length) steps.push(`${port ? "a review of the port" : `${name || stage.title.toLowerCase()}${again}`}${by(state, ...reviewers.map((reviewer) => reviewer.profileId))}`);
         if (needsReviewCheck(state, task, at)) steps.push("your call");
         break;
@@ -254,14 +254,14 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
       case "do": {
         // After the first acceptance pass, the engine skips this stage in fix rounds and decides on
         // a final pass at the delivery check. A tester already on that final pass goes straight to the check.
-        if (state.roles.find((role) => role.id === stage.roleId)?.result === "checks" && task.testedPatch !== undefined && !(task.retest && at === task.stageIndex)) break;
-        if (state.roles.find(role => role.id === stage.roleId)?.result === "delivery") {
+        if (roleForTask(state.roles, stage.roleId, task)?.result === "checks" && task.testedPatch !== undefined && !(task.retest && at === task.stageIndex)) break;
+        if (roleForTask(state.roles, stage.roleId, task)?.result === "delivery") {
           // Petrina publishes by itself: a release's notes come from the Release Manager first.
           if (task.delivery === "release") steps.push(`${WORK[stage.roleId]}${by(state, stage.profileIds[0])}`);
           steps.push(PUBLISH[task.delivery]);
           break;
         }
-        const fixing = at === task.stageIndex && task.fixing && state.roles.find((role) => role.id === stage.roleId)?.result === "build";
+        const fixing = at === task.stageIndex && task.fixing && roleForTask(state.roles, stage.roleId, task)?.result === "build";
         steps.push(`${fixing ? "fixes by the builder" : (WORK[stage.roleId] ?? stage.title.toLowerCase())}${by(state, stage.profileIds[0])}`);
         break;
       }
@@ -313,7 +313,7 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
   // checkpoint or a disagreement, what follows it. The Check finder and the Guide keeper only prepare
   // a step: the card is already running, but the review, the test or the build they are getting ready
   // has not started, so that work is still what comes next.
-  const result = state.roles.find(role => role.id === task.agent?.roleId)?.result;
+  const result = roleForTask(state.roles, task.agent?.roleId ?? "", task)?.result;
   const preparing = result === "check-discovery" || result === "guide";
   const onStep = !preparing && (task.state === "running" || items.some((item) => item.blocking));
   if (!onStep) {
@@ -335,12 +335,12 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
       return shaped(after, canFixReview(state, task, stage, task.stageIndex) ? "fixes by the builder if blocking issues are found" : "your call if blocking issues are found");
     }
     default:
-      if (task.retest && state.roles.find((role) => role.id === stage.roleId)?.result === "checks") {
+      if (task.retest && roleForTask(state.roles, stage.roleId, task)?.result === "checks") {
         const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
         return shaped(upcoming(state, task, gate >= 0 ? gate : task.stageIndex + 1, 0), "fixes by the builder if acceptance checks fail");
       }
       // The Release Manager writing a release's notes: Petrina publishes it next.
-      if (state.roles.find(role => role.id === stage.roleId)?.result === "delivery") return task.delivery === "release" ? { steps: [PUBLISH.release] } : undefined;
+      if (roleForTask(state.roles, stage.roleId, task)?.result === "delivery") return task.delivery === "release" ? { steps: [PUBLISH.release] } : undefined;
       return shaped(upcoming(state, task, task.stageIndex + 1, 0));
   }
 }

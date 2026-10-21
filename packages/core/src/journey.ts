@@ -6,7 +6,7 @@
 import { callOn, followingCall } from "./call.js";
 import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, RepositoryState, Role, Stage, Task } from "./model.js";
 import { queueOf } from "./scheduler.js";
-import { reviewerAt } from "./roles.js";
+import { reviewerAt, roleForTask } from "./roles.js";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -191,8 +191,8 @@ function placeOf(task: Omit<JourneyTask, "journey">, execution: JourneyExecution
  * The reviewer who looks at a port of an already reviewed change, by place in the stage's reviewers: the first on a
  * tool other than the latest builder's, or else the first. The engine then substitutes for unavailable tools.
  */
-export function portReviewerIndex(task: Pick<Task, "plan" | "builderSession">, profileIds: readonly Id[], toolOf: (profileId: Id) => Id | undefined, roles: JourneyContext["roles"]): number {
-  const builder = task.builderSession?.toolId ?? toolOf(task.plan?.stages.find((stage) => roles.find(role => role.id === stage.roleId)?.result === "build")?.profileIds[0] ?? "");
+export function portReviewerIndex(task: Pick<Task, "plan" | "builderSession" | "maintenance">, profileIds: readonly Id[], toolOf: (profileId: Id) => Id | undefined, roles: JourneyContext["roles"]): number {
+  const builder = task.builderSession?.toolId ?? toolOf(task.plan?.stages.find((stage) => roleForTask(roles, stage.roleId, task)?.result === "build")?.profileIds[0] ?? "");
   return Math.max(0, profileIds.findIndex((profileId) => toolOf(profileId) !== builder));
 }
 

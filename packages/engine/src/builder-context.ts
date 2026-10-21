@@ -23,7 +23,9 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
     return { section, key: `${section.title}#${occurrence}`, digest: hash(section.body) };
   });
   const versions = (task.repositories ?? [task]).map((work) => `${work.productId}: base ${work.baseSha ?? "not prepared"}`).join("\n");
-  const findingRecords = options.findings && sections.some((section) => section.title === "Findings so far (confirm or dispute by id)") ? options.findings : undefined;
+  const answering = (title: string) => title === "Review findings (answer every one by id; fix every Important one)";
+  const findingSection = (title: string) => title === "Findings so far (confirm or dispute by id)" || answering(title);
+  const findingRecords = sections.some(section => findingSection(section.title)) ? options.findings ?? (role.result === "build" ? task.findings.filter(finding => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(task.productId))) : undefined) : undefined;
   const packet = `# Current task: ${task.title}\n${task.description}\n\n## Current repository versions\n${versions}\n\n${sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n")}\n${findingRecords ? `\n## Complete recorded finding fields\n${JSON.stringify(findingRecords, null, 2)}\n` : ""}`;
   const digest = hash(packet);
   const file = join(root, `${digest}.md`);
@@ -40,13 +42,13 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
     if (!intact || !previous) return { sections: all, snapshot };
     let reducedFindings = false;
     const sent = keyed.flatMap(({ section, key, digest }) => {
-      if (section.title === "Findings so far (confirm or dispute by id)" && options.findings && previous.findingHashes && findingHashes) {
-        const changed = options.findings.filter((finding) => findingHashes[finding.id] !== previous.findingHashes![finding.id]);
+      if (findingSection(section.title) && findingRecords && previous.findingHashes && findingHashes) {
+        const changed = findingRecords.filter((finding) => findingHashes[finding.id] !== previous.findingHashes![finding.id]);
         const removed = Object.keys(previous.findingHashes).filter((id) => !(id in findingHashes));
         reducedFindings = true;
         return [
-          { title: "Current finding status index", body: `${options.findings.map((finding) => `- ${finding.id}: ${finding.status}, ${FINDING_TAG[finding.severity]}`).join("\n") || "No current findings."}${removed.length ? `\nNo longer present: ${removed.join(", ")}.` : ""}\nUnchanged records are in the complete current context packet above. Reopening a settled finding still requires fresh evidence on the current code.` },
-          ...(changed.length ? [{ title: "New or changed finding records (confirm or dispute by id)", body: formatFindings(changed, { complete: true }) }] : []),
+          { title: "Current finding status index", body: `${findingRecords.map((finding) => `- ${finding.id}: ${finding.status}, ${FINDING_TAG[finding.severity]}`).join("\n") || "No current findings."}${removed.length ? `\nNo longer present: ${removed.join(", ")}.` : ""}\n${answering(section.title) ? "Answer every open finding by id, including unchanged records. " : ""}Unchanged records are in the complete current context packet above. Reopening a settled finding still requires fresh evidence on the current code.` },
+          ...(changed.length ? [{ title: answering(section.title) ? "New or changed review findings (answer every one by id; fix every Important one)" : "New or changed finding records (confirm or dispute by id)", body: formatFindings(changed, { complete: true }) }] : []),
         ];
       }
       if (options.design && options.knownSections?.includes(section.title)) return [];
