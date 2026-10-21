@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { EditorPanel } from "./EditorPanel";
+import { useEffect, useId, useRef, useState } from "react";
+import { EditorPanel, FormSection } from "./EditorPanel";
 import { FolderGit2 } from "lucide-react";
 import { suggestProductName } from "@petrina/core";
 import { failureText, sim, useEngineStatus, useSim } from "../engine";
@@ -11,6 +11,7 @@ import { ConfirmDialog, WaitingLine } from "./bits";
  * `waiting`: a notification's item that opens once this closes.
  */
 export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: string; onClose: () => void; onAdded: (productId: string) => void }) {
+  const id = useId();
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
   const state = useSim();
@@ -56,12 +57,12 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
 
   return (
     <>
-      <EditorPanel title="Add a product" description="Point Petrina at a local clone of the product's GitHub repository." icon={<FolderGit2 size={24} />} busy={busy} onClose={close} footer={<>
+      <EditorPanel title="Add a product" description="Connect a local repository so your agents can work on it." icon={<FolderGit2 size={24} />} busy={busy} onClose={close} footer={<>
 
-          <span className="spacer" />
           <button className="btn quiet" disabled={busy} onClick={close}>
             {note ? "Close" : "Cancel"}
           </button>
+          <span className="spacer" />
           {note ? (
             <button key="done" className="btn lead" autoFocus onClick={() => onAdded(product.id)}>
               {added.already ? "Show it" : "Done"}
@@ -73,37 +74,16 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
           )}
       </>}>
         <WaitingLine text={waiting} />
-        <label className="product-field">
-          Folder of the local clone
-          <input
-            autoFocus
-            className="field"
-            aria-label="Folder of the local clone"
-            placeholder="/Users/you/code/my-product"
-            value={path}
-            onChange={(event) => edit(() => {
-              setPath(event.target.value);
-              setName(suggestProductName(event.target.value));
-            })}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void add();
-            }}
-          />
-        </label>
-        <label className="product-field">
-          Name
-          <input
-            className="field"
-            value={name}
-            onChange={(event) => edit(() => setName(event.target.value))}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void add();
-            }}
-          />
-        </label>
+        <FormSection title="Repository" description="Choose an existing local clone. Agents work in separate copies, so your clone stays untouched.">
+          <label className="form-field"><span className="field-label">Folder of the local clone</span><input autoFocus className="field" aria-label="Folder of the local clone" aria-describedby={`${id}-folder-help`} placeholder="~/code/my-product" value={path} onChange={event => edit(() => { setPath(event.target.value); setName(suggestProductName(event.target.value)); })} onKeyDown={event => { if (event.key === "Enter") void add(); }} /></label>
+          <p className="hint" id={`${id}-folder-help`}>Paste the folder path from Finder or your terminal.</p>
+        </FormSection>
+        <FormSection title="Product details" description="The name your squad uses throughout Petrina.">
+          <label className="form-field"><span className="field-label">Name</span><input className="field" value={name} placeholder="My product" onChange={event => edit(() => setName(event.target.value))} onKeyDown={event => { if (event.key === "Enter") void add(); }} /></label>
+        </FormSection>
         {!live && <p className="muted" role="status">Waiting for the engine before adding a product.</p>}
         {error && (
-          <p className="error-text" role="alert" style={{ margin: "4px 0 8px" }}>
+          <p className="error-text form-feedback" role="alert">
             {error}
           </p>
         )}
@@ -120,7 +100,6 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
             )}
           </p>
         )}
-        <p className="note">Each task gets its own working copy, so your clone stays untouched.</p>
       </EditorPanel>
       {discard && <ConfirmDialog title="Discard product changes?" confirm="Discard changes" cancel="Keep editing" onCancel={() => setDiscard(false)} onConfirm={onClose}><p>This product has not been added. Your unsaved choices will be lost.</p></ConfirmDialog>}
     </>

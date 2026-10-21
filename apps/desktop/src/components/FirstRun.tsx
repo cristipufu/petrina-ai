@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Check, ChevronDown, ChevronRight, FolderGit2 } from "lucide-react";
 import { SETUP_STEPS, STARTER_IDEAS, toolsGate, type Clone, type DeliveryMode, type SetupStep, type State, type TaskKind } from "@petrina/core";
@@ -405,13 +406,13 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
         {state.products.length > 1 ? (
           <label className="product-pick">
             <span>Product</span>
-            <select className="select" value={productId} onChange={(event) => setDraft({ productId: event.target.value, delivery: undefined, approveDelivery: undefined })} disabled={starting}>
+            <Select className="select" value={productId} onChange={(event) => setDraft({ productId: event.target.value, delivery: undefined, approveDelivery: undefined })} disabled={starting}>
               {state.products.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         ) : (
           product && (

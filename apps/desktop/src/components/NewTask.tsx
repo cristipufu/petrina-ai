@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { ChevronDown, Package, Search } from "lucide-react";
 import { EditorPanel } from "./EditorPanel";
 import { StartFromFields } from "./TaskStart";
@@ -161,7 +162,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
             <summary><span><strong>{product.name}</strong><span className="quiet-text">{choice.startFrom.kind === "default" ? "Default branch" : choice.startFrom.kind === "branch" ? choice.startFrom.name || "Choose a branch" : choice.startFrom.value || "Choose a pull request"} · {choice.delivery === "local" ? "Commit and push" : choice.delivery === "release" ? "Publish a release" : choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</span></span><ChevronDown size={16} aria-hidden="true" /></summary>
             <div className="new-task-product-fields">
               <StartFromFields product={product.name} value={choice.startFrom} onChange={(startFrom) => change(product.id, { startFrom })} />
-              <label>When ready for {product.name}<select className="select" value={choice.delivery} onChange={(event) => change(product.id, { delivery: event.target.value as DeliveryMode })}><option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option></select></label>
+              <label>When ready for {product.name}<Select className="select" value={choice.delivery} onChange={(event) => change(product.id, { delivery: event.target.value as DeliveryMode })}><option value="pull-request">{choice.startFrom.kind === "pull-request" ? "Update pull request" : "Open a pull request"}</option><option value="local">Commit and push to the starting branch</option><option value="release">Publish a release</option></Select></label>
               {choice.delivery === "release" && choice.startFrom.kind !== "default" && <p className="note bad" role="alert">{product.name}: Releases use the default branch.</p>}
               <button className="btn quiet small" aria-label={`Remove ${product.name}`} onClick={() => setChoices(choices.filter((entry) => entry.productId !== product.id))}>Remove product</button>
             </div>

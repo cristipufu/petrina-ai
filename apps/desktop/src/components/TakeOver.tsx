@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { SquareTerminal, Undo2 } from "lucide-react";
 import { TAKE_OVER_WORDS, takeOverBlock, toolName, type HandBackPreview, type Id, type Launched, type State, type Task } from "@petrina/core";
@@ -216,13 +217,13 @@ function TakeOverDialog({ task, state, find, onClose, onToast }: { task: Task; s
             {terminal ? (
               <label className="field-row">
                 <span>Opens in</span>
-                <select className="select" value={terminal.id} onChange={(event) => sim.setTerminal(event.target.value)}>
+                <Select className="select" value={terminal.id} onChange={(event) => sim.setTerminal(event.target.value)}>
                   {terminals.map((entry) => (
                     <option key={entry.id} value={entry.id}>
                       {entry.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             ) : (
               <p className="label warn">{TAKE_OVER_WORDS.noTerminal}</p>

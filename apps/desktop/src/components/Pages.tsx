@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { Profiles } from "./Profiles";
 import { followLink, routeHref } from "../routes";
 import { Pause, Play, SquareTerminal, Undo2 } from "lucide-react";
@@ -107,14 +108,14 @@ function TerminalPicker({ state }: { state: State }) {
         <div className="tile" style={{ minHeight: 0 }}>
           <strong style={{ fontWeight: 600 }}>Take over opens in</strong>
           {terminals.length ? (
-            <select className="select" aria-label="The terminal take over opens in" value={state.terminal ?? ""} onChange={(event) => sim.setTerminal(event.target.value)}>
+            <Select className="select" aria-label="The terminal take over opens in" value={state.terminal ?? ""} onChange={(event) => sim.setTerminal(event.target.value)}>
               <option value="">The usual one ({terminals[0]!.name})</option>
               {terminals.map((terminal) => (
                 <option key={terminal.id} value={terminal.id}>
                   {terminal.name}
                 </option>
               ))}
-            </select>
+            </Select>
           ) : (
             <div style={{ color: "var(--text-2)" }}>Petrina can't find a terminal on this machine. Take over still works: copy the command it gives you and run it in any terminal.</div>
           )}

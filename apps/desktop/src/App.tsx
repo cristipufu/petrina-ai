@@ -80,6 +80,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const viewport = useViewport();
   const [route, navigate] = useAppRoute();
   const { view, product, sheet, productSettings } = route;
+  const productSettingsOpen = view === "products" && Boolean(productSettings && find.product(productSettings));
   const setSheet = useCallback((next: typeof sheet) => navigate((previous) => ({ ...previous, sheet: next })), [navigate]);
   const [rolePanel, setRolePanel] = useState<RolePanelTarget>();
   const [routineDialog, setRoutineDialog] = useState(false);
@@ -124,8 +125,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const focusArea = useRef<KeyArea | undefined>(undefined);
   const { toasts, showToast, toast, dismiss } = useToasts();
   // Read by notification clicks, which arrive outside React's renders.
-  const latest = useRef({ state, dialog: creating || addingProduct || Boolean(rolePanel) || routineDialog, sheet: sheet !== undefined });
-  latest.current = { state, dialog: creating || addingProduct || Boolean(rolePanel) || routineDialog, sheet: sheet !== undefined };
+  const latest = useRef({ state, dialog: creating || addingProduct || Boolean(rolePanel) || routineDialog || productSettingsOpen, sheet: sheet !== undefined });
+  latest.current = { state, dialog: creating || addingProduct || Boolean(rolePanel) || routineDialog || productSettingsOpen, sheet: sheet !== undefined };
 
   // What the top bar gives up as the window narrows (or zooms, or text grows), in this order: the
   // wordmark and repeated wording, then the search field, the pool's squares, then pool and theme
@@ -312,15 +313,15 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     const el = id ? Array.from(document.querySelectorAll<HTMLElement>(`[${attr}]`)).find((node) => node.getAttribute(attr) === id) : area === "inbox" ? inboxPanel.current : document.querySelector<HTMLElement>(view === "history" ? ".history-page" : ".board");
     if (id && !pressing.current) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
     // Give Tab a starting point at the highlighted item, without taking focus from a field.
-    if (el && !palette && !creating && !addingProduct && !rolePanel && !routineDialog && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
+    if (el && !palette && !creating && !addingProduct && !rolePanel && !routineDialog && !productSettingsOpen && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
       el.focus({ preventScroll: true });
       focusArea.current = undefined;
     }
-  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, rolePanel, routineDialog, shortcuts, history.page]);
+  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, rolePanel, routineDialog, productSettingsOpen, shortcuts, history.page]);
 
   useGlobalKeys({
     palette,
-    modal: creating || addingProduct || shortcuts || Boolean(rolePanel) || routineDialog,
+    modal: creating || addingProduct || shortcuts || Boolean(rolePanel) || routineDialog || productSettingsOpen,
     sheetOpen: Boolean(sheet),
     area,
     singleKeys,
@@ -328,7 +329,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     boardId: currentBoardId,
     inboxId: currentInboxId,
     togglePalette: () => {
-      if (creating || addingProduct || rolePanel || routineDialog) return;
+      if (creating || addingProduct || rolePanel || routineDialog || productSettingsOpen) return;
       if (palette) setPalette(false);
       else openPalette();
     },

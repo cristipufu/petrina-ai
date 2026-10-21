@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { involvesProduct } from "@petrina/core";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { DELIVERY_LABEL, type Column, type Product, type ProductsUsage, type State } from "@petrina/core";
@@ -239,7 +239,7 @@ export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: { s
           </thead>
           <tbody>
             {stats.map((entry) => (
-              <Fragment key={entry.product.id}><tr
+              <tr key={entry.product.id}
                 className={entry.active ? "" : "quiet"}
                 onClick={(event) => {
                   if (!(event.target as HTMLElement).closest("button")) onPick(entry.product.id);
@@ -269,14 +269,13 @@ export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: { s
                 <td>
                   <span className="delivery-summary">{DELIVERY_LABEL[entry.product.delivery ?? "pull-request"]} · {(entry.product.approveDelivery ?? true) ? "asks first" : "ships automatically"}</span>
                 </td>
-                <td><button className="btn small" data-product-settings={entry.product.id} aria-label={`Settings for ${entry.product.name}`} aria-expanded={settings === entry.product.id} aria-controls={`product-editor-${entry.product.id}`} onClick={() => onSettings(settings === entry.product.id ? undefined : entry.product.id)}>Settings</button></td>
+                <td><button className="btn small" data-product-settings={entry.product.id} aria-label={`Settings for ${entry.product.name}`} aria-haspopup="dialog" aria-expanded={settings === entry.product.id} aria-controls={`product-editor-${entry.product.id}`} onClick={() => onSettings(settings === entry.product.id ? undefined : entry.product.id)}>Settings</button></td>
               </tr>
-              {settings === entry.product.id && <tr className="product-settings-row"><td className="product-editor-cell" colSpan={PIPE.length + 6}><ProductEditor product={entry.product} state={state} onClose={() => closeSettings(entry.product.id)} onRemoved={() => { onSettings(undefined); table.current?.focus(); }} /></td></tr>}
-              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
+      {state.products.filter(product => product.id === settings).map(product => <ProductEditor key={product.id} product={product} state={state} onClose={() => closeSettings(product.id)} onRemoved={() => { onSettings(undefined); table.current?.focus(); }} />)}
     </div>
   );
 }

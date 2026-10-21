@@ -105,7 +105,7 @@ describe("navigation in the app", () => {
     expect(location.pathname).toBe("/tasks/guest-checkout/plan");
     expect(new URL(location.href).searchParams.has("node")).toBe(false);
   });
-  it("edits a product in the existing portfolio row and keeps app settings separate", async () => {
+  it("edits a product in the shared side panel and keeps app settings separate", async () => {
     await mount("/products?demo");
     const products = simulator.getState().products.length;
     expect(host!.querySelectorAll(".product-pick")).toHaveLength(products);
@@ -113,7 +113,8 @@ describe("navigation in the app", () => {
     await click('[data-product-settings="shop"]');
     expect(location.pathname).toBe("/products/shop/settings");
     const editor = host!.querySelector("#product-editor-shop")!;
-    expect(editor.closest("tr")?.previousElementSibling?.querySelector(".product-pick")?.textContent).toBe("Shop");
+    expect(editor.closest("table")).toBeNull();
+    expect(editor.matches(".editor-panel[role=dialog]")).toBe(true);
     expect(host!.querySelectorAll(".product-pick")).toHaveLength(products);
     const input = editor.querySelector<HTMLInputElement>("input")!;
     await act(async () => {
@@ -132,6 +133,24 @@ describe("navigation in the app", () => {
     await click('.rail a[href^="/settings"]');
     expect(host!.querySelector(".settings-page")).not.toBeNull();
     expect(host!.querySelector(".product-editor, #settings-products")).toBeNull();
+  });
+  it("opens product settings by address and reserves shortcuts for the modal", async () => {
+    await mount("/products/shop/settings?demo");
+    expect(host!.querySelector(".editor-panel")?.getAttribute("id")).toBe("product-editor-shop");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true, cancelable: true })));
+    expect(host!.querySelector(".command-palette")).toBeNull();
+    expect(location.pathname).toBe("/products/shop/settings");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    expect(host!.querySelector(".editor-panel")).toBeNull();
+    expect(location.pathname).toBe("/products");
+    expect(document.activeElement).toBe(host!.querySelector('[data-product-settings="shop"]'));
+  });
+  it("keeps navigation shortcuts available when a product settings address is missing", async () => {
+    await mount("/products/missing/settings?demo");
+    expect(host!.querySelector(".editor-panel")).toBeNull();
+    expect(host!.textContent).toContain("This link is unavailable.");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true, cancelable: true })));
+    expect(host!.querySelector(".command-palette")).not.toBeNull();
   });
   it("keeps review outcomes and usage in Analytics, leaving Agents focused on the pool", async () => {
     await mount("/agents?demo");

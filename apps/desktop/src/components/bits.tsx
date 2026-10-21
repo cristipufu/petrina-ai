@@ -322,14 +322,15 @@ export function useViewport(): { width: number; height: number } {
  * Ask before something that cannot be taken back, or that loses what the coordinator typed. It opens
  * over everything, Escape or Cancel keeps things as they were, and focus goes back where it was.
  */
-export function ConfirmDialog({ title, confirm, cancel = "Cancel", onConfirm, onCancel, children }: { title: string; confirm: string; cancel?: string; onConfirm: () => void; onCancel: () => void; children?: ReactNode }) {
+export function ConfirmDialog({ title, confirm, cancel = "Cancel", onConfirm, onCancel, children, busy = false }: { title: string; confirm: string; cancel?: string; onConfirm: () => void; onCancel: () => void; children?: ReactNode; busy?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const id = useId();
-  useFocusTrap(box, onCancel);
+  const close = () => { if (!busy) onCancel(); };
+  useFocusTrap(box, close);
   return (
     <>
-      <div className="dialog-scrim" onClick={onCancel} />
-      <div ref={box} className="dialog confirm" role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={children ? `${id}-body` : undefined} tabIndex={-1}>
+      <div className="dialog-scrim confirm-scrim" onClick={close} />
+      <div ref={box} className="dialog confirm" aria-busy={busy || undefined} role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={children ? `${id}-body` : undefined} tabIndex={-1}>
         <h2 className="heading" id={`${id}-title`}>
           {title}
         </h2>
@@ -339,10 +340,10 @@ export function ConfirmDialog({ title, confirm, cancel = "Cancel", onConfirm, on
           </div>
         )}
         <div className="foot">
-          <button className="btn quiet" autoFocus onClick={onCancel}>
+          <button className="btn quiet" autoFocus disabled={busy} onClick={close}>
             {cancel}
           </button>
-          <button className="btn lead" onClick={onConfirm}>
+          <button className="btn lead" disabled={busy} onClick={onConfirm}>
             {confirm}
           </button>
         </div>

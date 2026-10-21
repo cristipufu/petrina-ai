@@ -1,3 +1,4 @@
+import { Select } from "../Select";
 import { TaskStart } from "../TaskStart";
 // The task sheet's Plan tab: why this plan, its risk, and its stages, with who works on each.
 
@@ -33,13 +34,13 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
   const select = (stage: Stage, list: "profileIds" | "reviewerProfileIds", index: number, value: string, editable: boolean) => {
     const assignment = (list === "profileIds" ? stage.assignments : stage.reviewerAssignments)?.[index];
     return <div className="stage-profile">{editable ? (
-      <select className="select" value={value} aria-label={`Who does ${stage.title.toLowerCase()}`} onChange={(event) => sim.setStageProfile(task.id, stage.id, list, index, event.target.value)}>
+      <Select className="select" value={value} aria-label={`Who does ${stage.title.toLowerCase()}`} onChange={(event) => sim.setStageProfile(task.id, stage.id, list, index, event.target.value)}>
         {state.profiles.map((profile) => (
           <option key={profile.id} value={profile.id}>
             {profileText(profile, find, true)}
           </option>
         ))}
-      </select>
+      </Select>
     ) : (
       <ProfileText profile={find.profile(value)} find={find} full />
     )}{assignment && <details className="assignment-reason"><summary>Why this agent</summary><p>{assignment.reason ?? "A reason was not recorded for this assignment."}</p>

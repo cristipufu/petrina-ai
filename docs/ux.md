@@ -95,6 +95,8 @@ Implementation details and regression examples belong in the relevant feature te
 
 ## Visual language
 
+Forms share the side editor’s header, scrollable grouped fields and fixed footer. Select fields use the same spacing, theme surfaces, focus ring and chevron throughout the app, retaining native keyboard selection. Discard and removal confirmations are compact centred dialogs sized to their content, with reachable actions at enlarged text sizes.
+
 - Six looks, three light and three dark: Ink, Clay, Tide, Midnight, Ember and Fathom. Each sets its surfaces, accent, type, corners and spacing. Light looks stay light and dark looks stay dark. Semantic colours stay the same in every look: running blue, needs-you amber, done green, failed red, queued slate. The accent stays a different hue from those, and from the gold of something that needs you.
 - The accent is the one solid button, New task, and selection. Decisions lead with a dark button on a light look and a pale button on a dark look. Secondary actions are neutral surfaces or plain text. The choice is in the top bar (and in More when the window is narrow), at the top of Settings, and in the command palette.
 - Fewer borders, pills and chips: states, counts and tool information are quiet text.

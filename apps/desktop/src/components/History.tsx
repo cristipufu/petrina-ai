@@ -1,5 +1,6 @@
+import { Select } from "./Select";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Ban, CheckCircle2, CircleMinus, Search, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowDownWideNarrow, Ban, CheckCircle2, CircleMinus, Search, X } from "lucide-react";
 import { HISTORY_STATUSES, historyDeliveryItem, type HistoryStatus, landingOf, type HistoryItem, type HistoryPage, type State } from "@petrina/core";
 import { failureText, sim } from "../engine";
 import { type Lookup } from "../lib";
@@ -73,22 +74,21 @@ export function History({ page, error, reload, position, onPosition, find, selec
   const newest = { ...(position?.status ? { status: position.status } : {}), ...(position?.query ? { query: position.query } : {}) };
   const search = (value: string) => onPosition({ ...(position?.status ? { status: position.status } : {}), ...(value.trim() ? { query: value.trim() } : {}) });
   return <div className="history-page page" tabIndex={-1} onFocus={(event) => { if (!(event.target as HTMLElement).closest("[data-task-id]")) onFocus(); }}>
-    <div className="history-toolbar">
-      <p className="quiet-text">Completed and cancelled tasks, newest first.</p>
-      <div className="history-filters">
-      <label className="history-status"><span>Status</span><select className="select" aria-label="Status" value={position?.status ?? ""} onChange={event => onPosition({ ...(position?.query ? { query: position.query } : {}), ...(event.target.value ? { status: event.target.value as HistoryStatus } : {}) })}><option value="">All statuses</option>{Object.entries(HISTORY_STATUSES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <form className="history-search" role="search" onSubmit={(event) => { event.preventDefault(); search(query); }}>
-        <Search size={16} aria-hidden="true" />
-        <input type="search" aria-label="Search finished task titles" placeholder="Find a finished task" value={query} onChange={(event) => setQuery(event.target.value)} />
-        {query && <button className="btn quiet small icon" type="button" aria-label="Clear history search" onClick={() => { setQuery(""); search(""); }}><X size={15} aria-hidden="true" /></button>}
-        <button className="btn small outline" type="submit">Search</button>
-      </form>
+    <header className="history-header">
+      <div className="history-toolbar">
+        <form className="history-search" role="search" onSubmit={event => { event.preventDefault(); search(query); }}>
+          <Search size={17} aria-hidden="true" />
+          <input type="search" aria-label="Search finished task titles" placeholder="Find a finished task" value={query} onChange={event => setQuery(event.target.value)} />
+          {query && <button className="btn quiet small icon" type="button" aria-label="Clear history search" onClick={() => { setQuery(""); search(""); }}><X size={15} aria-hidden="true" /></button>}
+          <button className="btn small" type="submit">Search</button>
+        </form>
+        <label className="history-status"><span>Status</span><Select aria-label="Status" value={position?.status ?? ""} onChange={event => onPosition({ ...(position?.query ? { query: position.query } : {}), ...(event.target.value ? { status: event.target.value as HistoryStatus } : {}) })}><option value="">All statuses</option>{Object.entries(HISTORY_STATUSES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>
       </div>
-    </div>
+      <div className="history-summary"><span className="num" aria-live="polite">{page ? <>{page.total.toLocaleString()} {page.total === 1 ? "task" : "tasks"}{position?.status ? ` · ${HISTORY_STATUSES[position.status]}` : " in history"}{position?.query ? ` matching “${position.query}”` : ""}</> : error ? "History unavailable" : "Finding finished tasks…"}</span><span className="history-order"><ArrowDownWideNarrow size={14} aria-hidden="true" />Newest first</span></div>
+    </header>
     {error ? <div className="history-empty" role="alert"><p>{error}</p><button className="btn outline" onClick={reload}>Try again</button>{position?.cursor && <button className="btn quiet" onClick={() => onPosition(newest)}>Back to the newest tasks</button>}</div>
       : !page ? <p className="history-empty" role="status">Loading task history…</p>
       : <>
-        <div className="history-summary" aria-live="polite"><span className="num">{page.total.toLocaleString()} {page.total === 1 ? "task" : "tasks"}{position?.status ? ` · ${HISTORY_STATUSES[position.status]}${position?.query ? ` matching “${position.query}”` : ""}` : position?.query ? ` matching “${position.query}”` : " in history"}</span></div>
         {page.items.length ? <div className="history-grid">{page.items.map((item) => {
           const date = item.finishedAt ?? item.createdAt;
           const delivered = item.state !== "cancelled" && (item.deliveries?.length ? item.deliveries.every((work) => work.nothingToPublish || landingOf(historyDeliveryItem(item, work)) === "landed") : ["landed", "no-changes"].includes(landingOf(item)));

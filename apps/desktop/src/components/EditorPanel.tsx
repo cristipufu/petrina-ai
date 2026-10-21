@@ -3,8 +3,8 @@ import { X } from "lucide-react";
 import { useFocusTrap } from "./bits";
 
 /** Creation and editing share placement, focus, scrolling and a footer that stays within reach. */
-export function EditorPanel({ title, dialogLabel, caption, description, icon, children, footer, onClose, busy = false, closeLabel = "Close", className = "", bodyClassName = "", onKeyDown }: {
-  title: string; dialogLabel?: string; caption?: string; description?: ReactNode; icon?: ReactNode; children: ReactNode; footer: ReactNode;
+export function EditorPanel({ title, dialogLabel, caption, description, icon, children, footer, id: panelId, onClose, busy = false, closeLabel = "Close", className = "", bodyClassName = "", onKeyDown }: {
+  id?: string; title: string; dialogLabel?: string; caption?: string; description?: ReactNode; icon?: ReactNode; children: ReactNode; footer: ReactNode;
   onClose: () => void; busy?: boolean; closeLabel?: string; className?: string; bodyClassName?: string; onKeyDown?: KeyboardEventHandler<HTMLElement>;
 }) {
   const panel = useRef<HTMLElement>(null), id = useId();
@@ -12,7 +12,7 @@ export function EditorPanel({ title, dialogLabel, caption, description, icon, ch
   useFocusTrap(panel, close);
   return <>
     <div className="scrim editor-scrim" onClick={close} />
-    <section ref={panel} className={`sheet panel editor-panel ${className}`} role="dialog" aria-modal="true" aria-labelledby={id} aria-label={dialogLabel ?? title} aria-busy={busy || undefined} tabIndex={-1} onKeyDown={onKeyDown}>
+    <section id={panelId} ref={panel} className={`sheet panel editor-panel ${className}`} role="dialog" aria-modal="true" aria-labelledby={id} aria-label={dialogLabel ?? title} aria-busy={busy || undefined} tabIndex={-1} onKeyDown={onKeyDown}>
       <header className="editor-header">
         {icon && <span className="editor-icon" aria-hidden="true">{icon}</span>}
         <div className="editor-heading">{caption && <p className="editor-caption">{caption}</p>}<h1 id={id}>{title}</h1>{description && <div className="editor-description">{description}</div>}</div>
@@ -22,4 +22,10 @@ export function EditorPanel({ title, dialogLabel, caption, description, icon, ch
       <footer className="editor-footer">{footer}</footer>
     </section>
   </>;
+}
+
+/** Related fields use the same heading, help text, spacing and divider in every editor. */
+export function FormSection({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+  const id = useId();
+  return <section className="form-section" aria-labelledby={id}><header className="form-section-heading"><h2 id={id}>{title}</h2>{description && <p>{description}</p>}</header><div className="form-section-fields">{children}</div></section>;
 }
