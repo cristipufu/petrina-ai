@@ -11,9 +11,10 @@ export class ProfileChoiceReader {
   private cache = new Map<string, { at: number; choices: ProfileChoices }>();
   private pending = new Map<string, Promise<ProfileChoices>>();
   private tools = new Map<string, Promise<unknown>>();
+  private lingering = new Map<string, Promise<void>>();
   private stopping = new AbortController();
   constructor(private readonly k: Kernel) {}
-  async stop(): Promise<void> { this.stopping.abort(); await Promise.allSettled([...this.pending.values()]); }
+  async stop(): Promise<void> { this.stopping.abort(); await Promise.allSettled([...this.pending.values()]); await Promise.allSettled([...this.lingering.values()]); }
   read(toolId: string, modelId?: string, refresh = false): Promise<ProfileChoices> {
     if (this.stopping.signal.aborted || this.k.stopped) return Promise.reject(new Error("The engine is stopping."));
     const key = JSON.stringify([toolId, modelId]);
@@ -23,6 +24,14 @@ export class ProfileChoiceReader {
     if (!refresh && cached && Date.now() - cached.at < 300_000) return Promise.resolve(structuredClone(cached.choices));
     const before = this.tools.get(toolId);
     const work = (before ? before.catch(() => undefined) : Promise.resolve()).then(async () => {
+      if (this.stopping.signal.aborted) throw new Error("The engine is stopping.");
+      const lingering = this.lingering.get(toolId);
+      if (lingering) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try { await Promise.race([lingering, new Promise<void>(resolve => { timer = setTimeout(resolve, 3_000); })]); }
+        finally { clearTimeout(timer); }
+        if (this.lingering.get(toolId) === lingering) throw new Error("This tool is still stopping after its last configuration check. Try again in a moment.");
+      }
       if (this.stopping.signal.aborted) throw new Error("The engine is stopping.");
       const choices = await this.probe(toolId, modelId);
       this.cache.set(key, { at: Date.now(), choices });
@@ -43,6 +52,10 @@ export class ProfileChoiceReader {
     let run: AgentRun | undefined;
     try {
       run = await AgentRun.start({ profile, cwd, env: agentEnv(process.env), probe: true, browser: false,
+        onGone: gone => {
+          this.lingering.set(toolId, gone);
+          void gone.then(() => { if (this.lingering.get(toolId) === gone) this.lingering.delete(toolId); }, () => undefined);
+        },
         command: this.k.options.agentCommand?.(profile), signal: AbortSignal.any([this.stopping.signal, controller.signal]), startTimeoutMs: this.k.options.startTimeoutMs,
         callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" } });
       return await run.profileChoices(modelId);
