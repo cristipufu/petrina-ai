@@ -96,6 +96,15 @@ describe("shared product controls", () => {
     expect(host.querySelectorAll(".history-card")).toHaveLength(1);
   });
 
+  it.each([false, true])("describes cancelled shared work with partial delivery %s", async partial => {
+    const task: Task = { ...state.tasks[0]!, state: "cancelled", repositories: [0, 1].map(index => ({ productId: state.products[index]!.id, source: source(index), delivery: "local", completedStages: [], landed: partial && index === 0 ? { branch: "main", sha: "a" } : undefined })) };
+    await render(<History page={{ items: [historyItem(task)], total: 1 }} reload={() => {}} onPosition={() => {}} find={lookup(state)} onFocus={() => {}} onOpen={() => {}} hrefFor={() => "#"} drafts={{}} />);
+    const outcome = host.querySelector(".history-outcome")!.textContent;
+    if (partial) { expect(outcome).toContain("Cancelled"); expect(outcome).toContain("Committed locally to main"); expect(outcome).toContain(`${state.products[1]!.name}: Not delivered`); }
+    else expect(outcome).toBe("Cancelled");
+    expect(outcome).not.toContain("Delivery not confirmed");
+  });
+
   it("preselects the current product and saves several independently chosen starting points", async () => {
     await render(<NewTaskDialog state={state} defaultProduct={state.products[0]!.id} initialTitle="A shared change" onClose={() => {}} onCreated={() => {}} />);
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Choose products"]')!);

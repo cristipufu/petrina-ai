@@ -320,7 +320,8 @@ export class TaskHistory {
         const products = taskProductIds(task);
         const reviews = JSON.parse(row.reviews) as ReviewStats;
         for (const productId of products) this.db.query("INSERT INTO task_history_products(task_id, product_id, finished_at) VALUES(?, ?, ?)").run(task.id, productId, historyAt(task));
-        this.db.query("UPDATE task_history SET item = ? WHERE id = ?").run(JSON.stringify(historyItem(task)), task.id);
+        const item = historyItem(task);
+        this.db.query("UPDATE task_history SET item = ?, final_status = ? WHERE id = ?").run(JSON.stringify(item), historyStatus(item), task.id);
         for (const scope of new Set(["", ...products])) {
           const rollup = this.rollups.get(scope) ?? emptyRollup();
           rollup.total += 1;

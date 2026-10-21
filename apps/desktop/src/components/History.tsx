@@ -40,7 +40,11 @@ export function useHistoryPage(state: State, enabled: boolean, product: string, 
 }
 
 function recordedDelivery(item: HistoryItem): string | undefined {
-  if (item.deliveries?.length) return item.deliveries.map(work => `${item.products?.find(product => product.id === work.productId)?.name ?? work.productId}: ${work.nothingToPublish ? "Nothing to publish" : recordedDelivery(historyDeliveryItem(item, work)) ?? "Delivery not confirmed"}`).join(" · ");
+  if (item.deliveries?.length) {
+    const deliveries = item.deliveries.map(work => ({ work, outcome: work.nothingToPublish ? "Nothing to publish" : recordedDelivery(historyDeliveryItem(item, work)) }));
+    if (item.state === "cancelled" && deliveries.every(delivery => !delivery.outcome)) return undefined;
+    return deliveries.map(({ work, outcome }) => `${item.products?.find(product => product.id === work.productId)?.name ?? work.productId}: ${outcome ?? (item.state === "cancelled" ? "Not delivered" : "Delivery not confirmed")}`).join(" · ");
+  }
   if (item.release) return `Released ${item.release.tag}`;
   if (item.landed) return item.localUpdate?.pushed ? `Committed to ${item.landed.branch} · pushed to GitHub` : `Committed locally to ${item.landed.branch}`;
   if (item.pr?.state === "merged") return `Pull request #${item.pr.number} merged`;

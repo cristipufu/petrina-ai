@@ -178,6 +178,20 @@ it("shows exact routine runs across current work and paginated history, and rest
   expect(host!.querySelector(".routine-runs")).toBeNull();
 });
 
+it("opens an unrelated Inbox task from routine runs without substituting the routine list", async () => {
+  await mount("/routines/routine-one/runs?demo", false, state => {
+    const task = { ...state.tasks[0]!, state: "needs-you" as const, column: "ready" as const, finishedAt: undefined, title: "Unrelated task" };
+    return { ...state, tasks: [task, ...state.tasks.slice(1).map(task => ({ ...task, maintenance: { routineId: "routine-one", routineName: "Daily", scheduledAt: task.createdAt, queuedAt: task.createdAt, zone: "UTC", focus: "Inspect", input: "Inspect", role: state.roles[0]!, profile: state.profiles[0]!, product: state.products[0]! } }))] };
+  });
+  projection = { ...projection, inbox: [{ id: "unrelated-question", taskId: "archive-0", kind: "question", title: "Which change?", body: "Please inspect this task", at: projection.now, blocking: false }] };
+  await act(async () => root!.render(<App />));
+  await click('.topbar [aria-label^="Inbox,"]');
+  await click('[data-inbox-id="unrelated-question"] .task-link');
+  expect(new URL(location.href).searchParams.get("list")).not.toBe("history");
+  expect(host!.querySelector(".sheet-title")?.textContent).toBe("Unrelated task");
+  expect([...host!.querySelectorAll(".task-list-item")].map(item => item.textContent)).toEqual([expect.stringContaining("Unrelated task")]);
+});
+
 it("keeps final status with search, pagination, task links and browser navigation", async () => {
   await mount("/history?demo&historyStatus=cancelled", false, state => ({ ...state, tasks: state.tasks.map((task, i) => ({ ...task, state: i < 30 ? "cancelled" : "done" })) }));
   expect(page).toHaveBeenLastCalledWith({ status: "cancelled", limit: 24 });

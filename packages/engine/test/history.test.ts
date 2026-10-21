@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, HISTORY_STATUSES, historyAt, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
+import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, HISTORY_STATUSES, historyAt, historyItem, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
 import { serve } from "../src/server.js";
 import { makeWorld, removeDir, tempDir, type World } from "./support.js";
@@ -234,6 +234,24 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
         expect(reopened.history.page({ productId }).items.map((item) => item.id)).toEqual([shared.id]);
         expect(reopened.history.info().products.find((product) => product.productId === productId)?.shared).toBe(1);
       }
+    } finally { reopened.close(); }
+  });
+
+  it("upgrades shared delivery outcomes and product memberships together", () => {
+    const { file, db } = store();
+    const shared = task(3, { repositories: [{ productId: "one", delivery: "local", completedStages: [], landed: { branch: "main", sha: "abc" } }, { productId: "two", delivery: "pull-request", completedStages: [], pr: { number: 2, url: "https://github.com/acme/two/pull/2", state: "merged", openedAt: 1 } }] });
+    db.save(state([shared]));
+    // An older card summary contained only the lead repository's delivery.
+    db.database.query("UPDATE task_history SET item = ? WHERE id = ?").run(JSON.stringify({ ...historyItem(shared), deliveries: undefined }), shared.id);
+    db.database.run("DROP TABLE task_history_products");
+    db.database.run("DROP INDEX task_history_status_newest");
+    db.database.run("ALTER TABLE task_history DROP COLUMN final_status");
+    db.close();
+    const reopened = new Store(file);
+    try {
+      expect(reopened.history.page({ status: "mixed" }).items.map(item => item.id)).toEqual([shared.id]);
+      expect(reopened.history.page({ status: "committed" }).total).toBe(0);
+      for (const productId of ["one", "two"]) expect(reopened.history.page({ productId, status: "mixed" }).total).toBe(1);
     } finally { reopened.close(); }
   });
 
