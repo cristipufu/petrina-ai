@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { claudeBackground } from "./claude-background.js";
 import { BACKGROUND_FEATURES } from "./codex-background.js";
 import { claudeReports } from "./claude-usage-report.js";
+import { CLAUDE_USAGE_COMMAND, ClaudeUsage } from "./claude-usage.js";
 import { claudeLimit, codexLimit, grokLimit } from "./provider-limits.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { GrokUsage, grokTurnReport } from "./grok-usage.js";
@@ -16,6 +17,7 @@ import { interjection, steering } from "./live-input.js";
 
 export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
   "claude-code": {
+    usageReader: { command: () => CLAUDE_USAGE_COMMAND, create: options => new ClaudeUsage(options) },
     liveInput: steering(true),
     parseLimitError: claudeLimit,
     parseUsageUpdate: meta => ({ reports: claudeReports("claude-code", meta), ...(typeof meta["_claude/model"] === "string" ? { model: meta["_claude/model"] } : {}) }),

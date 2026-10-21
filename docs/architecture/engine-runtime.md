@@ -108,6 +108,8 @@ A rejected window without extra usage takes the tool out until it resets, before
 
 #### Account readers
 
+Claude Code has a shared account reader in `claude-usage.ts`, alongside its per-turn reports. It starts the installed CLI in an empty checks folder, sends native stream-JSON `initialize` and `get_usage` control requests, and stops the process. No user prompt, model turn, MCP server, or saved conversation is created. The returned 5-hour, weekly and model-scoped percentages and UTC resets feed Analytics and balancing through the ordinary reader cadence. Missing readings stay missing; a disabled extra-usage balance never blocks included subscription work. A complete successful account read removes obsolete windows and account restrictions; failures retain the last successful report.
+
 Codex says nothing about its usage over ACP: its adapter reads the limits from Codex's app-server for its own status line and keeps them. Petrina reads them itself (`packages/engine/src/codex-usage.ts`): it runs `codex app-server` as an argument array with the agents' environment, does the adapter's `initialize` handshake, asks `account/rateLimits/read` once and stops the process. Each named limit and window becomes a report, with its duration and reset time: 100% used is `rejected`, from 90% a warning.
 
 It reads when the engine starts (Codex installed), whenever a Codex agent starts, every ten minutes while any agent runs, and when Analytics or a finished turn asks for a fresh reading (at most once per minute or five minutes respectively). These requests share one reader and feed both the scheduler and the history; a failure (not installed, not logged in, no answer within 20 seconds) goes to the engine log once and never fails a task.
