@@ -1,7 +1,7 @@
 import { profileModelName } from "@petrina/core";
 import { landingOf, onScreen, SCREEN_WORDS, screenOn, screenWait, slotUses, type AgentProfile, type Column, type Effort, type Id, type Role, type RoleIcon, type RoleResult, type RunState, type State, type Task, type Tone, type Tool } from "@petrina/core";
 
-export function lookup(state: State) {
+export function lookup(state: State, task?: Pick<Task, "maintenance">) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
   const profiles = new Map([...(state.retiredProfiles ?? []), ...state.profiles].map((profile) => [profile.id, profile]));
   const tools = new Map(state.tools.map((tool) => [tool.id, tool]));
@@ -9,8 +9,8 @@ export function lookup(state: State) {
   const tasks = new Map(state.tasks.map((task) => [task.id, task]));
   const finished = new Map(state.history?.dependencies?.map((task) => [task.id, task]) ?? []);
   return {
-    role: (id?: Id): Role | undefined => (id ? roles.get(id) : undefined),
-    profile: (id?: Id): AgentProfile | undefined => (id ? profiles.get(id) : undefined),
+    role: (id?: Id): Role | undefined => (id ? task?.maintenance?.role.id === id ? task.maintenance.role : roles.get(id) : undefined),
+    profile: (id?: Id): AgentProfile | undefined => (id ? task?.maintenance?.profile.id === id ? task.maintenance.profile : profiles.get(id) : undefined),
     tool: (id?: Id): Tool | undefined => (id ? tools.get(id) : undefined),
     product: (id?: Id) => (id ? products.get(id) : undefined),
     task: (id?: Id): Task | undefined => (id ? tasks.get(id) : undefined),

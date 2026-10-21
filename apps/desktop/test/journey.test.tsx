@@ -534,6 +534,25 @@ describe('the journey in the task sheet', () => {
     expect(host.querySelector('.journey-list')?.getAttribute('aria-label')).toBe('Journey, 20 steps');
     expect(host.querySelector('.journey-flow')?.getAttribute('aria-hidden')).toBe('true');
   });
+it('shows the frozen maintenance role and profile when the Library no longer contains their settings', async () => {
+  const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh');
+  const frozen = { ...state.roles.find(role => role.result === 'build')!, id: 'saved-maintainer', name: 'Saved maintainer', category: 'maintenance' as const };
+  const builder = task.journey!.find(step => step.roleId === 'builder')!;
+  const profile = { ...state.profiles.find(profile => profile.id === builder.profileId)!, modelId: 'saved-native-model', model: 'Saved model' };
+  task.maintenance = { routineId: 'routine', routineName: 'Routine', scheduledAt: 0, queuedAt: 0, zone: 'UTC', focus: 'Inspect', input: 'Inspect', role: frozen, profile, product: state.products[0]! };
+  builder.roleId = frozen.id; builder.fixing = true; builder.findingIds = ['assigned-fix'];
+  task.findings = [{ id: 'assigned-fix', text: 'Keep the saved contract.', severity: 'blocking', status: 'open', raisedBy: 'sol-high', confirmedBy: [] }];
+  task.plan!.stages.filter(stage => stage.roleId === 'builder').forEach(stage => { stage.roleId = frozen.id; });
+  await mount(state); await openTask(task.id);
+  await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${builder.id}"]`)!.click());
+  const details = host.querySelector('.journey-details')!;
+  expect(details.querySelector('h3')?.textContent).toContain('Saved maintainer');
+  expect(details.textContent).toContain(`${state.tools.find(tool => tool.id === profile.toolId)!.name} · Saved model`);
+  expect(details.textContent).toContain('Findings assigned to this fix');
+  expect(details.textContent).toContain('Keep the saved contract.');
+  expect(lookup(state).role(frozen.id)).toBeUndefined();
+});
+
 });
 
 describe('unusual endings in words', () => {
@@ -701,3 +720,4 @@ it("labels creation separately from the actual execution start", () => {
   expect(startWords(view, NOW)).toBe("Created 2h ago");
   expect(startWords({ ...view, start: { kind: "started", at: NOW - 60_000 } }, NOW)).toBe("Started 1m ago");
 });
+
