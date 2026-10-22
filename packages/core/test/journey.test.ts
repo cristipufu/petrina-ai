@@ -20,6 +20,7 @@ import {
   stepName,
   syncWait,
   stopCheckProgress,
+  taskLanding,
   type JourneyTask,
   type JourneyView,
 } from "../src/journey.js";
@@ -974,5 +975,64 @@ describe("whole-task prerequisite landing", () => {
     expect(dependencyLanding(historyItem(prerequisite))).toBe(landing);
     syncWait(waiting, [], () => prerequisite, 10);
     expect(waiting.journey![0]).toMatchObject({ endedAt: 10, reason: `“${prerequisite.title}” ${words}` });
+  });
+});
+
+describe("whole-task delivery for coordinator reads", () => {
+  const base = createDemoState(1_000_000_000_000).tasks[0]!;
+  const pr = { number: 44, url: "https://example.test/44", openedAt: 1 };
+  const linked = { text: "Part of a change across both", state: "done" as const };
+  const merged = { productId: base.productId, delivery: "pull-request" as const, completedStages: [], pr: { ...pr, state: "merged" as const }, companion: linked };
+  const open = { productId: "companion", delivery: "pull-request" as const, completedStages: [], pr: { ...pr, number: 55, state: "open" as const }, companion: linked };
+  const shared = (state: Task["state"], repositories: NonNullable<Task["repositories"]>, shown = 0): Task => repositoryTaskView({ ...base, state, repositories, leadProductId: repositories[shown]!.productId, activeProductId: repositories[shown]!.productId }, repositories[shown]!);
+
+  it.each([0, 1])("reads a merged lead and an open companion as awaiting merge, with product %i shown", (shown) => {
+    const task = shared("pr-open", [merged, open], shown);
+    expect(taskLanding(task)).toBe("awaiting-merge");
+    expect(taskLanding(shared("pr-open", [open, merged], shown))).toBe("awaiting-merge");
+    // Once the companion merges, the whole delivery has landed.
+    expect(taskLanding(shared("done", [merged, { ...open, pr: { ...open.pr, state: "merged" } }], shown))).toBe("landed");
+  });
+
+  it("keeps a published lead from standing in for an unfinished companion", () => {
+    const leadOpen = { ...merged, pr: { ...merged.pr, state: "open" as const } };
+    const publishing = { productId: "companion", delivery: "pull-request" as const, completedStages: [], shipping: { moves: 0, failures: 0, step: "push" as const } };
+    // The prerequisite reading stops at the open pull request; the whole delivery has not finished.
+    expect(dependencyLanding(shared("needs-you", [leadOpen, publishing]))).toBe("awaiting-merge");
+    expect(taskLanding(shared("needs-you", [leadOpen, publishing]))).toBe("open");
+    expect(taskLanding(shared("needs-you", [leadOpen, { ...open, companion: { ...linked, state: "pending" } }]))).toBe("open");
+    const landed = { branch: "main", sha: "abc" };
+    const local = { productId: "companion", delivery: "local" as const, completedStages: [], landed, localUpdate: { ...landed, pushed: false } };
+    expect(taskLanding(shared("done", [merged, local]))).toBe("open");
+    expect(taskLanding(shared("done", [merged, { ...local, localUpdate: { ...landed, pushed: true } }]))).toBe("landed");
+    // Older committed records carry no separate push report.
+    expect(taskLanding(shared("done", [merged, { ...local, localUpdate: undefined }]))).toBe("landed");
+  });
+
+  it("keeps closed, cancelled and no-change outcomes from counting as delivered", () => {
+    const closed = { ...open, pr: { ...open.pr, state: "closed" as const } };
+    for (const task of [shared("needs-you", [merged, closed]), shared("done", [merged, { ...closed, landingAccepted: { at: 1 } }])]) {
+      expect(taskLanding(task)).toBe("closed");
+      expect(taskLanding(historyItem(task))).toBe("closed");
+    }
+    expect(taskLanding(shared("cancelled", [merged, open]))).toBe("cancelled");
+    const nothing = { productId: "companion", delivery: "pull-request" as const, completedStages: [], nothingToPublish: true };
+    expect(taskLanding(shared("done", [{ ...nothing, productId: base.productId }, nothing]))).toBe("no-changes");
+    expect(taskLanding({ ...shared("done", [merged, open]), maintenance: { noProductChanges: true } })).toBe("no-changes");
+    // A product with nothing to publish leaves its companion's outcome intact.
+    expect(taskLanding(shared("pr-open", [nothing, open]))).toBe("awaiting-merge");
+    expect(taskLanding(shared("done", [merged, nothing]))).toBe("landed");
+    expect(taskLanding(historyItem(shared("done", [merged, nothing])))).toBe("landed");
+  });
+
+  it("keeps one product's own outcomes, saved or displayed", () => {
+    const repository = { productId: base.productId, delivery: "pull-request" as const, pr: { ...pr, state: "open" as const } };
+    for (const [state, landing] of [["pr-open", "awaiting-merge"], ["done", "closed"], ["running", "open"]] as const) {
+      const task = { ...base, state, repositories: undefined, repository };
+      expect(taskLanding(task)).toBe(landing);
+      expect(taskLanding(repositoryTaskView(task, repository))).toBe(landingOf(repositoryTaskView(task, repository)));
+    }
+    expect(taskLanding({ state: "done" })).toBe("marked-done");
+    expect(taskLanding(historyItem({ ...base, state: "done", repositories: undefined, repository: { ...repository, pr: { ...pr, state: "merged" } } }))).toBe("landed");
   });
 });

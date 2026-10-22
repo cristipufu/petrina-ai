@@ -1,7 +1,7 @@
 import { messageRemovalText } from "@petrina/core";
 import { checkProblem, displayTask, reviewDecisionPending } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
-import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSteps, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
+import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, taskLanding, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Landing, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { operation } from "./operations.js";
 import { offeredLessons } from "./learnings.js";
@@ -45,7 +45,12 @@ export function serial<T>(engine: Engine, run: () => T | Promise<T>): Promise<T>
   return next;
 }
 
+/** Awaiting merge confirms a delivery; only landing proves it landed. */
+const deliveryConfirmed = (landing: Landing): boolean => landing === "landed" || landing === "awaiting-merge";
+
 export function taskSummary(engine: Engine, task: Task) {
+  // Delivery describes the whole task, whichever product is displayed.
+  const landing = taskLanding(task);
   task = displayTask(task);
   const state = engine.activeState();
   return {
@@ -62,9 +67,9 @@ export function taskSummary(engine: Engine, task: Task) {
     next: nextSteps(state, task) ?? null,
     waitingReason: ["backlog", "waiting", "needs-you", "paused", "queued", "failed"].includes(task.state) ? task.statusLine : null,
     inbox: state.inbox.filter((item) => item.taskId === task.id).map(({ id, kind }) => ({ id, kind })),
-    landing: landingOf(task),
+    landing,
     delivery: task.delivery,
-    deliveryConfirmed: ["landed", "awaiting-merge"].includes(landingOf(task)),
+    deliveryConfirmed: deliveryConfirmed(landing),
     error: task.error?.slice(0, 1000) ?? null,
     errorShortened: (task.error?.length ?? 0) > 1000,
   };
@@ -460,7 +465,7 @@ export class Coordination {
     }
     return {
       outcome: "completed",
-      items: page.items.map((item) => ({ ...item, summary: item.statusLine, landing: landingOf(item), deliveryConfirmed: landingOf(item) === "landed" })),
+      items: page.items.map((item) => { const landing = taskLanding(item); return { ...item, summary: item.statusLine, landing, deliveryConfirmed: deliveryConfirmed(landing) }; }),
       total: page.total,
       ...(page.nextCursor ? { next: cursor({ key, after: page.nextCursor }) } : {}),
     };
@@ -759,7 +764,7 @@ export class Coordination {
                   ? !!items?.length && items.every((t) => a.states?.includes(t.state))
                   : a.condition === "landed"
                     ? !!items?.length && items.every((t) => t.landing === "landed")
-                    : !!items?.length && items.every((t) => ["awaiting-merge", "landed"].includes(t.landing));
+                    : !!items?.length && items.every((t) => t.deliveryConfirmed);
         if (matches) return { outcome: "completed", marker, result: current };
         if (e.stopped) return { outcome: "disconnected", marker, result: current };
         if (signal?.aborted) return { outcome: "disconnected", marker, result: current, message: "The wait was cancelled." };

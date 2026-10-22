@@ -8,6 +8,7 @@ import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, Jo
 import { decisionEvidence, evidenceFor, incompleteCheckOutcome, latestCheckResults, reusedCheckWords } from "./check-evidence.js";
 import { queueOf } from "./scheduler.js";
 import { reviewerAt, roleForTask } from "./roles.js";
+import { landingState } from "./repositories.js";
 import type { HistoryItem } from "./history.js";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
@@ -138,6 +139,20 @@ export function dependencyLanding(task: Parameters<typeof landingOf>[0] & Pick<T
     return outcomes.every((outcome) => outcome === "no-changes") ? "no-changes" : "landed";
   }
   return deliveryLanding(task.repository ?? task);
+}
+
+/**
+ * The whole task's delivery, for coordinator summaries and waits. One product's work keeps its own outcome. Shared
+ * work reads every product like a prerequisite, and awaits merge or lands only once the shared delivery has
+ * finished everywhere: a published lead cannot stand in for a companion still publishing, interrupted or unlinked.
+ */
+export function taskLanding(task: Parameters<typeof dependencyLanding>[0]): Landing {
+  if (!(task.repositories ?? task.deliveries)?.length) {
+    const work = task.repository ?? task;
+    return landingOf({ state: task.state, maintenance: task.maintenance, pr: work.pr, release: work.release, landed: work.landed });
+  }
+  const landing = dependencyLanding(task);
+  return (landing === "landed" || landing === "awaiting-merge") && task.repositories && landingState(task.repositories) === "unfinished" ? "open" : landing;
 }
 
 /** Waiting for other tasks to land: the timeline's words and the task's status line. */

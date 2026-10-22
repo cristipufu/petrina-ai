@@ -13,6 +13,7 @@ import { Kernel, type MTask } from "../src/kernel.js";
 import { beginRepair, invalidateAcceptance, versionsOf } from "../src/repositories.js";
 import { checkReviewEvidence } from "../src/review.js";
 import { ReviewResult } from "../src/roles.js";
+import { Coordination } from "../src/coordination.js";
 import { Fakes, coordinator, finish, git, itemOf, makeWorld, removeDir, taskOf, until, type World } from "./support.js";
 
 const worlds: World[] = [];
@@ -30,6 +31,14 @@ function setup(name: string) {
   const sourceRemotes: Record<string, string> = {};
   const start = (options: Partial<EngineOptions> = {}) => shop.start({ ...options, agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${join(shop.dir, "agents.json")}`], gh: [process.execPath, join(import.meta.dir, "fake-portfolio-gh.ts"), mapping], remotes, sourceRemotes });
   return { shop, api, start, fakes, remotes, sourceRemotes };
+}
+
+/** The whole task's delivery as coordinator inspection and immediate waits report it. */
+async function coordinatorDelivery(engine: ConstructorParameters<typeof Coordination>[0], taskId: string) {
+  const coordination = new Coordination(engine);
+  const { landing, deliveryConfirmed } = (await coordination.call("task.inspect", { taskId })).task as { landing: string; deliveryConfirmed: boolean };
+  const [delivered, landed] = await Promise.all(["delivered", "landed"].map(async (condition): Promise<string> => (await coordination.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome));
+  return { landing, deliveryConfirmed, delivered, landed };
 }
 
 describe.concurrent("one task across products", () => {
@@ -666,6 +675,13 @@ describe.concurrent("one task across products", () => {
       expect({ state: taskOf(partial, id).state, error: taskOf(partial, id).error, deliveries: taskOf(partial, id).repositories?.map((work) => ({ product: work.productId, pr: work.pr, shipping: work.shipping })) }).toMatchObject({ state: "needs-you" });
       expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(0);
       expect(taskOf(partial, id).repositories![0]!.pr?.number).toBe(1);
+      // The open pull request cannot stand in for the interrupted companion, whichever product is shown.
+      const interrupted = engine.task(id)!.activeProductId;
+      for (const shown of [first, second]) {
+        engine.task(id)!.activeProductId = shown;
+        expect(await coordinatorDelivery(engine, id)).toEqual({ landing: "open", deliveryConfirmed: false, delivered: "timed-out", landed: "timed-out" });
+      }
+      engine.task(id)!.activeProductId = interrupted;
       await engine.shutdown();
       engine = start();
       const retry = engine.getState().inbox.find((item) => item.taskId === id && ["shipping", "stuck"].includes(item.kind))!;
@@ -675,6 +691,7 @@ describe.concurrent("one task across products", () => {
       expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
       expect(shop.github().calls.filter((args) => args[0] === "pr" && args[1] === "create")).toHaveLength(1);
       expect(done.repositories!.every((work) => work.companion?.state === "done")).toBe(true);
+      expect(await coordinatorDelivery(engine, id)).toEqual({ landing: "awaiting-merge", deliveryConfirmed: true, delivered: "completed", landed: "timed-out" });
     } finally { await engine.shutdown(); }
   });
 
@@ -688,15 +705,19 @@ describe.concurrent("one task across products", () => {
       expect(completed.error).toBeUndefined();
       expect(completed.state).toBe("pr-open");
       const dependent = engine.addTask({ productId: first, title: "Follow-up", after: [id] });
-      if (!closed) shop.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
+      // Merge the product the task shows, so its own outcome cannot speak for the companion.
+      const shown = engine.task(id)!.activeProductId === first ? 0 : 1;
+      const [merging, other] = shown === 0 ? [shop, api] : [api, shop];
+      if (!closed) merging.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
       if (closed) api.setGitHub((state) => { state.prs[0]!.state = "CLOSED"; });
       // Use the normal poll through its timer, without waiting a minute.
       await engine["shipping"].monitor.pollPullRequests();
       const task = taskOf(engine.getState(), id);
       expect(task.state).toBe(closed ? "needs-you" : "pr-open");
       expect(engine.blockers(engine.task(dependent)!)).toHaveLength(1);
-      expect(task.repositories![0]!.pr!.state).toBe(closed ? "open" : "merged");
-      expect(task.repositories![1]!.pr!.state).toBe(closed ? "closed" : "open");
+      if (closed) expect(task.repositories!.map((work) => work.pr!.state)).toEqual(["open", "closed"]);
+      else expect(task.repositories!.map((work) => work.pr!.state)).toEqual(shown === 0 ? ["merged", "open"] : ["open", "merged"]);
+      expect(await coordinatorDelivery(engine, id)).toEqual(closed ? { landing: "closed", deliveryConfirmed: false, delivered: "timed-out", landed: "timed-out" } : { landing: "awaiting-merge", deliveryConfirmed: true, delivered: "completed", landed: "timed-out" });
       if (closed) {
         const decision = itemOf(engine.getState(), id, "shipping")!;
         expect(decision.title).toContain("API");
@@ -706,7 +727,17 @@ describe.concurrent("one task across products", () => {
         shop.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
         await engine["shipping"].monitor.pollPullRequests();
         expect(engine.task(id)!.state).toBe("done");
+      } else {
+        other.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
+        await engine["shipping"].monitor.pollPullRequests();
+        expect(engine.task(id)!.state).toBe("done");
       }
+      // Accepting the closed companion releases the dependent work too, without proving it landed.
+      expect(engine.blockers(engine.task(dependent)!)).toHaveLength(0);
+      const final = closed ? { landing: "closed", deliveryConfirmed: false, delivered: "timed-out", landed: "timed-out" } : { landing: "landed", deliveryConfirmed: true, delivered: "completed", landed: "completed" };
+      expect(await coordinatorDelivery(engine, id)).toEqual(final);
+      const coordination = new Coordination(engine);
+      for (const productId of [first, second]) expect((await coordination.call("task.history", { productId, taskId: id })).items).toEqual([expect.objectContaining({ landing: final.landing, deliveryConfirmed: final.deliveryConfirmed })]);
     } finally { await engine.shutdown(); }
   });
 
