@@ -1,6 +1,7 @@
 import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
-import { UsageCoordinator } from "./usage-coordinator.js";
+import { UsageCoordinator, type Selection } from "./usage-coordinator.js";
+import type { Readiness } from "./readiness.js";
 import { blockingDependencies, clearRunningTools, clearTaskStep, finishTaskStep, OTHERS_CONTINUE, stopTaskActivity } from "@petrina/core";
 import { executionFor, executionOf, scopesFor, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
 import * as library from "@petrina/core";
@@ -11,7 +12,7 @@ import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { IdleSleepAssertion } from "./awake.js";
-import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
+import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
 import type { Which } from "./setup.js";
@@ -218,6 +219,8 @@ export abstract class Kernel {
   private readonly projection = new StateProjection(this, task => renameRoles({ ...this.s, tasks: [task], inbox: [] }));
   readonly screens = new ScreenCoordinator(this);
   readonly usageCoordinator = new UsageCoordinator(this);
+  /** Bounded readiness rechecks for saved participants; the engine supplies them with its tool checks. */
+  readiness!: Readiness;
   /** Set by the Engine: what starts drivers and fills free slots. */
   abstract schedule(): void;
   abstract startDriver(taskId: Id, resume?: boolean): void;
@@ -830,7 +833,7 @@ export abstract class Kernel {
    * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
    * yields to another tool that has one, so a cap kept for a tool that is out does not idle a pool slot.
    */
-  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id, profile: AgentProfile) => boolean, reviewerKey?: string): Choice | undefined { return this.usageCoordinator.choose(plannedId, target, roleId, room, reviewerKey); }
+  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id, profile: AgentProfile) => boolean, reviewerKey?: string): Selection | undefined { return this.usageCoordinator.choose(plannedId, target, roleId, room, reviewerKey); }
 
   /** "Claude Code · Opus 5.5": the tool and model of a profile, for the timeline. */
   named(profileId: Id): string {

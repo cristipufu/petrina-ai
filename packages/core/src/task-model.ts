@@ -2,6 +2,7 @@
 // composing them does not introduce projection copies or a second schema.
 import type { ActiveAgent, BuilderContext, CheckRun, Cleanup, Column, ConversationNote, DesignBrief, DesignCall, DeliveryMode, Driving, Finding, HandedBack, Hunt, Id, InboxKind, JourneyStep, Lesson, Objection, Plan, PullRequest, QueuedMessage, RiskLevel, RunState, ScreenRequest, SessionLine, ShippingRecord, SourcePointer, StepClock, StepNote, StepRecord, TaskKind, TimelineEntry, WorkRow } from "./model.js";
 import type { PullRequestBackground, TaskSource, WorkChoice } from "./source.js";
+import type { ReadinessWait } from "./readiness.js";
 
 /** Execution state owned by exactly one product repository. */
 export interface RepositoryState {
@@ -60,7 +61,7 @@ export interface RepositoryState {
   /** Final acceptance failures return to the builder twice, then wait for the coordinator. */
   acceptanceReturns?: number;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
-  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; rethought?: boolean };
+  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; rethought?: boolean; readinessWait?: ReadinessWait };
   pr?: PullRequest;
   /** The task's own branch and working copy. */
   branch?: string;
@@ -196,7 +197,7 @@ export interface TaskDesignState {
   /** The coordinator's call on a disagreement. It stays, so no later design check reopens the design it settled. */
   call?: DesignCall;
   /** Separate completed design conversations per stage, participant and product. Never shared between author and reviewer. */
-  designSessions?: Readonly<Record<string, { scope: string; plannedProfileId: Id; profileId: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; briefDigest?: string; freshReason?: string }>>;
+  designSessions?: Readonly<Record<string, { scope: string; plannedProfileId: Id; profileId: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; briefDigest?: string; freshReason?: string; readinessWait?: ReadinessWait }>>;
   /** Changes were asked at this design check: earlier checks of the same design pass by themselves on the way back to it. */
   returnToCheck?: number;
   designRevision?: number;
@@ -220,6 +221,8 @@ export interface TaskReviewState {
     /** Immutable bases this seat last reviewed; older saved seats start fresh once. */
     bases?: Readonly<Record<Id, string>>;
     freshReason?: string;
+    /** This seat's first wait for its tool's uncertain readiness; the next completed review replaces it. */
+    readinessWait?: ReadinessWait;
   }>>>>;
   /** Per stage and seat, why its saved conversation was dropped (a conflict port), kept through pauses and restarts until that seat next starts. */
   reviewFreshReasons?: Readonly<Record<Id, Readonly<Record<Id, string>>>>;

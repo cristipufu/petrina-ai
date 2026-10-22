@@ -1,5 +1,5 @@
 // Account reports, limit wakeups and profile/stand-in selection.
-import { chooseWithRoom, claudeWindow, seatRemaining, currentReport, headroom, kindWords, limitOf, nearLimit, nextExpiry, UNKNOWN_LIMIT_MS, untilWords, usableAgentTools, withLimit, withReport, type Choice, type CheckId, type Id, type AgentProfile, type Task, type UsageReport } from "@petrina/core";
+import { chooseWithRoom, claudeWindow, seatRemaining, currentReport, headroom, kindWords, limitOf, nearLimit, nextExpiry, readinessGate, readinessOutcome, uncertain, UNKNOWN_LIMIT_MS, untilWords, usableAgentTools, withLimit, withReport, type Choice, type CheckId, type Id, type AgentProfile, type ReadinessRecheck, type ReadinessWait, type Task, type UsageReport } from "@petrina/core";
 import { executionOf, type RepositoryContext } from "./repository-context.js";
 import { notReady, stepKey, type Kernel, type MTask, type MState, type EngineOptions } from "./kernel.js";
 import { contractFor, freshBuilderRethink } from "./roles.js";
@@ -9,7 +9,11 @@ import { agentEnv } from "./env.js";
 import { participantConversation } from "./participant-conversation.js";
 import { join } from "node:path";
 import { CAPACITY_RETRY_DELAYS_MS, capacityWaiting, MODEL_CAPACITY_WAIT_MS, type ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
-type UsageHost = Pick<Kernel, "s" | "profile" | "role" | "tracking" | "activeState" | "stopped" | "schedule" | "commitNow" | "commit" | "log" | "named">;
+import { readinessLimitMs } from "./tool-checks.js";
+import type { ReadinessNeed } from "./readiness.js";
+type UsageHost = Pick<Kernel, "s" | "profile" | "role" | "tracking" | "activeState" | "stopped" | "schedule" | "commitNow" | "commit" | "log" | "named" | "options">;
+/** A choice, or why nobody works the step yet: `readiness` when only a saved participant's uncertain tool stands in the way. */
+export type Selection = Exclude<Choice, { kind: "none" }> | { kind: "none"; waiting: string; readiness?: ReadinessNeed };
 export class UsageCoordinator {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly legacyReviewerTools = new WeakMap<MTask, { key: string; tools: Id[] }>();
@@ -80,7 +84,7 @@ export class UsageCoordinator {
     const matches = (profile: AgentProfile) => profile.toolId === saved.toolId && (profile.modelId ?? profile.model) === saved.model;
     const exact = current ? this.k.profile(current.profileId) : undefined;
     const profile = exact && matches(exact) ? exact : this.k.s.profiles.find((profile) => matches(profile) && profile.effort === planned.effort) ?? this.k.s.profiles.find(matches);
-    return profile ? { sessionId: saved.sessionId, toolId: saved.toolId, model: saved.model, profile } : undefined;
+    return profile ? { sessionId: saved.sessionId, toolId: saved.toolId, model: saved.model, profile, saved: saved as { readinessWait?: ReadinessWait } } : undefined;
   }
 
   /**
@@ -88,7 +92,7 @@ export class UsageCoordinator {
    * model is out of usage. `room` is whether that tool can take a seat now. A stand-in whose tool is full
    * yields to another tool that has one, so a cap kept for a tool that is out does not idle a pool slot.
    */
-  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id, profile: AgentProfile) => boolean, reviewerKey?: string): Choice | undefined {
+  choose(plannedId: Id, target?: MTask | RepositoryContext, roleId?: Id, room?: (toolId: Id, profile: AgentProfile) => boolean, reviewerKey?: string): Selection | undefined {
     const scope = target ? executionOf(target) : undefined;
     const task = scope?.task;
     const repository = scope?.work;
@@ -160,13 +164,14 @@ export class UsageCoordinator {
     const usable = this.usableTools() as Id[];
     // Usage stand-ins follow the same login checks as the plan: Ready tools first, otherwise the
     // ones we couldn't check. Before checks have run, keep the existing installed-tool selection.
-    let candidates = checked ? {
+    const among = (tools: readonly Id[]) => checked ? {
       ...state,
       // With no usable tool at all, let the planned tool reach its readiness guard so
       // the task gets a login/install request, rather than a misleading usage wait.
-      profiles: state.profiles.filter((profile) => usable.includes(profile.toolId) || (!usable.length && profile.id === plannedId)),
-      tools: state.tools.filter((tool) => usable.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
+      profiles: state.profiles.filter((profile) => tools.includes(profile.toolId) || (!tools.length && profile.id === plannedId)),
+      tools: state.tools.filter((tool) => tools.includes(tool.id)).map((tool) => ({ ...tool, status: "ready" as const })),
     } : state;
+    let candidates = among(usable);
     const modelFull = (profile: AgentProfile) => this.capacityUntil(task, profile, now);
     // The step waits for a full model only while the account has usage. An account limit keeps its own wait and words.
     const fullOnly = (profile: AgentProfile) => limitOf(state.pool, profile, now) ? undefined : modelFull(profile);
@@ -189,6 +194,13 @@ export class UsageCoordinator {
       // still decide whether another model on this tool goes first. A full tool yields to one that can work.
       candidates = { ...candidates, profiles: candidates.profiles.filter((profile) => !modelFull(profile)) };
     }
+    // The same candidates as if a saved tool whose readiness is uncertain had passed: whether readiness alone stands in the way.
+    const passing = (toolId: Id) => { const all = among([...usable, toolId]); return { ...all, profiles: all.profiles.filter((profile) => !modelFull(profile)) }; };
+    const limit = readinessLimitMs(this.k.options.toolCheckTimeoutMs);
+    const checkOn = (toolId: Id) => state.setup?.checks.find((check) => check.id === toolId);
+    // An uncertain answer that a recheck turned into Ready. A Ready tool's ordinary check that only settled says nothing more.
+    const rechecked = (facts: ReadinessRecheck | undefined) => facts?.outcome === "ready" && facts.previous.status !== "ready";
+    const need = (saved: { readinessWait?: ReadinessWait }, profile: AgentProfile, words: string): Selection => ({ kind: "none", waiting: words, readiness: { toolId: profile.toolId as CheckId, profileId: profile.id, roleId: roleId!, saved, words, scope: scope! } });
     const reviewing = roleId !== undefined && ["findings", "objections", "votes"].includes(this.k.role(roleId, task)?.result ?? "");
     // A saved screen conversation is not swapped just for being near a limit. Reopen it on its tool
     // while that tool is available; a replacement still follows the current independence rules.
@@ -201,16 +213,28 @@ export class UsageCoordinator {
       if (saved.kind === "planned") return saved;
     }
     const own = task && roleId !== undefined && roleId === stage?.roleId ? this.builderConversation(scope!, plannedId) : undefined;
+    // Why a returning Builder starts fresh after its readiness decision, and that decision's evidence.
+    let ownFresh: string | undefined;
+    let ownReadiness: ReadinessRecheck | undefined;
     if (own && !modelFull(own.profile) && !limitOf(state.pool, own.profile, now) && !nearLimit(state.pool, own.profile, now) && headroom(state.pool, own.profile, now) !== 0 && (!room || room(own.toolId, own.profile))) {
-      const check = state.setup?.checks.find((check) => check.id === own.toolId);
-      // Recovery checks are bounded by the normal tool-check timeout. Checking is temporary;
-      // let it answer before replacing a healthy saved Builder with a permanent fresh start.
-      if (check?.checking) return { kind: "none", waiting: `Checking ${this.toolName(own.toolId)} before the Builder returns` };
-      if (candidates.profiles.some((profile) => profile.id === own.profile.id) && (!checked || usable.includes(own.toolId))) {
+      const check = checkOn(own.toolId);
+      const wait = own.saved.readinessWait;
+      ownReadiness = wait && readinessOutcome(check, wait, now, limit);
+      const usableOwn = candidates.profiles.some((profile) => profile.id === own.profile.id) && (!checked || usable.includes(own.toolId));
+      // Recovery checks are bounded by the normal tool-check timeout. Checking is temporary; let it answer before
+      // replacing a healthy saved Builder with a permanent fresh start. An uncertain answer gets one bounded recheck.
+      if (check?.checking || (checked && !usableOwn && uncertain(check?.status))) {
+        const gate = readinessGate(check, wait, now, limit, true);
+        if (gate.kind === "wait") return need(own.saved, own.profile, `Checking ${this.toolName(own.toolId)} before the Builder returns`);
+        ownFresh = gate.reason;
+      }
+      if (usableOwn) {
         const ready = candidates.tools.filter((tool) => tool.status === "ready");
-        if (!ready.length || ready.some((tool) => tool.id === own.toolId)) return { kind: own.profile.id === plannedId ? "planned" : "substitute", profile: own.profile, reason: "Returned to the Builder's existing conversation on an available profile." };
+        if (!ready.length || ready.some((tool) => tool.id === own.toolId)) return { kind: own.profile.id === plannedId ? "planned" : "substitute", profile: own.profile, reason: `Returned to the Builder's existing conversation on an available profile.${rechecked(ownReadiness) ? ` ${this.toolName(own.toolId)} passed its readiness recheck first.` : ""}`, ...(ownReadiness ? { readiness: ownReadiness } : {}) };
       }
     }
+    const builderFresh = (choice: Selection): Selection => ownFresh && choice.kind !== "none" && choice.profile.toolId !== own?.toolId
+      ? { ...choice, reason: `Started a fresh conversation: ${ownFresh}. ${choice.reason ?? ""}`.trim(), freshReason: ownFresh, ...(ownReadiness ? { readiness: ownReadiness } : {}) } : choice;
     if (task?.maintenance && findings && candidates.tools.some(tool => tool.status === "ready" && tool.id !== task.maintenance!.profile.toolId)) {
       const author = task.maintenance.profile;
       candidates = { ...candidates, profiles: candidates.profiles.filter(profile => !(profile.toolId === author.toolId && profile.modelId === author.modelId && profile.effort === author.effort)) };
@@ -227,6 +251,14 @@ export class UsageCoordinator {
     const participant = scope && role && !screen ? participantConversation(this.k, scope, role, planned, reviewerKey) : undefined;
     let freshReason = participant?.reason;
     const previous = participant?.actual;
+    const wait = participant?.prior?.readinessWait;
+    // A recorded readiness decision stays with the saved conversation's start, including a failed reopen after Ready.
+    const readiness = previous && wait ? readinessOutcome(checkOn(previous.toolId), wait, now, limit) : undefined;
+    const withReadiness = (choice: Selection): Selection => readiness && choice.kind !== "none" ? { ...choice, readiness } : choice;
+    // The usual choice with the saved profile treated as planned. Preserve why it rejected it,
+    // whether for usage headroom or review independence.
+    const rejected = (kept: Choice) => (kept.kind === "none" ? kept.waiting : kept.reason ?? "the usual selection requires a different profile")
+      .replaceAll("planned profile", "saved profile").replace(/\.$/, "");
     if (participant && !freshReason && previous) {
       const standIn = previous.id !== planned.id;
       if (standIn && participant.coordinator) freshReason = "you chose this seat's profile, so it returns to your choice when available";
@@ -236,21 +268,25 @@ export class UsageCoordinator {
       else if (modelFull(previous)) freshReason = "its saved model is full";
       else if (room && !room(previous.toolId, previous)) freshReason = "its saved tool has no free agent slot";
       else {
-        const check = state.setup?.checks.find((check) => check.id === previous.toolId);
-        if (standIn && check?.checking) return { kind: "none", waiting: `Checking ${this.toolName(previous.toolId)} before returning to its saved conversation` };
-        if (!candidates.profiles.some((profile) => profile.id === previous.id) || !candidates.tools.some((tool) => tool.id === previous.toolId && tool.status === "ready")) {
-          freshReason = `its saved tool is ${check?.status === "logged-out" ? "logged out" : "not ready"}`;
+        const check = checkOn(previous.toolId);
+        const ready = candidates.profiles.some((profile) => profile.id === previous.id) && candidates.tools.some((tool) => tool.id === previous.toolId && tool.status === "ready");
+        if ((standIn && check?.checking) || (checked && !ready && uncertain(check?.status))) {
+          // A running check, or an uncertain answer that is all that stands in the way: the usual choice would keep
+          // this conversation once its tool passes. Another restriction is never probed away.
+          const kept = chooseWithRoom(ready ? candidates : passing(previous.toolId), previous, now, rules, room);
+          const gate = kept.kind === "planned" && kept.profile.id === previous.id ? readinessGate(check, wait, now, limit, standIn) : undefined;
+          if (gate?.kind === "wait") return need(participant.prior!, previous, `Checking ${this.toolName(previous.toolId)} before returning to its saved conversation`);
+          freshReason = gate ? gate.reason : rejected(kept);
+        } else if (!ready) {
+          freshReason = `its saved tool is ${check?.status === "logged-out" ? "logged out" : check?.status === "not-installed" ? "not installed" : "not ready"}`;
         } else if (standIn) {
           const kept = chooseWithRoom(candidates, previous, now, rules, room);
           if (kept.kind === "planned" && kept.profile.id === previous.id) {
             const usual = chooseWithRoom(candidates, planned, now, rules, room);
             const recovered = usual.kind === "planned" && usual.profile.id === planned.id;
-            return { kind: "substitute", profile: previous, reason: `Kept its own conversation on ${this.k.named(previous.id)}${recovered ? ` while the planned ${this.k.named(planned.id)} is available` : ` for the seat planned for ${this.k.named(planned.id)}`}.` };
+            return withReadiness({ kind: "substitute", profile: previous, reason: `Kept its own conversation on ${this.k.named(previous.id)}${recovered ? ` while the planned ${this.k.named(planned.id)} is available` : ` for the seat planned for ${this.k.named(planned.id)}`}.${rechecked(readiness) ? ` ${this.toolName(previous.toolId)} passed its readiness recheck first.` : ""}` });
           }
-          // The saved profile is treated as planned for this check. Preserve why the usual
-          // choice rejected it, whether for usage headroom or review independence.
-          freshReason = (kept.kind === "none" ? kept.waiting : kept.reason ?? "the usual selection requires a different profile")
-            .replaceAll("planned profile", "saved profile").replace(/\.$/, "");
+          freshReason = rejected(kept);
         }
       }
     }
@@ -266,14 +302,18 @@ export class UsageCoordinator {
       if (seated.length) {
         const available = { ...candidates, tools: seated.map((tool) => ({ ...tool, status: "ready" as const })), profiles: candidates.profiles.filter((profile) => seated.some((tool) => tool.id === profile.toolId) && room(profile.toolId, profile)) };
         const next = chooseWithRoom(available, planned, now, rules, room);
-        if (next.kind !== "none") return next;
+        if (next.kind !== "none") return builderFresh(next);
       }
     }
     if (choice.kind !== "none" && participant && (participant.reason || choice.profile.id !== participant.prior?.profileId)) {
       const why = freshReason ?? "the usual selection requires a different profile";
-      return { ...choice, reason: `Started a fresh conversation: ${why}. ${choice.reason ?? ""}`, freshReason: why };
+      return withReadiness({ ...choice, reason: `Started a fresh conversation: ${why}. ${choice.reason ?? ""}`, freshReason: why });
     }
-    return choice;
+    // A planned participant returning to its own conversation after its tool passed the recheck says so.
+    if (choice.kind !== "none" && rechecked(readiness) && previous && choice.profile.id === previous.id) {
+      return withReadiness({ ...choice, reason: [choice.reason, `${this.toolName(previous.toolId)} passed its readiness recheck before it returned to its saved conversation.`].filter(Boolean).join(" ") });
+    }
+    return builderFresh(withReadiness(choice));
   }
 
   /**

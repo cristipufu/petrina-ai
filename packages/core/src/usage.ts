@@ -2,6 +2,7 @@
 // the simulator and the window all read the same answers.
 
 import type { AgentProfile, Id, Pool, State, UsageLimit, UsageReport } from "./model.js";
+import type { ReadinessRecheck } from "./readiness.js";
 
 /** From this much of a limit used, new agents prefer a tool that is further from its own. */
 export const NEAR_LIMIT = 0.9;
@@ -181,8 +182,11 @@ export function byRoom<T>(items: readonly T[], roomOf: (item: T) => number | und
   return [...items].sort((a, b) => key(b) - key(a));
 }
 
-/** `freshReason`: why a saved design or review conversation was not kept, when the choice starts that participant fresh. */
-export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile; reason?: string; freshReason?: string } | { kind: "none"; waiting: string };
+/**
+ * `freshReason`: why a saved design or review conversation was not kept, when the choice starts that participant fresh.
+ * `readiness`: the saved conversation's bounded readiness recheck behind this choice.
+ */
+export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile; reason?: string; freshReason?: string; readiness?: ReadinessRecheck } | { kind: "none"; waiting: string };
 
 /**
  * Which profile actually works a step planned for `planned`. The planned one when it is free to work and

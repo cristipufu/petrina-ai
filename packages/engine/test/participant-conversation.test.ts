@@ -369,7 +369,7 @@ describe.concurrent("eligible saved review stand-ins", () => {
         else if (changed === "chosen") { Object.assign(f.stage, { assignments: [{ profileId: "opus-high", by: "coordinator" }] }); reason = "you chose this seat"; }
         else if (changed === "usage") { f.engine.s.pool.limited = [{ toolId: saved.toolId, until: Date.now() + 3_600_000, reason: "Out" }]; reason = "out of usage"; }
         else if (changed === "capacity") { f.task.modelCapacity = [{ toolId: saved.toolId, modelId: saved.model, profileId: saved.profileId, until: Date.now() + 3_600_000 }]; reason = "saved model is full"; }
-        else if (changed === "readiness" || changed === "login") { f.engine.s.setup!.checks.find((check) => check.id === saved.toolId)!.status = changed === "login" ? "logged-out" : "not-installed"; reason = changed === "login" ? "logged out" : "not ready"; }
+        else if (changed === "readiness" || changed === "login") { f.engine.s.setup!.checks.find((check) => check.id === saved.toolId)!.status = changed === "login" ? "logged-out" : "not-installed"; reason = changed === "login" ? "logged out" : "not installed"; }
         else if (changed === "removed") { f.engine.s.retiredProfiles = [f.engine.profile(saved.profileId)!]; f.engine.s.profiles = f.engine.s.profiles.filter((profile) => profile.id !== saved.profileId); reason = "no longer offered"; }
         else if (changed === "planned removed") { f.engine.s.retiredProfiles = [f.engine.profile("opus-high")!]; f.engine.s.profiles = f.engine.s.profiles.filter((profile) => profile.id !== "opus-high"); reason = "planned profile is no longer offered"; }
         else if (changed === "cap") { f.engine.s.pool.toolCaps[saved.toolId] = 0; reason = "no free agent slot"; }
@@ -433,7 +433,7 @@ describe.concurrent("eligible saved review stand-ins", () => {
       const saved = (await f.first())["0"]!;
       const check = f.engine.s.setup!.checks.find((check) => check.id === saved.toolId)!;
       check.checking = true;
-      expect(f.choose()).toEqual({ kind: "none", waiting: expect.stringContaining("before returning") });
+      expect(f.choose()).toEqual({ kind: "none", waiting: expect.stringContaining("before returning"), readiness: expect.objectContaining({ toolId: saved.toolId, profileId: saved.profileId }) });
       check.checking = false;
       expect(f.choose()).toEqual(expect.objectContaining({ profile: expect.objectContaining({ id: saved.profileId }) }));
     } finally { await f.engine.shutdown(); }

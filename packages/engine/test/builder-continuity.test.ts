@@ -219,7 +219,7 @@ describe("Builder continuity boundaries", () => {
         ["no headroom on extra usage", () => { Object.assign(engine.s.pool.usage![0]!, { status: "rejected", overage: true }); }],
         ["logged out", () => { engine.s.setup!.checks[1]!.status = "logged-out"; }],
         ["not installed", () => { engine.s.setup!.checks[1]!.status = "not-installed"; }],
-        ["unverified with Ready alternatives", () => { engine.s.setup!.checks[1]!.status = "unknown"; }],
+        ["recently unverified with Ready alternatives", () => { Object.assign(engine.s.setup!.checks[1]!, { status: "unknown", at: Date.now() }); }],
         ["removed profiles", () => { engine.s.profiles = engine.s.profiles.filter((profile) => profile.toolId !== "codex"); }],
         ["different stage", () => { executionFor(task).work.builderSession!.stageId = "other"; }],
         ["changed plan effort", () => { executionFor(task).work.builderSession!.profileId = "opus-xhigh"; }],
@@ -230,6 +230,17 @@ describe("Builder continuity boundaries", () => {
       ];
       for (const [why, change] of handoffs) {
         reset(); change(); expect(tool(), why).toBe("grok");
+      }
+      // An older or undated uncertain answer gets one bounded recheck first; its recorded answer then decides.
+      for (const at of [undefined, Date.now() - 5 * 60_000]) {
+        reset(); Object.assign(engine.s.setup!.checks[1]!, { status: "unknown", at });
+        const waiting = choose();
+        expect(waiting).toEqual({ kind: "none", waiting: "Checking Codex before the Builder returns", readiness: expect.objectContaining({ toolId: "codex", profileId: "sol-high" }) });
+        if (waiting?.kind !== "none" || !waiting.readiness) throw new Error("No readiness decision");
+        waiting.readiness.saved.readinessWait = { at: Date.now() - 1, toolId: "codex", previous: { status: "unknown", ...(at ? { at } : {}) }, check: "started" };
+        expect(tool()).toBe("none");
+        engine.s.setup!.checks[1]!.at = Date.now();
+        expect(choose()).toEqual(expect.objectContaining({ profile: expect.objectContaining({ toolId: "grok" }), freshReason: "its saved tool's readiness recheck was inconclusive", readiness: expect.objectContaining({ outcome: "unknown", check: "started" }) }));
       }
       // A provider warning at 33%, or without a percentage, keeps the healthy saved Builder.
       for (const utilization of [0.33, undefined]) {

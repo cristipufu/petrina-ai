@@ -174,6 +174,17 @@ describe("compact facts become ordered events", () => {
     expect(diff(capacity, task({ state: "waiting", statusLine: "Still at capacity", capacityPaused: capacity.capacityPaused }))).toEqual([]);
   });
 
+  it("names a saved conversation's readiness wait and keeps its recheck with the seat that started", () => {
+    const waiting = task({ state: "waiting", statusLine: "Checking Grok before returning to its saved conversation" });
+    expect(diff(task({ state: "waiting", statusLine: "Waiting for a free slot" }), waiting)).toEqual([expect.objectContaining({ kind: "task.waiting", wait: "readiness" })]);
+    expect(workflowFacts(task({ state: "waiting", statusLine: "Checking Codex before the Builder returns" }), ctx()).waitKind).toBe("readiness");
+    const readiness = { at: 10, toolId: "grok", previous: { status: "unknown" as const, at: 1 }, check: "started" as const, outcome: "ready" as const };
+    const step: JourneyStep = { id: "j1", kind: "agent", roleId: "code-reviewer", profileId: "grok-high", round: 2, sub: 0, startedAt: 20, agentInputs: [{ at: 20, roleId: "code-reviewer", profileId: "grok-high", requestedProfileId: "opus-high", reviewerKey: "1", taskTitle: "T", sections: [], mode: "continued", readiness }] };
+    const seat = diff(task({ state: "running" }), task({ state: "running", journey: [step] })).find((event) => event.kind === "seat.started")!;
+    expect(seat).toMatchObject({ mode: "continued", requestedProfileId: "opus-high", profileId: "grok-high", readiness });
+    expect(seat.summary).toContain("continued its conversation; readiness recheck started, ready");
+  });
+
   it("orders node, seat, check, decision and review events within one change, with causal references", () => {
     const builder: JourneyStep = { id: "j1", kind: "agent", roleId: "builder", profileId: "sol-xhigh", round: 1, sub: 0, startedAt: 100, trigger: { reason: "Task started" }, agentInputs: [{ at: 101, roleId: "builder", profileId: "sol-xhigh", requestedProfileId: "sol-xhigh", taskTitle: "T", sections: [{ title: "Design brief", body: "x" }], mode: "fresh", exact: { file: "/f", digest: "d".repeat(64), size: 1200 }, manifest: [{ name: "Role instructions", size: 10, digest: "a", kind: "instructions" }, { name: "Design brief", size: 1, digest: "b", kind: "text" }] }], agentResults: [{ roleId: "builder", profileId: "sol-xhigh", at: 200, value: { summary: "Built it", changes: ["A change"] } }], endedAt: 200, end: "done", outcome: "Change ready", reason: "ready for review" };
     const checks: JourneyStep = { id: "j2", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 201, trigger: { after: "j1", reason: "ready for review" }, productChecks: [{ id: "check-0", attemptId: "run-0", productId: "shop", name: "Tests", result: "fail", queuedAt: 201, startedAt: 202, endedAt: 250, run: { name: "Tests", command: "bun test", ok: false, ms: 48, output: "1 failed", logPath: "/log", logComplete: true }, detail: "(fail) a case" }], checkAttempts: [{ id: "run-0", productId: "shop", commands: ["bun test"], sha: "abc", tree: "tree", definition: "def", passed: false }], endedAt: 250, end: "done", outcome: "1 of 1 check failed", reason: "1 check failed", tone: "back" };

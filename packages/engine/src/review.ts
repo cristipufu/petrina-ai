@@ -3,7 +3,7 @@ import { beginRepair, productsFor } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewRoundEnd, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type PanelCandidate, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
+import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewRoundEnd, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -20,6 +20,7 @@ import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
 import { participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
 import { completeAll } from "./parallel.js";
+import type { ReadinessNeed } from "./readiness.js";
 
 /**
  * Keep each dispute with who and why. Status is settled after every reviewer reports, so an objection
@@ -98,8 +99,8 @@ function reopenFinding(finding: DeepMutable<Finding>, at: number, evidence?: str
   if (evidence !== undefined) finding.evidence = evidence.trim();
 }
 
-/** What admission decided for a parallel seat: the words on its start, and why a saved conversation was not kept. */
-type SeatSelection = { selectionReason?: string; freshReason?: string };
+/** What admission decided for a parallel seat: the words on its start, why a saved conversation was not kept, and its readiness recheck. */
+type SeatSelection = { selectionReason?: string; freshReason?: string; readiness?: ReadinessRecheck };
 
 export class Reviews {
   private readonly inputs = new WeakMap<MTask, { digest: string; input: ReviewInput }>();
@@ -865,6 +866,9 @@ export class Reviews {
     const accepted = new Set<string>();
     const running = new Map<string, { agent: ActiveAgent; done: Promise<void> }>();
     const yielded = new Set<string>();
+    // Members whose saved conversation waits for its tool's bounded readiness decision: the group stays open until
+    // each settles, and later members keep their order behind it.
+    const deciding = new Map<string, { need: ReadinessNeed; done: Promise<void> }>();
     let failure: unknown;
     let noOne: WaitingForUsage | undefined;
     let wake: (() => void) | undefined;
@@ -873,6 +877,7 @@ export class Reviews {
       this.k.selectScreen(task);
       if (task.screen?.member) scope.work.conversation ??= task.hunt?.screenTurns?.[task.screen.member]?.conversation;
       const agents = [...running.entries()].filter(([key]) => !yielded.has(key)).sort(([a], [b]) => Number(b === task.screen?.member) - Number(a === task.screen?.member)).map(([, entry]) => entry.agent);
+      const [waitingOn, decision] = [...deciding.entries()][0] ?? [];
       if (agents.length) {
         task.holdsSlot = true;
         task.agent = agents[0]!;
@@ -880,11 +885,16 @@ export class Reviews {
         // Only a screen wait gives up the group's last reserved seat. Ordinary cleanup keeps it.
         task.holdsSlot = false;
         delete task.agent;
+      } else if (decision && task.holdsSlot && !this.k.readiness.charge(task, decision.need, members.find((member) => member.key === waitingOn)?.reviewKey)) {
+        // The last working reviewer finished during a readiness decision. Its one main place stays with the group,
+        // charged to the waiting reviewer's saved tool; where that tool has no room, the place is let go.
+        task.holdsSlot = false;
+        delete task.agent;
       }
       if (agents.length > 1) task.helpers = agents.slice(1);
       else delete task.helpers;
       task.state = this.k.s.inbox.some((item) => item.taskId === task.id && item.blocking) ? "needs-you" : task.screen && !task.screen.granted ? "waiting" : "running";
-      if (task.state === "running") task.statusLine = status(running.size, pending.length);
+      if (task.state === "running") task.statusLine = !agents.length && decision ? decision.need.words : status(running.size, pending.length);
       this.k.showReviewWork(task);
       this.k.syncScreen();
     };
@@ -977,8 +987,23 @@ export class Reviews {
       while (pending.length && failure === undefined && !task.screen && !Object.keys(task.hunt?.screenTurns ?? {}).length) {
         if (this.k.admissionsClosed || signal.aborted) break;
         const member = pending[0]!;
+        // Its decision is still open: no peer is moved ahead of it.
+        if (deciding.has(member.key)) break;
         const room = roomFor(member.key);
         const choice = this.k.choose(member.profileId, task, member.roleId, room, member.reviewerKey);
+        if (choice?.kind === "none" && choice.readiness && this.k.readiness.open(choice.readiness)) {
+          // The group owns this member's decision: the check starts or is joined now, without waiting for working
+          // peers, and the member stays pending without a place of its own until the check answers or its limit passes.
+          // Places are settled first: with no peer working, the group's main place moves to the saved tool.
+          const decision = { need: choice.readiness, done: Promise.resolve() };
+          deciding.set(member.key, decision);
+          show();
+          decision.done = this.k.readiness.resolve(choice.readiness, signal).then(() => {
+            deciding.delete(member.key);
+            wake?.();
+          });
+          break;
+        }
         if (choice?.kind === "none") {
           const waiting = waitingFor(choice.waiting);
           if (waiting instanceof WaitingForCapacity) noOne = waiting;
@@ -990,7 +1015,7 @@ export class Reviews {
         const profile = this.k.profile(seat)!;
         if (!room(profile.toolId, profile)) break;
         pending.shift();
-        startMember(member, join(folder, member.key), room, seat, false, choice ? { ...(choice.reason ? { selectionReason: choice.reason } : {}), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}) } : undefined);
+        startMember(member, join(folder, member.key), room, seat, false, choice ? { ...(choice.reason ? { selectionReason: choice.reason } : {}), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) } : undefined);
       }
       this.k.commit();
     };
@@ -1005,9 +1030,9 @@ export class Reviews {
     try {
       if (task.screen?.member) continueScreen();
       else start();
-      while (running.size) {
-        // A member reopened while its peers work must also be able to wake this group.
-        await Promise.race([...running.values()].map((entry) => entry.done).concat(new Promise<void>((resolve) => { wake = resolve; })));
+      while (running.size || deciding.size) {
+        // A member reopened while its peers work, or a settled readiness decision, must also be able to wake this group.
+        await Promise.race([...running.values()].map((entry) => entry.done).concat([...deciding.values()].map((entry) => entry.done), new Promise<void>((resolve) => { wake = resolve; })));
         if (failure !== undefined || signal.aborted) break;
         start();
       }

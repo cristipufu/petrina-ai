@@ -209,7 +209,8 @@ interface ConfigOption {
 // "--not-logged-in": it reports no login but opens conversations, and asks for a login only at the first
 // message, as Claude Code does. "--silent-login": it never says whether it is logged in.
 // "--wont-start": it exits at once. "--hang": it starts but never opens a conversation. "--stubborn": it
-// ignores being told to stop, and writes its process id to "pids".
+// ignores being told to stop, and writes its process id to "pids". "--hang-in-checks", "--logged-out-in-checks" and
+// "--hold-open-in-checks=<file>" apply only to Petrina's readiness checks, each of which is added to "checks.jsonl".
 // Scenarios ride in the task description: "[disagree]" makes the design reviewer object every round,
 // "[no-check]" leaves the design check out of the plan, "[screens]" puts Screens between the design and
 // its check, and "[two-checks]" adds Screens and a second design check after the first. "[quick]" plans just a
@@ -422,10 +423,13 @@ const check = { kind: "gate", title: "Your design check", roleId: "architect", g
 const screens = { kind: "do", title: "Screens", roleId: "ux-designer", profileIds: ["opus-high"] };
 const objectionIds = (text: string) => [...text.matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
 const hold = process.argv.find((arg) => arg.startsWith("--hold="))?.slice("--hold=".length);
-const loggedOut = process.argv.includes("--logged-out");
+// Petrina's readiness checks run in its own "checks" folder.
+const inChecks = process.cwd().endsWith(`${process.platform === "win32" ? "\\" : "/"}checks`);
+if (inChecks && dir) appendFileSync(join(dir, "checks.jsonl"), `${JSON.stringify({ pid: process.pid, tool: recordedTool, at: Date.now() })}\n`);
+const loggedOut = process.argv.includes("--logged-out") || (inChecks && process.argv.includes("--logged-out-in-checks"));
 const notLoggedIn = loggedOut || process.argv.includes("--not-logged-in");
 const silentLogin = process.argv.includes("--silent-login");
-const hangs = process.argv.includes("--hang");
+const hangs = process.argv.includes("--hang") || (inChecks && process.argv.includes("--hang-in-checks"));
 const stubborn = process.argv.includes("--stubborn");
 if (stubborn) {
   process.on("SIGTERM", () => undefined);
@@ -1383,7 +1387,8 @@ acp
     traceStartup("new");
     if (loggedOut) throw acp.RequestError.authRequired();
     if (hangs) await new Promise(() => undefined);
-    const holdOpen = process.argv.find((arg) => arg.startsWith("--hold-open="))?.slice("--hold-open=".length);
+    const holdOpen = process.argv.find((arg) => arg.startsWith("--hold-open="))?.slice("--hold-open=".length)
+      ?? (inChecks ? process.argv.find((arg) => arg.startsWith("--hold-open-in-checks="))?.slice("--hold-open-in-checks=".length) : undefined);
     if (holdOpen) {
       writeFileSync(`${holdOpen}.reached`, "");
       while (existsSync(holdOpen)) await Bun.sleep(20);

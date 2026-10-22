@@ -8,13 +8,18 @@ import { join } from "node:path";
 import { CHECK_NAMES, checkOf, type AgentProfile, type CheckId, type Id, type ToolCheck } from "@petrina/core";
 import { agentEnv } from "./env.js";
 import { Kernel, notReady, ToolProblem, type MTask } from "./kernel.js";
-import { checkAgentTool, checkGh, checkGit, checkNode, isAuthRequired, type CheckResult, type Which } from "./setup.js";
+import { AGENT_CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, checkNode, isAuthRequired, type CheckResult, type Which } from "./setup.js";
 import { ADAPTERS, findProgram } from "./tools.js";
 
 /** Everything the tools check looks at, in the order it is shown. */
 export const CHECKS: readonly CheckId[] = ["claude-code", "codex", "grok", "antigravity", "gh", "git", "node"];
 /** How long a check waits for the last check's copy of a tool to stop: past the forced stop, never longer. */
 const LINGER_MS = 3_000;
+
+/** A saved participant's readiness recheck may take one agent check, after the previous copy of its tool has stopped. */
+export function readinessLimitMs(timeoutMs: number | undefined): number {
+  return (timeoutMs ?? AGENT_CHECK_TIMEOUT_MS) + LINGER_MS;
+}
 
 export class ToolChecks {
   /** Tool checks under way, so a second ask joins the first. */
@@ -64,6 +69,11 @@ export class ToolChecks {
       .finally(() => this.checking.delete(id));
     this.checking.set(id, job);
     return job;
+  }
+
+  /** The check of this tool under way, to join without starting another. */
+  running(id: CheckId): Promise<void> | undefined {
+    return this.checking.get(id);
   }
 
   status(id: CheckId) {

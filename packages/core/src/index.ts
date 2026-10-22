@@ -12,6 +12,7 @@ export * from "./sim.js";
 export * from "./demo.js";
 export * from "./board.js";
 export * from "./setup.js";
+export * from "./readiness.js";
 export * from "./takeover.js";
 export * from "./navigation.js";
 export * from "./findings.js";

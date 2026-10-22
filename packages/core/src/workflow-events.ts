@@ -61,7 +61,7 @@ export const EVENT_MANIFEST_ENTRIES = 12;
 export const EVENT_FINDING_IDS = 20;
 const SUMMARY_CHARACTERS = 400;
 
-export type WaitKind = "capacity" | "usage" | "slot" | "pool" | "dependencies" | "preparation" | "checks" | "other";
+export type WaitKind = "capacity" | "usage" | "slot" | "pool" | "dependencies" | "preparation" | "checks" | "readiness" | "other";
 
 export type PublishingResult =
   | { kind: "released"; landed: true; tag: string; url: string }
@@ -145,6 +145,7 @@ interface SeatInputFacts {
   manifest?: readonly InputManifestEntry[];
   manifestTotal?: number;
   freshReason?: string;
+  readiness?: JourneyAgentInput["readiness"];
   sessionId?: string;
   taskDescription: boolean;
   updates: number;
@@ -292,6 +293,7 @@ function waitKindOf(task: TaskState, ctx: WorkflowContext): WaitKind | undefined
   if (line.startsWith("Waiting for room to prepare")) return "preparation";
   if (line.startsWith("Waiting to run the checks")) return "checks";
   if (line.startsWith("Waiting for a free")) return "slot";
+  if (/^Checking .+ before (returning to its saved conversation|the Builder returns)$/.test(line)) return "readiness";
   return "other";
 }
 
@@ -352,6 +354,7 @@ function nodeFacts(step: JourneyStep, index: number, journey: readonly JourneySt
       ...(input.exact ? { exact: input.exact } : {}),
       ...(input.manifest ? { manifest: input.manifest.slice(0, EVENT_MANIFEST_ENTRIES), manifestTotal: input.manifest.length } : {}),
       ...(input.freshReason ? { freshReason: input.freshReason } : {}),
+      ...(input.readiness ? { readiness: input.readiness } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       taskDescription: input.taskDescription !== undefined,
       updates: input.updates?.length ?? 0,
@@ -502,9 +505,9 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
       const seatRef = { taskId: next.id, nodeId: node.id, seat: input.seat, index: input.attempt - 1 };
       push({
         at: input.at ?? node.startedAt, kind: "seat.started", ...at, seat: input.seat, attempt: input.attempt,
-        summary: `${roleName(input.roleId)} (${input.seat}) started on ${input.profileId}${input.requestedProfileId && input.requestedProfileId !== input.profileId ? ` instead of ${input.requestedProfileId}` : ""}: ${input.mode === "resumed" ? "resumed its interrupted conversation" : input.mode === "continued" ? "continued its conversation" : input.freshReason ? `fresh conversation (${input.freshReason})` : "fresh conversation"}${node.trigger?.reason ? `; after: ${node.trigger.reason}` : ""}`,
+        summary: `${roleName(input.roleId)} (${input.seat}) started on ${input.profileId}${input.requestedProfileId && input.requestedProfileId !== input.profileId ? ` instead of ${input.requestedProfileId}` : ""}: ${input.mode === "resumed" ? "resumed its interrupted conversation" : input.mode === "continued" ? "continued its conversation" : input.freshReason ? `fresh conversation (${input.freshReason})` : "fresh conversation"}${input.readiness ? `; readiness recheck ${input.readiness.check}, ${input.readiness.outcome === "no answer" ? "no answer in time" : input.readiness.outcome}` : ""}${node.trigger?.reason ? `; after: ${node.trigger.reason}` : ""}`,
         roleId: input.roleId, profileId: input.profileId, ...(input.requestedProfileId ? { requestedProfileId: input.requestedProfileId } : {}), ...(input.selectionReason ? { selectionReason: input.selectionReason } : {}),
-        mode: input.mode, ...(input.freshReason ? { freshReason: input.freshReason } : {}), ...(input.sessionId ? { conversation: input.sessionId } : {}), ...(input.confirmedSettings ? { confirmedSettings: input.confirmedSettings } : {}),
+        mode: input.mode, ...(input.freshReason ? { freshReason: input.freshReason } : {}), ...(input.readiness ? { readiness: input.readiness } : {}), ...(input.sessionId ? { conversation: input.sessionId } : {}), ...(input.confirmedSettings ? { confirmedSettings: input.confirmedSettings } : {}),
         ...(node.builderConversation ? { builderConversation: node.builderConversation } : {}),
         ...(input.productId ? { productId: input.productId } : {}),
         ...(input.stepAttempts !== undefined ? { stepAttempts: input.stepAttempts } : {}),

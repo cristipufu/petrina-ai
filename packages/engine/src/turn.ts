@@ -30,15 +30,18 @@ import { builderContext } from "./builder-context.js";
 import { recordToolActivity } from "./record-tool-activity.js";
 import { discardParticipant, ParticipantUnavailable } from "./participant-conversation.js";
 import type { ToolActivityEvent } from "./tool-invocations.js";
+import type { ReadinessRecheck, ReadinessWait } from "@petrina/core";
 import { inputManifest, numberInputManifest, saveExactMessage } from "./exact-input.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
 type Given = () => Section[] | Promise<Section[]>;
-type ResumeConversation = { sessionId: string; toolId: Id; model: string; context?: import("@petrina/core").BuilderContext; knownSections?: readonly string[]; continuedSections?: readonly Section[]; reselect?: boolean };
+type ResumeConversation = { sessionId: string; toolId: Id; model: string; context?: import("@petrina/core").BuilderContext; knownSections?: readonly string[]; continuedSections?: readonly Section[]; reselect?: boolean; readinessWait?: ReadinessWait };
 type ConversationOptions = {
   /** Why a saved conversation was not kept, from the choice that started this participant fresh. */
   freshReason?: string;
+  /** The saved conversation's bounded readiness recheck behind this choice, for the journey. */
+  readiness?: ReadinessRecheck;
   resume?: ResumeConversation | ((profile: AgentProfile, role: Role) => ResumeConversation | undefined | Promise<ResumeConversation | undefined>);
   reviewContext?: boolean;
   reviewFindings?: readonly import("@petrina/core").Finding[];
@@ -123,6 +126,16 @@ export class Turns {
       const wanted = task.screen?.roleId === roleId ? task.screen.profileId : plannedId;
       const room = options.room ?? ((toolId: Id, profile: AgentProfile) => !slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId }));
       const choice = this.k.choose(wanted, scope, roleId, room, options.reviewerKey)!;
+      if (choice.kind === "none" && choice.readiness && !stopped) {
+        // Only a saved participant's uncertain tool stands in the way. A step holding its place keeps it for the
+        // bounded decision and chooses again; otherwise the check starts or is joined and the task waits as usual.
+        if (!options.member && this.k.readiness.hold(task, choice.readiness)) {
+          await this.k.readiness.resolve(choice.readiness, signal);
+          if (signal.aborted) throw new Aborted();
+          continue;
+        }
+        if (!this.k.admissionsClosed) void this.k.readiness.resolve(choice.readiness);
+      }
       if (choice.kind === "none") {
         // A full model, with nothing else to take the step, retries the same conversation. It is not a usage limit,
         // unless the account is out as well: then the wait is that limit's.
@@ -165,7 +178,7 @@ export class Turns {
         this.k.log(scope, "warn", `Security review on the builder's tool (${this.k.named(profile.id)}): no other tool is available for this review`);
       }
       try {
-        return await this.attempt(scope, roleId, plannedId, profile, given, schema, signal, { ...options, selectionReason: [options.selectionReason, choice.reason].filter(Boolean).join(" "), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}) });
+        return await this.attempt(scope, roleId, plannedId, profile, given, schema, signal, { ...options, selectionReason: [options.selectionReason, choice.reason].filter(Boolean).join(" "), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) });
       } catch (error) {
         if (signal.aborted) throw error;
         if (this.discardUnavailableParticipant(scope, roleId, error, options.reviewerKey)) continue;
@@ -238,7 +251,7 @@ export class Turns {
    * The role-specific context at the moment it is handed to an agent, not reconstructed later. The record is
    * returned, and joins the journey when the exact text goes out, so its saved message reference is part of it.
    */
-  private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued", plannedId: Id, selectionReason: string | undefined, reviewerKey: string | undefined, confirmedSettings: { model?: string; modelName?: string; effort?: string }, instructions: string, extra: { omitted?: readonly { title: string; digest: string }[]; freshReason?: string; sessionId?: string; resumed?: boolean; supplied?: readonly Section[]; place?: string } = {}): PendingInput | undefined {
+  private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued", plannedId: Id, selectionReason: string | undefined, reviewerKey: string | undefined, confirmedSettings: { model?: string; modelName?: string; effort?: string }, instructions: string, extra: { omitted?: readonly { title: string; digest: string }[]; freshReason?: string; sessionId?: string; resumed?: boolean; supplied?: readonly Section[]; place?: string; readiness?: ReadinessRecheck } = {}): PendingInput | undefined {
     const { task, work } = scope;
     const step = openStep(task);
     if (step?.kind !== "agent") return undefined;
@@ -276,6 +289,7 @@ export class Turns {
       ...(extra.resumed ? { resumed: true } : {}),
       manifest: inputManifest(instructions, extra.supplied ?? sections, extra.omitted, extra.supplied !== undefined),
       ...(extra.freshReason ? { freshReason: extra.freshReason } : {}),
+      ...(extra.readiness ? { readiness: structuredClone(extra.readiness) } : {}),
       ...(extra.sessionId ? { sessionId: extra.sessionId } : {}),
     };
     return { stepId: step.id, input };
@@ -323,11 +337,12 @@ export class Turns {
     if (access.afterReview && !same) this.k.log(scope, "warn", `${role.name} works read-only on this task: its step comes after the final review`, roleId, profileId);
     // A conversation that never showed it got its instructions (Petrina stopped in between) starts again instead.
     const reopen = same && same.briefed && role.result !== "delivery" && same.toolId === profile.toolId && same.model === model && (role.result !== "build" || !same.plannedProfileId || same.plannedProfileId === plannedId) ? same : undefined;
-    let again = saved && !reopen ? (same ? (same.briefed || role.result === "delivery" ? "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
+    let again = saved && !reopen ? (same ? (same.briefed || role.result === "delivery" ? (options.readiness && options.freshReason) || "it now runs on a different tool or model" : "it had not received its instructions yet") : "the saved conversation was for another step") : undefined;
     // Back to an earlier step's conversation, unless this step already has one of its own.
     const offered = typeof options.resume === "function" ? await options.resume(profile, role) : options.resume;
     const back = !saved && offered?.toolId === profile.toolId && offered.model === model ? offered : undefined;
-    if (!saved && offered && !back) this.k.log(scope, "status", "Started a fresh conversation: the tool or model changed", roleId, profileId);
+    // A selection that already said why (its saved tool's readiness) is logged with the journey input instead.
+    if (!saved && offered && !back && !options.freshReason) this.k.log(scope, "status", "Started a fresh conversation: the tool or model changed", roleId, profileId);
     const startedAt = same?.startedAt ?? Date.now();
     // Handed back by the coordinator: the note of what changed, until the agent hears it.
     const handback = same?.handback;
@@ -452,10 +467,12 @@ export class Turns {
       this.k.log(scope, "milestone", `Started this step again: ${again}`, roleId, profileId);
     }
     // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
-    // the old note; a reopened one keeps the open question until the conversation hears the answer.
+    // the old note; a reopened one keeps the open question until the conversation hears the answer, and the
+    // readiness recheck it already spent until its participant completes a turn and saves its next continuation.
     const asked = picked ? reopen?.asked : undefined;
+    const readinessWait = picked ? (reopen ?? back)?.readinessWait : undefined;
     if (role.result !== "delivery") {
-      repository.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId, builderTree: options.builderTree } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && same?.context ? { context: same.context } : {}), ...(picked && handback ? { handback } : {}), ...(picked && same?.capacityContinue ? { capacityContinue: true } : {}) };
+      repository.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId, builderTree: options.builderTree } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && same?.context ? { context: same.context } : {}), ...(picked && handback ? { handback } : {}), ...(picked && same?.capacityContinue ? { capacityContinue: true } : {}), ...(readinessWait ? { readinessWait } : {}) };
       const pending = screen?.member && task.hunt?.screenTurns?.[screen.member];
       // Keep the latest reopened or replacement conversation when this member yields to a peer.
       if (pending) pending.conversation = repository.conversation;
@@ -497,7 +514,7 @@ export class Turns {
       if (signal.aborted || !live()) throw new Aborted();
       const withBackground = async (): Promise<Section[]> => [...currentStepAssignment(task, roleId), ...await given(), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : [])];
       // Why this conversation is fresh rather than the saved one, when Petrina recorded a reason.
-      const freshReason = wentBack || picked ? undefined : back ? (notBack ?? "the tool did not reopen the earlier conversation") : !saved && offered ? "the tool or model changed since the earlier conversation" : saved ? again : options.freshReason;
+      const freshReason = wentBack || picked ? undefined : back ? (notBack ?? "the tool did not reopen the earlier conversation") : !saved && offered ? options.freshReason ?? "the tool or model changed since the earlier conversation" : saved ? again : options.freshReason;
       let pending: PendingInput | undefined;
       let opening: string;
       if (wentBack) {
@@ -510,7 +527,7 @@ export class Turns {
           findings: options.reviewFindings,
         });
         const sections = prepared.sections;
-        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole, recordJob: (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}) }); } });
+        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole, recordJob: (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); } });
       } else if (picked) {
         // One line about the restart (or the hand back, or that it may now use the screen), then only what the conversation
         // has not heard: the answer to its open question, and messages still in line.
@@ -536,7 +553,7 @@ export class Turns {
         const unheard = texts.length ? `Messages from the coordinator you have not seen yet, in order:\n${texts.map((text) => `- ${text}`).join("\n")}` : "";
         opening = handback ? handBackPrompt(handback, texts) : forScreen ? screenPrompt(forScreen.reason, texts) : capacityContinue ? [capacityContinuePrompt(), unheard].filter(Boolean).join("\n\n") : restartPrompt(where!, { ...(answer ? { answer } : {}), messages: texts });
         const sections = [...currentStepAssignment(task, roleId), ...(repository.prBackground ? [{ title: "Refreshed pull request background", body: pullRequestBackground(repository.prBackground) }] : [])];
-        pending = this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, opening, { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}) });
+        pending = this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, opening, { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) });
         opening += sections.map(({ title, body }) => `\n\n## ${title}\n${body}`).join("");
       } else {
         // Starting the step again: everything the coordinator said in it so far, in order, and after a restart, where it was.
@@ -553,7 +570,7 @@ export class Turns {
         if ((role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
           await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true, findings: options.reviewFindings });
         }
-        opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}) }); });
+        opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); });
       }
       if (screen) screen.heard = true;
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
@@ -637,11 +654,14 @@ export class Turns {
       // so a stand-in never repeats why the first start was fresh.
       let selectionReason = options.selectionReason;
       let freshReason = options.freshReason;
+      let readiness = options.readiness;
       if (accepted) profile = accepted;
       else {
         const choice = this.k.choose(plannedId, scope, roleId, options.room, options.reviewerKey);
         if (!choice) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
         if (choice.kind === "none") {
+          // A member adds no place for a readiness check: the check starts or is joined, and the group waits as usual.
+          if (choice.readiness && !this.k.admissionsClosed) void this.k.readiness.resolve(choice.readiness);
           // The group waits. A full model is not a usage limit: peers finish, and this seat stays for the same profile.
           // When the account is out as well, the wait is that limit's.
           if (stopped?.error instanceof ModelAtCapacity) {
@@ -655,6 +675,7 @@ export class Turns {
         profile = choice.profile;
         selectionReason = choice.reason;
         freshReason = choice.freshReason;
+        readiness = choice.readiness;
       }
       if (stopped?.error instanceof ModelAtCapacity && (stopped.profileId === profile.id || sameCapacityModel(stopped.error, profile))) {
         this.prepareCapacityRetry(scope, roleId, stopped.profileId, stopped.error, options.member);
@@ -690,7 +711,7 @@ export class Turns {
       this.k.commitNow(scope);
       const since = Date.now();
       try {
-        return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, selectionReason, freshReason, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error instanceof ModelAtCapacity ? { refusal: "the selected model is at capacity" } : stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
+        return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, selectionReason, freshReason, readiness, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error instanceof ModelAtCapacity ? { refusal: "the selected model is at capacity" } : stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
       } catch (error) {
         if (signal.aborted) throw error;
         if (this.discardUnavailableParticipant(scope, roleId, error, options.reviewerKey)) continue;
@@ -797,9 +818,9 @@ export class Turns {
       const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
       let pending: PendingInput | undefined;
       const freshReason = wentBack || capacityBack ? undefined : offered || held ? (opened.reopenFailure ?? "the earlier review conversation was not reopened") : options.freshReason;
-      const recordJob = (job: string, supplied: readonly Section[]) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}) }); };
+      const recordJob = (job: string, supplied: readonly Section[]) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); };
       const opening = capacityBack ? [capacityContinuePrompt(), ...currentStepAssignment(task, roleId).map(({ title, body }) => `## ${title}\n${body}`)].join("\n\n") : wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole, recordJob }) : buildPrompt(promptContext, recordJob);
-      if (capacityBack) pending = this.recordJourneyInput(scope, roleId, profileId, currentStepAssignment(task, roleId), "continued", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, capacityContinuePrompt(), { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}) });
+      if (capacityBack) pending = this.recordJourneyInput(scope, roleId, profileId, currentStepAssignment(task, roleId), "continued", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, capacityContinuePrompt(), { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) });
       const result = await this.converse(scope, run, agent, opening, capacityBack ? "continue" : "first", role, profileId, schema, signal, {
         ...options,
         main: false,

@@ -66,6 +66,30 @@ describe.concurrent("design participants' own conversations", () => {
     } finally { await run.engine().shutdown(); }
   });
 
+  for (const side of ["author", "reviewer", "planned reviewer"] as const) it(`rechecks the ${side}'s old uncertain tool once in the step's place, then continues its conversation`, async () => {
+    const run = await fixture("resume", undefined, side === "planned reviewer" ? undefined : side);
+    try {
+      await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && Object.keys(run.task().designSessions ?? {}).length; }, "the first design reviewer to hold the round");
+      const roleId = side === "author" ? "architect" : "design-reviewer";
+      const first = run.task().journey!.find((step) => step.round === 1 && step.roleId === roleId)!.agentInputs![0]!;
+      const toolId = run.engine().profile(first.profileId)!.toolId;
+      const name = run.engine().s.tools.find((tool) => tool.id === toolId)!.name;
+      run.engine().s.pool.limited = [];
+      // Its last answer was Couldn't check, ten minutes ago, while other tools are Ready.
+      const old = Date.now() - 10 * 60_000;
+      Object.assign(run.engine().s.setup!.checks.find((check) => check.id === toolId)!, { status: "unknown", at: old });
+      const task = await run.done();
+      const input = task.journey!.find((step) => step.round === 2 && step.roleId === roleId)!.agentInputs![0]!;
+      expect(input).toEqual(expect.objectContaining({ mode: "continued", profileId: first.profileId, sessionId: first.sessionId }));
+      expect(input.readiness).toEqual({ at: expect.any(Number), toolId, previous: { status: "unknown", at: old }, check: "started", outcome: "ready" });
+      expect(input.selectionReason).toContain(`${name} passed its readiness recheck`);
+      const line = task.timeline.find((entry) => entry.text.startsWith(`Checking ${name} before returning to its saved conversation (`));
+      expect(line?.text).toContain("so Petrina started one recheck");
+      expect(line?.roleId).toBeUndefined();
+      expect(run.engine().s.setup!.checks.find((check) => check.id === toolId)!.status).toBe("ready");
+    } finally { await run.engine().shutdown(); }
+  });
+
   for (const side of ["author", "reviewer"] as const) it(`records the usual near-limit policy for the ${side} stand-in after the planned tool recovers`, async () => {
     const run = await fixture("resume", undefined, side);
     try {

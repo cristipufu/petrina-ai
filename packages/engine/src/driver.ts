@@ -18,6 +18,7 @@ import type { GuideKeeper } from "./guide-keeper.js";
 import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
 import type { Connections } from "./connection.js";
+import type { ReadinessNeed } from "./readiness.js";
 import { destination, needsReleaseManager, type Shipping } from "./shipping.js";
 
 /** How a status line starts while a task waits for a tool to be out of its usage limit. */
@@ -122,8 +123,10 @@ export class Driver {
       if (!grantedResume(task) && (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT))) task.statusLine = "Waiting for a free slot";
       const seat = this.seatFor(task);
       // Everyone who could work this step is out of usage: it waits for a limit to end, and takes no slot.
+      // A saved participant's uncertain tool is checked once meanwhile, still without a slot.
       if (seat.waiting) {
         task.statusLine = seat.waiting;
+        this.resolveReadiness(seat.readiness);
         continue;
       }
       // Publishing with no agent needs no slot, but still waits for the pool to resume.
@@ -148,6 +151,7 @@ export class Driver {
       const seat = this.seatFor(task as MTask);
       if (seat.waiting) {
         (task as MTask).statusLine = seat.waiting;
+        this.resolveReadiness(seat.readiness);
         continue;
       }
       candidates.push({ ...this.k.profile(seat.agent?.profileId ?? ""), taskId: task.id, toolId: seat.toolId });
@@ -188,20 +192,39 @@ export class Driver {
     return this.seatOf(this.nextAgent(task), task);
   }
 
-  private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string } {
+  private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined, task?: MTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string; readiness?: ReadinessNeed } {
     if (!next) return { toolId: "none" };
     // This task's own slot does not count: it is the seat being filled. A stand-in whose tool is full yields.
     const room = task ? (toolId: Id, profile: AgentProfile) => !slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId }) : undefined;
     const choice = this.k.choose(next.profileId, task, next.roleId, room, next.reviewerKey);
     if (!choice) return { agent: next, toolId: this.k.profile(next.profileId)?.toolId ?? "unknown" };
-    if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting };
+    if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting, ...(choice.readiness ? { readiness: choice.readiness } : {}) };
     if (next.requiredToolId && next.requiredToolId !== choice.profile.toolId) return { toolId: next.requiredToolId, waiting: "Waiting for the remaining independent voter" };
     return { agent: { roleId: next.roleId, profileId: choice.profile.id }, toolId: choice.profile.toolId };
   }
 
+  /** A saved participant's uncertain tool: record its first wait and start or join the shared check, never while admissions are closed. */
+  private resolveReadiness(need: ReadinessNeed | undefined): void {
+    if (need && !this.k.admissionsClosed) void this.k.readiness.resolve(need);
+  }
+
+  /**
+   * The live step's next participant. A step that already holds its main place keeps it, charged to the saved
+   * participant's tool, while that participant's bounded readiness decision settles, then qualifies again from there.
+   * Retention never outlasts the decision's limit: the step then waits without a place, as any other.
+   */
+  private async admitNext(task: MTask, signal: AbortSignal): Promise<boolean> {
+    for (;;) {
+      const need = this.seatFor(task).readiness;
+      if (!need || !this.k.readiness.hold(task, need)) return this.reserveAgent(task);
+      await this.k.readiness.resolve(need, signal);
+      if (signal.aborted) throw new Aborted();
+    }
+  }
+
   /** Take the slot and name its agent together, or start work needing no agent, before any I/O. */
   private reserveAgent(task: MTask): boolean {
-    const { agent: next, toolId, waiting: noOne } = this.seatFor(task);
+    const { agent: next, toolId, waiting: noOne, readiness } = this.seatFor(task);
     const preparing = this.needsCheckPreparation(task);
     let waiting = noOne ?? (this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : next ? slotWait(this.k.activeState(), { ...this.k.profile(next.profileId), taskId: task.id, toolId }) : undefined);
     if (!waiting && preparing && !this.checks.claimPreparation(task.id)) waiting = "Waiting for room to prepare the product checks";
@@ -212,6 +235,8 @@ export class Driver {
       delete task.agent;
       task.column = this.k.columnFor(task);
       task.statusLine = waiting;
+      // Without a place, a saved participant's uncertain tool is still checked once.
+      this.resolveReadiness(readiness);
       return false;
     }
     if (task.screen && next && task.screen.profileId !== next.profileId) {
@@ -442,7 +467,7 @@ export class Driver {
         }
         // Running agents finish; every following agent must qualify again, even on the same tool.
         if (resume) resume = false;
-        else if (!this.reserveAgent(current)) {
+        else if (!await this.admitNext(current, signal)) {
           this.k.commit();
           return;
         }

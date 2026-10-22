@@ -68,6 +68,7 @@ import { CODEX_USAGE_EVERY_MS } from "./codex-usage.js";
 import { Kernel, TONES, type EngineOptions, type MTask } from "./kernel.js";
 import { browserCommand, expandPath, findClones } from "./setup.js";
 import { ToolChecks } from "./tool-checks.js";
+import { Readiness } from "./readiness.js";
 import { Turns } from "./turn.js";
 import { GuideKeeper } from "./guide-keeper.js";
 import { Context } from "./context.js";
@@ -125,6 +126,7 @@ export class Engine extends Kernel implements Commands {
     super(dataDir, options);
     this.profileReader = new ProfileChoiceReader(this);
     this.tools = new ToolChecks(this);
+    this.readiness = new Readiness(this, this.tools);
     this.connections = new Connections(this);
     this.sources = new Sources(this, this.connections);
     this.turns = new Turns(this, this.tools, this.sources);
@@ -320,6 +322,7 @@ export class Engine extends Kernel implements Commands {
     this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
     this.usageCoordinator.stop();
+    this.readiness.stop();
     this.screens.stop();
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();

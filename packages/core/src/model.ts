@@ -5,6 +5,7 @@ import type { TaskSource, WorkChoice } from "./source.js";
 
 import type { TurnReason, WorkInfo } from "./worklog.js";
 import type { CheckId, Setup } from "./setup.js";
+import type { ReadinessRecheck, ReadinessWait } from "./readiness.js";
 
 export type Id = string;
 
@@ -493,6 +494,8 @@ export interface JourneyAgentInput {
   manifest?: readonly InputManifestEntry[];
   /** Why a fresh conversation was needed instead of the saved one, when Petrina recorded it. */
   freshReason?: string;
+  /** A saved conversation's bounded readiness recheck before this start: what was known, started or joined, and found. */
+  readiness?: ReadinessRecheck;
   /** The native conversation this input went to. */
   sessionId?: string;
 }
@@ -590,6 +593,11 @@ export interface ConversationNote {
   handback?: string;
   /** Engine boot that paused this conversation; restart remains a fresh attempt. */
   handbackBoot?: string;
+  /**
+   * The first wait for this conversation's uncertain tool readiness. A reopened conversation keeps it, restarts included,
+   * until a completed turn saves the next continuation; a returning Builder's selection reads it.
+   */
+  readinessWait?: ReadinessWait;
 }
 
 /**
