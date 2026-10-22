@@ -8,6 +8,21 @@ import { removeDir, tempDir, waitFor } from "./fixtures.js";
 
 interface Message { type: string; stateId?: number; state?: State; id?: number; ok?: boolean }
 
+it("keeps repair proof bookkeeping out of board broadcasts while retaining task details and saved state", async () => {
+  const root = tempDir("petrina-proof-projection-");
+  const engine = new Engine(join(root, "data"));
+  engine.setPoolPaused(true);
+  try {
+    const id = engine.addTask({ productId: "", title: "Current proof", description: "A bounded projection", backlog: true });
+    const task = engine.task(id)!;
+    task.hunt = { stageId: "review", round: 2, reported: { "0": true }, findingChecks: { older: { "0": { by: "sol-high", resolved: true, evidence: "CURRENT-REPAIR-PROOF" } } } };
+    engine.commitNow(task);
+    expect(engine.windowState().tasks.find(entry => entry.id === id)?.hunt?.findingChecks).toBeUndefined();
+    expect(engine.taskDetails(id)!.hunt?.findingChecks?.older?.["0"]?.evidence).toBe("CURRENT-REPAIR-PROOF");
+    expect(engine.store.load()!.tasks.find(entry => entry.id === id)?.hunt?.findingChecks?.older?.["0"]?.resolved).toBe(true);
+  } finally { await engine.shutdown(); removeDir(root); }
+});
+
 async function withServer(run: (fixture: { engine: Engine; connect: () => Promise<{ socket: WebSocket; messages: Message[]; states: () => Message[] }>; reads: () => number }) => Promise<void>) {
   const dir = tempDir("petrina-state-stream-");
   const engine = new Engine(join(dir, "data"));
