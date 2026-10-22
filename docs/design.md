@@ -86,5 +86,7 @@ Each contract has one home. Read the relevant subsystem when changing it; add re
 | [Repositories and delivery](architecture/repositories.md) | Sources, worktrees, updating branches, checks at delivery and interrupted publishing |
 | [Engine runtime and scheduling](architecture/engine-runtime.md) | Modules, lifecycle, pool admission, usage limits and durable coordinator actions |
 | [Safety boundaries](architecture/safety.md) | Tool checkers, credentials, engine gates and known limits |
+| [CLI and MCP reference](coordination.md) | Terminal commands, MCP tools, workflow events and focused evidence |
+| [External coordinator guide](coordinator.md) | Responsibilities and operating loop for a coding agent coordinating products |
 
 Each contract above owns current behavior. Development and verification guidance lives in [testing.md](testing.md); historical briefs and investigations are isolated under [archive/](archive/README.md) and are not implementation instructions. Keep regression examples in tests. REVIEW.md at the task’s base remains the review guide.

@@ -1,6 +1,6 @@
 # Coordinate Petrina from a terminal or coding agent
 
-The CLI and MCP server operate the same local engine as the desktop app. They coordinate products, tasks, checkpoints and the agent pool. Editing source, Git operations, development tests and repairing Petrina stay with ordinary coding tools. Petrina never merges a pull request.
+The CLI and MCP server operate the same local engine as the desktop app. They coordinate products, tasks, checkpoints and the agent pool. Editing source, Git operations, development tests and repairing Petrina stay with ordinary coding tools. Petrina never merges a pull request. For how an external coding agent should manage projects, Backlog, Inbox decisions and delivery through these tools, read [the external coordinator guide](coordinator.md).
 
 ## Install and discover
 

@@ -83,7 +83,7 @@ else if (command === "antigravity") {
   } else console.log("petrina antigravity install — install Google's official ACP connector\npetrina antigravity login — open Google sign-in for that connector");
 }
 else if (command === "mcp") {
-  if (rest.includes("--help")) console.log("petrina mcp — connect a coding agent over MCP stdio. Discover named tools with tools/list. Uses the existing local connection; connecting never starts an engine. See docs/coordination.md for client configuration.");
+  if (rest.includes("--help")) console.log("petrina mcp — connect a coding agent over MCP stdio. Discover named tools with tools/list. Uses the existing local connection; connecting never starts an engine. See docs/coordination.md for client configuration and docs/coordinator.md for project coordination.");
   else await runMcp();
 }
 else process.exitCode = await coordinationCli(process.argv.slice(2));

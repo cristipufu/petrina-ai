@@ -1,6 +1,6 @@
 # Working on Petrina
 
-Petrina is a desktop app for people who run products with coding agents. Read [docs/design.md](docs/design.md) for architecture; for UI work also read [docs/ux.md](docs/ux.md). Follow their links to the subsystem you are changing, rather than loading the whole documentation tree.
+Petrina is a desktop app for people who run products with coding agents. Read [docs/design.md](docs/design.md) for architecture; for UI work also read [docs/ux.md](docs/ux.md). Follow their links to the subsystem you are changing, rather than loading the whole documentation tree. When acting as an external coordinator managing products through Petrina rather than developing this repository, read [docs/coordinator.md](docs/coordinator.md) and [docs/coordination.md](docs/coordination.md).
 
 ## Rules for every change
 
@@ -43,3 +43,4 @@ What agents learned about working in this repository, added with the coordinator
 - Fresh working copies need `bun install --frozen-lockfile`. Keep disposable repositories and installs outside this working copy, where they cannot accidentally use Petrina's own Git metadata or packages.
 - Core modules run directly from source with Bun; a small script outside the checkout can import them by absolute path without installing the full workspace.
 - The desktop app saves the first theme it applies in local storage under petrina.theme, so emulating a dark system setting after the first visit changes nothing; for light and dark checks set petrina.theme to light or dark, or emulate the scheme before the first visit.
+- The app shows tasks in their display form: a single-product task has no separate repository record, and its repository details (such as its checks) sit on the task itself. Build interface test fixtures in that form (core displayTask), not in the engine's stored form.
