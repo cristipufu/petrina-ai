@@ -204,15 +204,29 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
   const original = processes.execFile;
   const scanned: boolean[] = [];
   const allowances: number[] = [];
-  const scansRunning = new Set<ChildProcess>();
+  const scansRunning = new Set<number>();
   const scanTimers = new Set<ReturnType<typeof setTimeout>>();
   let scans = 0, incomplete = 0;
   let child: ChildProcess | undefined, run: AgentRun | undefined;
   const unrelated = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdout: "ignore", stderr: "ignore" });
   const signals = spyOn(process, "kill");
+  const snapshot = (first: boolean) => {
+    const worker = workerPid();
+    const owned = [{ pid: child!.pid!, parent: process.pid }, ...(worker ? [{ pid: worker, parent: child!.pid! }] : []), { pid: unrelated.pid, parent: process.pid }];
+    return owned.filter(({ pid }) => alive(pid)).map(({ pid, parent }) => {
+      let paused = false;
+      for (const [index, [target, signal]] of signals.mock.calls.entries()) {
+        if (Math.abs(target) !== pid || signals.mock.results[index]?.type !== "return") continue;
+        if (signal === "SIGSTOP") paused = true;
+        else if (signal === "SIGCONT") paused = false;
+      }
+      return `${pid} ${parent} ${first && firstRunning && pid === child!.pid ? "S" : paused ? "T" : "S"}`;
+    }).join("\n");
+  };
   const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
     if (args[0] !== "ps") return Reflect.apply(original, processes, args);
-    const first = ++scans === 1;
+    const id = ++scans, first = id === 1;
+    scansRunning.add(id);
     const hang = first && firstTimesOut;
     const options = args[2] as { timeout: number };
     allowances.push(options.timeout);
@@ -220,34 +234,20 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     let reported = false;
     const finish = (error: Error | null, stdout: string, stderr: string) => {
       if (reported) return;
-      reported = true; scanned.push(!error); done(error, stdout, stderr);
+      reported = true; scansRunning.delete(id); scanned.push(!error); done(error, stdout, stderr);
     };
-    // Model a slow response, keeping the actual OS read inside the same allowance. Starting ps
-    // AFTER a 3.8s delay gave it only 200ms of a 4s budget, accidentally turning this successful
-    // snapshot case into two failed reads under full-suite load. Each call still captures live
-    // parent/child links, and the real shutdown deadline and its assertions stay unchanged.
-    let result: [Error | null, string, string] | undefined;
-    let delayed = false, read = false;
-    let listing: ChildProcess | undefined;
-    const report = () => { if (delayed && result) finish(...result); };
-    if (!hang) {
-      listing = Reflect.apply(original, processes, [...args.slice(0, 2), options, (error: Error | null, stdout: string, stderr: string) => {
-        read = true;
-        if (listing) scansRunning.delete(listing);
-        const listed = first && firstRunning ? stdout.split("\n").map(line => Number(line.trim().split(/\s+/)[0]) === child?.pid ? line.replace(/T\S*\s*$/, "S") : line).join("\n") : stdout;
-        result = [error, listed, stderr];
-        report();
-      }]);
-      if (!read) scansRunning.add(listing!);
-    }
+    // Script read outcomes from this fixture's real process identities and successful signals.
+    // A native ps started inside the remaining quit allowance can itself time out under suite
+    // load, turning an intended successful response into an unrelated failure. Native snapshots
+    // and late-fork barriers have their own tests; these cases keep real stopping and deadlines.
+    const listed = hang ? "" : snapshot(first);
     const timer = setTimeout(() => {
       scanTimers.delete(timer);
       if (hang) return finish(new Error("Process list timed out"), "", "");
-      delayed = true;
       // A response deliberately slower than the caller's allowance is a timeout, even if
-      // the underlying OS read was quick; this keeps the broken split-budget control failing.
+      // the snapshot is ready; this keeps the broken split-budget control failing.
       if (delay >= options.timeout) return finish(new Error("Process list timed out"), "", "");
-      report();
+      finish(null, listed, "");
     }, hang ? options.timeout : Math.min(delay, options.timeout));
     scanTimers.add(timer);
     return undefined;
@@ -284,7 +284,7 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     signals.mockRestore();
     scan.mockRestore();
     scanTimers.forEach(clearTimeout);
-    for (const listing of scansRunning) listing.kill("SIGKILL");
+    scansRunning.clear();
     unrelated.kill("SIGKILL");
     await unrelated.exited;
     await waitFor(() => ![child?.pid, workerPid()].some(pid => pid && alive(pid)), "the fixture's agent and detached worker to stop");

@@ -7,6 +7,7 @@ import type { Scenario } from "./fake-agent.js";
 import { updateGitHub, type FakeGitHub } from "./fake-gh.js";
 import { shortTempParent, TEST_BROWSERS } from "./temp-parent.js";
 import { testGitEnv } from "./test-git-env.js";
+import { readPrompts, type PromptRecord } from "./prompt-records.js";
 export { testGitEnv } from "./test-git-env.js";
 
 /**
@@ -244,14 +245,14 @@ export class Fakes {
     return existsSync(join(this.dir, name));
   }
 
-  /** Every prompt the fake agents received, in order. */
+  /** Every complete prompt the fake agents received, in publication order. */
   prompts(role?: string): string[] {
     return this.received(role).map((entry) => entry.text);
   }
 
-  /** Every prompt the fake agents received, in order, with the conversation it went to. */
-  received(role?: string): { role: string; session: string; text: string }[] {
-    return this.lines<{ role: string; session: string; text: string }>("prompts.jsonl").filter((entry) => !role || entry.role === role);
+  /** Every complete prompt in publication order, with the conversation it went to. */
+  received(role?: string): PromptRecord[] {
+    return readPrompts(this.dir).filter((entry) => !role || entry.role === role);
   }
 
   /**

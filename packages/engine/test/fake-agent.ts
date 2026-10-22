@@ -3,7 +3,7 @@ import type { WorkChoice } from "@petrina/core";
 // like that role would, so the engine can be tested end to end without spending tokens.
 //
 // bun fake-agent.ts [dir] [--record-tool=<id>]: with a dir (the restart tests), it records every prompt it
-// gets in dir/prompts.jsonl, keeps its conversations in dir/conversations so the next engine can
+// gets as complete records in dir/prompts, keeps its conversations in dir/conversations so the next engine can
 // reopen them, notes how each was opened (as which tool, with which logins and sandbox settings) in
 // dir/opens.jsonl and every setting it was given in dir/config.jsonl, follows dir/scenario.json, and
 // drops marker files there at the moments a test waits for. With "--script=<file>", the builder and
@@ -17,6 +17,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { testGitEnv } from "./test-git-env.js";
+import { recordPrompt } from "./prompt-records.js";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
@@ -566,7 +567,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   if (restarted) session.restarts += 1;
   // Saved before it works on the turn: the engine may stop while it does.
   keep(sessionId);
-  if (dir) appendFileSync(join(dir, "prompts.jsonl"), `${JSON.stringify({ role: session.role, session: sessionId, text })}\n`);
+  if (dir) await recordPrompt(dir, { role: session.role, session: sessionId, text });
   const say = (line: string) => send(client, sessionId, { sessionUpdate: "plan", entries: [{ content: line, status: "in_progress", priority: "medium" }] });
   const learned = scenario().learnings === "tester"
     ? (session.role === "tester" ? ["Check the welcome page from the guest view."] : [])

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -13,6 +13,11 @@ import { defunctProcess, EngineProcess, Fakes, HARNESS, makeProduct, removeDir, 
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
+// Check behavior and cleanup limits do not depend on the host's power-log read. Evidence cases
+// below supply their own records; the native reader's contract lives in check-interruption.test.ts.
+let powerRecords: ReturnType<typeof spyOn<typeof machine, "readMachinePowerRecords">>;
+beforeEach(() => { powerRecords = spyOn(machine, "readMachinePowerRecords").mockResolvedValue(""); });
+afterEach(() => powerRecords.mockRestore());
 const root = (prefix: string) => {
   const dir = tempDir(prefix);
   roots.push(dir);
