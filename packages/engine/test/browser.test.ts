@@ -8,6 +8,7 @@ import * as os from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Engine } from "./engine.js";
+import * as browserRecovery from "../src/browser.js";
 import { AgentBrowser, browserTempRoot, recoverBrowserTemps } from "../src/browser.js";
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
@@ -213,7 +214,13 @@ it("discards a legacy directory and invalid browser registrations without follow
   expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("product work");
 });
 
-it("does not schedule queued work after shutdown while browser recovery is pending", async () => {
+const RECOVERY_HOLD_WAIT_MS = 5_000;
+
+/** Own the stand-ins and teardown even when the held point is never observed. */
+async function withPendingBrowserRecovery(
+  check: (fixture: { engine: Engine; fakes: Fakes; work: string; registry: string; stale: string; startup: Promise<void>; ready: () => boolean; release: () => void }) => Promise<void>,
+  options: { atHold?: (markReached: () => void) => void; observeMs?: number; bypassHold?: boolean } = {},
+) {
   const work = tempDir("petrina-browser-startup-pending-");
   const data = join(work, "data");
   const registry = join(data, "browser-temp");
@@ -221,28 +228,78 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
   const fakes = new Fakes(join(work, "fake"));
   mkdirSync(registry, { recursive: true });
   writeFileSync(join(registry, "stale.json"), JSON.stringify(stale));
-  // The decision depends on recovery being pending, not on a fresh shell helper
-  // starting before the real process-scan deadline on a busy machine.
+  // Hold the promise the kernel awaits, rather than a process scan whose own
+  // deadline can finish recovery while product setup is still running.
+  let recovered = false;
+  const releaseRecovery = Promise.withResolvers<void>();
+  const recover = browserRecovery.recoverBrowserTemps;
+  let heldArgs: Parameters<typeof recover> | undefined;
+  const recovery = spyOn(browserRecovery, "recoverBrowserTemps").mockImplementation(async (...args) => {
+    if (args[0] !== registry || args[1] !== browsers) return recover(...args);
+    // Only this engine's startup call owns the hold. Later calls must remain usable
+    // even if Bun stops the test during setup and never runs its finally block.
+    recovery.mockRestore();
+    heldArgs = args;
+    try { await recover(...args); }
+    finally { scan.mockRestore(); }
+    if (options.atHold) options.atHold(() => { recovered = true; });
+    else recovered = true;
+    await releaseRecovery.promise;
+  });
   const originalExecFile = processes.execFile;
-  let releaseScan: (() => void) | undefined;
   const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
     if (args[0] !== "ps") return Reflect.apply(originalExecFile, processes, args);
     const callback = args.at(-1) as (error: null, stdout: string, stderr: string) => void;
-    if (!releaseScan) releaseScan = () => callback(null, "", "");
-    else queueMicrotask(() => callback(null, "", ""));
+    queueMicrotask(() => callback(null, "", ""));
     return new processes.ChildProcess();
   }) as typeof processes.execFile);
   let engine: Engine | undefined;
+  let startup: Promise<void> | undefined;
+  let ready = false, settled = false;
+  let failure: { error: unknown } | undefined;
   try {
+    // A control models an engine that no longer calls the held export at startup.
+    if (options.bypassHold) recovery.mockRestore();
     engine = new Engine(data, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], browser: true, browserTempRoot: browsers });
-    await waitFor(() => releaseScan, "startup recovery to begin its owned process scan");
+    startup = engine.waitUntilReady();
+    void startup.then(() => { ready = true; settled = true; }, error => { failure = { error }; settled = true; });
+    // Bound observation only. The hold itself never expires during slow setup.
+    await waitFor(() => {
+      if (failure) throw failure.error;
+      if (recovered) return true;
+      if (ready) throw new Error("Browser startup finished without reaching its recovery hold");
+      return false;
+    }, "browser startup recovery to reach its held point", options.observeMs ?? RECOVERY_HOLD_WAIT_MS);
+    expect(heldArgs).toEqual([registry, browsers]);
+    await check({ engine, fakes, work, registry, stale, startup, ready: () => ready, release: releaseRecovery.resolve });
+  } finally {
+    try { await engine?.shutdown(); }
+    finally {
+      releaseRecovery.resolve();
+      try {
+        if (startup) await waitFor(() => settled, "browser startup recovery to settle after releasing its test hold", RECOVERY_HOLD_WAIT_MS);
+      } finally {
+        recovery.mockRestore();
+        scan.mockRestore();
+        removeDir(stale);
+        removeDir(work);
+      }
+    }
+  }
+}
+
+it("does not schedule queued work after shutdown while browser recovery is pending", async () => {
+  await withPendingBrowserRecovery(async ({ engine, fakes, work, registry, stale, startup, ready, release }) => {
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(registry)).toBe(false);
     const productId = await engine.addProduct(makeProduct(work));
+    expect(ready()).toBe(false);
     const taskId = engine.addTask({ productId, title: "A queued task", description: "[no-check]" });
     const task = engine.task(taskId)!;
     task.state = "waiting";
     task.screen = { reason: "Check the window", at: Date.now(), roleId: "builder", profileId: "sol-high" };
     engine.setScreenUse("off");
-    expect(engine.s.inbox.some(item => item.taskId === taskId && item.kind === "screen")).toBe(true);
+    expect(engine.s.inbox.filter(item => item.taskId === taskId && item.kind === "screen")).toEqual([expect.objectContaining({ blocking: false })]);
     engine.allowScreen(taskId);
     expect(engine.s.inbox.some(item => item.taskId === taskId && item.kind === "screen")).toBe(false);
     expect(engine.store.load()!.tasks.find(task => task.id === taskId)!.screen?.allowed).toBe(true);
@@ -250,27 +307,66 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
     engine.setTaskScreen(taskId, true);
     expect(engine.store.load()!.tasks.find(task => task.id === taskId)!.screenAllowed).toBe(true);
     engine.setTaskScreen(taskId, false);
-    expect(engine.s.inbox.some(item => item.taskId === taskId && item.kind === "screen")).toBe(true);
+    expect(engine.s.inbox.filter(item => item.taskId === taskId && item.kind === "screen")).toEqual([expect.objectContaining({ blocking: false })]);
     expect(engine.store.load()!.tasks.find(task => task.id === taskId)!.screenAllowed).toBeUndefined();
     engine.setScreenUse("on");
     expect(engine.s.inbox.some(item => item.taskId === taskId && item.kind === "screen")).toBe(false);
     expect(engine.store.load()!.pool.screen?.mode).toBe("on");
+    expect(ready()).toBe(false);
+    expect(engine.drivers.size).toBe(0);
     expect(fakes.opens()).toEqual([]);
     await engine.shutdown();
-    releaseScan!();
-    await engine.waitUntilReady();
+    expect(ready()).toBe(false);
+    release();
+    await startup;
+    expect(ready()).toBe(true);
     expect(engine.stopped).toBe(true);
     expect(engine.drivers.size).toBe(0);
     expect(fakes.opens()).toEqual([]);
     expect(existsSync(registry)).toBe(false);
-  } finally {
-    releaseScan?.();
-    await engine?.shutdown();
-    await engine?.waitUntilReady();
-    scan.mockRestore();
-    removeDir(stale);
-    removeDir(work);
-  }
+  });
+});
+
+it("lets later recovery finish while the owned startup call remains held, before teardown", async () => {
+  const originalRecovery = browserRecovery.recoverBrowserTemps, originalScan = processes.execFile;
+  await withPendingBrowserRecovery(async ({ registry, ready }) => {
+    expect(ready()).toBe(false);
+    expect(browserRecovery.recoverBrowserTemps).toBe(originalRecovery);
+    expect(processes.execFile).toBe(originalScan);
+    await recoverBrowserTemps(registry, browsers);
+    expect(ready()).toBe(false);
+  });
+});
+
+for (const mode of ["not observed", "failed", "bypassed"] as const) it(`restores startup recovery stand-ins when the hold is ${mode}, then permits another recovery`, async () => {
+  const originalRecovery = browserRecovery.recoverBrowserTemps, originalScan = processes.execFile;
+  const error = new Error("Startup recovery failed before the held point");
+  let checked = false;
+  const work = tempDir("petrina-browser-startup-failure-");
+  const registry = join(work, "registry");
+  const stale = mkdtempSync(join(browsers, "petrina-browser-"));
+  mkdirSync(registry);
+  writeFileSync(join(registry, "stale.json"), JSON.stringify(stale));
+  try {
+    await expectRejection(withPendingBrowserRecovery(async () => { checked = true; }, {
+      atHold: () => {
+        if (mode === "failed") throw error;
+        // Omit the notification. The clock and observation deadline keep running
+        // independently of whether startup ever reaches this callback.
+      },
+      observeMs: mode === "not observed" ? 200 : undefined,
+      bypassHold: mode === "bypassed",
+    }), mode === "failed" ? error : mode === "bypassed"
+      ? "Browser startup finished without reaching its recovery hold"
+      : "Timed out waiting for browser startup recovery to reach its held point");
+    expect(checked).toBe(false);
+    expect(browserRecovery.recoverBrowserTemps).toBe(originalRecovery);
+    expect(processes.execFile).toBe(originalScan);
+    // A later recovery must use the real implementation and complete its own cleanup.
+    await recoverBrowserTemps(registry, browsers);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(registry)).toBe(false);
+  } finally { removeDir(stale); removeDir(work); }
 });
 
 for (const replacement of [false, true]) it(`does not advertise a ready engine or discard browser ownership when startup recovery fails${replacement ? " during replacement" : ""}`, async () => {
