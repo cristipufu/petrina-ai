@@ -822,6 +822,8 @@ export interface Hunt {
   voted?: Readonly<Record<Id, true>>;
   /** Required independent ballot seats, fixed when voting begins and retained through a drain. */
   voterProfiles?: readonly Id[];
+  /** A required voter seat replaced on a different independent tool; accepted partial votes stay. */
+  voterReplacements?: Readonly<Record<Id, { from: Id; reason: string }>>;
   /** How many findings the task had when the round began: what the round's reviewers raise comes after. */
   findings?: number;
   /** Each parallel agent's starting role, by reviewer place or voter profile, through interruptions. */

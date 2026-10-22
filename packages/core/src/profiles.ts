@@ -80,7 +80,7 @@ export function profileModelName(profile: Pick<AgentProfile, "toolId" | "modelId
 /** Protect future repair paths as well as currently running seats. History keeps its own definition. */
 export function profileReferences(state: Pick<State, "tasks" | "routines" | "backgroundAgents">, id: string): string[] {
   const tasks = state.tasks.filter(task => !["done", "cancelled", "pr-open"].includes(task.state) && (
-    task.maintenance?.profile.id === id || task.agent?.profileId === id || task.helpers?.some(agent => agent.profileId === id) ||
+    task.maintenance?.profile.id === id || task.agent?.profileId === id || task.helpers?.some(agent => agent.profileId === id) || task.hunt?.voterProfiles?.includes(id) ||
     [...(task.repositories ?? []), ...(task.repository ? [task.repository] : []), task].some(work => work.conversation?.profileId === id || work.builderSession?.profileId === id) ||
     task.plan?.stages.some(stage => [...stage.profileIds, ...stage.reviewerProfileIds ?? []].includes(id)) ||
     task.plan?.products?.some(product => product.builderProfileId === id || product.reviewerProfileIds.includes(id))

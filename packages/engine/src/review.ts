@@ -475,34 +475,32 @@ export class Reviews {
       }
     }
     if (task.hunt?.voterProfiles && !this.k.admissionsClosed) {
-      // Keep the existing usage-handoff rule: an unavailable tool can yield to a new
-      // independent tool, or leave a completed partner's ballot to settle the findings.
+      // An unavailable tool can yield to a new independent tool, but a completed
+      // partner never substitutes for its required ballot.
       // A cap, a pause or a drain never makes a usable participant disappear.
       const requiredTools = new Set(planned.map(id => this.k.profile(id)?.toolId));
       const modelFull = (id: Id) => {
         const choice = this.k.choose(id, task, "verifier");
         return choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT);
       };
-      const available = planned.flatMap(id => {
-        const tool = this.k.profile(id)?.toolId;
-        if (covered.has(tool ?? "")) return [id];
+      const available = [...planned];
+      for (let index = 0; index < available.length; index += 1) {
+        const id = available[index]!, tool = this.k.profile(id)?.toolId;
+        if (covered.has(tool ?? "") || modelFull(id)) continue;
         const choice = this.k.choose(id, task, "verifier");
-        // Every model on this tool is full. Keep the seat and wait. A partner's vote does not replace it.
-        if (modelFull(id)) return [id];
-        if (!choice || choice.kind === "none") return covered.size ? [] : [id];
-        if (choice.profile.toolId === tool) return [id];
-        if (requiredTools.has(choice.profile.toolId) || covered.has(choice.profile.toolId)) return covered.size ? [] : [id];
-        requiredTools.delete(tool);
-        requiredTools.add(choice.profile.toolId);
-        return [choice.profile.id];
-      });
-      if (!planned.some(modelFull) && !covered.size && !available.some(id => this.k.choose(id, task, "verifier")?.kind !== "none")) {
-        // No complete ballot and every original tool is out: a newly recovered independent
-        // tool may finish the missing verdicts, keeping the partial reasons already saved.
-        for (const id of this.voters(stage)) {
-          const choice = this.k.choose(id, task, "verifier");
-          if (choice && choice.kind !== "none" && !available.some(existing => this.k.profile(existing)?.toolId === choice.profile.toolId)) available.push(choice.profile.id);
-        }
+        if (choice && choice.kind !== "none" && choice.profile.toolId === tool) continue;
+        const alternatives = this.voters(stage).flatMap(candidate => {
+          const pick = this.k.choose(candidate, task, "verifier");
+          return pick && pick.kind !== "none" ? [pick.profile] : [];
+        });
+        if (choice && choice.kind !== "none") alternatives.unshift(choice.profile);
+        const replacement = alternatives.find(profile => !requiredTools.has(profile.toolId) && !covered.has(profile.toolId));
+        if (!replacement) continue;
+        const reason = `${this.k.named(id)} could not finish verification (${choice?.kind === "none" ? choice.waiting : "selection did not retain its tool"}). ${this.k.named(replacement.id)} takes its required seat on a different tool; saved votes remain.`;
+        requiredTools.delete(tool); requiredTools.add(replacement.toolId);
+        available[index] = replacement.id;
+        task.hunt!.voterReplacements = { ...task.hunt!.voterReplacements, [replacement.id]: { from: id, reason } };
+        this.k.log(task, "milestone", reason);
       }
       if (JSON.stringify(available) !== JSON.stringify(planned)) {
         planned = available;
@@ -518,7 +516,7 @@ export class Reviews {
       if (choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT)) return [id];
       // Once admitted to the electorate, a missing independent tool cannot be replaced by a
       // finished partner's vote. Same-tool model substitutions retain that tool's seat.
-      return choice && choice.kind !== "none" && choice.profile.toolId === this.k.profile(id)?.toolId ? [choice.profile.id] : [];
+      return choice && choice.kind !== "none" && choice.profile.toolId === this.k.profile(id)?.toolId ? [choice.profile.id] : [id];
     });
     // With no finished ballot and nobody usable, keep the review waiting for usage, never pass it.
     if (!voters.length && !covered.size) {
@@ -600,6 +598,7 @@ export class Reviews {
             key: reviewKey,
             room,
             seat, ...selection,
+            ...(task.hunt?.voterReplacements?.[plannedId] ? { selectionReason: task.hunt.voterReplacements[plannedId]!.reason } : {}),
             used: heard,
             member: key,
             check,
@@ -617,7 +616,6 @@ export class Reviews {
       }),
       signal,
       (running, waiting) => `${running} fresh agent${running === 1 ? "" : "s"} voting on ${findings.length} important finding${findings.length === 1 ? "" : "s"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
-      () => finishedVoters(findings).size > 0,
     );
   }
 
@@ -653,7 +651,7 @@ export class Reviews {
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
-  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: SeatSelection) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
+  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: SeatSelection) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string): Promise<void> {
     const scope = executionFor(task);
     const stop = new AbortController();
     const signal = AbortSignal.any([parentSignal, stop.signal]);
@@ -749,7 +747,7 @@ export class Reviews {
           if (task.hunt?.screenTurns) delete task.hunt.screenTurns[member.key];
         })
         .catch((error: unknown) => {
-          // A full model has to wait even when a partner already finished. A usage limit can leave that ballot to settle.
+          // Usage and capacity waits keep the missing seat; partners finish and keep their ballots.
           if (error instanceof WaitingForCapacity) noOne = error;
           else if (error instanceof WaitingForUsage) noOne ??= error;
           else if (!(error instanceof ScreenWait)) {
@@ -830,8 +828,8 @@ export class Reviews {
         throw new ScreenWait();
       }
       // The rest looked at the change and reported; the ones left wait, and the driver starts them again after.
-      // A full model waits even when a partner already voted. A usage limit can leave that ballot to settle.
-      if (noOne && (noOne instanceof WaitingForCapacity || !canFinishWithoutUsage())) {
+      // A required seat waits even when a partner already voted.
+      if (noOne) {
         this.k.waitForUsage(task, noOne.words);
         throw noOne;
       }

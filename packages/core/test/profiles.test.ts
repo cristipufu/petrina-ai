@@ -83,6 +83,16 @@ it("protects projected single-product stand-in conversations and saved builder s
   const simulator = new Simulator(state);
   expect(() => simulator.removeProfile("fable-xhigh")).toThrow("Reassign");
 });
+it("protects selected verifier profiles while waiting, including the projected task", () => {
+  const state = empty();
+  const task = JSON.parse(JSON.stringify(createDemoState(1_000_000_000).tasks[0]!)) as DeepMutable<State>["tasks"][number];
+  state.tasks = [task]; task.state = "waiting"; task.plan = undefined; task.agent = undefined; task.helpers = undefined;
+  task.conversation = undefined; task.builderSession = undefined; task.repository = undefined; task.repositories = undefined;
+  task.hunt = { stageId: "review", round: 1, reported: {}, findings: 1, voterProfiles: ["grok-high"] };
+  expect(() => removeProfile(state, "grok-high")).toThrow("Reassign");
+  task.state = "cancelled";
+  expect(() => removeProfile(state, "grok-high")).not.toThrow();
+});
 it("keeps the demo planner on an active non-standby profile after edits and removal", async () => {
   const state = empty(); state.planner = "opus-high";
   const simulator = new Simulator(state);

@@ -172,7 +172,7 @@ export class UsageCoordinator {
     const fullOnly = (profile: AgentProfile) => limitOf(state.pool, profile, now) ? undefined : modelFull(profile);
     if (roleId !== undefined && this.k.role(roleId, task)?.result === "votes") {
       // A voter owns one actual tool's place, not a nominal profile's place. Other tools have
-      // voters of their own: a model fallback stays on this tool; a usage limit drops its place.
+      // voters of their own: a model fallback stays on this tool; a usage limit waits for its place.
       // A full model stays on this tool too. Every model on it being full waits, rather than
       // giving a partner another vote. A full cap still waits the same way.
       const ready = candidates.tools.filter((tool) => tool.status === "ready");

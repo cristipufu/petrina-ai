@@ -116,6 +116,8 @@ Every reviewer in a round looks at the change at the same time, blind to what th
 
 Before any reviewer starts, the engine saves the round's brief, Builder reports, check evidence, earlier findings and follow-up cards as one immutable snapshot. Queued reviewers and interrupted rounds read that same snapshot after a restart; a faster peer's current-round report never enters their input or result-validation baseline. Coordinator messages remain live and reach each intended participant.
 
+A selected voter's usage or capacity wait never removes its required seat or lets a completed partner cover it. A usage replacement may take that seat only on a tool without another selected or completed ballot; the replacement reason is saved with the new start, and accepted partial votes remain. Otherwise the missing voter waits. Selected profiles stay protected from removal while the task is unfinished.
+
 The same preparation saves each product's base-version review guide and commit-specific full, incremental and port comparisons in private files. Fix-round Code reviewers read a separate incremental file rather than rereading the original patch. Lockfile changes remain listed in the statistics and have separate patch files; they remain in review scope, including dependency and integrity checks. Security reviewers and Verifiers retain full-change scope. Reviewers receive file references rather than repeating Git discovery. Raw diffs stay out of task/window state. The in-memory input is reused without disk reads; after a restart its files are verified when loaded. Detached copies use the snapshot's exact commits.
 
 ### Reviewer working copies

@@ -372,13 +372,27 @@ describe.concurrent("one vote per actual usable tool", () => {
   for (const modelOnly of [false, true]) it(`handles a ${modelOnly ? "model" : "tool"} limit during voting without borrowing a partner's vote`, async () => {
     const f = await voting({ limited: [{ model: "opus", role: "verifier", ...(modelOnly ? { type: "seven_day_opus" } : { spendCap: true }) }] }, 3, []);
     try {
+      if (!modelOnly) {
+        await f.advance(() => f.delivery() || (checkedFinding(f)?.votes?.length === 2 && f.task().state === "waiting"));
+        expect(f.delivery()).toBe(false);
+        expect(checkedFinding(f).verification).toBeUndefined();
+        expect(f.task().hunt?.voterProfiles).toHaveLength(3);
+        const accepted = structuredClone(checkedFinding(f).votes!);
+        await f.restart();
+        expect(checkedFinding(f).votes).toEqual(accepted);
+        expect(checkedFinding(f).verification).toBeUndefined();
+        f.fakes.scenario({ controlled: true, builder: "plain", reviewer: "important" });
+        for (const limit of f.engine.s.pool.limited ?? []) if (limit.toolId === "claude-code") limit.until = Date.now() - 1;
+        for (const report of f.engine.s.pool.usage ?? []) if (report.toolId === "claude-code") report.resetsAt = Date.now() - 1;
+        f.engine.schedule();
+      }
       await f.advance(f.delivery);
       const finding = checkedFinding(f);
       const finished = f.engine.tracking.log.turns({ taskId: f.task().id }).filter((turn) => turn.roleId === "verifier" && turn.end === "finished");
-      expect(finished).toHaveLength(modelOnly ? 3 : 2);
+      expect(finished).toHaveLength(3);
       expect(new Set(finished.map((turn) => turn.toolId)).size).toBe(finished.length);
       expect(finding.votes).toHaveLength(finished.length);
-      expect(finding.votes?.some((vote) => vote.by === "opus-high")).toBe(false);
+      expect(finding.votes?.some((vote) => vote.by === "opus-high")).toBe(!modelOnly);
       if (modelOnly) expect(finding.votes?.find((vote) => vote.toolId === "claude-code")?.by).toBe("sonnet-high");
       expect(finding.verification?.verdict).toBe("real");
     } finally { f.engine.shutdown(); }
@@ -538,6 +552,9 @@ describe.concurrent("one vote per actual usable tool", () => {
       f.engine.schedule();
       await f.advance(f.delivery);
       expect(f.task().findings.find((finding) => finding.id === partial.id)?.votes).toContainEqual(partial.votes![0]);
+      const replacement = f.task().journey!.flatMap(step => step.agentInputs ?? []).find(input => input.selectionReason?.includes("takes its required seat"));
+      expect(replacement?.selectionReason).toContain("saved votes remain");
+      expect(replacement?.profileId).toBe("grok-high");
       expect(f.fakes.openings("verifier")).toHaveLength(2);
       expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.status === "dismissed")).toBe(true);
     } finally { f.engine.shutdown(); }
