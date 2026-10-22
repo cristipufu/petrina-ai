@@ -36,7 +36,8 @@ export interface TurnAgent {
 }
 
 const ACCOUNT_AFTER_TURN_MS = 5 * 60_000;
-const ACCOUNT_ON_PAGE_MS = 60_000;
+/** Analytics asks for fresh account usage at most this often. */
+export const ACCOUNT_ON_PAGE_MS = 60_000;
 
 export class Tracking {
   readonly log: WorkLog;
@@ -81,7 +82,12 @@ export class Tracking {
     if (request.view === "analytics") {
       this.k.readUsage(undefined, ACCOUNT_ON_PAGE_MS);
     }
-    return usageView(this.log, request, { now: Date.now(), state: this.k.activeState(), task: (id) => this.k.task(id), taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id) });
+    return this.usageAt(request, Date.now());
+  }
+
+  /** One view at a fixed time, without refreshing accounts. `live`: allowance readings to use instead of the pool's current ones. */
+  usageAt<R extends UsageRequest>(request: R, now: number, live?: readonly UsageReport[]): UsageViewFor<R> {
+    return usageView(this.log, request, { now, ...(live ? { usage: live } : {}), state: this.k.activeState(), task: (id) => this.k.task(id), taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id) });
   }
 
   // ── Products and ids ───────────────────────────────────────────────────

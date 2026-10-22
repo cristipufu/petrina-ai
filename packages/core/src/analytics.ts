@@ -4,7 +4,7 @@
 import { limitBuckets, limitsOverTime, readingsView, type LimitsOverTime, type ReadingsRequest, type ReadingsView } from "./limit-history-view.js";
 import { nodeUsage, type NodeUsage } from "./node-usage.js";
 import { tokensOverTime, type OverTimeView } from "./charts.js";
-import type { AgentProfile, Id, State, Task } from "./model.js";
+import type { AgentProfile, Id, State, Task, UsageReport } from "./model.js";
 import { atLeastLine, count, durationText, type Figure, listWords } from "./numbers.js";
 import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, emptyTally, addTurn, lineModelLabel, modelLabel, sameModel, sessionModelLabel, turnModelLabel, type Tally, type TokenLine, type WorkLogReader, type WorkMoment, type WorkTurn } from "./worklog.js";
 
@@ -28,6 +28,8 @@ export interface UsageContext {
   task?: (taskId: Id) => Task | undefined;
   /** Analytics lists read only the name, rather than loading every past conversation. */
   taskName?: (taskId: Id) => string | undefined;
+  /** The live allowance readings Analytics uses instead of the pool's current ones: a paged read keeps its first page's. */
+  usage?: readonly UsageReport[];
 }
 
 /** New input, reused, written and output. Missing: not reported. */
@@ -756,7 +758,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     atLeast: reasonsOf(tally, before),
     chart: { hourly: range.hourly, tools: toolIds.map((toolId) => ({ toolId, label: n.tool(toolId) })), buckets },
     overTime: tokensOverTime(turns, lines, range.buckets, range.hourly, n.tool),
-    limits: limitsOverTime(log.usageHistory({ from: ctx.now - 30 * 86_400_000, to: ctx.now + 1 }), ctx.state.pool.usage ?? [], limitBuckets(request.period, ctx.now), request.period === "today", ctx.now, n.tool, ctx.state.tools.map((tool) => tool.id)),
+    limits: limitsOverTime(log.usageHistory({ from: ctx.now - 30 * 86_400_000, to: ctx.now + 1 }), ctx.usage ?? ctx.state.pool.usage ?? [], limitBuckets(request.period, ctx.now), request.period === "today", ctx.now, n.tool, ctx.state.tools.map((tool) => tool.id)),
     byTool,
     byModel: modelSplit(turns, lines, before),
     byRole,

@@ -10,6 +10,7 @@ import { readCheckLog } from "./check-log-read.js";
 import { readConversation } from "./conversation-read.js";
 import { readExactInput } from "./exact-input.js";
 import { readReviewInput } from "./review-context.js";
+import { readAnalytics } from "./analytics-read.js";
 
 export type Outcome =
   | "completed"
@@ -270,6 +271,8 @@ export class Coordination {
     const e = this.engine,
       s = e.activeState();
     if (name === "watch.event") return e.events.log.read(a.eventId, a);
+    // Before the shared checks: a continuation reports its read's time even when the task or product is gone.
+    if (name === "analytics.inspect") return readAnalytics(e, a as Parameters<typeof readAnalytics>[1]);
     const needsTask = a.taskId && name !== "task.list" && name !== "task.history" && name !== "inbox.list";
     const task = needsTask ? e.taskDetails(a.taskId) : undefined;
     if (needsTask && !task) return { outcome: "missing", message: "That task does not exist." };
@@ -436,13 +439,6 @@ export class Coordination {
           [name, s.pool.screen],
         ),
       };
-    if (name === "analytics.inspect")
-      return readText(e.usage(a.taskId ? { view: "task", taskId: a.taskId } : { view: "analytics", period: a.period, productId: a.productId }), a, [
-        name,
-        a.taskId,
-        a.productId,
-        a.period,
-      ]);
     return { outcome: "invalid", message: "This read is not available." };
   }
   private history(a: Args): Result {

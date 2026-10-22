@@ -256,7 +256,7 @@ export const OPERATIONS = [
   op("screen.set", "Set the existing global screen allowance. Does not itself open windows.", { mode: z.enum(["off", "hour", "on"]) }, true),
   op("screen.task", "Set the existing per-task screen allowance. Does not itself open windows.", { ...task, allowed: z.boolean() }, true),
   op("screen.allow", "Allow one inspected pending screen request through the existing screen scheduler.", decision, true),
-  op("analytics.inspect", "Read existing task or product analytics in bounded pages.", {
+  op("analytics.inspect", "Read existing task or product analytics in bounded pages. Every page reports its read's asOf time; a product read's continuations expire ten minutes after its first page.", {
     taskId: id.optional(),
     productId: id.optional(),
     period: z.enum(["today", "7d", "30d"]).default("7d"),
