@@ -19,6 +19,8 @@ export interface ReaderOptions {
 
 /** How Petrina drives one tool through ACP. */
 export interface ToolAdapter {
+  /** Connector extensions requested during ACP initialization, separate from task instructions. */
+  clientMeta?: Record<string, unknown>;
   /** Provider-owned live input. No cancellation or personal settings changes. */
   liveInput?: {
     supported: (initialize: unknown) => boolean;

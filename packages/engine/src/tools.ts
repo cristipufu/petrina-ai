@@ -42,6 +42,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     sandboxMeta: (sandbox) => ({ claudeCode: { options: { sandbox } } }),
   },
   codex: {
+    clientMeta: { jetbrains: { air: { version: 1, capabilities: ["sessionFailure"] } } },
     liveInput: steering(false),
     parseLimitError: codexLimit,
     interruptions: codexInterruptions,

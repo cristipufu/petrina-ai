@@ -172,6 +172,8 @@ A step whose tool is not ready, won't start (or doesn't open a conversation with
 
 ## Results and questions
 
+Codex conversations request the installed connector's typed session-failure extension. Native reconnect warnings remain status updates while the harness retries; only a terminal error attached to the completed prompt enters failure recovery. Exhausted transport failures retain their diagnostic and streamed work without format-correction prompts or a quota/capacity record. Account limits, sign-in, model capacity and cancellation retain their own paths; context/session exhaustion does not establish an account quota limit. Other providers opt into extensions and failure readers through their adapters.
+
 An agent hands back its result as one fenced `petrina` block of JSON at the end of its last message, in the shape its role contract shows it. A stage finishes only when that block parses and passes the role's schema; otherwise the agent is told exactly what is wrong, twice at most. An agent that cannot go on without a decision ends with a `needsInput` block instead: the question goes to the inbox, and the answer comes back to the same conversation.
 
 Every fresh or continued agent is told to investigate uncertain facts through current code, reproduction and web research using applicable official documentation or primary sources. Evidence, hypotheses and unavailable checks stay distinct; only unresolved material product decisions go to the coordinator.

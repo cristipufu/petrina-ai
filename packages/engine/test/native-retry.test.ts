@@ -57,6 +57,33 @@ async function start(scenario: Scenario) {
 }
 
 describe.concurrent("a native harness reconnecting by itself", () => {
+  for (const parallel of [false, true]) it(`does not request corrected JSON after a terminal connection failure in ${parallel ? "parallel review" : "a Builder turn"}`, async () => {
+    const role = parallel ? "code reviewer" : "builder";
+    const meta = { jetbrains: { air: { version: 1, sessionFailure: { id: "terminal-network", revision: 1, category: "connection", severity: "error", title: "stream disconnected before completion: retries exhausted", actions: ["retry", "new_session"] } } } };
+    const run = await start({ planner: parallel ? "parallel" : "short", builder: "plain", reopen: "resume", nativeRetry: [{ role, model: "gpt-6.1-sol", steps: [said("I saved the work before reconnecting."), { mark: "terminal-ready" }, { wait: "end-terminal" }], meta }] });
+    try {
+      await run.until(task => run.fakes.marked("terminal-ready") && task, "the connection failure's controlled boundary");
+      run.release("end-terminal");
+      const failed = await waitFor(() => { run.answer(); const task = run.find(); return task.state === "failed" && task; }, "the typed failed turn");
+      expect(failed.error).toContain("retries exhausted");
+      const input = failed.journey!.flatMap(step => step.agentInputs ?? []).find(entry => entry.roleId === (parallel ? "code-reviewer" : "builder") && run.engine.profile(entry.profileId)?.toolId === "codex")!;
+      expect(run.fakes.received(role).filter(entry => entry.session === input.sessionId)).toHaveLength(1);
+      expect(run.fakes.prompts(role).some(text => text.includes("Your last answer"))).toBe(false);
+      expect(failed.modelCapacity).toBeUndefined();
+      expect(run.engine.getState().pool.limited ?? []).toEqual([]);
+      expect(failed.session.some(line => line.text.includes("I saved the work before reconnecting"))).toBe(true);
+      if (!parallel) {
+        run.fakes.scenario({ planner: "short", builder: "plain", reopen: "resume" });
+        const stuck = run.engine.getState().inbox.find(item => item.taskId === run.taskId && item.kind === "stuck")!;
+        await run.engine.retry(stuck.id);
+        await run.until(task => task.state === "done" && task, "ordinary retry after the connection recovered");
+        // The existing explicit Retry starts fresh after a terminal failure; native retries
+        // inside a still-running turn are the ones that retain their live conversation.
+        expect(run.fakes.received(role)).toHaveLength(2);
+        expect(new Set(run.fakes.received(role).map(entry => entry.session)).size).toBe(2);
+      }
+    } finally { await run.engine.shutdown(); }
+  });
   it("shows Codex reconnecting over stale activity and the saved to-do item, then returns to the work, with nothing sent", async () => {
     const run = await start({
       planner: "short", builder: "plain",

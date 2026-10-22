@@ -148,7 +148,7 @@ export interface Scenario {
    * a file in dir, drops a marker there (`{session}` becomes the conversation id), or ends the turn with an error.
    * The turn then goes on as the role usually does.
    */
-  nativeRetry?: { role: string; model?: string; steps: NativeStep[] }[];
+  nativeRetry?: { role: string; model?: string; steps: NativeStep[]; meta?: Record<string, unknown> }[];
   /** The builder mentions the capacity sentence and still hands back a finished result. */
   mentionCapacity?: boolean;
   /** Every turn of an agent on this model first reports its usage, the way Claude Code does. */
@@ -241,6 +241,7 @@ if (dir) appendFileSync(join(dir, "processes"), `${process.pid}\n`);
 const run = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, env: testGitEnv(), stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
 interface Reply {
+  meta?: Record<string, unknown>;
   text: string;
   stop?: "cancelled";
   /** Leave the usage out entirely. */
@@ -765,11 +766,11 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   }
   // Direct session tests: run these native retry steps, then end the turn with the rest of the text.
   if (text.startsWith("NATIVE-STEPS ")) {
-    const { steps, reply, late } = JSON.parse(text.slice("NATIVE-STEPS ".length)) as { steps: NativeStep[]; reply?: string; late?: NativeStep[] };
+    const { steps, reply, late, meta } = JSON.parse(text.slice("NATIVE-STEPS ".length)) as { steps: NativeStep[]; reply?: string; late?: NativeStep[]; meta?: Record<string, unknown> };
     await nativeSteps(client, sessionId, steps);
     // Steps after the turn has ended: a late notice from a turn that is over.
     if (late) setTimeout(() => void nativeSteps(client, sessionId, late).catch(() => undefined), 0);
-    return { text: reply ?? "" };
+    return { text: reply ?? "", ...(meta ? { meta } : {}) };
   }
   if (text.includes("SWITCH-THEN-STOP")) {
     // The tool confirms a switch to Sonnet at low effort, then stops before it replies.
@@ -1364,6 +1365,7 @@ acp
   .agent({ name: "fake-agent" })
   .onRequest("initialize", async (ctx) => {
     traceStartup("initialize");
+    if (dir && process.argv.includes("--record-initialize")) appendFileSync(join(dir, "initialize.jsonl"), `${JSON.stringify(ctx.params)}\n`);
     // After the answer, never before it: the login it runs on, or "none".
     if (!silentLogin) setImmediate(() => void ctx.client.notify("_auth/status_update", { authStatus: notLoggedIn ? { kind: "none", label: "Not logged in" } : { kind: "account", label: "Fake plan" } }).catch(() => undefined));
     const how = scenario().reopen;
@@ -1436,6 +1438,9 @@ acp
     });
     if (reply.text) await send(ctx.client, sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply.text } });
     const base = tool ? responseFor(reply, sessions.get(sessionId)!) : { stopReason: reply.stop ?? "end_turn" as const };
+    const session = sessions.get(sessionId)!;
+    const meta = reply.meta ?? (session.turns === 1 ? scenario().nativeRetry?.find(entry => entry.role === session.role && (!entry.model || entry.model === session.model))?.meta : undefined);
+    if (meta) return { ...base, _meta: meta };
     if (!reply.native) return base;
     // Codex's own stop: the turn completed with an overloaded error and no sentence in the agent's text.
     return {

@@ -640,7 +640,7 @@ export class AgentRun {
       if (signal.aborted) throw new Error("Stopped before the agent started");
       // Notices let Codex announce a reroute as a typed update instead of text in the reply.
       const [init, browser] = await Promise.all([
-        connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} } } }),
+        connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} }, ...(adapter.clientMeta ? { _meta: adapter.clientMeta } : {}) } }),
         browserReady,
       ]);
       const sessionId = options.reopen;
@@ -812,6 +812,8 @@ export class AgentRun {
       // A finished turn can carry the overloaded stop on the response itself, with no sentence in the agent's text.
       const full = this.capacityOf(response);
       if (full) throw full;
+      const failure = response.stopReason !== "cancelled" ? ADAPTERS[this.profile.toolId]?.interruptions?.failure?.(response) : undefined;
+      if (failure) throw this.limitOf(failure, true) ?? failure;
       return { stopReason: response.stopReason, text: this.state.text, ...(this.state.messages.streamed ? { streamed: true } : {}), ...(report ? { report } : {}), ...notes() };
     } finally {
       this.child.removeListener("exit", onExit);
@@ -888,8 +890,11 @@ export class AgentRun {
   }
 
   /** The usage limit a failed turn ran into, when that is why it failed. */
-  private limitOf(error: unknown): UsageLimited | undefined {
+  private limitOf(error: unknown, explicitOnly = false): UsageLimited | undefined {
     const failure = limitFromFailure(this.profile, error, this.state.text, Date.now());
+    // A typed terminal connection, sign-in or context failure keeps its own cause;
+    // an earlier account report cannot relabel it as a quota refusal.
+    if (explicitOnly && !failure) return undefined;
     // A generic rate/quota refusal inherits the live window's scope and reset. Billing and
     // account holds remain independent even when another subscription window is exhausted.
     const limited = failure?.independent ? failure : this.rejected(failure ? "refusal" : "report") ?? failure;

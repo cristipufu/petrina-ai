@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProfile } from "@petrina/core";
 import { AgentRun, type NativeRetryReport } from "../src/acp-run.js";
@@ -7,6 +7,8 @@ import { claudeInterruptions, codexInterruptions, GROK_OVERLOADED, grokInterrupt
 import { ADAPTERS } from "../src/tools.js";
 import { limitFromFailure, ModelAtCapacity, UsageLimited } from "../src/usage.js";
 import type { NativeStep, Scenario } from "./fake-agent.js";
+import { rejectionOf } from "./rejections.js";
+import { isAuthRequired } from "../src/setup.js";
 import { Fakes, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
@@ -39,8 +41,25 @@ const GARBLED = "reqwest error stream: Transport error: error decoding response 
 
 const update = (value: unknown): SessionNotice => ({ kind: "update", sessionId: "s", update: value });
 const extension = (value: { method: string; params: unknown }): SessionNotice => ({ kind: "extension", ...value });
+const air = (category: string, severity: "warning" | "error", title: string, actions: string[] = ["retry", "new_session"]) => ({ jetbrains: { air: { version: 1, sessionFailure: { id: "turn:error", revision: 1, category, severity, title, actions } } } });
 
 describe("reading each tool's own interruption reports", () => {
+  it("distinguishes typed reconnect warnings, terminal failures, cancellation and account limits", () => {
+    const failure = codexInterruptions.failure!;
+    const response = (category: string, actions: string[]) => ({ stopReason: "end_turn", _meta: air(category, "error", "The provider's actual diagnostic", actions) });
+    expect(codexInterruptions.notice!(update({ sessionUpdate: "session_info_update", _meta: air("connection", "warning", "Reconnecting") }))).toEqual({ retrying: "network" });
+    expect(failure({ stopReason: "end_turn", _meta: air("connection", "warning", "Reconnecting") })).toBeUndefined();
+    expect(failure({ stopReason: "cancelled", _meta: air("connection", "error", "Connection failed") })).toBeUndefined();
+    expect(codexInterruptions.notice!(update({ sessionUpdate: "session_info_update", _meta: air("connection", "error", "A past turn failed") }))).toBeUndefined();
+    const lost = failure(response("connection", ["retry", "new_session"]))!;
+    expect(lost.message).toContain("Codex's connection failed");
+    expect(limitFromFailure(PROFILES.codex, lost, "", Date.now())).toBeUndefined();
+    expect(isAuthRequired(failure(response("access", ["login"])))).toBe(true);
+    for (const actions of [[], ["retry"]]) expect(limitFromFailure(PROFILES.codex, failure(response("limit", actions)), "", Date.now())).toBeInstanceOf(UsageLimited);
+    expect(limitFromFailure(PROFILES.codex, failure(response("limit", ["new_session"])), "", Date.now())).toBeUndefined();
+    expect(limitFromFailure(PROFILES.codex, failure(response("service", ["retry"])), "", Date.now())).toBeUndefined();
+    expect(failure({ stopReason: "end_turn" })).toBeUndefined();
+  });
   it("shows Codex's own transport retries as reconnecting, and other retries without claiming the network", () => {
     const notice = codexInterruptions.notice!;
     expect(notice(update(codexRetry(STREAM_LOST)))).toEqual({ retrying: "network" });
@@ -114,7 +133,7 @@ async function conversation(profile: AgentProfile, scenario: Scenario = {}, reop
   const reports: (NativeRetryReport | undefined)[] = [];
   const steps: string[] = [];
   const run = await AgentRun.start({
-    profile, cwd: dir, browser: false, command: [process.execPath, join(import.meta.dir, "fake-agent.ts"), dir], env: {}, signal: new AbortController().signal,
+    profile, cwd: dir, browser: false, command: [process.execPath, join(import.meta.dir, "fake-agent.ts"), dir, "--record-initialize"], env: {}, signal: new AbortController().signal,
     ...(reopen ? { reopen } : {}),
     callbacks: { onActivity() {}, onPlanStep: (line) => steps.push(line), onPermission: async () => "deny" as const, onRetrying: (report) => reports.push(report) },
   });
@@ -131,6 +150,21 @@ const asUpdate = (value: unknown): NativeStep => ({ update: value as never });
 const asNotice = (value: { method: string; params: Record<string, unknown> }): NativeStep => ({ notice: value });
 
 describe.concurrent("a native retry during a turn", () => {
+  it("requests typed failures and rejects an exhausted transport once, preserving streamed prose and later recovery", async () => {
+    const { run, dir, reports } = await conversation(PROFILES.codex);
+    try {
+      const initialize = JSON.parse(readFileSync(join(dir, "initialize.jsonl"), "utf8").trim());
+      expect(initialize.clientCapabilities._meta.jetbrains.air.capabilities).toContain("sessionFailure");
+      const error = await rejectionOf(run.prompt(`NATIVE-STEPS ${JSON.stringify({ steps: [asUpdate({ sessionUpdate: "session_info_update", _meta: air("connection", "warning", "Reconnecting") }), said("The draft is saved.")], reply: "I could not finish reconnecting.", meta: air("connection", "error", "stream disconnected before completion") })}`));
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("stream disconnected before completion");
+      expect(error).not.toBeInstanceOf(UsageLimited);
+      expect(error).not.toBeInstanceOf(ModelAtCapacity);
+      expect(reports[0]?.cause).toBe("network");
+      const recovered = await run.prompt(`NATIVE-STEPS ${JSON.stringify({ steps: [asUpdate({ sessionUpdate: "session_info_update", _meta: air("connection", "warning", "Reconnecting") })], reply: "Recovered normally. A previous turn said 'stream disconnected before completion'.", meta: air("connection", "warning", "Reconnecting") })}`);
+      expect(recovered.text).toContain("Recovered normally.");
+    } finally { await run.stop(); }
+  });
   it("reports Codex reconnecting once, keeps it through repeats and earlier calls' updates, and ends it on fresh output", async () => {
     const { run, reports, release, reached } = await conversation(PROFILES.codex);
     try {

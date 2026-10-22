@@ -6,6 +6,7 @@
 // - A terminal capacity stop: the turn has ended because the selected model is full. Petrina retries it.
 // - A native retry: the tool is still working the turn and is trying again by itself. Petrina only shows it.
 // A native retry warning never establishes why a later turn ended.
+import { RequestError } from "@agentclientprotocol/sdk";
 
 /** A turn ended because the selected model is full. `retryAfterMs` is an explicit provider delay. */
 export interface CapacityStop { retryAfterMs?: number }
@@ -25,6 +26,8 @@ export type SessionNotice =
 export type RetryNotice = { retrying: RetryCause; retryAfterMs?: number } | { stopped: true };
 
 export interface ToolInterruptions {
+  /** A terminal failure carried by the prompt response; warnings and cancellation are not failures. */
+  failure?: (response: unknown) => Error | undefined;
   /** A thrown failure, a prompt response or the turn's text (`source` is a string) that ended the turn on a full model. */
   capacity?: (source: unknown, text: string) => CapacityStop | undefined;
   /** A native retry notice. Anything else, including account, rate and sign-in reports, is undefined. */
@@ -103,15 +106,21 @@ function codexHttpStatus(info: Record<string, unknown>): number | undefined {
 }
 
 /**
- * codex-acp 2.2.2, without the typed session-failure capability Petrina does not declare, forwards Codex's
- * own retry as `session_info_update` with `_meta.codex.error.willRetry: true`. A lost transport is a network
- * interruption; another retried kind is only "retrying". A terminal error ends the turn through its text or
- * rejection instead, so it is not read here.
+ * codex-acp 2.2.2 reports typed session failures when requested. Warning connection/service records
+ * describe native retries. Only the completed prompt's own metadata decides terminal failure;
+ * a late session-wide error cannot end a different turn. Native Codex retry updates are also recognized.
  */
 function codexNotice(notice: SessionNotice): RetryNotice | undefined {
   if (notice.kind !== "update") return undefined;
   const update = recordOf(notice.update);
   if (update?.sessionUpdate !== "session_info_update") return undefined;
+  const typed = sessionFailureOf(update);
+  if (typed?.severity === "warning") {
+    if (typed.category === "connection") return { retrying: "network" };
+    if (typed.category === "service") return { retrying: "transient" };
+    return undefined;
+  }
+  if (typed) return undefined;
   const error = recordOf(recordOf(recordOf(update._meta)?.codex)?.error);
   if (!error || error.willRetry !== true) return undefined;
   const info = error.codexErrorInfo;
@@ -126,7 +135,23 @@ function codexNotice(notice: SessionNotice): RetryNotice | undefined {
   return { retrying: "transient" };
 }
 
-export const codexInterruptions: ToolInterruptions = { capacity: codexCapacity, notice: codexNotice };
+/** codex-acp attributes this response metadata to the completed prompt, unlike session-wide notices. */
+function codexFailure(response: unknown): Error | undefined {
+  const record = recordOf(response);
+  if (record?.stopReason === "cancelled") return undefined;
+  const failure = sessionFailureOf(record);
+  if (failure?.severity !== "error" || typeof failure.title !== "string") return undefined;
+  const title = failure.title.trim() || "Codex reported a failed turn.";
+  const actions = Array.isArray(failure.actions) ? failure.actions : [];
+  if (failure.category === "access" && actions.includes("login")) return RequestError.authRequired();
+  // Typed limit policy distinguishes account quota/rate limits from context or session budgets.
+  // A new-session action alone does not prove the account has run out.
+  const codexErrorInfo = failure.category === "limit" && !actions.includes("new_session")
+    ? actions.includes("retry") ? "rateLimitExceeded" : "usageLimitExceeded" : undefined;
+  return Object.assign(new Error(failure.category === "connection" ? `Codex's connection failed: ${title}` : title), { data: codexErrorInfo ? { codexErrorInfo } : {} });
+}
+
+export const codexInterruptions: ToolInterruptions = { capacity: codexCapacity, notice: codexNotice, failure: codexFailure };
 
 // ── Claude Code ──────────────────────────────────────────────────────────
 
