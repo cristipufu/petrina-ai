@@ -51,6 +51,12 @@ for (const following of ["gate", "agent"] as const) it(`asks about exhausted rev
     expect(task.stageIndex).toBe(2); expect(task.rounds.review).toBe(5);
     expect(work.approvedSha).toBeUndefined(); expect(work.approvedFor).toBeUndefined();
     expect(task.findings[0]!.status).toBe("open");
+    task.risk = { level: "low", why: "Fixture" };
+    engine.s.products.find(product => product.id === productId)!.shipLowRisk = true;
+    const findings = task.findings;
+    task.findings = [];
+    expect(engine["driver"]["shipsUnasked"](task)).toBe(false);
+    task.findings = findings;
     // The actual delivery approval remains a different decision, after preparation.
     work.checkedSha = "final-code"; work.checkedPatch = "final-patch";
     task.stageIndex = 2;

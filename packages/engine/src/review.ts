@@ -932,10 +932,10 @@ export class Reviews {
       if (task.repositories) {
         if (beginRepair(this.k, task, "review", task.stageIndex)) return "continue";
         this.forgetSessions(task, stage.id);
-        // This decision is a delivery checkpoint. Approval must resume after it, not re-enter review.
+        // Continue through any remaining acceptance stage after the decision, before delivery approval.
         const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
         if (delivery < 0) throw new Error("The plan has no delivery check after review");
-        task.stageIndex = delivery;
+        task.stageIndex += 1;
         task.sub = 0;
         this.k.log(task, "warn", "No builder can take the remaining findings, so the decision goes to you");
         task.reviewDecision = { stageId: stage.id, round, accepted: false };

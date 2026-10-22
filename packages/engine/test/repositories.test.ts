@@ -935,7 +935,13 @@ describe.concurrent("one task across products", () => {
       expect(shop.github().prs).toHaveLength(0); expect(api.github().prs).toHaveLength(0);
       expect(task.plan!.stages[task.stageIndex]!.gate).toBe("delivery");
       const reviews = fakes.received("code reviewer").length;
-      engine.approve(itemOf(engine.getState(), id, "delivery")!.id);
+      const decision = itemOf(engine.getState(), id, "delivery")!;
+      expect(engine.task(id)!.reviewDecision?.accepted).toBe(false);
+      engine.approve(decision.id);
+      const verified = await until(engine, state => !!itemOf(state, id, "delivery"), coordinator([]));
+      expect(itemOf(verified, id, "delivery")!.id).not.toBe(decision.id);
+      expect(shop.github().prs).toHaveLength(0); expect(api.github().prs).toHaveLength(0);
+      engine.approve(itemOf(verified, id, "delivery")!.id);
       const delivered = await until(engine, (state) => taskOf(state, id).state === "pr-open" || !!taskOf(state, id).error || !!itemOf(state, id, "delivery"), coordinator([]));
       expect(taskOf(delivered, id).error).toBeUndefined();
       expect(taskOf(delivered, id).state).toBe("pr-open");
@@ -1070,7 +1076,14 @@ describe.concurrent("shared-task repair regressions", () => {
       engine.requestChanges(itemOf(engine.getState(), id, "delivery")!.id, "Try a new approach across both products");
       expect(current.repositories!.map((work) => work.acceptanceReturns ?? 0)).toEqual([0, 0]);
       engine.setPoolPaused(false);
-      const again = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator([]));
+      // An unresolved review can now ask before final verification. Accept that risk explicitly;
+      // it must neither renew nor bypass the acceptance allowance being exercised here.
+      const again = await until(engine, (state) => (!!itemOf(state, id, "delivery") && taskOf(state, id).reviewDecision?.accepted !== false) || !!taskOf(state, id).error, (current, state) => {
+        if (taskOf(state, id).reviewDecision?.accepted === false) {
+          const decision = itemOf(state, id, "delivery");
+          if (decision) current.approve(decision.id);
+        }
+      });
       expect(taskOf(again, id).error).toBeUndefined();
       expect(taskOf(again, id).repositories!.map((work) => work.acceptanceReturns)).toEqual([2, 2]);
       expect(taskOf(again, id).acceptancePassed).toBe(false);
@@ -1097,7 +1110,13 @@ describe.concurrent("shared-task repair regressions", () => {
       expect(shop.github().prs).toHaveLength(0); expect(api.github().prs).toHaveLength(0);
       expect(task.plan!.stages[task.stageIndex]!.gate).toBe("delivery");
       const reviews = fakes.received("code reviewer").length;
-      engine.approve(itemOf(engine.getState(), id, "delivery")!.id);
+      const decision = itemOf(engine.getState(), id, "delivery")!;
+      expect(engine.task(id)!.reviewDecision?.accepted).toBe(false);
+      engine.approve(decision.id);
+      const verified = await until(engine, state => !!itemOf(state, id, "delivery"), coordinator([]));
+      expect(itemOf(verified, id, "delivery")!.id).not.toBe(decision.id);
+      expect(shop.github().prs).toHaveLength(0); expect(api.github().prs).toHaveLength(0);
+      engine.approve(itemOf(verified, id, "delivery")!.id);
       const delivered = await until(engine, (state) => taskOf(state, id).state === "pr-open" || !!taskOf(state, id).error || !!itemOf(state, id, "delivery"), coordinator([]));
       expect(taskOf(delivered, id).error).toBeUndefined();
       expect(taskOf(delivered, id).state).toBe("pr-open");

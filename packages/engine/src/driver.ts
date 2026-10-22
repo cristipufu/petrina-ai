@@ -656,6 +656,7 @@ export class Driver {
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */
   private shipsUnasked(task: MTask): boolean {
     const scope = executionFor(task);
+    if (task.reviewDecision) return false;
     // Shared work also needs the saved task choice and combined acceptance; single-product work keeps
     // the product's existing low-risk opt-in, even when its ordinary deliveries ask first.
     if (task.repositories && (task.approveDelivery || task.acceptancePassed !== true)) return false;
