@@ -201,7 +201,8 @@ function deliveryLines(task: Task): string | undefined {
 export function checksLine(task: Task): string | undefined {
   const runs = task.checks?.results;
   if (!runs?.length) return undefined;
-  const failed = runs.filter((run) => !run.ok);
+  const failed = runs.filter((run) => !run.ok && !run.interruption && !run.interrupted);
+  if (runs.some((run) => run.interruption || run.interrupted)) return `Automated checks: ${failed.length ? `${failed.length} failed (${failed.map((run) => run.name).join(", ")}); ` : ""}interrupted — verification incomplete (${runs.filter((run) => run.interruption || run.interrupted).map((run) => run.name).join(", ")}). Original reported results retained.`;
   return failed.length
     ? `Automated checks: ${failed.length} of ${runs.length} failed (${failed.map((run) => run.name).join(", ")}).`
     : `Automated checks: all ${runs.length} passed (${runs.map((run) => run.name).join(", ")}).`;
@@ -334,6 +335,8 @@ export abstract class Kernel {
 
   /** Set by shutdown: work that ends afterwards (a turn cut off by the stop) changes nothing. */
   stopped = false;
+  /** Optional background evidence reads end when stopping is requested, before admitted work drains. */
+  readonly stopRequested = new AbortController();
   /** Stopping is under way: no new agent starts, and reviewers and voters in flight hand back first. */
   draining = false;
   drainReason: "stop" | "restart" = "restart";
@@ -381,6 +384,7 @@ export abstract class Kernel {
    */
   async drain(limitMs: number, onWait?: (left: number) => void): Promise<number> {
     this.draining = true;
+    this.stopRequested.abort();
     const started = Date.now();
     let last = -1;
     while (!this.stopped) {
@@ -456,15 +460,16 @@ export abstract class Kernel {
   gate(task: MTask, gate: GateKind, problem?: string, checks?: { title: string; body: string }): void {
     delete task.agent;
     task.holdsSlot = false;
-    beginYouStep(task, gate, Date.now());
+    const decision = beginYouStep(task, gate, Date.now());
+    if (gate === "delivery" && !decision.productChecks) decision.productChecks = library.decisionEvidence(taskView(task));
     const work = gate === "plan" ? task.proposedSource ?? executionFor(task).work.source : executionFor(task).work.source;
     const workLine = task.workRows || task.repositories
-      ? (gate === "plan" ? task.workRows?.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error, row.addition ? `Will be added in ${row.addition.path}` : ""].filter(Boolean).join("\n")) : task.repositories?.map((entry) => [entry.source ? workSummary(entry.source) : entry.productId, entry.report?.summary, entry.checks?.results.length ? entry.checks.results.every((run) => run.ok) ? "Product checks passed" : "Product checks failed" : "Product checks: Not run", entry.releasePreview ? `Release ${entry.releasePreview.tag}: ${entry.releasePreview.notes}\nThis includes everything waiting on the default branch since the previous release.` : ""].filter(Boolean).join("\n")))?.join("\n\n") ?? ""
+      ? (gate === "plan" ? task.workRows?.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error, row.addition ? `Will be added in ${row.addition.path}` : ""].filter(Boolean).join("\n")) : task.repositories?.map((entry) => [entry.source ? workSummary(entry.source) : entry.productId, entry.report?.summary, entry.checks?.results.length ? library.checkProblem({ checks: entry.checks }) === "unverified" ? "Product checks unverified" : entry.checks.results.every((run) => run.ok) ? "Product checks passed" : "Product checks failed" : "Product checks: Not run", entry.releasePreview ? `Release ${entry.releasePreview.tag}: ${entry.releasePreview.notes}\nThis includes everything waiting on the default branch since the previous release.` : ""].filter(Boolean).join("\n")))?.join("\n\n") ?? ""
       : work ? workSummary(work) : "";
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(taskView(task)) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
     const explanation = [problem, checks?.body, body].filter(Boolean).join("\n\n");
     this.raise(task, gate, checks?.title ?? gateTitle(taskView(task), gate), false, explanation ? { body: explanation } : {});
-    task.statusLine = problem ? "Delivery preparation needs you" : checks ? library.CHECKS_STILL_FAIL : gateStatus(taskView(task), gate);
+    task.statusLine = problem ? "Delivery preparation needs you" : gateStatus(taskView(task), gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     // On disk before the window shows it: an answer to this check must find it after any restart.
     this.commitNow();

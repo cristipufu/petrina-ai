@@ -52,7 +52,8 @@ it("retains live check progress and every original diagnostic through repeated p
     expect(visible[1]).toHaveProperty("id", "check-1");
     expect(visible[1]).toHaveProperty("startedAt");
     expect(visible[1]).toMatchObject({ attemptId: "run-0", productId: "product", queuedAt: expect.any(Number) });
-    expect(visible[0]).not.toHaveProperty("run");
+    expect(visible[0]!.run).toEqual(task.journey![0]!.productChecks![0]!.run);
+    expect(visible[0]!.run!.source).toEqual({ stepId: "notes", attemptId: "run-0", checkId: "check-0" });
   } finally { writeFileSync(release, "go"); }
   expect(await running).toBe(0);
   const firstLog = task.journey![0]!.productChecks![0]!.run!.logPath;

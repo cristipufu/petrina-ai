@@ -102,6 +102,7 @@ const ARGS = {
   resume: z.tuple([z.string()]),
   cancel: z.tuple([z.string()]),
   retry: z.tuple([z.string()]),
+  rerunChecks: z.tuple([z.string()]),
   sendMessage: z.tuple([z.string(), z.string().min(1).max(8000), z.enum(["now", "queue", "interrupt"]).optional(), ClientId.optional()]),
   removeQueued: z.tuple([z.string(), z.string()]),
   setStageProfile: z.tuple([z.string(), z.string(), z.enum(["profileIds", "reviewerProfileIds"]), z.number().int(), z.string()]),

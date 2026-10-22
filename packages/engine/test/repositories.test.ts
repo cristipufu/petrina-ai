@@ -1,8 +1,8 @@
 import { executionFor } from "../src/repository-context.js";
 import type { RepositoryContext } from "../src/repository-context.js";
-import { createDemoState, draftOf, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";
+import { checkDecisionLabel, decisionEvidence, createDemoState, draftOf, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { EngineOptions } from "../src/engine.js";
 import { addCopy, ensureWorktree } from "../src/git.js";
@@ -1207,6 +1207,35 @@ describe.concurrent("shared-task repair regressions", () => {
 });
 
 describe.concurrent("shared delivery and hand-back regressions", () => {
+  it("attributes both products' reused failures after a shared unchanged repair", async () => {
+    const { shop, api, start, fakes } = setup("unchanged-shared-check-repair");
+    const engine = start();
+    try {
+      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const products = [first, second];
+      fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", affectedProducts: products });
+      const log = join(shop.dir, "checks-ran.txt"), script = join(shop.dir, "fails.cjs");
+      writeFileSync(script, 'require("node:fs").appendFileSync(process.argv[2], process.argv[3] + "\\n"); process.exit(1);');
+      const check = (productId: string) => [{ name: "Tests", command: `${process.execPath} ${script} ${log} ${productId}` }];
+      for (const productId of products) engine.setProductChecks(productId, check(productId));
+      const id = engine.addTask({ productId: first, worksOn: products.map(productId => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Investigate both products' failed checks" });
+      const state = await until(engine, state => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan"]));
+      const task = taskOf(state, id);
+      expect(task.error).toBeUndefined();
+      expect(readFileSync(log, "utf8").trim().split("\n").sort()).toEqual([...products].sort());
+      expect(task.repositories!.map(work => work.checkReturns)).toEqual([2, 2]);
+      const evidence = decisionEvidence(task);
+      expect(evidence.map(check => [check.productId, check.result, check.reusedAt !== undefined])).toEqual([[first, "fail", true], [second, "fail", true]]);
+      for (const check of evidence) expect(task.journey!.find(step => step.id === check.run!.source!.stepId)?.work).toBe("checks");
+      expect(itemOf(state, id, "delivery")!.body!.match(/Previous check evidence reused; no new execution\./g)).toHaveLength(2);
+      // Editing a definition leaves these unresolved results and their coordinator actions intact.
+      engine.setProductChecks(first, check(first));
+      expect(checkDecisionLabel(taskOf(engine.getState(), id))).toBe("Your call: checks still failing");
+      expect(taskOf(engine.getState(), id).statusLine).toBe("Checks still fail. Your call");
+      expect(task.findings.filter(finding => finding.text.startsWith("Check failed"))).toHaveLength(2);
+    } finally { await engine.shutdown(); }
+  });
+
   it("returns a shared check repair started right before shipping through review, acceptance and the delivery check", async () => {
     const { shop, api, start, fakes } = setup("check-repair-before-shipping");
     const engine = start();

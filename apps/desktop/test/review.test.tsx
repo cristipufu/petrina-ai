@@ -130,6 +130,8 @@ it("labels an acceptance result that could not be checked without calling it a d
   };
   const html = renderToStaticMarkup(<ReviewView now={state.now} task={task} find={lookup(state)} />);
   expect(html).toContain("Could not verify");
+  expect(html).toContain("Acceptance check");
+  expect(html).not.toContain("Unverified check");
   expect(html).toContain("The account limit prevented a session.");
   expect(html).not.toContain("class=\"label bad\">Open");
 });

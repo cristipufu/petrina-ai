@@ -41,3 +41,4 @@ What agents learned about working in this repository, added with the coordinator
 - This Mac has no `timeout` command; use the command tool's execution deadline.
 - Fresh working copies need `bun install --frozen-lockfile`. Keep disposable repositories and installs outside this working copy, where they cannot accidentally use Petrina's own Git metadata or packages.
 - Core modules run directly from source with Bun; a small script outside the checkout can import them by absolute path without installing the full workspace.
+- The desktop app saves the first theme it applies in local storage under petrina.theme, so emulating a dark system setting after the first visit changes nothing; for light and dark checks set petrina.theme to light or dark, or emulate the scheme before the first visit.

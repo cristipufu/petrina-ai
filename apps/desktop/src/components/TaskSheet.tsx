@@ -26,7 +26,8 @@ interface SheetProps {
   tab: SheetTab;
   onTab: (tab: SheetTab) => void;
   selectedStep?: string;
-  onStep: (id: string | undefined) => void;
+  selectedAttempt?: string;
+  onStep: (id: string | undefined, attempt?: string) => void;
   onClose: () => void;
   onToast: (title: string, detail?: string) => void;
   /** A notification's item that opens once the sheet closes, because something typed in it is not sent yet. */
@@ -64,7 +65,7 @@ function TaskActivity({ task }: { task: TaskListEntry }) {
   return <span className={`task-list-activity ${task.state}`}><Icon size={13} aria-hidden="true" /><span>{label}</span></span>;
 }
 
-export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, onStep, onClose, onToast, hasDraft, drafts, messageFocus, onMessageFocused, onMessage, onAboutNumbers, onOpenTask, onDependencies, waiting }: SheetProps) {
+export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, selectedAttempt, onStep, onClose, onToast, hasDraft, drafts, messageFocus, onMessageFocused, onMessage, onAboutNumbers, onOpenTask, onDependencies, waiting }: SheetProps) {
   const [pane, setPane] = useState(selectedStep || tab !== "overview" ? "details" : "flow");
   const [menu, setMenu] = useState(false);
   const [detailsTarget, setDetailsTarget] = useState<HTMLDivElement | null>(null);
@@ -224,9 +225,9 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
               ))}
             </div>
           </aside>
-          <Journey key={task.id} task={task} state={state} find={find} onReadSession={readSession} onPlan={() => { onTab("plan"); }} {...(onOpenTask ? { onOpenTask } : {})} workspace detailsTarget={detailsTarget} selectedStep={selectedStep} onSelectionChange={(id) => {
+          <Journey key={task.id} task={task} state={state} find={find} onReadSession={readSession} onPlan={() => { onTab("plan"); }} {...(onOpenTask ? { onOpenTask } : {})} workspace detailsTarget={detailsTarget} selectedStep={selectedStep} selectedAttempt={selectedAttempt} onSelectionChange={(id, attempt) => {
             if (id && !selectedStep) globalScroll.current = scroller.current?.scrollTop ?? 0;
-            onStep(id);
+            onStep(id, attempt);
             if (id) setPane("details");
             scroller.current?.scrollTo({ top: id ? 0 : globalScroll.current });
           }} />

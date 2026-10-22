@@ -108,6 +108,11 @@ describe("the engine records each task's journey", () => {
     expect(view.nodes[6]!.productChecks).toEqual([expect.objectContaining({ name: "Version", result: "pass", startedAt: expect.any(Number), endedAt: expect.any(Number) })]);
     expect(view.nodes.map((node) => node.team ? [...node.team].sort().join(" ") : node.profileId ?? "")).toEqual(["opus-high", "opus-xhigh", "sol-xhigh", "", "sol-xhigh", "opus-high", "", "opus-high sol-high", "", ""]);
     expect(new Set(view.nodes[7]!.team)).toEqual(new Set(["opus-high", "sol-high"]));
+    const execution = view.nodes[6]!;
+    expect(view.nodes.filter(node => node.work === "checks")).toHaveLength(1);
+    expect(view.nodes.filter(node => node.work === "check-reuse")).toHaveLength(0);
+    const decision = view.nodes.find(node => node.kind === "you" && node.waitsFor === "delivery")!;
+    expect(decision.productChecks![0]!.run).toEqual(execution.productChecks![0]!.run);
     expect(view.end).toEqual({ text: "Delivered locally to main", state: "done" });
 
     // Questions and permission requests hang under the step that asked, with the answer.
@@ -161,7 +166,7 @@ describe("the engine records each task's journey", () => {
       const votes = view.nodes.filter((node) => node.roleId === "verifier");
       expect(votes).toHaveLength(1);
       expect(votes[0]).toMatchObject({ outcome: "1 checked: 1 real", reason: "sent back: 1 important", tone: "back", state: "done" });
-      expect(view.nodes.find((node) => node.name === "Builder (fixes)")).toMatchObject({ outcome: "Fixed 2 findings", reason: "fixes ready" });
+      expect(view.nodes.find((node) => node.name === "Builder (fixes)")).toMatchObject({ outcome: "Changes returned; 2 fixes claimed", reason: "Changes returned; 2 fixes claimed" });
       expect(view.nodes.at(-1)).toMatchObject({ kind: "petrina", name: "Publish delivery", state: "done" });
       expect(journeyProblems(task)).toEqual([]);
     } finally {

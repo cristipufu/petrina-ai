@@ -11,6 +11,12 @@ const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "Important"
 
 const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> = { real: "Checked: real", "not-a-bug": "Checked: not a bug", nit: "Checked: only a nit", "pre-existing": "Checked: older than this change" };
 
+function answerAttribution(finding: Finding, fixed: boolean): string | undefined {
+  if (finding.raisedBy !== "petrina" || !finding.text.startsWith("Check failed")) return;
+  if (!fixed) return "Builder’s explanation — not independently confirmed.";
+  if (finding.status !== "fixed") return "Builder’s fix claim — awaiting automated verification.";
+}
+
 /** A link to the task a follow-up came from, or to the Backlog card that now tracks it. */
 export function TaskLink({ taskId, find, onOpen, children }: { taskId: string; find: Lookup; onOpen?: (taskId: string) => void; children: string }) {
   const task = find.task(taskId);
@@ -31,7 +37,7 @@ export function FindingItem({ finding, find, onOpen }: { finding: Finding; find:
       <div className="issue-status">
         <span className={`label ${finding.status === "fixed" ? "ok" : finding.status === "open" && !followUp ? (finding.severity === "blocking" ? "bad" : "warn") : ""}`}>{status}</span>
         <span aria-hidden="true">·</span>
-        <span>{finding.status === "unverified" ? "Acceptance check" : FINDING_TAG[finding.severity]}</span>
+        <span>{finding.status === "unverified" ? finding.text.startsWith("Could not verify acceptance check:") ? "Acceptance check" : "Unverified check" : FINDING_TAG[finding.severity]}</span>
       </div>
       <p className="issue-text">{finding.text}</p>
       {finding.evidence && <p className="issue-evidence">{finding.evidence}</p>}
@@ -58,11 +64,12 @@ export function FindingItem({ finding, find, onOpen }: { finding: Finding; find:
           {finding.verification.reason}
         </div>
       )}
-      {finding.answers && Object.entries(finding.answers).map(([id, answer]) => <div className="issue-response" key={id}><b>{find.product(id)?.name ?? id}: {answer.fixed ? "Builder answered: fixed" : "Builder answered: not fixed"}</b>{answer.text}</div>)}
+      {finding.answers && Object.entries(finding.answers).map(([id, answer]) => <div className="issue-response" key={id}><b>{find.product(id)?.name ?? id}: {answer.fixed ? "Builder claims a fix" : "Builder answered: not fixed"}</b>{answer.text}{answerAttribution(finding, answer.fixed) && <p>{answerAttribution(finding, answer.fixed)}</p>}</div>)}
       {!finding.answers && finding.answer && (
         <div className="issue-response">
-          <b>{finding.answer.fixed ? "Builder reported a fix" : "Builder left it unchanged"}</b>
+          <b>{finding.answer.fixed ? "Builder reported a fix" : "Builder reported no fix"}</b>
           {finding.answer.text}
+          {answerAttribution(finding, finding.answer.fixed) && <p>{answerAttribution(finding, finding.answer.fixed)}</p>}
           {finding.answer.fixed && finding.status === "open" && <p>{finding.raisedBy === "petrina" ? "The latest automated check still fails." : "A later reviewer reopened this finding."}</p>}
         </div>
       )}

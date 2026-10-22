@@ -3,7 +3,8 @@ import { beginRepair, acceptanceVersion } from "./repositories.js";
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
-import { beginPetrinaStep, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
+import { beginPetrinaStep, checkCounts, checkProblem, checkResult, incompleteCheckOutcome, decisionEvidence, gateStatus, evidenceFor, originalCheck, recordCheckReuse, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
+import { powerInterruption, readMachinePowerRecords } from "./check-interruption.js";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -42,6 +43,37 @@ export class ProductChecks {
   private readonly preparations = new Set<Id>();
 
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
+
+  /** Recover trustworthy evidence once at startup, including decisions already waiting on the coordinator. */
+  async restoreEvidence(records?: string): Promise<void> {
+    const observations = this.k.s.tasks.filter((task) => !["running", "done", "cancelled", "pr-open"].includes(task.state)).flatMap((task) => scopesFor(task).flatMap((scope) => (scope.work.checks?.results ?? []).filter((run) => !run.ok && !run.interruption && !run.interrupted).flatMap((run) => {
+      const original = originalCheck(task, run)?.check;
+      const start = run.startedAt ?? original?.startedAt, end = run.endedAt ?? original?.endedAt;
+      return start !== undefined && end !== undefined ? [{ scope, run, start, end }] : [];
+    })));
+    if (!observations.length) return;
+    records ??= await readMachinePowerRecords(undefined, undefined, this.k.stopRequested.signal);
+    if (this.k.stopped || this.k.stopRequested.signal.aborted) return;
+    const changed = new Set<MTask>();
+    for (const { scope, run, start, end } of observations) {
+      if (scope.task.state === "running" || !scope.work.checks?.results.includes(run)) continue;
+      const interruption = powerInterruption(start, end, records);
+      if (!interruption) continue;
+      run.interruption = interruption;
+      for (const step of scope.task.journey ?? []) for (const check of step.productChecks ?? []) if (check.run && (run.source ? check.run.source?.stepId === run.source.stepId && check.run.source?.checkId === run.source.checkId && check.run.source?.attemptId === run.source.attemptId : !!run.logPath && check.run.logPath === run.logPath)) check.run.interruption = interruption;
+      this.settleFindings(scope, scope.work.checks.results);
+      changed.add(scope.task);
+    }
+    for (const task of changed) {
+      const decision = openStep(task);
+      if (task.state !== "needs-you" || decision?.waitsFor !== "delivery") continue;
+      decision.productChecks = decisionEvidence(taskView(task));
+      const problem = this.checkProblem(task);
+      for (const item of this.k.s.inbox) if (item.taskId === task.id && item.kind === "delivery") { item.title = problem.title; item.body = problem.body; }
+      task.statusLine = gateStatus(taskView(task), "delivery");
+    }
+    if (changed.size) this.k.commitNow();
+  }
 
   get preparingCount(): number { return this.preparations.size; }
 
@@ -270,8 +302,9 @@ export class ProductChecks {
       if (!check) return;
       if (event.kind === "started") { check.result = "running"; check.startedAt = event.at; }
       else {
+        if (!kept?.includes(event.run)) event.run.source ??= { stepId: step!.id, attemptId: check.attemptId!, checkId: check.id! };
         check.run = { ...event.run };
-        check.result = event.run.ok ? "pass" : event.run.timedOut ? "did-not-finish" : signal.aborted ? "stopped" : "fail";
+        check.result = signal.aborted ? "stopped" : checkResult(event.run);
         check.endedAt = event.at;
         if (!event.run.ok) check.detail = checkDiagnostic(event.run.output);
         if (!event.run.ok && id.startsWith("check-")) check.namedFailures = namedCheckFailures(event.run.output);
@@ -305,6 +338,8 @@ export class ProductChecks {
           const index = checks.findIndex((check, i) => !shown.has(i) && check.name === run.name && commandText(check.argv) === run.command);
           shown.add(index);
           progress(`check-${index}`, { kind: "finished", index, at: Date.now(), run });
+          const entry = entries.get(`check-${index}`);
+          if (entry) { entry.reusedAt = Date.now(); entry.startedAt = run.startedAt; entry.endedAt = run.endedAt; }
         });
       }
       if (signal.aborted) {
@@ -330,10 +365,11 @@ export class ProductChecks {
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     const failed = this.settleFindings(scope, results);
+    const interrupted = results.some((run) => run.interruption || run.interrupted);
     for (const entry of entries.values()) if (entry.run && !entry.run.ok) {
       entry.findingId = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === `Check failed: ${entry.run!.name} (${entry.run!.command})` && (!task.repositories || finding.productIds?.includes(repository.productId)))?.id;
     }
-    if (provenance && !failed.length && provenance.tree) {
+    if (provenance && !failed.length && !interrupted && provenance.tree) {
       const required = this.k.productOf(scope);
       // Restoration already verified the captured commit and tracked contents. Recheck only definitions
       // that can change during a run, retaining the immutable commit's captured message too.
@@ -343,17 +379,19 @@ export class ProductChecks {
       const commands = [...orderedChecks(checks).map((check) => commandText(check.argv)), ...hooks.map((hook) => hook === "pre-commit" ? "git hook run --ignore-missing pre-commit" : "git hook run commit-msg")];
       provenance.passed = current?.definition === definition
         && JSON.stringify(commands) === JSON.stringify(results.map((run) => run.command))
-        && results.every((run) => run.ok && !run.interrupted && !run.timedOut && !run.cleanupIncomplete);
+        && results.every((run) => run.ok && !run.interruption && !run.interrupted && !run.timedOut && !run.cleanupIncomplete);
     }
-    if (!failed.length) await this.closeEpisode(scope, state);
-    this.k.log(scope, failed.length ? "warn" : "done", failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failed.map((run) => run.name).join(", ")})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
-    if (failed.length && this.k.role(openStep(task)?.roleId ?? "")?.result === "delivery") {
-      endAgentStep(task, { outcome: W.interrupted, reason: W.checksFailed(failed.length), tone: "back", end: "failed" }, Date.now());
+    if (results.every((run) => run.ok && !run.interruption && !run.interrupted)) await this.closeEpisode(scope, state);
+    const incomplete = incompleteCheckOutcome(results.map((run) => ({ name: run.name, result: checkResult(run), run })));
+    const failureNames = failed.map((run) => run.name).join(", ");
+    this.k.log(scope, failed.length || interrupted ? "warn" : "done", incomplete ? `${incomplete}${failed.length ? ` (${failureNames})` : ""}; original reported results retained` : failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failureNames})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
+    if ((failed.length || interrupted) && this.k.role(openStep(task)?.roleId ?? "")?.result === "delivery") {
+      endAgentStep(task, { outcome: incomplete ?? W.interrupted, reason: incomplete ?? W.checksFailed(failed.length), tone: "back", end: "failed" }, Date.now());
     } else {
-      endPetrinaStep(task, failed.length ? { outcome: W.checks(failed.length, results.length), reason: W.checksFailed(failed.length), tone: "back" } : { outcome: W.checks(0, results.length), reason: W.checksPassed }, Date.now());
+      endPetrinaStep(task, incomplete ? { outcome: incomplete, reason: incomplete, tone: "back" } : failed.length ? { outcome: W.checks(failed.length, results.length), reason: W.checksFailed(failed.length), tone: "back" } : { outcome: W.checks(0, results.length), reason: W.checksPassed }, Date.now());
     }
     this.k.commit();
-    return failed.length;
+    return results.filter((run) => !run.ok || run.interruption || run.interrupted).length;
   }
 
   /**
@@ -379,7 +417,7 @@ export class ProductChecks {
   /** A builder's answer cannot settle a failed check; only a fresh passing run can. */
   private settleFindings(scope: RepositoryContext, results: readonly CheckRun[]): readonly CheckRun[] {
     const { task, work: repository } = scope;
-    const failed = results.filter((run) => !run.ok);
+    const failed = results.filter((run) => !run.ok && !run.interruption && !run.interrupted);
     const product = this.k.productOf(scope);
     const declared = new Set([
       ...(product && repository.worktree ? checksFor(product, repository.worktree) : []).map((check) => `Check failed: ${check.name} (${commandText(check.argv)})`),
@@ -388,7 +426,11 @@ export class ProductChecks {
     ]);
     // An earlier failure settles on this run, whatever anyone answered about it.
     for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(repository.productId)) && (!declared.has(finding.text) || results.some((run) => run.ok && finding.text === `Check failed: ${run.name} (${run.command})`))) finding.status = "fixed";
+      if (finding.raisedBy === "petrina" && (finding.status === "open" || finding.status === "unverified") && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(repository.productId))) {
+        const matching = results.find((run) => finding.text === `Check failed: ${run.name} (${run.command})`);
+        if (!declared.has(finding.text) || (matching?.ok && !matching.interruption && !matching.interrupted)) finding.status = "fixed";
+        else if (matching?.interruption || matching?.interrupted) finding.status = "unverified";
+      }
     }
     for (const run of failed) {
       const text = `Check failed: ${run.name} (${run.command})`;
@@ -530,11 +572,23 @@ export class ProductChecks {
     const state = await this.captureState(scope, checks);
     if (await this.ranOn(scope, checks, state)) {
       if (repository.checks) repository.checks.current = true;
+      let records: string | undefined;
+      for (const run of repository.checks!.results) if (!run.ok && !run.interruption && !run.interrupted) {
+        const original = originalCheck(scope.task, run)?.check;
+        const start = run.startedAt ?? original?.startedAt, end = run.endedAt ?? original?.endedAt;
+        if (start === undefined || end === undefined) continue;
+        // All these executions have finished. One log snapshot covers the whole saved batch.
+        records ??= await readMachinePowerRecords(undefined, undefined, signal);
+        if (signal.aborted || this.k.stopped) throw new Aborted();
+        const interruption = powerInterruption(start, end, records);
+        if (interruption) { run.interruption = interruption; if (original?.run) original.run.interruption = interruption; }
+      }
       // Rereading a saved failure is no new attempt; a saved pass on this code and these definitions is a genuine pass.
-      const failed = this.settleFindings(scope, repository.checks!.results);
-      if (!failed.length) await this.closeEpisode(scope, state);
+      this.settleFindings(scope, repository.checks!.results);
+      if (repository.checks!.results.every((run) => run.ok && !run.interruption && !run.interrupted)) await this.closeEpisode(scope, state);
+      recordCheckReuse(scope.task, repository, Date.now());
       this.k.commit();
-      return failed.length > 0;
+      return repository.checks!.results.some((run) => !run.ok || run.interruption || run.interrupted);
     }
     return (await this.runProductChecks(scope, checks, signal, await this.savedProductResults(scope, checks, state), state)) > 0;
   }
@@ -624,6 +678,7 @@ export class ProductChecks {
    */
   backToBuilder(scope: RepositoryContext, when: string): boolean {
     const { task, work: repository } = scope;
+    if (checkProblem(taskView(task)) === "unverified") return false;
     if (task.repositories) {
       // A shared repair pass returns to one stage. From the delivery check or shipping it returns through the
       // first review after the builder, as a single product walks forward; nothing it changed is unreviewed.
@@ -673,10 +728,11 @@ export class ProductChecks {
     const stages = task.plan?.stages ?? [];
     const shared = !!task.repositories;
     const failing = scopesFor(task).flatMap((scope) => {
-      const runs = scope.work.checks?.results.filter((run) => !run.ok) ?? [];
+      const runs = scope.work.checks?.results.filter((run) => !run.ok || run.interruption || run.interrupted) ?? [];
       return runs.length ? [{ scope, runs, name: this.k.productOf(scope)?.name ?? scope.work.productId }] : [];
     });
-    const names = failing.flatMap(({ runs, name }) => runs.map((run) => shared ? `${name}: ${run.name}` : run.name));
+    const names = failing.flatMap(({ runs, name }) => runs.filter((run) => !run.interruption && !run.interrupted).map((run) => shared ? `${name}: ${run.name}` : run.name));
+    const unverifiedNames = failing.flatMap(({ runs, name }) => runs.filter((run) => run.interruption || run.interrupted).map((run) => shared ? `${name}: ${run.name}` : run.name));
     const turns = (count: number) => `${count} automatic Builder ${count === 1 ? "turn" : "turns"}`;
     const sections = failing.map(({ scope, runs, name }) => {
       const attempts = scope.work.checkReturns ?? 0;
@@ -684,11 +740,17 @@ export class ProductChecks {
         const finding = task.findings.findLast((entry) => entry.raisedBy === "petrina" && entry.text === `Check failed: ${run.name} (${run.command})` && (!shared || entry.productIds?.includes(scope.work.productId)));
         const answer = (shared ? finding?.answers?.[scope.work.productId] : undefined) ?? finding?.answer;
         return [
-          `• ${run.name} ${run.timedOut ? "did not finish" : "failed"}: ${diagnosticOf(run)}`,
+          `• ${run.name} ${run.interruption ? "interrupted — verification incomplete; original reported result" : run.interrupted ? "stopped — verification incomplete; original reported result" : run.timedOut ? "did not finish" : "failed"}: ${diagnosticOf(run)}`,
+          ...(run.interruption ? [`  ${run.interruption.source}: ${new Date(run.interruption.at).toLocaleString()} — ${run.interruption.event}`] : []),
           ...(answer ? [`  The Builder's last answer${answer.fixed ? ", saying it fixed this" : ""}: “${answer.text.trim()}”`] : []),
+          ...(answer && !answer.fixed ? ["  Builder’s explanation — not independently confirmed. Only recorded machine evidence establishes interruption."] : []),
         ].join("\n");
       });
-      return [`${shared ? `${name}: s` : "S"}till failing after ${turns(attempts)}.`, ...lines].join("\n");
+      const evidence = evidenceFor(task, scope.work);
+      const reused = evidence.some((check) => check.reusedAt !== undefined);
+      const fresh = evidence.some((check) => check.run && check.reusedAt === undefined);
+      const { failed, unverified } = checkCounts(evidence);
+      return [failed ? `${shared ? `${name}: s` : "S"}till failing after ${turns(attempts)}.${unverified ? ` ${unverified} ${unverified === 1 ? "check also unverified" : "checks also unverified"}.` : ""}` : `${shared ? `${name}: ` : ""}Checks unverified. No automatic repair for interruption alone.`, ...lines, ...(reused ? [fresh ? "Some previous check evidence reused; other checks ran in this attempt." : "Previous check evidence reused; no new execution."] : [])].join("\n");
     });
     const builder = lastIndexWhere(stages, (entry, index) => index < task.stageIndex && entry.kind === "do" && this.k.role(entry.roleId, task)?.result === "build");
     const where = this.stoppedAt(task);
@@ -704,13 +766,13 @@ export class ProductChecks {
         ...(unconfirmed ? [`A reviewer has not yet confirmed ${unconfirmed === 1 ? "1 fix" : `${unconfirmed} fixes`} the Builder made for review findings.`] : []),
         ...(ahead.length ? [`${builder >= 0 ? "After the Builder's next turn, still to come" : "Still to come"}: ${ahead.join(", then ")}.`] : []),
       ].join(" "),
-      `${builder >= 0 ? "Ask for changes to give the Builder one more turn with your note. " : ""}Approving does not ship while a check fails.`,
+      `${builder >= 0 ? "Send back with a note to give the Builder one more turn. " : ""}Approving does not ship while checks fail or remain unverified. Run checks again explicitly requests fresh verification without approving delivery.`,
     ].join("\n\n");
     const attempts = shared ? "their automatic Builder turns" : turns(executionFor(task).work.checkReturns ?? 0);
     return {
-      title: checkProblemTitle(task.title, names),
+      title: checkProblem(taskView(task)) === "unverified" ? `Your call on “${task.title}”: checks unverified` : checkProblemTitle(task.title, names, unverifiedNames),
       body,
-      line: `Checks still fail after ${attempts} (${names.join(", ")}), so Petrina waits for you ${where}`,
+      line: checkProblem(taskView(task)) === "unverified" ? `Checks unverified (${unverifiedNames.join(", ")}), so Petrina waits for you ${where}` : `Checks still fail after ${attempts} (${names.join(", ")})${unverifiedNames.length ? `; unverified (${unverifiedNames.join(", ")})` : ""}, so Petrina waits for you ${where}`,
     };
   }
 

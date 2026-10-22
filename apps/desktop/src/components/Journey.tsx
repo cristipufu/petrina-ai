@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import { Activity, ArrowRight, Bot, ChevronRight, ClipboardCheck, Clock3, CornerDownRight, FileInput, MessageSquare, SlidersHorizontal, Timer, Ban, Check, Flag, GitBranch, Hourglass, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
-import { profileModelName, journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
+import { decisionEvidence, profileModelName, journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
 import { ago, duration, EFFORT_LABEL, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
 import { RoleAvatar } from "./bits";
@@ -44,7 +44,7 @@ function checkDiagnostic(output: string): string | undefined {
 
 /** Elapsed time from the step's start to its end (or now): pauses and waiting are not left out, so the words say elapsed. */
 function timeOf(node: JourneyNode, now: number): string | undefined {
-  return node.startedAt === undefined ? undefined : duration(node.startedAt, node.endedAt ?? now);
+  return node.work === "check-reuse" || node.startedAt === undefined ? undefined : duration(node.startedAt, node.endedAt ?? now);
 }
 
 const elapsed = (time: string | undefined) => (time ? `${time} elapsed` : undefined);
@@ -517,7 +517,7 @@ export function JourneyList({ view, find, now, onFocusStep, onSelect }: { view: 
 
 // ── A step's details, under the diagram ────────────────────────────────────────────────
 
-function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: { node: JourneyNode; task: Task; state: State; find: Lookup; now: number; onPlan: () => void; onClose?: () => void; onOpen?: (taskId: string) => void }) {
+function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, onOriginal, selectedAttempt }: { onOriginal: (id: string, attempt?: string) => void; selectedAttempt?: string; node: JourneyNode; task: Task; state: State; find: Lookup; now: number; onPlan: () => void; onClose?: () => void; onOpen?: (taskId: string) => void }) {
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "conversation">("overview");
   useEffect(() => setActiveTab("overview"), [node.id]);
   const role = find.role(node.roleId);
@@ -533,7 +533,8 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
   const nextAgent = journeyIndex >= 0 ? journeySteps.slice(journeyIndex + 1).find((step) => step.kind === "agent") : undefined;
   const checkingThisRound = nextAgent && ownStep && nextAgent.stageId === ownStep.stageId && nextAgent.round === ownStep.round && find.role(nextAgent.roleId)?.result === "votes";
   const handedOn = nextAgent?.agentInputs?.flatMap((input) => input.sections.map((section) => section.body)).join("\n") ?? "";
-  const findings = node.result?.findings ?? (role?.result === "findings" && nextAgent
+  // Builders retain their assigned findings and answers as history, not newly raised findings.
+  const findings = role?.result === "build" ? undefined : node.result?.findings ?? (role?.result === "findings" && nextAgent
     ? task.findings.filter((finding) => nextAgent.fixing && nextAgent.findingIds?.includes(finding.id) || checkingThisRound && handedOn.includes(`[${finding.id}]`)) : undefined);
   const reviewGroups = useMemo(() => role?.result === "findings" ? reviewRoundGroups(node, task.journey ?? [], (id) => find.role(id)?.result) : undefined, [role?.result, node, task.journey, find]);
   const outcome = reviewOutcome(node, role);
@@ -542,8 +543,9 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
     ? task.objections.filter((objection) => objection.round === ownStep.round && (node.team ?? [node.profileId]).includes(objection.raisedBy))
     : role?.result === "brief" ? task.objections.filter((objection) => objection.answer && given.includes(`[${objection.id}]`)) : undefined);
   const latestChecksStep = [...journeySteps].reverse().find((step) => step.kind === "petrina" && step.work === "checks");
-  const checksBelongHere = latestChecksStep?.id === node.id || (node.kind === "you" && node.waitsFor === "delivery" && previousJourneyStep?.id === latestChecksStep?.id);
+  const checksBelongHere = latestChecksStep?.id === node.id;
   const currentCheckRuns = checksBelongHere && task.checks?.at !== undefined && latestChecksStep?.startedAt !== undefined && task.checks.at >= latestChecksStep.startedAt ? task.checks.results : undefined;
+  const supportingChecks = node.productChecks ?? (node.kind === "you" && node.waitsFor === "delivery" && journeyIndex === journeySteps.length - 1 ? decisionEvidence(task) : []);
   const acceptanceChecks = node.acceptanceChecks ? [...node.acceptanceChecks].sort((a, b) => ({ pass: 0, blocked: 1, fail: 2 }[a.result] - { pass: 0, blocked: 1, fail: 2 }[b.result])) : [];
   const time = timeOf(node, now);
   const recorded = !planned && !node.legacy && node.startedAt !== undefined;
@@ -639,7 +641,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
               </dd>
             </>
           ) : null}
-          <dt><Clock3 size={14} aria-hidden="true" />Started</dt>
+          <dt><Clock3 size={14} aria-hidden="true" />{node.work === "check-reuse" ? "Evidence reused" : "Started"}</dt>
           <dd className="num">{node.legacy || node.startedAt === undefined ? "Not recorded" : since(node.startedAt, now)}</dd>
           {time && (
             <>
@@ -731,14 +733,19 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
 
       {node.kind === "agent" && role?.result === "build" && (
         <div className="journey-context">
+          {node.builderReturn && <p>{node.builderReturn.outcome}. This describes this return; earlier task changes are retained.</p>}
+          {ownStep?.agentResults?.map((report, index) => {
+            const value = report.value as { summary?: string };
+            return value.summary ? <div key={index}><h4>Builder’s report</h4><p>{value.summary}</p></div> : null;
+          })}
           {node.fixing && (() => {
             const legacyIds = node.state === "now" && task.fixing
               ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id)
               : node.startedAt !== undefined && node.endedAt !== undefined
                 ? task.findings.filter((finding) => finding.answer && finding.answer.at >= node.startedAt! && finding.answer.at <= node.endedAt!).map((finding) => finding.id)
                 : [];
-            const ids = node.findingIds ?? legacyIds;
-            const findings = ids.map((id) => task.findings.find((finding) => finding.id === id)).filter((finding): finding is Task["findings"][number] => !!finding);
+            const ids = node.findingIds ?? node.result?.findings?.map((finding) => finding.id) ?? legacyIds;
+            const findings = ids.map((id) => (node.result?.findings ?? task.findings).find((finding) => finding.id === id)).filter((finding): finding is Task["findings"][number] => !!finding);
             const journey = task.journey ?? [];
             const stepIndex = journey.findIndex((step) => step.id === node.id);
             const previous = stepIndex > 0 ? journey[stepIndex - 1] : undefined;
@@ -753,8 +760,8 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
               </>}
               <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Findings assigned to this fix</h4>
               {findings.length ? <ul className="journey-check-list">{findings.map((finding) => (
-                <li key={finding.id}><strong>{finding.text}</strong>{finding.answer ? <span>Builder’s last answer: {finding.answer.text}</span> : null}</li>
-              ))}</ul> : <p className="note">This fix round’s assigned findings were not recorded.</p>}
+                <li key={finding.id}><strong>{finding.text}</strong>{finding.answer ? <span>{!finding.answer.fixed && finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") ? "Builder’s explanation — not independently confirmed. " : ""}Builder answered: {finding.answer.fixed ? "fix claimed" : "not fixed"}. {finding.answer.text}</span> : null}</li>
+              ))}</ul> : <p className="note">{node.findingIds || node.result?.findings ? "No findings were assigned to this fix." : "This fix round’s assigned findings were not recorded."}</p>}
             </>;
           })()}
         </div>
@@ -784,8 +791,8 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
         </div>
       ) : null}
 
-      {(node.productChecks?.length || (node.kind === "petrina" && node.work === "checks")) && (() => {
-        if (node.productChecks?.length) return <CheckAttempts checks={node.productChecks} find={find} now={now} />;
+      {node.kind !== "you" && (node.productChecks?.length || (node.kind === "petrina" && node.work === "checks")) && (() => {
+        if (node.productChecks?.length) return <CheckAttempts checks={node.productChecks} find={find} now={now} taskId={task.id} onOriginal={onOriginal} selectedAttempt={selectedAttempt} evidence={node.work === "check-reuse"} />;
         if (currentCheckRuns?.length) return <div className="journey-context">
           <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Automated check results</h4>
           <ul className="journey-check-list">{currentCheckRuns.map((check) => <li key={check.name}>
@@ -801,13 +808,10 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen }: 
         return null;
       })()}
 
-      {node.kind === "you" && node.waitsFor === "delivery" && currentCheckRuns?.some((check) => !check.ok) && <div className="journey-context">
+      {node.kind === "you" && node.waitsFor === "delivery" && <div className="journey-context">
         <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Checks behind this delivery decision</h4>
-        <ul className="journey-check-list">{currentCheckRuns.map((check) => <li key={check.name}>
-          <span className={`label ${check.ok ? "ok" : "bad"}`}>{check.ok ? "Passed" : check.timedOut ? "Timed out" : "Failed"}</span>
-          <strong>{check.name}</strong>
-          {!check.ok && checkDiagnostic(check.output) ? <span className="journey-check-detail">{checkDiagnostic(check.output)}</span> : null}
-        </li>)}</ul>
+        <p className="note">This is your decision.{supportingChecks.length ? " Supporting check evidence is recorded below." : ""}</p>
+        {supportingChecks.length ? <CheckAttempts checks={supportingChecks} find={find} now={now} taskId={task.id} onOriginal={onOriginal} evidence /> : <p>Original check evidence unavailable.</p>}
       </div>}
 
       {node.asks.length > 0 && (
@@ -861,8 +865,9 @@ interface JourneyProps {
   /** A dedicated canvas column, with the selected step rendered in its neighbour. */
   workspace?: boolean;
   detailsTarget?: HTMLElement | null;
-  onSelectionChange?: (id?: string) => void;
+  onSelectionChange?: (id?: string, attempt?: string) => void;
   selectedStep?: string;
+  selectedAttempt?: string;
 }
 
 /** The task's journey as a live diagram, the same steps as a list, and the chosen step's details. */
@@ -874,7 +879,7 @@ export function Journey(props: JourneyProps) {
   );
 }
 
-function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false, detailsTarget, onSelectionChange, selectedStep }: JourneyProps) {
+function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false, detailsTarget, onSelectionChange, selectedStep, selectedAttempt }: JourneyProps) {
   const profiles = useMemo(() => [...(task.maintenance ? [task.maintenance.profile] : []), ...state.profiles, ...(state.retiredProfiles ?? [])], [state.profiles, state.retiredProfiles, task.maintenance?.profile]);
   const viewKey = journeyViewKey(task, { roles: state.roles, profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) });
   const view = useMemo(
@@ -884,6 +889,7 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
     [viewKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const [localSelection, setSelected] = useState<string>();
+  const [localAttempt, setAttempt] = useState<string>();
   const selected = workspace ? selectedStep : localSelection;
   const [focused, setFocused] = useState<string>();
   const reduced = useReducedMotion();
@@ -1006,10 +1012,11 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
 
   // Reading another step stops following the live one, and reading the live one stops it once it hands off,
   // so a handoff never moves the diagram away. Back to now resumes.
-  const select = (id?: string) => {
-    const next = workspace && id === selected ? undefined : id;
+  const select = (id?: string, attempt?: string) => {
+    const next = workspace && id === selected && !attempt ? undefined : id;
+    setAttempt(attempt);
     if (!workspace) setSelected(next);
-    onSelectionChange?.(next);
+    onSelectionChange?.(next, attempt);
     if (next && next !== target) setFollowing(false);
   };
   const focusStep = (id: string | undefined) => {
@@ -1039,8 +1046,8 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
       <p className="sr-only" aria-live="polite">
         {chosen ? `${chosen.name}: its details are ${workspace ? "in the right panel" : "below the diagram"}.` : ""}
       </p>
-      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} node={chosen} task={task} state={state} find={find} now={state.now} onPlan={onPlan} {...(onOpenTask ? { onOpen: onOpenTask } : {})} /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null, detailsTarget) : chosen ? (
-        <StepDetails node={chosen} task={task} state={state} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />
+      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} selectedAttempt={workspace ? selectedAttempt : localAttempt} onOriginal={select} node={chosen} task={task} state={state} find={find} now={state.now} onPlan={onPlan} {...(onOpenTask ? { onOpen: onOpenTask } : {})} /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null, detailsTarget) : chosen ? (
+        <StepDetails selectedAttempt={workspace ? selectedAttempt : localAttempt} onOriginal={select} node={chosen} task={task} state={state} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />
       ) : (
         <p className="note journey-hint">Click a step to see its details here.</p>
       )}

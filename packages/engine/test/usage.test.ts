@@ -116,7 +116,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       run.engine.schedule();
       await waitFor(() => {
         run.answer();
-        return lines(run.find()).some((line) => line.startsWith("Build done"));
+        return run.find().journey?.some((step) => step.roleId === "builder" && step.end === "done" && step.builderReturn);
       }, "the builder to resume after its cooldown");
       const builders = run.fakes.received("builder");
       expect(builders).toHaveLength(2);
@@ -278,7 +278,8 @@ describe.concurrent("an agent that runs out of usage", () => {
       const actual = task.builderSession!.profileId;
       expect(task.builderSession!.plannedProfileId).toBe("opus-high");
       expect(run.engine.profile(actual)!.toolId).toBe("codex");
-      expect(task.timeline.find((entry) => entry.text.startsWith("Build done"))!.profileId).toBe(actual);
+      const returned = task.journey!.find((step) => step.builderReturn)!;
+      expect(task.timeline.find((entry) => entry.step === returned.id && entry.text.startsWith(returned.builderReturn!.outcome))!.profileId).toBe(actual);
       expect(task.lessons!.filter((lesson) => lesson.roleId === "builder").map((lesson) => lesson.profileId)).toEqual([actual, actual]);
       expect(git(run.engine.getState().products[0]!.path!, "log", "-1", "--format=%B", "main")).toContain("Built by Petrina: Builder on Codex");
       const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;

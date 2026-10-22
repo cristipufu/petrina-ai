@@ -36,7 +36,7 @@ describe("role contracts and queued work", () => {
     const finished = simulator.getState().tasks[0]!;
     expect(["done", "pr-open"]).toContain(finished.state);
     expect(finished.findings[0]!.status).toBe("fixed");
-    expect(finished.journey!.find(step => step.roleId === "custom-build")?.outcome).toBe(W.fixed(1));
+    expect(finished.journey!.find(step => step.roleId === "custom-build")?.outcome).toBe("Changes returned; 1 fix claimed");
     expect(finished.journey!.find(step => step.roleId === "custom-checks")?.outcome).toBe(W.checks(0, finished.brief?.acceptance.length ?? 0));
     expect(finished.journey!.some(step => step.kind === "agent" && step.roleId === "custom-delivery")).toBe(delivery === "release");
   });

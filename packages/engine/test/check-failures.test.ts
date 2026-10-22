@@ -2,7 +2,7 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { displayTask, draftOf, journeyProblems, journeyView, type DeepMutable, type State, type Task } from "@petrina/core";
+import { decisionEvidence, displayTask, draftOf, journeyProblems, journeyView, type DeepMutable, type State, type Task } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "../src/store.js";
@@ -91,6 +91,13 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       await f.restart();
       expect(await f.engine["checks"].current(executionFor(f.engine.task(f.taskId)!))).toBe(true);
       expect(f.runs()).toEqual(["failed"]);
+      f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
+      const rerun = await f.delivery();
+      const evidence = decisionEvidence(rerun);
+      expect(f.runs()).toEqual(["failed", "failed"]);
+      expect(evidence.map(check => [check.name, check.result, check.reusedAt])).toEqual([["Type check", "fail", undefined], ["Tests", "skipped", undefined]]);
+      expect(evidence[1]!.source?.stepId).toBe(checkSteps(rerun).at(-1)!.id);
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).not.toContain("no new execution");
     } finally { await f.engine.shutdown(); }
   });
   it("gives built-in and edited builders the check commands without telling them to rerun the full suite", async () => {
@@ -296,6 +303,11 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       // The fake builder claims it fixed the finding without changing any files. Evidence wins.
       expect(failure.answer?.fixed).toBe(true);
       expect(failure.status).toBe("open");
+      const repairs = task.journey!.filter((step) => step.fixing && step.roleId === "builder");
+      expect(repairs.every((step) => step.builderReturn?.changed === false)).toBe(true);
+      expect(repairs.every((step) => step.outcome?.startsWith("No code changes; checks still failing"))).toBe(true);
+      expect(task.journey!.filter((step) => step.work === "check-reuse").every((step) => step.productChecks?.[0]?.run?.source?.stepId === recordedChecks[0]!.id)).toBe(true);
+      expect(task.journey!.at(-1)!.productChecks?.[0]?.reusedAt).toBeNumber();
       expect(failure.evidence).toContain("captured failure");
       expect(f.fakes.prompts("builder").filter((text) => text.includes("captured failure"))).toHaveLength(2);
       // Rereading the saved failure keeps its diagnostics: the saved log, the journey's run and the check problem.
@@ -658,7 +670,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
             expect(again.at).toBeGreaterThan(refreshed.at);
             expect(again.results[0]).toEqual(refreshed.results[0]);
             // A rerun keeps the outcome but creates a new diagnostic file with its own identity.
-            expect(again.results.map(({ ms, logPath, logFileIdentity, ...run }) => run)).toEqual(refreshed.results.map(({ ms, logPath, logFileIdentity, ...run }) => run));
+            expect(again.results.map(({ ms, logPath, logFileIdentity, startedAt, endedAt, source, ...run }) => run)).toEqual(refreshed.results.map(({ ms, logPath, logFileIdentity, startedAt, endedAt, source, ...run }) => run));
             expect(again.results.at(-1)!.logPath).not.toBe(refreshed.results.at(-1)!.logPath);
             expect(again.results.at(-1)!.logFileIdentity).not.toEqual(refreshed.results.at(-1)!.logFileIdentity);
             for (const run of [refreshed.results.at(-1)!, again.results.at(-1)!]) {
@@ -808,7 +820,7 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       // The Builder answered round 1's Important finding and its nit; no reviewer has looked at either fix yet.
       expect(item.body).toContain("Stopped before the review (round 2). A reviewer has not yet confirmed 2 fixes the Builder made for review findings.");
       expect(item.body).toMatch(/After the Builder's next turn, still to come: code review again \([^)]*\), then final acceptance testing \([^)]*\) if the code changed, then your OK to ship/);
-      expect(item.body).toContain("Ask for changes to give the Builder one more turn with your note. Approving does not ship while a check fails.");
+      expect(item.body).toContain("Send back with a note to give the Builder one more turn. Approving does not ship while checks fail or remain unverified.");
       expect(item.body).toContain("Automated checks: 1 of 1 failed (Welcome).");
       expect(lines(task)).toContain("Checks still fail after 2 automatic Builder turns (Welcome), so Petrina waits for you before the review (round 2)");
       // The journey still shows the pending review round ahead of the delivery check.
@@ -916,6 +928,32 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       expect(failure).toEqual(expect.objectContaining({ status: "open", answer: expect.objectContaining({ fixed: false, text: claim }) }));
       expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain(`The Builder's last answer: “${claim}”`);
       expect(f.fakes.openings("code reviewer")).toHaveLength(0);
+      expect(task.journey!.filter((step) => step.fixing && step.roleId === "builder").every((step) => step.outcome === "No code changes; checks still failing")).toBe(true);
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain("not independently confirmed");
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("runs unchanged work only on the coordinator's explicit request and resumes review after a pass", async () => {
+    const f = await fixture(true, { planner: "short", builder: "plain" }, { checkArgs: ["--sequence=FFP"] });
+    try {
+      const first = await f.delivery();
+      expect(first.checkReturns).toBe(2);
+      expect(f.runs()).toEqual(["failed"]);
+      f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
+      const second = await f.delivery();
+      expect(f.runs()).toEqual(["failed", "failed"]);
+      expect(second.checkReturns).toBe(2);
+      expect(second.approvedFor).toBeUndefined();
+      expect(f.fakes.openings("builder")).toHaveLength(3);
+      expect(checkSteps(second)).toHaveLength(2);
+      f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
+      const passing = await f.delivery();
+      expect(f.runs()).toEqual(["failed", "failed", "passed"]);
+      expect(f.fakes.openings("code reviewer")).toHaveLength(1);
+      expect(passing.approvedFor).toBeUndefined();
+      expect(passing.checkReturns).toBeUndefined();
+      expect(checkSteps(passing)).toHaveLength(3);
+      expect(passing.journey!.filter((step) => step.work === "checks")[0]).toEqual(checkSteps(first)[0]);
     } finally { await f.engine.shutdown(); }
   });
 });

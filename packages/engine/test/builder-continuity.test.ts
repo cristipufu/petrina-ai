@@ -86,7 +86,9 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
       expect(builders[1]!.text).toStartWith("Petrina is back with more work on this task");
       expect(f.fakes.received("builder").some((entry) => f.model(entry.session) === "grok-4.7")).toBe(false);
       expect(f.task().builderSession).toEqual(expect.objectContaining({ profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", sessionId: original.session }));
-      expect(f.task().timeline.filter((entry) => entry.text.startsWith("Build done")).every((entry) => entry.profileId === "sol-high")).toBe(true);
+      const returns = f.task().journey!.filter((step) => step.builderReturn);
+      expect(returns).toHaveLength(2);
+      expect(returns.map((step) => f.task().timeline.find((entry) => entry.step === step.id && entry.text.startsWith(step.builderReturn!.outcome))?.profileId)).toEqual(["sol-high", "sol-high"]);
       expect(f.task().findings.filter((finding) => finding.severity === "blocking").every((finding) => finding.answer?.fixed)).toBe(true);
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
       expect(new Set(verdicts.filter((entry) => entry.round === 2).map((entry) => f.engine.profile(entry.profileId!)?.toolId))).toEqual(new Set(["codex", "grok"]));

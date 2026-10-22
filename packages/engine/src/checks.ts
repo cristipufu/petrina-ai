@@ -9,6 +9,7 @@ import { mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
 import { CLEANUP_INCOMPLETE, descendantsKnown } from "./process-tree.js";
+import { machineInterruption } from "./check-interruption.js";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
 export const CHECK_TIMEOUT_MS = 20 * 60_000;
@@ -140,7 +141,8 @@ export async function runChecks(
       const started = Date.now();
       onProgress?.({ kind: "started", index, at: started });
       const run = await runOne(check.argv, cwd, env, timeoutMs, signal, log, processList);
-      const result = { name: check.name, command: commandText(check.argv), ms: Date.now() - started, ...await log?.close() };
+      const endedAt = Date.now();
+      const result = { name: check.name, command: commandText(check.argv), startedAt: started, endedAt, ms: endedAt - started, ...await log?.close() };
       const output = [
         run.error ? `Could not start: ${run.error}` : run.timedOut ? `${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.` : run.output,
         ...(run.cleanupIncomplete ? [CLEANUP_INCOMPLETE] : []),
@@ -154,6 +156,10 @@ export async function runChecks(
         ...(run.cleanupIncomplete ? { cleanupIncomplete: true } : {}),
         output: tidyOutput(output),
       };
+      // Cancellation already explains an incomplete check. Do not delay stopping the task
+      // with a power-log read; a stop during evidence collection cancels that read too.
+      if (!finished.ok && !finished.interrupted) finished.interruption = await machineInterruption(started, endedAt, signal);
+      if (signal?.aborted) finished.interrupted = true;
       onProgress?.({ kind: "finished", index, at: Date.now(), run: finished });
       runs.push(finished);
       if (!finished.ok && staticCheck(check)) break;

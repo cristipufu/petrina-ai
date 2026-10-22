@@ -12,6 +12,7 @@ import {
   PackageSearch,
   PanelRightClose,
   PartyPopper,
+  RotateCw,
   Scale,
   ShieldQuestion,
   SquareTerminal,
@@ -19,7 +20,7 @@ import {
   Undo2,
   type LucideIcon,
 } from "lucide-react";
-import { CHECK_NAMES, checkOf, deliveryLabel, fixFor, inboxOrder, inboxSummary, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
+import { checkDecisionLabel, checkProblem, decisionEvidence, CHECK_NAMES, checkOf, deliveryLabel, fixFor, inboxOrder, inboxSummary, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
 import { desktop, sim, useEngineStatus, useUnsent } from "../engine";
 import { useBrowserPermission } from "../notify/channels";
 import { finishOffer, useNotifySettings } from "../notify/settings";
@@ -30,6 +31,7 @@ import { UnsentNote } from "./EngineState";
 import { openHandBack, ReopenButton } from "./TakeOver";
 import { FixSteps } from "./Tools";
 import type { SheetTab } from "./TaskCard";
+import { followLink } from "../routes";
 
 const KIND: Record<InboxKind, { label: string; icon: LucideIcon; tone: Tone }> = {
   "maintenance-settings": { label: "Agent settings", icon: TriangleAlert, tone: "amber" },
@@ -186,7 +188,8 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const product = find.product(contextTask?.productId);
   // A delivery whose review rounds ran out with Important findings open is a decision, not "ready to ship".
   const unsettled = item.kind === "delivery" && (task?.acceptanceUnverified === true || (task?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
-  const kind = unsettled ? { ...KIND.delivery, label: "Your call", tone: "amber" as const } : KIND[item.kind];
+  const checkIssue = task ? checkProblem(task) : undefined;
+  const kind = item.kind === "delivery" && checkIssue ? { ...KIND.delivery, label: checkDecisionLabel(task!)!, tone: "amber" as const } : unsettled ? { ...KIND.delivery, label: "Your call", tone: "amber" as const } : KIND[item.kind];
   const Icon = kind.icon;
   const role = find.role(item.roleId);
   const profile = find.profile(item.profileId);
@@ -488,13 +491,11 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {!sending && item.kind === "delivery" && (
         <div className="ask-actions">
-          <button className="btn lead" onClick={() => sim.approve(item.id)}>
-            <GitPullRequest size={16} aria-hidden="true" />
-            {task ? deliveryLabel(task) : "Ship it"}
+          <button className="btn lead" onClick={() => checkIssue ? sim.rerunChecks(item.id) : sim.approve(item.id)}>
+            {checkIssue ? <RotateCw size={16} aria-hidden="true" /> : <GitPullRequest size={16} aria-hidden="true" />}
+            {checkIssue ? "Run checks again" : task ? deliveryLabel(task) : "Ship it"}
           </button>
-          <button className="btn" onClick={() => onOpen(item.taskId, "review")}>
-            See the reviews
-          </button>
+          {checkIssue && task ? <a className="btn" onClick={(event) => followLink(event, () => { window.history.pushState(window.history.state, "", event.currentTarget.href); window.dispatchEvent(new PopStateEvent("popstate")); })} href={(() => { const url = new URL(window.location.href); url.pathname = `/tasks/${encodeURIComponent(task.id)}`; const source = decisionEvidence(task).find((check) => check.run?.source && check.result !== "pass")?.run?.source ?? decisionEvidence(task).find((check) => check.run?.source)?.run?.source; if (source) { url.searchParams.set("node", source.stepId); url.searchParams.set("attempt", source.attemptId); } return `${url.pathname}${url.search}`; })()}>See original checks</a> : <button className="btn" onClick={() => onOpen(item.taskId, "review")}>See the reviews</button>}
           {sendBack("Send back…")}
         </div>
       )}

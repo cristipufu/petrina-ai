@@ -216,13 +216,13 @@ describe("the record each finished step leaves", () => {
       expect(done.steps?.map((record) => record.roleId)).toEqual(["planner", "architect", "design-reviewer", "builder", "code-reviewer", "code-reviewer"]);
       expect(done.steps?.every((record) => !record.repeat)).toBe(true);
       // From the agent's start to its result, minus the wait for the coordinator.
-      const span = (roleId: string, end: string) => {
-        const started = done.timeline.find((entry) => entry.roleId === roleId && entry.text.endsWith(" started"))!.at;
-        return done.timeline.find((entry) => entry.roleId === roleId && entry.text.startsWith(end))!.at - started;
+      const span = (roleId: string) => {
+        const step = done.journey!.find((entry) => entry.roleId === roleId)!;
+        return step.endedAt! - step.startedAt;
       };
-      for (const [roleId, end] of [["architect", "Design brief ready"], ["builder", "Build done"]] as const) {
+      for (const roleId of ["architect", "builder"]) {
         const record = done.steps!.find((entry) => entry.roleId === roleId)!;
-        expect(record.worked).toBeLessThan(span(roleId, end) - WAIT + 300);
+        expect(record.worked).toBeLessThan(span(roleId) - WAIT + 300);
         expect(record.worked).toBeGreaterThanOrEqual(0);
       }
     } finally {

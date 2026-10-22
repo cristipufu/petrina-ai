@@ -226,7 +226,7 @@ describe("a task's journey", () => {
       "ready for review",
       "checks passed",
       "sent back: 1 important",
-      "fixes ready",
+      "Changes returned; 1 fix claimed",
       "checks passed",
       "review passed",
       "you approved",
@@ -239,7 +239,7 @@ describe("a task's journey", () => {
     expect(view.nodes[8]).toMatchObject({ team: ["opus-high", "sol-xhigh"], outcome: "1 important, 1 nit · 1 follow-up" });
     expect(view.nodes[11]!.outcome).toBe("Nothing to fix");
     expect(view.nodes[7]).toMatchObject({ kind: "petrina", work: "checks", outcome: "All 3 checks pass" });
-    expect(view.nodes[9]!.outcome).toBe("Fixed 1 finding");
+    expect(view.nodes[9]!.outcome).toBe("Changes returned; 1 fix claimed");
     expect(view.nodes.at(-1)!.outcome).toMatch(/^Opened pull request #\d+$/);
     const number = taskOf(sim, id).pr!.number;
     expect(view.end).toEqual({ text: `Pull request #${number} · awaiting merge`, state: "pending" });

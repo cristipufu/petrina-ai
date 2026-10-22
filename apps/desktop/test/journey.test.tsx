@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { Window as HappyWindow } from 'happy-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Simulator, repositoryTaskView, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task } from '@petrina/core';
+import { builderCheckSummary, gateTitle, gateStatus, deliveryLabel, beginAgentStep, endAgentStep, beginYouStep, decisionEvidence, recordStepResult, recordCheckReuse, Simulator, repositoryTaskView, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task, type DeepMutable } from '@petrina/core';
 import { App } from '../src/App';
 import { JourneyEdge, JourneyList, spokenStep, startWords } from '../src/components/Journey';
 import { layoutJourney } from '../src/journeyLayout';
@@ -356,10 +356,37 @@ describe('the journey in the task sheet', () => {
     expect(earlier.every((entry) => !entry.open)).toBe(true);
     expect(earlier[0]!.querySelector('summary')?.textContent).toContain('Earlier attempt 2 · 1 of 1 failed');
     expect(earlier[0]!.textContent).toContain('Original failure');
-    expect(earlier[1]!.querySelector('summary')?.textContent).toContain('Interrupted');
+    expect(earlier[1]!.querySelector('summary')?.textContent).toContain('Stopped — verification incomplete');
+    expect(earlier[1]!.textContent).not.toContain('Interrupted — verification incomplete');
     expect(earlier[1]!.textContent).toContain('Original interruption');
     expect(details.querySelector('.check-attempt')?.textContent).toContain('PassedTests');
     expect(details.querySelector('.check-attempt')?.textContent).not.toContain('Original failure');
+    expect(details.querySelector('.check-attempt')?.textContent).toContain(`Started ${new Date(NOW - 30_000).toLocaleString()} · <1m elapsed`);
+    expect(earlier[0]!.textContent).toContain(`Started ${new Date(NOW - 60_000).toLocaleString()} · <1m elapsed`);
+    expect(earlier[1]!.textContent).toContain(`Started ${new Date(NOW - 90_000).toLocaleString()} · <1m elapsed`);
+  });
+
+  it.each([false, true])('annotates confirmed interruption beside a real failure=%s while retaining original diagnostics', async (mixed) => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const step = task.journey!.find((step) => step.work === 'checks')!;
+    const originalOutcome = step.outcome;
+    const failed = { ...step.productChecks![0]!, result: 'fail' as const, run: { ...step.productChecks![0]!.run!, ok: false, output: 'Completed failure before sleep' }, detail: 'Completed failure before sleep' };
+    const run = { ...step.productChecks![1]!.run!, ok: false, output: 'Original startup failure', interruption: { source: 'macOS power log' as const, at: NOW - 90_000, event: 'Entering Sleep state due to Clamshell Sleep' } };
+    step.productChecks = [...(mixed ? [failed] : []), { ...step.productChecks![1]!, result: 'fail', run, detail: 'Original startup failure' }];
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${step.id}"]`)!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Interrupted — verification incomplete');
+    expect(details.textContent).toContain('Original reported result: failed');
+    expect(details.textContent).toContain('Original startup failure');
+    expect(details.textContent).toContain('macOS power log');
+    if (mixed) {
+      expect(details.textContent).toContain('1 still failing, 1 unverified');
+      expect(details.textContent).toContain('Completed failure before sleep');
+      expect(details.querySelectorAll('.label.bad')).toHaveLength(1);
+    }
+    expect(step.outcome).toBe(originalOutcome);
   });
 
   it('shows the failed test behind a delivery checkpoint, not just “checks still fail”', async () => {
@@ -373,16 +400,155 @@ describe('the journey in the task sheet', () => {
       { name: 'Tests', command: 'bun run test', ok: false, ms: 100, output: '@petrina/engine:test  | (fail) reviews after a usage handoff > keeps a real reviewer handoff independent with 1 pool slots and one slot per tool [66762.68ms]\n@petrina/engine:test  | error: Timed out waiting for the independent reviews' },
       { name: 'Desktop shell', command: 'cargo check', ok: true, ms: 10, output: 'passed' },
     ] };
+    delete task.journey!.findLast((step) => step.kind === 'you' && step.waitsFor === 'delivery')!.productChecks;
     await mount(state);
     await openTask('pricing-refresh');
     const delivery = task.journey!.find((step) => step.kind === 'you' && step.waitsFor === 'delivery')!;
     await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${delivery.id}"]`)!.click());
     const details = host.querySelector('.journey-details')!;
     expect(details.textContent).toContain('Checks behind this delivery decision');
+    expect(host.querySelector('#journey-details-title')?.textContent).toContain('Your call: checks still failing');
     expect(details.textContent).toContain('Tests');
     expect(details.textContent).toContain('Failed');
     expect(details.textContent).toContain('keeps a real reviewer handoff independent');
     expect(details.textContent).toContain('Timed out waiting for the independent reviews');
+  });
+
+  it.each([false, true])('links reused passing=%s evidence after an unchanged Builder and offers the right coordinator action', async (passed) => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh') as DeepMutable<Task>;
+    task.after = ['guest-checkout'];
+    const original = task.journey!.find((step) => step.work === 'checks')!;
+    const run = { ...original.productChecks!.find((check) => check.name === 'Tests')!.run!, ok: passed, output: passed ? 'passed' : 'Startup cause remains unresolved', startedAt: NOW - 90_000, endedAt: NOW - 49_000 };
+    const source = run.source!;
+    original.productChecks = [{ id: source.checkId, attemptId: source.attemptId, productId: task.productId, name: run.name, result: passed ? 'pass' : 'fail', run }];
+    task.checks = { at: NOW - 49_000, current: true, results: [run] };
+    task.journey = task.journey!.slice(0, task.journey!.indexOf(original) + 1);
+    const builderIndex = task.plan!.stages.findIndex((stage) => stage.roleId === 'builder');
+    task.stageIndex = builderIndex; task.fixing = true;
+    const outcome = passed ? 'No code changes' : 'No code changes; checks still failing';
+    const builder = beginAgentStep(task, 'builder', task.plan!.stages[builderIndex]!.profileIds[0]!, NOW - 40_000, state.roles);
+    builder.builderReturn = { productId: task.productId, changed: false, claimedFixes: 0, outcome };
+    builder.agentResults = [{ roleId: 'builder', profileId: builder.profileId!, at: NOW - 20_000, value: { summary: 'Investigated the startup problem.' } }];
+    task.findings = passed ? [] : [{ id: 'unresolved', text: 'Check failed: Tests', raisedBy: 'petrina', confirmedBy: [], severity: 'blocking', status: 'open', answer: { fixed: false, text: 'The environment is a suspected cause.', at: NOW - 20_000 } }];
+    builder.findingIds = task.findings.map(finding => finding.id);
+    recordStepResult(task, { findings: task.findings });
+    endAgentStep(task, { outcome, reason: outcome }, NOW - 20_000);
+    task.fixing = false;
+    recordCheckReuse(task, task, NOW - 10_000);
+    const reuse = task.journey!.at(-1)!;
+    task.stageIndex = task.plan!.stages.findIndex((stage) => stage.gate === 'delivery');
+    const decision = beginYouStep(task, 'delivery', NOW - 5_000); decision.productChecks = decisionEvidence(task);
+    task.statusLine = passed ? 'Reviews done. Waiting for your OK to ship' : 'Checks still fail. Your call';
+    await mount(state); await openTask(task.id);
+    const overview = host.querySelector('.task-global-details')!;
+    expect(overview.textContent).toContain('Latest Builder return');
+    expect(overview.textContent).toContain(builderCheckSummary(task));
+    expect(overview.textContent).toContain('Start after other tasks land');
+    expect(overview.querySelector('.dependency-selection a')?.getAttribute('href')).toContain('/tasks/guest-checkout');
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${reuse.id}"]`)!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain(passed ? '1 of 1 passed' : '1 of 1 failed');
+    expect(details.textContent).toContain('no new execution');
+    expect(details.textContent).toContain('recorded duration');
+    const link = details.querySelector<HTMLAnchorElement>('a[href*="attempt="]')!;
+    expect(link.href).toContain(`node=${source.stepId}`);
+    await act(async () => link.click());
+    expect(window.location.search).toContain(`attempt=${source.attemptId}`);
+    expect(host.querySelector('#journey-details-title')?.textContent).toContain('Automated checks');
+    expect(host.querySelector('.journey-details .check-attempt')?.textContent).toContain(`Started ${new Date(run.startedAt).toLocaleString()}`);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${decision.id}"]`)!.click());
+    expect(host.querySelector('.journey-details')?.textContent).toContain('Checks behind this delivery decision');
+    expect(host.querySelector('.journey-details')?.textContent).toContain(passed ? 'Passed' : 'Startup cause remains unresolved');
+    const request = [...host.querySelectorAll<HTMLElement>('.ask')].find((item) => item.textContent?.includes('Refresh the pricing page') && item.textContent?.includes(passed ? deliveryLabel(task) : 'Run checks again'))!;
+    expect(request).toBeTruthy();
+    expect(request.querySelector('.ask-actions .lead svg')?.classList.contains(passed ? 'lucide-git-pull-request' : 'lucide-rotate-cw')).toBe(true);
+    if (!passed) {
+      expect(request.textContent).not.toContain('Open pull request');
+      const sameSimulator = simulator;
+      await act(async () => request.querySelector<HTMLAnchorElement>('a[href*="attempt="]')!.click());
+      expect(simulator).toBe(sameSimulator);
+      expect(window.location.search).toContain(`node=${source.stepId}`);
+      expect(window.location.search).toContain(`attempt=${source.attemptId}`);
+      expect(host.querySelector('#journey-details-title')?.textContent).toContain('Automated checks');
+      await act(async () => [...request.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Send back…')!.click());
+      expect(request.querySelector('input[placeholder="What should change?"]')).toBeTruthy();
+    }
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${builder.id}"]`)!.click());
+    expect([...host.querySelectorAll('.journey-details h4')].map(heading => heading.textContent)).toContain('Builder’s report');
+    if (!passed) expect(host.querySelector('.journey-details')?.textContent).toContain('Builder’s explanation — not independently confirmed');
+    expect(host.querySelector('.journey-details')?.textContent).not.toContain('Recorded machine evidence');
+  });
+
+  it.each([false, true])('keeps a real repair report neutral with a check finding=%s', async (checkFinding) => {
+    const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh');
+    const builder = task.journey!.findLast(step => step.roleId === 'builder')!;
+    builder.fixing = true;
+    if (checkFinding) builder.findingIds = ['repair'];
+    else delete builder.findingIds; // Older saved returns can retain answers without a separate assignment list.
+    builder.builderReturn = { productId: task.productId, changed: true, claimedFixes: 1, outcome: 'Changes returned; 1 fix claimed' };
+    builder.agentResults = [{ roleId: 'builder', profileId: builder.profileId!, at: NOW - 1, value: { summary: 'Added the startup guard.' } }];
+    builder.result = { findings: [{ id: 'repair', text: checkFinding ? 'Check failed: Tests' : 'The greeting needs a guard', raisedBy: checkFinding ? 'petrina' : 'sol-high', confirmedBy: [], severity: 'blocking', status: 'open', answer: { fixed: true, text: 'Added the startup guard.', at: NOW - 1 } }] };
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${builder.id}"]`)!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Builder’s report');
+    expect(details.textContent).toContain('Added the startup guard.');
+    expect(details.textContent).toContain('Findings assigned to this fix');
+    expect(details.textContent?.split(checkFinding ? 'Check failed: Tests' : 'The greeting needs a guard')).toHaveLength(2);
+    expect(details.textContent).not.toContain('Findings from this step');
+    expect(details.textContent).not.toContain('Builder’s explanation — not independently confirmed');
+  });
+
+  it('keeps a renamed Builder with no assigned findings free of reviewer finding headings', async () => {
+    const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh');
+    const role = state.roles.find(role => role.result === 'build')!;
+    role.id = 'repair-specialist'; role.name = 'Repair specialist';
+    const builder = task.journey!.findLast(step => step.roleId === 'builder')!;
+    builder.roleId = role.id; builder.fixing = true; builder.findingIds = [];
+    builder.result = { findings: [] };
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${builder.id}"]`)!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Findings assigned to this fix');
+    expect(details.textContent).not.toContain('Findings from this step');
+    expect(details.textContent).not.toContain('No findings were raised or confirmed');
+  });
+
+  it.each([false, true])('retains the check decision after outdated interrupted=%s evidence', async (interrupted) => {
+    const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh');
+    task.checks = { at: NOW - 1, current: false, results: [{ name: 'Tests', command: 'tests', ms: 100, ok: false, output: 'Original diagnostic', ...(interrupted ? { interruption: { source: 'macOS power log', at: NOW - 1000, event: 'Sleep' } } : {}) }] };
+    task.findings = [];
+    task.statusLine = gateStatus(task, 'delivery');
+    const item = state.inbox.find(item => item.taskId === task.id && item.kind === 'delivery')!;
+    item.title = gateTitle(task, 'delivery');
+    const decision = task.journey!.findLast(step => step.waitsFor === 'delivery')!;
+    decision.productChecks = decisionEvidence(task);
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${decision.id}"]`)!.click());
+    const request = [...host.querySelectorAll('.ask')].find(ask => ask.textContent?.includes(task.title))!;
+    const words = interrupted ? 'checks unverified' : 'checks still failing';
+    expect(request.textContent).toContain(`Your call: ${words}`);
+    expect(request.textContent).toContain('Run checks again');
+    expect(request.textContent).not.toContain('Open a pull request');
+    expect(host.querySelector('#journey-details-title')?.textContent).toContain(`Your call: ${words}`);
+    expect(builderCheckSummary(task)).toContain('Checks need updating');
+    expect(builderCheckSummary(task)).toContain(interrupted ? 'Earlier checks were unverified' : 'Earlier checks failed');
+  });
+
+  it('does not invent original runs or links when a delivery has no evidence', async () => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    task.checks = undefined;
+    task.journey = task.journey!.filter(step => step.work !== 'checks');
+    const decision = task.journey!.find(step => step.waitsFor === 'delivery')!;
+    delete decision.productChecks;
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${decision.id}"]`)!.click());
+    const details = host.querySelector('.journey-details')!.textContent;
+    expect(details).toContain('Original check evidence unavailable');
+    expect(details).not.toContain('Checks ran');
+    expect(details).not.toContain('linked below');
   });
 
   it('uses footer marks instead of parentheses in flow and selected-step titles', async () => {

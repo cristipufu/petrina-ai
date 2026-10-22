@@ -89,6 +89,16 @@ describe("related check evidence", () => {
     expect(matches(second, failure("j5"))).toHaveLength(1);
   });
 
+  it("excludes confirmed interrupted peer failures while preserving their original reports", () => {
+    const p = peer(), own = failure("j3");
+    expect(matches(p, own)).toHaveLength(1);
+    const check = p.journey[0]!.productChecks![0]!;
+    const original = { result: check.result, output: check.run!.output };
+    check.run!.interruption = { source: "macOS power log", at: 1, event: "Entering Sleep state" };
+    expect(matches(p, own)).toEqual([]);
+    expect({ result: check.result, output: check.run!.output }).toEqual(original);
+  });
+
   it("requires the same product, failing command, command list and specific overlapping name", () => {
     for (const change of [
       (p: DeepMutable<CheckEvidenceTask>) => { p.journey[0]!.checkAttempts![0]!.productId = "other"; },
@@ -236,6 +246,13 @@ describe("related check evidence", () => {
       const failures = assignedCheckFailures(scope);
       expect(failures).toHaveLength(1);
       expect(failures[0]!.check.namedFailures![0]!.name).toBe(failureName);
+      const original = task.journey!.find((step) => step.id === failures[0]!.nodeId)!.productChecks![0]!;
+      const originalReport = { result: original.result, output: original.run!.output };
+      original.run!.interruption = { source: "macOS power log", at: Date.now(), event: "Entering Sleep state" };
+      expect(assignedCheckFailures(scope)).toEqual([]);
+      expect({ result: original.result, output: original.run!.output }).toEqual(originalReport);
+      delete original.run!.interruption;
+      expect(assignedCheckFailures(scope)).toHaveLength(1);
       const findingId = failures[0]!.check.findingId!;
       beginAgentStep(task, "builder", "sol-high", Date.now(), engine.s.roles, undefined, scope.work);
       const value = { summary: "Repaired progress", changes: ["Wait for owned progress"], title: "Repair progress", answers: [{ id: findingId, fixed: true, text: "Wait for replacement-owned progress." }], learnings: [] };
@@ -262,6 +279,18 @@ describe("related check evidence", () => {
       expect(relatedCheckCandidates(failures, [projectCheckEvidence(task, "p")!], "p")[0]!.status).toBe("checked");
       expect(task.findings.find((finding) => finding.id === findingId)!.status).toBe("fixed");
       expect(scope.work.checkReturns).toBeUndefined();
+      // Even an original exit-zero report cannot certify a repair when verification was interrupted.
+      for (const ok of [false, true]) {
+        const interrupted = { ...scope.work.checks!.results[0]!, ok, output: "Original reported result retained", interruption: { source: "macOS power log" as const, at: Date.now(), event: "Entering Sleep state" } };
+        scope.work.checkReturns = 2;
+        engine["checks"].claimPreparation(id);
+        expect(await engine["checks"].runProductChecks(scope, [check], signal, [interrupted])).toBe(1);
+        const recorded = task.journey!.at(-1)!;
+        expect(recorded.checkAttempts![0]!.passed).not.toBe(true);
+        expect(recorded.outcome).toBe("Interrupted — verification incomplete");
+        expect(recorded.productChecks![0]!.run!.output).toBe(interrupted.output);
+        expect(scope.work.checkReturns).toBe(2);
+      }
     } finally { turn.mockRestore(); await engine.shutdown(); removeDir(w.dir); }
   });
 

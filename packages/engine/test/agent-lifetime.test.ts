@@ -56,57 +56,78 @@ it("does not retain completed turns on the live agent's process", async () => {
   } finally { await run.stop(); }
 });
 
-for (const firstTimesOut of [true, false]) for (const startsLate of [false, true]) it.skipIf(process.platform === "win32")(`finds detached work ${startsLate ? "started during stopping" : "already running"} within the quit limit when the first process scan ${firstTimesOut ? "times out" : "succeeds"}`, async () => {
+const stopCases = [true, false].flatMap(firstTimesOut => [false, true].map(startsLate => ({ firstTimesOut, startsLate, stubborn: true, delay: 0, workerStubborn: true, cancel: false })));
+stopCases.push(
+  { firstTimesOut: true, startsLate: false, stubborn: false, delay: 0, workerStubborn: true, cancel: true },
+  { firstTimesOut: false, startsLate: false, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false },
+  { firstTimesOut: false, startsLate: true, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false },
+  { firstTimesOut: false, startsLate: false, stubborn: false, delay: 3_800, workerStubborn: false, cancel: false },
+);
+for (const { firstTimesOut, startsLate, stubborn, delay, workerStubborn, cancel } of stopCases) it.skipIf(process.platform === "win32")(`finds detached work ${startsLate ? "started during stopping" : "already running"} within the quit limit when the first process scan ${firstTimesOut ? "times out" : "succeeds"}${delay ? ` with consistently slow ${delay}ms listings` : ""}${stubborn ? "" : " and the agent exits gracefully"}${cancel ? " on cancellation" : ""}`, async () => {
   const dir = tempDir("petrina-stop-scan-");
   const record = join(dir, "worker-pid");
   const workerReady = join(dir, "worker-ready");
-  const scanner = join(dir, "scan.ts"), agent = join(dir, "agent.ts");
-  // The scan's real timeout is the behavior under test. Its stand-in has no child to orphan
-  // when killed; successful scans still inspect the actual process tree.
-  writeFileSync(scanner, `if (process.argv[2] === "timeout") await Bun.sleep(60_000);
-await Bun.sleep(100);
-const result = Bun.spawnSync(["/bin/ps", "-A", "-o", "pid=,ppid="]);
-process.stdout.write(result.stdout);
-process.exit(result.exitCode);`);
-  const worker = `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); require("node:fs").writeFileSync(${JSON.stringify(workerReady)}, "ready");`;
+  const agent = join(dir, "agent.ts");
+  const worker = `${workerStubborn ? 'process.on("SIGTERM", () => {});' : ""} setInterval(() => {}, 1000); require("node:fs").writeFileSync(${JSON.stringify(workerReady)}, "ready");`;
   writeFileSync(agent, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 const startWorker = () => { const child = spawn(process.execPath, ["-e", ${JSON.stringify(worker)}], { detached: true, stdio: "ignore" }); writeFileSync(${JSON.stringify(record)}, String(child.pid)); child.unref(); };
 ${startsLate ? 'process.once("SIGTERM", startWorker);' : "startWorker();"}
-process.argv.push("--stubborn");
+${stubborn ? 'process.argv.push("--stubborn");' : ""}
 await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
-  // Warm the helper before any stop timer starts, keeping first-run setup outside the deadline.
-  const ready = Bun.spawn([process.execPath, scanner, "fast"], { stdout: "ignore", stderr: "pipe" });
-  expect(await ready.exited, await new Response(ready.stderr).text()).toBe(0);
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   const workerPid = () => existsSync(record) ? Number(readFileSync(record, "utf8")) || undefined : undefined;
   const original = processes.execFile;
   const scanned: boolean[] = [];
+  const allowances: number[] = [];
+  const scansRunning = new Set<ChildProcess>();
+  const scanTimers = new Set<ReturnType<typeof setTimeout>>();
   let scans = 0, incomplete = 0;
   let child: ChildProcess | undefined, run: AgentRun | undefined;
   const unrelated = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdout: "ignore", stderr: "ignore" });
   const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
     if (args[0] !== "ps") return Reflect.apply(original, processes, args);
-    const mode = ++scans === 1 && firstTimesOut ? "timeout" : "fast";
+    const hang = ++scans === 1 && firstTimesOut;
+    const options = args[2] as { timeout: number };
+    allowances.push(options.timeout);
     const done = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
-    return Reflect.apply(original, processes, [process.execPath, [scanner, mode], args[2], (error: Error | null, stdout: string, stderr: string) => {
-      scanned.push(!error);
-      done(error, stdout, stderr);
-    }]);
+    const from = Date.now();
+    const finish = (error: Error | null, stdout: string, stderr: string) => { scanned.push(!error); done(error, stdout, stderr); };
+    // Delay the read itself, within its real allowance, without starting a Bun helper on every
+    // scan. That helper's startup used to compete with the very deadline this fixture asserts.
+    // Successful reads still capture the actual live parent/child links, never a saved tree.
+    const timer = setTimeout(() => {
+      scanTimers.delete(timer);
+      const left = options.timeout - (Date.now() - from);
+      if (hang || left <= 0) return finish(new Error("Process list timed out"), "", "");
+      const listing = Reflect.apply(original, processes, [...args.slice(0, 2), { ...options, timeout: left }, (error: Error | null, stdout: string, stderr: string) => {
+        scansRunning.delete(listing);
+        finish(error, stdout, stderr);
+      }]);
+      scansRunning.add(listing);
+    }, hang ? options.timeout : Math.min(delay, options.timeout));
+    scanTimers.add(timer);
+    return undefined;
   }) as typeof processes.execFile);
+  const controller = new AbortController();
   try {
-    run = await AgentRun.start({ profile, cwd: dir, command: [process.execPath, agent], callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; } }, signal: new AbortController().signal, browser: false, onProcess: process => { child = process; } });
+    run = await AgentRun.start({ profile, cwd: dir, command: [process.execPath, agent], callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; } }, signal: controller.signal, browser: false, onProcess: process => { child = process; } });
     if (!startsLate) await waitFor(() => existsSync(workerReady), "the detached worker to be ready before stopping");
     const from = Date.now();
+    if (cancel) controller.abort();
     const stopping = run.stop();
     const pid = await waitFor(workerPid, "the detached worker to start");
     const complete = await stopping;
     expect(Date.now() - from).toBeLessThan(7_000);
     expect([child!.pid!, pid].filter(alive)).toEqual([]);
-    expect(scanned).toEqual([!firstTimesOut, true]);
-    expect(complete).toBe(!firstTimesOut);
-    expect(incomplete).toBe(firstTimesOut ? 1 : 0);
+    expect(scanned).toEqual(firstTimesOut ? [false, true, true] : workerStubborn ? [true, true] : [true]);
+    expect(allowances[0]).toBe(4_000);
+    expect(scansRunning.size).toBe(0);
+    expect(scanTimers.size).toBe(0);
+    expect(complete).toBe(true);
+    expect(incomplete).toBe(0);
     expect(alive(unrelated.pid)).toBe(true);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
   } finally {
     // Reclaim the missed worker even when this regression is run against broken shutdown code.
     for (const pid of [child?.pid, workerPid()].filter((pid): pid is number => !!pid)) {
@@ -115,9 +136,35 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     }
     await run?.stop();
     scan.mockRestore();
+    scanTimers.forEach(clearTimeout);
+    for (const listing of scansRunning) listing.kill("SIGKILL");
     unrelated.kill("SIGKILL");
     await unrelated.exited;
     await waitFor(() => ![child?.pid, workerPid()].some(pid => pid && alive(pid)), "the fixture's agent and detached worker to stop");
     removeDir(dir);
   }
+});
+
+for (const hangs of [false, true]) it.skipIf(process.platform === "win32")(`keeps an incomplete-cleanup warning within the quit limit when process snapshots ${hangs ? "all time out" : "are unavailable"}`, async () => {
+  const original = processes.execFile;
+  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+    if (args[0] !== "ps") return Reflect.apply(original, processes, args);
+    const done = args.at(-1) as (error: Error, stdout: string, stderr: string) => void;
+    const fail = () => done(new Error("Process list unavailable"), "", "");
+    if (hangs) setTimeout(fail, (args[2] as { timeout: number }).timeout);
+    else queueMicrotask(fail);
+    return undefined;
+  }) as typeof processes.execFile);
+  let incomplete = 0;
+  let run: AgentRun | undefined;
+  let child: ChildProcess | undefined;
+  try {
+    run = await AgentRun.start({ profile, cwd: root, command: [...command, "--stubborn"], callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; } }, signal: new AbortController().signal, browser: false, onProcess: process => { child = process; } });
+    const from = Date.now();
+    expect(await run.stop()).toBe(false);
+    expect(Date.now() - from).toBeLessThan(7_000);
+    expect(await run.stop()).toBe(false);
+    expect(incomplete).toBe(1);
+    expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+  } finally { await run?.stop(); scan.mockRestore(); }
 });

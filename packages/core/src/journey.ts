@@ -5,6 +5,7 @@
 
 import { callOn, followingCall } from "./call.js";
 import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, RepositoryState, Role, Stage, Task } from "./model.js";
+import { decisionEvidence, evidenceFor, incompleteCheckOutcome, latestCheckResults, reusedCheckWords } from "./check-evidence.js";
 import { queueOf } from "./scheduler.js";
 import { reviewerAt, roleForTask } from "./roles.js";
 
@@ -28,7 +29,7 @@ export const JOURNEY_WORDS = {
   wroteNotes: "Wrote notes",
   built: "Change ready",
   unchanged: "No changes to the code",
-  fixed: (count: number) => (count ? `Fixed ${plural(count, "finding")}` : "Fixes ready"),
+  fixed: (count: number) => (count ? `Builder claims ${plural(count, "fix")}` : "Changes returned"),
   checks: (failed: number, total: number) => (failed ? `${failed} of ${plural(total, "check")} failed` : total === 1 ? "The check passes" : total ? `All ${total} checks pass` : "Every check passes"),
   voted: (real: number, total: number) => `${total} checked: ${real} real`,
   foundChecks: (count: number) => (count ? `Found ${plural(count, "check")}` : "Found no checks"),
@@ -153,6 +154,7 @@ export const YOU_STEP_NAMES: Readonly<Record<JourneyWait, string>> = {
 
 /** Petrina's own steps, by what it did. */
 export const PETRINA_STEP_NAMES: Readonly<Record<JourneyWork, string>> = {
+  "check-reuse": "Previous checks reused",
   checks: "Automated checks",
   update: "Update branch",
   delivery: "Publish delivery",
@@ -326,6 +328,25 @@ export function endAgentStep(task: JourneyTask, how: StepEnd, at: number): void 
   if (open?.kind === "agent") close(open, at, how);
 }
 
+/** An evidence handoff, never a check execution. Keep the original run and attempt intact. */
+export function recordCheckReuse(task: JourneyTask, work: RepositoryState, at: number): void {
+  if (!work.checks) return;
+  const journey = task.journey ?? [];
+  // Shared repairs finish several Builders before checks are read. Match this product's return,
+  // then stop once its evidence has been handed on or fresh checks have followed that return.
+  const returned = journey.findLastIndex(step => step.builderReturn?.productId === work.productId && step.endedAt !== undefined);
+  if (returned < 0) return;
+  const following = journey.slice(returned + 1);
+  if (following.some(step => step.kind !== "you" && step.productChecks?.some(check => check.productId === work.productId))) return;
+  const evidence = evidenceFor(task, work);
+  if (!evidence.length) return;
+  const checks = evidence.map((check) => ({ ...check, reusedAt: at }));
+  const outcome = reusedCheckWords(checks);
+  petrinaMoment(task, "check-reuse", { outcome, reason: outcome, ...(checks.some((check) => check.result !== "pass" && check.result !== "skipped") ? { tone: "back" as const } : {}) }, at);
+  const step = task.journey!.at(-1)!;
+  step.productChecks = checks;
+}
+
 /** The task waits for the coordinator: a check, the call on a disagreement, a stuck task, interrupted shipping. */
 export function beginYouStep(task: JourneyTask, waitsFor: JourneyWait, at: number): JourneyStep {
   const open = openStep(task);
@@ -448,7 +469,7 @@ export function legacyJourney(task: Task, inbox: readonly InboxItem[], roles: Jo
 // ── Reading: what the screen draws ──────────────────────────────────────────────────────────
 
 /** The fields a step's name comes from, for recorded and planned steps alike. */
-type Named = Pick<JourneyStep, "kind" | "stageId" | "round" | "sub" | "fixing" | "update" | "port" | "call" | "roleId" | "team" | "work" | "waitsFor" | "end" | "endedAt">;
+type Named = Pick<JourneyStep, "kind" | "stageId" | "round" | "sub" | "fixing" | "update" | "port" | "call" | "roleId" | "team" | "work" | "waitsFor" | "end" | "endedAt" | "productChecks">;
 
 /**
  * A step's name. Repeats say so: "Architect (round 2)", "Builder (fixes)", "Builder (fixes 2)",
@@ -457,10 +478,15 @@ type Named = Pick<JourneyStep, "kind" | "stageId" | "round" | "sub" | "fixing" |
  * retry after getting stuck. Main moving on is not a round of anything.
  */
 export function stepName(step: Named, earlier: readonly Named[], roles: readonly Pick<Role, "id" | "name">[]): string {
-  if (step.kind === "you") return YOU_STEP_NAMES[step.waitsFor ?? "delivery"];
+  if (step.kind === "you") {
+    if (step.waitsFor === "delivery" && step.productChecks?.some((check) => check.result === "fail" || check.result === "did-not-finish")) return "Your call: checks still failing";
+    if (step.waitsFor === "delivery" && step.productChecks?.some((check) => check.result === "stopped" || check.result === "pending" || check.result === "running")) return "Your call: checks unverified";
+    return YOU_STEP_NAMES[step.waitsFor ?? "delivery"];
+  }
   if (step.kind === "wait") return "Waiting for others";
   const same = earlier.filter((entry) => sameStep(entry, step));
   if (step.kind === "petrina") {
+    if (step.work === "check-reuse") return PETRINA_STEP_NAMES[step.work];
     const place = step.work === "update" ? [] : step.port ? ["port"] : step.round > 1 ? [`round ${step.round}`] : [];
     const parts = [...place, ...(same.length ? ["again"] : [])];
     const name = PETRINA_STEP_NAMES[step.work ?? "delivery"];
@@ -483,9 +509,9 @@ export function stepName(step: Named, earlier: readonly Named[], roles: readonly
 
 function flowStepMarks(step: Named, name: string, earlier: readonly Named[]) {
   const flowName = name.replace(/\s+\([^)]*\)$/, "");
-  const roundMark = step.round > 1 && !step.update && !step.fixing && !step.call && !step.port ? step.round : undefined;
+  const roundMark = step.round > 1 && step.work !== "check-reuse" && !step.update && !step.fixing && !step.call && !step.port ? step.round : undefined;
   const updateMark = !!step.update || (step.kind === "petrina" && step.work === "update");
-  const repeatMark = name.endsWith("again)") || earlier.some((entry) => sameStep(entry, step));
+  const repeatMark = step.work !== "check-reuse" && (name.endsWith("again)") || earlier.some((entry) => sameStep(entry, step)));
   const fixMark = step.fixing ? Number(name.match(/\(fixes(?: (\d+))?/)?.[1] ?? 1) : undefined;
   const portMark = !!step.port;
   const callMark = !!step.call;
@@ -535,6 +561,7 @@ export interface JourneyNode {
   agentInputs?: JourneyStep["agentInputs"];
   productChecks?: JourneyStep["productChecks"];
   builderConversation?: JourneyStep["builderConversation"];
+  builderReturn?: JourneyStep["builderReturn"];
   /** `petrina`: what Petrina did. */
   work?: JourneyWork;
   stageId?: Id;
@@ -705,7 +732,11 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
     else state = "now";
     const live = state === "now" || state === "you";
     const earlier = recorded.slice(0, index);
-    const name = stepName(step, earlier, ctx.roles);
+    const supporting = live && step.kind === "you" && step.waitsFor === "delivery" && !step.productChecks ? decisionEvidence(task) : undefined;
+    const name = stepName(supporting ? { ...step, productChecks: supporting } : step, earlier, ctx.roles);
+    const latestChecks = latestCheckResults(step.productChecks ?? []);
+    const interruptedOutcome = step.work === "checks" && latestChecks.some((check) => check.run?.interruption) ? incompleteCheckOutcome(latestChecks) : undefined;
+    const outcome = interruptedOutcome ?? step.outcome;
     return {
       id: step.id,
       kind: step.kind,
@@ -721,18 +752,19 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...(step.findingIds ? { findingIds: step.findingIds } : {}),
       ...(step.result ? { result: step.result } : {}),
       ...(step.agentInputs ? { agentInputs: step.agentInputs } : {}),
-      ...(step.productChecks ? { productChecks: step.productChecks.map(({ run: _run, ...check }) => check) } : {}),
+      ...(step.productChecks ? { productChecks: step.productChecks } : {}),
+      ...(step.builderReturn ? { builderReturn: step.builderReturn } : {}),
       ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}),
       ...(step.work ? { work: step.work } : {}),
       ...(step.stageId ? { stageId: step.stageId } : {}),
       ...(step.waitsFor ? { waitsFor: step.waitsFor } : {}),
       ...(step.waitsOn ? { waitsOn: step.waitsOn } : {}),
       ...(step.legacy ? { legacy: true } : { startedAt: step.startedAt, ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}) }),
-      ...(step.outcome ? { outcome: step.outcome } : {}),
+      ...(outcome ? { outcome } : {}),
       ...(step.acceptanceChecks ? { acceptanceChecks: step.acceptanceChecks } : index === latestCompletedTester && !step.acceptanceChecks && task.brief?.acceptance.some((check) => check.verification)
         ? { acceptanceChecks: task.brief.acceptance.filter((check) => check.verification).map((check) => ({ text: check.text, result: check.verification === "passed" ? "pass" as const : check.verification === "failed" ? "fail" as const : "blocked" as const, ...(check.reason ? { reason: check.reason } : {}) })) }
         : {}),
-      ...(step.reason ? { reason: step.reason } : {}),
+      ...(interruptedOutcome ? { reason: interruptedOutcome } : step.reason ? { reason: step.reason } : {}),
       tone: step.tone ?? "on",
       asks: step.asks ?? [],
     };

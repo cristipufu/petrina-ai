@@ -12,9 +12,10 @@ export async function descendantsKnown(
   roots: readonly number[],
   budget = 3_200,
   read: (timeout: number) => Promise<string | undefined> = readProcessList,
+  attempts: readonly number[] = [1_000, 2_000],
 ): Promise<number[] | undefined> {
   const started = Date.now();
-  for (const attempt of [1_000, 2_000]) {
+  for (const attempt of attempts) {
     const left = budget - (Date.now() - started);
     if (left < 50) break;
     const stdout = await read(Math.min(attempt, left));

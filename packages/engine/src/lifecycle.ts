@@ -181,6 +181,7 @@ export class EngineLifecycle implements LifecycleControl {
         else if (name === "stop" || name === "restart") {
           e.drainReason = name;
           e.draining = true;
+          e.stopRequested.abort();
           e.commitNow();
         }
       });

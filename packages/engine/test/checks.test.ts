@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "../src/checks.js";
 import { CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
+import * as machine from "../src/check-interruption.js";
 import { Engine } from "../src/engine.js";
 import { Store } from "../src/store.js";
 import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
@@ -128,12 +129,71 @@ describe("a product's checks", () => {
       stderr: new Response("Details kept\n").body!,
     } as Bun.Subprocess<"ignore", "pipe", "pipe">;
     const spawning = spyOn(Bun, "spawn").mockReturnValue(child);
+    const interruption = { source: "macOS power log" as const, at: Date.now(), event: "Recorded sleep" };
+    const evidence = spyOn(machine, "machineInterruption").mockResolvedValue(interruption);
     try {
       const runs = await runChecks(root("petrina-checks-ended-"), [{ name: "Already ended", argv: ["petrina-already-ended"] }], process.env, 200 * SLOW);
-      expect(runs, JSON.stringify(runs)).toEqual([{
+      expect(runs, JSON.stringify(runs)).toEqual([expect.objectContaining({
         name: "Already ended", command: "petrina-already-ended", ms: expect.any(Number), ok: code === 0, output: "Check finished\nDetails kept\n",
-      }]);
-    } finally { spawning.mockRestore(); }
+        startedAt: expect.any(Number), endedAt: expect.any(Number),
+      })]);
+      expect(runs[0]!.ms).toBe(runs[0]!.endedAt! - runs[0]!.startedAt!);
+      expect(runs[0]!.interruption).toEqual(code === 0 ? undefined : interruption);
+      if (code === 0) expect(evidence).not.toHaveBeenCalled();
+      else expect(evidence).toHaveBeenCalledWith(runs[0]!.startedAt, runs[0]!.endedAt, undefined);
+    } finally { spawning.mockRestore(); evidence.mockRestore(); }
+  });
+
+  it("records a cancelled check without starting an environment investigation", async () => {
+    const stop = new AbortController();
+    const child = {
+      exited: Promise.resolve(1), stdout: new Response("Original diagnostic\n").body!, stderr: new Response("").body!,
+    } as Bun.Subprocess<"ignore", "pipe", "pipe">;
+    const spawning = spyOn(Bun, "spawn").mockImplementation(() => { stop.abort(); return child; });
+    const evidence = spyOn(machine, "machineInterruption").mockResolvedValue(undefined);
+    try {
+      const runs = await runChecks(root("petrina-checks-cancelled-"), [{ name: "Stopped", argv: ["stopped-check"] }, { name: "Pending", argv: ["pending-check"] }], process.env, 30_000, stop.signal);
+      expect(runs).toHaveLength(1);
+      expect(runs[0]!.ok).toBe(false);
+      expect(runs[0]!.interrupted).toBe(true);
+      expect(runs[0]!.output).toBe("Original diagnostic\n");
+      expect(evidence).not.toHaveBeenCalled();
+      expect(spawning).toHaveBeenCalledTimes(1);
+    } finally { spawning.mockRestore(); evidence.mockRestore(); }
+  });
+
+  it("cancels evidence collection after a completed failure without starting pending checks", async () => {
+    const stop = new AbortController();
+    const child = {
+      exited: Promise.resolve(7), stdout: new Response("Original failure\n").body!, stderr: new Response("").body!,
+    } as Bun.Subprocess<"ignore", "pipe", "pipe">;
+    const spawning = spyOn(Bun, "spawn").mockReturnValue(child);
+    let ready!: () => void;
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    let release: ((records: string) => void) | undefined;
+    const evidence = spyOn(machine, "readMachinePowerRecords").mockImplementation((_execute, _platform, signal) => new Promise<string>((resolve) => {
+      release = resolve;
+      signal?.addEventListener("abort", () => resolve(""), { once: true });
+      ready();
+    }));
+    let running: ReturnType<typeof runChecks> | undefined;
+    try {
+      running = runChecks(root("petrina-checks-evidence-stop-"), [{ name: "Failed", argv: ["failed-check"] }, { name: "Pending", argv: ["pending-check"] }], process.env, 30_000, stop.signal);
+      await started;
+      expect(evidence.mock.calls[0]![2]).toBe(stop.signal);
+      stop.abort();
+      const runs = await running;
+      expect(runs).toHaveLength(1);
+      expect(runs[0]!.ok).toBe(false);
+      expect(runs[0]!.interrupted).toBe(true);
+      expect(runs[0]!.interruption).toBeUndefined();
+      expect(runs[0]!.output).toBe("Original failure\n");
+      expect(runs[0]!.ms).toBe(runs[0]!.endedAt! - runs[0]!.startedAt!);
+      expect(spawning).toHaveBeenCalledTimes(1);
+    } finally {
+      stop.abort(); release?.(""); await running;
+      spawning.mockRestore(); evidence.mockRestore();
+    }
   });
 
   it("reports a check that exceeds its deadline as timed out", async () => {

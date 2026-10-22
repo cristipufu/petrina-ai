@@ -45,6 +45,7 @@ type ConversationOptions = {
 
 /** `used` hears which profile worked each attempt: a stand-in when the planned one was out of usage. */
 interface TurnOptions<T> extends ConversationOptions {
+  builderTree?: string;
   requestedProfileId?: Id;
   selectionReason?: string;
   status?: string;
@@ -418,7 +419,7 @@ export class Turns {
     // the old note; a reopened one keeps the open question until the conversation hears the answer.
     const asked = picked ? reopen?.asked : undefined;
     if (role.result !== "delivery") {
-      repository.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && same?.context ? { context: same.context } : {}), ...(picked && handback ? { handback } : {}), ...(picked && same?.capacityContinue ? { capacityContinue: true } : {}) };
+      repository.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId, builderTree: options.builderTree } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && same?.context ? { context: same.context } : {}), ...(picked && handback ? { handback } : {}), ...(picked && same?.capacityContinue ? { capacityContinue: true } : {}) };
       const pending = screen?.member && task.hunt?.screenTurns?.[screen.member];
       // Keep the latest reopened or replacement conversation when this member yields to a peer.
       if (pending) pending.conversation = repository.conversation;

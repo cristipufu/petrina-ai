@@ -148,6 +148,7 @@ export class Engine extends Kernel implements Commands {
     this.shipping.carryOverShipping();
     for (const task of this.s.tasks) recoverMessages(task);
     this.driver.recover();
+    void this.trackWork(this.checks.restoreEvidence().catch(() => undefined));
     // Recovered Builders get a short login check on their saved tool before fallback selection.
     // Other roles keep their existing recovery rules; the usual check timeout bounds this wait.
     for (const task of this.s.tasks.filter((task) => task.state === "waiting")) {
@@ -308,6 +309,7 @@ export class Engine extends Kernel implements Commands {
     if (this.stopped) return Promise.resolve();
     // Stopped first: stopping agents still changes state, and nothing may save after the store closes.
     this.stopped = true;
+    this.stopRequested.abort();
     this.stopIdleSleep();
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
@@ -922,6 +924,25 @@ export class Engine extends Kernel implements Commands {
     this.log(task, "you", "You asked to try again");
     endYouStep(task, { outcome: W.triedAgain, reason: W.tryAgain }, Date.now());
     this.commit();
+    this.schedule();
+  }
+
+  /** Explicit fresh verification, with no delivery approval and no new automatic repair allowance. */
+  rerunChecks(itemId: Id): void {
+    const item = this.s.inbox.find((entry) => entry.id === itemId && entry.kind === "delivery");
+    const task = item && this.task(item.taskId);
+    if (!item || !task) return;
+    this.takeover.notDrivingItem(itemId);
+    this.takeItem(itemId);
+    for (const { work } of scopesFor(task)) {
+      if (library.repositoryPublished(work)) continue;
+      if (work.checks) { delete work.checks.sha; delete work.checks.tree; work.checks.current = false; }
+      delete work.approvedSha; delete work.approvedPatch; delete work.approvedFor;
+    }
+    this.log(task, "you", "You asked to run checks again on unchanged work; delivery is not approved");
+    endYouStep(task, { outcome: "Run checks again", reason: W.checkAgain }, Date.now());
+    this.toWaiting(task);
+    this.commitNow();
     this.schedule();
   }
 

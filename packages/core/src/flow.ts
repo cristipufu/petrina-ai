@@ -3,6 +3,7 @@
 // sends the task, and how design and review rounds end.
 
 import { roleForTask } from "./roles.js";
+import { checkProblem } from "./check-evidence.js";
 import { CALL_WORDS, callOn, designStageIndex, startCall } from "./call.js";
 import type { Column, GateKind, InboxKind, Role, Stage, Task } from "./model.js";
 
@@ -40,14 +41,16 @@ function stillBlocking(task: Task): number {
 }
 
 /** A check problem names the checks that still fail, not a count of the findings they raise. */
-export function checkProblemTitle(title: string, failing: readonly string[]): string {
-  return `Your call on “${title}”: ${failing.length === 1 ? "a check still fails" : "checks still fail"} (${failing.join(", ")})`;
+export function checkProblemTitle(title: string, failing: readonly string[], unverified: readonly string[] = []): string {
+  return `Your call on “${title}”: ${failing.length === 1 ? "a check still fails" : "checks still fail"} (${failing.join(", ")})${unverified.length ? `; unverified (${unverified.join(", ")})` : ""}`;
 }
 
 /** What a checkpoint is called in the inbox. Failing checks, then Important findings still open, say so first. */
 export function gateTitle(task: Task, gate: GateKind): string {
-  const failing = gate === "delivery" ? task.checks?.results.filter((run) => !run.ok).map((run) => run.name) ?? [] : [];
-  if (failing.length) return checkProblemTitle(task.title, failing);
+  if (gate === "delivery" && checkProblem(task) === "unverified") return `Your call on “${task.title}”: checks unverified`;
+  const failing = gate === "delivery" ? (task.repositories ?? [task]).flatMap((work) => work.checks?.results.filter((run) => !run.ok && !run.interruption && !run.interrupted).map((run) => run.name) ?? []) : [];
+  const unverifiedChecks = gate === "delivery" ? (task.repositories ?? [task]).flatMap((work) => work.checks?.results.filter((run) => run.interruption || run.interrupted).map((run) => run.name) ?? []) : [];
+  if (failing.length) return checkProblemTitle(task.title, failing, unverifiedChecks);
   const open = gate === "delivery" ? stillBlocking(task) : 0;
   if (open) return `Your call on “${task.title}”: ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} still open`;
   const unverified = gate === "delivery" ? task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0 : 0;
@@ -62,7 +65,8 @@ export function gateStatus(task: Task, gate: GateKind): string {
   if (gate === "plan") return "Plan ready. Waiting for your OK";
   if (gate === "design") return callOn(task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check";
   const open = stillBlocking(task);
-  if (task.checks?.results.some((run) => !run.ok)) return CHECKS_STILL_FAIL;
+  if (checkProblem(task) === "failing") return CHECKS_STILL_FAIL;
+  if (checkProblem(task)) return "Checks unverified. Your call";
   // Never "done" while Important findings are open: the rounds ran out and the coordinator decides.
   if (open) return `Review rounds ran out with ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} open. Your call`;
   const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0;

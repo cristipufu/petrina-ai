@@ -144,11 +144,19 @@ describe("shared product controls", () => {
   });
 
   it("groups shared and unassigned findings under Together with separate builder answers", async () => {
-    const task: Task = { ...state.tasks[0]!, repositories: [0, 1].map((index) => ({ productId: state.products[index]!.id, source: source(index), delivery: "pull-request", completedStages: [] })), findings: [{ id: "shared", text: "The two products disagree", productIds: state.products.slice(0, 2).map((product) => product.id), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open", answers: { [state.products[0]!.id]: { fixed: true, text: "First product repaired", at: 1 } } }, { id: "unassigned", text: "Ownership needs a decision", severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" }] };
+    const task: Task = { ...state.tasks[0]!, repositories: [0, 1].map((index) => ({ productId: state.products[index]!.id, source: source(index), delivery: "pull-request", completedStages: [] })), findings: [{ id: "shared", text: "The two products disagree", productIds: state.products.slice(0, 2).map((product) => product.id), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open", answers: {
+      [state.products[0]!.id]: { fixed: true, text: "First product repaired", at: 1 },
+      [state.products[1]!.id]: { fixed: false, text: "Second product still needs investigation", at: 2 },
+    } }, { id: "unassigned", text: "Ownership needs a decision", severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" }] };
     await render(<ReviewView now={state.now} task={task} find={lookup(state)} />);
     const together = [...host.querySelectorAll("section")].find((section) => section.querySelector("h2")?.textContent === "Together")!;
     expect(together.textContent).toContain("The two products disagree"); expect(together.textContent).toContain("Ownership needs a decision");
-    expect(together.textContent).toContain("Builder answered: fixed");
+    const shared = together.querySelector(".issue")!;
+    expect(shared.textContent).toContain("Open");
+    expect([...shared.querySelectorAll(".issue-response")].map(response => ({ title: response.querySelector("b")?.textContent, text: response.textContent }))).toEqual([
+      { title: `${state.products[0]!.name}: Builder claims a fix`, text: `${state.products[0]!.name}: Builder claims a fixFirst product repaired` },
+      { title: `${state.products[1]!.name}: Builder answered: not fixed`, text: `${state.products[1]!.name}: Builder answered: not fixedSecond product still needs investigation` },
+    ]);
     expect(host.textContent).toContain("Product checks: Not run");
     expect(host.textContent).not.toContain("Every reviewer passed");
     for (const section of host.querySelectorAll(".repository-row")) expect(section.textContent).toContain("No findings assigned only to this product. Shared findings appear under Together.");

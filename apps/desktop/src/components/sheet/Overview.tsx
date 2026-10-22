@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Monitor, User } from "lucide-react";
-import { occurrenceText, SCREEN_WORDS, mainLine, nextLine, screenWait, timeLeft, workedSoFar, type Role, type State, type Task } from "@petrina/core";
+import { builderCheckSummary, checkProblem, occurrenceText, SCREEN_WORDS, mainLine, nextLine, screenWait, timeLeft, workedSoFar, type Role, type State, type Task } from "@petrina/core";
 import { deliveryText, duration, profileText, type Lookup } from "../../lib";
 import { failureText, sim } from "../../engine";
 import { RoleAvatar } from "../bits";
@@ -91,6 +91,7 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
 
       <TaskDependencies key={`dependencies-${task.id}`} task={task} state={state} onOpenTask={onOpenTask} onEdit={onDependencies} />
 
+      {builderCheckSummary(task) && <section className="sheet-section reading"><h2>Latest Builder return</h2><p className="prose">{builderCheckSummary(task)}</p><p className="note">Earlier task changes are retained.</p></section>}
       <section className="sheet-section">
         <h2>Right now</h2>
         <div className={`now ${task.state}`}>
@@ -129,7 +130,7 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
           <h3>{work.source?.product.name ?? work.productId}{work.removed ? " · removed" : ""}</h3><p className="note">{work.source?.product.repo}</p>
           <p className="prose">{work.report?.summary ?? "No changes reported yet"}</p>
           <ul>{work.report?.changes.map((change) => <li key={change}>{change}</li>)}</ul>
-          <p className="note">Product checks: {!work.checks?.results.length ? "Not run" : work.checks.current === false ? "Not current" : work.checks.results.some((run) => !run.ok) ? "Failed" : "Passed"}{work.checks?.sha ? ` · version ${work.checks.sha.slice(0, 7)}` : ""}</p>
+          <p className="note">Product checks: {!work.checks?.results.length ? "Not run" : work.checks.current === false ? "Not current" : checkProblem({ checks: work.checks }) === "unverified" ? "Unverified" : work.checks.results.some((run) => !run.ok) ? "Failed" : "Passed"}{work.checks?.sha ? ` · version ${work.checks.sha.slice(0, 7)}` : ""}</p>
           <p className="prose">{work.nothingToPublish ? "Nothing to publish" : work.pr ? <a href={work.pr.url} target="_blank" rel="noreferrer">Pull request #{work.pr.number} · {work.pr.state === "open" ? "waiting for merge" : work.pr.state === "merged" ? "merged" : work.landingAccepted ? "closed without merging · resolved by you" : "closed without merging · your decision needed"}</a> : work.release ? <a href={work.release.url} target="_blank" rel="noreferrer">Release {work.release.tag}</a> : work.localUpdate ? `${work.localUpdate.branch}: committed locally${work.localUpdate.pushed ? " and push confirmed" : " · push unfinished"}` : work.shipping?.step ? "Delivery needs checking before retry" : "Delivery waiting"}</p>
           {work.source && <p className="note">{work.source.destination.repo} · {work.source.destination.branch}</p>}
           {work.releasePreview && <div><p>Release {work.releasePreview.tag} includes everything waiting on the default branch since its previous release.</p><p className="prose">{work.releasePreview.notes}</p></div>}

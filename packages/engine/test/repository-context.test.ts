@@ -851,6 +851,89 @@ describe("shared check repair episodes", () => {
     } finally { await engine.shutdown(); }
   });
 
+  it("keeps confirmed interrupted evidence unverified without repairing or spending either product's allowance", async () => {
+    const { engine, task } = await fixture("check-interrupted");
+    try {
+      engine.setPoolPaused(false); task.plan = plan(); task.stageIndex = 2;
+      const first = executionFor(task, "first"), second = executionFor(task, "second");
+      const checks = engine["checks"], signal = new AbortController().signal;
+      setChecks(engine, "first", [failing]); setChecks(engine, "second", [passing]);
+      await checks.runProductChecks(first, [failing], signal);
+      await checks.runProductChecks(second, [passing], signal);
+      first.work.checkReturns = 2; second.work.checkReturns = 1;
+      const original = first.work.checks!.results[0]!;
+      original.interruption = { source: "macOS power log", at: original.startedAt!, event: "Entering Sleep state due to Clamshell Sleep" };
+      expect(await checks.failing(first, signal)).toBe(true);
+      expect(checks.backToBuilder(first, "before review")).toBe(false);
+      expect(task.repositories!.map((work) => work.checkReturns)).toEqual([2, 1]);
+      expect(task.findings.filter((finding) => finding.status === "open")).toHaveLength(0);
+      expect(task.findings[0]!.status).toBe("unverified");
+      expect(checks.blocked(task)).toBe("stop");
+      expect(task.statusLine).toBe("Checks unverified. Your call");
+      const decision = task.journey!.at(-1)!;
+      expect(decision.productChecks!.map((check) => [check.productId, check.result])).toEqual([["first", "stopped"], ["second", "pass"]]);
+      expect(decision.productChecks![0]!.run!.output).toBe(original.output);
+      expect(decision.productChecks![0]!.run!.source).toEqual(original.source);
+    } finally { await engine.shutdown(); }
+  });
+
+  it("recovers recorded sleep for an already waiting decision and preserves its original run across restart", async () => {
+    const f = await fixture("check-interruption-recovery");
+    let engine = f.engine;
+    try {
+      engine.setPoolPaused(false); f.task.plan = plan(); f.task.stageIndex = 2;
+      const scope = executionFor(f.task, "first");
+      setChecks(engine, "first", [failing]);
+      await engine["checks"].runProductChecks(scope, [failing], new AbortController().signal);
+      const run = scope.work.checks!.results[0]!;
+      run.startedAt = Date.parse("2026-10-21T17:54:07+03:00"); run.endedAt = Date.parse("2026-10-21T17:57:46+03:00"); run.ms = run.endedAt - run.startedAt;
+      const original = f.task.journey!.find((step) => step.id === run.source!.stepId)!;
+      original.startedAt = run.startedAt; original.endedAt = run.endedAt;
+      original.productChecks![0]!.run = { ...run };
+      original.productChecks![0]!.startedAt = run.startedAt; original.productChecks![0]!.endedAt = run.endedAt;
+      const outcome = original.outcome, output = run.output, source = { ...run.source! };
+      scope.work.checkReturns = 2;
+      engine["checks"].blocked(f.task);
+      const count = f.task.journey!.length;
+      await engine["checks"].restoreEvidence("2026-10-21 17:55:44 +0300 Sleep Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 74 secs");
+      expect(f.task.statusLine).toBe("Checks unverified. Your call");
+      expect(f.task.journey).toHaveLength(count);
+      expect(original.outcome).toBe(outcome);
+      expect(original.productChecks![0]!.result).toBe("fail");
+      expect(original.productChecks![0]!.run!.interruption?.source).toBe("macOS power log");
+      expect(f.task.journey!.at(-1)!.productChecks![0]!.result).toBe("stopped");
+      expect(f.task.findings[0]!.status).toBe("unverified");
+      expect(scope.work.checkReturns).toBe(2);
+      expect(f.task.repair).toBeUndefined();
+      await engine.shutdown(); engine = f.start();
+      const restored = engine.task(f.id)!;
+      const saved = executionFor(restored, "first").work.checks!.results[0]!;
+      expect(saved).toEqual(expect.objectContaining({ output, source, interruption: expect.objectContaining({ source: "macOS power log" }) }));
+      expect(restored.statusLine).toBe("Checks unverified. Your call");
+      expect(executionFor(restored, "first").work.checkReturns).toBe(2);
+    } finally { await engine.shutdown(); }
+  });
+
+  it("requests fresh checks only for unfinished products without approving or replenishing repairs", async () => {
+    const { engine, task } = await fixture("check-explicit-partial");
+    try {
+      task.plan = plan(); task.stageIndex = 2;
+      const first = executionFor(task, "first").work, second = executionFor(task, "second").work;
+      first.landed = { branch: "main", sha: "delivered" };
+      first.checks = { at: 1, current: true, sha: "delivered", tree: "first-tree", results: [{ name: "Tests", command: "tests", ok: true, ms: 1, output: "Passed" }] };
+      second.checks = { at: 2, current: true, sha: "pending", tree: "second-tree", results: [{ name: "Tests", command: "tests", ok: false, ms: 1, output: "Failed" }] };
+      second.checkReturns = 2;
+      engine["checks"].blocked(task);
+      const item = engine.s.inbox.find((item) => item.taskId === task.id && item.kind === "delivery")!;
+      engine.rerunChecks(item.id);
+      expect(first.checks).toEqual(expect.objectContaining({ current: true, sha: "delivered", tree: "first-tree" }));
+      expect(second.checks.sha).toBeUndefined(); expect(second.checks.tree).toBeUndefined();
+      expect(second.checkReturns).toBe(2); expect(second.approvedFor).toBeUndefined();
+      expect(task.stageIndex).toBe(2); expect(task.state).toBe("waiting");
+      expect(task.journey!.at(-1)!.outcome).toBe("Run checks again");
+    } finally { await engine.shutdown(); }
+  });
+
   it("returns a shared check repair from the delivery check or shipping through review, withdrawing approval", async () => {
     const { engine, task } = await fixture("check-routes");
     try {
@@ -905,7 +988,7 @@ describe("shared check repair episodes", () => {
       expect(item.body).toContain("First: still failing after 2 automatic Builder turns.\n• Welcome page did not finish: The welcome page is missing");
       expect(item.body).toContain("Second: still failing after 1 automatic Builder turn.\n• Tests failed: (fail) greeting > says hello\nerror: expected Hello\n  The Builder's last answer: “The suite timed out while the Mac slept.”");
       expect(item.body).toContain("Stopped before acceptance testing.");
-      expect(item.body).toContain("Approving does not ship while a check fails.");
+      expect(item.body).toContain("Approving does not ship while checks fail or remain unverified.");
       expect(task.statusLine).toBe("Checks still fail. Your call");
       expect(task.stageIndex).toBe(1);
       expect(task.timeline.map((line) => line.text)).toContain("Checks still fail after their automatic Builder turns (First: Welcome page, Second: Tests), so Petrina waits for you before acceptance testing");

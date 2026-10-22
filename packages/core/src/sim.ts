@@ -7,8 +7,9 @@ export { readCall } from "./sim-script.js";
 export type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
 import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, blockingDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState, finishTaskStep } from "./task-transitions.js";
 import { combinedBacklogInput } from "./combine-backlog.js";
-import { companionPreview, involvesProduct, taskProductIds, withoutProduct } from "./repositories.js";
+import { companionPreview, involvesProduct, repositoryPublished, taskProductIds, withoutProduct } from "./repositories.js";
 import { deliveryLabel, workSummary, type WorkChoice } from "./source.js";
+import { builderReturnWords, decisionEvidence } from "./check-evidence.js";
 // A deterministic stand-in for real agents. It drives the same state the real engine
 // will: tasks move through their plan, agents report status lines, ask questions,
 // request permissions, raise objections and findings, and wait at gates.
@@ -270,6 +271,18 @@ export class Simulator {
           break;
       }
     }, "approved");
+  }
+
+  rerunChecks(itemId: Id): void {
+    this.resolve(itemId, (d, task, item) => {
+      if (item.kind !== "delivery") return;
+      endYouStep(task, { outcome: "Run checks again", reason: W.checkAgain }, d.now);
+      this.log(d, task, "you", "You asked to run checks again; delivery is not approved");
+      this.runChecks(d, task);
+      for (const finding of task.findings) if (finding.raisedBy === "petrina" && finding.text.startsWith("Check failed")) finding.status = "fixed";
+      delete task.checkReturns;
+      this.unblock(d, task);
+    }, "answered");
   }
 
   /** "Add the ticked ones": the lessons of an offer the coordinator keeps, by their place in it. */
@@ -1016,7 +1029,12 @@ export class Simulator {
   /** Petrina's own run of the product's checks, before a review round's reviewers. In the demo they pass. */
   private runChecks(d: Draft, task: DraftTask): void {
     beginPetrinaStep(task, "checks", d.now);
-    task.checks = { at: d.now, results: DEMO_CHECKS };
+    const step = openStep(task)!;
+    for (const work of (task.repositories ?? [task]).filter((work) => !repositoryPublished(work))) {
+      const results = DEMO_CHECKS.map((run, index) => ({ ...run, startedAt: d.now, endedAt: d.now, source: { stepId: step.id, attemptId: "run-0", checkId: `${task.repositories ? `${work.productId}:` : ""}check-${index}` } }));
+      step.productChecks = [...(step.productChecks ?? []), ...results.map((run) => ({ id: run.source.checkId, attemptId: "run-0", productId: work.productId, name: run.name, result: "pass" as const, startedAt: run.startedAt, endedAt: run.endedAt, run }))];
+      work.checks = { at: d.now, current: true, results };
+    }
     this.log(d, task, "done", `Checks passed: ${DEMO_CHECKS.map((run) => run.name).join(", ")}`);
     endPetrinaStep(task, { outcome: W.checks(0, DEMO_CHECKS.length), reason: W.checksPassed }, d.now);
   }
@@ -1125,12 +1143,17 @@ export class Simulator {
           if (finding.status !== "open" || finding.severity === "pre-existing") continue;
           const fixed = finding.severity === "blocking";
           finding.answer = { fixed, text: fixed ? "Fixed, with a test for addresses with a plus sign." : "Kept as is: the current message matches the rest of the product.", at: d.now };
-          if (fixed) finding.status = "fixed";
+          if (fixed && !(finding.raisedBy === "petrina" && finding.text.startsWith("Check failed"))) finding.status = "fixed";
           if (fixed) count += 1;
         }
         task.fixing = false;
         this.log(d, task, "done", "Fixed the blocking findings", agent.roleId, agent.profileId);
-        endAgentStep(task, { outcome: W.fixed(count), reason: W.fixesReady }, d.now);
+        // A changed return awaits fresh checks; the earlier failure remains a task blocker.
+        for (const work of task.repositories ?? [task]) if (work.checks) work.checks.current = false;
+        const outcome = builderReturnWords(true, undefined, count);
+        const returned = openStep(task);
+        if (returned) returned.builderReturn = { productId: task.productId, changed: true, claimedFixes: count, outcome };
+        endAgentStep(task, { outcome, reason: outcome }, d.now);
       } else {
         this.log(d, task, "done", `${stage.title} done`, agent.roleId, agent.profileId);
         endAgentStep(
@@ -1346,7 +1369,8 @@ export class Simulator {
   private gate(d: Draft, task: DraftTask, gate: GateKind): void {
     delete task.agent;
     delete task.helpers;
-    beginYouStep(task, gate, d.now);
+    const decision = beginYouStep(task, gate, d.now);
+    if (gate === "delivery") decision.productChecks = decisionEvidence(task);
     task.holdsSlot = false;
     task.statusLine = gateStatus(task as unknown as Task, gate);
     let body = gate === "design" ? callCheckBody(task as unknown as Task) : task.source && (gate === "plan" || gate === "delivery") ? workSummary(task.source) : undefined;

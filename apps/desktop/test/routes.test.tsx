@@ -52,6 +52,12 @@ describe("addresses", () => {
     expect(at(href)).toEqual(route);
     expect(routeHref({ view: "products", product: "all" }, "?demo&node=old")).toBe("/products?demo=");
   });
+  it("restores the exact original check attempt and removes it when leaving the step", () => {
+    const route = at("/tasks/pricing-refresh?demo&node=j3&attempt=run-2");
+    expect(route.sheet?.attemptId).toBe("run-2");
+    expect(at(routeHref(route))).toEqual(route);
+    expect(routeHref({ view: "products", product: "all" }, "?demo&node=j3&attempt=run-2")).toBe("/products?demo=");
+  });
   it("keeps History's current page and search in task and node links without an expanding cursor trail", () => {
     const route: AppRoute = { view: "history", product: "shop", history: { cursor: "older page", query: "account export", previous: ["", "previous page"] }, sheet: { taskId: "finished", tab: "overview", list: "history", stepId: "build-2" } };
     const href = routeHref(route, "?demo=portfolio");

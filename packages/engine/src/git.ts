@@ -469,6 +469,20 @@ export async function treeOf(path: string, ref = "HEAD"): Promise<string | undef
   return result.code === 0 && SHA.test(result.stdout) ? result.stdout : undefined;
 }
 
+/** Observe all committable contents without changing the real staging area. */
+export async function contentTree(path: string): Promise<string | undefined> {
+  const status = await worktreeStatus(path);
+  if (status.clean && status.head) return treeOf(path, status.head);
+  const folder = mkdtempSync(join(tmpdir(), "petrina-content-tree-"));
+  const options = { index: join(folder, "index") };
+  try {
+    if ((await run(["git", "read-tree", "HEAD"], path, undefined, options)).code !== 0) return;
+    if ((await run(["git", "add", "-A"], path, undefined, options)).code !== 0) return;
+    const tree = await run(["git", "write-tree"], path, undefined, options);
+    return tree.code === 0 && SHA.test(tree.stdout) ? tree.stdout : undefined;
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+}
+
 /**
  * The branch's work as one commit on top of where it forked from `base`, with the same code and `message`.
  * Returns how many commits it folded: 0 when it already was one commit with that message, or had none.

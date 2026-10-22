@@ -64,6 +64,8 @@ The middle column always shows the task's complete chronological journey: the st
 
 Automated checks show every check in that run, with pending, running and completed results, and elapsed time for checks that have started. Product commands run serially, with type checks and lint first; a static failure leaves later commands and hooks skipped, with no passing result implied. The task’s status names the checks currently running. When a step contains repeated preparations, its latest attempt shows its own count, outcome, product and recorded timing. Earlier attempts are separate disclosures, collapsed by default, retaining stopped results and original diagnostics.
 
+Each attempt keeps its original start date, time and overall elapsed duration. The step outcome follows the latest attempt, including any reused results in it. A mixed outcome states both the failures and the unverified checks. A stopped check without recorded machine evidence says “Stopped — verification incomplete”; confirmed machine interruption says “Interrupted — verification incomplete” and shows its supporting event.
+
 ### Release notes
 
 Pausing or restarting unfinished release notes keeps the same Release Manager box. Preparation checks still run again before the agent continues, with their results in that step's timeline. The box gets its completion check only after the notes are ready; failed checks interrupt it and say why.
@@ -152,6 +154,17 @@ The right sidebar’s fixed agent footer offers takeover: you drive the agent yo
 - Anything you left unsaved becomes one commit marked as yours, never undone, even after driving a read-only role. A short note of what changed goes into the session, the timeline and the notes every later agent reads. The same agent then carries on with the same step on the same conversation; when its tool can't reopen it, it carries on in a fresh one with its usual instructions plus your note, and the Session tab says so.
 - If you changed files, the tests check runs at once and its problems become blocking findings. If review is still ahead, it covers your changes. If review was underway or done, the review starts again from the first reviewer once the step you drove finishes, before anything ships, without using up a review round.
 - You choose the terminal in Agents, under Your terminal: Terminal on macOS by default (iTerm2 and other installed ones selectable), Windows Terminal or else a PowerShell window on Windows, and on Linux the system default, then the desktop's own, then common ones.
+
+### Builder returns and saved checks
+
+A repair return describes its own observed code changes. “No code changes; checks still failing” appears on the unchanged Builder step and its outgoing transition; fixes on a changed return are labelled as Builder claims. The investigation and original answers remain on that turn. Environment explanations are attributed to the Builder, with independent interruption evidence shown separately.
+
+A selectable “Previous checks reused” handoff follows a return when Petrina uses saved evidence. It states the outcome without implying a new check execution, duration or attempt. Its details identify each product, original check, execution time, recorded duration and diagnostic, with a link to the original step and attempt. Reuse time is shown separately. Older missing information says unavailable.
+
+Reading those results again at review, approval or publishing adds no handoff. In shared repairs, each product's latest Builder return has its own evidence handoff, even when another product's return or fresh checks intervene. A fresh attempt owns its skipped checks; an earlier reuse time never carries over to it. Mixed attempts label fresh and reused evidence separately. Outdated results say they need updating, with earlier failures or unverified checks labelled as earlier evidence. A recorded failure or interruption stays unresolved until new applicable evidence settles it; editing check definitions cannot restore a ship action. A changed Builder return makes no claim that those earlier checks ran on its new code, and its summary does not carry reuse from before that return. Finished task summaries retain the recorded delivery outcome.
+
+The task summary and coordinator decision agree about failed or unverified checks. The decision retains the supporting checks even after intervening work and explains where work stopped and why the coordinator is being asked. It says “Your call: checks still failing” or “Your call: checks unverified”, and offers “Run checks again”, “See original checks” and “Send back…” with a note. A fresh check request grants no delivery approval. Confirmed interruption says “Interrupted — verification incomplete”, alongside the original reported failures and recorded machine event; sleep overlap alone does not explain every failure or establish that the feature works.
+
 
 ## New task
 

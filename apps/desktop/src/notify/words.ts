@@ -2,7 +2,7 @@
 // asking. Never the command behind a permission, the error of a stuck task, or a link: those stay
 // in the app, since notifications can show on the lock screen and stay in the system's history.
 
-import type { InboxItem, InboxKind, State } from "@petrina/core";
+import { checkProblem, type InboxItem, type InboxKind, type State } from "@petrina/core";
 
 /** Where a click on a notification, or View on an in-app message, leads. */
 export type Target = { kind: "item"; id: string } | { kind: "inbox" };
@@ -151,8 +151,9 @@ export function noticeFor(item: InboxItem, state: State): Notice {
   const where = item.kind === "stuck" ? product : product ? `${task}, ${product}` : task;
   const owner = state.tasks.find((entry) => entry.id === item.taskId);
   const unsettled = item.kind === "delivery" && (owner?.acceptanceUnverified === true || (owner?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
+  const checks = item.kind === "delivery" && owner ? checkProblem(owner) : undefined;
   return {
-    title: unsettled ? `${who}: review rounds ran out with blocking findings open, your call` : NEED[item.kind](who, task),
+    title: checks ? `${who}: checks ${checks === "failing" ? "still failing" : "unverified"}, your call` : unsettled ? `${who}: review rounds ran out with blocking findings open, your call` : NEED[item.kind](who, task),
     lines: [detail, where].filter((line): line is string => Boolean(line)),
     itemIds: [item.id],
     target: { kind: "item", id: item.id },

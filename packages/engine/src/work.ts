@@ -4,7 +4,7 @@ import { beginRepair, productsFor, versionsOf, acceptanceVersion, invalidateAcce
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import { endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, openStep, type Task } from "@petrina/core";
+import { builderReturnWords, checkProblem, recordStepResult, endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, openStep, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, NotesResult, stepBack, TestResult, TEXT_LIMITS } from "./roles.js";
@@ -56,6 +56,9 @@ export class Work {
       const updating = repository.updating;
       const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? "main";
       if (updating) await this.updates.reopen(scope);
+      const startingTree = repository.conversation?.roleId === roleId && repository.conversation.head
+        ? repository.conversation.builderTree
+        : await git.contentTree(repository.worktree!).catch(() => undefined);
       // In a fix round the builder answers every finding it was given, by id.
       const given = task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(repository.productId))) : [];
       // Bind to the failure attempt now; mutable finding ids can be reused by a later check run.
@@ -66,6 +69,7 @@ export class Work {
       const builderStep = openStep(task);
       if (task.fixing && builderStep?.kind === "agent" && builderStep.roleId === roleId) builderStep.builderConversation = back ? "resumed" : "new";
       const result = savedResult !== undefined ? BuildResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, BuildResult, signal, {
+        builderTree: startingTree,
         used,
         check: async (value) => {
           if (maintenance && typeof value.complete !== "boolean") return 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.';
@@ -89,7 +93,7 @@ export class Work {
       if (maintenance && !result.complete) { this.k.commitNow(task); throw new Error(`Maintenance investigation is incomplete: ${result.summary}`); }
       await this.learnings.note(scope, result.learnings, roleId, by);
       // One commit per task: the builder's work joins the branch's one commit, under its title.
-      const sha = await git.commitAll(repository.worktree!, this.updates.message(scope));
+      await git.commitAll(repository.worktree!, this.updates.message(scope));
       if (updating) {
         // A first review, an unreviewed fix, or work beyond the conflicts needs the whole planned review.
         // Check the saved code too: older updates recorded a head without recording any completed review.
@@ -106,6 +110,7 @@ export class Work {
       } else delete repository.reviewedTree;
       await this.updates.fold(scope);
       const builtTree = await git.treeOf(repository.worktree!);
+      const changed = startingTree && builtTree ? startingTree !== builtTree : undefined;
       if (repository.checks) repository.checks.current = repository.checks.tree === builtTree;
       const buildReport = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
       if (buildReport && builtTree) buildReport.versions = { [repository.productId]: builtTree };
@@ -140,11 +145,18 @@ export class Work {
           if (answer.fixed) fixed += 1;
         }
         task.fixing = false;
+        recordStepResult(task, { findings: given });
       }
-      if (!updating) this.k.log(scope, "done", sha ? `Build done: ${result.summary}` : "Build done, with no changes to the code", roleId, by);
+      // A changed return awaits verification. An unchanged return retains the unresolved problem,
+      // including when an earlier edit or check-definition change made that evidence outdated.
+      const problem = changed === true ? undefined : checkProblem({ checks: repository.checks });
+      const outcome = builderReturnWords(changed, problem, fixed);
+      const returnedStep = openStep(task);
+      if (returnedStep?.kind === "agent") returnedStep.builderReturn = { productId: repository.productId, ...(changed !== undefined ? { changed } : {}), claimedFixes: fixed, outcome };
+      if (!updating) this.k.log(scope, "done", `${outcome}: ${result.summary}`, roleId, by);
       endAgentStep(
         task,
-        updating ? { outcome: W.broughtUpToDate, reason: sourceName === "main" ? W.upToDate : `up to date with ${sourceName}` } : fixing ? { outcome: W.fixed(fixed), reason: W.fixesReady } : { outcome: sha ? W.built : W.unchanged, reason: W.readyForReview },
+        updating ? { outcome: W.broughtUpToDate, reason: sourceName === "main" ? W.upToDate : `up to date with ${sourceName}` } : fixing || (changed === false && problem) ? { outcome, reason: outcome, ...(problem ? { tone: "back" as const } : {}) } : { outcome: changed === false ? W.unchanged : W.built, reason: W.readyForReview },
         Date.now(),
       );
     } else if (role?.result === "checks") {

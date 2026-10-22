@@ -155,7 +155,7 @@ export const COLUMN_LABEL: Record<Column, string> = {
   designing: "Designing",
   building: "Building",
   reviewing: "Reviewing",
-  ready: "Ready to ship",
+  ready: "Delivery",
   done: "Done",
 };
 

@@ -255,7 +255,7 @@ export type JourneyTone = "on" | "back" | "stuck";
 export type JourneyWait = GateKind | "call" | "stuck" | "shipping";
 
 /** Petrina's own work, with no agent: running the product's checks, finding main moved on, and publishing the delivery. */
-export type JourneyWork = "checks" | "update" | "delivery";
+export type JourneyWork = "checks" | "check-reuse" | "update" | "delivery";
 
 /** A question or permission request asked during a step, with how the coordinator answered. */
 export interface JourneyAsk {
@@ -299,6 +299,8 @@ export interface JourneyStep {
   result?: { objections?: readonly Objection[]; findings?: readonly Finding[] };
   /** Whether the builder continued its saved conversation or began a fresh one for this step. */
   builderConversation?: "resumed" | "new";
+  /** Observed contents for this return, independent of the Builder's claims. */
+  builderReturn?: { productId: Id; changed?: boolean; claimedFixes: number; outcome: string };
   /** Created with exact per-turn usage attribution enabled. Older steps may need time-based evidence. */
   usageTracked?: boolean;
   /** The builder bringing the work up to date with main. */
@@ -370,6 +372,10 @@ export interface JourneyProductCheck {
   namedFailures?: readonly { name: string; file?: string }[];
   /** Original run, including its complete diagnostic link. Never points to a later run. */
   run?: CheckRun;
+  /** When saved evidence was selected; never an execution start. */
+  reusedAt?: number;
+  /** Original recorded attempt, including entries skipped without execution. */
+  source?: CheckRun["source"];
   name: string;
   result: "pending" | "running" | "pass" | "fail" | "did-not-finish" | "stopped" | "skipped";
   startedAt?: number;
@@ -496,6 +502,8 @@ export interface ConversationNote {
   sessionId: string;
   /** The working copy's commit when the step first started. */
   head?: string;
+  /** Actual committable contents before this Builder turn, retained across continuation and restart. */
+  builderTree?: string;
   /**
    * What the step's agent may change, as it stood when the step first started. A restart keeps it,
    * so a role made read-only meanwhile never undoes work its agent already did.
@@ -941,6 +949,11 @@ export interface CheckRun {
   command: string;
   ok: boolean;
   ms: number;
+  startedAt?: number;
+  endedAt?: number;
+  source?: { stepId: Id; attemptId: string; checkId: string };
+  /** Confirmed machine event overlapping this execution, not an inferred failure cause. */
+  interruption?: { source: "macOS power log"; at: number; event: string };
   /** The end of the command's output, as plain text. */
   output: string;
   /** Private complete output on this machine, independent of the working copy and prompt excerpt. */

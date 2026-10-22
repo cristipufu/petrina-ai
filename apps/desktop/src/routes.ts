@@ -5,7 +5,7 @@ import type { SheetTab } from "./components/TaskCard";
 
 export const PAGE_NAMES: Record<Page, string> = { board: "Board", history: "History", products: "Products", routines: "Routines", agents: "Agents", analytics: "Analytics", library: "Library", settings: "Settings" };
 const TABS: readonly SheetTab[] = ["overview", "plan", "design", "review", "session"];
-const OWN_PARAMS = ["product", "from", "node", "historyCursor", "historyQuery", "historyPrevious", "historyStatus", "routine"];
+const OWN_PARAMS = ["product", "from", "node", "attempt", "historyCursor", "historyQuery", "historyPrevious", "historyStatus", "routine"];
 
 /** Keep the browser's open-in-new-tab and copy-link behaviour. */
 export function followLink(event: MouseEvent<HTMLAnchorElement>, navigate: () => void): void {
@@ -14,7 +14,7 @@ export function followLink(event: MouseEvent<HTMLAnchorElement>, navigate: () =>
   navigate();
 }
 
-export type TaskRoute = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string; stepId?: string };
+export type TaskRoute = { taskId: string; tab: SheetTab; list: TaskList; itemId?: string; stepId?: string; attemptId?: string };
 export interface AppRoute {
   view: Page;
   product: string;
@@ -46,7 +46,8 @@ export function readRoute(address: URL): AppRoute {
     const from = address.searchParams.get("from");
     const view = from && Object.hasOwn(PAGE_NAMES, from) ? from as Page : "board";
     const stepId = address.searchParams.get("node");
-    return { ...base, view, ...(view === "history" ? historyState() : {}), ...(view === "routines" && address.searchParams.get("routine") ? { routineRuns: { id: address.searchParams.get("routine")!, ...historyState() } } : {}), sheet: { taskId: id, tab: detail as SheetTab || "overview", list: view === "board" ? "board" : view === "history" || view === "routines" && !!address.searchParams.get("routine") ? "history" : undefined, ...(stepId ? { stepId } : {}) } };
+    const attemptId = address.searchParams.get("attempt");
+    return { ...base, view, ...(view === "history" ? historyState() : {}), ...(view === "routines" && address.searchParams.get("routine") ? { routineRuns: { id: address.searchParams.get("routine")!, ...historyState() } } : {}), sheet: { taskId: id, tab: detail as SheetTab || "overview", list: view === "board" ? "board" : view === "history" || view === "routines" && !!address.searchParams.get("routine") ? "history" : undefined, ...(stepId ? { stepId, ...(attemptId ? { attemptId } : {}) } : {}) } };
   }
   if (page && Object.hasOwn(PAGE_NAMES, page)) {
     const route = { ...base, view: page as Page, ...(page === "history" ? historyState() : {}) };
@@ -75,6 +76,7 @@ export function routeHref(route: AppRoute, search = window.location.search): str
     if (route.view !== "board") query.set("from", route.view);
     if (route.view === "routines" && route.routineRuns) query.set("routine", route.routineRuns.id);
     if (route.sheet.stepId) query.set("node", route.sheet.stepId);
+    if (route.sheet.stepId && route.sheet.attemptId) query.set("attempt", route.sheet.attemptId);
   } else if (route.view === "routines" && route.routineRuns) path += `/${encodeURIComponent(route.routineRuns.id)}/runs`;
   else if (route.view === "library" && route.libraryView) path += `/${route.libraryView}`;
   else if (route.view === "products" && route.productSettings) path += `/${encodeURIComponent(route.productSettings)}/settings`;
