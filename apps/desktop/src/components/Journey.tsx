@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import { Activity, ArrowRight, Bot, ChevronRight, ClipboardCheck, Clock3, CornerDownRight, FileInput, MessageSquare, SlidersHorizontal, Timer, Ban, Check, Flag, GitBranch, Hourglass, LocateFixed, Maximize, MessageCircle, Pencil, RotateCw, User, Wrench, X, ZoomIn, ZoomOut } from "lucide-react";
-import { decisionEvidence, profileModelName, journeyView, journeyViewKey, landingOf, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
+import { decisionEvidence, dependencyLanding, profileModelName, journeyView, journeyViewKey, quoteTitles, type JourneyAsk, type JourneyNode, type JourneyView, type Role, type State, type Task } from "@petrina/core";
 import { ago, duration, EFFORT_LABEL, profileText, type Lookup } from "../lib";
 import { layoutJourney, type EdgeKind, type ItemKind, type LaidItem } from "../journeyLayout";
 import { RoleAvatar } from "./bits";
@@ -118,7 +118,7 @@ function visibleStepName(node: JourneyNode): string {
 }
 
 /** Where a task the journey waited for stands. */
-const LANDING_WORDS: Record<ReturnType<typeof landingOf>, string> = {
+const LANDING_WORDS: Record<ReturnType<typeof dependencyLanding>, string> = {
   landed: "landed",
   "awaiting-merge": "not landed yet: awaiting merge",
   closed: "did not land: closed without merging",
@@ -634,7 +634,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, on
                   const other = find.task(entry.id) ?? find.finishedTask(entry.id);
                   return (
                     <span key={entry.id} className="journey-waits">
-                      “{other?.title ?? entry.title}” <span className="quiet-text">{other ? LANDING_WORDS[landingOf(other)] : "no longer on the board"}</span>
+                      “{other?.title ?? entry.title}” <span className="quiet-text">{other ? LANDING_WORDS[dependencyLanding(other)] : "no longer on the board"}</span>
                     </span>
                   );
                 })}

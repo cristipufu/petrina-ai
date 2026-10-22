@@ -4,9 +4,9 @@ import { resolve } from 'node:path';
 import type { Window as HappyWindow } from 'happy-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { builderCheckSummary, gateTitle, gateStatus, deliveryLabel, beginAgentStep, endAgentStep, beginYouStep, decisionEvidence, recordStepResult, recordCheckReuse, Simulator, repositoryTaskView, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task, type DeepMutable } from '@petrina/core';
+import { blocksDependents, historyItem, builderCheckSummary, gateTitle, gateStatus, deliveryLabel, beginAgentStep, endAgentStep, beginYouStep, decisionEvidence, recordStepResult, recordCheckReuse, Simulator, repositoryTaskView, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task, type DeepMutable } from '@petrina/core';
 import { App } from '../src/App';
-import { JourneyEdge, JourneyList, spokenStep, startWords } from '../src/components/Journey';
+import { Journey, JourneyEdge, JourneyList, spokenStep, startWords } from '../src/components/Journey';
 import { layoutJourney } from '../src/journeyLayout';
 import { deliveryText, lookup } from '../src/lib';
 import { repairedReviewFixture } from './reviewRoundFixture';
@@ -920,6 +920,46 @@ it("labels creation separately from the actual execution start", () => {
   expect(startWords({ ...view, start: { kind: "started", at: NOW - 60_000 } }, NOW)).toBe("Started 1m ago");
 });
 
+
+describe('prerequisite outcomes in Waiting for others details', () => {
+  const pr = { number: 44, url: 'https://example.test/44', openedAt: NOW };
+  const local = { productId: 'local', delivery: 'local' as const, completedStages: [], landed: { branch: 'main', sha: 'abc' } };
+  const merged = { productId: 'merged', delivery: 'pull-request' as const, completedStages: [], pr: { ...pr, state: 'merged' as const } };
+  const open = { ...merged, productId: 'companion', pr: { ...pr, number: 55, state: 'open' as const } };
+  const closed = { ...open, pr: { ...open.pr, state: 'closed' as const } };
+  const cases = [
+    { name: 'local delivery with an open companion', works: [local, open], state: 'pr-open', words: 'not landed yet: awaiting merge', blocks: true },
+    { name: 'merged delivery with a closed companion', works: [merged, closed], state: 'pr-open', words: 'did not land: closed without merging', blocks: true },
+    { name: 'fully landed shared work', works: [local, merged], state: 'done', words: 'landed', blocks: false },
+    { name: 'a single open pull request', works: [open], state: 'pr-open', words: 'not landed yet: awaiting merge', blocks: true },
+    { name: 'a single merged pull request', works: [merged], state: 'done', words: 'landed', blocks: false },
+    { name: 'a single closed pull request', works: [closed], state: 'done', words: 'did not land: closed without merging', blocks: true },
+  ] as const;
+
+  for (const historical of [false, true]) {
+    it.each(cases)(`shows $name using ${historical ? 'History' : 'live'} evidence`, async ({ works, state: taskState, words, blocks }) => {
+      const demo = createDemoState(NOW);
+      const base = taskOf(demo, 'dark-mode');
+      const prerequisite = repositoryTaskView({ ...base, state: historical ? 'done' : taskState, repositories: works }, works[0]!);
+      const waiting = taskOf(demo, 'tag-search');
+      const state: State = { ...demo, tasks: historical ? [waiting] : [waiting, prerequisite], history: historical ? { ...demo.history!, dependencies: [{ ...historyItem(prerequisite), blocksDependents: blocks }] } : undefined };
+      expect(blocksDependents(prerequisite)).toBe(blocks);
+      await render(<Journey task={waiting} state={state} find={lookup(state)} onPlan={() => {}} onReadSession={() => {}} />);
+      await act(async () => host.querySelector<HTMLElement>('.journey-list li')!.click());
+      expect(host.querySelector('#journey-details-title')!.textContent).toContain('Waiting for others');
+      expect(host.querySelector('.journey-waits')!.textContent).toBe(`“${prerequisite.title}” ${words}`);
+    });
+  }
+
+  it('keeps the recorded title when a prerequisite is unavailable', async () => {
+    const demo = createDemoState(NOW);
+    const waiting = taskOf(demo, 'tag-search');
+    const state = { ...demo, tasks: [waiting], history: undefined };
+    await render(<Journey task={waiting} state={state} find={lookup(state)} onPlan={() => {}} onReadSession={() => {}} />);
+    await act(async () => host.querySelector<HTMLElement>('.journey-list li')!.click());
+    expect(host.querySelector('.journey-waits')!.textContent).toBe('“Dark mode” no longer on the board');
+  });
+});
 
 it.each(['local', 'release'] as const)('opens a shared task delivered by %s alongside an open pull request', async (delivery) => {
   const state = createDemoState(NOW);

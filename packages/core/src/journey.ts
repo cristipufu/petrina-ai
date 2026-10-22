@@ -8,6 +8,7 @@ import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, Jo
 import { decisionEvidence, evidenceFor, incompleteCheckOutcome, latestCheckResults, reusedCheckWords } from "./check-evidence.js";
 import { queueOf } from "./scheduler.js";
 import { reviewerAt, roleForTask } from "./roles.js";
+import type { HistoryItem } from "./history.js";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -122,18 +123,20 @@ export function landingOf(task: Pick<Task, "state" | "pr" | "release" | "landed"
 }
 
 /** A prerequisite is the whole task. Keep aggregation out of displayed-product outcomes. */
-function dependencyLanding(task: Parameters<typeof landingOf>[0] & Pick<Task, "repository" | "repositories">): Landing {
+export function dependencyLanding(task: Parameters<typeof landingOf>[0] & Pick<Task, "repository" | "repositories"> & Pick<HistoryItem, "deliveries">): Landing {
   if (task.state === "cancelled") return "cancelled";
   if (task.state === "done" && task.maintenance?.noProductChanges) return "no-changes";
   // Engine records keep delivery on its repository owner; public task views flatten one owner.
   // Read every shared delivery so a successful lead cannot hide an unsuccessful companion.
-  if (task.repositories?.length) {
-    const outcomes = task.repositories.map((work) => work.nothingToPublish ? "no-changes" : landingOf({ state: task.state, pr: work.pr, release: work.release, landed: work.landed }));
+  const deliveryLanding = (work: Pick<Task, "pr" | "release" | "landed"> & { nothingToPublish?: boolean }): Landing =>
+    work.nothingToPublish ? "no-changes" : work.pr?.state === "open" ? "awaiting-merge" : landingOf({ state: task.state, pr: work.pr, release: work.release, landed: work.landed });
+  const deliveries = task.repositories ?? task.deliveries;
+  if (deliveries?.length) {
+    const outcomes = deliveries.map(deliveryLanding);
     for (const outcome of ["closed", "marked-done", "awaiting-merge", "open"] as const) if (outcomes.includes(outcome)) return outcome;
     return outcomes.every((outcome) => outcome === "no-changes") ? "no-changes" : "landed";
   }
-  if (task.repository) return landingOf({ state: task.state, pr: task.repository.pr, release: task.repository.release, landed: task.repository.landed });
-  return landingOf(task);
+  return deliveryLanding(task.repository ?? task);
 }
 
 /** Waiting for other tasks to land: the timeline's words and the task's status line. */
