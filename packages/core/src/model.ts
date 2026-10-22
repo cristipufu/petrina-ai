@@ -318,7 +318,7 @@ export interface JourneyStep {
   team?: readonly Id[];
   /**
    * The positions the step expects a result from, recorded by the engine as it admits participants: a review
-   * round's reviewer places (`reviewer:0`, `reviewer:1`) or a vote's electorate (`verifier:<planned profile>`).
+   * round's reviewer places (`reviewer:0`, `reviewer:1`) or a vote's places (`verifier:<place>`, see `JourneyAgentInput.place`).
    * Profiles that start or stand in fill these positions; a planned seat nobody started is still expected.
    */
   seats?: readonly string[];
@@ -468,6 +468,8 @@ export interface JourneyAgentInput {
   profileId: Id;
   /** Distinguishes reviewer seats even when their role and profile are identical. */
   reviewerKey?: Id;
+  /** A vote's place, kept through usage replacements: its original planned profile, or `third:<profile>` for a third answer. */
+  place?: string;
   requestedProfileId?: Id;
   selectionReason?: string;
   /** Settings confirmed by the native tool when this turn opened. */
@@ -747,10 +749,16 @@ export interface Finding {
   confirmedBy: readonly Id[];
   /** Later reviewers who think it is wrong, and why. */
   disputes?: readonly FindingDispute[];
-  /** The outcome of checking an Important finding before it could send work back: the majority's verdict. */
+  /** The outcome of checking an Important finding before it could send work back (see `VerifierPanel`). */
   verification?: FindingVerification;
   /** Each voter's verdict, when fresh agents voted on it. */
   votes?: readonly Vote[];
+  /**
+   * A completed ballot that still needed a third answer when no independent tool was ready to give one.
+   * It stays Important without a verification, and its completed ballot is not repeated on unchanged evidence.
+   * The reviewed commits, and their trees where recorded, tell whether a later reproduction is on changed code.
+   */
+  unresolved?: { at: number; reason: string; heads?: Readonly<Record<Id, string>>; trees?: Readonly<Record<Id, string>> };
   /** When a review reopened a fix or dismissal. Earlier support does not judge the new reproduction. */
   reopenedAt?: number;
   /** Evidence from before a finding was reopened, retained as history rather than current support. */
@@ -762,6 +770,7 @@ export interface Finding {
     disputes?: readonly FindingDispute[];
     verification?: FindingVerification;
     votes?: readonly Vote[];
+    unresolved?: Finding["unresolved"];
     answer?: { fixed: boolean; text: string; at: number };
     resolution?: Finding["resolution"];
   }[];
@@ -825,10 +834,12 @@ export interface Hunt {
   screenTurns?: Readonly<Record<string, { reason: string; at: number; copy: string; copies?: Readonly<Record<Id, string>>; conversation: ConversationNote; allowed?: boolean }>>;
   /** Per actual voter profile, whether it finished the round's findings. Older records used planned profiles. */
   voted?: Readonly<Record<Id, true>>;
-  /** Required independent ballot seats, fixed when voting begins and retained through a drain. */
+  /** Older rounds' required ballot seats, one per tool, kept with their majority rule until they finish. */
   voterProfiles?: readonly Id[];
-  /** A required voter seat replaced on a different independent tool; accepted partial votes stay. */
+  /** An older round's voter seat replaced on a different independent tool; accepted partial votes stay. */
   voterReplacements?: Readonly<Record<Id, { from: Id; reason: string }>>;
+  /** The verifier panel saved when voting began, with every place it still requires. */
+  panel?: VerifierPanel;
   /** How many findings the task had when the round began: what the round's reviewers raise comes after. */
   findings?: number;
   /** Each parallel agent's starting role, by reviewer place or voter profile, through interruptions. */
@@ -856,6 +867,44 @@ export interface Vote {
   plannedProfileId?: Id;
   verdict: FindingVerification["verdict"];
   reason: string;
+  /** The ballot it answered: review stage, round, reviewed versions and panel place. Older votes have none. */
+  ballot?: { stageId: Id; round: number; seat: string; versions?: Readonly<Record<Id, string>> };
+}
+
+/**
+ * Who verifies a round's Important findings. `bounded`: two fresh verifiers on different actual tools (one when only one
+ * is usable), chosen from the tools usable when the panel was saved; any real answer keeps a finding Important, and a
+ * finding both call not blocking gets a third independent answer when that saved set had a third tool. `majority`: an
+ * older round's panel of one voter per tool, settled by its original rule until it finishes.
+ */
+export interface VerifierPanel {
+  rule: "bounded" | "majority";
+  /** Actual tools usable when the panel was chosen, in stable order. Later recovery or registration never enlarges it. */
+  usable: readonly Id[];
+  /** Each finding's author tool the selection avoided where it could; unknown attribution is absent. */
+  authors?: Readonly<Record<Id, Id>>;
+  /** Every place the panel requires, in admission order. */
+  seats: readonly VerifierSeat[];
+  /** When the initial places finished and targeted third answers were decided. */
+  escalatedAt?: number;
+  /** Why a finding needed a third answer, or why none could be had, by finding id. */
+  escalations?: Readonly<Record<Id, { reason: string; unresolved?: true }>>;
+}
+
+/** One required verifier place: its own identity, assigned finding ids and the tool currently planned for it. */
+export interface VerifierSeat {
+  /** Never reused within the panel. Votes name it, so a tool answering twice is never mistaken for one place. */
+  key: string;
+  /** The planned profile; a usage replacement on another tool takes the place over. */
+  profileId: Id;
+  toolId: Id;
+  findingIds: readonly Id[];
+  /** A targeted third answer, admitted as its own step once the initial places finished. */
+  third?: true;
+  /** Why this place was chosen, in plain words. */
+  reason: string;
+  /** The place's replacement on another independent tool; accepted answers remain attributed to who gave them. */
+  replaced?: { from: Id; reason: string };
 }
 
 export interface FindingVerification {

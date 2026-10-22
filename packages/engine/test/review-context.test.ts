@@ -3,12 +3,13 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as gitOps from "../src/git.js";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beginAgentStep, BUILT_IN_ROLES, createDemoState, type DeepMutable, type Finding, type Task } from "@petrina/core";
+import { beginAgentStep, BUILT_IN_ROLES, createDemoState, panelAnswers, seatRemaining, type DeepMutable, type Finding, type Task } from "@petrina/core";
 import { Context } from "../src/context.js";
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor, repositoryView, scopesFor } from "../src/repository-context.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewConversationScope } from "../src/review-context.js";
+import { ReviewResult } from "../src/roles.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "./fixtures.js";
 import type { Scenario } from "./fake-agent.js";
@@ -66,6 +67,26 @@ describe("immutable review inputs", () => {
     } finally { await f.engine.shutdown(); }
   });
 
+  it("keeps a later review stage's ballot to its own answers, never re-asking a finding left unresolved earlier", async () => {
+    const f = await bare();
+    try {
+      const code = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high", "opus-high"] };
+      const security = { id: "security", title: "Security review", kind: "review-chain" as const, roleId: "security-reviewer", profileIds: ["sol-high", "opus-high"] };
+      f.task.plan = { rationale: "Verify", plannerProfileId: "sol-high", stages: [code, security] }; f.task.stageIndex = 1;
+      const codeBallot = { stageId: code.id, round: 1, seat: "sol-high", versions: { p: f.first } };
+      f.task.findings = [
+        { id: "unresolved", text: "Both first answers called it a nit", severity: "blocking", raisedBy: "grok-high", confirmedBy: [], status: "open", votes: [{ by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: "nit", reason: "Only a nit on the code review's ballot.", ballot: codeBallot }], unresolved: { at: 1, reason: "No ready independent tool could give the third answer." } },
+        { id: "security-finding", text: "Anyone can ask for the greeting.", severity: "blocking", raisedBy: "grok-high", confirmedBy: [], status: "open", votes: [{ by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: "not-a-bug", reason: "An answer on the code review's ballot.", ballot: codeBallot }] },
+      ];
+      f.task.hunt = { stageId: security.id, round: 1, reported: { "0": true, "1": true }, findings: 0, input: { file: "input.json", digest: "d", heads: { p: f.first } } };
+      const vote = f.engine["reviews"]["pendingVote"](f.task, security)!;
+      expect(vote.findings.map((finding) => finding.id)).toEqual(["security-finding"]);
+      expect(vote.seats.map((seat) => seat.toolId).sort()).toEqual(["claude-code", "codex"]);
+      // The code review's Codex answer is history on this ballot: Codex's place still owes its own answer.
+      for (const seat of vote.seats) expect(seatRemaining(vote.panel!, seat, f.task.findings, f.task.hunt!)).toEqual(["security-finding"]);
+    } finally { await f.engine.shutdown(); }
+  });
+
   it("gives queued voters complete reproduction evidence without current peer ballots", async () => {
     const f = await bare();
     const reviews = f.engine["reviews"];
@@ -85,7 +106,9 @@ describe("immutable review inputs", () => {
       for (const member of members) await member.work(f.repo, () => true, member.profileId, () => {}, {} as never, false, signal);
     });
     try {
-      await reviews["vote"](f.task, f.task.findings, stage.profileIds, signal);
+      const ids = f.task.findings.map((finding) => finding.id);
+      const seats = stage.profileIds.map((profileId) => ({ key: profileId, profileId, toolId: f.engine.profile(profileId)!.toolId, findingIds: ids, reason: "Chosen for the initial pair." }));
+      await reviews["vote"](f.task, { findings: f.task.findings, seats, voters: stage.profileIds }, signal);
       expect(bodies).toHaveLength(2);
       for (const body of bodies) { expect(body).toContain("Exact reproduction"); expect(body).toContain(f.task.findings[0]!.evidence!); expect(body).not.toContain("CURRENT-PEER-BALLOT"); }
     } finally { together.mockRestore(); turn.mockRestore(); await f.engine.shutdown(); }
@@ -652,4 +675,209 @@ it("checks each seat's remembered bases, including missing, unchanged, forward, 
     f.scope.work.portReview = { from: f.base, head: f.first, onto: f.first, files: ["greeting.txt"] };
     expect((await reviewBaseUpdates(f.scope, bases, heads)).reason).toContain("conflict port review");
   } finally { await f.engine.shutdown(); }
+});
+
+describe("bounded verifier places after handoffs", () => {
+  type Hunted = { stageId: string; round: number; input?: { heads: Readonly<Record<string, string>> } };
+  const ballotOn = (hunt: Hunted, seat: string) => ({ stageId: hunt.stageId, round: hunt.round, seat, versions: { ...hunt.input!.heads } });
+  const answer = (hunt: Hunted, seat: string, by: string, toolId: string, verdict: "real" | "nit" | "not-a-bug") => ({ by, toolId, plannedProfileId: seat, verdict, reason: `${toolId} answered ${verdict} for its place.`, ballot: ballotOn(hunt, seat) });
+  const important = (id: string): DeepMutable<Finding> => ({ id, text: `The ${id} greeting is missing.`, severity: "blocking", raisedBy: "argon-high", confirmedBy: [], status: "open", evidence: `Opened the ${id} page.` });
+  const place = (key: string, profileId: string, toolId: string, findingIds: string[], extra: object = {}) => ({ key, profileId, toolId, findingIds, reason: "Chosen for the initial pair.", ...extra });
+  /** A review stage whose fallback verifiers are the stage's own tools, with admissions open and nothing scheduled. */
+  async function ballot(profileIds: string[], findingIds: string[], round = 1) {
+    const f = await bare();
+    const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds };
+    f.task.plan = { rationale: "Verify", plannerProfileId: "sol-high", stages: [stage] }; f.task.stageIndex = 0; f.task.rounds = { [stage.id]: round };
+    f.task.findings = findingIds.map(important);
+    f.engine.draining = false; f.engine.s.pool.paused = false;
+    // The stage's tools are the ready ones, whatever this machine has installed.
+    const offered = new Set(profileIds.map((id) => f.engine.profile(id)!.toolId));
+    f.engine.s.tools = f.engine.s.tools.map((tool) => ({ ...tool, status: offered.has(tool.id) ? "ready" as const : "not-installed" as const }));
+    const limit = (...tools: string[]) => { f.engine.s.pool.limited = tools.map((toolId) => ({ toolId, until: Date.now() + 3_600_000, reason: `${toolId}'s usage limit` })); };
+    return { ...f, stage, limit, reviews: f.engine["reviews"] };
+  }
+
+  it("records only what a takeover still owes, and its step still expects every place", async () => {
+    const f = await ballot(["opus-high", "sol-high", "grok-high"], ["a", "b"]);
+    const signal = new AbortController().signal;
+    const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
+    f.task.hunt = { stageId: f.stage.id, round: 1, reported: { "0": true, "1": true, "2": true }, findings: 2, input };
+    const hunt = f.task.hunt;
+    // Claude answered "a" before running out; Codex took over its place, which still owes "b". Grok answered both.
+    f.task.findings[0]!.votes = [answer(hunt, "opus-high", "opus-high", "claude-code", "nit"), answer(hunt, "grok-high", "grok-high", "grok", "real")];
+    f.task.findings[1]!.votes = [answer(hunt, "grok-high", "grok-high", "grok", "real")];
+    const taken = place("opus-high", "sol-high", "codex", ["a", "b"], { replaced: { from: "opus-high", reason: "Claude Code ran out." } });
+    const grok = place("grok-high", "grok-high", "grok", ["a", "b"]);
+    hunt.panel = { rule: "bounded", usable: ["claude-code", "codex", "grok"], seats: [taken, grok] };
+    const bodies: string[] = [];
+    const expected: unknown[] = [];
+    const named: unknown[] = [];
+    let status = "";
+    const turn = spyOn(f.engine["turns"], "parallel").mockImplementation(async (_scope, _role, _profile, _copy, given, _schema, _signal, options) => {
+      bodies.push(JSON.stringify(await given()));
+      expected.push(options?.seats);
+      named.push([options?.key, options?.member, options?.place]);
+      // Shown only "b", the takeover also answers "a", which its place already holds from Claude Code.
+      await (options!.check as (value: unknown) => unknown)({ verdicts: [{ id: "a", verdict: "nit", reason: "An unasked answer on a finding this place already holds." }, { id: "b", verdict: "nit", reason: "The answer this place still owed." }] });
+      return undefined as never;
+    });
+    const together = spyOn(f.reviews as unknown as { together: typeof f.reviews["together"] }, "together").mockImplementation(async (_task, members, _signal, words) => {
+      status = words(1, 0);
+      for (const member of members) await member.work(f.repo, () => true, member.profileId, () => {}, {} as never, false, signal);
+    });
+    try {
+      await f.reviews["vote"](f.task, { findings: f.task.findings, seats: [hunt.panel.seats[0]!], voters: ["sol-high"], phase: [...hunt.panel.seats], panel: hunt.panel }, signal);
+      const shown = JSON.parse(bodies[0]!).map((section: { body: string }) => section.body).at(-1) as string;
+      expect(shown).toContain("- [b]");
+      expect(shown).not.toContain("- [a]");
+      expect(panelAnswers(hunt.panel, f.task.findings[0]!, hunt).map((vote) => [vote.toolId, vote.verdict])).toEqual([["claude-code", "nit"], ["grok", "real"]]);
+      expect(f.task.findings[0]!.votes).toHaveLength(2);
+      expect(panelAnswers(hunt.panel, f.task.findings[1]!, hunt).map((vote) => [vote.toolId, vote.verdict])).toEqual([["grok", "real"], ["codex", "nit"]]);
+      // The step expects Grok's finished place as well as the one being taken over, each named by its place.
+      expect(expected).toEqual([["verifier:opus-high", "verifier:grok-high"]]);
+      expect(named).toEqual([["verifier:opus-high", "vote-opus-high", "opus-high"]]);
+      expect(status).toBe("1 fresh agent voting on 2 important findings");
+    } finally { together.mockRestore(); turn.mockRestore(); await f.engine.shutdown(); }
+  });
+
+  it("counts only the findings a third answer was given in its live status", async () => {
+    const f = await ballot(["opus-high", "sol-high", "grok-high"], ["a", "b"]);
+    const signal = new AbortController().signal;
+    const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
+    f.task.hunt = { stageId: f.stage.id, round: 1, reported: { "0": true, "1": true, "2": true }, findings: 2, input };
+    const third = place("third:opus-high", "opus-high", "claude-code", ["b"], { third: true, reason: "Third answer." });
+    f.task.hunt.panel = { rule: "bounded", usable: ["claude-code", "codex", "grok"], seats: [place("sol-high", "sol-high", "codex", ["a", "b"]), place("grok-high", "grok-high", "grok", ["a", "b"]), third], escalatedAt: 1 };
+    let status = "";
+    const together = spyOn(f.reviews as unknown as { together: typeof f.reviews["together"] }, "together").mockImplementation(async (_task, _members, _signal, words) => { status = words(1, 0); });
+    try {
+      await f.reviews["vote"](f.task, { findings: f.task.findings, seats: [third], voters: ["opus-high"], phase: [third], third: true, panel: f.task.hunt.panel }, signal);
+      expect(status).toBe("1 fresh agent giving a third answer on 1 important finding");
+    } finally { together.mockRestore(); await f.engine.shutdown(); }
+  });
+
+  it("never gives two unfinished places one tool at once, and lets a tool that finished one place take another", async () => {
+    const f = await ballot(["opus-high", "sol-high", "grok-high"], ["x", "y"]);
+    f.task.hunt = { stageId: f.stage.id, round: 1, reported: { "0": true, "1": true, "2": true }, findings: 0, input: { file: "input.json", digest: "d", heads: { p: f.first } } };
+    const hunt = f.task.hunt;
+    // Complementary partial answers: Claude Code answered x, Grok answered y. Both then run out.
+    f.task.findings[0]!.votes = [answer(hunt, "opus-high", "opus-high", "claude-code", "nit")];
+    f.task.findings[1]!.votes = [answer(hunt, "grok-high", "grok-high", "grok", "nit")];
+    hunt.panel = { rule: "bounded", usable: ["claude-code", "codex", "grok"], seats: [place("opus-high", "opus-high", "claude-code", ["x", "y"]), place("grok-high", "grok-high", "grok", ["x", "y"])] };
+    f.limit("claude-code", "grok");
+    try {
+      const vote = f.reviews["pendingVote"](f.task, f.stage)!;
+      // Codex takes one place; the other waits while Codex still works there.
+      expect(hunt.panel.seats.map((seat) => [seat.key, seat.toolId])).toEqual([["opus-high", "codex"], ["grok-high", "grok"]]);
+      expect(vote.voters).toEqual(["sol-high", "grok-high"]);
+      // Codex finished that place: it never answered x, so it takes the other place under that place's own name.
+      f.task.findings[1]!.votes = [...f.task.findings[1]!.votes!, answer(hunt, "opus-high", "sol-high", "codex", "nit")];
+      const next = f.reviews["pendingVote"](f.task, f.stage)!;
+      expect(next.seats.map((seat) => [seat.key, seat.toolId, seat.profileId])).toEqual([["grok-high", "codex", "sol-high"]]);
+      expect(next.phase!.map((seat) => seat.key)).toEqual(["opus-high", "grok-high"]);
+      // A short same-conversation retry for Codex is looked up under the unfinished place it now works.
+      expect(f.engine["usageCoordinator"]["votePlace"](f.task, "sol-high")).toBe("vote-grok-high");
+    } finally { await f.engine.shutdown(); }
+  });
+
+  for (const finished of [true, false]) it(`${finished ? "lets a tool that finished another finding's third answer give a stalled one" : "keeps a stalled third answer waiting while the free tool still works another place"}`, async () => {
+    const f = await ballot(["opus-high", "sol-high", "grok-high", "argon-high"], ["x", "y"]);
+    f.task.hunt = { stageId: f.stage.id, round: 1, reported: { "0": true, "1": true, "2": true, "3": true }, findings: 0, input: { file: "input.json", digest: "d", heads: { p: f.first } } };
+    const hunt = f.task.hunt;
+    // After partial handoffs x has Codex and Grok, y has Claude Code and Grok: separate third places.
+    f.task.findings[0]!.votes = [answer(hunt, "sol-high", "sol-high", "codex", "nit"), answer(hunt, "grok-high", "grok-high", "grok", "nit"), ...(finished ? [answer(hunt, "third:argon-high", "argon-high", "antigravity", "nit")] : [])];
+    f.task.findings[1]!.votes = [answer(hunt, "sol-high", "opus-high", "claude-code", "nit"), answer(hunt, "grok-high", "grok-high", "grok", "nit")];
+    hunt.panel = { rule: "bounded", usable: ["claude-code", "codex", "grok", "antigravity"], escalatedAt: 1, seats: [
+      place("sol-high", "sol-high", "codex", ["x", "y"]), place("grok-high", "grok-high", "grok", ["x", "y"]),
+      place("third:argon-high", "argon-high", "antigravity", ["x"], { third: true }), place("third:sol-high", "sol-high", "codex", ["y"], { third: true }),
+    ] };
+    // y's third tool runs out; Antigravity stays free and has never answered y.
+    f.limit("codex");
+    try {
+      const vote = f.reviews["pendingVote"](f.task, f.stage)!;
+      const y = hunt.panel.seats.find((seat) => seat.key === "third:sol-high")!;
+      if (finished) {
+        expect([y.toolId, y.profileId]).toEqual(["antigravity", "argon-high"]);
+        expect(y.replaced?.reason).toContain("takes its required seat on a different tool");
+        expect(vote.seats.map((seat) => seat.key)).toEqual(["third:sol-high"]);
+      } else {
+        expect(y.toolId).toBe("codex");
+        expect(vote.seats.map((seat) => [seat.key, seat.toolId])).toEqual([["third:argon-high", "antigravity"], ["third:sol-high", "codex"]]);
+      }
+    } finally { await f.engine.shutdown(); }
+  });
+
+  for (const [name, limited, profiles, expected] of [
+    ["waits for the saved third tool rather than one left out at selection", ["claude-code", "antigravity"], ["opus-high", "sol-high", "grok-high", "argon-high"], { toolId: "antigravity" }],
+    ["lets a tool left out at selection answer only when it can start now", ["antigravity"], ["opus-high", "sol-high", "grok-high", "argon-high"], { toolId: "claude-code" }],
+    ["leaves the finding unresolved rather than waiting for a tool left out at selection", ["claude-code"], ["opus-high", "sol-high", "grok-high"], { unresolved: true }],
+  ] as const) it(`${name}`, async () => {
+    const f = await ballot([...profiles], ["f"]);
+    f.task.hunt = { stageId: f.stage.id, round: 1, reported: Object.fromEntries(profiles.map((_, index) => [String(index), true as const])), findings: 0, input: { file: "input.json", digest: "d", heads: { p: f.first } } };
+    const hunt = f.task.hunt;
+    // Claude Code was out of usage when the panel was saved; both first answers say the finding does not block.
+    f.task.findings[0]!.votes = [answer(hunt, "sol-high", "sol-high", "codex", "nit"), answer(hunt, "grok-high", "grok-high", "grok", "nit")];
+    hunt.panel = { rule: "bounded", usable: ["codex", "grok", "antigravity"], seats: [place("sol-high", "sol-high", "codex", ["f"]), place("grok-high", "grok-high", "grok", ["f"])] };
+    f.limit(...limited);
+    try {
+      const vote = f.reviews["pendingVote"](f.task, f.stage);
+      const third = hunt.panel.seats.filter((seat) => seat.third);
+      if ("unresolved" in expected) {
+        expect(third).toEqual([]);
+        expect(hunt.panel.escalations?.f?.unresolved).toBe(true);
+        expect(vote?.seats).toEqual([]);
+      } else {
+        expect(third.map((seat) => [seat.toolId, seat.findingIds])).toEqual([[expected.toolId, ["f"]]]);
+        expect(vote?.seats.map((seat) => seat.toolId)).toEqual([expected.toolId]);
+      }
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("reopens a finding a vote left unresolved when a reviewer brings a current reproduction", async () => {
+    const f = await ballot(["sol-high", "opus-high"], ["u", "kept"], 2);
+    const round1 = { stageId: f.stage.id, round: 1, input: { heads: { p: f.base } } };
+    for (const finding of f.task.findings) {
+      finding.votes = [answer(round1, "sol-high", "sol-high", "codex", "nit"), answer(round1, "grok-high", "grok-high", "grok", "nit")];
+      finding.unresolved = { at: 1, reason: "No ready independent tool could give the third answer.", heads: { p: f.base } };
+    }
+    f.task.hunt = { stageId: f.stage.id, round: 2, reported: {}, findings: 2, input: { file: "input.json", digest: "d", heads: { p: f.first } } };
+    try {
+      const evidence = "On the changed code the u greeting is still missing: expected Hello Ada, observed Hello. The kept page shows its greeting.";
+      await f.reviews["applyReview"](f.scope, f.stage, ReviewResult.parse({ verdict: "fail", findings: [], confirms: [{ id: "u", evidence }, "kept"], disputes: [] }), "argon-high", "code-reviewer", "0");
+      const u = f.task.findings[0]!, kept = f.task.findings[1]!;
+      expect(u.unresolved).toBeUndefined();
+      expect(u.votes).toBeUndefined();
+      expect(u.reopenedAt).toBeDefined();
+      expect(u.evidence).toBe(evidence);
+      expect(u.confirmedBy).toEqual(["argon-high"]);
+      expect(u.earlierReviews?.[0]?.unresolved?.reason).toBe("No ready independent tool could give the third answer.");
+      expect(u.earlierReviews?.[0]?.votes).toHaveLength(2);
+      // A confirmation without a reproduction keeps the unresolved episode, and its completed ballot is not repeated.
+      expect(kept.unresolved).toBeDefined();
+      expect(kept.votes).toHaveLength(2);
+      expect(f.reviews["ballotFindings"](f.task).map((finding) => finding.id)).toEqual(["u"]);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  // An older round may have saved only the commit; a later round of the same commit records its tree as well.
+  for (const recorded of ["commit", "commit and tree"] as const) it(`keeps a finding a vote left unresolved when a written confirmation arrives on the same code, its ${recorded} saved`, async () => {
+    const f = await ballot(["sol-high", "opus-high"], ["u"], 2);
+    const tree = git(f.repo, "rev-parse", `${f.first}^{tree}`);
+    const round1 = { stageId: f.stage.id, round: 1, input: { heads: { p: f.first } } };
+    const finding = f.task.findings[0]!;
+    finding.votes = [answer(round1, "sol-high", "sol-high", "codex", "nit"), answer(round1, "grok-high", "grok-high", "grok", "nit")];
+    finding.unresolved = { at: 1, reason: "No ready independent tool could give the third answer.", heads: { p: f.first }, ...(recorded === "commit" ? {} : { trees: { p: tree } }) };
+    const saved = structuredClone(finding.unresolved);
+    f.task.hunt = { stageId: f.stage.id, round: 2, reported: {}, findings: 1, input: { file: "input.json", digest: "d", heads: { p: f.first }, trees: { p: tree } } };
+    try {
+      const restated = "The u greeting is still missing: expected Hello Ada, observed Hello.";
+      await f.reviews["applyReview"](f.scope, f.stage, ReviewResult.parse({ verdict: "fail", findings: [], confirms: [{ id: "u", evidence: restated }], disputes: [] }), "argon-high", "code-reviewer", "0");
+      await f.reviews["applyReview"](f.scope, f.stage, ReviewResult.parse({ verdict: "fail", findings: [], confirms: [{ id: "u", evidence: restated }], disputes: [] }), "opus-high", "code-reviewer", "1");
+      expect(finding.unresolved).toEqual(saved);
+      expect(finding.votes).toHaveLength(2);
+      expect(finding.reopenedAt).toBeUndefined();
+      expect(finding.earlierReviews).toBeUndefined();
+      expect(finding.confirmedBy).toEqual(["argon-high", "opus-high"]);
+      expect(f.reviews["ballotFindings"](f.task)).toEqual([]);
+    } finally { await f.engine.shutdown(); }
+  });
 });

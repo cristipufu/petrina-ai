@@ -1,7 +1,7 @@
 import { messageRemovalText } from "@petrina/core";
 import { checkProblem, displayTask, originalCheck, reviewDecisionPending } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
-import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, taskLanding, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Landing, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
+import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, seatRemaining, taskLanding, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Landing, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { operation } from "./operations.js";
 import { offeredLessons } from "./learnings.js";
@@ -75,6 +75,24 @@ export function taskSummary(engine: Engine, task: Task) {
     errorShortened: (task.error?.length ?? 0) > 1000,
   };
 }
+/**
+ * A ballot's required places and who still owes answers. A bounded panel names each place with its tool, assigned
+ * finding ids, answers still owed and why it was chosen, plus the tools usable when it was saved and any third-answer decisions.
+ */
+function voterPlaces(engine: Engine, task: Task) {
+  const hunt = task.hunt!;
+  const panel = hunt.panel;
+  if (!panel) return {
+    requiredVoters: hunt.voterProfiles ?? [],
+    waitingVoters: (hunt.voterProfiles ?? []).filter((id) => !Object.keys(hunt.voted ?? {}).some((used) => engine.profile(used)?.toolId === engine.profile(id)?.toolId)),
+  };
+  const places = panel.seats.map((seat) => ({ key: seat.key, profileId: seat.profileId, toolId: seat.toolId, findingIds: seat.findingIds, owed: seatRemaining(panel, seat, task.findings, hunt), third: seat.third === true, reason: seat.replaced?.reason ?? seat.reason }));
+  return {
+    requiredVoters: [...new Set(panel.seats.map((seat) => seat.profileId))],
+    waitingVoters: [...new Set(places.filter((place) => place.owed.length).map((place) => place.profileId))],
+    verifierPanel: { rule: panel.rule, usableAtSelection: panel.usable, places, escalations: panel.escalations ?? {} },
+  };
+}
 export function drainStatus(engine: Engine) {
   const state = engine.activeState();
   const active = state.tasks.filter((task) => engine.settling.has(task.id) || engine.drivers.has(task.id) || task.holdsSlot);
@@ -107,10 +125,7 @@ export function drainStatus(engine: Engine) {
                 finishedReviewers: Object.keys(task.hunt.reported),
                 waitingReviewers: stage.profileIds.flatMap((profileId, index) => (task.hunt!.reported[String(index)] ? [] : [{ index, profileId }])),
                 finishedVoters: Object.keys(task.hunt.voted ?? {}),
-                requiredVoters: task.hunt.voterProfiles ?? [],
-                waitingVoters: (task.hunt.voterProfiles ?? []).filter(
-                  (id) => !Object.keys(task.hunt!.voted ?? {}).some((used) => engine.profile(used)?.toolId === engine.profile(id)?.toolId),
-                ),
+                ...voterPlaces(engine, task),
               },
             ]
           : [];

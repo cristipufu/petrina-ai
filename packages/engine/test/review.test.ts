@@ -50,9 +50,12 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
       }
       return found && state.inbox.some((item) => item.taskId === taskId && item.kind === "delivery") && found;
     }, ship ? "the work to ship" : "the delivery check", 60_000);
-    // One fresh voter per tool that can run here. With none installed, the two tools the reviewers were planned on.
-    const voters = engine.getState().tools.filter((tool) => tool.status === "ready").length || 2;
-    return { task, fakes, atOnce, repo, before, voters, root };
+    // A bounded pair of fresh voters from the tools that can run here (with none installed, the two tools the
+    // reviewers were planned on). A pair that both say not blocking asks a third tool when one more was usable.
+    const usable = engine.getState().tools.filter((tool) => tool.status === "ready").length || 2;
+    const voters = Math.min(2, usable);
+    const nonblocking = usable >= 3 ? 3 : voters;
+    return { task, fakes, atOnce, repo, before, voters, nonblocking, root };
   } finally {
     unsubscribe();
     await engine.shutdown();
@@ -91,11 +94,12 @@ describe.concurrent("reviews that converge", () => {
       expect(reopened.confirmedBy).toEqual([stage.profileIds[1]!]);
       expect(reopened.verification?.verdict).toBe("real");
       expect(reopened.votes).toHaveLength(run.voters);
+      expect(old.votes).toHaveLength(run.nonblocking);
       expect(reopened.earlierReviews).toHaveLength(1);
       expect(reopened.earlierReviews![0]!.evidence).toBe(old.evidence);
       expect(reopened.earlierReviews![0]!.verification?.verdict).toBe("not-a-bug");
       expect(reopened.earlierReviews![0]!.votes).toEqual(old.votes);
-      expect(run.fakes.openings("verifier")).toHaveLength(run.voters * 2);
+      expect(run.fakes.openings("verifier")).toHaveLength(run.nonblocking + run.voters);
       const corrections = run.fakes.received("code reviewer").filter((entry) => entry.text.startsWith("Your result block could not be used: Current evidence is required"));
       expect(corrections).toHaveLength(1);
       expect(run.fakes.received("code reviewer").find((entry) => entry.session === corrections[0]!.session)!.text).toContain("(dismissed)");
@@ -109,7 +113,7 @@ describe.concurrent("reviews that converge", () => {
       expect(saved.verification?.verdict).toBe("real");
       expect(saved.earlierReviews![0]!.verification?.verdict).toBe("not-a-bug");
       expect(saved.earlierReviews![0]!.votes).toEqual(old.votes?.map((vote) => ({ ...vote })));
-      expect(run.fakes.openings("verifier")).toHaveLength(run.voters * 2);
+      expect(run.fakes.openings("verifier")).toHaveLength(run.nonblocking + run.voters);
     } finally { await restored.shutdown(); }
   });
 
@@ -223,17 +227,17 @@ describe.concurrent("reviews that converge", () => {
   });
 
   it("keeps a previously real, builder-fixed finding fixed when fresh voters reject a false reopening", async () => {
-    const { task, fakes, voters } = await untilDelivery({ reviewer: "confirm-fixed-one-tool", verifier: "after-fix-not-a-bug" });
+    const { task, fakes, voters, nonblocking } = await untilDelivery({ reviewer: "confirm-fixed-one-tool", verifier: "after-fix-not-a-bug" });
     const finding = task.findings.find((entry) => entry.severity === "blocking")!;
     expect(finding.answer?.fixed).toBe(true);
     expect(finding.status).toBe("fixed");
     expect(finding.verification?.verdict).toBe("not-a-bug");
-    expect(finding.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("not-a-bug"));
+    expect(finding.votes?.map((vote) => vote.verdict)).toEqual(Array(nonblocking).fill("not-a-bug"));
     expect(finding.earlierReviews).toHaveLength(1);
     expect(finding.earlierReviews![0]!.verification?.verdict).toBe("real");
     expect(finding.earlierReviews![0]!.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("real"));
     expect(reviewStats([task]).findings).toMatchObject({ fixed: 1, notABug: 0 });
-    expect(fakes.openings("verifier")).toHaveLength(voters * 2);
+    expect(fakes.openings("verifier")).toHaveLength(voters + nonblocking);
     expect(fakes.openings("builder")).toHaveLength(2);
   });
 
@@ -252,7 +256,7 @@ describe.concurrent("reviews that converge", () => {
 
     const important = task.findings.filter((finding) => finding.severity === "blocking");
     expect(important.map((finding) => finding.text)).toEqual(["The greeting is missing on the welcome page."]);
-    // Raised on one tool only, so one fresh agent per ready tool voted on it, and each said it is real.
+    // Raised on one tool only, so a fresh pair voted on it, and each said it is real: no third answer.
     expect(important[0]!.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("real"));
     expect(important[0]!.verification).toMatchObject({ verdict: "real" });
     expect(important[0]!.answer).toMatchObject({ fixed: true, text: "Fixed it." });

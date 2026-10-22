@@ -2,7 +2,7 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { draftOf, independentVotes, slotUses } from "@petrina/core";
+import { draftOf, independentVotes, slotUses, type Vote } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { ADAPTERS } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
@@ -301,9 +301,9 @@ describe.concurrent("reviews after a usage handoff", () => {
   });
 });
 
-/** Let Opus finish its review, then change availability before any fresh voter starts. */
-async function voting(scenario: Scenario = {}, limit = 3, limited = ["claude-code"]) {
-  const f = await fixture({ controlled: true, reviewer: "important", ...scenario }, limit, undefined, undefined, true);
+/** Let the reviewers start, then change availability before any fresh voter starts. */
+async function voting(scenario: Scenario = {}, limit = 3, limited = ["claude-code"], antigravity = false) {
+  const f = await fixture({ controlled: true, reviewer: "important", ...scenario }, limit, undefined, undefined, true, antigravity);
   try {
     await f.advance(() => f.fakes.received("code reviewer").length >= (limit > 1 ? 2 : 1), (role) => role !== "code reviewer");
     f.engine.s.pool.limited = limited.map((toolId) => ({ toolId, until: Date.now() + 3_600_000, reason: `${toolId}'s usage limit` }));
@@ -312,18 +312,159 @@ async function voting(scenario: Scenario = {}, limit = 3, limited = ["claude-cod
 }
 
 const checkedFinding = (f: Awaited<ReturnType<typeof voting>>) => f.task().findings.find((finding) => finding.text === "The greeting is missing on the welcome page.")!;
+/** What each tool answered, without the ballot details every new answer records. */
+const plain = (votes?: readonly Vote[]) => votes?.map(({ ballot: _ballot, ...vote }) => vote);
+const verifierSteps = (f: Awaited<ReturnType<typeof voting>>) => f.task().journey!.filter((step) => step.roleId === "verifier");
+/** task-59268's dissent: Codex reported it; Claude and Grok called it a nit, Codex and Antigravity real. */
+const HISTORICAL = "task-59268-65829";
+const historical = { [HISTORICAL]: { opus: "nit", "grok-4.7": "nit", "gpt-6.1-sol": "real", "gemini-4-argon": "real" } } as const;
+const inject = (f: Awaited<ReturnType<typeof voting>>, id: string, raisedBy: string, text = "The second greeting is missing.") =>
+  f.engine.s.tasks.find((entry) => entry.id === f.task().id)!.findings.push({ id, text, severity: "blocking", raisedBy, confirmedBy: [], status: "open", evidence: "Opened the second page" });
 
-describe.concurrent("one vote per actual usable tool", () => {
-  it("gives Antigravity one independent vote alongside the three other ready tools", async () => {
+describe.concurrent("bounded verifier panels", () => {
+  it("starts two fresh verifiers instead of one per ready tool, avoiding the reporting tool", async () => {
     const f = await fixture({ reviewer: "important" }, 4, undefined, undefined, true, true);
     try {
       await f.advance(f.delivery);
       const finding = checkedFinding(f);
-      expect(new Set(independentVotes(finding.votes).map(vote => vote.toolId))).toEqual(new Set(["claude-code", "codex", "grok", "antigravity"]));
-      expect(f.fakes.openings("verifier")).toHaveLength(4);
+      expect(new Set(independentVotes(finding.votes).map((vote) => vote.toolId))).toEqual(new Set(["codex", "grok"]));
+      expect(f.fakes.openings("verifier")).toHaveLength(2);
       expect(finding.status).toBe("fixed");
+      const steps = verifierSteps(f);
+      expect(steps).toHaveLength(1);
+      expect(steps[0]!.seats).toEqual(["verifier:sol-high", "verifier:grok-high"]);
+      expect(steps[0]!.agentInputs).toHaveLength(2);
+      for (const input of steps[0]!.agentInputs!) expect(input.selectionReason).toContain("usable at selection: Claude Code, Codex, Grok and Antigravity; avoided Claude Code, which reported a finding");
+      expect(f.task().timeline.some((entry) => entry.text.startsWith("Verifiers: ") && entry.text.includes("usable at selection: Claude Code, Codex, Grok and Antigravity"))).toBe(true);
     } finally { await f.engine.shutdown(); }
   });
+
+  it("settles with the two usable tools when two of four registered tools are already out of usage", async () => {
+    const f = await voting({ verifier: "not-a-bug" }, 3, ["claude-code", "grok"], true);
+    try {
+      await f.advance(f.delivery);
+      const finding = checkedFinding(f);
+      expect(new Set(plain(finding.votes)!.map((vote) => vote.toolId))).toEqual(new Set(["codex", "antigravity"]));
+      expect(f.fakes.openings("verifier")).toHaveLength(2);
+      // The two tools out of usage at selection never became required tie-breakers.
+      expect(finding.status).toBe("dismissed");
+      expect(finding.verification?.verdict).toBe("not-a-bug");
+      expect(verifierSteps(f)).toHaveLength(1);
+      expect(verifierSteps(f)[0]!.agentInputs![0]!.selectionReason).toContain("usable at selection: Codex and Antigravity");
+      expect(f.fakes.openings("builder")).toHaveLength(1);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("keeps a tool near its usage limit eligible for the pair", async () => {
+    const f = await voting({}, 3, []);
+    try {
+      f.engine.s.pool.usage = [{ toolId: "grok", kind: "five_hour", status: "allowed", utilization: 0.95, resetsAt: Date.now() + 3_600_000, at: Date.now() }];
+      await f.advance(f.delivery);
+      expect(new Set(plain(checkedFinding(f).votes)!.map((vote) => vote.toolId))).toEqual(new Set(["codex", "grok"]));
+      expect(f.fakes.openings("verifier")).toHaveLength(2);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  for (const third of ["real", "nit"] as const) it(`asks the usable unasked tool for a third answer when both first answers do not block, which then says ${third}`, async () => {
+    const f = await voting({ verifierByModel: { "gpt-6.1-sol": "nit", "grok-4.7": "nit", opus: third } }, 3, []);
+    try {
+      await f.advance(() => f.delivery() || f.fakes.openings("builder").length === 2, (role) => role !== "builder");
+      const finding = checkedFinding(f);
+      expect(f.models("verifier")).toEqual(expect.arrayContaining(["gpt-6.1-sol", "grok-4.7", "opus"]));
+      expect(f.fakes.openings("verifier")).toHaveLength(3);
+      const [first, second] = verifierSteps(f);
+      expect(first).toMatchObject({ outcome: "1 checked: 0 real, 1 not blocking on both answers", reason: "1 finding to check on a third tool" });
+      expect(second!.seats).toEqual(["verifier:third:opus-high"]);
+      expect(second!.agentInputs![0]!.selectionReason).toContain("Third answer: both first verifiers said this finding does not block");
+      expect(plain(finding.votes)!.find((vote) => vote.toolId === "claude-code")).toEqual({ by: "opus-high", toolId: "claude-code", plannedProfileId: "opus-high", verdict: third, reason: expect.any(String) });
+      expect(finding.votes!.find((vote) => vote.toolId === "claude-code")!.ballot!.seat).toBe("third:opus-high");
+      if (third === "real") {
+        expect(finding.verification?.verdict).toBe("real");
+        expect(finding.verification?.reason).toContain("Disputed: ");
+        expect(second!.outcome).toBe("1 checked: 1 real (1 disputed)");
+        expect(f.task().fixing).toBe(true);
+      } else {
+        // Three answers settle it; no fourth is asked.
+        expect(finding.verification?.verdict).toBe("nit");
+        expect(finding.severity).toBe("suggestion");
+        expect(second!.outcome).toBe("1 checked: 0 real");
+      }
+      await f.advance(f.delivery);
+      expect(f.fakes.openings("verifier")).toHaveLength(3);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  for (const antigravity of [true, false]) it(`keeps ${HISTORICAL} Important after Claude and Grok call it a nit, with ${antigravity ? "Antigravity" : "Codex"} as the third tool`, async () => {
+    const f = await voting({ reviewer: undefined, verifierByFinding: historical }, 4, [], antigravity);
+    try {
+      inject(f, HISTORICAL, "sol-high");
+      await f.advance(() => f.delivery() || f.fakes.openings("builder").length === 2, (role) => role !== "builder");
+      const finding = f.task().findings.find((entry) => entry.id === HISTORICAL)!;
+      const steps = verifierSteps(f);
+      expect(steps.map((step) => step.seats)).toEqual([["verifier:opus-high", "verifier:grok-high"], [antigravity ? "verifier:third:argon-high" : "verifier:third:sol-high"]]);
+      expect(new Set(plain(finding.votes)!.map((vote) => `${vote.toolId}:${vote.verdict}`))).toEqual(new Set(["claude-code:nit", "grok:nit", antigravity ? "antigravity:real" : "codex:real"]));
+      expect(finding.verification?.verdict).toBe("real");
+      expect(finding.severity).toBe("blocking");
+      expect(f.fakes.openings("verifier")).toHaveLength(3);
+      expect(f.task().fixing).toBe(true);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("asks no third tool when an initial answer is already real", async () => {
+    const f = await voting({ reviewer: undefined, verifierByFinding: { [HISTORICAL]: { opus: "nit", "grok-4.7": "real" } } }, 4, [], true);
+    try {
+      inject(f, HISTORICAL, "sol-high");
+      await f.advance(() => f.delivery() || f.fakes.openings("builder").length === 2, (role) => role !== "builder");
+      const finding = f.task().findings.find((entry) => entry.id === HISTORICAL)!;
+      expect(f.fakes.openings("verifier")).toHaveLength(2);
+      expect(verifierSteps(f)).toHaveLength(1);
+      expect(verifierSteps(f)[0]!.outcome).toBe("1 checked: 1 real (1 disputed)");
+      expect(finding.verification).toMatchObject({ verdict: "real", by: "grok-high" });
+      expect(finding.verification!.reason).toContain("answered only a nit");
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("targets a mixed batch's third answer at the unsettled finding only", async () => {
+    const f = await voting({ verifierByFinding: { second: { "gpt-6.1-sol": "nit", "grok-4.7": "nit", opus: "not-a-bug" } } }, 3, []);
+    try {
+      inject(f, "second", "opus-high");
+      await f.advance(() => f.delivery() || f.fakes.openings("builder").length === 2, (role) => role !== "builder");
+      const main = checkedFinding(f), second = f.task().findings.find((entry) => entry.id === "second")!;
+      const openings = f.fakes.openings("verifier");
+      expect(openings).toHaveLength(3);
+      const third = openings.find((text) => f.fakes.received("verifier").find((entry) => entry.text === text && f.model(entry.session) === "opus"))!;
+      const ballot = third.slice(third.indexOf("## Important findings to check"));
+      expect(ballot).toContain("- [second]");
+      expect(ballot).not.toContain(`- [${main.id}]`);
+      expect(plain(main.votes)!.map((vote) => vote.toolId).sort()).toEqual(["codex", "grok"]);
+      expect(main.verification?.verdict).toBe("real");
+      expect(second.verification?.verdict).toBe("nit");
+      expect(second.severity).toBe("suggestion");
+      expect(verifierSteps(f)[1]!.outcome).toBe("2 checked: 1 real");
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("leaves a finding unresolved when no ready tool can give its third answer, and never repeats that ballot", async () => {
+    const f = await voting({ verifier: "not-a-bug", answer: { fixed: false, text: "It is not broken." }, reviewRounds: 2 }, 3, []);
+    try {
+      await f.advance(() => f.fakes.received("verifier").length === 2, (role) => role !== "verifier");
+      // Claude Code signs out after selection: it was usable, but cannot give the required third answer.
+      f.engine.s.setup!.checks = [{ id: "claude-code", status: "logged-out" }, { id: "codex", status: "ready" }, { id: "grok", status: "ready" }];
+      await f.advance(f.delivery);
+      const finding = checkedFinding(f);
+      expect(f.fakes.openings("verifier")).toHaveLength(2);
+      expect(finding.verification).toBeUndefined();
+      expect(finding.unresolved?.reason).toContain("no ready independent tool can give the required third answer");
+      // The reviewed commit and its tree, so a later round compares like with like.
+      expect(Object.values(finding.unresolved?.heads ?? {})).toHaveLength(1);
+      expect(Object.values(finding.unresolved?.trees ?? {})).toHaveLength(1);
+      expect(finding.severity).toBe("blocking");
+      expect(finding.status).toBe("open");
+      expect(verifierSteps(f).map((step) => step.outcome)).toEqual(["1 checked: 0 real, 1 unresolved"]);
+      expect(f.task().timeline.some((entry) => entry.text.startsWith("Review rounds used up"))).toBe(true);
+    } finally { await f.engine.shutdown(); }
+  });
+
   for (const limit of [1, 3]) it(`does not turn Claude's lost place into a second Codex vote with ${limit} pool slots`, async () => {
     const f = await voting({ verifierByModel: { "gpt-6.1-sol": "not-a-bug", "grok-4.7": "real" } }, limit);
     const violations: unknown[] = [];
@@ -339,7 +480,7 @@ describe.concurrent("one vote per actual usable tool", () => {
       expect(finding.votes).toHaveLength(2);
       expect(new Set(finding.votes!.map((vote) => vote.toolId))).toEqual(new Set(["codex", "grok"]));
       for (const vote of finding.votes!) expect(f.engine.profile(vote.by)?.toolId).toBe(vote.toolId);
-      // Half is enough. The old duplicate Codex vote would incorrectly dismiss this finding.
+      // Any real answer keeps it Important. The old duplicate Codex vote would incorrectly dismiss this finding.
       expect(finding.verification?.verdict).toBe("real");
       expect(finding.status).toBe("fixed");
       expect(violations).toEqual([]);
@@ -352,31 +493,36 @@ describe.concurrent("one vote per actual usable tool", () => {
       await f.advance(f.delivery);
       const finding = checkedFinding(f);
       expect(f.fakes.openings("verifier")).toHaveLength(1);
-      expect(finding.votes).toEqual([{ by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
+      expect(plain(finding.votes)).toEqual([{ by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
       expect(finding.verification?.by).toBe("sol-high");
       expect(finding.status).toBe("dismissed");
       expect(f.fakes.openings("builder")).toHaveLength(1);
+      expect(verifierSteps(f)[0]!.outcome).toBe("1 checked by one tool: 0 real");
+      expect(f.task().timeline.some((entry) => entry.text === "1 checked by the one usable tool: 0 real, 1 not holding the work back")).toBe(true);
     } finally { f.engine.shutdown(); }
   });
 
-  it("keeps the existing mildest-verdict tie rule", async () => {
+  it("keeps the existing mildest-verdict tie rule on an exhaustive pair", async () => {
     const f = await voting({ verifierByModel: { "gpt-6.1-sol": "pre-existing", "grok-4.7": "nit" } });
     try {
       await f.advance(f.delivery);
       expect(checkedFinding(f).verification?.verdict).toBe("nit");
       expect(checkedFinding(f).severity).toBe("suggestion");
+      expect(f.fakes.openings("verifier")).toHaveLength(2);
       expect(f.fakes.openings("builder")).toHaveLength(1);
     } finally { f.engine.shutdown(); }
   });
 
-  for (const modelOnly of [false, true]) it(`handles a ${modelOnly ? "model" : "tool"} limit during voting without borrowing a partner's vote`, async () => {
-    const f = await voting({ limited: [{ model: "opus", role: "verifier", ...(modelOnly ? { type: "seven_day_opus" } : { spendCap: true }) }] }, 3, []);
+  for (const modelOnly of [false, true]) it(`retains a selected seat whose ${modelOnly ? "model" : "tool"} is limited after its peer finishes, without borrowing the peer's vote`, async () => {
+    // Grok is out before selection, so the pair is Codex and Claude Code with no independent replacement.
+    const f = await voting({ limited: [{ model: "opus", role: "verifier", ...(modelOnly ? { type: "seven_day_opus" } : { spendCap: true }) }] }, 3, ["grok"]);
     try {
       if (!modelOnly) {
-        await f.advance(() => f.delivery() || (checkedFinding(f)?.votes?.length === 2 && f.task().state === "waiting"));
+        await f.advance(() => f.delivery() || (checkedFinding(f)?.votes?.length === 1 && f.task().state === "waiting" && f.fakes.received("verifier").length === 2));
         expect(f.delivery()).toBe(false);
         expect(checkedFinding(f).verification).toBeUndefined();
-        expect(f.task().hunt?.voterProfiles).toHaveLength(3);
+        expect(f.task().hunt?.panel?.seats.map((seat) => seat.toolId)).toEqual(["codex", "claude-code"]);
+        expect(f.task().hunt?.panel?.usable).toEqual(["claude-code", "codex"]);
         const accepted = structuredClone(checkedFinding(f).votes!);
         await f.restart();
         expect(checkedFinding(f).votes).toEqual(accepted);
@@ -389,11 +535,24 @@ describe.concurrent("one vote per actual usable tool", () => {
       await f.advance(f.delivery);
       const finding = checkedFinding(f);
       const finished = f.engine.tracking.log.turns({ taskId: f.task().id }).filter((turn) => turn.roleId === "verifier" && turn.end === "finished");
-      expect(finished).toHaveLength(3);
+      expect(finished).toHaveLength(2);
       expect(new Set(finished.map((turn) => turn.toolId)).size).toBe(finished.length);
       expect(finding.votes).toHaveLength(finished.length);
       expect(finding.votes?.some((vote) => vote.by === "opus-high")).toBe(!modelOnly);
       if (modelOnly) expect(finding.votes?.find((vote) => vote.toolId === "claude-code")?.by).toBe("sonnet-high");
+      expect(finding.verification?.verdict).toBe("real");
+    } finally { f.engine.shutdown(); }
+  });
+
+  it("replaces a selected seat limited after its peer finishes with an independent usable tool", async () => {
+    const f = await voting({ limited: [{ model: "grok-4.7", role: "verifier", spendCap: true }] }, 3, []);
+    try {
+      await f.advance(f.delivery);
+      const finding = checkedFinding(f);
+      expect(new Set(plain(finding.votes)!.map((vote) => vote.toolId))).toEqual(new Set(["codex", "claude-code"]));
+      expect(finding.votes!.find((vote) => vote.toolId === "claude-code")!.ballot!.seat).toBe("grok-high");
+      const replacement = f.task().journey!.flatMap((step) => step.agentInputs ?? []).find((input) => input.selectionReason?.includes("takes its required seat"));
+      expect(replacement?.profileId).toBe("opus-high");
       expect(finding.verification?.verdict).toBe("real");
     } finally { f.engine.shutdown(); }
   });
@@ -406,6 +565,9 @@ describe.concurrent("one vote per actual usable tool", () => {
     try {
       await f.advance(() => checkedFinding(f)?.votes?.length === 1 && f.task().state === "waiting");
       expect(f.models("verifier")).toEqual(["gpt-6.1-sol"]);
+      // A full slot is not a usage block: Grok keeps its saved place.
+      expect(f.task().hunt?.panel?.usable).toEqual(["codex", "grok"]);
+      expect(f.task().hunt?.panel?.seats.map((seat) => seat.toolId)).toEqual(["codex", "grok"]);
       expect(checkedFinding(f).verification).toBeUndefined();
       expect(f.delivery()).toBe(false);
       f.engine.s.tasks = f.engine.s.tasks.filter((entry) => entry.id !== occupied.id);
@@ -430,11 +592,51 @@ describe.concurrent("one vote per actual usable tool", () => {
     } finally { f.engine.shutdown(); }
   });
 
+  it("keeps the first pair's answers and its third place through a pause and a restart", async () => {
+    const f = await voting({ verifier: "not-a-bug" }, 3, []);
+    try {
+      await f.advance(() => f.fakes.received("verifier").length === 2, (role) => role !== "verifier");
+      // Pausing admits no new conversation: the pair finishes, and the third answer waits for resume.
+      f.engine.setPoolPaused(true);
+      for (const entry of f.fakes.received("verifier")) f.release(entry.session);
+      await waitFor(() => independentVotes(checkedFinding(f).votes).length === 2 && !f.engine.drivers.has(f.task().id), "the first pair's answers");
+      expect(f.fakes.received("verifier")).toHaveLength(2);
+      expect(f.task().hunt?.panel?.seats).toHaveLength(2);
+      f.engine.setPoolPaused(false);
+      await f.advance(() => f.fakes.received("verifier").length === 3, (role) => role !== "verifier");
+      const saved = f.task().hunt!.panel!;
+      expect(saved.seats.map((seat) => seat.key)).toEqual(["sol-high", "grok-high", "third:opus-high"]);
+      expect(saved.escalatedAt).toBeDefined();
+      await f.restart();
+      expect(f.task().hunt?.panel).toEqual(saved);
+      await f.advance(f.delivery);
+      const received = f.fakes.received("verifier");
+      expect(received.filter((entry) => f.model(entry.session) === "gpt-6.1-sol")).toHaveLength(1);
+      expect(received.filter((entry) => f.model(entry.session) === "grok-4.7")).toHaveLength(1);
+      expect(new Set(received.filter((entry) => f.model(entry.session) === "opus").map((entry) => entry.session)).size).toBe(2);
+      expect(checkedFinding(f).verification?.verdict).toBe("not-a-bug");
+      expect(independentVotes(checkedFinding(f).votes)).toHaveLength(3);
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("stops owned verifier work when the task is cancelled mid-vote, and admits no third answer", async () => {
+    const f = await voting({ verifier: "not-a-bug" }, 3, []);
+    try {
+      await f.advance(() => f.fakes.received("verifier").length === 2, (role) => role !== "verifier");
+      f.engine.cancel(f.task().id);
+      await waitFor(() => f.task().state === "cancelled" && !f.engine.drivers.has(f.task().id) && !f.engine.settling.has(f.task().id), "the cancelled vote to stop");
+      expect(slotUses(f.engine.getState()).filter((use) => use.taskId === f.task().id)).toEqual([]);
+      f.engine.schedule();
+      expect(f.fakes.received("verifier")).toHaveLength(2);
+      expect(checkedFinding(f).verification).toBeUndefined();
+      expect(verifierSteps(f).every((step) => step.endedAt !== undefined)).toBe(true);
+    } finally { await f.engine.shutdown(); }
+  });
+
   it("saves partial reports before repair and restarts only the missing verdicts", async () => {
     const f = await voting({ partialVerification: true, verifier: "not-a-bug" }, 1, ["claude-code", "grok"]);
     try {
-      const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
-      task.findings.push({ id: "second", text: "The second greeting is missing.", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "open" });
+      inject(f, "second", "opus-high");
       await f.advance(() => f.fakes.marked("partial-verification"));
       const partial = structuredClone(f.task().findings.find((finding) => finding.votes?.length)!);
       expect(partial.votes).toHaveLength(1);
@@ -452,8 +654,7 @@ describe.concurrent("one vote per actual usable tool", () => {
   it("keeps a voter's starting role and partial work when its model changes before restart", async () => {
     const f = await voting({ partialVerification: true, verifier: "not-a-bug" }, 3, ["codex", "grok"]);
     try {
-      const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
-      task.findings.push({ id: "second", text: "The second greeting is missing.", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "open" });
+      inject(f, "second", "opus-high");
       await f.advance(() => f.fakes.marked("partial-verification"));
       const partial = structuredClone(f.task().findings.find((finding) => finding.votes?.length)!);
       const original = f.engine.role("verifier")!;
@@ -470,7 +671,7 @@ describe.concurrent("one vote per actual usable tool", () => {
       expect(opening.slice(opening.indexOf("## Important findings to check"))).not.toContain(`- [${partial.id}]`);
       expect(f.task().findings.find((finding) => finding.id === partial.id)?.votes).toEqual(partial.votes);
       const remaining = f.task().findings.find((finding) => finding.id !== partial.id && finding.votes?.length)!;
-      expect(remaining.votes).toEqual([{ by: "sonnet-high", toolId: "claude-code", plannedProfileId: "opus-high", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
+      expect(plain(remaining.votes)).toEqual([{ by: "sonnet-high", toolId: "claude-code", plannedProfileId: "opus-high", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
       expect(f.engine.role("verifier")?.purpose).toBe("Use the new voting instructions next round.");
     } finally { f.engine.shutdown(); }
   });
@@ -482,9 +683,8 @@ describe.concurrent("one vote per actual usable tool", () => {
   ] as const) it(`counts a corrected ${corrected} verdict after an incomplete ${initial} answer${restart ? ", retaining it through restart" : ""}`, async () => {
     const f = await voting({ partialVerification: true, verifier: initial, correctPartialVerification: corrected }, 3, restart ? ["claude-code"] : ["claude-code", "grok"]);
     try {
-      const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
       // First on the ballot: its initial verdict must be revised by the completed answer.
-      task.findings.push({ id: "second", text: "The second greeting is missing.", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "open" });
+      inject(f, "second", "opus-high");
       let saved;
       if (restart) {
         await f.advance(() => !!f.task().hunt?.voted?.["sol-high"], (role, session) => role !== "verifier" || f.model(session) === "gpt-6.1-sol");
@@ -500,9 +700,9 @@ describe.concurrent("one vote per actual usable tool", () => {
       const votes = independentVotes(finding.votes);
       const reason = `After checking every finding, this one ${corrected === "real" ? "is a real problem" : "is not a bug"}.`;
       expect(finding.verification?.verdict).toBe(corrected);
-      expect(votes.find((vote) => vote.toolId === "codex")).toEqual({ by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: corrected, reason });
+      expect(plain(votes)!.find((vote) => vote.toolId === "codex")).toEqual({ by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: corrected, reason });
       expect(votes).toHaveLength(restart ? 2 : 1);
-      expect(finding.votes?.filter((vote) => vote.toolId === "codex")).toEqual([
+      expect(plain(finding.votes?.filter((vote) => vote.toolId === "codex"))).toEqual([
         { by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: initial, reason: initial === "real" ? "The welcome page has no greeting: confirmed by opening it." : "The welcome page shows the greeting already." },
         { by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: corrected, reason },
       ]);
@@ -540,8 +740,7 @@ describe.concurrent("one vote per actual usable tool", () => {
   it("keeps partial votes through a usage limit and waits until every finding has a verdict", async () => {
     const f = await voting({ partialVerification: true, limitAfterPartial: true, verifier: "not-a-bug" }, 3, ["claude-code", "grok"]);
     try {
-      const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
-      task.findings.push({ id: "second", text: "The second greeting is missing.", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "open" });
+      inject(f, "second", "opus-high");
       await f.advance(() => f.task().state === "waiting" && f.task().statusLine.startsWith("Waiting for usage") && f.fakes.received("verifier").length === 2);
       const partial = structuredClone(f.task().findings.find((finding) => finding.votes?.length)!);
       expect(partial.votes).toHaveLength(1);
@@ -556,8 +755,36 @@ describe.concurrent("one vote per actual usable tool", () => {
       expect(replacement?.selectionReason).toContain("saved votes remain");
       expect(replacement?.profileId).toBe("grok-high");
       expect(f.fakes.openings("verifier")).toHaveLength(2);
-      expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.status === "dismissed")).toBe(true);
+      // The replacement answered only what its place still owed, under the same place.
+      const replacementOpening = f.fakes.openings("verifier").at(-1)!;
+      expect(replacementOpening.slice(replacementOpening.indexOf("## Important findings to check"))).not.toContain(`- [${partial.id}]`);
+      expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.status === "dismissed" && finding.votes!.every((vote) => vote.ballot?.seat === "sol-high"))).toBe(true);
     } finally { f.engine.shutdown(); }
+  });
+
+  it("keeps an older round's admitted one-per-tool panel and its majority rule until it finishes", async () => {
+    const f = await voting({ verifierByModel: { "grok-4.7": "nit", "gemini-4-argon": "nit" } }, 4, [], true);
+    try {
+      // Pausing lets the admitted reviewers finish and admits no voter, so no bounded panel is saved yet.
+      f.engine.setPoolPaused(true);
+      await f.advance(() => Object.keys(f.task().hunt?.reported ?? {}).length === 2 && !f.engine.drivers.has(f.task().id) && !f.engine.settling.has(f.task().id));
+      const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
+      expect(task.hunt!.panel).toBeUndefined();
+      // An earlier release saved one voter per ready tool and two of their answers.
+      task.hunt!.voterProfiles = ["opus-high", "sol-high", "grok-high", "argon-high"];
+      task.findings.find((entry) => entry.text === "The greeting is missing on the welcome page.")!.votes = [
+        { by: "opus-high", toolId: "claude-code", plannedProfileId: "opus-high", verdict: "real", reason: "An older ballot's real answer." },
+        { by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: "nit", reason: "An older ballot's nit answer." },
+      ];
+      await f.restart();
+      f.engine.setPoolPaused(false);
+      await f.advance(f.delivery);
+      expect(new Set(f.models("verifier"))).toEqual(new Set(["grok-4.7", "gemini-4-argon"]));
+      expect(f.fakes.openings("verifier")).toHaveLength(2);
+      // One real answer of four does not reach that panel's half; a bounded panel would have kept it Important.
+      expect(checkedFinding(f).verification?.verdict).toBe("nit");
+      expect(independentVotes(checkedFinding(f).votes)).toHaveLength(4);
+    } finally { await f.engine.shutdown(); }
   });
 
   it("waits with no usable voter and resumes on the one tool that recovers", async () => {
@@ -565,6 +792,8 @@ describe.concurrent("one vote per actual usable tool", () => {
     try {
       await f.advance(() => Object.keys(f.task().hunt?.reported ?? {}).length === 2 && f.task().state === "waiting");
       expect(f.fakes.openings("verifier")).toHaveLength(0);
+      // Nothing is saved as a completed or empty panel while nobody can vote.
+      expect(f.task().hunt?.panel).toBeUndefined();
       expect(checkedFinding(f).verification).toBeUndefined();
       expect(f.delivery()).toBe(false);
       f.engine.s.pool.limited = f.engine.s.pool.limited!.filter((limit) => limit.toolId !== "codex");
@@ -575,15 +804,17 @@ describe.concurrent("one vote per actual usable tool", () => {
     } finally { f.engine.shutdown(); }
   });
 
-  it("does not close complementary partial ballots until a tool finishes, including after restart", async () => {
+  for (const proven of [true, false]) it(`${proven ? "counts this ballot's saved answers before choosing more work" : "keeps answers of unproven provenance as history"} when no panel was saved`, async () => {
     const f = await voting({ verifier: "not-a-bug" }, 3, ["claude-code", "codex", "grok"]);
     try {
+      inject(f, "second", "opus-high");
       const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
-      task.findings.push({ id: "second", text: "The second greeting is missing.", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "open" });
       await f.advance(() => Object.keys(f.task().hunt?.reported ?? {}).length === 2 && f.task().state === "waiting");
       const findings = task.findings.filter((finding) => finding.severity === "blocking");
-      const first = { by: "sol-high", toolId: "codex", verdict: "not-a-bug" as const, reason: "Codex's finished verdict before its limit." };
-      const second = { by: "grok-xhigh", toolId: "grok", verdict: "not-a-bug" as const, reason: "Grok's finished verdict before its limit." };
+      const hunt = task.hunt!;
+      const provenance = (seat: string) => (proven ? { ballot: { stageId: hunt.stageId, round: hunt.round, seat, versions: { ...hunt.input!.heads } } } : {});
+      const first = { by: "sol-high", toolId: "codex", plannedProfileId: "sol-high", verdict: "not-a-bug" as const, reason: "Codex's finished verdict before its limit.", ...provenance("sol-high") };
+      const second = { by: "grok-xhigh", toolId: "grok", plannedProfileId: "grok-high", verdict: "not-a-bug" as const, reason: "Grok's finished verdict before its limit.", ...provenance("grok-high") };
       findings[0]!.votes = [first];
       findings[1]!.votes = [second];
       await f.restart();
@@ -591,13 +822,22 @@ describe.concurrent("one vote per actual usable tool", () => {
       expect(f.delivery()).toBe(false);
       expect(f.task().findings.every((finding) => !finding.verification)).toBe(true);
       expect(f.fakes.openings("verifier")).toHaveLength(0);
-      // Only Codex recovers: it finishes the missing verdict, preserving both tools' saved work.
+      // Only Codex recovers. Complementary partial answers never close the ballot by themselves.
       f.engine.s.pool.limited = f.engine.s.pool.limited!.filter((limit) => limit.toolId !== "codex");
       f.engine.schedule();
+      if (proven) {
+        await f.advance(() => f.fakes.openings("verifier").length === 1 && f.task().state === "waiting" && !!f.task().findings.find((finding) => finding.id === findings[1]!.id)?.votes?.some((vote) => vote.toolId === "codex"));
+        expect(f.task().hunt?.panel?.seats.map((seat) => [seat.key, seat.toolId])).toEqual([["sol-high", "codex"], ["grok-high", "grok"]]);
+        expect(f.delivery()).toBe(false);
+        // Grok's evidenced place still owes the first finding.
+        f.engine.s.pool.limited = f.engine.s.pool.limited!.filter((limit) => limit.toolId !== "grok");
+        f.engine.schedule();
+      }
       await f.advance(f.delivery);
-      expect(f.fakes.openings("verifier")).toHaveLength(1);
-      const opening = f.fakes.openings("verifier")[0]!;
-      expect(opening.slice(opening.indexOf("## Important findings to check"))).not.toContain(`- [${findings[0]!.id}]`);
+      const openings = f.fakes.openings("verifier");
+      expect(openings).toHaveLength(proven ? 2 : 1);
+      const codex = openings[0]!.slice(openings[0]!.indexOf("## Important findings to check"));
+      expect(codex.includes(`- [${findings[0]!.id}]`)).toBe(!proven);
       expect(f.task().findings.find((finding) => finding.id === findings[0]!.id)?.votes).toContainEqual(first);
       expect(f.task().findings.find((finding) => finding.id === findings[1]!.id)?.votes).toContainEqual(second);
       expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.status === "dismissed")).toBe(true);

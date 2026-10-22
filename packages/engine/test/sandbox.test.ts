@@ -150,7 +150,8 @@ describe("Claude Code's own sandbox", () => {
   for (const unavailable of [false, true]) {
     for (const voting of [false, true]) {
       it(`group ${voting ? "voters" : "reviewers"} keep each agent's sandbox status, including when the header changes${unavailable ? " without Claude Code's sandbox" : ""}`, async () => {
-        const run = await start({ planner: "pair", builder: "plain", controlled: true, ...(voting ? { reviewer: "important" as const, verifier: "not-a-bug" as const } : {}), ...(unavailable ? { sandbox: "unavailable" as const } : {}) });
+        // Codex reports the vote's finding, so the bounded pair is Claude Code and Grok; Antigravity gives the third answer.
+        const run = await start({ planner: "pair", builder: "plain", controlled: true, ...(voting ? { reviewer: "important" as const, importantBy: "gpt-6.1-sol", verifier: "not-a-bug" as const } : {}), ...(unavailable ? { sandbox: "unavailable" as const } : {}) });
         const { engine, fakes } = run;
         if (voting) {
           await engine.until(state => Object.keys(ADAPTERS).every(id => state.setup?.checks.some(check => check.id === id && check.status === "ready" && !check.checking)), "every voter's tool to be ready");
@@ -165,11 +166,10 @@ describe("Claude Code's own sandbox", () => {
         try {
           const expected = new Map<string, ActiveAgent["sandbox"]>([
             ["opus-high", unavailable ? { on: false, reason: "this computer lacks what it needs (bubblewrap (bwrap) not installed, socat not installed)" } : { on: true }],
-            ["sol-high", { on: true }],
+            // A vote's pair includes Grok, with its own setup and no sandbox claim.
+            voting ? ["grok-high", undefined] : ["sol-high", { on: true }],
           ]);
-          // A vote includes the installed third tool too, with its own setup and no sandbox claim.
-          if (voting && (await engine.state()).tools.some((tool) => tool.id === "grok" && tool.status === "ready")) expected.set("grok-high", undefined);
-          if (voting && (await engine.state()).tools.some((tool) => tool.id === "antigravity" && tool.status === "ready")) expected.set("argon-high", undefined);
+          const later = voting ? ["argon-high"] : [];
           const group = await traceTaskWait(!voting && unavailable ? "Reviewers without Claude Code's sandbox" : undefined, () => engine.state(), run.taskId, () => engine.until((state) => {
             const task = run.find(state);
             const agents = [task.agent, ...(task.helpers ?? [])];
@@ -196,14 +196,14 @@ describe("Claude Code's own sandbox", () => {
           release = setInterval(() => go(), 50);
           const done = await run.finished(engine);
           const sessions = new Set(fakes.received(promptRole).map((entry) => entry.session));
-          expect(sessions.size).toBe(expected.size);
+          expect(sessions.size).toBe(expected.size + later.length);
           for (const open of fakes.opens().filter((entry) => sessions.has(entry.session)))
             expect(open.sandbox).toEqual(open.tool === "claude-code" && !unavailable ? claudeSandbox() : undefined);
           expect(done.session.filter((line) => line.roleId === roleId && line.text === REFUSED)).toHaveLength(unavailable ? 1 : 0);
           // The sandbox status must also preserve main's work log for every member of the group.
           const usage = (await engine.act("usage", { view: "task", taskId: run.taskId })) as TaskUsage;
           const logged = usage.stages.flatMap((stage) => stage.agents).filter((agent) => agent.roleId === roleId);
-          expect(new Map(logged.map((agent) => [agent.profileId, agent.turns]))).toEqual(new Map([...expected.keys()].map((profile) => [profile, 1])));
+          expect(new Map(logged.map((agent) => [agent.profileId, agent.turns]))).toEqual(new Map([...expected.keys(), ...later].map((profile) => [profile, 1])));
         } finally {
           clearInterval(before);
           clearInterval(release);

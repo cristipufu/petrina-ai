@@ -34,7 +34,9 @@ export const JOURNEY_WORDS = {
   unchanged: "No changes to the code",
   fixed: (count: number) => (count ? `Builder claims ${plural(count, "fix")}` : "Changes returned"),
   checks: (failed: number, total: number) => (failed ? `${failed} of ${plural(total, "check")} failed` : total === 1 ? "The check passes" : total ? `All ${total} checks pass` : "No checks to run"),
-  voted: (real: number, total: number) => `${total} checked: ${real} real`,
+  voted: (real: number, total: number, more: { disputed?: number; unresolved?: number; oneTool?: boolean } = {}) =>
+    `${total} checked${more.oneTool ? " by one tool" : ""}: ${real} real${more.disputed ? ` (${more.disputed} disputed)` : ""}${more.unresolved ? `, ${more.unresolved} unresolved` : ""}`,
+  firstAnswers: (total: number, real: number, third: number) => `${total} checked: ${real} real, ${third} not blocking on both answers`,
   foundChecks: (count: number) => (count ? `Found ${plural(count, "check")}` : "Found no checks"),
   couldNotFinish: "Could not finish",
   handedOn: "Work handed on",
@@ -78,6 +80,7 @@ export const JOURNEY_WORDS = {
   checksFound: "checks found",
   checksAsBefore: "the checks it had",
   toCheck: (count: number) => `${plural(count, "important finding")} to check`,
+  thirdAnswer: (count: number) => `${plural(count, "finding")} to check on a third tool`,
   sentBack: (count: number) => `sent back: ${count} important`,
   reviewPassed: "review passed",
   reviewAgain: "your changes get reviewed",

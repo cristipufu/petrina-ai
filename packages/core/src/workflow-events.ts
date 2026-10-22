@@ -295,11 +295,11 @@ function waitKindOf(task: TaskState, ctx: WorkflowContext): WaitKind | undefined
   return "other";
 }
 
-/** The seat an input or result belongs to, independent of a usage stand-in: the reviewer position, the voter's planned profile, or the role. */
-export function seatOf(entry: Pick<JourneyAgentInput, "roleId" | "profileId" | "reviewerKey" | "requestedProfileId">, roles: WorkflowContext["roles"], task?: Pick<TaskState, "maintenance">): string {
+/** The seat an input or result belongs to, independent of a usage stand-in: the reviewer position, the vote place (older records: the voter's planned profile), or the role. */
+export function seatOf(entry: Pick<JourneyAgentInput, "roleId" | "profileId" | "reviewerKey" | "requestedProfileId" | "place">, roles: WorkflowContext["roles"], task?: Pick<TaskState, "maintenance">): string {
   if (entry.reviewerKey !== undefined) return `reviewer:${entry.reviewerKey}`;
   const role = roleForTask(roles, entry.roleId, task);
-  if (role?.result === "votes") return `verifier:${entry.requestedProfileId ?? entry.profileId}`;
+  if (role?.result === "votes") return `verifier:${entry.place ?? entry.requestedProfileId ?? entry.profileId}`;
   return entry.roleId;
 }
 

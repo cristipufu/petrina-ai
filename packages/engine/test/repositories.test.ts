@@ -1,7 +1,7 @@
 import { expectRejection } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import type { RepositoryContext } from "../src/repository-context.js";
-import { checkDecisionLabel, decisionEvidence, createDemoState, draftOf, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";
+import { checkDecisionLabel, decisionEvidence, createDemoState, draftOf, independentVotes, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -931,6 +931,11 @@ describe.concurrent("one task across products", () => {
       expect(finding.productIds).toEqual([first, second]);
       expect(Object.keys(finding.answers!)).toEqual([first, second]);
       expect(finding.status).toBe("fixed");
+      // One bounded pair checked the shared finding in round one, each answer bound to both products' reviewed versions.
+      const votes = independentVotes(finding.earlierReviews?.[0]?.votes);
+      expect(votes.length).toBeGreaterThan(0);
+      expect(votes.length).toBeLessThanOrEqual(2);
+      for (const vote of votes) expect(Object.keys(vote.ballot!.versions!).sort()).toEqual([first, second].sort());
       const earlier = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 1)!.result!.findings!.find((entry) => entry.id === finding.id)!;
       expect(earlier.status).toBe("open");
       expect(earlier.productIds).toEqual([first, second]);

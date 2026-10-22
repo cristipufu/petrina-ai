@@ -86,7 +86,7 @@ Selection remains in observation mode until representative changes and full-run 
 - Engine helpers can be imported by standalone Bun diagnostics outside the checkout. Do not register test-runner-only hooks, such as time limits, at import time in those helpers.
 - With asymmetric matchers, Bun's `toMatchObject` can overwrite checked fields. Use `toEqual`, or check a copy.
 - For rejected operations use `expectRejection` or `rejectionOf` from `test/rejections.ts`. These await ordinary Promises before asserting; Bun's `.rejects`/`.resolves` matchers re-enter the I/O dispatcher and can lose subprocess or pipe notifications ([upstream issue](https://github.com/oven-sh/bun/issues/33261)). Keep the same error, message and type assertions.
-- Derive verifier counts from the ready tools; do not assume two voters.
+- Derive verifier counts from the bounded panel: at most two initial voters from the ready tools, plus one third answer when both say a finding does not block and three or more tools were usable. Do not assume one voter per ready tool.
 
 `bun run test:conventions` parses test source and rejects direct production Engine imports, Bun promise matchers in engine tests, and exclusive test selection across all workspaces. The fixture's own production import is the single exception. The guard does not prove that arbitrary subprocesses are isolated: review test-owned commands, writable resources, cleanup and native opt-ins as part of the change. Do not bypass the guard with dynamic or generated code.
 

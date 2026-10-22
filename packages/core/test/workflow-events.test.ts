@@ -498,6 +498,9 @@ describe("compact facts become ordered events", () => {
     expect(events[1]).toMatchObject({ seat: "reviewer:0", attempt: 2, replaced: { previousProfileId: "opus-high", reason: "Claude Code's weekly Opus limit" } });
     expect(events[2]).toMatchObject({ previousProfileId: "opus-high", profileId: "sol-high", reason: "Claude Code's weekly Opus limit" });
     expect(seatOf({ roleId: "verifier", profileId: "sol-high", requestedProfileId: "opus-high" }, BUILT_IN_ROLES)).toBe("verifier:opus-high");
+    // A vote place keeps its own seat through a replacement, and a reused tool in a later place gets another.
+    expect(seatOf({ roleId: "verifier", profileId: "sol-high", requestedProfileId: "sol-high", place: "opus-high" }, BUILT_IN_ROLES)).toBe("verifier:opus-high");
+    expect(seatOf({ roleId: "verifier", profileId: "argon-high", requestedProfileId: "argon-high", place: "third:sol-high" }, BUILT_IN_ROLES)).toBe("verifier:third:sol-high");
   });
 
   it("baselines loaded work silently and never invents events for finished tasks it first sees in the archive", () => {

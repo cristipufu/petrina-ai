@@ -262,7 +262,8 @@ describe("real grouped review summaries", () => {
     try {
       await run.approve();
       for (const model of models) for (const name of ["publish-1", "action-1", "result-1", "finish"]) run.go(`${name}-code-reviewer-${model}`);
-      const voting = await engine.until((state) => run.find(state).agent?.roleId === "verifier" && Object.keys(run.find(state).hunt?.work ?? {}).filter(key => key.startsWith("verifier:")).length === Object.keys(ADAPTERS).length, "every fresh voter");
+      // The bounded pair, not one voter per ready tool.
+      const voting = await engine.until((state) => run.find(state).agent?.roleId === "verifier" && Object.keys(run.find(state).hunt?.work ?? {}).filter(key => key.startsWith("verifier:")).length === Math.min(2, Object.keys(ADAPTERS).length), "every fresh voter");
       const voters = [run.find(voting).agent!, ...(run.find(voting).helpers ?? [])].map((agent) => {
         const profile = voting.profiles.find((profile) => profile.id === agent.profileId)!;
         return { seat: agent.reviewKey!, tag: `verifier-${profile.modelId}-${profile.effort}` };
@@ -327,10 +328,10 @@ describe("real grouped review summaries", () => {
         expect(run.find(await engine.state()).hunt?.voterProfiles).toBeUndefined();
         await engine.act("setPoolPaused", false);
         const reserved = await engine.until((state) => {
-          // An older vote without a tool does not fill a seat, so every ready tool still votes.
+          // An older vote without a tool does not fill a seat, so a full fresh pair still votes.
           const count = state.tools.filter((tool) => tool.status === "ready").length;
           const seats = Object.keys(run.find(state).hunt?.work ?? {}).filter((key) => key.startsWith("verifier:")).length;
-          return count > 0 && seats === count;
+          return count > 0 && seats === Math.min(2, count);
         }, "the remaining voters' seats");
         const tags = [run.find(reserved).agent!, ...(run.find(reserved).helpers ?? [])].map((agent) => {
           const profile = reserved.profiles.find((profile) => profile.id === agent.profileId)!;

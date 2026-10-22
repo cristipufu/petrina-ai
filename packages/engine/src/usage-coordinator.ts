@@ -1,5 +1,5 @@
 // Account reports, limit wakeups and profile/stand-in selection.
-import { chooseWithRoom, claudeWindow, currentReport, headroom, kindWords, limitOf, nearLimit, nextExpiry, UNKNOWN_LIMIT_MS, untilWords, usableAgentTools, withLimit, withReport, type Choice, type CheckId, type Id, type AgentProfile, type Task, type UsageReport } from "@petrina/core";
+import { chooseWithRoom, claudeWindow, seatRemaining, currentReport, headroom, kindWords, limitOf, nearLimit, nextExpiry, UNKNOWN_LIMIT_MS, untilWords, usableAgentTools, withLimit, withReport, type Choice, type CheckId, type Id, type AgentProfile, type Task, type UsageReport } from "@petrina/core";
 import { executionOf, type RepositoryContext } from "./repository-context.js";
 import { notReady, stepKey, type Kernel, type MTask, type MState, type EngineOptions } from "./kernel.js";
 import { contractFor, freshBuilderRethink } from "./roles.js";
@@ -401,7 +401,7 @@ export class UsageCoordinator {
   private replacementOwedContinue(task: MTask | undefined, roleId: Id | undefined, planned: AgentProfile, reviewerKey: string | undefined): AgentProfile | undefined {
     if (!task || roleId === undefined) return undefined;
     const votes = this.k.role(roleId, task)?.result === "votes";
-    const seat = votes ? `vote-${planned.id}` : reviewerKey !== undefined ? `review-${reviewerKey}` : undefined;
+    const seat = votes ? this.votePlace(task, planned.id) : reviewerKey !== undefined ? `review-${reviewerKey}` : undefined;
     const resumes = (task.capacityResume ?? []).filter((entry) => {
       if (entry.roleId !== roleId) return false;
       if (seat === undefined) return entry.member === undefined;
@@ -413,6 +413,13 @@ export class UsageCoordinator {
     });
     const entry = owed.findLast((item) => item.profileId !== planned.id);
     return entry ? this.k.profile(entry.profileId) : undefined;
+  }
+
+  /** A vote member is named after its place: the unfinished place this profile works now, else the profile (older ballots). */
+  private votePlace(task: MTask, profileId: Id): string {
+    const hunt = task.hunt, panel = hunt?.panel;
+    const place = panel?.seats.find((seat) => seat.profileId === profileId && seatRemaining(panel, seat, task.findings, hunt!).length);
+    return `vote-${place?.key ?? profileId}`;
   }
 
   /**

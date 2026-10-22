@@ -182,8 +182,15 @@ describe("graceful coordination lifecycle", () => {
       let task = await f.engine.task(taskId);
       expect(task.findings.some((finding) => finding.votes?.length === 1)).toBe(true);
       expect(task.findings.some((finding) => finding.verification)).toBe(false);
-      const required = task.hunt!.voterProfiles!.length;
+      const required = task.hunt!.panel!.seats.length;
       expect(required).toBeGreaterThan(1);
+      // Coordinators read the saved panel: the tools usable at selection and what each place still owes.
+      const status = await f.client.call("engine.status");
+      const pending = (status.pendingParticipants as { taskId: string; requiredVoters: string[]; waitingVoters: string[]; verifierPanel?: { usableAtSelection: string[]; places: { profileId: string; owed: string[] }[] } }[]).find((entry) => entry.taskId === taskId)!;
+      expect(pending.requiredVoters).toHaveLength(required);
+      expect(pending.verifierPanel!.usableAtSelection.length).toBeGreaterThanOrEqual(required);
+      expect(pending.verifierPanel!.places.filter((place) => place.owed.length).map((place) => place.profileId)).toEqual(pending.waitingVoters);
+      expect(pending.waitingVoters).toHaveLength(required - 1);
       const restarted = await f.client.call("engine.restart", { requestId: "ballot-restart", wait: true, timeoutMs: 30000 * SLOW });
       expect(restarted, JSON.stringify(restarted)).toHaveProperty("outcome", "completed");
       expect(f.fakes.received("verifier")).toHaveLength(1);

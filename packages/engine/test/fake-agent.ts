@@ -70,6 +70,8 @@ export interface Scenario {
    */
   reviewTodo?: boolean;
   reviewer?: "commit" | "work" | "important" | "important-twice" | "move-branch" | "confirm" | "confirm-fixed" | "confirm-fixed-one-tool" | "confirm-dismissed" | "question";
+  /** The model whose reviewer raises "important"'s one Important finding (default Opus). */
+  importantBy?: string;
   reviewRounds?: number;
   reopenedEvidence?: string;
   /** The first claim has only an old id; its correction either accepts the fix or supplies new proof. */
@@ -84,6 +86,8 @@ export interface Scenario {
   followUpMatch?: "same" | "unsure" | "down";
   /** Voting regressions: independent tools can disagree, or stop after a partial report. */
   verifierByModel?: Record<string, "real" | "not-a-bug" | "nit" | "pre-existing">;
+  /** Mixed batches: a finding id's verdict per model, overriding the verdicts above for that finding. */
+  verifierByFinding?: Record<string, Record<string, "real" | "not-a-bug" | "nit" | "pre-existing">>;
   partialVerification?: boolean;
   limitAfterPartial?: boolean;
   /** Repair a partial ballot with a revised first verdict; the remaining findings are not bugs. */
@@ -1193,7 +1197,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (plan.reviewer === "confirm-fixed" && text.includes("This is review round")) return done({ verdict: "fail", findings: [], confirms: findingIds(text, "Findings so far (confirm or dispute by id)").map((id) => ({ id, evidence: plan.reopenedEvidence ?? "On current code, the guest welcome page still omits the greeting; the signed-in control shows it." })), disputes: [] });
       if (plan.reviewer === "confirm-fixed-one-tool" && text.includes("This is review round")) return done({ verdict: session.model === "opus" ? "fail" : "pass", findings: [], confirms: session.model === "opus" ? findingIds(text, "Findings so far (confirm or dispute by id)").map((id) => ({ id, evidence: plan.reopenedEvidence ?? "On current code, the guest welcome page still omits the greeting; the signed-in control shows it." })) : [], disputes: [] });
       if ((plan.reviewer === "important" || plan.reviewer === "important-twice" || plan.reviewer === "confirm-fixed" || plan.reviewer === "confirm-fixed-one-tool") && !text.includes("This is review round") && !(plan.fixes === "change" && existsSync(join(session.cwd, "welcome.txt")))) {
-        const opus = session.model === "opus";
+        const opus = session.model === (plan.importantBy ?? "opus");
         if ((plan.reviewer === "important" || plan.reviewer === "confirm-fixed-one-tool") && !opus) return done({ verdict: "pass", findings: [{ text: "Consider a friendlier greeting.", severity: "nit" }], confirms: [], disputes: [] });
         return done({ verdict: "fail", findings: [{ text: opus ? "The greeting is missing on the welcome page." : "The GREETING is missing on the welcome page!", where: "greeting.txt", severity: "important", evidence: "Opened the welcome page" }], confirms: [], disputes: [] });
       }
@@ -1243,11 +1247,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       const ids = findingIds(text, "Important findings to check (a verdict on every one, by id)");
       const verdict = plan.verifierByModel?.[session.model ?? ""] ?? (plan.verifier === "after-fix-not-a-bug" ? (text.includes("  The builder: fixed.") ? "not-a-bug" : "real") : plan.verifier === "split" ? (notABug ? "not-a-bug" : "real") : plan.verifier === "hold" ? "real" : plan.verifier) ?? "real";
       return done({
-        verdicts: (plan.partialVerification ? ids.slice(0, 1) : ids).map((id) => ({
-          id,
-          verdict,
-          reason: verdict === "not-a-bug" ? "The welcome page shows the greeting already." : "The welcome page has no greeting: confirmed by opening it.",
-        })),
+        verdicts: (plan.partialVerification ? ids.slice(0, 1) : ids).map((id) => {
+          const given = plan.verifierByFinding?.[id]?.[session.model ?? ""] ?? verdict;
+          return { id, verdict: given, reason: given === "not-a-bug" ? "The welcome page shows the greeting already." : given === "real" ? "The welcome page has no greeting: confirmed by opening it." : `It is ${given === "nit" ? "only a nit" : "older than this change"}: checked on ${session.model}.` };
+        }),
       });
     }
     case "tester":

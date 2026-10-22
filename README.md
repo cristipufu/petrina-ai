@@ -39,7 +39,7 @@ A review finding must hold up before it can send work back. Reviewers mark findi
 | --- | --- |
 | **Reviewers** | Reviewers read the change at the same time, each in a separate conversation and working copy. They see neither the builder's transcript nor each other's current verdicts. Important means the change should not ship with the issue; Nit means it is smaller; Pre-existing means this change did not cause it. |
 | **Checks** | Petrina runs the product's checks itself. A passing result is evidence from the command, not an agent's claim. |
-| **Verifiers** | Support from another tool confirms an Important finding. Otherwise, a fresh verifier on each available tool checks it in parallel, with one vote per tool. At least half must call it real for it to block. Other verdicts record it as a nit, pre-existing or not a bug. |
+| **Verifiers** | Support from another tool confirms an Important finding. Otherwise, two fresh verifiers on different available tools check it in parallel, avoiding the tool that reported it where they can. Any real answer keeps it blocking. When both say it does not block and a third tool was available, that tool gives a third answer before it is recorded as a nit, pre-existing or not a bug. |
 | **Security** | High-risk work gets a security review, preferring a tool that did not build the change. The same finding rules apply. The planner sets the risk; unrated work counts as medium. |
 | **Delivery** | You approve shipping unless the task's settings allow automatic delivery. Petrina publishes the chosen pull request, release or commit. Merging a pull request stays with you. |
 

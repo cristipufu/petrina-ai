@@ -17,6 +17,7 @@ export * from "./navigation.js";
 export * from "./findings.js";
 export * from "./finding-reports.js";
 export * from "./reviews.js";
+export * from "./verifier-panel.js";
 export * from "./flow.js";
 export * from "./check-evidence.js";
 export * from "./commands.js";

@@ -618,14 +618,18 @@ describe("internal roles and reviewers asking for the screen", () => {
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
-      const voters = f.state().tools.filter((tool) => tool.status === "ready").length || 2;
+      // The bounded pair asks first; with a third usable tool, its third answer asks afterwards in a step of its own.
+      const ready = f.state().tools.filter((tool) => tool.status === "ready").length || 2;
+      const voters = Math.min(2, ready);
       await waitFor(() => f.asking(id) && Object.keys(f.task(id).hunt?.screenTurns ?? {}).length === voters, "the verifiers to ask");
       expect(f.task(id).screen?.roleId).toBe("verifier");
       expect(slotUses(f.state())).toEqual([]);
       const sessions = f.fakes.received("verifier").map((entry) => entry.session);
       f.engine.setScreenUse("on");
       await f.until((state) => f.built(state, id), "the verifiers to finish");
-      expect(f.onScreen().sort()).toEqual(sessions.sort());
+      const all = [...new Set(f.fakes.received("verifier").map((entry) => entry.session))];
+      expect(all).toHaveLength(voters + (ready >= 3 ? 1 : 0));
+      expect(f.onScreen().sort()).toEqual(all.sort());
       for (const session of sessions) expect(f.fakes.received("verifier").filter((entry) => entry.session === session)).toHaveLength(2);
       expect(f.task(id).findings.find((entry) => entry.verification)?.verification?.verdict).toBe("not-a-bug");
     } finally { await f.close(); }

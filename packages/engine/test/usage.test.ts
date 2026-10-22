@@ -171,7 +171,16 @@ describe.concurrent("an agent that runs out of usage", () => {
   }
 
   it("credits review votes to the verifier that finished after a model handoff", async () => {
-    const run = await start({ builder: "plain", reviewer: "important", limited: [{ model: "opus", role: "verifier", type: "seven_day_opus" }] });
+    // With Grok signed out, the pair includes Claude Code even though its reviewer reported the finding.
+    const run = await start({ builder: "plain", reviewer: "important", limited: [{ model: "opus", role: "verifier", type: "seven_day_opus" }] }, {
+      before: (engine) => {
+        engine.s.setup!.checks = [
+          { id: "claude-code", status: "ready" },
+          { id: "codex", status: "ready" },
+          { id: "grok", status: "logged-out" },
+        ];
+      },
+    });
     try {
       const task = await run.done();
       const actual = run.engine.tracking.log.turns({ taskId: task.id }).find((turn) => turn.roleId === "verifier" && turn.end === "finished" && turn.modelAsked === "sonnet")!;

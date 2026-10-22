@@ -3,7 +3,7 @@ import { beginRepair, productsFor } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { endAgentStep, findingCount, independentVotes, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, pickStarts, portReviewerIndex, recordStepResult, reviewRoundEnd, reviewerAt, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Id, type Role, type Stage, type Task, type Vote } from "@petrina/core";
+import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewRoundEnd, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type PanelCandidate, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -36,13 +36,13 @@ export function recordDisputes(findings: DeepMutable<Finding>[], disputes: reado
 /** What a reviewer's tag means for the finding. */
 const SEVERITY = { important: "blocking", nit: "suggestion", "pre-existing": "pre-existing" } as const;
 
-/** The verdict most voters gave, the mildest first on a tie: a nit, then older than the change, then not a bug. */
-function mostCommon(votes: readonly Vote[]): Vote | undefined {
-  const order: Vote["verdict"][] = ["nit", "pre-existing", "not-a-bug"];
-  const count = (verdict: Vote["verdict"]) => votes.filter((vote) => vote.verdict === verdict).length;
-  const best = [...order].sort((a, b) => count(b) - count(a) || order.indexOf(a) - order.indexOf(b))[0]!;
-  return votes.find((vote) => vote.verdict === best);
-}
+/** A verifier's answer in plain words. */
+const VERDICT_WORDS: Record<Vote["verdict"], string> = { real: "real", "not-a-bug": "not a bug", nit: "only a nit", "pre-existing": "older than the change" };
+
+const listWords = (names: readonly string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
+
+/** What voting needs next: the ballot's findings, the places to admit now and the profile each would start on. `phase`: every place of their step. */
+type PendingVote = { findings: Task["findings"]; seats: VerifierSeat[]; voters: Id[]; phase?: VerifierSeat[]; panel?: VerifierPanel; third?: boolean };
 
 function closedFinding(finding: Finding): boolean {
   return finding.status === "fixed" || finding.status === "dismissed";
@@ -83,6 +83,7 @@ function reopenFinding(finding: DeepMutable<Finding>, at: number, evidence?: str
     ...(finding.disputes ? { disputes: finding.disputes } : {}),
     ...(finding.verification ? { verification: finding.verification } : {}),
     ...(finding.votes ? { votes: finding.votes } : {}),
+    ...(finding.unresolved ? { unresolved: finding.unresolved } : {}),
     ...(finding.answer ? { answer: finding.answer } : {}),
     ...(finding.resolution ? { resolution: finding.resolution } : {}),
   }];
@@ -90,15 +91,11 @@ function reopenFinding(finding: DeepMutable<Finding>, at: number, evidence?: str
   delete finding.disputes;
   delete finding.verification;
   delete finding.votes;
+  delete finding.unresolved;
   delete finding.resolution;
   finding.status = "open";
   finding.reopenedAt = at;
   if (evidence !== undefined) finding.evidence = evidence.trim();
-}
-
-/** Tools that finished the whole ballot. Partial verdicts are saved, but cannot close a round alone. */
-function finishedVoters(findings: readonly Finding[]): Set<Id> {
-  return new Set(findings[0]?.votes?.flatMap((vote) => vote.toolId && findings.every((finding) => finding.votes?.some((entry) => entry.toolId === vote.toolId)) ? [vote.toolId] : []));
 }
 
 /** What admission decided for a parallel seat: the words on its start, and why a saved conversation was not kept. */
@@ -203,10 +200,10 @@ export class Reviews {
       // The reviewers' box ends with what they raised; the voters get a box of their own.
       const roleId = openStep(task)?.roleId;
       if (roleId === stage.roleId || (roleId && stage.roleIds?.includes(roleId))) endAgentStep(task, { outcome: this.raised(task), reason: W.toCheck(vote.findings.length) }, Date.now());
-      await this.vote(task, vote.findings, vote.voters, signal);
+      await this.vote(task, vote, signal);
       return "continue";
     }
-    const outcome = vote ? this.tally(task, vote.findings) : this.raised(task);
+    const outcome = vote ? this.tally(task, vote) : this.raised(task);
     const reviewedVersions = task.hunt?.input?.trees;
     delete task.hunt;
     return this.closeReviewRound(task, stage, round, outcome, reviewedVersions);
@@ -247,10 +244,10 @@ export class Reviews {
     return this.plannedReviewers(task, stage).map(({ key }) => `reviewer:${key}`);
   }
 
-  /** A vote's electorate is its step's expected seats: a revision under the usage-handoff rule is recorded on the open vote step, never on an ended one. */
-  private syncVoterSeats(task: MTask, planned: readonly Id[]): void {
+  /** A vote's places are its step's expected seats, named by place: recorded on the open vote step, never on an ended one. */
+  private syncVoterSeats(task: MTask, seats: readonly VerifierSeat[]): void {
     const step = openStep(task);
-    if (step?.kind === "agent" && step.roleId && this.k.role(step.roleId)?.result === "votes") step.seats = planned.map((id) => `verifier:${id}`);
+    if (step?.kind === "agent" && step.roleId && this.k.role(step.roleId)?.result === "votes") step.seats = seats.map((seat) => `verifier:${seat.key}`);
   }
 
   private rememberReviewer(task: MTask, key: string, profileId: Id): void {
@@ -378,10 +375,10 @@ export class Reviews {
     await this.learnings.note(scope, result.learnings, roleId, profileId);
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
-      // Fresh proof can challenge a claimed fix or dismissal without creating another finding.
-      // Native check findings remain governed by the actual check results.
+      // Fresh proof can challenge a claimed fix or dismissal without creating another finding, and on changed code starts
+      // a fresh ballot for one a vote left unresolved. Native check findings remain governed by the actual check results.
       const evidence = result.confirmationEvidence[id];
-      if (finding && closedFinding(finding) && finding.raisedBy !== "petrina") reopenFinding(finding, Date.now(), evidence);
+      if (finding && finding.raisedBy !== "petrina" && (closedFinding(finding) || reopensUnresolved(finding, task.hunt, evidence))) reopenFinding(finding, Date.now(), evidence);
       else if (finding) addEvidence(finding, evidence);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
@@ -438,16 +435,78 @@ export class Reviews {
   }
 
   /**
-   * The Important findings still to vote on (raised by a reviewer, and not yet backed on a second tool),
-   * and the voters who have not voted yet: one fresh agent per tool.
+   * The Important findings to check (raised by a reviewer and not yet backed on a second tool), and the places to admit
+   * next. A new ballot saves its bounded panel before anyone starts; the initial places finish first, then targeted third
+   * answers, each set in its own journey step.
    */
-  private pendingVote(task: MTask, stage: MStage): { findings: Task["findings"]; voters: Id[] } | undefined {
+  private pendingVote(task: MTask, stage: MStage): PendingVote | undefined {
     // Scheduling asks this before running the step. Settle the complete reviewer group first,
     // so a finding that needs no ballot cannot make the task wait for a voter's usage or slot.
     this.settleReviews(task, stage);
+    const hunt = task.hunt;
+    const eligible = this.ballotFindings(task);
+    let panel: VerifierPanel | undefined = hunt?.panel;
+    if (!panel && hunt?.voterProfiles?.length && eligible.length) {
+      // An older round admitted one voter per tool: it keeps its places and majority rule until it finishes.
+      hunt.panel = this.olderPanel(task, eligible) as DeepMutable<VerifierPanel>;
+      panel = hunt.panel;
+      delete hunt.voterProfiles;
+      delete hunt.voterReplacements;
+      this.k.commitNow();
+    }
+    if (!panel) {
+      if (!eligible.length) return undefined;
+      const chosen = this.newPanel(task, stage, eligible);
+      if (!chosen) {
+        // Nobody can vote yet: leave the panel open until at least one tool is usable, and keep the review waiting.
+        const waiting = this.voters(stage)[0];
+        return { findings: eligible, seats: waiting ? [{ key: waiting, profileId: waiting, toolId: this.k.profile(waiting)?.toolId ?? "", findingIds: eligible.map((finding) => finding.id), reason: "" }] : [], voters: waiting ? [waiting] : [] };
+      }
+      panel = chosen.panel;
+      // A paused scheduler may ask who would run next before tool checks finish.
+      // Keep that preview provisional until work can start; an existing ballot stays durable.
+      if (hunt && !this.k.admissionsClosed) {
+        chosen.keep();
+        hunt.panel = panel as DeepMutable<VerifierPanel>;
+        this.syncVoterSeats(task, panel.seats);
+        this.k.log(task, "milestone", `${panel.seats.length === 1 ? "Verifier" : "Verifiers"}: ${listWords(panel.seats.map((seat) => this.k.named(seat.profileId)))} check ${findingCount(eligible)}; usable at selection: ${listWords(panel.usable.map((tool) => this.toolName(tool)))}`);
+        this.k.commitNow();
+      }
+    }
+    const ids = new Set(panel.seats.flatMap((seat) => seat.findingIds));
+    // A finding that became eligible while the initial places still work joins their assignment; it never waits for a later round.
+    const joining = eligible.filter((finding) => !ids.has(finding.id));
+    if (joining.length && hunt?.panel === panel && panel.escalatedAt === undefined && !this.k.admissionsClosed) {
+      for (const seat of panel.seats as DeepMutable<VerifierSeat>[]) seat.findingIds = [...seat.findingIds, ...joining.map((finding) => finding.id)];
+      for (const finding of joining) ids.add(finding.id);
+      this.k.commitNow();
+    }
+    const findings = task.findings.filter((finding) => ids.has(finding.id) && finding.status === "open" && !finding.verification && !finding.unresolved);
+    if (!findings.length) return undefined;
+    // Before the round saves its state, the preview reads answers as this stage and round's.
+    const ballot = hunt ?? { stageId: stage.id, round: task.rounds[stage.id] ?? 1 };
+    const remaining = (seat: VerifierSeat) => seatRemaining(panel, seat, findings, ballot).length > 0;
+    const admit = (seats: VerifierSeat[], phase: VerifierSeat[], third?: boolean): PendingVote => ({ findings: findings as Task["findings"], panel, seats, voters: seats.map((seat) => this.voterOn(task, seat)), phase, ...(third ? { third } : {}) });
+    const initial = panel.seats.filter((seat) => !seat.third);
+    if (initial.some(remaining)) {
+      if (hunt?.panel === panel && !this.k.admissionsClosed) this.replaceStalled(task, stage, panel, findings, initial);
+      return admit(initial.filter(remaining), initial);
+    }
+    if (panel.rule === "bounded" && panel.escalatedAt === undefined) {
+      const plan = this.thirdAnswers(task, stage, panel, findings, ballot);
+      if (hunt?.panel !== panel || this.k.admissionsClosed) return admit(plan.seats, plan.seats, true);
+      this.escalate(task, panel, findings, plan);
+    }
+    const third = panel.seats.filter((seat) => seat.third);
+    if (third.some(remaining) && hunt?.panel === panel && !this.k.admissionsClosed) this.replaceStalled(task, stage, panel, findings, third);
+    return admit(third.filter(remaining), third, true);
+  }
+
+  /** Important reports that still need independent support: not backed on a second tool, never settled, never left unresolved. */
+  private ballotFindings(task: MTask): Task["findings"] {
     const toolOf = (profileId: Id) => this.k.profile(profileId)?.toolId;
-    const findings = task.findings.filter((finding) => {
-      if (finding.status !== "open" || finding.severity !== "blocking" || finding.raisedBy === "petrina" || finding.verification) return false;
+    return task.findings.filter((finding) => {
+      if (finding.status !== "open" || finding.severity !== "blocking" || finding.raisedBy === "petrina" || finding.verification || finding.unresolved) return false;
       if (task.repositories && !productsFor(task, finding.productIds).length) return false;
       const judgments = finding.judgments ?? [];
       const clashed = judgments.some((entry) => entry.severity === "pre-existing") && judgments.some((entry) => entry.severity === "blocking");
@@ -457,85 +516,172 @@ export class Reviews {
         ? [...judgments.filter((entry) => entry.severity === "blocking").map((entry) => entry.by), ...finding.confirmedBy.filter((id) => !older.has(id))]
         : [...((finding.reopenedAt !== undefined || finding.answer?.fixed) ? [] : [finding.raisedBy]), ...finding.confirmedBy];
       return new Set(supporters.map(toolOf).filter(Boolean)).size < 2;
-    });
-    if (!findings.length) return undefined;
-    // Resolve usage and model fallbacks before choosing the electorate. A capped tool is still
-    // usable and waits for its seat. Older votes remain history; their nominal names do not prove
-    // an actual tool voted, so only newly recorded identities cover a tool's place.
-    const covered = finishedVoters(findings);
-    let planned = task.hunt?.voterProfiles;
-    if (!planned) {
-      const tools = new Set<Id>();
-      planned = this.voters(stage).flatMap((id) => {
-        const choice = this.k.choose(id, task, "verifier");
-        if (!choice || choice.kind === "none" || tools.has(choice.profile.toolId)) return [];
-        tools.add(choice.profile.toolId);
-        return [choice.profile.id];
-      });
-      // Nobody can vote yet: leave the electorate open until at least one tool is usable.
-      // A paused scheduler may ask who would run next before tool checks finish.
-      // Keep that preview provisional until work can start; an existing ballot stays durable.
-      if (planned.length && task.hunt && !this.k.admissionsClosed) {
-        task.hunt.voterProfiles = planned;
-        this.syncVoterSeats(task, planned);
-        this.k.commitNow();
-      }
-    }
-    if (task.hunt?.voterProfiles && !this.k.admissionsClosed) {
-      // An unavailable tool can yield to a new independent tool, but a completed
-      // partner never substitutes for its required ballot.
-      // A cap, a pause or a drain never makes a usable participant disappear.
-      const requiredTools = new Set(planned.map(id => this.k.profile(id)?.toolId));
-      const modelFull = (id: Id) => {
-        const choice = this.k.choose(id, task, "verifier");
-        return choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT);
-      };
-      const available = [...planned];
-      for (let index = 0; index < available.length; index += 1) {
-        const id = available[index]!, tool = this.k.profile(id)?.toolId;
-        if (covered.has(tool ?? "") || modelFull(id)) continue;
-        const choice = this.k.choose(id, task, "verifier");
-        if (choice && choice.kind !== "none" && choice.profile.toolId === tool) continue;
-        const alternatives = this.voters(stage).flatMap(candidate => {
-          const pick = this.k.choose(candidate, task, "verifier");
-          return pick && pick.kind !== "none" ? [pick.profile] : [];
-        });
-        if (choice && choice.kind !== "none") alternatives.unshift(choice.profile);
-        const replacement = alternatives.find(profile => !requiredTools.has(profile.toolId) && !covered.has(profile.toolId));
-        if (!replacement) continue;
-        const reason = `${this.k.named(id)} could not finish verification (${choice?.kind === "none" ? choice.waiting : "selection did not retain its tool"}). ${this.k.named(replacement.id)} takes its required seat on a different tool; saved votes remain.`;
-        requiredTools.delete(tool); requiredTools.add(replacement.toolId);
-        available[index] = replacement.id;
-        task.hunt!.voterReplacements = { ...task.hunt!.voterReplacements, [replacement.id]: { from: id, reason } };
-        this.k.log(task, "milestone", reason);
-      }
-      if (JSON.stringify(available) !== JSON.stringify(planned)) {
-        planned = available;
-        task.hunt.voterProfiles = planned;
-        this.syncVoterSeats(task, planned);
-        this.k.commitNow();
-      }
-    }
-    const voters = planned.flatMap((id) => {
-      if (covered.has(this.k.profile(id)?.toolId ?? "")) return [];
+    }) as Task["findings"];
+  }
+
+  private toolName(toolId: Id): string {
+    return this.k.s.tools.find((tool) => tool.id === toolId)?.name ?? toolId;
+  }
+
+  /** The actual tool of a finding's author, or of the reviewer whose current reproduction reopened it. Unknown stays unknown. */
+  private authorTool(finding: Finding): Id | undefined {
+    const author = authorProfile(finding);
+    return author ? this.k.profile(author)?.toolId : undefined;
+  }
+
+  /** The tools a verifier choice resolves on now, one per actual tool, in the stable order: stand-ins on the same tool included. */
+  private usableVoters(task: MTask, stage: MStage): PanelCandidate[] {
+    const tools = new Set<Id>();
+    return this.voters(stage).flatMap((id) => {
       const choice = this.k.choose(id, task, "verifier");
-      // A full model keeps this tool's seat. The vote waits instead of settling on the other tools.
-      if (choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT)) return [id];
-      // Once admitted to the electorate, a missing independent tool cannot be replaced by a
-      // finished partner's vote. Same-tool model substitutions retain that tool's seat.
-      return choice && choice.kind !== "none" && choice.profile.toolId === this.k.profile(id)?.toolId ? [choice.profile.id] : [id];
+      if (!choice || choice.kind === "none" || tools.has(choice.profile.toolId)) return [];
+      tools.add(choice.profile.toolId);
+      return [{ toolId: choice.profile.toolId, profileId: choice.profile.id, usableNow: true }];
     });
-    // With no finished ballot and nobody usable, keep the review waiting for usage, never pass it.
-    if (!voters.length && !covered.size) {
-      const waiting = planned[0] ?? this.voters(stage)[0];
-      if (waiting) voters.push(waiting);
-    }
-    return { findings: findings as Task["findings"], voters };
   }
 
   /**
-   * One fresh voter per tool. Prefer high effort for checking a specific claim;
-   * the stage's discovery reviewers keep their configured profiles.
+   * A new ballot's bounded panel. Usage, model and capacity choices resolve first: a tool already unavailable is not
+   * reserved for later, while a full slot still waits for its place. Answers this ballot already proved keep their places.
+   */
+  private newPanel(task: MTask, stage: MStage, findings: Task["findings"]): { panel: VerifierPanel; keep: () => void } | undefined {
+    const recovered = this.recoveredAnswers(task, findings);
+    const panel = choosePanel({
+      candidates: this.usableVoters(task, stage),
+      recovered: recovered.candidates,
+      findings: findings.map((finding) => ({ id: finding.id, ...(this.authorTool(finding) ? { author: this.authorTool(finding)! } : {}) })),
+      name: (tool) => this.toolName(tool),
+    });
+    return panel ? { panel, keep: recovered.keep } : undefined;
+  }
+
+  /**
+   * Answers to this stage, round and reviewed code saved before a panel was: they count before more work is chosen.
+   * An older answer without ballot details counts only when this round's own vote step recorded it on this input.
+   */
+  private recoveredAnswers(task: MTask, findings: Task["findings"]): { candidates: PanelCandidate[]; keep: () => void } {
+    const hunt = task.hunt;
+    if (!hunt) return { candidates: [], keep: () => {} };
+    const recorded = (finding: Finding, vote: Vote) => !!hunt.input?.digest && (task.journey ?? []).some((step) => step.stageId === hunt.stageId && step.round === hunt.round && step.reviewInput?.digest === hunt.input!.digest && this.k.role(step.roleId ?? "")?.result === "votes" &&
+      [...(step.result?.findings ?? []), ...(step.agentResults ?? []).flatMap((entry) => entry.findings ?? [])].some((copy) => copy.id === finding.id && copy.votes?.some((saved) => !saved.ballot && saved.toolId === vote.toolId && saved.by === vote.by && saved.verdict === vote.verdict && saved.reason === vote.reason)));
+    const proven = (finding: Finding, vote: Vote) => !!vote.toolId && (vote.ballot ? inBallot(vote, hunt) : recorded(finding, vote));
+    const places = new Map<Id, Id>();
+    for (const finding of findings) for (const vote of finding.votes ?? []) if (proven(finding, vote) && !places.has(vote.toolId!)) places.set(vote.toolId!, vote.plannedProfileId ?? vote.by);
+    return {
+      candidates: [...places].map(([toolId, profileId]) => ({ toolId, profileId })),
+      // Proven answers are attributed to their tool's kept place, so the saved panel counts them as this ballot's.
+      keep: () => {
+        for (const finding of findings) if (finding.votes?.some((vote) => proven(finding, vote))) finding.votes = finding.votes.map((vote) => proven(finding, vote) ? { ...vote, ballot: ballotOf(hunt, places.get(vote.toolId!)!) } : vote);
+      },
+    };
+  }
+
+  /** An older round's saved electorate, as places with its original majority rule. */
+  private olderPanel(task: MTask, findings: Task["findings"]): VerifierPanel {
+    const hunt = task.hunt!;
+    const planned = hunt.voterProfiles!;
+    const toolOf = (id: Id) => this.k.profile(id)?.toolId ?? id;
+    return {
+      rule: "majority",
+      usable: [...new Set(planned.map(toolOf))],
+      seats: planned.map((id) => ({ key: id, profileId: id, toolId: toolOf(id), findingIds: findings.map((finding) => finding.id), reason: "Kept the place this ballot admitted before bounded panels, with its original rule.", ...(hunt.voterReplacements?.[id] ? { replaced: hunt.voterReplacements[id]! } : {}) })),
+    };
+  }
+
+  /** The profile that would start on a place now: a same-tool model stand-in, or the planned profile while it waits. */
+  private voterOn(task: MTask, seat: VerifierSeat): Id {
+    const choice = this.k.choose(seat.profileId, task, "verifier");
+    // A full model keeps this tool's seat. The vote waits instead of settling on the other tools.
+    if (choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT)) return seat.profileId;
+    // Once admitted, a missing independent tool cannot be replaced by a finished partner's answer.
+    return choice && choice.kind !== "none" && choice.profile.toolId === seat.toolId ? choice.profile.id : seat.profileId;
+  }
+
+  /**
+   * A place whose tool cannot continue may move to a currently usable tool independent of every finding it still owes,
+   * preferring tools that reported none of them. A cap, a pause or a drain never makes a usable place disappear,
+   * a completed partner never covers it, and its saved answers remain. `phase`: every place of one step. Each place keeps
+   * its own seat, conversation and working copy, so a tool that finished another place may take this one; a tool still
+   * working another unfinished place finishes that first.
+   */
+  private replaceStalled(task: MTask, stage: MStage, panel: VerifierPanel, findings: Task["findings"], phase: readonly VerifierSeat[]): void {
+    const hunt = task.hunt!;
+    let changed = false;
+    for (const seat of phase as DeepMutable<VerifierSeat>[]) {
+      const owed = seatRemaining(panel, seat, findings, hunt);
+      if (!owed.length) continue;
+      const choice = this.k.choose(seat.profileId, task, "verifier");
+      if (choice?.kind === "none" && choice.waiting.startsWith(CAPACITY_WAIT)) continue;
+      if (choice && choice.kind !== "none" && choice.profile.toolId === seat.toolId) continue;
+      const busy = new Set(phase.filter((other) => other !== seat && seatRemaining(panel, other, findings, hunt).length).map((other) => other.toolId));
+      const alternatives = this.usableVoters(task, stage).filter((candidate) => candidate.toolId !== seat.toolId && !busy.has(candidate.toolId));
+      const replacement = replacementFor(owed, (id) => engagedTools(panel, findings.find((finding) => finding.id === id)!, hunt, seat), alternatives, owed.map((id) => panel.authors?.[id]));
+      if (!replacement) continue;
+      const reason = `${this.k.named(seat.profileId)} could not finish verification (${choice?.kind === "none" ? choice.waiting : "selection did not retain its tool"}). ${this.k.named(replacement.profileId)} takes its required seat on a different tool; saved votes remain.`;
+      seat.replaced = { from: seat.profileId, reason };
+      seat.profileId = replacement.profileId;
+      seat.toolId = replacement.toolId;
+      this.k.log(task, "milestone", reason);
+      changed = true;
+    }
+    if (!changed) return;
+    this.syncVoterSeats(task, phase);
+    this.k.commitNow();
+  }
+
+  /** The findings whose two completed answers both said they do not block, and who gives each its third answer. */
+  private thirdAnswers(task: MTask, stage: MStage, panel: VerifierPanel, findings: Task["findings"], ballot: Pick<Hunt, "stageId" | "round" | "input">) {
+    const needs = findings.flatMap((finding) => {
+      const answers = panelAnswers(panel, finding, ballot);
+      return decide(panel, answers)?.verdict === "third" ? [{ id: finding.id, answered: answers.map((vote) => vote.toolId!), ...(panel.authors?.[finding.id] ? { author: panel.authors[finding.id]! } : {}) }] : [];
+    });
+    if (!needs.length) return { seats: [], escalations: {} };
+    // Any ready tool that has not answered a finding may give its third answer when it can start now. Only a tool
+    // usable when the panel was saved is waited for: one already left out then is never a required tie-breaker.
+    const tools = new Set<Id>();
+    const suppliers = this.voters(stage).flatMap((id) => {
+      const toolId = this.k.profile(id)?.toolId;
+      if (!toolId || tools.has(toolId)) return [];
+      tools.add(toolId);
+      const choice = this.k.choose(id, task, "verifier");
+      const usableNow = !!choice && choice.kind !== "none" && choice.profile.toolId === toolId;
+      if (!usableNow && !panel.usable.includes(toolId)) return [];
+      return [{ toolId, profileId: usableNow ? choice.profile.id : id, usableNow }];
+    });
+    return planThirdAnswers({ findings: needs, suppliers, name: (tool) => this.toolName(tool) });
+  }
+
+  /** Save the third answers once the initial places finished, and close the first pair's step with what it decided. */
+  private escalate(task: MTask, panel: VerifierPanel, findings: Task["findings"], plan: ReturnType<Reviews["thirdAnswers"]>): void {
+    const hunt = task.hunt!;
+    const saved = panel as DeepMutable<VerifierPanel>;
+    saved.seats = [...saved.seats, ...plan.seats as DeepMutable<VerifierSeat>[]];
+    saved.escalatedAt = Date.now();
+    if (Object.keys(plan.escalations).length) saved.escalations = plan.escalations;
+    // A third place is named on its own and starts clean, never in an earlier place's conversation.
+    for (const seat of plan.seats) {
+      if (hunt.work) delete hunt.work[`verifier:${seat.key}`];
+      if (hunt.screenTurns) delete hunt.screenTurns[`vote-${seat.key}`];
+    }
+    const voting = (entry: { roleId: Id }) => this.k.role(entry.roleId)?.result === "votes";
+    if (plan.seats.length) {
+      task.capacityResume = task.capacityResume?.filter((entry) => !voting(entry));
+      task.capacityRetries = task.capacityRetries?.filter((entry) => !voting(entry));
+      task.capacityPaused = task.capacityPaused?.filter((entry) => !voting(entry));
+    }
+    for (const [id, escalation] of Object.entries(plan.escalations)) this.k.log(task, escalation.unresolved ? "warn" : "milestone", `${findings.find((finding) => finding.id === id)?.text.slice(0, 80) ?? id}: ${escalation.reason}`);
+    const asked = plan.seats.reduce((count, seat) => count + seat.findingIds.length, 0);
+    const open = openStep(task);
+    if (asked && open?.kind === "agent" && open.roleId && this.k.role(open.roleId)?.result === "votes") {
+      const real = findings.filter((finding) => decide(panel, panelAnswers(panel, finding, hunt))?.verdict === "real").length;
+      endAgentStep(task, { outcome: W.firstAnswers(findings.length, real, Object.keys(plan.escalations).length), reason: W.thirdAnswer(asked) }, Date.now());
+    }
+    this.k.commitNow();
+  }
+
+  /**
+   * One fresh voter per usable tool, in the tools' stable order: the candidates a panel is chosen from. Prefer high
+   * effort for checking a specific claim; the stage's discovery reviewers keep their configured profiles.
    */
   private voters(stage: MStage): Id[] {
     const usable = this.k.usableTools() as Id[];
@@ -552,27 +698,28 @@ export class Reviews {
   }
 
   /**
-   * Fresh agents vote on each Important finding, all at once. A finding stands when at least half of them
-   * say it is real; otherwise the most common other verdict settles it (see tally). Every vote is kept.
+   * Fresh agents check their place's findings, all at once, each blind to its peers' answers. Every answer is saved
+   * as it arrives with its place, so a limit or restart only asks for what that place still owes.
    */
-  private async vote(task: MTask, findings: Task["findings"], voters: readonly Id[], signal: AbortSignal): Promise<void> {
+  private async vote(task: MTask, pending: PendingVote, signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
     const input = task.hunt?.input ? await this.input(task, signal) : undefined;
-    // Every voter sees the same claims, never a faster peer’s current ballot.
-    const claims = structuredClone(findings).map(({ votes: _votes, verification: _verification, ...finding }) => finding);
-    const ids = new Set(claims.map((finding) => finding.id));
-    // Keep each review position stable through model fallbacks and restarts.
-    const planned = task.hunt?.voterProfiles ?? this.voters(task.plan!.stages[task.stageIndex]!);
-    // The electorate is what the vote step waits for, whoever stands in on each tool.
-    const seats = planned.map((id) => `verifier:${id}`);
+    // Every voter sees the same original claims and evidence, never a peer's ballot.
+    const claims = structuredClone(pending.findings).map(({ votes: _votes, verification: _verification, unresolved: _unresolved, ...finding }) => finding);
+    // The step waits for every place of its phase, finished or not, whoever stands in on each tool.
+    const seats = (pending.phase ?? pending.seats).map((seat) => `verifier:${seat.key}`);
+    // The live status counts only the findings these places were given.
+    const findings = new Set(pending.seats.flatMap((seat) => seat.findingIds).filter((id) => claims.some((finding) => finding.id === id))).size;
     await this.together(
       task,
-      voters.map((profileId) => {
-        const plannedId = planned.find((id) => this.k.profile(id)?.toolId === this.k.profile(profileId)?.toolId) ?? profileId;
-        // The seat stays the electorate's planned profile. A replacement saves its conversation and
-        // retry count there, and a later start of this vote has to find them under the same name.
-        const key = `vote-${plannedId}`;
-        const reviewKey = `verifier:${plannedId}`;
+      pending.seats.map((planned, index) => {
+        const profileId = pending.voters[index]!;
+        const plannedId = planned.profileId;
+        const assigned = new Set(planned.findingIds);
+        // The member is named after its place, never its tool: a replacement saves its conversation and retry count
+        // there, a later start of this place finds them under the same name, and a reused tool never shares them.
+        const key = `vote-${planned.key}`;
+        const reviewKey = `verifier:${planned.key}`;
         return {
         key,
         reviewKey,
@@ -580,74 +727,103 @@ export class Reviews {
         profileId,
         work: async (copy, room, seat, used, agent, continuing, signal, selection) => {
           let by = seat;
-          const missing = () => claims.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
+          const place = () => task.hunt?.panel?.seats.find((entry) => entry.key === planned.key) ?? planned;
+          const answered = (id: Id) => {
+            const finding = task.findings.find((entry) => entry.id === id);
+            const panel = task.hunt?.panel;
+            if (!finding) return true;
+            return panel ? seatAnswered(panel, place(), finding, task.hunt!) : (finding.votes ?? []).some((vote) => vote.toolId === this.k.profile(by)!.toolId && inBallot(vote, task.hunt!));
+          };
+          const missing = () => claims.filter((finding) => assigned.has(finding.id) && !answered(finding.id));
           const given = async () => [...await this.context.sectionsFor(scope, "verifier", key, this.turns.repositoryCopies.get(copy), undefined, input), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing(), { complete: true }) }];
           const check = (value: z.infer<typeof VerifyResult>) => {
             const toolId = this.k.profile(by)!.toolId;
+            const hunt = task.hunt!;
+            const older = task.hunt?.panel?.rule === "majority";
             for (const verdict of value.verdicts) {
-              const finding = task.findings.find((entry) => entry.id === verdict.id && ids.has(entry.id));
+              const finding = task.findings.find((entry) => entry.id === verdict.id && assigned.has(entry.id));
               if (!finding) continue;
-              const previous = finding.votes?.findLast((vote) => vote.toolId === toolId);
+              // An unasked answer changes nothing: a place records only what it still owes, or its own tool's correction.
+              if (task.hunt?.panel && !acceptsAnswer(task.hunt.panel, place(), finding, hunt, toolId)) continue;
+              const previous = finding.votes?.findLast((vote) => vote.toolId === toolId && (older || (vote.ballot?.seat === planned.key && inBallot(vote, hunt))));
               if (previous?.by === by && previous.verdict === verdict.verdict && previous.reason === verdict.reason) continue;
-              // A repair can revise an earlier verdict. Keep both reasons; the latest one counts for this tool.
-              finding.votes = [...(finding.votes ?? []), { by, toolId, plannedProfileId: plannedId, verdict: verdict.verdict, reason: verdict.reason }];
+              // A repair can revise an earlier verdict. Keep both reasons; the latest one counts for this place.
+              finding.votes = [...(finding.votes ?? []), { by, toolId, plannedProfileId: plannedId, verdict: verdict.verdict, reason: verdict.reason, ballot: ballotOf(hunt, planned.key) }];
             }
             // A partial report is finished work too. Keep its reasons before asking for the rest,
-            // so a limit or restart only redoes the missing verdicts on this tool.
-            recordStepResult(task, { findings: task.findings.filter((finding) => ids.has(finding.id)) });
+            // so a limit or restart only redoes the missing verdicts on this place.
+            recordStepResult(task, { findings: task.findings.filter((finding) => assigned.has(finding.id)) });
             this.k.commitNow();
             const left = missing();
             return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left, { complete: true })}` : undefined;
           };
           const heard = (id: Id) => { by = id; used(id); };
-          if (continuing) await this.turns.turn(scope, "verifier", plannedId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room, seats });
+          const why = [place().replaced?.reason ?? place().reason, selection?.selectionReason].filter(Boolean).join(" ");
+          if (continuing) await this.turns.turn(scope, "verifier", plannedId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room, seats, place: planned.key });
           else await this.turns.parallel(scope, "verifier", plannedId, copy, given, VerifyResult, signal, {
             key: reviewKey,
             room,
             seat, ...selection,
-            ...(task.hunt?.voterReplacements?.[plannedId] ? { selectionReason: task.hunt.voterReplacements[plannedId]!.reason } : {}),
+            ...(why ? { selectionReason: why } : {}),
             used: heard,
             member: key,
             check,
             seats,
+            place: planned.key,
             agent,
             refresh: false,
           });
           task.hunt = { ...task.hunt!, voted: { ...task.hunt?.voted, [by]: true } };
           const own = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === "verifier" && entry.profileId === by);
-          if (own) own.findings = structuredClone(task.findings.filter((finding) => ids.has(finding.id)));
+          if (own) own.findings = structuredClone(task.findings.filter((finding) => assigned.has(finding.id)));
           this.k.finishReviewWork(task, reviewKey);
           this.k.commit();
         },
       };
       }),
       signal,
-      (running, waiting) => `${running} fresh agent${running === 1 ? "" : "s"} voting on ${findings.length} important finding${findings.length === 1 ? "" : "s"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
+      (running, waiting) => `${running} fresh agent${running === 1 ? "" : "s"} ${pending.third ? "giving a third answer on" : "voting on"} ${findings} important finding${findings === 1 ? "" : "s"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
     );
   }
 
-  /** Every voter has voted: each finding stands or falls by its votes. Says how the vote went. */
-  private tally(task: MTask, findings: Task["findings"]): string {
-    const ids = new Set(findings.map((finding) => finding.id));
+  /**
+   * Every place has answered: each finding is settled by its panel's rule (see `decide`). A real answer keeps it
+   * Important, disputed when another answer disagreed; a finding whose required third answer nobody could give stays
+   * Important and unresolved, without an invented verification. Says how the vote went.
+   */
+  private tally(task: MTask, pending: PendingVote): string {
+    const ids = new Set(pending.findings.map((finding) => finding.id));
+    const panel = task.hunt?.panel ?? pending.panel;
     const at = Date.now();
-    let real = 0;
+    let real = 0, disputed = 0, unresolved = 0, cleared = 0;
     for (const finding of task.findings.filter((entry) => ids.has(entry.id))) {
-      // One actual tool, one vote. Do not guess an older nominal vote's missing identity.
-      const votes = independentVotes(finding.votes);
-      const yes = votes.filter((vote) => vote.verdict === "real");
-      const outcome = yes.length * 2 >= votes.length ? (yes[0] ?? votes[0]) : mostCommon(votes.filter((vote) => vote.verdict !== "real"));
-      if (!outcome) continue;
-      const verdict = yes.length * 2 >= votes.length ? "real" : outcome.verdict;
-      finding.verification = { by: outcome.by, verdict, reason: outcome.reason, at };
-      if (verdict === "real") real += 1;
-      else if (verdict === "not-a-bug") finding.status = isRejectedReopenOfVerifiedFix(finding) ? "fixed" : "dismissed";
-      else if (verdict === "nit") finding.severity = "suggestion";
+      if (!panel || !task.hunt) continue;
+      // One actual tool, one answer on this ballot. Older rounds' answers and unproven identities stay history.
+      const decision = decide(panel, panelAnswers(panel, finding, task.hunt));
+      if (!decision) continue;
+      if (decision.verdict === "third") {
+        finding.unresolved = { at, reason: panel.escalations?.[finding.id]?.reason ?? "Both answers said it does not block, and the required third answer could not be had: it stays Important, unresolved.", ...reviewedCode(task.hunt) };
+        unresolved += 1;
+        continue;
+      }
+      if (decision.verdict === "real") {
+        real += 1;
+        if (decision.disputed.length) disputed += 1;
+        const dispute = decision.disputed.map((vote) => `${this.k.named(vote.by)} answered ${VERDICT_WORDS[vote.verdict]}: ${vote.reason}`).join(" ");
+        finding.verification = { by: decision.vote.by, verdict: "real", reason: dispute ? `${decision.vote.reason} Disputed: ${dispute}` : decision.vote.reason, at };
+        continue;
+      }
+      finding.verification = { by: decision.vote.by, verdict: decision.verdict, reason: decision.vote.reason, at };
+      cleared += 1;
+      if (decision.verdict === "not-a-bug") finding.status = isRejectedReopenOfVerifiedFix(finding) ? "fixed" : "dismissed";
+      else if (decision.verdict === "nit") finding.severity = "suggestion";
       else finding.severity = "pre-existing";
     }
     recordStepResult(task, { findings: task.findings.filter((finding) => ids.has(finding.id)) });
-    this.k.log(task, real ? "warn" : "done", `${ids.size} checked: ${real} real${ids.size > real ? `, ${ids.size - real} not holding the work back` : ""}`);
+    const oneTool = panel?.rule === "bounded" && panel.usable.length === 1;
+    this.k.log(task, real || unresolved ? "warn" : "done", `${ids.size} checked${oneTool ? " by the one usable tool" : ""}: ${real} real${disputed ? ` (${disputed} disputed)` : ""}${unresolved ? `, ${unresolved} unresolved` : ""}${cleared ? `, ${cleared} not holding the work back` : ""}`);
     this.k.commit();
-    return W.voted(real, ids.size);
+    return W.voted(real, ids.size, { disputed, unresolved, oneTool });
   }
 
   /**
