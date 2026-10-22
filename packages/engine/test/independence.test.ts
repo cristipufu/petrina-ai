@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { draftOf, independentVotes, slotUses } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { ADAPTERS } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";

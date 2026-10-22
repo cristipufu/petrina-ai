@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { draftOf, journeyProblems, JOURNEY_WORDS as W, type Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 

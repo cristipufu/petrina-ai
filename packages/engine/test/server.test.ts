@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { serve } from "../src/server.js";
 import { removeDir, tempDir, waitFor } from "./support.js";
 

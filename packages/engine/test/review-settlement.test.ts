@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -93,7 +94,7 @@ describe("shared review settlement interleavings", () => {
         task.hunt!.reported = { "0": true };
         engine.commitNow();
       } }], new AbortController().signal, () => "Reviewing");
-      if (workFails) await expect(together).rejects.toThrow("The review failed before handing back a result");
+      if (workFails) await expectRejection(together, "The review failed before handing back a result");
       else await together;
       expect(failedCleanup).toBe(true);
       expect(reported).toBe(!workFails);

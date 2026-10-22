@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROLE_STARTS, type DeepMutable, type Task, type WorkChoice } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Fakes, coordinator, finish, git, itemOf, makeWorld, REPO, remoteRef, removeDir, taskOf, until, waitFor, waitForFile, type World } from "./support.js";
 import type { Scenario } from "./fake-agent.js";
 

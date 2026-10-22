@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, journeyView, usageLines, type AgentProfile, type Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { failureReason } from "../src/tracking.js";
 import { claudeReport, claudeReports, clockTime, limitFromFailure, limitFromReport, UsageLimited, WaitingForUsage } from "../src/usage.js";
 import type { Scenario } from "./fake-agent.js";

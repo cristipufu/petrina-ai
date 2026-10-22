@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { journeyProblems } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { removeDir, testGitEnv, waitFor } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");

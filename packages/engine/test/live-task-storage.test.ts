@@ -1,7 +1,7 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import type { CheckId } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];

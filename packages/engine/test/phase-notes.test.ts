@@ -2,7 +2,7 @@ import { executionFor } from "../src/repository-context.js";
 import { expect, it } from "bun:test";
 import { join } from "node:path";
 import { Context } from "../src/context.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import { makeProduct, removeDir, tempDir } from "./support.js";
 

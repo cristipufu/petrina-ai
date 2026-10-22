@@ -1,10 +1,11 @@
+import { expectRejection } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROLE_STARTS } from "@petrina/core";
 import { Context } from "../src/context.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { fileAt } from "../src/git.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import { makeProduct, removeDir, SLOW, tempDir } from "./support.js";
@@ -55,7 +56,7 @@ describe("reading a product's committed files", () => {
       const context = new Context(engine, { pendingPoints: async () => [] } as unknown as GuideKeeper, async () => { throw new Error("Could not inspect check freshness"); });
       const reading = context.sectionsFor(scope, "code-reviewer");
       engine.sendMessage(taskId, "Keep this instruction for the successful retry.");
-      await expect(reading).rejects.toThrow("Could not inspect check freshness");
+      await expectRejection(reading, "Could not inspect check freshness");
       expect(scope.task.queued.map((message) => message.text)).toEqual(["Keep this instruction for the successful retry."]);
     } finally { await engine.shutdown(); }
   });
@@ -107,7 +108,7 @@ describe("reading a product's committed files", () => {
 
   it("reports an expired read as a failure, never as a missing guide", async () => {
     await withGit('setInterval(() => {}, 1000)', async () => {
-      await expect(fileAt(process.cwd(), "HEAD", "REVIEW.md", 80 * SLOW)).rejects.toThrow("Git did not finish reading");
+      await expectRejection(fileAt(process.cwd(), "HEAD", "REVIEW.md", 80 * SLOW), "Git did not finish reading");
     });
   });
 

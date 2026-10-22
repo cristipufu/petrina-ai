@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyView, mainLine, type Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import type { NativeStep, Scenario } from "./fake-agent.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 

@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { onScreen, screenOn, slotUses, type State, type Task } from "@petrina/core";
-import { Engine, type EngineOptions } from "../src/engine.js";
+import { Engine, type EngineOptions } from "./engine.js";
 import { screenRules, WHERE_YOU_WERE_SCREEN } from "../src/prompts.js";
 import type { Scenario } from "./fake-agent.js";
 import { finish, Fakes, git, makeProduct, makeWorld, removeDir, taskOf, tempDir, waitFor } from "./support.js";

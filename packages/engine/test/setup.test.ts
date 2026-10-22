@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
@@ -6,7 +7,7 @@ import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
 import { Connections } from "../src/connection.js";
-import { Engine, type EngineOptions } from "../src/engine.js";
+import { Engine, type EngineOptions } from "./engine.js";
 import { AgentRun } from "../src/acp-run.js";
 import { AGENT_CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
 import { Store } from "../src/store.js";
@@ -509,9 +510,9 @@ describe("Adding a product", () => {
       expect(product.path && git(product.path, "rev-parse", "--show-toplevel")).toBe(git(repo, "rev-parse", "--show-toplevel"));
       // Adding it again opens the one already there, never a second product.
       expect(await engine.addProduct(repo)).toBe(id);
-      await expect(engine.addProduct("~/nowhere")).rejects.toThrow("There is no folder at ~/nowhere.");
-      await expect(engine.addProduct("~/notes.txt")).rejects.toThrow("~/notes.txt is a file, so pick the folder you cloned the product into.");
-      await expect(engine.addProduct("~/plain")).rejects.toThrow("That folder isn't a copy of a repository, so pick the folder you cloned the product into.");
+      await expectRejection(engine.addProduct("~/nowhere"), "There is no folder at ~/nowhere.");
+      await expectRejection(engine.addProduct("~/notes.txt"), "~/notes.txt is a file, so pick the folder you cloned the product into.");
+      await expectRejection(engine.addProduct("~/plain"), "That folder isn't a copy of a repository, so pick the folder you cloned the product into.");
       // Each refusal is one plain sentence.
       for (const input of ["~/nowhere", "~/notes.txt", "~/plain"]) expect(sentences(await refusal(engine.addProduct(input)))).toBe(1);
       // A clone that is not linked to GitHub keeps its finished work on this machine.
@@ -523,7 +524,7 @@ describe("Adding a product", () => {
     }
     const noGit = new Engine(fresh("data"), { home, which: (name) => (name === "git" ? null : Bun.which(name)) });
     try {
-      await expect(noGit.addProduct(repo)).rejects.toThrow(/Git isn't installed: run .+ then try again/);
+      await expectRejection(noGit.addProduct(repo), /Git isn't installed: run .+ then try again/);
       expect(sentences(await refusal(noGit.addProduct(repo)))).toBe(1);
     } finally {
       noGit.shutdown();

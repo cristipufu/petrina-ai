@@ -1,8 +1,9 @@
+import { expectRejection } from "./rejections.js";
 import { codexLimits, limitBuckets, limitsOverTime, type ReadingsView } from "@petrina/core";
 import { grokReports } from "../src/grok-usage.js";
 import { expect, it, spyOn } from "bun:test";
 import { dispatch } from "../src/server.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { removeDir, tempDir } from "./support.js";
 
 it("strictly checks readings requests, bounds their pages, freezes them and never refreshes accounts", async () => {
@@ -25,7 +26,7 @@ it("strictly checks readings requests, bounds their pages, freezes them and neve
     expect(older.rows).toHaveLength(20);
     expect(refresh).not.toHaveBeenCalled();
     for (const extra of [{ unknown: true }, { latest: { ...latest, utilization: NaN } }, { latest: { ...latest, utilization: Infinity } }, { latest: { ...latest, unexpected: true } }, { latest: { ...latest, at: now + 1 } }, { latest: { ...latest, toolId: "other" } }, { toolId: "a".repeat(201) }, { allowanceKey: "a".repeat(601) }, { from: now + 2 }, { to: now + 32 * 86400000 }, { offset: -20 }, { offset: 100020 }, { offset: 1 }, { snapshotAt: NaN }]) {
-      await expect(dispatch(engine, { name: "usage", args: [{ ...request, ...extra }] })).rejects.toThrow();
+      await expectRejection(dispatch(engine, { name: "usage", args: [{ ...request, ...extra }] }));
     }
     expect(refresh).not.toHaveBeenCalled();
   } finally { refresh.mockRestore(); await engine.shutdown(); removeDir(dir); }

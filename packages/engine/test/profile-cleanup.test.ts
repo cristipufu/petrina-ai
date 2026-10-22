@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { expect, it, spyOn } from "bun:test";
 import { ProfileChoiceReader } from "../src/profile-choices.js";
 import { AgentRun } from "../src/acp-run.js";
@@ -17,7 +18,7 @@ it("waits for a failed startup's process cleanup before opening another configur
   });
   const reader = new ProfileChoiceReader({ dataDir: root, s: { profiles: [] }, options: {}, stopped: false } as unknown as Kernel);
   try {
-    await expect(reader.read("codex")).rejects.toThrow("Could not open");
+    await expectRejection(reader.read("codex"), "Could not open");
     const next = reader.read("codex");
     await new Promise(resolve => setImmediate(resolve));
     expect(start).toHaveBeenCalledTimes(1);

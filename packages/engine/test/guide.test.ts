@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import * as gitOps from "../src/git.js";
 import { appendPoints, cleanPoint, GUIDE, pointsText } from "../src/points.js";
 import type { Scenario } from "./fake-agent.js";

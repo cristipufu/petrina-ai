@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -54,7 +55,7 @@ createInterface({input:process.stdin}).on('line',line=>{
     await run.prompt(JSON.stringify([call("repeat"), update("repeat", { status: "completed" }), call("again"), update("again", { status: "failed" })]));
     expect(events.filter(event => event.isNew)).toHaveLength(4);
     expect(events.filter(event => event.invocation).slice(before).map(event => [event.invocation!.toolCallId, event.invocation!.status])).toEqual([["repeat", "pending"], ["repeat", "completed"], ["again", "pending"], ["again", "failed"]]);
-    await expect(run.prompt(JSON.stringify([call("unfinished"), { crash: true }]))).rejects.toThrow("Turn failed");
+    await expectRejection(run.prompt(JSON.stringify([call("unfinished"), { crash: true }])), "Turn failed");
     expect(events.at(-1)?.runningTool).toBeUndefined();
     expect(events.at(-1)?.turnEndedAt).toBeNumber();
     const unfinished = events.filter(event => event.invocation?.toolCallId === "unfinished");

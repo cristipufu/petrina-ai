@@ -75,6 +75,12 @@ export async function readGrokUsage(options: ReadOptions): Promise<UsageInfo[]> 
     return grokReports(await connection.request("_x.ai/billing", {}));
   })();
   try { return await Promise.race([read, gone, late]); }
+  catch (error) {
+    // A failed spawn closes the protocol stream too. Its AbortError can win the race
+    // against node's error event, but a missing process is still a startup failure.
+    if (child.pid === undefined) throw new Error("Grok could not start", { cause: error });
+    throw error;
+  }
   finally {
     clearTimeout(timer);
     if (child.exitCode === null && child.signalCode === null) {

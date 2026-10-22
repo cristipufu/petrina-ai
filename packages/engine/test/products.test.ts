@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { serve } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";

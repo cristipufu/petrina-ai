@@ -1,6 +1,7 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { dispatch } from "../src/server.js";
 import { removeDir, tempDir } from "./support.js";
@@ -63,7 +64,7 @@ it("rejects unknown references, self and indirect cycles without changing the sa
   expect(engine.task(c)!.priority).toBe(priority);
   engine.task(c)!.startedAt = Date.now();
   const saved = [...engine.task(c)!.after!];
-  await expect(dispatch(engine, { name: "setAfter", args: [c, []] })).rejects.toThrow("already started");
+  await expectRejection(dispatch(engine, { name: "setAfter", args: [c, []] }), "already started");
   expect(engine.task(c)!.after).toEqual(saved);
   const outside = await new Coordination(engine).call("task.dependencies", { taskId: c, after: [], requestId: "too-late" });
   expect(outside.outcome).toBe("invalid");

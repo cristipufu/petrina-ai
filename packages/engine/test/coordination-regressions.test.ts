@@ -2,7 +2,7 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it } from "bun:test";
 import { z } from "zod";
 import type { AgentRun } from "../src/acp-run.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { EngineClient } from "../src/engine-client.js";

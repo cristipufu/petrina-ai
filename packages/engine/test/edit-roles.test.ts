@@ -1,9 +1,10 @@
+import { expectRejection } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, MAINTENANCE_ROLES, draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, REPAIR_RULE, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { dispatch } from "../src/server.js";
 import { Store } from "../src/store.js";
@@ -463,13 +464,13 @@ describe("the engine's own rules for roles", () => {
       ];
       for (const [name, args, message] of refused) {
         const before = JSON.stringify({ roles: engine.getState().roles, changes: engine.getState().roleChanges });
-        await expect(act(name, ...args)).rejects.toThrow(message);
+        await expectRejection(act(name, ...args), message);
         expect(JSON.stringify({ roles: engine.getState().roles, changes: engine.getState().roleChanges })).toBe(before);
       }
       for (let n = 1; n <= 20; n += 1) await act("addRole", { ...ROLE_STARTS[0]!.draft, name: `Helper ${n}`, purpose: "Helps." });
-      await expect(act("addRole", { ...ROLE_STARTS[0]!.draft, name: "Helper 21", purpose: "Helps." })).rejects.toThrow("You can add at most 20 roles");
+      await expectRejection(act("addRole", { ...ROLE_STARTS[0]!.draft, name: "Helper 21", purpose: "Helps." }), "You can add at most 20 roles");
       const helper = engine.getState().roles.find((role) => role.name === "Helper 1")!;
-      await expect(act("saveRole", helper.id, { ...draftOf(helper), result: "findings" })).rejects.toThrow("add a new role");
+      await expectRejection(act("saveRole", helper.id, { ...draftOf(helper), result: "findings" }), "add a new role");
       // Nothing refused changed anything.
       expect(engine.getState().roles.filter((role) => !role.added)).toEqual([...BUILT_IN_ROLES, ...MAINTENANCE_ROLES].map((role) => ({ ...role })));
     } finally {

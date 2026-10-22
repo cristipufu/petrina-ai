@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 // Where agents' temporary browser folders live. Real agents keep the user's standard folder; test
 // fixtures use their own short folders, and scripted agents that never open a page get no browser.
 import { expect, it, spyOn } from "bun:test";
@@ -14,7 +15,7 @@ import sharp from "sharp";
 import { AgentRun } from "../src/acp-run.js";
 import { AgentBrowser, browserTempRoot } from "../src/browser.js";
 import { preserveCaptures } from "../src/captures.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { mayAskScreen } from "../src/prompts.js";
 import { opensBrowser } from "../src/turn.js";
 import { finish, makeWorld, removeDir, SLOW, taskOf, tempDir, testBrowserRoot } from "./support.js";
@@ -209,7 +210,7 @@ it("keeps parallel fixtures' browser folders apart and recovers only an engine's
     // Windows cannot verify browser children after a forced helper exit, so it
     // reports incomplete cleanup and leaves the folder for the fixture's final cleanup.
     for (const browser of browsers) {
-      if (process.platform === "win32") await expect(browser.close()).rejects.toThrow("The headless browser did not stop.");
+      if (process.platform === "win32") await expectRejection(browser.close(), "The headless browser did not stop.");
       else await browser.close();
     }
     expect(readdirSync(first)).toEqual([]);

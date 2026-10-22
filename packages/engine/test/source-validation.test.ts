@@ -1,7 +1,8 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import type { TaskSource, WorkChoice } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { removeDir, tempDir } from "./support.js";
 
@@ -27,7 +28,7 @@ it("saves in-flight single-product validation and blocks edits and approval unti
     const pending = engine.setTaskStart(task.id, choice("one"));
     expect(task.workValidating).toBe(true);
     expect(engine.store.load()!.tasks.find(entry => entry.id === task.id)!.workValidating).toBe(true);
-    await expect(engine.setTaskStart(task.id, choice("two"))).rejects.toThrow("Wait for validation");
+    await expectRejection(engine.setTaskStart(task.id, choice("two")), "Wait for validation");
     expect(() => sources.confirm(task)).toThrow("Wait for every product choice");
     finish(resolved("one")); await pending;
     expect(task.workValidating).toBe(false); expect(task.workError).toBeUndefined();
@@ -60,7 +61,7 @@ it("rejects a source edit for an absent shared product without clearing the lead
   const before = JSON.stringify(task.workRows);
   try {
     const bad = { ...choice("missing"), productId: "missing", lead: true };
-    await expect(engine.setTaskStart(task.id, bad)).rejects.toThrow("not in this task's product choices");
+    await expectRejection(engine.setTaskStart(task.id, bad), "not in this task's product choices");
     expect(JSON.stringify(task.workRows)).toBe(before);
     const result = await new Coordination(engine).call("task.source", { taskId: task.id, choice: bad, requestId: "missing-product" });
     expect(result.outcome).toBe("invalid"); expect(JSON.stringify(task.workRows)).toBe(before);

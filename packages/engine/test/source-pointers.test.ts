@@ -3,7 +3,7 @@ import { expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Context } from "../src/context.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import { SourcePointers } from "../src/roles.js";
 import { currentSourcePointers } from "../src/source-pointers.js";

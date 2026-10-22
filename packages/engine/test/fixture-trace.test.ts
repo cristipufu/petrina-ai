@@ -1,3 +1,4 @@
+import { rejectionOf } from "./rejections.js";
 import { expect, it } from "bun:test";
 import { FixtureTrace } from "./fixture-trace.js";
 
@@ -20,10 +21,10 @@ it("records a stalled nested phase before it finishes, including work still owne
     await work;
     trace.report("still waiting");
     expect(lines.at(-1)).toContain('"pending":[]');
-    await expect(trace.during("Shutdown", async () => {
+    expect(await rejectionOf(trace.during("Shutdown", async () => {
       trace.report("still waiting");
       throw failure;
-    })).rejects.toBe(failure);
+    }))).toBe(failure);
     expect(lines.at(-1)).toContain('"phase":"Shutdown"');
     expect(lines.at(-1)).toContain('"settling":["task"]');
     expect(lines.at(-1)).toContain("Evidence could not be read");
@@ -91,12 +92,12 @@ it("retains phase evidence when startup diagnostics are unavailable and preserve
   const failure = new Error("Agent did not start");
   try {
     trace.snapshot = () => { throw new Error("startup.jsonl unavailable"); };
-    await expect(trace.during("Round 1", async () => { throw failure; })).rejects.toBe(failure);
+    expect(await rejectionOf(trace.during("Round 1", async () => { throw failure; }))).toBe(failure);
     expect(lines.at(-1)).toContain('"event":"failed"');
     expect(lines.at(-1)).toContain('"phase":"Round 1"');
     expect(lines.at(-1)).toContain("startup.jsonl unavailable");
     trace.snapshot = () => ({ bad: 1n }); // Even an unserializable diagnostic cannot replace failure.
-    await expect(trace.during("Shutdown", async () => { throw failure; })).rejects.toBe(failure);
+    expect(await rejectionOf(trace.during("Shutdown", async () => { throw failure; }))).toBe(failure);
   } finally { trace.close(); }
 });
 
@@ -128,7 +129,7 @@ for (const rejects of [false, true]) it(`distinguishes an unfinished process fro
     expect(stdout.locked).toBe(false);
     expect(stderr.locked).toBe(false);
     result.reject(failure);
-    await expect(work).rejects.toBe(failure);
+    expect(await rejectionOf(work)).toBe(failure);
     const failed = JSON.parse(lines.at(-1)!.split("Git cleanup: ")[1]!);
     expect(failed.event).toBe("failed");
     expect(failed.error).toContain("Command output failed");

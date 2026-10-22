@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { journeyProblems, type Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { EARLIER_ATTEMPT } from "../src/prompts.js";
 import { EngineProcess, Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 

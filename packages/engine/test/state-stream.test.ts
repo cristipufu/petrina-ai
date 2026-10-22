@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { serve } from "../src/server.js";
 import { removeDir, tempDir, waitFor } from "./support.js";
 

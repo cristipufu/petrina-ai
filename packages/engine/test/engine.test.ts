@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { removeDir, SLOW, testGitEnv } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");

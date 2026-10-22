@@ -1,8 +1,9 @@
+import { expectRejection, rejectionOf } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { endAgentStep, ROLE_STARTS, slotWait, type AgentProfile, type CheckId } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { executionFor } from "../src/repository-context.js";
 import { participantConversation } from "../src/participant-conversation.js";
 import * as gitOps from "../src/git.js";
@@ -238,7 +239,7 @@ describe.concurrent("eligible saved review stand-ins", () => {
       const command = f.engine.options.agentCommand!;
       f.engine.options.agentCommand = (profile) => profile.toolId === "claude-code"
         ? [process.execPath, join(import.meta.dir, "fake-agent.ts"), "--wont-start"] : command(profile);
-      await expect(f.round(1)).rejects.toMatchObject({ toolId: "claude-code", status: "wont-start" });
+      expect(await rejectionOf(f.round(1))).toMatchObject({ toolId: "claude-code", status: "wont-start" });
       expect(f.task.timeline.filter((entry) => entry.tone === "milestone" && entry.roleId === f.stage.roleId && entry.profileId === "opus-high")).toHaveLength(1);
       expect(f.task.session.filter((entry) => entry.from === "system" && entry.profileId === "opus-high" && entry.text.includes("joined ·"))).toHaveLength(1);
       expect(f.task.journey!.flatMap((step) => step.agentInputs ?? []).filter((input) => input.profileId === "opus-high")).toHaveLength(0);
@@ -413,7 +414,7 @@ describe.concurrent("eligible saved review stand-ins", () => {
       rmSync(join(f.fakes.dir, "conversations", `${saved.sessionId}.json`));
       f.engine.s.pool.toolCaps["claude-code"] = 0;
       const firstPrompts = f.fakes.received().length;
-      await expect(f.round(2)).rejects.toThrow("Waiting for a free");
+      await expectRejection(f.round(2), "Waiting for a free");
       expect(f.task.reviewSessions![f.stage.id]!["0"]!.freshReason).toContain("could not reopen");
       expect(f.task.journey!.at(-1)!.agentInputs!.some((input) => input.reviewerKey === "0")).toBe(false);
       expect(f.fakes.received().length).toBe(firstPrompts + 1); // Only the healthy peer received instructions.

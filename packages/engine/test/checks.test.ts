@@ -7,7 +7,7 @@ import type { Task } from "@petrina/core";
 import { CHECK_EXIT_UNREPORTED, checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "../src/checks.js";
 import { childState, CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
 import * as machine from "../src/check-interruption.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Store } from "../src/store.js";
 import { defunctProcess, EngineProcess, Fakes, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 

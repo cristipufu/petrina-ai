@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { draftOf, journeyProblems, ROLE_STARTS, slotUses, takeOverBlock } from "@petrina/core";
-import { Engine, type EngineOptions } from "../src/engine.js";
+import { Engine, type EngineOptions } from "./engine.js";
 import type { Learnings } from "../src/learnings.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";

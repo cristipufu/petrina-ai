@@ -1,10 +1,11 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { modelSplit, turnTokens } from "@petrina/core";
 import { Database } from "bun:sqlite";
 import { AgentRun, reportOf } from "../src/acp-run.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { grokReports, grokTurnReport, readGrokUsage } from "../src/grok-usage.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { WorkLog } from "../src/worklog.js";
@@ -98,12 +99,12 @@ describe("Grok account usage", () => {
   it("stops an unresponsive CLI, and reports refusal and missing executables without an AI turn", async () => {
     const hanging = server({ hang: true, ignoreStop: true });
     let pid: number | undefined;
-    await expect(readGrokUsage({ command: hanging.command, env: process.env, timeoutMs: 500, onProcess: (child) => { pid = child.pid; } })).rejects.toThrow("in time");
+    await expectRejection(readGrokUsage({ command: hanging.command, env: process.env, timeoutMs: 500, onProcess: (child) => { pid = child.pid; } }), "in time");
     expect(pid).toBeGreaterThan(0);
     await waitFor(() => !alive(pid!), "the hanging Grok reader to stop", 5000);
     const refused = server({ error: "Authentication required" });
-    await expect(readGrokUsage({ command: refused.command, env: process.env })).rejects.toThrow("Authentication required");
-    await expect(readGrokUsage({ command: [join(refused.dir, "no-such-grok")], env: process.env })).rejects.toThrow("could not start");
+    await expectRejection(readGrokUsage({ command: refused.command, env: process.env }), "Authentication required");
+    await expectRejection(readGrokUsage({ command: [join(refused.dir, "no-such-grok")], env: process.env }), "could not start");
   });
 
   it("shares one cached reader across engine startup, Analytics and agent refreshes, and retains the chart history", async () => {

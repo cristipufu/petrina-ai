@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -7,7 +8,7 @@ import { readAntigravityUsage } from "../src/antigravity-usage.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { checkAgentTool } from "../src/setup.js";
 import { ADAPTERS } from "../src/tools.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import type { UsageLimited } from "../src/usage.js";
 import { Fakes, removeDir, tempDir, waitFor, SLOW } from "./support.js";
 
@@ -164,7 +165,7 @@ describe("Antigravity agent sessions", () => {
   it("refuses an unconfirmed profile before sending work, and login checks never send an AI prompt", async () => {
     const dir = folder(); const fakes = new Fakes(dir);
     const command = [process.execPath, fake, dir, "--tool=antigravity"];
-    await expect(AgentRun.start({ profile: { ...profile, modelId: "not-available" }, cwd: folder(), command, signal: new AbortController().signal, browser: false, callbacks })).rejects.toThrow("did not confirm");
+    await expectRejection(AgentRun.start({ profile: { ...profile, modelId: "not-available" }, cwd: folder(), command, signal: new AbortController().signal, browser: false, callbacks }), "did not confirm");
     const result = await checkAgentTool({ adapter: ADAPTERS.antigravity!, profile, cwd: folder(), command, env: process.env, which: () => null });
     expect(result.status).toBe("ready");
     expect(fakes.prompts()).toEqual([]);

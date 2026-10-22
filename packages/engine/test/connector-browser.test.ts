@@ -1,3 +1,4 @@
+import { rejectionOf } from "./rejections.js";
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -31,7 +32,7 @@ for (const toolId of ["claude-code", "codex"]) {
       };
       let run: AgentRun;
       if (how === "failed-reopen") {
-        await expect(AgentRun.start({ ...options, reopen: "old" })).rejects.toBeInstanceOf(ReopenFailed);
+        expect(await rejectionOf(AgentRun.start({ ...options, reopen: "old" }))).toBeInstanceOf(ReopenFailed);
         expect(readdirSync(registry)).toEqual([]);
         run = await AgentRun.start(options);
       } else run = await AgentRun.start({ ...options, ...(how === "new" ? {} : { reopen: "old" }) });

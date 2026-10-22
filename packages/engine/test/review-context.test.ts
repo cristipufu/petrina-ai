@@ -1,10 +1,11 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as gitOps from "../src/git.js";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, BUILT_IN_ROLES, createDemoState, type DeepMutable, type Finding, type Task } from "@petrina/core";
 import { Context } from "../src/context.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor, repositoryView, scopesFor } from "../src/repository-context.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewConversationScope } from "../src/review-context.js";
@@ -239,7 +240,7 @@ describe("immutable review inputs", () => {
       for (const artifact of snapshot.artifacts!) {
         const original = readFileSync(artifact.file, "utf8");
         writeFileSync(artifact.file, "corrupt");
-        await expect(readReviewInput(ref)).rejects.toThrow("prepared review comparison changed");
+        await expectRejection(readReviewInput(ref), "prepared review comparison changed");
         writeFileSync(artifact.file, original);
       }
       expect(await readReviewInput(ref)).toEqual(snapshot);
@@ -544,7 +545,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       git(product.path!, "reset", "--hard", "HEAD~1");
       writeFileSync(join(product.path!, "replacement.txt"), "Different history\n");
       git(product.path!, "add", "."); git(product.path!, "commit", "-qm", "Replace the source history");
-      await expect(f.done()).rejects.toThrow("history was replaced or diverged");
+      await expectRejection(f.done(), "history was replaced or diverged");
       const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
       expect(sessions.size).toBe(2);
       expect(f.fakes.opens().filter((entry) => sessions.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);

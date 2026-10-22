@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
 import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor, waitForFile } from "./support.js";
 

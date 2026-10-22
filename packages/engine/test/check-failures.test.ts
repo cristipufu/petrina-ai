@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decisionEvidence, displayTask, draftOf, journeyProblems, journeyView, type DeepMutable, type State, type Task, type WorkflowEvent } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";

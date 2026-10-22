@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it } from "bun:test";
 import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -69,5 +70,5 @@ it("uses only native control requests, then stops the Claude process", async () 
 it("fails a refused account request without exposing its response contents", async () => {
   const cwd = tempDir("petrina-claude-account-refused-"); roots.push(cwd);
   const script = `require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const request=JSON.parse(line);console.log(JSON.stringify({type:'control_response',response:{subtype:'error',request_id:request.request_id,error:'private fixture detail'}}));});`;
-  await expect(readClaudeUsage({ cwd, env: testGitEnv(), command: [process.execPath, "-e", script] })).rejects.toThrow("Claude Code could not read account usage; check its login");
+  await expectRejection(readClaudeUsage({ cwd, env: testGitEnv(), command: [process.execPath, "-e", script] }), "Claude Code could not read account usage; check its login");
 });

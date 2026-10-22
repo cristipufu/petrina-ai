@@ -1,9 +1,10 @@
+import { expectRejection } from "./rejections.js";
 import { expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { dispatch } from "../src/server.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { removeDir, tempDir } from "./support.js";
 import { demoProfileChoices } from "@petrina/core";
 
@@ -23,7 +24,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
     expect(run.browser).toBeUndefined();
     expect((await run.profileChoices()).efforts).toEqual(["high"]);
     expect((await run.profileChoices("second")).efforts).toEqual(["medium", "high"]);
-    await expect(run.profileChoices("invented")).rejects.toThrow("did not offer");
+    await expectRejection(run.profileChoices("invented"), "did not offer");
   } finally { await run?.stop(); removeDir(root); }
 });
 it("joins discovery, caches it, and preserves catalog edits through an engine restart", async () => {

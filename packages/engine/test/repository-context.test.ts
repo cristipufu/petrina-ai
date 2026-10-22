@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -293,7 +294,7 @@ describe("explicit repository execution contexts", () => {
     });
     const start = engine.startDriver; engine.startDriver = () => {};
     try {
-      await expect(engine.handBack(task.id, "Keep the edits", true)).rejects.toThrow("Second product could not advance");
+      await expectRejection(engine.handBack(task.id, "Keep the edits", true), "Second product could not advance");
       expect(task.driving!.repositoryCopies).toEqual(anchors);
       expect(existsSync(join(task.repositories![0]!.worktree!, "hand-edited.txt"))).toBe(true);
       expect(task.repositories![0]!.checks!.current).toBe(false);
@@ -393,7 +394,7 @@ describe("explicit repository execution contexts", () => {
     };
     const reset = spyOn(gitOps, "resetTo").mockResolvedValue(undefined);
     try {
-      await expect(engine["checks"]["runAll"](scope, [], { sha, trackedChanged: false, hooks: ["pre-commit"], definition: "test" }, new AbortController().signal, new Map())).rejects.toThrow("could not restore the original work");
+      await expectRejection(engine["checks"]["runAll"](scope, [], { sha, trackedChanged: false, hooks: ["pre-commit"], definition: "test" }, new AbortController().signal, new Map()), "could not restore the original work");
       expect(scope.work.checks).toMatchObject({ sha, current: false });
       expect(git(path, "rev-parse", "HEAD")).not.toBe(sha);
     } finally { reset.mockRestore(); checks["runHooks"] = hook; await engine.shutdown(); }
@@ -464,7 +465,7 @@ describe("explicit repository execution contexts", () => {
     try {
       for (const fail of [choose, history, turn]) {
         fail.mockRejectedValueOnce(new Error("Interrupted preview"));
-        await expect(releases.previewRelease(scope, stage, new AbortController().signal)).rejects.toThrow("Interrupted preview");
+        await expectRejection(releases.previewRelease(scope, stage, new AbortController().signal), "Interrupted preview");
         expect(scope.work.shipping).toBeUndefined();
         expect(scope.work.releasePreview).toBeUndefined();
         engine.commitNow();

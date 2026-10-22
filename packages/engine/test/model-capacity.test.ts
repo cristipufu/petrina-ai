@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { slotWait, usageLines, type AgentProfile, type RoutineDraft, type Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { executionFor } from "../src/repository-context.js";
 import { failureReason } from "../src/tracking.js";
 import { capacityRetryDelay, capacityWaiting, CODEX_MODEL_CAPACITY, codexCapacityFailure, codexModelAtCapacity, limitFromFailure, ModelAtCapacity, WaitingForCapacity, WaitingForUsage } from "../src/usage.js";

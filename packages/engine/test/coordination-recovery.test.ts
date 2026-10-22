@@ -1,6 +1,6 @@
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { EngineClient } from "../src/engine-client.js";
 import { Coordination, serial, type Result } from "../src/coordination.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";

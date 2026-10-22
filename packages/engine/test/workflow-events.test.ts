@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkflowEvent } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { EngineClient } from "../src/engine-client.js";
 import { executionFor } from "../src/repository-context.js";

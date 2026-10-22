@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InboxKind } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Coordination, requestRevision } from "../src/coordination.js";
 import { EngineClient } from "../src/engine-client.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";

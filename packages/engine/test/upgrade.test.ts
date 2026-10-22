@@ -4,7 +4,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import type { DeliveryMode, State, Task } from "@petrina/core";
-import type { Engine } from "../src/engine.js";
+import type { Engine } from "./engine.js";
 import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
 
 const worlds: World[] = [];

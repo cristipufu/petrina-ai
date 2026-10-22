@@ -2,7 +2,7 @@ import { executionFor, restoreRepositoryState } from "../src/repository-context.
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, createDemoState, DESIGN_OBJECTION_RULE, type State } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { type MState, renameRoles } from "../src/kernel.js";
 import type { PromptContext } from "../src/prompts.js";
 import { contractFor, ROLE_CONTRACTS, shapeFor } from "../src/roles.js";

@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as files from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -23,12 +24,12 @@ it("resolves named output inside captures and refuses traversal, outside absolut
   mkdirSync(outside);
   symlinkSync(outside, join(captures, "linked"));
   for (const name of ["../product/escape.png", join(outside, "escape.png"), "linked/escape.png"]) {
-    await expect(capturePath(captures, name)).rejects.toThrow();
+    await expectRejection(capturePath(captures, name));
   }
   expect(readdirSync(outside)).toEqual([]);
   writeFileSync(join(outside, "linked.png"), png);
   linkSync(join(outside, "linked.png"), join(captures, "hardlink.png"));
-  await expect(capturePath(captures, "hardlink.png")).rejects.toThrow("linked file");
+  await expectRejection(capturePath(captures, "hardlink.png"), "linked file");
   expect(readFileSync(join(outside, "linked.png"))).toEqual(png);
 });
 
@@ -51,11 +52,11 @@ it("refuses automatic writes through a shortcut or shared file before they can c
       () => fs.promises.copyFile(join(folder, "source.bin"), join(folder, "shortcut.png")),
       () => fs.promises.writeFile(join(folder, "shortcut.png"), bytes),
       () => fs.promises.appendFile(join(folder, "shortcut.png"), bytes),
-    ]) await expect(write()).rejects.toThrow("capture folder");
+    ]) await expectRejection(write(), "capture folder");
     expect(() => fs.createWriteStream(join(folder, "shortcut.png"))).toThrow("capture folder");
-    await expect(fs.promises.copyFile(join(folder, "source.bin"), join(folder, "shared.png"))).rejects.toThrow("linked file");
-    await expect(fs.promises.copyFile(join(folder, "source.bin"), join(folder, "chain.png"))).rejects.toThrow("capture folder");
-    await expect(fs.promises.copyFile(join(folder, "source.bin"), join(folder, "dangling.png"))).rejects.toThrow();
+    await expectRejection(fs.promises.copyFile(join(folder, "source.bin"), join(folder, "shared.png")), "linked file");
+    await expectRejection(fs.promises.copyFile(join(folder, "source.bin"), join(folder, "chain.png")), "capture folder");
+    await expectRejection(fs.promises.copyFile(join(folder, "source.bin"), join(folder, "dangling.png")));
     expect(lstatSync(join(folder, "shortcut.png")).isSymbolicLink()).toBe(true);
     expect(lstatSync(join(folder, "shared.png")).nlink).toBeGreaterThan(1);
     expect(readFileSync(victim)).toEqual(png);
@@ -93,21 +94,21 @@ it("refuses shortcuts to shared files and dangling links before writing or accep
   symlinkSync(join(product, "missing.png"), join(folder, "dangling.png"));
   symlinkSync(join(product, "missing-folder"), join(folder, "dangling-folder"));
   for (const path of ["shared.png", "shortcut.png", "shortcut-chain.png", "alias-folder/shared.png", "dangling.png", "dangling-folder/page.png"]) {
-    await expect(capturePath(folder, path)).rejects.toThrow();
-    await expect(preserveCaptures(folder, history, [{ path, caption: "A linked picture" }])).rejects.toThrow("inside this session's capture folder");
+    await expectRejection(capturePath(folder, path));
+    await expectRejection(preserveCaptures(folder, history, [{ path, caption: "A linked picture" }]), "inside this session's capture folder");
   }
   expect(readdirSync(product)).toEqual(["existing.png"]);
   expect(readFileSync(join(product, "existing.png"))).toEqual(png);
   expect(existsSync(history)).toBe(false);
   const redirected = join(root, "replaced-capture-folder");
   symlinkSync(product, redirected);
-  await expect(capturePath(redirected, "existing.png")).rejects.toThrow("capture folder");
-  await expect(preserveCaptures(redirected, history, [{ path: "existing.png", caption: "An outside picture" }])).rejects.toThrow("inside this session's capture folder");
+  await expectRejection(capturePath(redirected, "existing.png"), "capture folder");
+  await expectRejection(preserveCaptures(redirected, history, [{ path: "existing.png", caption: "An outside picture" }]), "inside this session's capture folder");
   // A shortcut is never a picture, even when it names an ordinary file in this folder.
   writeFileSync(join(folder, "ordinary.png"), png);
   symlinkSync("ordinary.png", join(folder, "ordinary-shortcut.png"));
-  await expect(capturePath(folder, "ordinary-shortcut.png")).rejects.toThrow("capture folder");
-  await expect(preserveCaptures(folder, history, [{ path: "ordinary-shortcut.png", caption: "A safe captured page" }])).rejects.toThrow("inside this session's capture folder");
+  await expectRejection(capturePath(folder, "ordinary-shortcut.png"), "capture folder");
+  await expectRejection(preserveCaptures(folder, history, [{ path: "ordinary-shortcut.png", caption: "A safe captured page" }]), "inside this session's capture folder");
   const saved = await preserveCaptures(folder, history, [{ path: "ordinary.png", caption: "A safe captured page" }]);
   expect(saved).toHaveLength(1);
   expect(readFileSync(join(product, "existing.png"))).toEqual(png);
@@ -123,19 +124,19 @@ it("refuses a shortcut that stays in the capture folder but leads through anothe
   symlinkSync(product, join(folder, "via"));
   symlinkSync(victim, join(folder, "direct.png"));
   symlinkSync("via/existing.png", join(folder, "second.png"));
-  await expect(capturePath(folder, "direct.png")).rejects.toThrow("capture folder");
-  await expect(capturePath(folder, "via/existing.png")).rejects.toThrow("capture folder");
-  await expect(capturePath(folder, "second.png")).rejects.toThrow("capture folder");
-  await expect(preserveCaptures(folder, history, [{ path: "second.png", caption: "A checked page" }])).rejects.toThrow("inside this session's capture folder");
+  await expectRejection(capturePath(folder, "direct.png"), "capture folder");
+  await expectRejection(capturePath(folder, "via/existing.png"), "capture folder");
+  await expectRejection(capturePath(folder, "second.png"), "capture folder");
+  await expectRejection(preserveCaptures(folder, history, [{ path: "second.png", caption: "A checked page" }]), "inside this session's capture folder");
   expect(existsSync(history)).toBe(false);
   const fs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
   const release = guardCaptureWrites(folder);
   try {
     const bytes = Buffer.from("more");
-    await expect(fs.promises.appendFile(join(folder, "second.png"), bytes)).rejects.toThrow("capture folder");
+    await expectRejection(fs.promises.appendFile(join(folder, "second.png"), bytes), "capture folder");
     expect(() => fs.createWriteStream(join(folder, "second.png"))).toThrow("capture folder");
-    await expect(fs.promises.writeFile(join(folder, "second.png"), bytes)).rejects.toThrow("capture folder");
-    await expect(fs.promises.copyFile(join(folder, "direct.png"), join(folder, "second.png"))).rejects.toThrow("capture folder");
+    await expectRejection(fs.promises.writeFile(join(folder, "second.png"), bytes), "capture folder");
+    await expectRejection(fs.promises.copyFile(join(folder, "direct.png"), join(folder, "second.png")), "capture folder");
   } finally { release(); }
   expect(readFileSync(victim)).toEqual(png);
   expect(lstatSync(join(folder, "second.png")).isSymbolicLink()).toBe(true);
@@ -147,9 +148,9 @@ it("rejects missing, broken, outside and blank-caption pictures without saving a
   writeFileSync(join(captures, "broken.png"), "not a picture");
   symlinkSync(join(root, "product"), join(captures, "outside"));
   for (const path of ["missing.png", "broken.png", "outside/page.png", "../product/page.png"]) {
-    await expect(preserveCaptures(captures, fresh, [{ path: "chosen.png", caption: "Valid first choice" }, { path, caption: "Invalid choice" }])).rejects.toThrow();
+    await expectRejection(preserveCaptures(captures, fresh, [{ path: "chosen.png", caption: "Valid first choice" }, { path, caption: "Invalid choice" }]));
   }
-  await expect(preserveCaptures(captures, fresh, [{ path: "chosen.png", caption: "  " }])).rejects.toThrow("caption");
+  await expectRejection(preserveCaptures(captures, fresh, [{ path: "chosen.png", caption: "  " }]), "caption");
   expect(existsSync(fresh)).toBe(false);
 });
 
@@ -164,7 +165,7 @@ it("removes a report's newly written bytes when saving is interrupted or a write
       else throw new Error("Disk write interrupted");
     });
     try {
-      await expect(preserveCaptures(captures, folder, [{ path: "chosen.png", caption: "A checked page" }], controller.signal)).rejects.toThrow();
+      await expectRejection(preserveCaptures(captures, folder, [{ path: "chosen.png", caption: "A checked page" }], controller.signal));
       expect(readdirSync(folder)).toEqual([]);
     } finally { saving.mockRestore(); }
   }

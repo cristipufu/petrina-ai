@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 // The work log, end to end: a real engine with the fake agent reporting usage and settings the
 // way Claude Code and Codex do, and the product list that never hands an id out again.
 import { afterAll, describe, expect, it } from "bun:test";
@@ -9,7 +10,7 @@ import type { State, Task, WorkTurn } from "@petrina/core";
 import type { Kernel, MStage, MTask } from "../src/kernel.js";
 import { Tracking } from "../src/tracking.js";
 import { AgentRun, reportOf } from "../src/acp-run.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { dispatch } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
@@ -247,9 +248,9 @@ describe("The work log of a real engine", () => {
     // Petrina commits to main by itself: no agent works on that stage, so it used nothing and isn't listed.
     expect(view.stages.map((stage) => stage.title)).toEqual(["Planning", "Design", "Build", "Review"]);
     expect(view.stages[2]!.agents[0]!.settings).toBe("asked for sol at xhigh, ran gpt-6.1 at medium");
-    await expect(dispatch(engine, { name: "usage", args: [{ view: "everything" }] })).rejects.toThrow();
-    await expect(dispatch(engine, { name: "usage", args: [{ view: "analytics", period: "year" }] })).rejects.toThrow();
-    await expect(dispatch(engine, { name: "usage", args: [{ view: "today", sql: "DROP TABLE work_turns" }] })).rejects.toThrow();
+    await expectRejection(dispatch(engine, { name: "usage", args: [{ view: "everything" }] }));
+    await expectRejection(dispatch(engine, { name: "usage", args: [{ view: "analytics", period: "year" }] }));
+    await expectRejection(dispatch(engine, { name: "usage", args: [{ view: "today", sql: "DROP TABLE work_turns" }] }));
     const analytics = (await dispatch(engine, { name: "usage", args: [{ view: "analytics", period: "7d" }] })) as { headline: { turns: number } };
     expect(analytics.headline.turns).toBeGreaterThan(5);
   });

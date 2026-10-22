@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { expect, it } from "bun:test";
 import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -153,7 +154,7 @@ it("removes terminal and orphaned context packets while retaining an unfinished 
     }
     await new Cleanup(engine).sweep();
     expect(await readFile(join(world.data, "contexts", active, "context.md"), "utf8")).toBe("Authoritative context");
-    await expect(access(join(world.data, "contexts", finished))).rejects.toThrow();
-    await expect(access(join(world.data, "contexts", "orphaned-context"))).rejects.toThrow();
+    await expectRejection(access(join(world.data, "contexts", finished)));
+    await expectRejection(access(join(world.data, "contexts", "orphaned-context")));
   } finally { await engine.shutdown(); removeDir(world.dir); }
 });

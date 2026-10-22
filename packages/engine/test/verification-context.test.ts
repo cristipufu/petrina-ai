@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { expect, it } from "bun:test";
 import { readFile, writeFile } from "node:fs/promises";
 import { createDemoState } from "@petrina/core";
@@ -35,6 +36,6 @@ it("links earlier evidence to its node, code and confirmed settings without pres
     const again = await verificationContext(root, task);
     const changedFile = JSON.parse(again[0]!.body.match(/available at ("[^"]+")/)![1]!);
     await writeFile(changedFile, "Corrupt");
-    await expect(verificationContext(root, task)).rejects.toThrow("saved verification evidence changed");
+    await expectRejection(verificationContext(root, task), "saved verification evidence changed");
   } finally { removeDir(root); }
 });

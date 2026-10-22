@@ -3,7 +3,7 @@ import { afterAll, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AcceptedPoints } from "../src/accepted-points.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Learnings } from "../src/learnings.js";
 import { git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 

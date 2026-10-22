@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { getEventListeners } from "node:events";
 import * as processes from "node:child_process";
@@ -40,7 +41,7 @@ it("releases stopped and failed runs from a shared task cancellation signal", as
     await run.stop();
     expect(getEventListeners(controller.signal, "abort").length).toBe(before);
   }
-  await expect(AgentRun.start({ profile, cwd: root, command: [...command, "--logged-out"], callbacks, signal: controller.signal, probe: true })).rejects.toThrow();
+  await expectRejection(AgentRun.start({ profile, cwd: root, command: [...command, "--logged-out"], callbacks, signal: controller.signal, probe: true }));
   expect(getEventListeners(controller.signal, "abort").length).toBe(before);
 });
 
@@ -91,20 +92,36 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     const options = args[2] as { timeout: number };
     allowances.push(options.timeout);
     const done = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
-    const from = Date.now();
-    const finish = (error: Error | null, stdout: string, stderr: string) => { scanned.push(!error); done(error, stdout, stderr); };
-    // Delay the read itself, within its real allowance, without starting a Bun helper on every
-    // scan. That helper's startup used to compete with the very deadline this fixture asserts.
-    // Successful reads still capture the actual live parent/child links, never a saved tree.
+    let reported = false;
+    const finish = (error: Error | null, stdout: string, stderr: string) => {
+      if (reported) return;
+      reported = true; scanned.push(!error); done(error, stdout, stderr);
+    };
+    // Model a slow response, keeping the actual OS read inside the same allowance. Starting ps
+    // AFTER a 3.8s delay gave it only 200ms of a 4s budget, accidentally turning this successful
+    // snapshot case into two failed reads under full-suite load. Each call still captures live
+    // parent/child links, and the real shutdown deadline and its assertions stay unchanged.
+    let result: [Error | null, string, string] | undefined;
+    let delayed = false, read = false;
+    let listing: ChildProcess | undefined;
+    const report = () => { if (delayed && result) finish(...result); };
+    if (!hang) {
+      listing = Reflect.apply(original, processes, [...args.slice(0, 2), options, (error: Error | null, stdout: string, stderr: string) => {
+        read = true;
+        if (listing) scansRunning.delete(listing);
+        result = [error, stdout, stderr];
+        report();
+      }]);
+      if (!read) scansRunning.add(listing!);
+    }
     const timer = setTimeout(() => {
       scanTimers.delete(timer);
-      const left = options.timeout - (Date.now() - from);
-      if (hang || left <= 0) return finish(new Error("Process list timed out"), "", "");
-      const listing = Reflect.apply(original, processes, [...args.slice(0, 2), { ...options, timeout: left }, (error: Error | null, stdout: string, stderr: string) => {
-        scansRunning.delete(listing);
-        finish(error, stdout, stderr);
-      }]);
-      scansRunning.add(listing);
+      if (hang) return finish(new Error("Process list timed out"), "", "");
+      delayed = true;
+      // A response deliberately slower than the caller's allowance is a timeout, even if
+      // the underlying OS read was quick; this keeps the broken split-budget control failing.
+      if (delay >= options.timeout) return finish(new Error("Process list timed out"), "", "");
+      report();
     }, hang ? options.timeout : Math.min(delay, options.timeout));
     scanTimers.add(timer);
     return undefined;

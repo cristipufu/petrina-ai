@@ -4,7 +4,7 @@ import * as fileIO from "node:fs/promises";
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { ReviewResult } from "../src/roles.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 

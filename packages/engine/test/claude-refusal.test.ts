@@ -2,7 +2,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { chooseProfile, limitOf, UNKNOWN_LIMIT_MS, type Pool } from "@petrina/core";
 import { AgentRun } from "../src/acp-run.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { claudeAccountReports } from "../src/claude-usage.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { UsageLimited, type UsageInfo } from "../src/usage.js";

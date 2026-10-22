@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { removeDir, tempDir } from "./support.js";
 
 it("recovers duplicate profile choices once and retains the old definition only for history", async () => {

@@ -1,6 +1,6 @@
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { executionFor } from "../src/repository-context.js";
 import { beginSideStep } from "../src/side-step.js";
 import { removeDir, tempDir } from "./support.js";

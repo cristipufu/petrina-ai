@@ -1,9 +1,10 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { FEWER_START, slotUses, type State } from "@petrina/core";
 import { codexReports, readCodexUsage } from "../src/codex-usage.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import type { CodexScript } from "./fake-codex.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
@@ -71,15 +72,15 @@ describe("what Codex's app-server says about usage", () => {
     for (const server of [hanging, appServer({ hang: true, bootDelayMs: 1500 })]) {
       let pid: number | undefined;
       const started = Date.now();
-      await expect(readCodexUsage({ command: server.command, env: process.env, timeoutMs: 700, onProcess: (child) => { pid = child.pid; } })).rejects.toThrow("Codex did not answer within 1 seconds");
+      await expectRejection(readCodexUsage({ command: server.command, env: process.env, timeoutMs: 700, onProcess: (child) => { pid = child.pid; } }), "Codex did not answer within 1 seconds");
       expect(Date.now() - started).toBeLessThan(10_000);
       // The deadline may pass before the executable handles even its first request.
       expect(pid).toBeGreaterThan(0);
       await waitFor(() => !alive(pid!), "the hanging app-server to be gone", 5_000);
     }
     const refusing = appServer({ error: "not logged in" });
-    await expect(readCodexUsage({ command: refusing.command, env: process.env })).rejects.toThrow("not logged in");
-    await expect(readCodexUsage({ command: [join(hanging.dir, "no-such-codex"), "app-server"], env: process.env })).rejects.toThrow("Codex is not installed");
+    await expectRejection(readCodexUsage({ command: refusing.command, env: process.env }), "not logged in");
+    await expectRejection(readCodexUsage({ command: [join(hanging.dir, "no-such-codex"), "app-server"], env: process.env }), "Codex is not installed");
   });
 });
 

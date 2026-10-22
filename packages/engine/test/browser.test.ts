@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -6,7 +7,7 @@ import { dirname, join, sep } from "node:path";
 import * as os from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { AgentBrowser, browserTempRoot, recoverBrowserTemps } from "../src/browser.js";
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
@@ -122,7 +123,7 @@ it("the browser server exposes page tools, confines output and stops cleanly eve
     expect(existsSync(join(root, "escape.png"))).toBe(false);
   } finally { await client?.close(); await browser.close(); }
   expect(existsSync(browser.directory)).toBe(false);
-  await expect(fetch("url" in browser.mcp ? browser.mcp.url : "")).rejects.toThrow();
+  await expectRejection(fetch("url" in browser.mcp ? browser.mcp.url : ""));
 });
 
 it("restart reaps registered interrupted browser output and ignores outside paths", async () => {
@@ -144,6 +145,37 @@ it("starts cleanly when no interrupted browser registry exists", async () => {
   const missing = join(root, "empty-browser-registry");
   await recoverBrowserTemps(missing, browsers);
   expect(existsSync(missing)).toBe(false);
+});
+
+for (const stillRunning of [false, true]) it(`checks final browser termination after the first cleanup wait (${stillRunning ? "still running" : "stopped"})`, async () => {
+  const registry = join(root, `late-browser-stop-${stillRunning}`);
+  const directory = mkdtempSync(join(browsers, "petrina-browser-"));
+  mkdirSync(registry);
+  writeFileSync(join(registry, "owned.json"), JSON.stringify(directory));
+  const pid = 1_234_567_890;
+  let scans = 0;
+  const originalRead = processes.execFile, originalKill = process.kill;
+  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+    if (args[0] !== "ps") return Reflect.apply(originalRead, processes, args);
+    scans += 1;
+    const output = scans === 1 ? `${pid} browser ${directory}\n` : "";
+    const callback = args.at(-1) as (error: null, stdout: string, stderr: string) => void;
+    queueMicrotask(() => callback(null, output, ""));
+    return new processes.ChildProcess();
+  }) as typeof processes.execFile);
+  const kill = spyOn(process, "kill").mockImplementation((target, signal) => {
+    if (Math.abs(target) !== pid) return originalKill(target, signal);
+    // The first one-second wait expires. The next OS observation confirms it is gone.
+    if (signal === 0 && scans >= 2 && !stillRunning) throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+    return true;
+  });
+  try {
+    if (stillRunning) await expectRejection(recoverBrowserTemps(registry, browsers), "The headless browser did not stop");
+    else await recoverBrowserTemps(registry, browsers);
+    expect(scans).toBe(3);
+    expect(existsSync(directory)).toBe(stillRunning);
+    expect(existsSync(registry)).toBe(stillRunning);
+  } finally { kill.mockRestore(); scan.mockRestore(); removeDir(directory); removeDir(registry); }
 });
 
 it.skipIf(process.platform !== "darwin")("keeps the standard home browser folder and recovers it canonically when the home path is a symlink", async () => {
@@ -284,7 +316,7 @@ it("cleans output after the browser server is killed unexpectedly", async () => 
   child.kill("SIGKILL");
   await exited;
   if (process.platform === "win32") {
-    await expect(browser.close()).rejects.toThrow("The headless browser did not stop.");
+    await expectRejection(browser.close(), "The headless browser did not stop.");
     expect(existsSync(browser.directory)).toBe(true);
     removeDir(browser.directory);
     return;
@@ -407,7 +439,7 @@ it("stops unused endpoints and endpoints receiving their first connection", asyn
       await browser.close();
       await connecting;
       expect(existsSync(browser.directory)).toBe(false);
-      await expect(fetch("url" in browser.mcp ? browser.mcp.url : "")).rejects.toThrow();
+      await expectRejection(fetch("url" in browser.mcp ? browser.mcp.url : ""));
     } finally { await browser.close(); }
   }
 });

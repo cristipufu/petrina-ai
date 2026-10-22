@@ -1,10 +1,11 @@
+import { rejectionOf } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JOURNEY_WORDS as W, journeyView, type ProductCheck, type WorkflowEvent } from "@petrina/core";
 import * as gitOps from "../src/git.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Aborted } from "../src/kernel.js";
 import { Coordination } from "../src/coordination.js";
 import { git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
@@ -250,7 +251,7 @@ it("describes a resumed attempt with nothing left to run as nothing configured, 
   const running = engine["checks"].runProductChecks(scope, [check], controller.signal);
   await waitFor(() => task.journey![0]?.productChecks?.[0]?.result === "running", "the held check running");
   controller.abort();
-  await expect(running).rejects.toBeInstanceOf(Aborted);
+  expect(await rejectionOf(running)).toBeInstanceOf(Aborted);
   writeFileSync(release, "go");
   const step = task.journey![0]!;
   expect(step.endedAt).toBeUndefined();
@@ -282,7 +283,7 @@ it("describes the latest attempt when an interrupted run is resumed on the same 
   const running = engine["checks"].runProductChecks(scope, [check], controller.signal);
   await waitFor(() => task.journey![0]?.productChecks?.[0]?.result === "running", "the held check running");
   controller.abort();
-  await expect(running).rejects.toBeInstanceOf(Aborted);
+  expect(await rejectionOf(running)).toBeInstanceOf(Aborted);
   const step = task.journey![0]!;
   expect(step.endedAt).toBeUndefined();
   expect(step.productChecks![0]).toMatchObject({ attemptId: "run-0", result: "stopped" });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pipelineOf, queueOf, slotUses, type State } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");

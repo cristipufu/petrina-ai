@@ -131,7 +131,7 @@ export const EXIT_POLL_MAX_MS = 8_000;
 const STATE_READ_MS = 3_000;
 
 /**
- * Watch a child whose output has ended but whose exit the runtime has not reported. Closed pipes prove
+ * Watch a child whose exit the runtime has not reported. Closed pipes prove
  * nothing by themselves: a valid command can close or redirect its output and keep working inside its
  * allowance. Bounded state reads decide: a child still running is left alone and read again later, one
  * whose state cannot be read gets the benefit of the doubt, and one observed gone or defunct is given a
@@ -142,7 +142,7 @@ const STATE_READ_MS = 3_000;
  */
 export function lostExit(pid: number, signal: AbortSignal, read: ProcessListRead = readProcessList): Promise<"lost" | "stopped"> {
   return new Promise((resolve) => {
-    // The child existed when its output closed, just before this watch began: a read started from here on can be joined.
+    // A read started before this watch could predate the child: only join observations started from here on.
     const since = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stop = () => { clearTimeout(timer); resolve("stopped"); };

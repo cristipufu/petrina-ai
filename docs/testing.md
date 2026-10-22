@@ -36,6 +36,7 @@ Core stops at the first failure; filter by name to investigate later cases. Core
 ## Engine fixtures
 
 - `test/support.ts` supplies `makeWorld`, local GitHub stand-ins through `EngineOptions.gh` and `remote`, scripted engines, and wait helpers. Configure agents with `Fakes.scenario`.
+- Import fixture `Engine` from `test/engine.ts`. It disables every provider's live account reader by default; usage tests supply their own `usageCommands`. Production defaults must not contact the developer's accounts during an unrelated test.
 - Scripted agents get no browser. A test that checks browsing, capture folders or report pictures opts in with `makeWorld(name, { browser: true })`, `EngineOptions.browser` and `browserTempRoot`, or the harness's `--browser-root`. Its short private folder comes from `testBrowserRoot()`, inside the runner's browser folder; pass the same folder to every engine, browser and recovery of the fixture, and remove it afterwards.
 - Use the fake agent's default plan for parallel reviewers. Its short plan has one reviewer. A fixture that holds agents must still let the Check finder finish.
 - `waitFor`, `until` and `waitForFile` already apply the machine's `SLOW` factor. Stretch hang-catching limits under contention; do not stretch assertions about an actual timing guarantee.
@@ -47,6 +48,7 @@ Core stops at the first failure; filter by name to investigate later cases. Core
 - After local delivery the working copy may be removed. Read the delivered commit from the product clone using the task branch.
 - Engine helpers can be imported by standalone Bun diagnostics outside the checkout. Do not register test-runner-only hooks at import time in those helpers.
 - With asymmetric matchers, Bun's `toMatchObject` can overwrite checked fields. Use `toEqual`, or check a copy.
+- For rejected operations use `expectRejection` or `rejectionOf` from `test/rejections.ts`. These await ordinary Promises before asserting; Bun's `.rejects`/`.resolves` matchers re-enter the I/O dispatcher and can lose subprocess or pipe notifications ([upstream issue](https://github.com/oven-sh/bun/issues/33261)). Keep the same error, message and type assertions.
 - Derive verifier counts from the ready tools; do not assume two voters.
 
 ## Desktop and demo fixtures

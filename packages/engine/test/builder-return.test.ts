@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { beginAgentStep, JOURNEY_WORDS, type Stage, type DeepMutable } from "@petrina/core";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { contentTree } from "../src/git.js";
 import { Work } from "../src/work.js";
 import { executionFor } from "../src/repository-context.js";

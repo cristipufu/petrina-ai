@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 // Take over in the coordinator's terminal, and hand back, end to end on fake agents. The "terminal"
 // runs Petrina's real launcher with sh, and the launcher opens a fake of the agent's own app
 // (fake-cli.ts) that adds a turn to the conversation and changes the working copy like a person would.
@@ -5,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { slotUses, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
-import { Engine, type EngineOptions } from "../src/engine.js";
+import { Engine, type EngineOptions } from "./engine.js";
 import * as gitOps from "../src/git.js";
 import { sessionState } from "../src/terminal.js";
 import type { CliScript } from "./fake-cli.js";
@@ -154,9 +155,9 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     await waitFor(async () => (await sessionState(takeoverDir(run.data, run.taskId))) === "running", "the launcher to report it started");
 
     // While the app is open: no hand back, no second copy, and messages wait.
-    await expect(engine.handBack(run.taskId, "", true)).rejects.toThrow(TAKE_OVER_WORDS.stillOpen("Codex"));
+    await expectRejection(engine.handBack(run.taskId, "", true), TAKE_OVER_WORDS.stillOpen("Codex"));
     expect((await engine.handBackPreview(run.taskId)).open).toBe("running");
-    await expect(engine.reopenTerminal(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.alreadyOpen("Codex"));
+    await expectRejection(engine.reopenTerminal(run.taskId), TAKE_OVER_WORDS.alreadyOpen("Codex"));
     engine.sendMessage(run.taskId, "Keep it short", "interrupt");
     expect(run.task().queued.map((message) => message.text)).toEqual(["Keep it short"]);
 
@@ -352,7 +353,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
 
     // The command was never run: Petrina cannot tell, so only "anyway" hands back.
     expect((await engine.handBackPreview(run.taskId)).open).toBe("unknown");
-    await expect(engine.handBack(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.cannotTell("Codex"));
+    await expectRejection(engine.handBack(run.taskId), TAKE_OVER_WORDS.cannotTell("Codex"));
 
     // The copied command runs the same launcher; a second copy refuses while the first is open.
     const hold = join(run.root, "hold");
@@ -367,7 +368,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
 
     // Restarted again while the app is open: still refused.
     engine = run.restart();
-    await expect(engine.handBack(run.taskId, "", true)).rejects.toThrow(TAKE_OVER_WORDS.stillOpen("Codex"));
+    await expectRejection(engine.handBack(run.taskId, "", true), TAKE_OVER_WORDS.stillOpen("Codex"));
     rmSync(hold);
     expect(await first.exited).toBe(0);
     await engine.handBack(run.taskId);
@@ -389,7 +390,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     const worktree = run.task().worktree!;
     git(worktree, "checkout", "-q", "-b", "elsewhere");
     expect((await engine.handBackPreview(run.taskId)).problem).toBe("The working copy is no longer on the task's branch. Switch back to it in your terminal, then hand back.");
-    await expect(engine.handBack(run.taskId)).rejects.toThrow("no longer on the task's branch");
+    await expectRejection(engine.handBack(run.taskId), "no longer on the task's branch");
     expect(run.task().driving).toBeTruthy();
     git(worktree, "checkout", "-q", run.task().branch!);
     await engine.handBack(run.taskId);
@@ -420,21 +421,21 @@ describe.skipIf(!posix)("opening the terminal again", () => {
     writeFileSync(hold, "");
     run.cli({ hold, write: { "again.txt": "Again\n" } });
     const first = engine.reopenTerminal(run.taskId);
-    await expect(engine.reopenTerminal(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.busy.reopening);
-    await expect(engine.handBack(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.busy.reopening);
-    await expect(engine.handBack(run.taskId, "", true)).rejects.toThrow(TAKE_OVER_WORDS.busy.reopening);
+    await expectRejection(engine.reopenTerminal(run.taskId), TAKE_OVER_WORDS.busy.reopening);
+    await expectRejection(engine.handBack(run.taskId), TAKE_OVER_WORDS.busy.reopening);
+    await expectRejection(engine.handBack(run.taskId, "", true), TAKE_OVER_WORDS.busy.reopening);
     expect((await first).terminal).toBe("Test terminal");
 
     // The terminal is open but the app has not reported yet: the last session's end says nothing about this one.
     expect(run.launched()).toHaveLength(1);
     expect((await engine.handBackPreview(run.taskId)).open).toBe("unknown");
-    await expect(engine.handBack(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.cannotTell("Codex"));
+    await expectRejection(engine.handBack(run.taskId), TAKE_OVER_WORDS.cannotTell("Codex"));
     rmSync(opening);
     await waitFor(async () => run.launched().length === 2 && (await sessionState(takeoverDir(run.data, run.taskId))) === "running", "the app to open again");
 
     // Open: no hand back, even anyway, and no third copy.
-    await expect(engine.handBack(run.taskId, "", true)).rejects.toThrow(TAKE_OVER_WORDS.stillOpen("Codex"));
-    await expect(engine.reopenTerminal(run.taskId)).rejects.toThrow(TAKE_OVER_WORDS.alreadyOpen("Codex"));
+    await expectRejection(engine.handBack(run.taskId, "", true), TAKE_OVER_WORDS.stillOpen("Codex"));
+    await expectRejection(engine.reopenTerminal(run.taskId), TAKE_OVER_WORDS.alreadyOpen("Codex"));
     expect(run.task().driving).toBeTruthy();
 
     rmSync(hold);
@@ -456,7 +457,7 @@ describe.skipIf(!posix)("when the agent's work cannot be saved", () => {
     const lock = resolve(worktree, git(worktree, "rev-parse", "--git-path", "index.lock"));
     writeFileSync(lock, "");
     const engine = run.engine();
-    await expect(engine.takeOver(run.taskId)).rejects.toThrow("Petrina couldn't save the Builder's work before you took over, so the Builder carries on.");
+    await expectRejection(engine.takeOver(run.taskId), "Petrina couldn't save the Builder's work before you took over, so the Builder carries on.");
     rmSync(lock);
     const task = run.task();
     expect(task.driving).toBeUndefined();
@@ -481,7 +482,7 @@ describe.concurrent("when take over is not available", () => {
     const productId = await engine.addProduct(product);
     engine.setPoolPaused(true);
     const taskId = engine.addTask({ productId, title: "Add a greeting" });
-    await expect(engine.takeOver(taskId)).rejects.toThrow(TAKE_OVER_WORDS.noAgent);
+    await expectRejection(engine.takeOver(taskId), TAKE_OVER_WORDS.noAgent);
     expect((engine.getState() as State).terminals).toEqual([]);
     expect(() => engine.setTerminal("iterm")).toThrow("That terminal is not on this machine");
     engine.shutdown();

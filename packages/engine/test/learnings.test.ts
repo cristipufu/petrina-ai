@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { addLearnings, Learnings } from "../src/learnings.js";
 import { hasPoint } from "../src/points.js";
 import * as gitOps from "../src/git.js";

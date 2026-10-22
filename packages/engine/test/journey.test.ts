@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { journeyProblems, journeyView, type JourneyView, type State, type Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");

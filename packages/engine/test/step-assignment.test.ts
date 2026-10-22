@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, type ConversationNote, type Stage } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { AgentBrowser } from "../src/browser.js";
 import { executionFor } from "../src/repository-context.js";

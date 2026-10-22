@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, journeyProblems, stepName, type Task } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 

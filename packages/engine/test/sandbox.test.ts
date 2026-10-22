@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ActiveAgent, State, Task, TaskUsage } from "@petrina/core";
 import { AgentRun } from "../src/acp-run.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { agentEnv } from "../src/env.js";
 import { claudeSandbox, sandboxFailure } from "../src/sandbox.js";
 import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";

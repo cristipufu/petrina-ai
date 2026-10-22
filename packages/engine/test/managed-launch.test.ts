@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { ADAPTERS } from "../src/tools.js";
@@ -56,7 +57,7 @@ for (const id of ["claude-code", "codex", "grok", "antigravity"]) {
 }
 
 it("refuses a self-referencing Codex command without starting a recursive process", async () => {
-  await expect(backgroundCommand(wrapper)).rejects.toThrow("launcher points back to itself");
+  await expectRejection(backgroundCommand(wrapper), "launcher points back to itself");
   expect(await backgroundCommand(process.execPath)).toEqual([process.execPath]);
   expect((await backgroundCommand(undefined))[1]).toEndWith("codex.js");
 });

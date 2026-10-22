@@ -1,7 +1,7 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Turns } from "../src/turn.js";
 import { ToolChecks } from "../src/tool-checks.js";
 import { Sources } from "../src/sources.js";

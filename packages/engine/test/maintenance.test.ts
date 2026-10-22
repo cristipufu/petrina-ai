@@ -5,7 +5,7 @@ import { draftOf, MAINTENANCE_ROLES, type RoutineDraft, type Task } from "@petri
 import { makeWorld, Fakes, FAKE_AGENT, until, removeDir } from "./support.js";
 import { normalizePlan } from "../src/plan.js";
 import { plannerRoles } from "../src/roles.js";
-import type { Engine } from "../src/engine.js";
+import type { Engine } from "./engine.js";
 import { git } from "./support.js";
 
 function setup(name: string, behavior: Parameters<Fakes["scenario"]>[0]["maintenance"], objectFormat?: "sha1" | "sha256") {

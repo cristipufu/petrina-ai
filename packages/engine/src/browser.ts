@@ -151,15 +151,17 @@ async function reap(directory: string, owned: number[] | undefined): Promise<voi
   let targets = [...new Set([...(owned ?? []), ...(marked ?? [])])].filter((pid) => pid !== process.pid);
   const still = () => targets.filter(alive);
   if (still().length) forceKill(still());
-  let stopped = await untilGone(targets, 1_000);
+  await untilGone(targets, 1_000);
   const left = await processesUsing(directory);
   if (left?.length) {
     targets = [...new Set([...targets, ...left])];
     forceKill(left.filter(alive));
-    stopped = await untilGone(targets, 1_000) && stopped;
+    await untilGone(targets, 1_000);
   }
   const remaining = await processesUsing(directory);
-  if (!stopped || remaining?.some(alive) || (owned === undefined && marked === undefined && remaining === undefined)) {
+  // A process can finish between the first wait and the final scan. Judge the final
+  // ownership evidence, keeping every earlier target; a provisional timeout is not a sticky failure.
+  if (targets.some(alive) || remaining?.some(alive) || (owned === undefined && marked === undefined && remaining === undefined)) {
     throw new Error("The headless browser did not stop.");
   }
 }

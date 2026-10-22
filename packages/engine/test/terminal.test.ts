@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -446,9 +447,9 @@ describe("the local API's limits on take over and hand back", () => {
       ["takeOver", "task-7", "copy"],
       ["handBack", "task-7", "x".repeat(4000), true],
     ]);
-    await expect(dispatch(engine, { name: "handBack", args: ["task-7", "x".repeat(4001)] })).rejects.toThrow();
-    await expect(dispatch(engine, { name: "takeOver", args: ["../task-7"] })).rejects.toThrow();
-    await expect(dispatch(engine, { name: "takeOver", args: ["task-7", "shell"] })).rejects.toThrow();
-    await expect(dispatch(engine, { name: "setTerminal", args: ["iTerm; rm"] })).rejects.toThrow();
+    await expectRejection(dispatch(engine, { name: "handBack", args: ["task-7", "x".repeat(4001)] }));
+    await expectRejection(dispatch(engine, { name: "takeOver", args: ["../task-7"] }));
+    await expectRejection(dispatch(engine, { name: "takeOver", args: ["task-7", "shell"] }));
+    await expectRejection(dispatch(engine, { name: "setTerminal", args: ["iTerm; rm"] }));
   });
 });

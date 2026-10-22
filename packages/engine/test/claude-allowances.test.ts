@@ -1,6 +1,6 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { chooseProfile, headroom, limitOf, nearLimit, toolCapNow, usageLines, type AgentProfile } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { claudeReports } from "../src/claude-usage-report.js";
 import { claudeAccountReports } from "../src/claude-usage.js";
 import { limitFromFailure } from "../src/usage.js";

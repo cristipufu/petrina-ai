@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -71,7 +72,7 @@ describe.concurrent("approved clone recovery", () => {
       }
       const config = readFileSync(join(path, ".git", "config"), "utf8");
       current = start();
-      await expect(add(current)).rejects.toThrow("Change folder");
+      await expectRejection(add(current), "Change folder");
       expect(current.task(id)!.workRows![0]!.addition?.ready).not.toBe(true);
       expect(current.s.products.some((entry) => entry.id === product.id)).toBe(false);
       expect(readFileSync(join(path, ".git", "config"), "utf8")).toBe(config);
@@ -123,7 +124,7 @@ describe.concurrent("approved clone recovery", () => {
       }
       if (recovery === "foreign-origin" || recovery === "missing-approved-branch") {
         const config = readFileSync(join(path, ".git", "config"), "utf8");
-        await expect(add(current)).rejects.toThrow("Change folder");
+        await expectRejection(add(current), "Change folder");
         expect(current.task(id)!.workRows![0]!.addition?.ready).not.toBe(true);
         expect(current.s.products.some((entry) => entry.id === product.id)).toBe(false);
         expect(readFileSync(join(path, ".git", "config"), "utf8")).toBe(config);
@@ -150,7 +151,7 @@ describe.concurrent("approved clone recovery", () => {
     try {
       delete engine.task(id)!.workRows![0]!.addition!.created;
       writeFileSync(join(path, "keep.txt"), "Unrelated occupied folder\n");
-      await expect(add()).rejects.toThrow("EEXIST");
+      await expectRejection(add(), "EEXIST");
       expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Unrelated occupied folder\n");
       expect(existsSync(join(path, ".git"))).toBe(false);
       expect(engine.s.products).toEqual([]);

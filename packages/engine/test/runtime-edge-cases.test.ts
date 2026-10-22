@@ -1,6 +1,7 @@
+import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { headroom, limitOf } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { dispatch } from "../src/server.js";
 import { removeDir, tempDir } from "./support.js";
 
@@ -134,7 +135,7 @@ it("returns Retry failures to the command caller when approving a stuck request"
   const id = engine.raise(task, "stuck", "Check the tool", false, { toolId: "codex" });
   const check = spyOn(engine["tools"], "stillNotReady").mockRejectedValue(new Error("Readiness failed"));
   try {
-    await expect(dispatch(engine, { name: "approve", args: [id] })).rejects.toThrow("Readiness failed");
+    await expectRejection(dispatch(engine, { name: "approve", args: [id] }), "Readiness failed");
     expect(engine.s.inbox.some(item => item.id === id)).toBe(true);
   } finally { check.mockRestore(); await engine.shutdown(); }
 });

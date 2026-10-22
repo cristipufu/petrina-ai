@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { cpus, loadavg, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import type { InboxKind, State, Task } from "@petrina/core";
-import { Engine, type EngineOptions } from "../src/engine.js";
+import { Engine, type EngineOptions } from "./engine.js";
 import { readConnection } from "../src/instance.js";
 import type { ShellMessage } from "../src/launch.js";
 import { Store } from "../src/store.js";

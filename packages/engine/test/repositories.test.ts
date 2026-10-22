@@ -1,10 +1,11 @@
+import { expectRejection } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import type { RepositoryContext } from "../src/repository-context.js";
 import { checkDecisionLabel, decisionEvidence, createDemoState, draftOf, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { EngineOptions } from "../src/engine.js";
+import type { EngineOptions } from "./engine.js";
 import { addCopy, ensureWorktree } from "../src/git.js";
 import { Sources } from "../src/sources.js";
 import type { Connections } from "../src/connection.js";
@@ -809,7 +810,7 @@ describe.concurrent("one task across products", () => {
       fakes.scenario({ planner: "short", builder: "plain", worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: "acme/api", repo: "acme/api", reason: "Both repositories need the greeting", startFrom: { kind: "default" }, delivery: "pull-request" }] });
       const id = engine.addTask({ productId: first, title: "Resume an addition" });
       await until(engine, (state) => !!itemOf(state, id, "plan"), coordinator([]));
-      await expect(engine.setTaskAddition(id, "acme/api", "API", shop.clone)).rejects.toThrow("already exists");
+      await expectRejection(engine.setTaskAddition(id, "acme/api", "API", shop.clone), "already exists");
       const folder = join(shop.dir, "api-addition");
       await engine.setTaskAddition(id, "acme/api", "API", folder);
       remotes["acme/api"] = join(api.dir, "unavailable.git");
@@ -854,7 +855,7 @@ describe.concurrent("one task across products", () => {
       expect(task.workRows![0]!.addition!.ready).toBe(true);
       expect(products.some((product) => product.id === "addition")).toBe(true);
     } else {
-      await expect(add()).rejects.toThrow("different repository. Change folder");
+      await expectRejection(add(), "different repository. Change folder");
       expect(task.workRows![0]!.addition!.ready).not.toBe(true);
       expect(products.some((product) => product.id === "addition")).toBe(false);
     }

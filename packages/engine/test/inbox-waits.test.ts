@@ -1,5 +1,6 @@
+import { rejectionOf } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Aborted } from "../src/kernel.js";
 import { Connections, CONFIRM_ADDRESS } from "../src/connection.js";
 import { executionFor } from "../src/repository-context.js";
@@ -30,7 +31,7 @@ it("does not ask for an address after pause during the Git lookup, and releases 
     expect(await rejection).toBeInstanceOf(Aborted);
     expect(engine.taskDetails(task.id)!.state).toBe("paused"); expect(engine.s.inbox).toEqual([]); expect(engine.waiting.size).toBe(0);
     expect(connections["confirming"].size).toBe(0);
-    await expect(connections.connection(scope, controller.signal)).rejects.toBeInstanceOf(Aborted);
+    expect(await rejectionOf(connections.connection(scope, controller.signal))).toBeInstanceOf(Aborted);
     expect(remote).toHaveBeenCalledTimes(1);
   } finally { remote.mockRestore(); await engine.shutdown(); }
 });
@@ -62,7 +63,7 @@ it("cleans question waiters on cancellation, on an answer and when already abort
   const by = { roleId: "builder", profileId: "sol-high" };
   try {
     const already = new AbortController(); already.abort();
-    await expect(engine["turns"]["wait"](scope, "question", "No orphan", true, {}, already.signal, "Waiting", by, false)).rejects.toBeInstanceOf(Aborted);
+    expect(await rejectionOf(engine["turns"]["wait"](scope, "question", "No orphan", true, {}, already.signal, "Waiting", by, false))).toBeInstanceOf(Aborted);
     expect(engine.s.inbox).toEqual([]); expect(engine.waiting.size).toBe(0);
     const controller = new AbortController();
     const remove = spyOn(controller.signal, "removeEventListener");

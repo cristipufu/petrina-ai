@@ -3,7 +3,7 @@ import { afterAll, expect, it } from "bun:test";
 import { linkSync, mkdirSync, renameSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { EngineClient } from "../src/engine-client.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { matchesCheckLogIdentity } from "../src/check-log-read.js";

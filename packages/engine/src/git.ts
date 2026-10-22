@@ -18,7 +18,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { CLEANUP_WORDS } from "@petrina/core";
 import { withGitConfig, withoutCredentials } from "./env.js";
 import { completeAll } from "./parallel.js";
-import { lostExit } from "./process-tree.js";
+import { EXIT_GRACE_MS, lostExit } from "./process-tree.js";
 
 export interface RunResult {
   code: number;
@@ -26,12 +26,13 @@ export interface RunResult {
   stderr: string;
   /** The command did not finish as far as Petrina can tell: stopped at its time limit, or its exit was never reported. */
   timedOut?: boolean;
-  /** The command ended (its output closed and the process was observed gone or defunct), but the system never reported its exit, so its result is unknown. */
+  /** The process was observed gone or defunct, but its exit was never reported; its result is unknown. */
   exitUnreported?: boolean;
 }
 
 export { EXIT_GRACE_MS } from "./process-tree.js";
 export const EXIT_UNREPORTED = "Git finished, but the system did not report its exit";
+export const OUTPUT_INCOMPLETE = "Git finished, but its output did not finish arriving";
 
 /** The `gh` command to run. Tests stand in a fake GitHub through the Engine's constructor. */
 export type Gh = readonly string[];
@@ -131,37 +132,48 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
     return { code: 127, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
   }
   // Read while the process writes: a saved file can exceed the pipe's capacity before Git exits.
-  const stdout = proc.stdout as ReadableStream;
-  const stderr = proc.stderr as ReadableStream;
-  const output = Promise.all([
-    options.rawOutput ? new Response(stdout).arrayBuffer().then((bytes) => Buffer.from(bytes).toString("utf8")) : new Response(stdout).text(),
-    new Response(stderr).text(),
-  ]);
-  void output.catch(() => undefined);
-  // The exit, not the output, is what the deadline races: git's network helpers can keep the pipes open
-  // after git is killed, and a valid command can close its output and keep working inside its allowance.
-  // Under load the runtime can also lose a child's exit: the command ended, but the exit is never reported
-  // and the process stays defunct. Once the output is complete, bounded state reads watch the child; only
-  // one observed gone or defunct, with no exit reported after a short grace, fails plainly as lost, keeping
-  // the complete output it did produce. A child whose state cannot be read keeps waiting for its exit.
+  const readers = [proc.stdout, proc.stderr].map(stream => (stream as ReadableStream<Uint8Array>).getReader());
+  const captured = ["", ""];
+  const output = Promise.all(readers.map(async (reader, index) => {
+    const decoder = new TextDecoder("utf-8", { ignoreBOM: options.rawOutput === true && index === 0 });
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        captured[index] += decoder.decode(next.value, { stream: true });
+      }
+      captured[index] += decoder.decode();
+    } finally { reader.releaseLock(); }
+  }));
+  // The deadline covers both exit and output. An exited parent's helper can retain a pipe; a
+  // lost runtime notification can leave BOTH its exit and its output pending. Watch process state
+  // independently of pipe completion, and never infer success from closed pipes or a dead process.
   const watch = new AbortController();
-  const lost = output.then(() => lostExit(proc.pid, watch.signal), () => lostExit(proc.pid, watch.signal));
+  const lost = typeof proc.pid === "number" ? lostExit(proc.pid, watch.signal) : new Promise<never>(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
   const deadline = options.timeoutMs ? new Promise<"timeout">((resolve) => (timer = setTimeout(() => resolve("timeout"), options.timeoutMs))) : undefined;
-  const first = await Promise.race([proc.exited.then(() => "exited" as const), lost, ...(deadline ? [deadline] : [])]);
+  const complete = Promise.all([proc.exited, output]).then(([code]) => ({ code }), error => ({ error }));
+  const drainDeadline = proc.exited.then(() => new Promise<"output-incomplete">((resolve) => {
+    if (!settled) drainTimer = setTimeout(() => resolve("output-incomplete"), EXIT_GRACE_MS);
+  }), () => new Promise<never>(() => {}));
+  const first = await Promise.race([complete, lost, drainDeadline, ...(deadline ? [deadline] : [])]);
+  settled = true;
   watch.abort();
   clearTimeout(timer);
-  if (first === "timeout") {
-    proc.kill("SIGKILL");
-    return { code: 124, stdout: "", stderr: "timed out", timedOut: true };
+  clearTimeout(drainTimer);
+  const out = () => options.rawOutput ? captured[0]! : captured[0]!.trim();
+  if (typeof first !== "object" || "error" in first) {
+    // A process already observed ended needs no signal; a collected PID can belong to somebody else.
+    if (first !== "lost" && first !== "output-incomplete" && proc.exitCode === null && proc.signalCode === null) {
+      try { proc.kill("SIGKILL"); } catch { /* Already gone. */ }
+    }
+    for (const reader of readers) void reader.cancel().catch(() => undefined);
+    const reason = first === "lost" ? EXIT_UNREPORTED : first === "output-incomplete" ? OUTPUT_INCOMPLETE : typeof first === "object" ? `Git's output could not be read: ${String(first.error)}` : "timed out";
+    return { code: 124, stdout: out(), stderr: [captured[1]!.trim(), reason].filter(Boolean).join("\n"), timedOut: true, ...(first === "lost" ? { exitUnreported: true } : {}) };
   }
-  if (first === "lost") {
-    try { proc.kill("SIGKILL"); } catch { /* Already gone. */ }
-    const [out, err] = await output.catch(() => ["", ""] as const);
-    return { code: 124, stdout: options.rawOutput ? out : out.trim(), stderr: [err.trim(), EXIT_UNREPORTED].filter(Boolean).join("\n"), timedOut: true, exitUnreported: true };
-  }
-  const [[out, err], code] = await Promise.all([output, proc.exited]);
-  return { code, stdout: options.rawOutput ? out : out.trim(), stderr: err.trim() };
+  return { code: first.code, stdout: out(), stderr: captured[1]!.trim() };
 }
 
 /** A file as committed at `ref`, read straight from git's objects: no filters, no links followed. Undefined when absent. */
@@ -964,6 +976,7 @@ export async function removeCopies(root: string, folder: string, keep: readonly 
         .map((copy) => rm(copy, { recursive: true, force: true })));
     }
     // These copies are detached: one prune drops all missing unlocked registrations.
-    await run(["git", "worktree", "prune"], root);
+    const pruned = await run(["git", "worktree", "prune"], root, undefined, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS });
+    if (pruned.code !== 0) throw new Reason(`the repository's review-copy records could not be cleaned: ${pruned.stderr || pruned.stdout || `exit ${pruned.code}`}`);
   });
 }

@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { AgentRun, reportOf } from "../src/acp-run.js";
 import { ADAPTERS, type ToolAdapter } from "../src/tools.js";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { UsageReader } from "../src/usage-reader.js";
 import { limitFromFailure } from "../src/usage.js";
 import { Fakes, removeDir, tempDir } from "./support.js";

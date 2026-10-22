@@ -1,7 +1,8 @@
+import { rejectionOf } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { checkDecisionLabel, checkResult, journeyView, type CheckRun } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { Aborted } from "../src/kernel.js";
@@ -73,7 +74,7 @@ it.each(["failed", "interrupted", "mixed", "passed"] as const)("keeps %s results
         await started;
         expect(reading.mock.calls[0]![2]).toBe(stop.signal);
         stop.abort();
-        await expect(pending).rejects.toBeInstanceOf(Aborted);
+        expect(await rejectionOf(pending)).toBeInstanceOf(Aborted);
         expect(task.journey!.filter((entry) => entry.work === "check-reuse")).toHaveLength(reuseCount);
         expect(scope.work.checkReturns).toBe(2);
       } finally {

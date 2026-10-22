@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { queueOf } from "@petrina/core";
-import { Engine } from "../src/engine.js";
+import { Engine } from "./engine.js";
 import { dispatch } from "../src/server.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 

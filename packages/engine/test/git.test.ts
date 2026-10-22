@@ -1,3 +1,4 @@
+import { expectRejection } from "./rejections.js";
 import * as operations from "../src/git.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -35,12 +36,12 @@ describe("Petrina's own git steps", () => {
     expect(await operations.changedFiles(repo, initial.slice(0, 12), changed.slice(0, 12))).toEqual(["maintenance.txt"]);
     expect(await operations.treeOf(repo)).toBe(git(repo, "rev-parse", "HEAD^{tree}"));
     expect(await contains(repo, changed, initial)).toBe(true);
-    await expect(operations.changedFiles(repo, "invalid", changed)).rejects.toThrow();
-    await expect(operations.changedFiles(repo, initial, "invalid")).rejects.toThrow();
-    await expect(operations.changedFiles(repo, initial, "f".repeat(initial.length))).rejects.toThrow();
-    await expect(operations.resetTo(repo, "invalid")).rejects.toThrow();
+    await expectRejection(operations.changedFiles(repo, "invalid", changed));
+    await expectRejection(operations.changedFiles(repo, initial, "invalid"));
+    await expectRejection(operations.changedFiles(repo, initial, "f".repeat(initial.length)));
+    await expectRejection(operations.resetTo(repo, "invalid"));
     writeFileSync(join(repo, ".git", "index.lock"), "Restore is temporarily unavailable\n");
-    try { await expect(operations.resetTo(repo, initial)).rejects.toThrow(); }
+    try { await expectRejection(operations.resetTo(repo, initial)); }
     finally { rmSync(join(repo, ".git", "index.lock")); }
     expect(await operations.head(repo)).toBe(changed);
     await operations.resetTo(repo, initial);
@@ -98,8 +99,8 @@ describe("Petrina's own git steps", () => {
       expect(await removeWorktree(missing, folder)).toBe(false);
       expect(listed).not.toHaveBeenCalled();
       mkdirSync(folder); writeFileSync(join(folder, "keep.txt"), "Recover me");
-      await expect(removeFinishedCopies(missing, folder)).rejects.toThrow("the product's folder could not be found");
-      await expect(removeWorktree(missing, folder)).rejects.toThrow("the product's folder could not be found");
+      await expectRejection(removeFinishedCopies(missing, folder), "the product's folder could not be found");
+      await expectRejection(removeWorktree(missing, folder), "the product's folder could not be found");
       expect(readFileSync(join(folder, "keep.txt"), "utf8")).toBe("Recover me");
       expect(listed).not.toHaveBeenCalled();
     } finally { listed.mockRestore(); }
@@ -255,7 +256,7 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     expect(existsSync(alias)).toBe(true);
     expect(readFileSync(join(cache, "keep"), "utf8")).toBe("shared\n");
     expect(git(repo, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(refs);
-    await expect(removeWorktree(rootAlias, repo)).rejects.toThrow("that folder holds the product itself");
+    await expectRejection(removeWorktree(rootAlias, repo), "that folder holds the product itself");
     expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("product\n");
     expect(await removeWorktree(rootAlias, copyAlias)).toBe(false);
   });
@@ -312,8 +313,8 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     expect(git(repo, "worktree", "list", "--porcelain")).not.toContain("cleanup-copy");
     expect(git(repo, "rev-parse", "petrina/cleanup")).toBe(before);
     expect(await removeWorktree(repo, copy)).toBe(false);
-    await expect(removeWorktree(repo, repo)).rejects.toThrow("that folder holds the product itself");
-    await expect(removeWorktree(repo, temp)).rejects.toThrow("that folder holds the product itself");
+    await expectRejection(removeWorktree(repo, repo), "that folder holds the product itself");
+    await expectRejection(removeWorktree(repo, temp), "that folder holds the product itself");
     expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("kept\n");
     expect(git(repo, "rev-parse", "main")).toBe(before);
   });
@@ -393,6 +394,49 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
       spawning.mockRestore();
       await defunct.release();
     }
+  });
+
+  it.skipIf(process.platform === "win32")("bounds the whole command when an exited parent's child retains its output pipe", async () => {
+    // The command's exit is known, but a helper still holds stdout. The explicit deadline
+    // must cover draining as well as waiting for the command itself.
+    const started = Date.now();
+    const result = await operations.run(["sh", "-c", "sleep 2 & exit 0"], temp, undefined, { timeoutMs: 200 });
+    expect(result).toMatchObject({ code: 124, timedOut: true });
+    expect(result.stderr).toContain("timed out");
+    expect(Date.now() - started).toBeLessThan(1_500);
+  });
+
+  it.skipIf(process.platform === "win32")("detects a lost exit even when the runtime never closes an output stream", async () => {
+    const defunct = await defunctProcess();
+    let cancelled = false;
+    const stdout = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode("partial diagnostic\n")); },
+      cancel() { cancelled = true; },
+    });
+    const spawning = spyOn(Bun, "spawn");
+    try {
+      await waitFor(async () => (await childState(defunct.pid)) === "ended", "the owned process to be defunct");
+      spawning.mockReturnValueOnce({ pid: defunct.pid, exited: new Promise<number>(() => {}), stdout, stderr: new Response("").body!, kill() {} } as unknown as ReturnType<typeof Bun.spawn>);
+      const started = Date.now();
+      const result = await operations.run(["git", "worktree", "prune"], temp);
+      expect(result).toEqual({ code: 124, timedOut: true, exitUnreported: true, stdout: "partial diagnostic", stderr: operations.EXIT_UNREPORTED });
+      expect(Date.now() - started).toBeLessThan(25_000);
+      expect(cancelled).toBe(true);
+    } finally { spawning.mockRestore(); await defunct.release(); }
+  });
+
+  it("fails a bounded review-copy prune and releases its repository queue for the next cleanup", async () => {
+    const calls = spyOn(operations, "run").mockResolvedValueOnce({ code: 124, stdout: "", stderr: "timed out", timedOut: true });
+    const folder = join(temp, "bounded-prune.copies");
+    try {
+      await expectRejection(removeCopies(temp, folder), "review-copy records could not be cleaned");
+      expect(calls.mock.calls[0]).toEqual([["git", "worktree", "prune"], temp, undefined, { timeoutMs: 60_000 }]);
+      calls.mockResolvedValueOnce({ code: 7, stdout: "", stderr: "prune refused" });
+      await expectRejection(removeCopies(temp, folder), "prune refused");
+      calls.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+      await removeCopies(temp, folder);
+      expect(calls).toHaveBeenCalledTimes(3);
+    } finally { calls.mockRestore(); }
   });
 
   it("knows a GitHub address by its owner and name, SSH host nicknames included", () => {
