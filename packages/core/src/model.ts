@@ -789,9 +789,9 @@ export interface Finding {
   judgments?: readonly { by: Id; severity: Finding["severity"]; at: number }[];
   /**
    * Where a confirmed older bug went once its task was done.
-   * A task id is the Backlog card. A reason means it stayed on this task.
+   * A task id names the bug task tracking it. A reason means it stayed on this task.
    */
-  tracking?: { taskId: Id } | { reason: "missing-steps" | "missing-evidence" | "no-choice" | "unmatched" | "unavailable"; retry?: boolean };
+  tracking?: { taskId: Id } | { reason: "missing-steps" | "missing-evidence" | "no-choice" | "unmatched" | "unavailable" | "pictures"; retry?: boolean };
 }
 
 export type RiskLevel = "low" | "medium" | "high";

@@ -120,6 +120,12 @@ export const OPERATIONS = [
     true,
   ),
   op(
+    "task.track-finding",
+    "Record that a complete confirmed older report left Not tracked is tracked in an existing bug task, including from History. Waits for automatic linking; never runs agents or creates a task.",
+    { ...task, findingId: id, targetTaskId: id },
+    true,
+  ),
+  op(
     "task.source",
     "Change an unstarted task's source and destination using existing source validation. Inspect its plan request again before approval.",
     { ...task, choice: WorkChoiceSchema },

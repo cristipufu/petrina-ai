@@ -3,7 +3,7 @@
 
 import type { Finding, Id, RunState, Task } from "./model.js";
 
-export type TrackingReason = "missing-steps" | "missing-evidence" | "no-choice" | "unmatched" | "unavailable";
+export type TrackingReason = "missing-steps" | "missing-evidence" | "no-choice" | "unmatched" | "unavailable" | "pictures";
 
 const REASONS: Record<TrackingReason, string> = {
   "missing-steps": "The steps are missing",
@@ -11,6 +11,7 @@ const REASONS: Record<TrackingReason, string> = {
   "no-choice": "No card was chosen",
   unmatched: "Petrina could not match it",
   unavailable: "The match could not run",
+  pictures: "The pictures could not be copied",
 };
 
 /** What the review shows for a follow-up that did or did not become a card. */
@@ -219,6 +220,8 @@ export function followUpSnapshot(tasks: readonly Task[], pending: readonly { key
       // A report already on a card that is no longer an older bug loses that credit.
       if (block === "skip") {
         if (finding.tracking && "taskId" in finding.tracking) releases.push({ taskId: task.id, findingId: finding.id, cardId: finding.tracking.taskId });
+        else for (const group of pending) if (group.cardId && group.keys.includes(followUpKey(task.id, finding.id)))
+          releases.push({ taskId: task.id, findingId: finding.id, cardId: group.cardId });
         continue;
       }
       // The other reviewers have not judged it yet. Leave it off every card.
@@ -388,7 +391,15 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
   const pendingOut: { keys: readonly string[]; cardId?: Id; retry?: boolean }[] = [];
   const remaining = snapshot.reports.filter((report) => {
     if (report.tracking && "taskId" in report.tracking) return false;
-    if (report.tracking && !report.tracking.retry && report.tracking.reason !== "unavailable") return false;
+    // Once a destination is saved, closing or archiving it must not assign this report again.
+    const assignment = snapshot.pending.find(group => group.cardId && group.keys.includes(report.key));
+    if (assignment) {
+      const card = snapshot.cards.find(card => card.id === assignment.cardId);
+      if (card && card.phase !== "closed" && !report.block) remember(working, card.id, [report], snapshot, card.phase);
+      return false;
+    }
+    const missingChoice = report.tracking && "reason" in report.tracking && report.tracking.reason === "no-choice" && !report.sameBug;
+    if (report.tracking && !report.tracking.retry && report.tracking.reason !== "unavailable" && !missingChoice) return false;
     const listed = snapshot.cards.find((card) => card.phase !== "closed" && card.reportKeys.includes(report.key));
     if (listed) {
       remember(working, listed.id, [report], snapshot, listed.phase);
@@ -418,8 +429,8 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
     const shown = report.cardsShown ?? [];
     const named = report.sameBug && report.sameBug !== "none" ? snapshot.cards.find((card) => card.id === report.sameBug) : undefined;
     const pointed = named && named.phase !== "closed" && shown.includes(named.id) && fitsCard(named, report) ? named : undefined;
-    // Cards were shown and this report did not pick one. A card that has since finished is not a refusal.
-    if (shown.length && !pointed && report.sameBug !== "none" && !(named && named.phase === "closed")) {
+    // Preserve an explicit pointer that cannot be used. Silence supplies no hint to the matcher.
+    if (shown.length && report.sameBug && !pointed && report.sameBug !== "none" && !(named && named.phase === "closed")) {
       if (report.sourceDone) track(working, report, { reason: "no-choice" });
       continue;
     }
@@ -525,7 +536,7 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
     pool = pool.filter((report) => !working.used.has(report.key) && !deferred.has(report.key));
   }
 
-  const consumed = new Set([...working.created.flatMap((entry) => entry.keys), ...working.linked.flatMap((entry) => entry.keys), ...working.tracks.map((entry) => followUpKey(entry.taskId, entry.findingId))]);
+  const consumed = new Set([...working.created.flatMap((entry) => entry.keys), ...working.linked.flatMap((entry) => entry.keys), ...working.tracks.map((entry) => followUpKey(entry.taskId, entry.findingId)), ...released.map(entry => followUpKey(entry.taskId, entry.findingId))]);
   for (const group of snapshot.pending) {
     if (group.retry) continue;
     if (group.keys.every((key) => consumed.has(key) || snapshot.reports.some((report) => report.key === key && report.tracking && "taskId" in report.tracking))) continue;

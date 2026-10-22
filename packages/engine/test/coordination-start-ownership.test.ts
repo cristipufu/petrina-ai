@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EngineClient } from "../src/engine-client.js";
 import { readConnection, removeConnection } from "../src/instance.js";
@@ -65,7 +65,8 @@ await launch({ home: ${JSON.stringify(home)}, mode: ${JSON.stringify(mode === "e
     const submitted = await Promise.all([client.call("engine.start", { requestId: "recover-start" }), client.call("engine.start", { requestId: "competing-start" })]);
     expect(submitted.some((result) => result.outcome === "pending")).toBe(true);
     expect(launches).toBe(1);
-    expect((await client.call("engine.start", { requestId: "recover-start", wait: true, timeoutMs: 30000 * SLOW })).outcome).toBe("completed");
+    const recovered = await client.call("engine.start", { requestId: "recover-start", wait: true, timeoutMs: 30000 * SLOW });
+    expect(recovered, readFileSync(join(home, "engine.log"), "utf8")).toMatchObject({ outcome: "completed" });
     expect((await client.call("engine.status")).status).toBe("running");
     expect(readConnection(home)?.pid).toBe(children[0]!.pid);
   } finally {

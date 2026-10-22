@@ -117,6 +117,10 @@ export class Engine extends Kernel implements Commands {
   private readonly followUps: FollowUps;
   private readonly acceptedPoints: AcceptedPoints;
 
+  trackFinding<T>(taskId: Id, findingId: Id, targetTaskId: Id, record: (link: { taskId: Id; findingId: Id; targetTaskId: Id }) => T): Promise<T> {
+    return this.followUps.trackFinding(taskId, findingId, targetTaskId, record);
+  }
+
   constructor(dataDir: string, options: EngineOptions = {}) {
     super(dataDir, options);
     this.profileReader = new ProfileChoiceReader(this);
@@ -648,7 +652,7 @@ export class Engine extends Kernel implements Commands {
       const images = await completeAll(sources.flatMap(source => source.session.flatMap(line => (line.images ?? []).filter(image => /^[a-f0-9-]{36}$/.test(image.id)).map(async image => {
         const id = randomUUID();
         await copyFile(join(captures, source.id, `${image.id}.png`), join(temp, `${id}.png`));
-        return { id, caption: `${source.title}: ${image.caption}` };
+        return { id, caption: `${source.title}: ${image.caption}`, ...(image.from ? { from: { ...image.from } } : {}) };
       }))));
       // Other commands may have edited or queued a request while the pictures were copied.
       if (this.stopped || JSON.stringify(taskIds.map((id) => this.task(id))) !== before) throw new Error("A selected task changed. Review the selection and try again.");

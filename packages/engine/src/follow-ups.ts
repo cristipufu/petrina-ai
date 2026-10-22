@@ -84,6 +84,94 @@ export class FollowUps {
     return this.enqueue(() => this.apply());
   }
 
+  /** The coordinator has already tracked this bug. Share automatic linking's queue and save its receipt with the link. */
+  trackFinding<T>(taskId: Id, findingId: Id, targetTaskId: Id, record: (link: { taskId: Id; findingId: Id; targetTaskId: Id }) => T): Promise<T> {
+    const releaseSource = this.k.holdFollowUp(taskId);
+    const releaseTarget = this.k.holdFollowUp(targetTaskId);
+    return this.enqueue(async () => {
+      const validate = () => {
+        if (this.k.stopped) throw new Error("Petrina stopped before the link could be saved.");
+        const source = this.k.task(taskId);
+        const finding = source?.findings.find(entry => entry.id === findingId);
+        if (!source || !finding) throw new Error("That source report does not exist.");
+        if (source.state !== "done" || followUpBlock(finding) !== undefined || (finding.verification && finding.verification.verdict !== "pre-existing"))
+          throw new Error("Only a complete confirmed older bug on a done task can be linked.");
+        if (finding.tracking && "taskId" in finding.tracking && finding.tracking.taskId !== targetTaskId)
+          throw new Error("This report is already tracked in another task.");
+        if (!finding.tracking) throw new Error("Automatic tracking has not finished for this report.");
+        const key = followUpKey(taskId, findingId);
+        // A saved destination survives either task moving to History. A same-target request may
+        // finish an interrupted copy; a different target must not acquire the same report.
+        const assigned = this.assignments(taskId, findingId);
+        if (assigned.some(id => id !== targetTaskId)) throw new Error("This report is already assigned to another task.");
+        if (!assigned.length && (this.k.s.followUpPending ?? []).some(group => !group.retry && group.keys.includes(key)))
+          throw new Error("Petrina is still linking this report. Try again after that finishes.");
+        const target = this.k.task(targetTaskId);
+        if (!target) throw new Error("The target task does not exist.");
+        if (target.id === source.id) throw new Error("A report cannot be tracked in its own task.");
+        if (target.state === "cancelled") throw new Error("The target task was cancelled.");
+        if (target.kind !== "bug") throw new Error("The target must be a bug task.");
+        if ((this.k.s.followUpPending ?? []).some(group => !group.retry && group.keys.includes(key)) && !target.followUp?.reports.some(report => report.taskId === taskId && report.findingId === findingId))
+          throw new Error("Petrina is still linking this report. Try again after that finishes.");
+        const report = followUpSnapshot([source as Task]).reports.find(entry => entry.findingId === findingId)!;
+        const products = productsOn(target);
+        if (!report.productIds.length || !report.productIds.every(id => products.includes(id)))
+          throw new Error("The target task must cover every product in the report.");
+        if (!("taskId" in finding.tracking) && target.state === "done" && report.images.some(image => existsSync(join(this.k.dataDir, "captures", image.sourceTaskId, `${image.sourceImageId}.png`))))
+          throw new Error("The original still has pictures. Choose an open bug task to keep them.");
+        return { source, finding, target, report, key };
+      };
+      const initial = validate();
+      const link = { taskId, findingId, targetTaskId };
+      if ("taskId" in initial.finding.tracking!) return this.k.store.database.transaction(() => record(link))();
+      // Prepare pictures without changing the task. A copy failure leaves the report untracked.
+      const prepared = { ...initial.target, session: [...initial.target.session] };
+      const sessionLength = prepared.session.length;
+      const credit: FollowUpCredit = {
+        ...initial.report,
+        steps: initial.report.steps!.trim(),
+        evidence: initial.report.evidence!.trim(),
+      };
+      let saved = false;
+      try {
+        if (initial.target.state !== "done" && !await this.keepImages(prepared, [credit]))
+          throw new Error("The pictures could not be copied. The report is still untracked; try again with a new request reference.");
+        // Work can finish while pictures are copying. Recheck before changing either task.
+        const { source, finding, target, key } = validate();
+        const before = { session: target.session, followUp: target.followUp, tracking: finding.tracking, pending: this.k.s.followUpPending };
+        let result: T;
+        try {
+          result = this.k.store.database.transaction(() => {
+            if (target.state !== "done") {
+              target.session = [...target.session, ...prepared.session.slice(sessionLength)];
+              const followUp = target.followUp ?? { reports: [], preserveRequest: true };
+              if (!followUp.reports.some(entry => entry.taskId === taskId && entry.findingId === findingId))
+                target.followUp = { ...followUp, reports: [...followUp.reports, stored(credit)] };
+            }
+            finding.tracking = { taskId: targetTaskId };
+            this.k.s.followUpPending = (this.k.s.followUpPending ?? []).map(group => ({ ...group, keys: group.keys.filter(entry => entry !== key) })).filter(group => group.keys.length);
+            if (!this.k.s.tasks.includes(source)) this.k.saveArchivedTask(source);
+            return record(link);
+          })();
+        } catch (error) {
+          target.session = before.session;
+          if (before.followUp) target.followUp = before.followUp;
+          else delete target.followUp;
+          finding.tracking = before.tracking;
+          this.k.s.followUpPending = before.pending;
+          throw error;
+        }
+        saved = true;
+        this.k.commit(source);
+        if (target.state !== "done") this.k.commit(target);
+        return result;
+      } finally {
+        if (!saved) for (const line of prepared.session.slice(sessionLength)) for (const image of line.images ?? [])
+          await rm(join(this.k.dataDir, "captures", targetTaskId, `${image.id}.png`), { force: true });
+      }
+    }).finally(() => { releaseSource(); releaseTarget(); });
+  }
+
   /** Copy pictures onto unfinished follow-ups before a done task's own pictures are removed. */
   beforeRemoval(task: MTask): Promise<void> {
     if (task.state !== "done") return Promise.resolve();
@@ -95,7 +183,7 @@ export class FollowUps {
     }).finally(release);
   }
 
-  private enqueue(work: () => Promise<void>): Promise<void> {
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const run = this.k.trackWork(this.tail.then(work, work));
     this.tail = run.then(() => undefined, () => undefined);
     return run;
@@ -103,10 +191,12 @@ export class FollowUps {
 
   private async apply(): Promise<void> {
     if (this.k.stopped) return;
-    const plan = await planFollowUps(followUpSnapshot(this.tasks(), this.k.s.followUpPending ?? []), (ask) => this.answer(ask));
+    const assigned = this.pending();
+    const plan = await planFollowUps(followUpSnapshot(this.tasks(), assigned), (ask) => this.answer(ask));
     if (this.k.stopped) return;
     const pending = [
       ...plan.created.map((entry) => ({ keys: [...entry.keys] })),
+      ...plan.linked.map((entry) => ({ keys: [...entry.keys], cardId: entry.cardId })),
       ...plan.pending.map((group) => ({ keys: [...group.keys], ...(group.cardId ? { cardId: group.cardId } : {}), ...(group.retry ? { retry: true } : {}) })),
     ];
     // An empty pass must not save. That save retires a finished task still being updated, and a full disk
@@ -115,7 +205,8 @@ export class FollowUps {
     try {
       // Keep a saved retry until the link itself is saved. Replacing the list first drops an archived
       // report, and a restart never sees it again.
-      const previous = (this.k.s.followUpPending ?? []).filter((group) => group.keys.some((key) => !this.linkedKey(key)));
+      const released = new Set(plan.released.map(entry => followUpKey(entry.taskId, entry.findingId)));
+      const previous = this.pending().map(group => ({ ...group, keys: group.keys.filter(key => !released.has(key) && !this.linkedKey(key)) })).filter(group => group.keys.length);
       this.k.s.followUpPending = mergePending(previous, pending);
       this.save();
       for (const release of plan.released) this.releaseReport(release);
@@ -127,27 +218,34 @@ export class FollowUps {
         if (!reports.length) continue;
         const ready = { ...create, reports, keys, productIds: [...new Set(reports.flatMap((report) => report.productIds))] };
         const card = this.cardFor(ready);
-        this.k.s.followUpPending = (this.k.s.followUpPending ?? []).map((entry) => sameKeys(entry.keys, create.keys) && !entry.retry ? { ...entry, cardId: card.id } : entry);
+        this.assign(keys, card.id);
         this.save();
         await this.copyThenTrack(card, reports, keys, card.id, picturesPending);
         this.save();
       }
       for (const link of plan.linked) {
-        const live = this.k.s.tasks.find((task) => task.id === link.cardId);
+        const cardId = this.destination(link.cardId);
+        const live = this.k.s.tasks.find((task) => task.id === cardId);
         const reports = link.reports.filter((report) => this.stillOlder(followUpKey(report.taskId, report.findingId)));
         const keys = link.keys.filter((key) => reports.some((report) => followUpKey(report.taskId, report.findingId) === key));
         if (!reports.length) continue;
+        if ((!live || live.state === "done" || live.state === "cancelled") && assigned.some(group => group.cardId && group.keys.some(key => keys.includes(key)))) {
+          for (const key of keys) picturesPending.add(key);
+          continue;
+        }
         const scope = live ? productsOn(live) : [];
         const sameScope = live && (!live.followUp || live.followUp.preserveRequest) ? reports.every(report => report.productIds.length === scope.length && scope.every(id => report.productIds.includes(id))) : true;
         const open = sameScope && !!live && (live.followUp || (live.state === "backlog" && live.kind === "bug")) && live.state !== "done" && live.state !== "cancelled";
-        const card = open ? live! : this.cardAfterClose({ ...link, reports, keys });
+        const card = open ? live! : this.cardAfterClose({ ...link, cardId, reports, keys });
         if (open) this.applyLink(card, { ...link, reports, keys });
+        this.assign(keys, card.id);
+        this.save();
         await this.copyThenTrack(card, reports, keys, card.id, picturesPending);
         this.save();
       }
       for (const track of plan.tracks) {
         if ("taskId" in track.tracking && picturesPending.has(followUpKey(track.taskId, track.findingId))) continue;
-        this.writeTracking(track.taskId, track.findingId, track.tracking);
+        this.writeTracking(track.taskId, track.findingId, "taskId" in track.tracking ? { taskId: this.destination(track.tracking.taskId) } : track.tracking);
       }
       this.k.s.followUpPending = (this.k.s.followUpPending ?? []).filter((group) => group.keys.some((key) => !this.linkedKey(key)));
       this.save();
@@ -170,10 +268,12 @@ export class FollowUps {
     const task = this.k.task(taskId);
     if (!task) return false;
     for (const finding of task.findings) {
-      if (finding.tracking && !("taskId" in finding.tracking)) continue;
+      if (finding.tracking && !("taskId" in finding.tracking) && finding.tracking.reason !== "pictures") continue;
+      const targetId = finding.tracking && "taskId" in finding.tracking ? finding.tracking.taskId : this.assignments(task.id, finding.id)[0];
+      const card = targetId ? this.k.task(targetId) : undefined;
+      if (card?.state === "done" || card?.state === "cancelled") continue;
       const images = findingImages(task as Task, finding);
       if (!images.length) continue;
-      const card = this.k.s.tasks.find((entry) => entry.followUp?.reports.some((report) => report.taskId === taskId && report.findingId === finding.id));
       const pending = (this.k.s.followUpPending ?? []).some((group) => group.keys.includes(followUpKey(taskId, finding.id)));
       if (!card && !pending && !(finding.tracking && "taskId" in finding.tracking)) continue;
       for (const image of images) {
@@ -185,7 +285,7 @@ export class FollowUps {
   }
 
   private releaseReport(release: { taskId: Id; findingId: Id; cardId: Id }): void {
-    const card = this.k.s.tasks.find((task) => task.id === release.cardId);
+    const card = this.k.task(release.cardId);
     const task = this.k.task(release.taskId);
     const finding = task?.findings.find((entry) => entry.id === release.findingId);
     if (card?.followUp) {
@@ -212,8 +312,9 @@ export class FollowUps {
         const also = card.followUp.alsoReported;
         card.followUp = { ...card.followUp, reports, alsoReported: also?.length ? [...also] : undefined };
       }
+      if (!this.k.s.tasks.includes(card)) this.k.saveArchivedTask(card);
     }
-    if (!task || !finding?.tracking || !("taskId" in finding.tracking) || finding.tracking.taskId !== release.cardId) return;
+    if (!task || !finding?.tracking || ("taskId" in finding.tracking ? finding.tracking.taskId !== release.cardId : finding.tracking.reason !== "pictures")) return;
     delete finding.tracking;
     if (!this.k.s.tasks.includes(task)) this.k.saveArchivedTask(task);
   }
@@ -260,6 +361,39 @@ export class FollowUps {
   private save(): void {
     if (this.k.stopped) throw new Error("Petrina stopped before the follow-up was saved");
     this.k.commitNow();
+  }
+
+  /** Exact report identities, never wording, reserve a destination until tracking is saved. */
+  private assignments(taskId: Id, findingId: Id): Id[] {
+    const key = followUpKey(taskId, findingId);
+    return [...new Set([
+      ...(this.k.s.followUpPending ?? []).flatMap(group => group.cardId && group.keys.includes(key) ? [group.cardId] : []),
+      ...this.k.s.tasks.flatMap(task => task.followUp?.reports.some(report => report.taskId === taskId && report.findingId === findingId) ? [task.id] : []),
+    ].map(id => this.destination(id)))];
+  }
+
+  /** Combining requests explicitly transfers their reports, including unfinished picture links. */
+  private destination(cardId: Id): Id {
+    const seen = new Set<Id>();
+    let id = cardId;
+    while (!seen.has(id)) {
+      seen.add(id);
+      const next = this.k.task(id)?.combinedInto;
+      if (!next) return id;
+      id = next;
+    }
+    return cardId;
+  }
+
+  private pending() {
+    return (this.k.s.followUpPending ?? []).map(group => group.cardId ? { ...group, cardId: this.destination(group.cardId) } : group);
+  }
+
+  private assign(keys: readonly string[], cardId: Id): void {
+    this.k.s.followUpPending = [
+      ...(this.k.s.followUpPending ?? []).map(group => ({ ...group, keys: group.keys.filter(key => !keys.includes(key)) })).filter(group => group.keys.length),
+      { keys: [...keys], cardId },
+    ];
   }
 
   /** Live tasks, plus any archived task a saved link still names. History is not scanned. */
@@ -424,6 +558,7 @@ export class FollowUps {
       const key = followUpKey(report.taskId, report.findingId);
       blocked.add(key);
       picturesPending.add(key);
+      this.writeTracking(report.taskId, report.findingId, { reason: "pictures", retry: true });
     }
     this.trackKeys(keys.filter((key) => !blocked.has(key)), cardId);
   }

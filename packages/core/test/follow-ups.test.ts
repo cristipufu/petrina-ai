@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDemo, createPortfolioDemo } from "../src/demo.js";
-import { followUpBlock, followUpKey, followUpSnapshot, noteReviewTag, planFollowUps, type FollowUpCandidate, type FollowUpSnapshot, type MatchAnswer, type MatchAsk, type OpenFollowUp } from "../src/follow-ups.js";
+import { followUpBlock, followUpKey, followUpSnapshot, noteReviewTag, planFollowUps, trackingWords, type FollowUpCandidate, type FollowUpSnapshot, type MatchAnswer, type MatchAsk, type OpenFollowUp } from "../src/follow-ups.js";
 
 function report(partial: Partial<FollowUpCandidate> & Pick<FollowUpCandidate, "taskId" | "findingId" | "text">): FollowUpCandidate {
   return {
@@ -134,6 +134,23 @@ describe("confirmed older bugs", async () => {
     expect(saved.linked.map((entry) => entry.keys)).toEqual([[two.key]]);
   });
 
+  it("keeps an unfinished assignment when its card closes or leaves the board, and resumes only that card", async () => {
+    const one = report({ taskId: "source", findingId: "old", text: "An older bug", tracking: { reason: "pictures", retry: true }, images: [{ caption: "Proof", sourceTaskId: "source", sourceImageId: "pic" }] });
+    const pending = [{ keys: [one.key], cardId: "assigned" }];
+    for (const cards of [[card({ id: "assigned", phase: "closed", reportKeys: [one.key] })], []]) {
+      const held = await plan(snap([one], { cards, pending }));
+      expect(held.created).toEqual([]);
+      expect(held.linked).toEqual([]);
+      expect(held.asked).toEqual([]);
+      expect(held.pending).toEqual(pending);
+    }
+    const resume = await plan(snap([one], { cards: [card({ id: "assigned", reportKeys: [one.key] })], pending }));
+    expect(resume.asked).toEqual([]);
+    expect(resume.created).toEqual([]);
+    expect(resume.linked[0]!.cardId).toBe("assigned");
+    expect(trackingWords({ reason: "pictures", retry: true })).toEqual({ label: "Not tracked", reason: "The pictures could not be copied" });
+  });
+
   it("leaves both reports untracked when the match cannot tell them apart", async () => {
     const one = report({ taskId: "a", findingId: "1", text: "The date is wrong." });
     const two = report({ taskId: "b", findingId: "1", text: "The year is wrong." });
@@ -157,19 +174,63 @@ describe("confirmed older bugs", async () => {
     expect(retry.pending).toEqual([]);
   });
 
-  it("follows a reviewer's card, keeps a refusal off that card, and leaves a missing choice untracked", async () => {
+  it("follows a reviewer's card, keeps a refusal off that card, and matches a missing choice", async () => {
     const pointed = report({ taskId: "a", findingId: "1", text: "Words that do not match the card.", cardsShown: ["card"], sameBug: "card" });
     const refused = report({ taskId: "b", findingId: "1", text: "A different footer bug.", cardsShown: ["card"], sameBug: "none" });
     const other = report({ taskId: "c", findingId: "1", text: "Another report of that different footer bug.", cardsShown: ["card"], sameBug: "none" });
     const silent = report({ taskId: "d", findingId: "1", text: "Nobody chose.", cardsShown: ["card"] });
     const cards = [card({ id: "card", problem: "The known footer bug" })];
     const chosen = await plan(snap([pointed, refused, other, silent], { cards }), { groups: [{ keys: [refused.key, other.key] }] });
-    expect(chosen.asked).toEqual([[refused.key, other.key]]);
+    expect(chosen.asked).toEqual([[refused.key, other.key, silent.key]]);
     expect(chosen.linked.map((entry) => entry.cardId)).toEqual(["card"]);
     expect(chosen.created).toHaveLength(1);
     expect(chosen.created[0]!.keys).toEqual([refused.key, other.key]);
-    expect(chosen.tracks).toContainEqual({ taskId: "d", findingId: "1", tracking: { reason: "no-choice" } });
+    expect(chosen.tracks).toContainEqual({ taskId: "d", findingId: "1", tracking: { reason: "unmatched" } });
     expect(chosen.created[0]!.reports.every((entry) => entry.taskId !== "card")).toBe(true);
+  });
+
+  it("uses semantic matching for a missing choice, retaining the shown open card as a candidate", async () => {
+    const silent = report({ taskId: "source", findingId: "old", text: "Different words", cardsShown: ["shown"] });
+    const snapshot = snap([silent], { cards: [card({ id: "shown" })] });
+    const asked: MatchAsk[] = [];
+    const same = await planFollowUps(snapshot, ask => {
+      asked.push(ask);
+      return { groups: [{ keys: [silent.key], cardId: "shown" }] };
+    });
+    expect(asked[0]!.cards.map(card => card.id)).toEqual(["shown"]);
+    expect(same.created).toEqual([]);
+    expect(same.linked[0]!.keys).toEqual([silent.key]);
+    const different = await plan(snapshot, { groups: [{ keys: [silent.key] }] });
+    expect(different.created).toHaveLength(1);
+    expect(different.linked).toEqual([]);
+    const unavailable = await plan(snapshot, "unavailable");
+    expect(unavailable.tracks[0]!.tracking).toEqual({ reason: "unavailable", retry: true });
+    const retry = await plan(snap([{ ...silent, tracking: { reason: "unavailable", retry: true } }], { cards: snapshot.cards, pending: unavailable.pending }), { groups: [{ keys: [silent.key], cardId: "shown" }] });
+    expect(retry.created).toEqual([]);
+    expect(retry.linked).toHaveLength(1);
+  });
+
+  it("recovers saved absent choices, with the same card content as none when the shown card is closed", async () => {
+    const silent = report({ taskId: "source", findingId: "old", text: "An older bug", cardsShown: ["closed"], reasons: ["Each voter confirmed base"], images: [{ caption: "Proof", sourceTaskId: "source", sourceImageId: "pic" }] });
+    const closed = [card({ id: "closed", phase: "closed" })];
+    const missing = await plan(snap([silent], { cards: closed }));
+    const none = await plan(snap([{ ...silent, sameBug: "none" }], { cards: closed }));
+    expect(missing.created).toHaveLength(1);
+    expect(missing).toEqual(none);
+    const recovered = await plan(snap([{ ...silent, tracking: { reason: "no-choice" } }], { cards: closed }));
+    expect(recovered).toEqual(missing);
+    const explicit = await plan(snap([{ ...silent, sameBug: "archived", tracking: { reason: "no-choice" } }], { cards: closed }));
+    expect(explicit.created).toEqual([]);
+    const stillMissing = await plan(snap([{ ...silent, sameBug: "archived" }], { cards: closed }));
+    expect(stillMissing.tracks[0]!.tracking).toEqual({ reason: "no-choice" });
+    const refused = await plan(snap([{ ...silent, sameBug: "none", cardsShown: ["shown"] }], { cards: [card({ id: "shown" })] }));
+    expect(refused.asked).toEqual([]);
+    expect(refused.created).toHaveLength(1);
+    const cancelled = { ...silent, sourceDone: false };
+    expect((await plan(snap([cancelled], { cards: closed }))).created).toEqual([]);
+    const done = report({ taskId: "done", findingId: "old", text: "Another report" });
+    const joined = await plan(snap([cancelled, done]), { groups: [{ keys: [cancelled.key, done.key] }] });
+    expect(joined.created[0]!.keys).toEqual([cancelled.key, done.key]);
   });
 
   it("adds a product while the card waits, and only records one named after work starts", async () => {

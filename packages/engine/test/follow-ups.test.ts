@@ -7,6 +7,11 @@ import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@
 import { Engine } from "./engine.js";
 import { ReviewResult } from "../src/roles.js";
 import { checkReviewEvidence } from "../src/review.js";
+import { Coordination } from "../src/coordination.js";
+import { coordinationCli } from "../src/coordination-cli.js";
+import { mcpRequest, mcpTools } from "../src/mcp.js";
+import type { EngineClient } from "../src/engine-client.js";
+import { dispatch } from "../src/server.js";
 import * as gitOps from "../src/git.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
@@ -363,7 +368,7 @@ it("credits every matching report on one card, in either order, and again after 
   } finally { await world.engine.shutdown(); }
 });
 
-it("follows a chosen card, keeps a refusal off it, and leaves a missing choice untracked", async () => {
+it("follows a chosen card, keeps a refusal off it, and matches a missing choice", async () => {
   const world = await open();
   const { engine } = world;
   try {
@@ -389,9 +394,618 @@ it("follows a chosen card, keeps a refusal off it, and leaves a missing choice u
     expect(card.followUp!.reports.map((report) => report.findingId)).not.toContain("refused");
 
     await finish(engine, silent);
-    expect(silent.findings[0]!.tracking).toEqual({ reason: "no-choice" });
-    expect(cards(engine).some((task) => task.followUp!.reports.some((report) => report.findingId === "silent"))).toBe(false);
+    expect(silent.findings[0]!.tracking).toEqual({ taskId: cardFor(engine, "silent")[0]!.id });
+    expect(card.followUp!.reports.map(report => report.findingId)).not.toContain("silent");
+    const same = taskOf(engine, world.shop, "Skipped same bug", [older("same", "bug-known: Another wording of the known bug", { cardsShown: [card.id] })]);
+    await finish(engine, same);
+    expect(world.prompts.at(-1)).toContain(`Card [${card.id}]`);
+    expect(same.findings[0]!.tracking).toEqual({ taskId: card.id });
+    expect(card.followUp!.reports.map(report => report.findingId)).toContain("same");
   } finally { await engine.shutdown(); }
+});
+
+it("recovers a skipped choice after the shown card finishes, preserving votes, pictures and one card through restart", async () => {
+  const world = await open();
+  try {
+    const { engine } = world;
+    const shown = engine.addTask({ productId: world.shop, kind: "bug", title: "Already finished", backlog: true });
+    engine.task(shown)!.state = "done";
+    const text = "bug-silent: An accepted confirmed unrelated bug";
+    const accepted = ReviewResult.parse({ verdict: "pass", findings: [{ text, severity: "pre-existing", steps: STEPS, evidence: EVIDENCE }] });
+    expect(checkReviewEvidence([], accepted)).toBeUndefined();
+    const source = taskOf(engine, world.shop, "Finished source", [older("old", text, {
+      cardsShown: [shown], tracking: { reason: "no-choice" },
+      verification: { by: "sol-high", verdict: "pre-existing", reason: "Three independent voters confirmed base", at: 1 },
+      votes: [{ by: "sol-high", toolId: "codex", verdict: "pre-existing", reason: "Base reproduction confirmed" }],
+    })]);
+    plant(engine, source.id, text);
+    const release = engine.holdFollowUp(source.id);
+    try {
+      source.state = "done";
+      source.column = "done";
+      engine.save();
+      expect(engine.s.tasks.some(task => task.id === source.id)).toBe(true);
+      await engine["followUps"].catchUp();
+    } finally { release(); }
+    const card = cardFor(engine, "silent")[0]!;
+    expect(card.state).toBe("backlog");
+    expect(card.description).toContain(STEPS);
+    expect(card.description).toContain("Three independent voters confirmed base");
+    expect(card.description).toContain("Base reproduction confirmed");
+    expect(card.followUp!.reports[0]).toMatchObject({ taskId: source.id, findingId: "old", text });
+    expect(card.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: card.id });
+    expect(world.prompts).toEqual([]);
+    await reopen(world);
+    await world.engine["followUps"].catchUp();
+    expect(cardFor(world.engine, "silent")).toHaveLength(1);
+    expect(world.engine.task(card.id)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+  } finally { await world.engine.shutdown(); }
+});
+
+function settledSource(engine: Engine, productId: string, extra: Partial<Finding> = {}) {
+  const source = taskOf(engine, productId, "A finished report", [older("old", "bug-manual: The confirmed older defect", { tracking: { reason: "no-choice" }, ...extra })]);
+  source.state = "done";
+  source.column = "done";
+  source.finishedAt = Date.now();
+  return source;
+}
+
+it("records a manual link from archived history to a running request without changing evidence or the request, and retains its receipt", async () => {
+  const world = await open();
+  try {
+    const { engine } = world;
+    const source = settledSource(engine, world.shop, { verification: { by: "sol-high", verdict: "pre-existing", reason: "Confirmed on base", at: 1 } });
+    engine.save();
+    expect(engine.s.tasks.some(task => task.id === source.id)).toBe(false);
+    const targetId = engine.addTask({ productId: world.shop, kind: "bug", title: "Coordinator's request", description: "Keep these exact requirements", backlog: true });
+    const target = engine.task(targetId)!;
+    target.state = "running";
+    const request = { title: target.title, description: target.description, products: target.selectedProducts };
+    const original = structuredClone(engine.task(source.id)!.findings[0]!);
+    const count = engine.getState().tasks.length;
+    const args = { taskId: source.id, findingId: "old", targetTaskId: targetId, requestId: "manual-history" };
+    const c = new Coordination(engine);
+    const result = await c.call("task.track-finding", args);
+    expect(result).toEqual({ outcome: "completed", ...args });
+    const client = { call: (name: string, args: Record<string, unknown>) => c.call(name, args) } as EngineClient;
+    const output = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await coordinationCli(["task", "track-finding", "--task-id", source.id, "--finding-id", "old", "--target-task-id", targetId, "--request-id", args.requestId, "--json"], client)).toBe(0);
+      expect(JSON.parse(output.mock.calls.at(-1)![0] as string)).toEqual(result);
+    } finally { output.mockRestore(); }
+    expect(mcpTools().find(tool => tool.name === "petrina_task_track_finding")!.inputSchema.required).toContain("requestId");
+    const mcp = await mcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "petrina_task_track_finding", arguments: args } }, client);
+    expect((mcp!.result as { structuredContent: unknown }).structuredContent).toEqual(result);
+    expect((await c.call("task.track-finding", { taskId: source.id, findingId: "old", targetTaskId: targetId })).outcome).toBe("invalid");
+    expect(await c.call("task.track-finding", args)).toEqual(result);
+    expect((await c.call("task.track-finding", { ...args, targetTaskId: "different" })).outcome).toBe("conflict");
+    expect((await c.call("task.track-finding", { ...args, requestId: "already-linked" })).outcome).toBe("completed");
+    expect(engine.taskDetails(source.id)!.findings[0]).toEqual({ ...original, tracking: { taskId: targetId } });
+    expect((await c.call("task.read", { taskId: source.id, section: "findings", findingId: "old" })).text).toContain(targetId);
+    expect(target.followUp!.reports).toHaveLength(1);
+    expect(target.followUp!.preserveRequest).toBe(true);
+    expect({ title: target.title, description: target.description, products: target.selectedProducts }).toEqual(request);
+    expect(engine.getState().tasks).toHaveLength(count);
+    expect(world.prompts).toEqual([]);
+    expect(new Fakes(join(world.root, "agents")).prompts()).toEqual([]);
+    await reopen(world);
+    expect(await new Coordination(world.engine).call("task.track-finding", args)).toEqual(result);
+    expect(world.engine.task(source.id)!.findings[0]).toEqual({ ...original, tracking: { taskId: targetId } });
+    expect(world.engine.task(targetId)!.followUp!.reports).toHaveLength(1);
+    expect(world.prompts).toEqual([]);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("links manually to a finished bug without changing it, but refuses while original pictures remain", async () => {
+  const world = await open();
+  try {
+    const { engine } = world;
+    const source = settledSource(engine, world.shop);
+    plant(engine, source.id, source.findings[0]!.text);
+    const targetId = engine.addTask({ productId: world.shop, kind: "bug", title: "Finished bug", backlog: true });
+    engine.task(targetId)!.state = "done";
+    engine.save();
+    const original = structuredClone(engine.task(targetId)!);
+    const c = new Coordination(engine);
+    const args = { taskId: source.id, findingId: "old", targetTaskId: targetId, requestId: "finished-pictures" };
+    const refused = await c.call("task.track-finding", args);
+    expect(refused.outcome).toBe("invalid");
+    expect(refused.message).toContain("pictures");
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ reason: "no-choice" });
+    await engine["cleanup"].removeCaptures(source.id);
+    expect((await c.call("task.track-finding", { ...args, requestId: "finished-link" })).outcome).toBe("completed");
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: targetId });
+    expect(engine.task(targetId)).toEqual(original);
+    expect(world.prompts).toEqual([]);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("copies manual-link pictures before tracking, keeps concurrent messages, and allows source cleanup", async () => {
+  const world = await open();
+  try {
+    const { engine } = world;
+    const source = settledSource(engine, world.shop, { tracking: { reason: "unavailable", retry: true } });
+    plant(engine, source.id, source.findings[0]!.text);
+    const targetId = engine.addTask({ productId: world.shop, kind: "bug", title: "Working on it", backlog: true });
+    const target = engine.task(targetId)!;
+    target.state = "running";
+    engine.s.followUpPending = [{ keys: [followUpKey(source.id, "old")], retry: true }];
+    const originalCopy = fileIO.copyFile;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let copying!: () => void;
+    const started = new Promise<void>(resolve => { copying = resolve; });
+    const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
+    const c = new Coordination(engine);
+    const args = { taskId: source.id, findingId: "old", targetTaskId: targetId, requestId: "pictured-link" };
+    try {
+      const linking = c.call("task.track-finding", args);
+      await started;
+      expect(source.findings[0]!.tracking).toEqual({ reason: "unavailable", retry: true });
+      target.session.push({ id: "during-copy", from: "agent", text: "Still working", at: 1 });
+      await engine["cleanup"].removeCaptures(source.id);
+      expect(existsSync(join(engine.dataDir, "captures", source.id, "pic.png"))).toBe(true);
+      release();
+      expect((await linking).outcome).toBe("completed");
+    } finally { release(); copy.mockRestore(); }
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: targetId });
+    expect(target.session.some(line => line.id === "during-copy")).toBe(true);
+    expect(target.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+    expect(readdirSync(join(engine.dataDir, "captures", targetId))).toHaveLength(1);
+    expect(engine.s.followUpPending).toEqual([]);
+    expect((await c.call("task.track-finding", { ...args, requestId: "pictures-again" })).outcome).toBe("completed");
+    await engine["followUps"].catchUp();
+    await engine["cleanup"].removeCaptures(source.id);
+    expect(existsSync(join(engine.dataDir, "captures", source.id))).toBe(false);
+    expect(target.followUp!.reports).toHaveLength(1);
+    expect(target.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+    await reopen(world);
+    expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: targetId });
+    expect(world.prompts).toEqual([]);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("refuses incomplete, unsettled and ineligible manual links with plain reasons and no changes", async () => {
+  const world = await open(undefined, true);
+  try {
+    const { engine } = world;
+    const c = new Coordination(engine);
+    const variants: { name: string; finding?: Partial<Finding>; sourceState?: "running" | "cancelled"; target?: "missing" | "cancelled" | "combined" | "feature" | "self" | "product"; pending?: boolean }[] = [
+      { name: "fixed", finding: { status: "fixed" } },
+      { name: "dismissed", finding: { status: "dismissed" } },
+      ...(["not-a-bug", "nit", "real"] as const).map(verdict => ({ name: `judged-${verdict}`, finding: { verification: { by: "sol-high", verdict, reason: "Not confirmed older", at: 1 } } })),
+      { name: "nit", finding: { severity: "suggestion" } },
+      { name: "Important", finding: { severity: "blocking" } },
+      { name: "check", finding: { raisedBy: "petrina", text: "Check failed: tests" } },
+      { name: "acceptance", finding: { text: "Failed acceptance check: page" } },
+      { name: "steps", finding: { steps: " " } },
+      { name: "evidence", finding: { evidence: " " } },
+      { name: "elsewhere", finding: { tracking: { taskId: "another-task" } } },
+      { name: "no-outcome", finding: { tracking: undefined } },
+      { name: "unfinished", sourceState: "running" },
+      { name: "cancelled-source", sourceState: "cancelled" },
+      { name: "pending", pending: true },
+      ...(["missing", "cancelled", "combined", "feature", "self", "product"] as const).map(target => ({ name: target, target })),
+      { name: "all-products", finding: { productIds: [world.shop, world.notes] } },
+    ];
+    for (const variant of variants) {
+      const source = settledSource(engine, world.shop, variant.finding);
+      if (variant.sourceState) source.state = variant.sourceState;
+      const targetId = engine.addTask({ productId: variant.target === "product" ? world.notes : world.shop, kind: variant.target === "feature" ? "feature" : "bug", title: variant.name, backlog: true });
+      const target = engine.task(targetId)!;
+      if (variant.target === "cancelled" || variant.target === "combined") target.state = "cancelled";
+      if (variant.target === "combined") target.combinedInto = "replacement";
+      engine.s.followUpPending = variant.pending ? [{ keys: [followUpKey(source.id, "old")], cardId: targetId }] : [];
+      engine.save();
+      const before = structuredClone([engine.task(source.id), engine.task(targetId), engine.s.followUpPending]);
+      const result = await c.call("task.track-finding", { taskId: source.id, findingId: "old", targetTaskId: variant.target === "missing" ? "missing" : variant.target === "self" ? source.id : targetId, requestId: `refuse-${variant.name}` });
+      expect(result.outcome, variant.name).toBe("invalid");
+      expect(typeof result.message, variant.name).toBe("string");
+      expect([engine.task(source.id), engine.task(targetId), engine.s.followUpPending], variant.name).toEqual(before);
+    }
+    expect(world.prompts).toEqual([]);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("waits for automatic linking before a manual link, so a report cannot be credited twice", async () => {
+  let release!: () => void;
+  let matching!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { matching = resolve; });
+  const world = await open(async prompt => { matching(); await held; return groupByBug(prompt); });
+  try {
+    const { engine } = world;
+    const automaticId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-race: Existing bug", backlog: true });
+    const manualId = engine.addTask({ productId: world.shop, kind: "bug", title: "Different manual request", backlog: true });
+    const source = taskOf(engine, world.shop, "Skipped choice", [older("old", "bug-race: A new sighting", { cardsShown: [automaticId] })]);
+    plant(engine, source.id, source.findings[0]!.text);
+    const finishing = finish(engine, source);
+    await started;
+    let replied = false;
+    const linking = new Coordination(engine).call("task.track-finding", { taskId: source.id, findingId: "old", targetTaskId: manualId, requestId: "racing-link" }).then(result => { replied = true; return result; });
+    await Promise.resolve();
+    expect(replied).toBe(false);
+    release();
+    await finishing;
+    const result = await linking;
+    expect(result.outcome).toBe("invalid");
+    expect(result.message).toContain("another task");
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
+    expect(engine.task(automaticId)!.followUp!.reports).toHaveLength(1);
+    expect(engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+    expect(engine.task(manualId)!.followUp).toBeUndefined();
+    await engine["followUps"].catchUp();
+    expect(engine.task(manualId)!.followUp).toBeUndefined();
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+async function failedAssignment(world: World, reason: "unavailable" | "no-choice") {
+  const { engine } = world;
+  const automaticId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-reserved: Existing bug", backlog: true });
+  const manualId = engine.addTask({ productId: world.shop, kind: "bug", title: "Different manual request", backlog: true });
+  engine.task(manualId)!.state = "running";
+  const tracking = reason === "unavailable" ? { reason, retry: true } : { reason };
+  const source = taskOf(engine, world.shop, "Saved report", [older("old", "bug-reserved: Another sighting", { cardsShown: [automaticId], tracking })]);
+  const release = engine.holdFollowUp(source.id);
+  source.state = "done";
+  source.column = "done";
+  source.finishedAt = Date.now();
+  const key = followUpKey(source.id, "old");
+  engine.s.followUpPending = reason === "unavailable" ? [{ keys: [key], retry: true }] : [];
+  plant(engine, source.id, source.findings[0]!.text);
+  engine.save();
+  const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy refused"));
+  try { await engine["followUps"].catchUp(); }
+  catch (error) { release(); throw error; }
+  finally { copy.mockRestore(); }
+  expect(engine.task(automaticId)!.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
+  expect(engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toEqual([]);
+  return { source, automaticId, manualId, key, release };
+}
+
+async function combinedAssignments(world: World, partial = false) {
+  const { engine } = world;
+  const sources = [
+    taskOf(engine, world.shop, "First source", [older("first", "bug-first: An older footer bug")]),
+    taskOf(engine, world.shop, "Second source", [older("second", "bug-second: An older header bug")]),
+  ];
+  const releases = sources.map(source => engine.holdFollowUp(source.id));
+  for (const source of sources) plant(engine, source.id, source.findings[0]!.text);
+  if (partial) {
+    sources[0]!.journey![0]!.agentResults![0]!.images!.push({ id: "second", caption: "Another view" });
+    writeFileSync(join(world.data, "captures", sources[0]!.id, "second.png"), "png");
+  }
+  const original = fileIO.copyFile;
+  const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => {
+    if (String(args[0]).endsWith("pic.png")) throw new Error("Copy refused");
+    return original(...args);
+  });
+  try {
+    for (const source of sources) await finish(engine, source);
+  } catch (error) { releases.forEach(release => release()); throw error; }
+  finally { copy.mockRestore(); }
+  const originals = [cardFor(engine, "first")[0]!.id, cardFor(engine, "second")[0]!.id];
+  const combinedId = await dispatch(engine, { name: "combineBacklog", args: [originals, "Keep both bug reports", "combined-reports"] }) as string;
+  expect(engine.task(combinedId)!.followUp!.reports).toHaveLength(2);
+  for (const id of originals) expect(engine.task(id)!.combinedInto).toBe(combinedId);
+  return { sources, originals, combinedId, release: () => releases.forEach(release => release()) };
+}
+
+it("recovers unfinished reports and pictures on the combined task after the app combines their cards", async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const saved = await combinedAssignments(world);
+    release = saved.release;
+    const { sources, originals, combinedId } = saved;
+    expect(originals.every(id => !world.engine.s.tasks.some(task => task.id === id))).toBe(true);
+    for (const source of sources) expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
+    await world.engine["followUps"].catchUp();
+    await world.engine["followUps"].catchUp();
+    for (const source of sources) expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: combinedId });
+    const images = world.engine.task(combinedId)!.session.flatMap(line => line.images ?? []);
+    expect(images.map(image => image.from?.taskId).sort()).toEqual(sources.map(source => source.id).sort());
+    expect(world.engine.s.followUpPending).toEqual([]);
+    release();
+    for (const source of sources) {
+      await world.engine["cleanup"].removeCaptures(source.id);
+      expect(existsSync(join(world.data, "captures", source.id))).toBe(false);
+    }
+    expect(readdirSync(join(world.data, "captures", combinedId))).toHaveLength(2);
+    await reopen(world);
+    expect(cards(world.engine).map(task => task.id)).toEqual([combinedId]);
+    expect(world.engine.task(combinedId)!.session.flatMap(line => line.images ?? [])).toHaveLength(2);
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+it("retains combined reports' originals while copying fails and permits manual recovery on a later combined task", async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const saved = await combinedAssignments(world, true);
+    release = saved.release;
+    const { sources, combinedId } = saved;
+    world.engine.moveToBacklog(combinedId);
+    const extra = world.engine.addTask({ productId: world.shop, kind: "bug", title: "Another request", worksOn: world.engine.task(combinedId)!.selectedProducts, backlog: true });
+    const latestId = await world.engine.combineBacklog([combinedId, extra], "Combined again", "combine-again");
+    const otherId = world.engine.addTask({ productId: world.shop, kind: "bug", title: "Different bug request", backlog: true });
+    world.engine.task(otherId)!.state = "running";
+    release();
+    world.engine.save();
+    const original = fileIO.copyFile;
+    const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => {
+      if (String(args[0]).endsWith("pic.png")) throw new Error("Copy still refused");
+      return original(...args);
+    });
+    try {
+      for (const source of sources) {
+        await world.engine["cleanup"].removeCaptures(source.id);
+        expect(existsSync(join(world.data, "captures", source.id, "pic.png"))).toBe(true);
+      }
+      await reopen(world);
+      expect(world.engine.s.followUpPending?.every(group => group.cardId === latestId)).toBe(true);
+      expect(world.engine.task(latestId)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+    } finally { copy.mockRestore(); }
+    const c = new Coordination(world.engine);
+    const checks = world.prompts.length;
+    for (const source of sources) {
+      const args = { taskId: source.id, findingId: source.findings[0]!.id, targetTaskId: latestId, requestId: `combined-${source.id}` };
+      expect((await c.call("task.track-finding", { ...args, targetTaskId: otherId, requestId: `unrelated-${source.id}` })).outcome).toBe("invalid");
+      const result = await c.call("task.track-finding", args);
+      expect(result.outcome).toBe("completed");
+      expect(await c.call("task.track-finding", args)).toEqual(result);
+    }
+    expect(world.prompts).toHaveLength(checks);
+    expect(world.engine.s.followUpPending).toEqual([]);
+    for (const source of sources) {
+      await world.engine["cleanup"].removeCaptures(source.id);
+      expect(existsSync(join(world.data, "captures", source.id))).toBe(false);
+    }
+    await reopen(world);
+    expect(world.engine.task(latestId)!.followUp!.reports).toHaveLength(2);
+    expect(world.engine.task(latestId)!.session.flatMap(line => line.images ?? [])).toHaveLength(3);
+    expect(readdirSync(join(world.data, "captures", latestId))).toHaveLength(3);
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+for (const reason of ["unavailable", "no-choice"] as const) it(`keeps an archived assignment after a failed ${reason} copy`, async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const { engine } = world;
+    const saved = await failedAssignment(world, reason);
+    release = saved.release;
+    const { source, automaticId, manualId } = saved;
+    engine.task(automaticId)!.state = "cancelled";
+    engine.save();
+    expect(engine.s.tasks.some(task => task.id === automaticId)).toBe(false);
+    const args = { taskId: source.id, findingId: "old", targetTaskId: manualId, requestId: `archived-${reason}` };
+    const c = new Coordination(engine);
+    const result = await c.call("task.track-finding", args);
+    expect(result.outcome).toBe("invalid");
+    expect(result.message).toContain("another task");
+    const same = await c.call("task.track-finding", { ...args, targetTaskId: automaticId, requestId: `cancelled-${reason}` });
+    expect(same.outcome).toBe("invalid");
+    expect(same.message).toContain("cancelled");
+    await engine["followUps"].catchUp();
+    expect(engine.task(manualId)!.followUp).toBeUndefined();
+    expect(cards(engine)).toHaveLength(0);
+    release();
+    engine.save();
+    await reopen(world);
+    await world.engine["followUps"].catchUp();
+    expect(world.engine.task(automaticId)!.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
+    expect(cards(world.engine)).toHaveLength(0);
+    expect(await new Coordination(world.engine).call("task.track-finding", args)).toEqual(result);
+    const retry = await new Coordination(world.engine).call("task.track-finding", { ...args, requestId: `archived-retry-${reason}` });
+    expect(retry.outcome).toBe("invalid");
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+it("finishes a stranded History report on its existing card after restart, even without original pictures", async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const saved = await failedAssignment(world, "no-choice");
+    release = saved.release;
+    const { source, automaticId, manualId } = saved;
+    // A saved record from before unfinished assignments were kept for recovery.
+    source.findings[0]!.tracking = { reason: "no-choice" };
+    world.engine.s.followUpPending = [];
+    release();
+    world.engine.save();
+    await world.engine["cleanup"].removeCaptures(source.id);
+    expect(existsSync(join(world.data, "captures", source.id))).toBe(false);
+    await reopen(world);
+    await world.engine["followUps"].catchUp();
+    expect(world.engine.s.tasks.some(task => task.id === source.id)).toBe(false);
+    expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ reason: "no-choice" });
+    const checks = world.prompts.length;
+    const c = new Coordination(world.engine);
+    const different = await c.call("task.track-finding", { taskId: source.id, findingId: "old", targetTaskId: manualId, requestId: "stranded-different" });
+    expect(different.outcome).toBe("invalid");
+    const args = { taskId: source.id, findingId: "old", targetTaskId: automaticId, requestId: "stranded-same" };
+    expect((await c.call("task.track-finding", args)).outcome).toBe("completed");
+    expect((await c.call("task.track-finding", args)).outcome).toBe("completed");
+    expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
+    expect(world.engine.task(automaticId)!.followUp!.reports).toHaveLength(1);
+    expect(world.engine.task(manualId)!.followUp).toBeUndefined();
+    expect(world.prompts).toHaveLength(checks);
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+for (const reason of ["unavailable", "no-choice"] as const) it(`keeps the ${reason} picture retry through source retirement and restart`, async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const saved = await failedAssignment(world, reason);
+    release = saved.release;
+    const { source, automaticId, manualId, key } = saved;
+    release();
+    world.engine.save();
+    expect(world.engine.s.tasks.some(task => task.id === source.id)).toBe(false);
+    const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy still refused"));
+    try {
+      await world.engine["cleanup"].removeCaptures(source.id);
+      expect(existsSync(join(world.data, "captures", source.id, "pic.png"))).toBe(true);
+      await reopen(world);
+      await world.engine["followUps"].catchUp();
+      expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
+      expect(world.engine.s.followUpPending).toEqual([{ keys: [key], cardId: automaticId }]);
+    } finally { copy.mockRestore(); }
+    const checks = world.prompts.length;
+    const c = new Coordination(world.engine);
+    const args = { taskId: source.id, findingId: "old", targetTaskId: automaticId, requestId: `retired-${reason}` };
+    const different = await c.call("task.track-finding", { ...args, targetTaskId: manualId, requestId: `retired-different-${reason}` });
+    expect(different.outcome).toBe("invalid");
+    const result = await c.call("task.track-finding", args);
+    expect(result.outcome).toBe("completed");
+    expect(await c.call("task.track-finding", args)).toEqual(result);
+    expect(world.prompts).toHaveLength(checks);
+    expect(world.engine.s.followUpPending).toEqual([]);
+    expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
+    expect(world.engine.task(manualId)!.followUp).toBeUndefined();
+    await world.engine["cleanup"].removeCaptures(source.id);
+    expect(existsSync(join(world.data, "captures", source.id))).toBe(false);
+    await reopen(world);
+    expect(world.engine.task(automaticId)!.followUp!.reports).toHaveLength(1);
+    expect(world.engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+    expect(readdirSync(join(world.data, "captures", automaticId))).toHaveLength(1);
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+it("finishes an archived assignment only after its original pictures are gone, leaving the finished target unchanged", async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const saved = await failedAssignment(world, "no-choice");
+    release = saved.release;
+    const { source, automaticId, manualId } = saved;
+    world.engine.task(automaticId)!.state = "done";
+    release();
+    world.engine.save();
+    const before = structuredClone(world.engine.task(automaticId));
+    const c = new Coordination(world.engine);
+    const args = { taskId: source.id, findingId: "old", targetTaskId: automaticId, requestId: "closed-assignment" };
+    const pictured = await c.call("task.track-finding", args);
+    expect(pictured.outcome).toBe("invalid");
+    expect(pictured.message).toContain("pictures");
+    expect((await c.call("task.track-finding", { ...args, targetTaskId: manualId, requestId: "closed-different" })).outcome).toBe("invalid");
+    await world.engine["cleanup"].removeCaptures(source.id);
+    expect(existsSync(join(world.data, "captures", source.id))).toBe(false);
+    expect((await c.call("task.track-finding", { ...args, requestId: "closed-no-pictures" })).outcome).toBe("completed");
+    expect(world.engine.task(automaticId)).toEqual(before);
+    expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
+    await reopen(world);
+    expect(world.engine.task(automaticId)).toEqual(before);
+    expect(world.engine.task(manualId)!.followUp).toBeUndefined();
+    expect(cards(world.engine)).toHaveLength(0);
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+it("withdraws a picture retry when its report is fixed instead of retaining an unfinished credit", async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const saved = await failedAssignment(world, "no-choice");
+    release = saved.release;
+    saved.source.findings[0]!.status = "fixed";
+    await world.engine["followUps"].catchUp();
+    expect(world.engine.s.followUpPending).toEqual([]);
+    expect(world.engine.task(saved.automaticId)!.followUp!.reports).toEqual([]);
+    expect(world.engine.task(saved.source.id)!.findings[0]!.tracking).toBeUndefined();
+    release();
+    await world.engine["cleanup"].removeCaptures(saved.source.id);
+    expect(existsSync(join(world.data, "captures", saved.source.id))).toBe(false);
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+for (const reason of ["unavailable", "no-choice"] as const) it(`finishes the existing ${reason} assignment by hand without crediting another target`, async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const { engine } = world;
+    const saved = await failedAssignment(world, reason);
+    release = saved.release;
+    const { source, automaticId, manualId, key } = saved;
+    const c = new Coordination(engine);
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
+    expect(engine.task(automaticId)!.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
+    expect(engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toEqual([]);
+    expect(engine.s.followUpPending).toEqual([{ keys: [key], cardId: automaticId }]);
+    const before = structuredClone([source.findings, engine.task(automaticId), engine.task(manualId), engine.s.followUpPending]);
+    const checks = world.prompts.length;
+    const args = { taskId: source.id, findingId: "old", targetTaskId: manualId, requestId: `pending-${reason}` };
+    const result = await c.call("task.track-finding", args);
+    expect(result.outcome).toBe("invalid");
+    expect(result.message).toContain("another task");
+    expect(await c.call("task.track-finding", args)).toEqual(result);
+    expect([source.findings, engine.task(automaticId), engine.task(manualId), engine.s.followUpPending]).toEqual(before);
+    expect(world.prompts).toHaveLength(checks);
+    expect((await c.call("task.track-finding", { taskId: source.id, findingId: "old", targetTaskId: automaticId, requestId: `complete-${reason}` })).outcome).toBe("completed");
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
+    expect(engine.task(manualId)!.followUp).toBeUndefined();
+    const images = engine.task(automaticId)!.session.flatMap(line => line.images ?? []);
+    expect(images).toHaveLength(1);
+    expect(readdirSync(join(engine.dataDir, "captures", automaticId))).toHaveLength(1);
+    expect((await c.call("task.track-finding", { taskId: source.id, findingId: "old", targetTaskId: automaticId, requestId: `finished-${reason}` })).outcome).toBe("completed");
+    await engine["followUps"].beforeRemoval(source);
+    release();
+    await engine["cleanup"].removeCaptures(source.id);
+    expect(existsSync(join(engine.dataDir, "captures", source.id))).toBe(false);
+    expect(existsSync(join(engine.dataDir, "captures", automaticId, `${images[0]!.id}.png`))).toBe(true);
+    await reopen(world);
+    await world.engine["followUps"].catchUp();
+    expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
+    expect(cards(world.engine).filter(task => task.followUp!.reports.some(report => report.taskId === source.id && report.findingId === "old")).map(task => task.id)).toEqual([automaticId]);
+    expect(world.engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+  } finally { release(); await world.engine.shutdown(); }
+});
+
+it("leaves a manual report untracked after copying or saving fails and safely retries with a fresh reference", async () => {
+  const world = await open();
+  try {
+    const { engine } = world;
+    const source = settledSource(engine, world.shop);
+    plant(engine, source.id, source.findings[0]!.text);
+    const targetId = engine.addTask({ productId: world.shop, kind: "bug", title: "Manual target", backlog: true });
+    const c = new Coordination(engine);
+    const args = { taskId: source.id, findingId: "old", targetTaskId: targetId, requestId: "copy-failed" };
+    const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy refused"));
+    try {
+      const result = await c.call("task.track-finding", args);
+      expect(result.outcome).toBe("invalid");
+      expect(result.message).toContain("pictures could not be copied");
+    } finally { copy.mockRestore(); }
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ reason: "no-choice" });
+    expect(engine.task(targetId)!.followUp).toBeUndefined();
+    expect((await c.call("task.track-finding", args)).outcome).toBe("invalid");
+    const originalSave = engine.save.bind(engine);
+    let saves = 0;
+    const save = spyOn(engine, "save").mockImplementation((...args) => {
+      if (saves++ === 0) throw new Error("Save refused");
+      return originalSave(...args);
+    });
+    try {
+      const result = await c.call("task.track-finding", { ...args, requestId: "save-failed" });
+      expect(result.outcome).toBe("invalid");
+      expect(result.message).toContain("Save refused");
+    } finally { save.mockRestore(); }
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ reason: "no-choice" });
+    expect(engine.task(targetId)!.followUp).toBeUndefined();
+    expect(engine.task(targetId)!.session.flatMap(line => line.images ?? [])).toEqual([]);
+    expect(readdirSync(join(engine.dataDir, "captures", targetId))).toEqual([]);
+    expect((await c.call("task.track-finding", { ...args, requestId: "copy-retried" })).outcome).toBe("completed");
+    expect(engine.task(targetId)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+    expect(readdirSync(join(engine.dataDir, "captures", targetId))).toHaveLength(1);
+    engine.task(targetId)!.state = "done";
+    await engine["cleanup"].removeCaptures(targetId);
+    expect(existsSync(join(engine.dataDir, "captures", targetId))).toBe(false);
+    await engine["followUps"].beforeRemoval(engine.task(source.id)!);
+    await engine["cleanup"].removeCaptures(source.id);
+    expect(existsSync(join(engine.dataDir, "captures", source.id))).toBe(false);
+  } finally { await world.engine.shutdown(); }
 });
 
 it("leaves a report untracked when the match cannot be settled, then links one card when it can", async () => {
@@ -455,7 +1069,7 @@ it("retries a partial picture copy without attaching successful images again", a
     await finish(engine, source);
     const card = cardFor(engine, "partial")[0]!;
     expect(card.session.flatMap(line => line.images ?? [])).toHaveLength(1);
-    expect(source.findings[0]!.tracking).toBeUndefined();
+    expect(source.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
     fail = false;
     await engine["followUps"].catchUp();
     const images = card.session.flatMap(line => line.images ?? []);
@@ -771,7 +1385,7 @@ it("keeps a refused picture on the original task until a later pass copies it", 
     chmodSync(join(engine.dataDir, "captures", source.id, "pic.png"), 0);
     await finish(engine, source);
     const card = cardFor(engine, "copy")[0]!;
-    expect(source.findings[0]!.tracking).toBeUndefined();
+    expect(source.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
     expect(card.session.some((line) => line.images?.length)).toBe(false);
     expect(existsSync(join(engine.dataDir, "captures", source.id, "pic.png"))).toBe(true);
     await engine["cleanup"].removeCaptures(source.id);
@@ -907,13 +1521,13 @@ it("keeps a picture that could not be copied until a later try, including after 
     chmodSync(join(engine.dataDir, "captures", blocked.id, "pic.png"), 0);
     await finish(engine, blocked);
     await finish(engine, clear);
-    expect(blocked.findings[0]!.tracking).toBeUndefined();
+    expect(blocked.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
     expect(clear.findings[0]!.tracking && "taskId" in clear.findings[0]!.tracking).toBe(true);
     await reopen(world);
     await world.engine["cleanup"].removeCaptures(blocked.id);
     await world.engine["cleanup"].removeCaptures(clear.id);
     expect(existsSync(join(world.engine.dataDir, "captures", blocked.id, "pic.png"))).toBe(true);
-    expect(world.engine.task(blocked.id)!.findings[0]!.tracking).toBeUndefined();
+    expect(world.engine.task(blocked.id)!.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
     expect(cardFor(world.engine, "held")[0]!.session.some((line) => line.images?.length)).toBe(false);
     const clearCard = cardFor(world.engine, "clear")[0]!;
     const clearImage = clearCard.session.flatMap((line) => line.images ?? [])[0]!;

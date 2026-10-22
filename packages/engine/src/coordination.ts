@@ -268,7 +268,18 @@ export class Coordination {
         requestId: a.requestId,
         message: error instanceof Error ? error.message : "The operation could not be applied.",
       });
-      if (["task.source", "inbox.retry"].includes(name)) {
+      if (name === "task.track-finding") {
+        try {
+          result = await this.engine.trackFinding(a.taskId, a.findingId, a.targetTaskId, link => {
+            const result: Result = { outcome: "completed", ...link, requestId: a.requestId };
+            save(result);
+            return result;
+          });
+        } catch (error) {
+          result = errorResult(error);
+          db.transaction(() => save(result))();
+        }
+      } else if (["task.source", "inbox.retry"].includes(name)) {
         // Save submission before asynchronous validation, so a crash never blindly repeats it.
         save({
           outcome: "pending",

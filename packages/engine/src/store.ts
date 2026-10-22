@@ -26,6 +26,9 @@ export class Store {
   constructor(path: string, options: { debugSql?: boolean } = {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new Database(path, { create: true });
+    // Offline status reads can recover the WAL before a replacement opens it. Give that
+    // short recovery the same bounded allowance as lifecycle receipts, before touching it.
+    this.db.run("PRAGMA busy_timeout = 3000");
     if (options.debugSql) {
       try { logSqlExecutions(this.db, new SqlExecutionLog(dirname(path))); }
       catch (error) { this.db.close(); throw error; }
