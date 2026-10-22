@@ -633,6 +633,8 @@ export class Turns {
       const accepted = first && options.seat ? this.k.profile(options.seat) : undefined;
       first = false;
       let profile: AgentProfile;
+      // The reserved seat's words belong to its first attempt. Every later choice replaces both, even with none,
+      // so a stand-in never repeats why the first start was fresh.
       let selectionReason = options.selectionReason;
       let freshReason = options.freshReason;
       if (accepted) profile = accepted;
@@ -688,7 +690,7 @@ export class Turns {
       this.k.commitNow(scope);
       const since = Date.now();
       try {
-        return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, selectionReason, ...(freshReason ? { freshReason } : {}), member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error instanceof ModelAtCapacity ? { refusal: "the selected model is at capacity" } : stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
+        return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, selectionReason, freshReason, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error instanceof ModelAtCapacity ? { refusal: "the selected model is at capacity" } : stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
       } catch (error) {
         if (signal.aborted) throw error;
         if (this.discardUnavailableParticipant(scope, roleId, error, options.reviewerKey)) continue;

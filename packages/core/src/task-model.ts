@@ -221,6 +221,8 @@ export interface TaskReviewState {
     bases?: Readonly<Record<Id, string>>;
     freshReason?: string;
   }>>>>;
+  /** Per stage and seat, why its saved conversation was dropped (a conflict port), kept through pauses and restarts until that seat next starts. */
+  reviewFreshReasons?: Readonly<Record<Id, Readonly<Record<Id, string>>>>;
   /** A review round's parallel work so far, so a restart only redoes what had not finished. */
   hunt?: Hunt;
   /** Per review stage, how many Important findings were open at the end of each round: whether it still converges. */

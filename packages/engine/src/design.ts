@@ -26,7 +26,7 @@ export class Design {
       resume: async (actual: import("@petrina/core").AgentProfile) => {
         if (!planned) return;
         const saved = participantConversation(this.k, scope, this.k.role(roleId)!, planned);
-        if (!saved || saved.reason || saved.actual?.id !== actual.id) return;
+        if (!saved?.prior || saved.reason || saved.actual?.id !== actual.id) return;
         const prior = saved.prior;
         if (!(await reviewContextIntact(prior.context))) throw new ParticipantUnavailable("its saved context is unavailable");
         return { ...prior, reselect: true, ...(side === "author" && task.brief && "briefDigest" in prior && prior.briefDigest === digest(task.brief) ? { knownSections: ["Design brief"] } : {}) };

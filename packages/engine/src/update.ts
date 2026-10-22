@@ -136,6 +136,12 @@ export class Updates {
     const head = reviewed ? await git.head(worktree) : undefined;
     repository.updating = { from: fork, onto: latest.sha, ...(head ? { head } : {}), files: merged.conflicts, ...(merged.notes.length ? { notes: merged.notes } : {}) };
     if (task.reviewSessions) {
+      // Each dropped seat's next start says why it is fresh, even after a pause or restart in between.
+      // Seats with no saved conversation (first reviews, or already dropped by an earlier conflict) keep what they had.
+      const why = `${sourceName} conflicted with the change${task.repositories ? ` in ${this.k.repositoryOf(scope)?.name ?? repository.productId}` : ""}, so the Builder had to port it`;
+      const dropped = structuredClone(task.reviewFreshReasons ?? {});
+      for (const [stageId, seats] of Object.entries(task.reviewSessions)) for (const seat of Object.keys(seats)) dropped[stageId] = { ...dropped[stageId], [seat]: why };
+      task.reviewFreshReasons = dropped;
       delete task.reviewSessions;
       this.k.log(scope, "status", "Reviewer conversations will start fresh because the Builder must port the change after conflicts");
     }

@@ -32,6 +32,9 @@ export function participantConversation(k: Pick<Kernel, "s">, scope: RepositoryC
     requestedId = stage.profileIds[Number(seat)] ?? planned.id;
     if (prior && prior.round > (task.rounds[stage.id] ?? 1)) return;
     coordinator = stage.assignments?.[Number(seat)]?.by === "coordinator";
+    // Its saved conversation was dropped: the start says why, without one to return to.
+    const dropped = task.reviewFreshReasons?.[stage.id]?.[seat];
+    if (!prior && dropped) return { reason: dropped, coordinator };
   }
   if (!prior) return;
   const actual = k.s.profiles.find((profile) => profile.id === prior.profileId);

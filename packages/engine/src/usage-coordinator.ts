@@ -269,7 +269,7 @@ export class UsageCoordinator {
         if (next.kind !== "none") return next;
       }
     }
-    if (choice.kind !== "none" && participant && (participant.reason || choice.profile.id !== participant.prior.profileId)) {
+    if (choice.kind !== "none" && participant && (participant.reason || choice.profile.id !== participant.prior?.profileId)) {
       const why = freshReason ?? "the usual selection requires a different profile";
       return { ...choice, reason: `Started a fresh conversation: ${why}. ${choice.reason ?? ""}`, freshReason: why };
     }

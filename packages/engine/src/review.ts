@@ -285,8 +285,15 @@ export class Reviews {
         // An interrupted parallel attempt starts fresh unless it saved a screen conversation.
         // Never return to an older round's reference after that native session has begun new work.
         const saved = task.reviewSessions?.[stage.id];
-        if (!saved?.[seat]) return;
-        delete saved[seat];
+        const dropped = task.reviewFreshReasons?.[stage.id];
+        if (!saved?.[seat] && !dropped?.[seat]) return;
+        delete saved?.[seat];
+        // This start has said why it is fresh. A later start of the seat gives its own reason, not this one.
+        if (dropped?.[seat]) {
+          delete dropped[seat];
+          if (!Object.keys(dropped).length) delete task.reviewFreshReasons![stage.id];
+          if (!Object.keys(task.reviewFreshReasons!).length) delete task.reviewFreshReasons;
+        }
         this.k.commitNow();
       },
       completed: (note: ConversationNote, actual: AgentProfile, role: Role) => {

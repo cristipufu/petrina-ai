@@ -357,6 +357,8 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       const task = await f.done();
       const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer");
       expect(rounds).toHaveLength(2);
+      // A conflict-free update keeps the conversations, so no seat has a dropped-conversation reason waiting.
+      expect(task.reviewFreshReasons).toBeUndefined();
       expect(rounds[0]!.agentInputs!.every((input) => input.mode === "fresh" && input.taskDescription?.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
       expect(rounds[0]!.agentInputs!.every((input) => !input.sections.some((section) => section.title.startsWith("Findings so far")))).toBe(true);
       const works = scopesFor(task).map(({ work }) => work);
@@ -547,16 +549,51 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
     } finally { await f.engine().shutdown(); }
   });
 
-  it("drops reviewer conversations when main conflicts and the Builder must port the change", async () => {
-    const f = await run("resume", { advance: true });
+  for (const { between, shared, single } of [{}, { between: "pause" }, { between: "restart" }, { shared: true }, { single: true }] as { between?: "pause" | "restart"; shared?: boolean; single?: boolean }[]) it(`drops ${single ? "a single reviewer's conversation" : "reviewer conversations"} when main conflicts${shared ? " in one shared product" : ""} and records why on each seat's next start${between ? `, across a ${between} before admission` : ""}`, async () => {
+    const f = await run(single ? "load" : "resume", { advance: true, shared, single });
     try {
-      await f.beforeFix(); f.advanceMain(undefined, true);
-      const sessions = Object.values(f.task().reviewSessions!).flatMap((seats) => Object.values(seats).map((seat) => seat.sessionId));
+      await f.beforeFix();
+      const moved = f.advanceMain(undefined, true);
+      const saved = f.task().reviewSessions!;
+      const sessions = Object.values(saved).flatMap((seats) => Object.values(seats).map((seat) => seat.sessionId));
+      const why = `main conflicted with the change${shared ? ` in ${f.engine().s.products.find((product) => product.id === moved.productId)!.name}` : ""}, so the Builder had to port it`;
+      const dropped = Object.fromEntries(Object.entries(saved).map(([stageId, seats]) => [stageId, Object.fromEntries(Object.keys(seats).map((seat) => [seat, why]))]));
+      if (between) {
+        // Held in the Builder's port: the conversations are already dropped and no reviewer has been admitted.
+        const port = join(f.root, "hold-port");
+        writeFileSync(port, "");
+        writeFileSync(join(f.root, "script.json"), JSON.stringify({ hold: { title: "Bring the work up to date first", file: port } }));
+        rmSync(f.hold);
+        await waitFor(() => { f.tick(); return existsSync(`${port}.reached`); }, "the held conflict port");
+        expect(f.task().reviewSessions).toBeUndefined();
+        expect(f.task().reviewFreshReasons).toEqual(dropped);
+        if (between === "pause") f.engine().pause(f.task().id);
+        else await f.restart();
+        expect(f.task().reviewFreshReasons).toEqual(dropped);
+        rmSync(port);
+        if (between === "pause") f.engine().resume(f.task().id);
+      }
       const task = await f.done();
       expect(task.timeline.some((entry) => entry.text.includes("Reviewer conversations will start fresh") && entry.text.includes("port"))).toBe(true);
-      const inputs = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!.agentInputs!;
-      expect(inputs.every((input) => input.mode === "fresh" && input.taskDescription?.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
+      const [first, second] = task.journey!.filter((step) => step.roleId === "code-reviewer");
+      // A first review had no earlier conversation, so nothing describes it as a failed return.
+      expect(first!.agentInputs!.every((input) => input.mode === "fresh" && input.freshReason === undefined)).toBe(true);
+      expect(second!.agentInputs!.map((input) => input.reviewerKey).sort()).toEqual(Object.keys(Object.values(dropped)[0]!).sort());
+      for (const input of second!.agentInputs!) {
+        expect([input.mode, input.freshReason]).toEqual(["fresh", why]);
+        expect(input.selectionReason).toContain(`Started a fresh conversation: ${why}.`);
+        expect(input.taskDescription).toContain("ORIGINAL-REVIEW-REQUEST");
+      }
       for (const session of sessions) expect(f.fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new"]);
+      // The compact handoff carries the same explanation, and each start used up its own seat's reason.
+      const events = (await new Coordination(f.engine()).call("watch.events", { taskIds: [task.id], from: "oldest", kinds: ["seat.started"], timeoutMs: 0 })).events as { nodeId: string; freshReason?: string; summary: string }[];
+      expect(events.filter((event) => event.nodeId === first!.id).map((event) => event.freshReason)).toEqual(first!.agentInputs!.map(() => undefined));
+      expect(events.filter((event) => event.nodeId === second!.id)).toHaveLength(second!.agentInputs!.length);
+      for (const event of events.filter((event) => event.nodeId === second!.id)) {
+        expect(event.freshReason).toBe(why);
+        expect(event.summary).toContain(`fresh conversation (${why})`);
+      }
+      expect(task.reviewFreshReasons).toBeUndefined();
     } finally { await f.engine().shutdown(); }
   });
 

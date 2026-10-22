@@ -1,11 +1,12 @@
 import { expectRejection, rejectionOf } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { endAgentStep, ROLE_STARTS, slotWait, type AgentProfile, type CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { executionFor } from "../src/repository-context.js";
 import { participantConversation } from "../src/participant-conversation.js";
+import { Coordination } from "../src/coordination.js";
 import * as gitOps from "../src/git.js";
 import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 import { FixtureTrace } from "./fixture-trace.js";
@@ -171,6 +172,30 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
   }
   const closeTrace = () => { traces.delete(root); trace?.close(); };
   return { engine, task, scope, stage, fakes, choose, first, round, diagnostics, closeTrace };
+}
+
+/**
+ * The task's branch in its own copy, so main can move on and conflict with it, compared locally only.
+ * Each call brings in a conflicting main change, then leaves the work as the Builder's port does, back on the first review stage.
+ */
+function conflicting(f: Awaited<ReturnType<typeof fixture>>) {
+  const main = f.scope.work.worktree!, copy = join(dirname(main), "task-copy");
+  const commit = (cwd: string, greeting: string) => {
+    writeFileSync(join(cwd, "greeting.txt"), greeting);
+    git(cwd, "add", "."); git(cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", greeting);
+  };
+  git(main, "worktree", "add", "-q", "-b", "task", copy);
+  commit(copy, "The task's greeting\n");
+  Object.assign(f.scope.work, { worktree: copy, branch: "task", delivery: "local" });
+  f.engine.s.products.find((product) => product.id === "p")!.remoteRefused = "No remote in this fixture";
+  f.task.plan!.stages.push({ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["opus-high"] });
+  return async (greeting: string) => {
+    commit(main, greeting);
+    expect(await f.engine["updates"].upToDate(f.scope, new AbortController().signal)).toBe("conflict");
+    commit(copy, `Ported: ${greeting}`);
+    delete f.scope.work.updating;
+    f.task.stageIndex = 0;
+  };
 }
 
 describe.concurrent("eligible saved review stand-ins", () => {
@@ -450,6 +475,74 @@ describe.concurrent("eligible saved review stand-ins", () => {
       expect(input.profileId).toBe("opus-high");
       expect(input.selectionReason).toContain("could not reopen");
       expect(input.taskDescription).toContain("ORIGINAL-SEAT-REQUEST");
+    } finally { await f.engine.shutdown(); }
+  });
+
+  it("keeps each conflict-dropped conversation's reason with its own stage and seat until that seat starts", async () => {
+    const f = await fixture(true);
+    try {
+      const conflict = conflicting(f);
+      const later = { ...f.stage, id: "later", title: "Review once more" };
+      f.task.plan!.stages.push(later);
+      const choose = (seat: string) => f.engine.choose(later.profileIds[Number(seat)]!, f.scope, later.roleId, undefined, seat);
+      await f.round(1);
+      // Only the later stage's second seat had a conversation of its own there.
+      f.task.reviewSessions = { ...f.task.reviewSessions, later: { "1": structuredClone(f.task.reviewSessions![f.stage.id]!["1"]!) } };
+      const why = "main conflicted with the change, so the Builder had to port it";
+      await conflict("Main's first greeting\n");
+      expect(f.task.reviewSessions).toBeUndefined();
+      expect(f.task.reviewFreshReasons).toEqual({ [f.stage.id]: { "0": why, "1": why }, later: { "1": why } });
+      f.task.stageIndex = f.task.plan!.stages.indexOf(later);
+      expect(choose("0")).not.toHaveProperty("freshReason");
+      expect(choose("1")).toMatchObject({ freshReason: why });
+      f.task.stageIndex = 0;
+      const round2 = await f.round(2);
+      expect(round2).toHaveLength(2);
+      for (const input of round2) expect(input).toMatchObject({ mode: "fresh", freshReason: why });
+      expect(f.task.reviewFreshReasons).toEqual({ later: { "1": why } });
+      // Another conflict drops the new conversations; the seat it found nothing for keeps its own reason.
+      await conflict("Main's second greeting\n");
+      expect(f.task.reviewFreshReasons).toEqual({ [f.stage.id]: { "0": why, "1": why }, later: { "1": why } });
+      const round3 = await f.round(3);
+      expect(round3).toHaveLength(2);
+      for (const input of round3) expect(input).toMatchObject({ mode: "fresh", freshReason: why });
+      // The next start returns to its conversation, with no stale explanation left over.
+      const round4 = await f.round(4);
+      expect(round4).toHaveLength(2);
+      for (const input of round4) {
+        expect(input.mode).toBe("continued");
+        expect(input.freshReason).toBeUndefined();
+      }
+      expect(f.task.reviewFreshReasons).toEqual({ later: { "1": why } });
+    } finally { await f.engine.shutdown(); }
+  });
+
+  for (const pair of [true, false]) it(`gives a ${pair ? "parallel" : "single"} seat's usage stand-in its own start, not the conflict reason the seat already used`, async () => {
+    const f = await fixture(pair);
+    try {
+      const conflict = conflicting(f);
+      await f.round(1);
+      await conflict("Main's greeting\n");
+      const why = "main conflicted with the change, so the Builder had to port it";
+      // The seat's first start after the port runs out of usage partway through its turn.
+      f.fakes.scenario({ reopen: "resume", addedReviewer: "pass", limited: [{ model: "opus", role: "code reviewer", spendCap: true }] });
+      const before = f.task.journey!.length;
+      await f.round(2);
+      const starts = f.task.journey!.slice(before).flatMap((step) => step.agentInputs ?? []).filter((input) => input.reviewerKey === "0");
+      expect(starts.map((input) => input.profileId)).toEqual(["opus-high", expect.not.stringMatching(/^opus-/)]);
+      const [first, standIn] = starts;
+      expect(first).toMatchObject({ mode: "fresh", freshReason: why });
+      // The stand-in says why it took over; the single seat's own turn also notes its new tool, as before.
+      expect(standIn!.mode).toBe("fresh");
+      expect(standIn!.selectionReason).toContain("Claude Code's spend limit");
+      expect(standIn!.selectionReason).not.toContain(why);
+      expect(standIn!.freshReason).toBe(pair ? undefined : "it now runs on a different tool or model");
+      const events = (await new Coordination(f.engine).call("watch.events", { taskIds: [f.task.id], from: "oldest", kinds: ["seat.started"], timeoutMs: 0 })).events as { profileId: string; freshReason?: string; summary: string; at: number }[];
+      const standInEvent = events.find((event) => event.profileId === standIn!.profileId && event.at === standIn!.at)!;
+      expect(standInEvent).toBeDefined();
+      expect(standInEvent.freshReason).toBe(standIn!.freshReason);
+      expect(standInEvent.summary).not.toContain(why);
+      expect(f.task.reviewFreshReasons).toBeUndefined();
     } finally { await f.engine.shutdown(); }
   });
 });
