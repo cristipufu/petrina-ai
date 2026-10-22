@@ -9,7 +9,7 @@ import { checkOf, type AgentProfile, type CheckId, type State, type Task } from 
 import { Connections } from "../src/connection.js";
 import { Engine, type EngineOptions } from "./engine.js";
 import { AgentRun } from "../src/acp-run.js";
-import { AGENT_CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
+import { AGENT_CHECK_TIMEOUT_MS, CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
 import { Store } from "../src/store.js";
 import { ToolChecks } from "../src/tool-checks.js";
 import { ADAPTERS, ENGINE_PROFILES, findProgram } from "../src/tools.js";
@@ -107,6 +107,7 @@ describe("Tool status", () => {
         expect(result.detail!.length).toBeLessThan(802);
         expect(budget).toBe(timedOut ? 500 : AGENT_CHECK_TIMEOUT_MS);
         expect(AGENT_CHECK_TIMEOUT_MS).toBe(30_000);
+        expect(CHECK_TIMEOUT_MS).toBe(8_000);
       } finally { starting.mockRestore(); }
     });
   }
@@ -187,25 +188,27 @@ describe("Tool status", () => {
   });
 
   for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
-    it(`honors an 8-second check deadline for a tool that ${behaviour === "stubborn" ? "never opens a conversation" : "never reports its login"} and ignores being stopped, stops it, and never piles up copies`, async () => {
+    it(`honors a short check deadline for a tool that ${behaviour === "stubborn" ? "never opens a conversation" : "never reports its login"} and ignores being stopped, stops it, and never piles up copies`, async () => {
+      const timeoutMs = 2_000;
       const fakes = new Fakes(fresh("fakes"));
       const command = agents({ "claude-code": behaviour, codex: behaviour }, fakes.dir)!;
+      const data = fresh("data");
+      const cwd = join(data, "checks");
+      mkdirSync(cwd, { recursive: true });
       // Follow the actual children: historical PIDs can name another process after an exit on Windows.
       const active = new Set<processes.ChildProcess>();
+      const prepared: processes.ChildProcess[] = [];
       let most = 0;
       const spawn = processes.spawn;
       const watching = spyOn(processes, "spawn").mockImplementation(((...args: Parameters<typeof processes.spawn>) => {
-        const child = Reflect.apply(spawn, processes, args) as processes.ChildProcess;
         if (Array.isArray(args[1]) && args[1].includes("--stubborn")) {
-          active.add(child);
-          most = Math.max(most, active.size);
-          child.once("exit", () => active.delete(child));
-          child.once("error", () => { if (child.pid === undefined) active.delete(child); });
+          const child = prepared.shift();
+          if (!child) throw new Error("A tool check started an unprepared replacement");
+          return child;
         }
-        return child;
+        return Reflect.apply(spawn, processes, args) as processes.ChildProcess;
       }) as typeof processes.spawn);
-      // Every copy of Claude Code and Codex the engine starts. Counted as it starts them, so a machine too busy
-      // for a copy to get going before the limit still counts it.
+      // Count the engine's attempts separately from the prepared children, including an unwanted replacement.
       let starts = 0;
       let stopping = 0;
       const start = AgentRun.start.bind(AgentRun);
@@ -217,44 +220,76 @@ describe("Tool status", () => {
           options.onGone?.(gone);
         },
       }));
-      const engine = new Engine(fresh("data"), {
-        toolCheckTimeoutMs: 8_000,
+      const engine = new Engine(data, {
+        toolCheckTimeoutMs: timeoutMs,
         agentCommand: (profile) => {
           if (profile.toolId === "claude-code" || profile.toolId === "codex") starts += 1;
           return command(profile);
         },
       });
+      const prepare = async () => {
+        expect(active.size).toBe(0);
+        expect(stopping).toBe(0);
+        writeFileSync(join(fakes.dir, "pids"), "");
+        // Cold process startup is unrelated to the check's deadline. Start the same real stand-ins
+        // first, and hand them to AgentRun only once their SIGTERM handlers are installed. The engine
+        // still owns the real handshake, deadline, forced stop and confirmed cleanup of every copy.
+        for (const id of ["claude-code", "codex"] as const) {
+          const profile = ENGINE_PROFILES.find((entry) => entry.toolId === id)!;
+          const [program, ...args] = command(profile)!;
+          const child = spawn(program!, args, { cwd, env: testGitEnv(), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+          prepared.push(child);
+          active.add(child);
+          most = Math.max(most, active.size);
+          child.once("exit", () => active.delete(child));
+          child.once("error", () => { if (child.pid === undefined) active.delete(child); });
+        }
+        await waitFor(() => {
+          const path = join(fakes.dir, "pids");
+          const ready = new Set(existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").map(Number) : []);
+          return prepared.every((child) => child.pid !== undefined && ready.has(child.pid));
+        }, "both stop-resistant tools to start", 20_000);
+        expect(active.size).toBe(2);
+      };
       try {
+        await prepare();
         const from = Date.now();
         await engine.checkTools();
         const took = Date.now() - from;
         // The check's own limit, not the minute a step gets to start: Continue is never held for long.
-        expect(took).toBeGreaterThanOrEqual(7_900);
-        expect(took).toBeLessThan(10_000 * SLOW);
+        expect(took).toBeGreaterThanOrEqual(timeoutMs - 100);
+        expect(took).toBeLessThan((timeoutMs + 2_000) * SLOW);
         for (const id of ["claude-code", "codex"] as const) {
           expect(status(engine, id)).toBe("unknown");
-          // A stand-in that never opens says it did not answer. One that opens but never reports says so, unless a busy
-          // machine kept it from opening in time (the shorter test above covers those words).
-          expect(checkOf(engine.getState().setup?.checks, id).detail).toContain(behaviour === "stubborn" ? "did not answer within 8 seconds" : "within 8 seconds");
+          expect(checkOf(engine.getState().setup?.checks, id).detail).toContain(behaviour === "stubborn" ? "did not answer within 2 seconds" : "did not say whether it is logged in within 2 seconds");
         }
         expect(starts).toBe(2);
+        expect(prepared).toHaveLength(0);
+        expect(fakes.opens()).toHaveLength(behaviour === "stubborn" ? 0 : 2);
 
         // Cleanup may outlast a recheck's bounded wait on a busy machine. Wait for
         // its completion here; controlled cases below cover rechecks while it is pending.
         await waitFor(() => active.size === 0 && stopping === 0, "the first hung tools and their cleanup to finish", 6_000);
+        await prepare();
         // Concurrent rechecks join one new check per tool once the old one is gone.
         await Promise.all([engine.checkTools(), engine.checkTools(), engine.checkTools()]);
-        expect(most).toBeLessThanOrEqual(2);
+        expect(most).toBe(2);
         expect(starts).toBe(4);
-        expect(status(engine, "claude-code")).toBe("unknown");
+        expect(prepared).toHaveLength(0);
+        expect(fakes.opens()).toHaveLength(behaviour === "stubborn" ? 0 : 4);
+        for (const id of ["claude-code", "codex"] as const) expect(status(engine, id)).toBe("unknown");
         // Every copy is stopped, though each ignored being asked.
         await waitFor(() => active.size === 0 && stopping === 0, "the hung tools and their cleanup to finish", 6_000);
       } finally {
         const shutdown = engine.shutdown();
         for (const child of active) child.kill("SIGKILL");
-        await shutdown;
-        opening.mockRestore();
-        watching.mockRestore();
+        try {
+          await shutdown;
+          await waitFor(() => active.size === 0 && stopping === 0, "all tool-check children to exit after shutdown", 6_000);
+        } finally {
+          opening.mockRestore();
+          watching.mockRestore();
+        }
       }
     }, 60_000 * SLOW);
   }
