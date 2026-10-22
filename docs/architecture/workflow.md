@@ -72,6 +72,8 @@ Before a fresh Tester, each repository is brought up to date once before prepari
 
 Each check operation shares one observation of its commit, tree, tracked changes and hook definition. Queue waits refresh that observation before executing. Review-context capture remains a fresh boundary; a saved current flag alone proves nothing. Settled native failures remain in history without repeating their old diagnostics to reviewers; open failures and agent finding history remain visible.
 
+A passing check operation revalidates its inputs before handing control onward. If required commands, hook inputs or the code changed while it ran, the old result stays historical and current requirements run again. Repeated changes stop verification explicitly rather than permitting acceptance or publishing on an obsolete pass.
+
 A Tester must report each item in a saved acceptance checklist; missing items are repaired in the same conversation. A failed acceptance run never satisfies final acceptance, even if a Builder claims it fixed without changing the patch. Final acceptance failures return to the Builder twice, then stop at the coordinator's delivery decision; that boundary survives a restart. A new change request authorizes another bounded attempt.
 
 ### Product checks

@@ -388,6 +388,7 @@ export class ProductChecks {
       provenance.passed = current?.definition === definition
         && JSON.stringify(commands) === JSON.stringify(results.map((run) => run.command))
         && results.every((run) => run.ok && !run.interruption && !run.interrupted && !run.timedOut && !run.cleanupIncomplete);
+      repository.checks.current = provenance.passed;
     }
     if (results.every((run) => run.ok && !run.interruption && !run.interrupted)) await this.closeEpisode(scope, state);
     const incomplete = incompleteCheckOutcome(results.map((run) => ({ name: run.name, result: checkResult(run), run })));
@@ -576,6 +577,28 @@ export class ProductChecks {
    * on the step that ran the original, with its basis, so the evidence survives restarts and later runs.
    */
   async failing(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[], purpose: JourneyCheckReuse["purpose"] = "acceptance"): Promise<boolean> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (await this.failingOnce(scope, signal, checks, purpose)) return true;
+      if (!scope.work.worktree) return false;
+      const product = this.k.productOf(scope);
+      const required = product ? checksFor(product, scope.work.worktree) : checks ?? [];
+      if (signal.aborted || this.k.stopped) throw new Aborted();
+      const saved = scope.work.checks;
+      const expected = orderedChecks(required).map(check => commandText(check.argv));
+      const unchangedCommands = JSON.stringify(expected) === JSON.stringify(saved?.results.slice(0, expected.length).map(run => run.command));
+      // failingOnce just observed this worktree, or runAll restored it and checked its final
+      // definition. Reuse that operation's proof, not a current flag loaded from earlier work.
+      if (saved?.current && unchangedCommands) return false;
+      // Commands and external hook inputs can change while a long suite runs. Its old pass is
+      // historical evidence only; neither final acceptance nor publishing may use it as a pass now.
+      if (saved) saved.current = false;
+      this.k.log(scope, "warn", "Check inputs changed while verification ran; checking the current code and requirements before continuing");
+      checks = required;
+    }
+    throw new Error("The product's check inputs kept changing during verification. Nothing was approved or published; run the checks again once they are stable.");
+  }
+
+  private async failingOnce(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[], purpose: JourneyCheckReuse["purpose"] = "acceptance"): Promise<boolean> {
     const { task, work: repository } = scope;
     if (!repository.worktree) return false;
     const product = this.k.productOf(scope);

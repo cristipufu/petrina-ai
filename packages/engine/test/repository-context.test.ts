@@ -234,7 +234,7 @@ describe("explicit repository execution contexts", () => {
       const messagePath = readFileSync(recorded, "utf8");
       expect(dirname(dirname(messagePath))).toBe(join(engine.dataDir, "checks", task.id));
       expect(existsSync(messagePath)).toBe(false);
-      expect(scope.work.checks).toMatchObject({ current: true, sha: state.sha, tree: state.tree });
+      expect(scope.work.checks).toMatchObject({ current: !changed, sha: state.sha, tree: state.tree });
       expect(task.journey!.at(-1)!.checkAttempts![0]).toMatchObject({ passed: !changed, sha: state.sha, tree: state.tree, definition: state.definition });
     } finally { messages.mockRestore(); heads.mockRestore(); trees.mockRestore(); await engine.shutdown(); }
   });
@@ -1076,11 +1076,16 @@ describe("shared check repair episodes", () => {
       await waitFor(() => existsSync(started), "the original check to start");
       setChecks(engine, "first", [failing]);
       writeFileSync(release, "go");
-      // The original command passed, but it is no longer what the product requires.
-      expect(await run).toBe(false);
+      // The original pass cannot authorize continuation. The current failing requirement is
+      // run within this operation, without granting any new Builder returns.
+      expect(await run).toBe(true);
       expect(scope.work.checkReturns).toBe(2);
-      expect(task.journey!.at(-1)!.checkAttempts![0]!.passed).toBe(false);
+      const attempts = task.journey!.flatMap(step => step.checkAttempts ?? []);
+      expect(attempts).toHaveLength(2);
+      expect(attempts[0]!.passed).toBe(false);
+      expect(attempts[1]!.definition).not.toBe(attempts[0]!.definition);
       expect(await checks.failing(scope, signal)).toBe(true);
+      expect(task.journey!.flatMap(step => step.checkAttempts ?? [])).toHaveLength(2);
       expect(scope.work.checkReturns).toBe(2);
       // Control: a pass on the checks required now does end the episode.
       setChecks(engine, "first", [passing]);
