@@ -833,7 +833,7 @@ describe("the demos", () => {
     const [, state] = demos[1];
     const task = state.tasks.find((entry) => entry.title === "Usage dashboard" && entry.state === "done")!;
     const view = journeyView(task, contextOf(state));
-    expect(view.nodes).toHaveLength(20);
+    expect(view.nodes).toHaveLength(22);
     expect(view.nodes.every((node) => node.state === "done")).toBe(true);
     expect(view.end?.state).toBe("done");
   });

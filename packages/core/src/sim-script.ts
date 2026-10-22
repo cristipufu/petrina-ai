@@ -5,6 +5,21 @@ import type { CheckRun, DesignBrief, Id, Objection, Role, Task, TaskKind } from 
 import type { TaskSource, WorkChoice } from "./source.js";
 import type { TurnReport } from "./worklog.js";
 import type { SimQuirk } from "./sim-types.js";
+import { taskProductIds } from "./repositories.js";
+
+/** Stable synthetic contents, changed only by a completed demo build. */
+export function simVersions(task: Task, buildStep?: Id): Record<Id, string> {
+  return Object.fromEntries(taskProductIds(task).map((id) => [id, buildStep
+    ? `demo:${task.id}:${id}:${buildStep}`
+    : task.journey?.findLast((step) => step.buildVersions?.[id])?.buildVersions?.[id] ?? `demo:${task.id}:${id}:initial`]));
+}
+
+export function simAcceptance(task: Task) {
+  return (task.brief?.acceptance ?? []).map((item) => ({ text: item.text, result: "pass" as const,
+    evidence: `Demo scenario: ${item.text}. The simulated user flow met this requirement.`,
+    productIds: item.productIds ?? taskProductIds(task),
+  }));
+}
 
 export const DEMO_RISK: Record<TaskKind, { level: "low" | "medium" | "high"; why: string }> = {
   new: { level: "high", why: "A new product: everything it touches is new, sign-in included." },

@@ -10,6 +10,7 @@ import { Journey, JourneyEdge, JourneyList, spokenStep, startWords } from '../sr
 import { layoutJourney } from '../src/journeyLayout';
 import { deliveryText, lookup } from '../src/lib';
 import { repairedReviewFixture } from './reviewRoundFixture';
+import { acceptanceFixture, laterTester } from './acceptanceFixture';
 
 let simulator: Simulator;
 const live = { link: 'live', desktop: false };
@@ -273,11 +274,18 @@ describe('the journey in the task sheet', () => {
     const builder = task.journey!.find((step) => step.roleId === 'builder')!;
     builder.agentInputs = [{ roleId: 'builder', profileId: builder.profileId!, taskTitle: task.title, taskDescription: task.description, stageTitle: 'Build', sections: [{ title: 'Implementation brief', body: 'Build the requested checkout changes.' }], mode: 'fresh' }];
     const tester = task.journey!.findLast((step) => step.work === 'checks' && step.endedAt !== undefined)!;
-    delete tester.acceptanceChecks;
+    tester.kind = 'agent';
+    tester.roleId = 'tester';
+    delete tester.work;
+    tester.acceptanceChecks = [
+      { text: 'Type checks and all tests pass.', result: 'fail', evidence: 'The Tests command timed out.' },
+      { text: 'The total includes the selected shipping fee.', result: 'pass', evidence: 'The selected shipping fee is included.' },
+      { text: 'A real account works.', result: 'blocked', reason: 'Account unavailable.' },
+    ];
     tester.reason = 'one acceptance check failed';
     tester.outcome = '1 acceptance check failed';
     const testerIndex = task.journey!.indexOf(tester);
-    task.journey = [...task.journey!.slice(0, testerIndex + 1), { ...builder, id: 'builder-fix-test', fixing: true, startedAt: NOW - 100, endedAt: NOW, builderConversation: 'resumed', reason: undefined, outcome: 'Fixes ready', agentInputs: [{ roleId: 'builder', profileId: builder.profileId!, taskTitle: task.title, stageTitle: 'Build', sections: [{ title: 'Review findings', body: 'The checkout total drops the selected shipping fee.' }], mode: 'continued' }] }];
+    task.journey = [...task.journey!.slice(0, testerIndex + 1), { ...builder, id: 'builder-fix-test', trigger: { after: tester.id, reason: 'A recorded acceptance failure' }, fixing: true, startedAt: NOW - 100, endedAt: NOW, builderConversation: 'resumed', reason: undefined, outcome: 'Fixes ready', agentInputs: [{ roleId: 'builder', profileId: builder.profileId!, taskTitle: task.title, stageTitle: 'Build', sections: [{ title: 'Review findings', body: 'The checkout total drops the selected shipping fee.' }], mode: 'continued' }] }];
     const fixInput = task.journey!.at(-1)!.agentInputs![0]!;
     fixInput.requestedProfileId = state.profiles[0]!.id;
     fixInput.selectionReason = 'The planned profile reached its weekly limit.';
@@ -314,18 +322,113 @@ describe('the journey in the task sheet', () => {
     expect(details.textContent).toContain('The planned profile reached its weekly limit.');
     expect(details.textContent).toContain('Tool confirmed at start: confirmed-model');
     expect(details.textContent).toContain('Type checks and all tests pass.');
+    expect(details.textContent).not.toContain('A real account works.');
     expect(details.textContent).not.toContain('Builder conversation');
     expect(details.textContent).toContain('Findings assigned to this fix');
     expect(details.textContent).toContain('The checkout total drops the selected shipping fee.');
 
-    const testerItem = [...host.querySelectorAll<HTMLElement>('.journey-list li')].find((item) => item.textContent?.includes('Automated checks, round 2'))!;
+    const testerItem = host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${tester.id}"]`)!;
     await act(async () => testerItem.click());
     details = host.querySelector('.journey-details')!;
     expect(details.textContent).toContain('Type checks and all tests pass.');
     expect(details.textContent).toContain('Failed');
     const acceptanceItems = [...details.querySelectorAll('.journey-check-list li')].map((item) => item.textContent ?? '');
     expect(acceptanceItems[0]).toContain('The total includes the selected shipping fee.');
-    expect(acceptanceItems[1]).toContain('Type checks and all tests pass.');
+    expect(acceptanceItems[1]).toContain('Could not verify');
+    expect(acceptanceItems[2]).toContain('Type checks and all tests pass.');
+  });
+
+  it.each([false, true])('keeps acceptance evidence on its source and repair trigger for custom roles=%s', async (custom) => {
+    const fixture = acceptanceFixture(custom);
+    const { state, task } = fixture;
+    task.journey = [...task.journey!, laterTester(fixture)];
+    await mount(state); await openTask(task.id);
+    const select = async (id: string) => {
+      await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${id}"]`)!.click());
+      return host.querySelector('.journey-details')!;
+    };
+    let details = await select('j65');
+    expect(details.querySelectorAll('.journey-check-list li')).toHaveLength(4);
+    expect(details.querySelectorAll('.journey-check-list .label.ok')).toHaveLength(3);
+    expect(details.querySelectorAll('.journey-check-list .label.bad')).toHaveLength(1);
+    expect(details.textContent).toContain('First recorded timeout diagnostic');
+    expect(details.textContent).toContain('Second recorded timeout diagnostic');
+    expect(details.textContent).not.toContain('Acceptance requirement');
+    details = await select('command-repair');
+    expect(details.textContent).not.toContain('Acceptance requirement');
+    expect(details.textContent).not.toContain('Failed checks that triggered this fix');
+    details = await select('repair');
+    expect(details.textContent).toContain('Failed checks that triggered this fix');
+    expect(details.querySelectorAll('.journey-check-list li')).toHaveLength(7);
+    expect(details.textContent).toContain('Original failure reason 25');
+    details = await select('j14');
+    expect(details.querySelectorAll('.journey-check-list .label.ok')).toHaveLength(18);
+    expect(details.querySelectorAll('.journey-check-list .label.bad')).toHaveLength(7);
+    expect(details.textContent).toContain('Original observation 25');
+    details = await select('later-tester');
+    expect(details.querySelectorAll('.journey-check-list .label.ok')).toHaveLength(24);
+    expect(details.querySelectorAll('.journey-check-list .label.bad')).toHaveLength(0);
+    expect(details.textContent).toContain('Could not verify');
+    expect(details.textContent).toContain('New observation 24');
+  });
+
+  it.each(['missing trigger', 'missing evidence', 'blocked'])('leaves acceptance repair evidence unavailable or unconfirmed: %s', async (variant) => {
+    const { state, task } = acceptanceFixture(true);
+    const tester = task.journey![0]!;
+    const repair = task.journey![1]!;
+    if (variant === 'missing trigger') delete repair.trigger;
+    if (variant === 'missing evidence') delete tester.acceptanceChecks;
+    if (variant === 'blocked') tester.acceptanceChecks = [{ text: 'Unavailable account probe', result: 'blocked', reason: 'Account unavailable' }];
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>('.journey-list li[data-step-id="repair"]')!.click());
+    let details = host.querySelector('.journey-details')!;
+    expect(details.textContent).not.toContain('Failed checks that triggered this fix');
+    expect(details.textContent).not.toContain('Acceptance requirement');
+    if (variant !== 'blocked') expect(details.textContent).toContain('Acceptance trigger details unavailable');
+    await act(async () => host.querySelector<HTMLElement>('.journey-list li[data-step-id="j14"]')!.click());
+    details = host.querySelector('.journey-details')!;
+    if (variant === 'missing evidence') expect(details.textContent).toContain('Acceptance results unavailable for this step');
+    if (variant === 'blocked') { expect(details.textContent).toContain('Could not verify'); expect(details.querySelectorAll('.label.bad')).toHaveLength(0); }
+  });
+
+  it('describes a running Tester as in progress without borrowing results', async () => {
+    const { state, task } = acceptanceFixture(true);
+    task.journey = task.journey!.slice(0, 1);
+    const tester = task.journey![0]!;
+    delete tester.endedAt;
+    delete tester.end;
+    delete tester.acceptanceChecks;
+    delete tester.agentResults;
+    task.state = 'running';
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>('.journey-list li[data-step-id="j14"]')!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).toContain('Acceptance testing in progress. No results recorded yet.');
+    expect(details.textContent).not.toContain('unavailable');
+    expect(details.textContent).not.toContain('Acceptance requirement');
+  });
+
+  it.each(['running', 'stopped', 'interrupted', 'reused', 'missing'])('keeps %s command evidence separate from acceptance', async (variant) => {
+    const { state, task } = acceptanceFixture();
+    const step = task.journey![2]!;
+    task.journey = task.journey!.slice(0, 3);
+    if (variant === 'running') { delete step.endedAt; delete step.end; step.productChecks = [{ name: 'Tests', result: 'running' }]; }
+    if (variant === 'stopped' || variant === 'interrupted') step.productChecks = [{ name: 'Tests', result: 'stopped', detail: 'Original interrupted diagnostic' }];
+    if (variant === 'interrupted') step.productChecks = [{ name: 'Tests', result: 'fail', detail: 'Original interrupted diagnostic', run: { name: 'Tests', command: 'test', ms: 100, ok: false, output: 'Original interrupted diagnostic', interruption: { source: 'macOS power log', at: state.now - 550, event: 'Recorded sleep event' } } }];
+    if (variant === 'reused') { step.work = 'check-reuse'; step.productChecks = step.productChecks!.map((check) => ({ ...check, reusedAt: state.now, source: { stepId: 'original-command-run', attemptId: 'run-0', checkId: 'tests' } })); }
+    if (variant === 'missing') { delete step.productChecks; task.checks = { at: state.now, results: [{ name: 'Unattributed later command', command: 'test', ms: 1, ok: true, output: 'Passed' }] }; }
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>('.journey-list li[data-step-id="j65"]')!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).not.toContain('Acceptance requirement');
+    if (variant === 'running') expect(details.textContent).toContain('Running');
+    if (variant === 'stopped' || variant === 'interrupted') expect(details.textContent).toContain('Original interrupted diagnostic');
+    if (variant === 'reused') {
+      expect(details.textContent).toContain('no new execution');
+      expect(details.textContent).toContain('Second recorded timeout diagnostic');
+      expect(details.querySelector('a[href*="node=original-command-run"]')).toBeTruthy();
+    }
+    if (variant === 'missing') { expect(details.textContent).toContain('Automated check results unavailable for this step'); expect(details.textContent).not.toContain('Unattributed later command'); }
   });
 
   it('names each automated check and its result on that journey step', async () => {
@@ -717,7 +820,7 @@ describe('the journey in the task sheet', () => {
     await act(async () => host.querySelector<HTMLElement>(`.history-card[data-task-id="${usage.id}"]`)!.click());
     const controls = [...host.querySelectorAll('.journey-controls button')].map((button) => button.getAttribute('aria-label') ?? button.textContent);
     expect(controls).toEqual(['Zoom in', 'Zoom out', 'Show the whole journey']);
-    expect(host.querySelector('.journey-list')?.getAttribute('aria-label')).toBe('Journey, 20 steps');
+    expect(host.querySelector('.journey-list')?.getAttribute('aria-label')).toBe(`Journey, ${journeyView(usage, contextOf(simulator.getState())).nodes.length} steps`);
     expect(host.querySelector('.journey-flow')?.getAttribute('aria-hidden')).toBe('true');
   });
 it('uses retired profiles to show an independent reviewer for a port', async () => {

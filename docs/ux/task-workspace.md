@@ -22,7 +22,7 @@ Why this plan, then the stages as a spacious numbered list. Stages that have not
 
 #### Design
 
-The brief in one reading column (what changes for users, which parts of the product, the acceptance checklist, risks), then the disagreements. Acceptance items that could not be checked say so with the reason; they stay unchecked and require the coordinator's decision before delivery. Each disagreement separates the issue, its status, who raised it and the architect's answer, with open blockers first. Objections your call settled carry a "Your call" tag, your words, and the architect's note on how the brief follows them.
+The brief in one reading column (what changes for users, which parts of the product, the acceptance checklist, risks), then the disagreements. Design and Overview label acceptance evidence “Last recorded result”. After code changes, or when freshness cannot be established, they say “Current version not verified”; both old passes and old failures remain historical. Matching recorded versions retain applicable verification for each item’s affected products. Before testing starts, items say “Not tested yet”; running testing says “in progress”. Missing saved history remains unavailable. A mix of current and unverified items says “Current version partly verified”. Completion and a Builder's fix claim never establish acceptance. Acceptance items that could not be checked say so with the reason; they stay unchecked and require the coordinator's decision before delivery. Each disagreement separates the issue, its status, who raised it and the architect's answer, with open blockers first. Objections your call settled carry a "Your call" tag, your words, and the architect's note on how the brief follows them.
 
 #### Review
 

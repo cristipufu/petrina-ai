@@ -725,7 +725,6 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
   if (task.maintenance) ctx = { ...ctx, roles: [...ctx.roles.filter(role => role.id !== task.maintenance!.role.id), task.maintenance.role] };
   const recorded: readonly JourneyStep[] = task.journey ?? legacyJourney(task, ctx.inbox, ctx.roles);
   const open = openStep({ journey: recorded });
-  const latestCompletedTester = recorded.reduce((latest, step, index) => ((step.kind === "agent" && ctx.roles.find(role => role.id === step.roleId)?.result === "checks") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
   const finished = FINISHED.includes(task.state);
   const run: JourneyNode["run"] = task.state === "running" ? "working" : task.state === "paused" ? "paused" : "waiting";
   // The live step's line. A native retry comes ahead of the latest action, as on the card (summary.ts mainLine).
@@ -767,9 +766,7 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...(step.waitsOn ? { waitsOn: step.waitsOn } : {}),
       ...(step.legacy ? { legacy: true } : { startedAt: step.startedAt, ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}) }),
       ...(outcome ? { outcome } : {}),
-      ...(step.acceptanceChecks ? { acceptanceChecks: step.acceptanceChecks } : index === latestCompletedTester && !step.acceptanceChecks && task.brief?.acceptance.some((check) => check.verification)
-        ? { acceptanceChecks: task.brief.acceptance.filter((check) => check.verification).map((check) => ({ text: check.text, result: check.verification === "passed" ? "pass" as const : check.verification === "failed" ? "fail" as const : "blocked" as const, ...(check.reason ? { reason: check.reason } : {}) })) }
-        : {}),
+      ...(step.acceptanceChecks ? { acceptanceChecks: step.acceptanceChecks } : {}),
       ...(interruptedOutcome ? { reason: interruptedOutcome } : step.reason ? { reason: step.reason } : {}),
       tone: step.tone ?? "on",
       asks: step.asks ?? [],

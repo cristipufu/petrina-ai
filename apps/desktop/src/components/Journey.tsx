@@ -34,14 +34,6 @@ function stateWords(node: JourneyNode): string {
   return node.run === "paused" ? "Now, paused" : "Now, waiting";
 }
 
-function checkDiagnostic(output: string): string | undefined {
-  const lines = output.split(/\r?\n/).map((line) => line.replace(/^@[^|]+\|\s*/, "").trim());
-  const failures = lines.filter((line) => /^\(fail\)\s/i.test(line));
-  const causes = lines.filter((line) => /^(?:error|assertionerror):/i.test(line) || /^timed out waiting for\b/i.test(line));
-  const detail = [...failures, ...causes].filter((line, index, all) => all.indexOf(line) === index).slice(0, 6).join("\n").slice(0, 1000);
-  return detail || undefined;
-}
-
 /** Elapsed time from the step's start to its end (or now): pauses and waiting are not left out, so the words say elapsed. */
 function timeOf(node: JourneyNode, now: number): string | undefined {
   return node.work === "check-reuse" || node.startedAt === undefined ? undefined : duration(node.startedAt, node.endedAt ?? now);
@@ -542,9 +534,6 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, on
   const objections = node.result?.objections ?? (role?.result === "objections" && ownStep
     ? task.objections.filter((objection) => objection.round === ownStep.round && (node.team ?? [node.profileId]).includes(objection.raisedBy))
     : role?.result === "brief" ? task.objections.filter((objection) => objection.answer && given.includes(`[${objection.id}]`)) : undefined);
-  const latestChecksStep = [...journeySteps].reverse().find((step) => step.kind === "petrina" && step.work === "checks");
-  const checksBelongHere = latestChecksStep?.id === node.id;
-  const currentCheckRuns = checksBelongHere && task.checks?.at !== undefined && latestChecksStep?.startedAt !== undefined && task.checks.at >= latestChecksStep.startedAt ? task.checks.results : undefined;
   const supportingChecks = node.productChecks ?? (node.kind === "you" && node.waitsFor === "delivery" && journeyIndex === journeySteps.length - 1 ? decisionEvidence(task) : []);
   const acceptanceChecks = node.acceptanceChecks ? [...node.acceptanceChecks].sort((a, b) => ({ pass: 0, blocked: 1, fail: 2 }[a.result] - { pass: 0, blocked: 1, fail: 2 }[b.result])) : [];
   const time = timeOf(node, now);
@@ -746,18 +735,14 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, on
                 : [];
             const ids = node.findingIds ?? node.result?.findings?.map((finding) => finding.id) ?? legacyIds;
             const findings = ids.map((id) => (node.result?.findings ?? task.findings).find((finding) => finding.id === id)).filter((finding): finding is Task["findings"][number] => !!finding);
-            const journey = task.journey ?? [];
-            const stepIndex = journey.findIndex((step) => step.id === node.id);
-            const previous = stepIndex > 0 ? journey[stepIndex - 1] : undefined;
-            const latestTesterIndex = journey.reduce((latest, step, index) => ((step.kind === "agent" && find.role(step.roleId)?.result === "checks") || (step.kind === "petrina" && step.work === "checks")) && step.endedAt !== undefined ? index : latest, -1);
-            const failedChecks = previous?.acceptanceChecks?.filter((check) => check.result !== "pass")
-              ?? (stepIndex - 1 === latestTesterIndex ? task.brief?.acceptance.filter((check) => check.verification === "failed" || check.verification === "blocked").map((check) => ({ text: check.text, result: check.verification === "failed" ? "fail" as const : "blocked" as const, ...(check.reason ? { reason: check.reason } : {}) })) : undefined)
-              ?? [];
+            const trigger = journeySteps.find((step) => step.id === ownStep?.trigger?.after);
+            const failedChecks = trigger?.kind === "agent" && find.role(trigger.roleId)?.result === "checks"
+              ? trigger.acceptanceChecks?.filter((check) => check.result === "fail") ?? [] : [];
             return <>
-              {failedChecks.length > 0 && <>
+              {failedChecks.length > 0 ? <>
                 <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Failed checks that triggered this fix</h4>
-                <ul className="journey-check-list">{failedChecks.map((check) => <li key={check.text}><strong>{check.text}</strong>{check.reason ? <span>{check.reason}</span> : null}</li>)}</ul>
-              </>}
+                <ul className="journey-check-list">{failedChecks.map((check) => <li key={check.text}><strong>{check.text}</strong>{check.evidence ? <span>{check.evidence}</span> : null}{check.reason ? <span>{check.reason}</span> : null}</li>)}</ul>
+              </> : !trigger || (trigger.kind === "agent" && find.role(trigger.roleId)?.result === "checks" && !trigger.acceptanceChecks) ? <p className="note">Acceptance trigger details unavailable.</p> : null}
               <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Findings assigned to this fix</h4>
               {findings.length ? <ul className="journey-check-list">{findings.map((finding) => (
                 <li key={finding.id}><strong>{finding.text}</strong>{finding.answer ? <span>{!finding.answer.fixed && finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") ? "Builder’s explanation — not independently confirmed. " : ""}Builder answered: {finding.answer.fixed ? "fix claimed" : "not fixed"}. {finding.answer.text}</span> : null}</li>
@@ -789,23 +774,15 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, on
             </li>)}
           </ul>
         </div>
-      ) : null}
+      ) : node.kind === "agent" && role?.result === "checks" && !planned ? <p className="note">{node.state === "now" || node.state === "you" ? "Acceptance testing in progress. No results recorded yet." : "Acceptance results unavailable for this step."}</p> : null}
 
       {node.kind !== "you" && (node.productChecks?.length || (node.kind === "petrina" && node.work === "checks")) && (() => {
         if (node.productChecks?.length) return <CheckAttempts checks={node.productChecks} find={find} now={now} taskId={task.id} onOriginal={onOriginal} selectedAttempt={selectedAttempt} evidence={node.work === "check-reuse"} />;
-        if (currentCheckRuns?.length) return <div className="journey-context">
-          <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Automated check results</h4>
-          <ul className="journey-check-list">{currentCheckRuns.map((check) => <li key={check.name}>
-            <span className={`label ${check.ok ? "ok" : "bad"}`}>{check.ok ? "Passed" : check.timedOut ? "Timed out" : "Failed"}</span>
-            <strong>{check.name}</strong>
-            {!check.ok && checkDiagnostic(check.output) ? <span className="journey-check-detail">{checkDiagnostic(check.output)}</span> : null}
-          </li>)}</ul>
-        </div>;
         if (checkTimeline) return <div className="journey-context">
           <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Automated check results</h4>
           <p>{checkTimeline.text}</p>
         </div>;
-        return null;
+        return <p className="note">Automated check results unavailable for this step.</p>;
       })()}
 
       {node.kind === "you" && node.waitsFor === "delivery" && <div className="journey-context">

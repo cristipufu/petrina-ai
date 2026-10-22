@@ -1,7 +1,7 @@
 import { demoProfileChoices, saveProfile, removeProfile, type ProfileDraft } from "./profiles.js";
 import { messageRemovable } from "./message-delivery.js";
 import { saveRoutine, admitRoutines, prepareMaintenanceTask, type RoutineDraft } from "./routines.js";
-import { DEMO_RISK, DEMO_CHECKS, scriptFor, laterObjections, callAnswers, briefFor, capitalize, areaFromTitle, simReport, demoSource } from "./sim-script.js";
+import { DEMO_RISK, DEMO_CHECKS, scriptFor, laterObjections, callAnswers, briefFor, capitalize, areaFromTitle, simReport, demoSource, simVersions, simAcceptance } from "./sim-script.js";
 import type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
 export { readCall } from "./sim-script.js";
 export type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
@@ -900,6 +900,8 @@ export class Simulator {
       this.runChecks(d, task);
       task.hunt = { stageId: current.id, round, reported: {}, findings: task.findings.length };
     }
+    if (current?.kind === "do" && d.roles.find((role) => role.id === current.roleId)?.result === "checks"
+      && (task.repositories ?? [task]).some((work) => !work.checks?.current)) this.runChecks(d, task);
     // Back from waiting for the screen: the same agent picks up where it left off, on the screen.
     const screen = task.screen?.granted && !task.screen.heard && task.screen.roleId === next.roleId ? task.screen : undefined;
     // A review round's reviewers share its step on the journey; each joins it as it starts.
@@ -1040,7 +1042,7 @@ export class Simulator {
     for (const work of (task.repositories ?? [task]).filter((work) => !repositoryPublished(work))) {
       const results = DEMO_CHECKS.map((run, index) => ({ ...run, startedAt: d.now, endedAt: d.now, source: { stepId: step.id, attemptId: "run-0", checkId: `${task.repositories ? `${work.productId}:` : ""}check-${index}` } }));
       step.productChecks = [...(step.productChecks ?? []), ...results.map((run) => ({ id: run.source.checkId, attemptId: "run-0", productId: work.productId, name: run.name, result: "pass" as const, startedAt: run.startedAt, endedAt: run.endedAt, run }))];
-      work.checks = { at: d.now, current: true, results };
+      work.checks = { at: d.now, tree: simVersions(task)[work.productId], current: true, results };
     }
     this.log(d, task, "done", `Checks passed: ${DEMO_CHECKS.map((run) => run.name).join(", ")}`);
     endPetrinaStep(task, { outcome: W.checks(0, DEMO_CHECKS.length), reason: W.checksPassed }, d.now);
@@ -1144,6 +1146,24 @@ export class Simulator {
       return;
     }
     if (stage.kind === "do") {
+      const recorded = openStep(task);
+      if (result === "build" && recorded) {
+        recorded.buildVersions = simVersions(task, recorded.id);
+        for (const work of task.repositories ?? [task]) if (work.checks) work.checks.current = false;
+      }
+      if (result === "checks" && recorded) {
+        const checks = simAcceptance(task);
+        const versions = simVersions(task);
+        recorded.acceptanceChecks = checks.map(({ text, result, evidence }) => ({ text, result, evidence }));
+        recorded.agentResults = [{ roleId: agent.roleId, profileId: agent.profileId, at: d.now, value: { checks }, versions }];
+        if (task.brief) task.brief.acceptance = task.brief.acceptance.map((item) => {
+          const check = checks.find((check) => check.text === item.text)!;
+          return { ...item, met: true, verification: "passed", productIds: [...check.productIds],
+            versions: Object.fromEntries(check.productIds.map((id) => [id, versions[id]!])),
+          };
+        });
+        task.acceptancePassed = true;
+      }
       if (result === "build" && task.fixing) {
         let count = 0;
         for (const finding of task.findings) {
@@ -1155,8 +1175,6 @@ export class Simulator {
         }
         task.fixing = false;
         this.log(d, task, "done", "Fixed the blocking findings", agent.roleId, agent.profileId);
-        // A changed return awaits fresh checks; the earlier failure remains a task blocker.
-        for (const work of task.repositories ?? [task]) if (work.checks) work.checks.current = false;
         const outcome = builderReturnWords(true, undefined, count);
         const returned = openStep(task);
         if (returned) returned.builderReturn = { productId: task.productId, changed: true, claimedFixes: count, outcome };

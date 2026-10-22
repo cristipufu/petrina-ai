@@ -12,6 +12,7 @@ import { WhatItUsed } from "./WhatItUsed";
 import { Journey } from "../Journey";
 import { TimelineList } from "../Timeline";
 import { TaskLink } from "./ReviewTab";
+import { AcceptanceChecklist } from "./AcceptanceChecklist";
 
 function nowSentence(task: Task, role: Role | undefined, state: State): string {
   if (task.driving) return role ? `You're driving the ${role.name.toLowerCase()} in your terminal` : "You're driving in your terminal";
@@ -136,9 +137,9 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
           {work.releasePreview && <div><p>Release {work.releasePreview.tag} includes everything waiting on the default branch since its previous release.</p><p className="prose">{work.releasePreview.notes}</p></div>}
           {work.companion && <p className="note">{work.companion.state === "done" ? "Companion links finished" : "Companion links need finishing"}</p>}
         </div>)}
-        <h3>Together</h3>{task.sharedLessons?.map((lesson, index) => <p className="note" key={index}>Lesson needs a product assignment: {lesson.text}</p>)}<p className="note">{task.acceptancePassed === true ? "Shared acceptance passed" : task.acceptancePassed === false ? "Shared acceptance needs attention" : "Shared acceptance not yet verified"}</p>
-        {task.brief?.acceptance.map((item) => <p className="prose" key={item.text}>{item.text}: {item.verification === "passed" ? "Passed" : item.verification === "failed" ? "Failed" : "Not verified"}</p>)}
+        {!!task.sharedLessons?.length && <><h3>Together</h3>{task.sharedLessons.map((lesson, index) => <p className="note" key={index}>Lesson needs a product assignment: {lesson.text}</p>)}</>}
       </section>}
+      {!!task.brief?.acceptance.length && <section className="sheet-section reading"><h2>Acceptance checklist</h2><AcceptanceChecklist task={task} roleFor={find.role} /></section>}
       <WhatItUsed task={task} state={state} find={find} onAbout={onAboutNumbers} />
       {task.localUpdate && !task.localUpdate.pushed && <p className="note">{task.localUpdate.branch} was updated in the local copy. Its push to GitHub is unfinished; the work is saved.</p>}
 

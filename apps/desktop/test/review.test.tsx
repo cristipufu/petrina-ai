@@ -5,6 +5,7 @@ import { DesignView } from "../src/components/sheet/DesignTab";
 import { Overview } from "../src/components/sheet/Overview";
 import { ReviewView } from "../src/components/sheet/ReviewTab";
 import { lookup } from "../src/lib";
+import { acceptanceFixture, laterTester } from "./acceptanceFixture";
 
 function checked(votes: Vote[], extra: Partial<Finding> = {}) {
   const state = createDemoState(1_000_000_000);
@@ -149,9 +150,12 @@ it("shows why an acceptance item could not be checked and leaves its box uncheck
       risks: [],
     },
   };
+  task.journey = [{ id: "recorded-test", kind: "agent", roleId: "tester", round: 1, sub: 0, startedAt: 1, endedAt: 2,
+    acceptanceChecks: [{ text: "A real session can write safely", result: "blocked", reason: "The account limit prevented a session." }],
+  }];
   const html = renderToStaticMarkup(<DesignView task={task} find={lookup(state)} />);
   expect(html).toContain("Could not verify · The account limit prevented a session.");
-  expect(html).toContain('class="sr-only">Could not verify: </span>A real session can write safely');
+  expect(html).toContain("Last recorded result: Could not verify");
   expect(html).not.toContain("box on");
 });
 
@@ -176,4 +180,86 @@ describe("check cleanup", () => {
     const html = renderToStaticMarkup(<ReviewView now={state.now} task={task} find={lookup(state)} />);
     expect(html).toContain("Petrina could not confirm every child process stopped. Some may still be running.");
   });
+});
+
+
+it.each([false, true])("Design and Overview separate last recorded results from current verification, later Tester=%s", (later) => {
+  const fixture = acceptanceFixture(true);
+  const { state, task } = fixture;
+  if (later) task.journey = [...task.journey!, laterTester(fixture)];
+  const find = lookup(state);
+  const views = [<DesignView task={task} find={find} />, <Overview task={task} state={state} find={find} onAboutNumbers={() => {}} onReadSession={() => {}} onPlan={() => {}} separateFlow />];
+  for (const view of views) {
+    const html = renderToStaticMarkup(view);
+    expect(html).toContain(later ? "Current version partly verified" : "Current version not verified");
+    expect(html.match(/Last recorded result: Passed/g)).toHaveLength(later ? 24 : 18);
+    expect(html.match(/Last recorded result: Failed/g) ?? []).toHaveLength(later ? 0 : 7);
+    expect(html.match(/box on/g) ?? []).toHaveLength(later ? 24 : 0);
+    expect(html).toContain(later ? "New observation 24" : "Original observation 25");
+    if (later) expect(html).toContain("Last recorded result: Could not verify · Account unavailable");
+  }
+});
+
+it.each(["ready", "done"])("completion never fills unavailable acceptance evidence: %s", (stateName) => {
+  const { state, task } = acceptanceFixture();
+  task.column = "ready";
+  if (stateName === "done") task.state = "done";
+  delete task.journey![0]!.acceptanceChecks;
+  task.acceptancePassed = true;
+  const html = renderToStaticMarkup(<DesignView task={task} find={lookup(state)} />);
+  expect(html).toContain("Current version not verified");
+  expect(html.match(/Last recorded result: Unavailable/g)).toHaveLength(25);
+  expect(html).not.toContain("box on");
+});
+
+
+it("both acceptance summaries show an unchanged single-product version as fully verified", () => {
+  const fixture = acceptanceFixture(true);
+  const { state, task } = fixture;
+  const later = laterTester(fixture);
+  later.acceptanceChecks = later.acceptanceChecks!.map((check) => ({ ...check, result: "pass", evidence: "Successful later probe", reason: undefined }));
+  task.journey = [...task.journey!, later];
+  expect(task.repository).toBeUndefined();
+  const find = lookup(state);
+  for (const view of [<DesignView task={task} find={find} />, <Overview task={task} state={state} find={find} onAboutNumbers={() => {}} onReadSession={() => {}} onPlan={() => {}} separateFlow />]) {
+    const html = renderToStaticMarkup(view);
+    expect(html).toContain("Recorded results apply to the current version");
+    expect(html.match(/box on/g)).toHaveLength(25);
+    expect(html.match(/Current version: Passed/g)).toHaveLength(25);
+    expect(html).not.toContain("Current version not verified");
+  }
+});
+
+it.each([false, true])("shows acceptance that has not run as pending, running=%s", (running) => {
+  const { state, task, tester, base } = acceptanceFixture(true);
+  task.journey = running ? [{ ...base, id: "running-test", kind: "agent", roleId: tester, endedAt: undefined, end: undefined }] : [];
+  const find = lookup(state);
+  for (const view of [<DesignView task={task} find={find} />, <Overview task={task} state={state} find={find} onAboutNumbers={() => {}} onReadSession={() => {}} onPlan={() => {}} separateFlow />]) {
+    const html = renderToStaticMarkup(view);
+    expect(html).toContain(running ? "Acceptance testing in progress" : "Acceptance testing not started");
+    expect(html.match(running ? /Testing in progress/g : /Not tested yet/g)).toHaveLength(25);
+    expect(html).not.toContain("Unavailable");
+    expect(html).not.toContain("box on");
+  }
+});
+
+it.each([false, true])("Overview shows Together only when shared lessons exist, lessons=%s", (lessons) => {
+  const { state, task } = acceptanceFixture();
+  task.repositories = [{ productId: task.productId, delivery: "local", completedStages: [] }, { productId: "second-product", delivery: "local", completedStages: [] }];
+  task.sharedLessons = lessons ? [{ text: "Keep shared behavior consistent", roleId: "builder", profileId: "sol-high", at: state.now }] : [];
+  const html = renderToStaticMarkup(<Overview task={task} state={state} find={lookup(state)} onAboutNumbers={() => {}} onReadSession={() => {}} onPlan={() => {}} separateFlow />);
+  expect(html.includes("<h3>Together</h3>")).toBe(lessons);
+  if (lessons) expect(html).toContain("Keep shared behavior consistent");
+});
+
+
+it("keeps missing acceptance history unavailable instead of saying testing never ran", () => {
+  const { state, task } = acceptanceFixture();
+  delete task.journey;
+  task.state = "done";
+  const html = renderToStaticMarkup(<DesignView task={task} find={lookup(state)} />);
+  expect(html).toContain("Current version not verified");
+  expect(html.match(/Last recorded result: Unavailable/g)).toHaveLength(25);
+  expect(html).not.toContain("Not tested yet");
+  expect(html).not.toContain("box on");
 });

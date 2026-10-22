@@ -1,10 +1,10 @@
 // The task sheet's Design tab: the brief, the architects' objections and how each was settled.
 
 import { useState } from "react";
-import { Check } from "lucide-react";
 import type { Objection, Task } from "@petrina/core";
 import { profileText, type Lookup } from "../../lib";
 import { openFirst } from "./order";
+import { AcceptanceChecklist } from "./AcceptanceChecklist";
 
 export function ObjectionItem({ objection, find }: { objection: Objection; find: Lookup }) {
   const status = objection.status === "open" ? "Open" : objection.status === "accepted" ? "Accepted" : objection.status === "noted" ? "Follow-up" : "Rejected";
@@ -78,25 +78,7 @@ export function DesignView({ task, find }: { task: Task; find: Lookup }) {
           </section>
           <section className="sheet-section reading">
             <h2>Acceptance checklist</h2>
-            <ul className="checks">
-              {brief.acceptance.map((item) => {
-                const met = item.verification === "blocked" ? false : item.met ?? (task.state === "pr-open" || task.state === "done" || task.column === "ready");
-                return (
-                  <li key={item.text} className="check">
-                    <span className={`box ${met ? "on" : ""}`} aria-hidden="true">
-                      {met && <Check size={12} strokeWidth={3} />}
-                    </span>
-                    <span>
-                      <span className="sr-only">{item.verification === "blocked" ? "Could not verify: " : met ? "Met: " : "Not met yet: "}</span>
-                      {item.text}
-                      {item.verification === "blocked" && (
-                        <span className="check-unverified">Could not verify{item.reason ? ` · ${item.reason}` : ""}</span>
-                      )}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+            <AcceptanceChecklist task={task} roleFor={find.role} />
           </section>
           {brief.risks.length > 0 && (
             <section className="sheet-section reading">
