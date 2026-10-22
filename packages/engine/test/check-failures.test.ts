@@ -431,25 +431,28 @@ describe.concurrent("failed checks are evidence until something changes", () => 
     }
   });
 
-  it("keeps a forced delivery decision and the coordinator's explicit Retry when automatic returns are used up", async () => {
+  it("keeps a forced check decision and allows explicit reruns without approving delivery or replenishing repairs", async () => {
     const f = await fixture(false);
     try {
       const blocked = await f.delivery();
       expect(f.runs()).toEqual(["failed"]);
       expect(blocked.stageIndex).toBe(reviewStage(blocked));
       // This task normally delivers without asking. Failed checks still bring it to the coordinator.
-      f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
-      let state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "failed", coordinator(["plan"]));
-      expect(taskOf(state, f.taskId).error).toContain("checks fail");
+      const decision = itemOf(f.engine.getState(), f.taskId, "delivery")!.id;
+      expect(() => f.engine.approve(decision)).toThrow("delivery has not been approved");
+      expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.id).toBe(decision);
       expect(f.runs()).toEqual(["failed"]);
 
-      f.engine.retry(itemOf(state, f.taskId, "stuck")!.id);
-      state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "failed", coordinator(["plan"]));
+      f.engine.rerunChecks(decision);
+      const failed = await f.delivery();
       expect(f.runs()).toEqual(["failed", "failed"]);
-      expect(taskOf(state, f.taskId).checks!.results[0]!.output).toContain("captured failure");
+      expect(failed.checks!.results[0]!.output).toContain("captured failure");
+      expect(failed.checkReturns).toBe(2);
+      expect(failed.approvedSha).toBeUndefined();
+      expect(failed.error).toBeUndefined();
 
       f.setCheck("--pass");
-      f.engine.retry(itemOf(state, f.taskId, "stuck")!.id);
+      f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
       await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       expect(f.runs()).toEqual(["failed", "failed", "passed"]);
       // The passing run continued at the review the checks had held back; nothing shipped unreviewed.

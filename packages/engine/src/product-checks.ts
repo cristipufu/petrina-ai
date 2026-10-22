@@ -725,14 +725,9 @@ export class ProductChecks {
   /**
    * The automatic returns of this failure episode are used up. The task waits at the step these checks guard
    * (a pending review round keeps its number), and the coordinator gets a check problem: asking for changes
-   * gives the Builder one more turn, and approving never ships failing checks. Without a delivery check to ask
-   * again, an approval stops the task for Retry instead.
+   * gives the Builder one more turn. Approval is refused; an explicit rerun keeps the same repair allowance.
    */
   blocked(task: MTask): "stop" {
-    const stages = task.plan?.stages ?? [];
-    if (!stages.some((stage) => stage.kind === "gate" && stage.gate === "delivery") && scopesFor(task).some(({ work }) => work.approvedFor?.by === "coordinator")) {
-      throw new Error("The product's checks fail, and approving does not ship failing checks. Retry runs them again; a pass continues where the task stopped.");
-    }
     const problem = this.checkProblem(task);
     this.k.log(task, "warn", problem.line);
     this.k.gate(task, "delivery", undefined, problem);

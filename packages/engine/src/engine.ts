@@ -930,9 +930,11 @@ export class Engine extends Kernel implements Commands {
 
   /** Explicit fresh verification, with no delivery approval and no new automatic repair allowance. */
   rerunChecks(itemId: Id): void {
-    const item = this.s.inbox.find((entry) => entry.id === itemId && entry.kind === "delivery");
+    const item = this.s.inbox.find((entry) => entry.id === itemId);
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
+    if (item.kind !== "delivery") throw new Error("Run checks again is only available for a delivery check problem.");
+    if (!library.checkProblem({ repositories: task.repositories, checks: executionFor(task).work.checks })) throw new Error("This delivery has no failed or unverified product checks to rerun.");
     this.takeover.notDrivingItem(itemId);
     this.takeItem(itemId);
     for (const { work } of scopesFor(task)) {

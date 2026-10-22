@@ -1,5 +1,5 @@
 import { messageRemovalText } from "@petrina/core";
-import { displayTask } from "@petrina/core";
+import { checkProblem, displayTask } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSteps, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
@@ -145,7 +145,7 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
       : {}),
   });
 }
-const decisions = (kind: string) =>
+const decisions = (kind: string, task?: Pick<Task, "repositories" | "checks">) =>
   kind === "question"
     ? ["inbox.answer"]
     : kind === "permission"
@@ -160,6 +160,8 @@ const decisions = (kind: string) =>
               ? ["learning.accept", "learning.decline"]
               : kind === "guide"
                 ? ["review-guide.accept", "review-guide.decline"]
+                : kind === "delivery" && task && checkProblem(task)
+                  ? ["inbox.rerun-checks", "inbox.changes"]
                 : ["plan", "design", "delivery", "disagreement"].includes(kind)
                   ? ["inbox.approve", "inbox.changes"]
                   : [];
@@ -409,7 +411,7 @@ export class Coordination {
         },
         a,
         [name, item.id, revision],
-        { itemId: item.id, kind: item.kind, revision, decisions: decisions(item.kind), recommendation: item.options?.[0] ?? null, choices: item.options ?? [] },
+        { itemId: item.id, kind: item.kind, revision, decisions: decisions(item.kind, t), recommendation: item.options?.[0] ?? null, choices: item.options ?? [] },
       );
     }
     if (name === "product.list")
@@ -499,12 +501,12 @@ export class Coordination {
           outcome: e.store.handled(a.itemId) ? "handled" : "missing",
           message: e.store.handled(a.itemId) ? "That request was already handled." : "That request does not exist.",
         };
-      if (!decisions(item.kind).includes(name)) return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
       const itemTask = e.task(item.taskId);
       if (!itemTask || (["learnings", "guide"].includes(item.kind) && !e.productOf(itemTask)))
         return { outcome: "missing", message: "This request's task or product is no longer available." };
       if (requestRevision(e, item as InboxItem) !== a.revision)
         return { outcome: "changed", message: "The request changed. Inspect it again before deciding." };
+      if (!decisions(item.kind, { repositories: itemTask.repositories, checks: executionFor(itemTask).work.checks }).includes(name)) return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
       switch (name) {
         case "inbox.answer":
           e.answer(a.itemId, a.answer, { clientId: a.requestId });
@@ -520,6 +522,9 @@ export class Coordination {
           break;
         case "inbox.changes":
           e.requestChanges(a.itemId, a.note);
+          break;
+        case "inbox.rerun-checks":
+          e.rerunChecks(a.itemId);
           break;
         case "inbox.retry":
           return e

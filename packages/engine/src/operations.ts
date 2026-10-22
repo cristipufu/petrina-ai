@@ -205,6 +205,7 @@ export const OPERATIONS = [
     { ...decision, note: text.max(4000) },
     true,
   ),
+  op("inbox.rerun-checks", "Run failed or unverified product checks afresh at the inspected decision. Approves no delivery and grants no automatic repair returns. Reuse the request reference after a lost reply.", decision, true),
   op("inbox.retry", "Retry the inspected stuck item, including existing tool-readiness checks. Cannot approve checkpoints.", decision, true),
   op(
     "inbox.recovery",

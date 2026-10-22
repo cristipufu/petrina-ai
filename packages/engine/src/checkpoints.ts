@@ -1,5 +1,5 @@
 // Coordinator checkpoint decisions. Validation precedes removal; state and recovery stay atomic.
-import { afterChangesAsked, CALL_WORDS, endYouStep, JOURNEY_WORDS as W, repositoryPublished, type Id } from "@petrina/core";
+import { afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, repositoryPublished, type Id } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import { executionFor, scopesFor } from "./repository-context.js";
 import { beginRepair } from "./repositories.js";
@@ -16,6 +16,9 @@ export class Checkpoints {
     if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
     const pending = this.k.s.inbox.find((entry) => entry.id === itemId);
     const pendingTask = pending && this.k.task(pending.taskId);
+    if (pending?.kind === "delivery" && pendingTask && checkProblem({ repositories: pendingTask.repositories, checks: executionFor(pendingTask).work.checks })) {
+      throw new Error("The product's checks are failing or unverified. Run the checks again or ask for changes; delivery has not been approved.");
+    }
     if (pending?.kind === "plan" && pendingTask) this.sources.confirm(pendingTask);
     const item = this.k.takeItem(itemId);
     const task = item && this.k.task(item.taskId);
