@@ -1,5 +1,4 @@
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
-import { setDefaultTimeout } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -42,10 +41,6 @@ function busy(): number {
   const ratio = (load ?? 0) / Math.max(1, cpus().length);
   return Math.min(8, Math.max(1, Math.ceil(1 + Math.max(0, ratio - 0.75) * 4)));
 }
-// Bun's per-test deadline is fixed when a test starts, while SLOW can grow as concurrent workers
-// make the machine busier. Give it the full documented cap so the adaptive waits below, rather
-// than a stale startup sample, decide when a slow process test has really stopped making progress.
-setDefaultTimeout(90_000 * 8);
 
 export const CLI = join(import.meta.dir, "../src/cli.ts");
 export const HARNESS = join(import.meta.dir, "harness.ts");

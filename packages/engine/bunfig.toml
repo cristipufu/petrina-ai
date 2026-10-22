@@ -1,3 +1,0 @@
-[test]
-# Tests drive real agent processes and git: a run of one file gets the same time as the suite.
-timeout = 90000

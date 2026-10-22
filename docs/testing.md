@@ -35,6 +35,20 @@ bun run --cwd apps/desktop test test/name.test.tsx -t 'test name'
 
 Core stops at the first failure; filter by name to investigate later cases. Core modules have no runtime dependencies: diagnostic scripts can import their source by absolute path without the whole suite. Keep those scripts, their working directory and `TMPDIR` in an uncrowded home folder on this Mac; moving just one leaves Bun's startup delay. Use the command tool's deadline; this Mac has no `timeout` program.
 
+## Engine test time limits
+
+Run engine tests through the runner, as above: `test/run.ts` owns their fallback limit. It passes Bun `--timeout=720000` (twelve minutes) before your options, because Bun fixes a test's limit when it starts while fixture waits stretch up to eight times as the machine gets busier. Bun uses the last `--timeout`, written `--timeout 30000` or `--timeout=30000`, so a limit you pass replaces the fallback. A test's own limit, `it(name, fn, ms)`, beats both, shorter or longer. Bun ignores a `timeout` in `bunfig.toml`. Direct `bun test` without the runner, a `--timeout` or a test's own limit stops each test after Bun's five-second default, whatever helpers it imports; pass `--timeout` when a direct run needs longer.
+
+Shared helpers never set limits: a `setDefaultTimeout` in an imported helper replaces an explicit `--timeout`, and in one Bun process only for the first file that loads it, so the limit would depend on imports and file order.
+
+For a bounded focused diagnostic, give each test an explicit short limit and also bound the whole command outside Bun:
+
+```sh
+bun run --cwd packages/engine test test/name.test.ts -t 'test name' --timeout=30000
+```
+
+Run it under the command tool's execution deadline, normally two minutes. Bun's limit stops only a running test: it does not cover slow startup, a stuck or CPU-starved process, or a test with its own longer limit. A test that Bun reports as "timed out after 30000ms" is that test's result; a command stopped by the outer deadline is an incomplete check. Confirm the processes it started have stopped before trying again.
+
 ## Affected-test observation
 
 `bun run test:impact [base-ref]` reports candidates from the current import/export graph, including changed tests and transitive dependents. The default base is the locally available `origin/main`; no network fetch or test execution occurs. Full runs use `PETRINA_TEST_BASE` when supplied. The report records the resolved base, HEAD and a content fingerprint of current inputs, including uncommitted files. Deleted or unmapped files, shared fixtures, configuration, dependencies, runner changes and unknown mappings conservatively select the full suite. Unresolved or computed imports include all their known test consumers. Invalid or unavailable Git information in the full runner falls back to the full suite.
@@ -65,7 +79,7 @@ Selection remains in observation mode until representative changes and full-run 
 - Change a running fake GitHub through its shared update helper, so simultaneous readers retain one consistent answer.
 - Pass `testGitEnv()` explicitly to test-owned Git child processes; environment cleanup alone does not remove inherited push protections.
 - After local delivery the working copy may be removed. Read the delivered commit from the product clone using the task branch.
-- Engine helpers can be imported by standalone Bun diagnostics outside the checkout. Do not register test-runner-only hooks at import time in those helpers.
+- Engine helpers can be imported by standalone Bun diagnostics outside the checkout. Do not register test-runner-only hooks, such as time limits, at import time in those helpers.
 - With asymmetric matchers, Bun's `toMatchObject` can overwrite checked fields. Use `toEqual`, or check a copy.
 - For rejected operations use `expectRejection` or `rejectionOf` from `test/rejections.ts`. These await ordinary Promises before asserting; Bun's `.rejects`/`.resolves` matchers re-enter the I/O dispatcher and can lose subprocess or pipe notifications ([upstream issue](https://github.com/oven-sh/bun/issues/33261)). Keep the same error, message and type assertions.
 - Derive verifier counts from the ready tools; do not assume two voters.
