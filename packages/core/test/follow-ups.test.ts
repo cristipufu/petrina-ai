@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDemo, createPortfolioDemo } from "../src/demo.js";
-import { followUpBlock, followUpKey, noteReviewTag, planFollowUps, type FollowUpCandidate, type FollowUpSnapshot, type MatchAnswer, type MatchAsk, type OpenFollowUp } from "../src/follow-ups.js";
+import { followUpBlock, followUpKey, followUpSnapshot, noteReviewTag, planFollowUps, type FollowUpCandidate, type FollowUpSnapshot, type MatchAnswer, type MatchAsk, type OpenFollowUp } from "../src/follow-ups.js";
 
 function report(partial: Partial<FollowUpCandidate> & Pick<FollowUpCandidate, "taskId" | "findingId" | "text">): FollowUpCandidate {
   return {
@@ -35,6 +35,22 @@ async function plan(snapshot: FollowUpSnapshot, answer: MatchAnswer | ((asked: r
 }
 
 describe("confirmed older bugs", async () => {
+  it("shows a card's current request rather than an immutable obsolete report", () => {
+    const original = createDemo(1_000_000_000).state.tasks[0]!;
+    const task = JSON.parse(JSON.stringify(original)) as typeof original;
+    Object.assign(task, { state: "backlog", kind: "bug", title: "Current remaining defect", description: "The coordinator's current reproduction", followUp: { reports: [{ taskId: "source", findingId: "old", text: "The already repaired original defect", productIds: [task.productId] }] } });
+    const snapshot = followUpSnapshot([task]);
+    expect(snapshot.cards[0]?.problem).toBe("The coordinator's current reproduction");
+    expect(snapshot.cards[0]?.reportKeys).toEqual(["source::old"]);
+  });
+
+  it("does not link a fixed-scope manual bug to a report for a different product set", async () => {
+    const manual = card({ id: "manual", fixedProducts: true, productIds: ["shop"] });
+    const multi = report({ taskId: "source", findingId: "both", text: "A distinct shared bug", productIds: ["shop", "notes"] });
+    const result = await plan(snap([multi], { cards: [manual] }), { groups: [{ keys: [multi.key], cardId: manual.id }] });
+    expect(result.linked).toEqual([]);
+    expect(result.created).toHaveLength(1);
+  });
   it("opens one backlog card for one confirmed report and skips nits, checks and unfinished work", async () => {
     expect(followUpBlock({ text: "Old", status: "open", severity: "pre-existing", raisedBy: "opus-high", steps: "Look", evidence: "It was already wrong." })).toBeUndefined();
     expect(followUpBlock({ text: "Old", status: "open", severity: "pre-existing", raisedBy: "opus-high", evidence: "It was already wrong." })).toBe("missing-steps");

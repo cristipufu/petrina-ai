@@ -75,6 +75,8 @@ export interface OpenFollowUp {
   title: string;
   problem: string;
   reportKeys: readonly string[];
+  /** Coordinator-created requests cannot acquire a different product scope through matching. */
+  fixedProducts?: boolean;
 }
 
 export interface FollowUpSnapshot {
@@ -137,6 +139,10 @@ function overlaps(left: readonly Id[], right: readonly Id[]): boolean {
   return left.some((id) => right.includes(id));
 }
 
+function fitsCard(card: OpenFollowUp, report: Pick<FollowUpCandidate, "productIds">): boolean {
+  return !card.fixedProducts || (card.productIds.length === report.productIds.length && card.productIds.every(id => report.productIds.includes(id)));
+}
+
 /** Evidence that the change left the bug as it was. Checker reasons count once a vote settles it as older. */
 export function olderEvidence(finding: Pick<Finding, "evidence" | "verification" | "votes">): string {
   if (finding.verification?.verdict === "pre-existing") {
@@ -194,14 +200,15 @@ export function followUpSnapshot(tasks: readonly Task[], pending: readonly { key
   const keptImages: { cardId: Id; sourceTaskId: Id; sourceImageId: string }[] = [];
   const releases: { taskId: Id; findingId: Id; cardId: Id }[] = [];
   for (const task of tasks) {
-    if (task.followUp) {
+    if (task.followUp || (task.state === "backlog" && task.kind === "bug" && productsOn(task).length)) {
       cards.push({
         id: task.id,
         phase: cardPhase(task.state),
-        productIds: [...new Set([...productsOn(task), ...task.followUp.reports.flatMap((report) => report.productIds)])],
+        productIds: [...new Set([...productsOn(task), ...(!task.followUp || task.followUp.preserveRequest ? [] : task.followUp.reports.flatMap((report) => report.productIds))])],
         title: task.title,
-        problem: task.followUp.reports[0]?.text ?? task.title,
-        reportKeys: task.followUp.reports.map((report) => followUpKey(report.taskId, report.findingId)),
+        problem: task.description.trim() || task.title,
+        reportKeys: task.followUp?.reports.map((report) => followUpKey(report.taskId, report.findingId)) ?? [],
+        ...(!task.followUp || task.followUp.preserveRequest ? { fixedProducts: true } : {}),
       });
       for (const line of task.session) for (const image of line.images ?? []) {
         if (image.from) keptImages.push({ cardId: task.id, sourceTaskId: image.from.taskId, sourceImageId: image.from.imageId });
@@ -244,7 +251,7 @@ export function followUpSnapshot(tasks: readonly Task[], pending: readonly { key
 /** Open follow-up cards a reviewer of these products can point at. Bounded, and only cards still open. */
 export function openFollowUpCards(tasks: readonly Task[], productIds: readonly Id[]): { id: Id; title: string; problem: string; productIds: readonly Id[] }[] {
   return followUpSnapshot(tasks).cards
-    .filter((card) => card.phase !== "closed" && overlaps(card.productIds, productIds))
+    .filter((card) => card.phase !== "closed" && fitsCard(card, { productIds }) && overlaps(card.productIds, productIds))
     .slice(0, 20)
     .map((card) => ({ id: card.id, title: card.title, problem: card.problem, productIds: card.productIds }));
 }
@@ -259,7 +266,7 @@ export function followUpDescription(reports: readonly FollowUpCredit[], productN
     report.text,
     `How to see it again: ${report.steps}`,
     `Why the change left it as it was: ${report.evidence}`,
-    report.reasons?.length ? `Checked as older: ${report.reasons.join(" ")}` : "",
+    report.reasons?.some(reason => !report.evidence.includes(reason)) ? `Checked as older: ${[...new Set(report.reasons.filter(reason => !report.evidence.includes(reason)))].join(" ")}` : "",
     `Found on ${report.sourceTitle}.`,
   ].filter(Boolean).join("\n")).join("\n\n");
   return [body, productNames.length ? `Products: ${productNames.join(", ")}` : ""].filter(Boolean).join("\n\n");
@@ -309,6 +316,7 @@ function pictureKey(image: { sourceTaskId: string; sourceImageId: string }): str
 
 function remember(working: Working, cardId: Id, reports: readonly FollowUpCandidate[], snapshot: FollowUpSnapshot, phase: OpenFollowUp["phase"]): void {
   const card = snapshot.cards.find((entry) => entry.id === cardId);
+  reports = reports.filter(report => !card || fitsCard(card, report));
   const already = new Set(card?.reportKeys ?? []);
   const keptIds = new Set(snapshot.keptImages.filter((image) => image.cardId === cardId).map(pictureKey));
   const pictureMissing = (report: FollowUpCandidate) => report.images.some((image) => !keptIds.has(pictureKey(image)));
@@ -409,7 +417,7 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
     if (report.block === "skip") continue;
     const shown = report.cardsShown ?? [];
     const named = report.sameBug && report.sameBug !== "none" ? snapshot.cards.find((card) => card.id === report.sameBug) : undefined;
-    const pointed = named && named.phase !== "closed" && shown.includes(named.id) ? named : undefined;
+    const pointed = named && named.phase !== "closed" && shown.includes(named.id) && fitsCard(named, report) ? named : undefined;
     // Cards were shown and this report did not pick one. A card that has since finished is not a refusal.
     if (shown.length && !pointed && report.sameBug !== "none" && !(named && named.phase === "closed")) {
       if (report.sourceDone) track(working, report, { reason: "no-choice" });
@@ -434,7 +442,7 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
   const comparable = (report: FollowUpCandidate, peers: readonly FollowUpCandidate[], cards: readonly OpenFollowUp[]) => {
     const banned = new Set(excluded.get(report.key) ?? []);
     return peers.some((other) => other.key !== report.key && overlaps(other.productIds, report.productIds))
-      || cards.some((entry) => entry.phase !== "closed" && !banned.has(entry.id) && overlaps(entry.productIds, report.productIds));
+      || cards.some((entry) => entry.phase !== "closed" && !banned.has(entry.id) && fitsCard(entry, report) && overlaps(entry.productIds, report.productIds));
   };
   // A report with nothing to compare it with is one card. One that has rivals stays for the matcher, even past the cap.
   const deferred = new Set<string>();
@@ -460,7 +468,7 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
       for (const report of pool) if (report.sourceDone && !report.block) openNew(working, [report]);
       break;
     }
-    const relevant = cardsNow.filter((card) => askReports.some((report) => overlaps(card.productIds, report.productIds) && !(excluded.get(report.key) ?? []).includes(card.id)) && !askReports.every((report) => (excluded.get(report.key) ?? []).includes(card.id)));
+    const relevant = cardsNow.filter((card) => askReports.some((report) => fitsCard(card, report) && overlaps(card.productIds, report.productIds) && !(excluded.get(report.key) ?? []).includes(card.id)) && !askReports.every((report) => (excluded.get(report.key) ?? []).includes(card.id)));
     let pending = askReports;
     let page = 0;
     let stopped = false;

@@ -241,6 +241,7 @@ export function formatFindings(findings: readonly Finding[], options: { complete
         `- [${finding.id}] ${FINDING_TAG[finding.severity]} (${finding.status}): ${finding.text}${finding.where ? ` at ${finding.where}` : ""}`,
         finding.verification ? `  Verified by a fresh agent: ${finding.verification.verdict}. ${finding.verification.reason}` : "",
         finding.answer ? `  The builder: ${finding.answer.fixed ? "fixed" : "not fixed"}. ${finding.answer.text}` : "",
+        finding.resolution ? `  Repair verified by ${finding.resolution.by}: ${finding.resolution.evidence}` : "",
       ]
         .filter(Boolean)
         .join("\n");
@@ -260,6 +261,7 @@ export function formatFindings(findings: readonly Finding[], options: { complete
           `    Confirmed by: ${entry.confirmedBy.join(", ") || "none"}`,
           entry.verification ? `    Verification: ${entry.verification.verdict}. ${entry.verification.reason}` : "",
           entry.answer ? `    Builder: ${entry.answer.fixed ? "fixed" : "not fixed"}. ${entry.answer.text}` : "",
+          entry.resolution ? `    Repair verified by ${entry.resolution.by}: ${entry.resolution.evidence}` : "",
           ...(entry.disputes ?? []).map((dispute) => `    Disputed by ${dispute.by}: ${dispute.reason}`),
           ...(entry.votes ?? []).map((vote) => `    Vote by ${vote.by} (${vote.toolId ?? "tool not reported"}): ${vote.verdict}. ${vote.reason}`),
         ].filter(Boolean).join("\n")}`),

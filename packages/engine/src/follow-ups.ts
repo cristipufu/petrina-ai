@@ -6,7 +6,7 @@ import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
-import { createTaskState, findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, type AgentProfile, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type MatchAnswer, type MatchAsk, type ReportImage, type Task } from "@petrina/core";
+import { createTaskState, findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, productsOn, type AgentProfile, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type MatchAnswer, type MatchAsk, type ReportImage, type Task } from "@petrina/core";
 import { completeAll } from "./parallel.js";
 import { AgentRun } from "./acp-run.js";
 import type { Kernel, MTask } from "./kernel.js";
@@ -137,7 +137,9 @@ export class FollowUps {
         const reports = link.reports.filter((report) => this.stillOlder(followUpKey(report.taskId, report.findingId)));
         const keys = link.keys.filter((key) => reports.some((report) => followUpKey(report.taskId, report.findingId) === key));
         if (!reports.length) continue;
-        const open = !!live?.followUp && live.state !== "done" && live.state !== "cancelled";
+        const scope = live ? productsOn(live) : [];
+        const sameScope = live && (!live.followUp || live.followUp.preserveRequest) ? reports.every(report => report.productIds.length === scope.length && scope.every(id => report.productIds.includes(id))) : true;
+        const open = sameScope && !!live && (live.followUp || (live.state === "backlog" && live.kind === "bug")) && live.state !== "done" && live.state !== "cancelled";
         const card = open ? live! : this.cardAfterClose({ ...link, reports, keys });
         if (open) this.applyLink(card, { ...link, reports, keys });
         await this.copyThenTrack(card, reports, keys, card.id, picturesPending);
@@ -193,14 +195,14 @@ export class FollowUps {
       if (dropped && reports.length && reports.length !== before.length) {
         const still = new Set(reports.flatMap((report) => report.productIds));
         const only = dropped.productIds.filter((id) => !still.has(id));
-        if (card.state === "backlog" && only.length) {
+        if (card.state === "backlog" && only.length && !card.followUp.preserveRequest) {
           card.selectedProducts = (card.selectedProducts ?? []).filter((choice) => !only.includes(choice.productId));
           if ((card.selectedProducts ?? []).length === 1) card.approvePlan = false;
         }
         const also = (card.followUp.alsoReported ?? []).filter((id) => !only.includes(id));
         const auto = followUpDescription(before.map(asCredit), this.productNames([...new Set(before.flatMap((report) => report.productIds))]));
-        const rewrite = card.description === auto;
-        card.followUp = { reports, ...(also.length ? { alsoReported: also } : {}) };
+        const rewrite = !card.followUp.preserveRequest && card.description === auto;
+        card.followUp = { ...card.followUp, reports, alsoReported: also.length ? also : undefined };
         if (task && finding) this.dropPictures(card, task, finding);
         if (rewrite) {
           const names = this.productNames((card.selectedProducts ?? []).map((choice) => choice.productId));
@@ -208,7 +210,7 @@ export class FollowUps {
         }
       } else if (reports.length !== before.length) {
         const also = card.followUp.alsoReported;
-        card.followUp = { reports, ...(also?.length ? { alsoReported: [...also] } : {}) };
+        card.followUp = { ...card.followUp, reports, alsoReported: also?.length ? [...also] : undefined };
       }
     }
     if (!task || !finding?.tracking || !("taskId" in finding.tracking) || finding.tracking.taskId !== release.cardId) return;
@@ -379,7 +381,11 @@ export class FollowUps {
   }
 
   private applyLink(card: MTask, link: FollowUpLink): void {
-    if (!card.followUp || card.state === "done" || card.state === "cancelled") return;
+    if (card.state === "done" || card.state === "cancelled") return;
+    if (!card.followUp) {
+      if (card.state !== "backlog" || card.kind !== "bug") return;
+      card.followUp = { reports: [], preserveRequest: true };
+    }
     const reports = [...card.followUp.reports];
     for (const report of link.reports) {
       if (!reports.some((entry) => entry.taskId === report.taskId && entry.findingId === report.findingId)) reports.push(stored(report));
@@ -391,10 +397,10 @@ export class FollowUps {
       ...card.followUp.reports.flatMap((report) => report.productIds),
     ]);
     const extra = [...new Set(link.reports.flatMap((report) => report.productIds))].filter((id) => id.length > 0 && !covered.has(id));
-    if (card.state !== "backlog") {
+    if (card.state !== "backlog" || card.followUp.preserveRequest) {
       const also = [...(card.followUp.alsoReported ?? [])];
       for (const id of extra) if (!also.includes(id)) also.push(id);
-      card.followUp = { reports, ...(also.length ? { alsoReported: also } : {}) };
+      card.followUp = { ...card.followUp, reports, alsoReported: also.length ? also : undefined };
       return;
     }
     const selected = [...(card.selectedProducts ?? [])];
@@ -407,7 +413,7 @@ export class FollowUps {
     card.selectedProducts = selected;
     if (selected.length !== 1) card.approvePlan = true;
     const also = card.followUp.alsoReported;
-    card.followUp = { reports, ...(also?.length ? { alsoReported: [...also] } : {}) };
+    card.followUp = { ...card.followUp, reports, alsoReported: also?.length ? [...also] : undefined };
   }
 
   /** Copy every picture, then mark the finding tracked. A refused copy stays pending and is not tracked. */

@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { ReviewResult } from "../src/roles.js";
+import { checkReviewEvidence } from "../src/review.js";
+import * as gitOps from "../src/git.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
@@ -117,6 +119,101 @@ async function finish(engine: Engine, task: ReturnType<Engine["task"]> & object)
 function cards(engine: Engine) {
   return engine.s.tasks.filter((task) => task.followUp);
 }
+
+it("reuses a coordinator's Backlog bug with current wording, preserving its request, products and links through restart", async () => {
+  const world = await open(groupByBug, true);
+  try {
+    const engine = world.engine;
+    const id = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-manual: Fix the remaining variant", description: "Current request, edited by the coordinator.", backlog: true });
+    const manual = engine.task(id)!;
+    const unrelated = engine.addTask({ productId: world.notes, kind: "bug", title: "bug-manual: Separate product", description: "Another scope", backlog: true });
+    const feature = engine.addTask({ productId: world.shop, title: "bug-manual: A feature", description: "Do not turn features into bug follow-ups", backlog: true });
+    const source = taskOf(engine, world.shop, "Report the remaining issue", [older("remaining", "bug-manual: A confirmed current defect")]);
+    await finish(engine, source);
+    expect(source.findings[0]!.tracking).toEqual({ taskId: id });
+    expect(manual.followUp?.preserveRequest).toBe(true);
+    expect(manual.description).toBe("Current request, edited by the coordinator.");
+    expect(manual.followUp?.reports).toHaveLength(1);
+    expect(manual.state).toBe("backlog");
+    expect(engine.task(unrelated)!.followUp).toBeUndefined();
+    expect(engine.task(feature)!.followUp).toBeUndefined();
+    expect(world.prompts[0]).toContain("Current request, edited by the coordinator.");
+    await reopen(world);
+    expect(world.engine.task(id)!.followUp?.reports).toHaveLength(1);
+    // A withdrawn source credit cannot rewrite a coordinator-created request or its products.
+    const loaded = world.engine.task(source.id)!;
+    loaded.findings[0]!.status = "fixed";
+    world.engine.saveArchivedTask(loaded);
+    world.engine.s.followUpPending = [{ keys: [followUpKey(source.id, "remaining")], cardId: id }];
+    await world.engine["followUps"].catchUp();
+    expect(world.engine.task(id)!.description).toBe("Current request, edited by the coordinator.");
+    expect(world.engine.task(id)!.productId).toBe(world.shop);
+    expect(world.engine.task(id)!.followUp?.reports).toHaveLength(0);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("settles an incidental older-bug repair only from current explicit proof, retaining unknown and contested reports", async () => {
+  const world = await open();
+  try {
+    const engine = world.engine;
+    const task = taskOf(engine, world.shop, "Incidental repair", [older("fixed", "bug-fixed: A repaired bug"), older("unknown", "bug-unknown: Not checked"), older("contested", "bug-contested: Still broken")]);
+    task.plan = { rationale: "Review current evidence", plannerProfileId: "sol-high", stages: [STAGE] }; task.stageIndex = 0;
+    const work = executionFor(task).work;
+    work.worktree = engine.productOf(task)!.path!;
+    work.baseSha = await gitOps.head(work.worktree);
+    work.base = "main";
+    task.hunt = { stageId: STAGE.id, round: 1, reported: {}, findings: 3 };
+    await engine["reviews"]["input"](task, new AbortController().signal);
+    const evidence = "Repeated the exact original reproduction on the current commit; About now opens the current page, and the neighbouring Home control still passes.";
+    const resolved = ReviewResult.parse({ verdict: "pass", findings: [{ text: "bug-remaining: A distinct remaining variant", severity: "pre-existing", steps: STEPS, evidence: EVIDENCE }], resolves: [{ id: "fixed", evidence }, { id: "contested", evidence }] });
+    expect(checkReviewEvidence(task.findings, resolved)).toBeUndefined();
+    expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "pass", resolves: [{ id: "not-shown", evidence }] }))).toContain("not shown");
+    expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "pass", resolves: [{ id: "fixed", evidence }], confirms: ["fixed"] }))).toContain("without also");
+    await engine["reviews"]["applyReview"](executionFor(task), STAGE, resolved, "opus-high", "code-reviewer", "0");
+    task.hunt.reported["0"] = true;
+    engine["reviews"]["settleReviews"](task, STAGE);
+    expect(task.findings[0]!.status).toBe("open"); // The blind peer has not finished.
+    await engine["reviews"]["applyReview"](executionFor(task), STAGE, ReviewResult.parse({ verdict: "pass", confirms: [{ id: "contested", evidence: "Current reproduction still fails for the other account." }] }), "sol-high", "code-reviewer", "1");
+    task.hunt.reported["1"] = true;
+    const input = task.hunt.input;
+    delete task.hunt.input;
+    engine["reviews"]["settleReviews"](task, STAGE);
+    expect(task.findings[0]!.status).toBe("open"); // No code binding is not proof.
+    task.hunt.input = input;
+    engine["reviews"]["settleReviews"](task, STAGE);
+    expect(task.findings.map(finding => finding.status)).toEqual(["fixed", "open", "open", "open"]);
+    expect(task.findings[0]!.resolution).toMatchObject({ by: "opus-high", evidence, versions: { [world.shop]: work.baseSha } });
+    await finish(engine, task);
+    expect(task.findings[0]!.tracking).toBeUndefined();
+    expect(task.findings[1]!.tracking).toHaveProperty("taskId");
+    expect(task.findings[2]!.tracking).toHaveProperty("taskId");
+    expect(cardFor(engine, "remaining")[0]!.title).toBe("bug-remaining: A distinct remaining variant");
+    // A later current reproduction reopens the original identity and retains its repair proof as history.
+    task.hunt = { stageId: STAGE.id, round: 2, reported: {}, findings: 3 };
+    await engine["reviews"]["applyReview"](executionFor(task), STAGE, ReviewResult.parse({ verdict: "fail", confirms: [{ id: "fixed", evidence: "The exact reproduction fails again on a later commit." }] }), "sol-high", "code-reviewer", "1");
+    expect(task.findings[0]!.status).toBe("open");
+    expect(task.findings[0]!.resolution).toBeUndefined();
+    expect(task.findings[0]!.earlierReviews?.at(-1)?.resolution?.evidence).toBe(evidence);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("does not attach reports to a manual bug that was queued while matching", async () => {
+  let queue = () => {};
+  const world = await open(prompt => { queue(); return groupByBug(prompt); });
+  try {
+    const engine = world.engine;
+    const id = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-race: Existing manual bug", description: "Do not change this queued request", backlog: true });
+    queue = () => { queue = () => {}; engine.queueTask(id); };
+    const source = taskOf(engine, world.shop, "New sighting", [older("race", "bug-race: The same underlying bug")]);
+    await finish(engine, source);
+    expect(engine.task(id)!.state).toBe("queued");
+    expect(engine.task(id)!.followUp).toBeUndefined();
+    expect(engine.task(id)!.description).toBe("Do not change this queued request");
+    expect(source.findings[0]!.tracking).toHaveProperty("taskId");
+    expect(source.findings[0]!.tracking).not.toEqual({ taskId: id });
+    expect(cards(engine)).toHaveLength(1);
+  } finally { await world.engine.shutdown(); }
+});
 
 function cardFor(engine: Engine, bug: string) {
   return cards(engine).filter((task) => task.title.startsWith(`bug-${bug}`));
@@ -529,7 +626,7 @@ it("keeps independent classifications separate and requires explicit identity fo
     const task = taskOf(engine, world.shop, "Checked as older", [settled]);
     await finish(engine, task);
     expect(cardFor(engine, "clash")).toHaveLength(1);
-    expect(cardFor(engine, "clash")[0]!.description).toContain("Checked as older:");
+    expect(cardFor(engine, "clash")[0]!.description.match(/The footer was already wrong before this change\./g)).toHaveLength(1);
     expect(cardFor(engine, "clash")[0]!.description).toContain(settled.verification!.reason);
     expect(cardFor(engine, "clash")[0]!.description).toContain(settled.votes![0]!.reason);
     const thin = taskOf(engine, world.shop, "No steps", [older("thin", "bug-thin: The footer opens a retired page.", { steps: undefined, evidence: undefined, verification: settled.verification, votes: settled.votes })]);

@@ -54,8 +54,10 @@ function needsCurrentEvidence(finding: Finding): boolean {
 
 /** Closed findings are judged again only from current reproductions, never unexplained old ids. */
 export function checkReviewEvidence(findings: readonly Finding[], result: z.infer<typeof ReviewResult>, _task?: Task): string | undefined {
-  const unknown = [...result.confirms, ...result.disputes.map((entry) => entry.id)].filter((id) => !findings.some((finding) => finding.id === id));
+  const unknown = [...result.confirms, ...result.disputes.map((entry) => entry.id), ...result.resolves.map(entry => entry.id)].filter((id) => !findings.some((finding) => finding.id === id));
   if (unknown.length) return `Confirm or dispute only finding ids provided in your saved review input. These ids were not shown: ${[...new Set(unknown)].join(", ")}. Report a new problem as a new finding instead.`;
+  const invalid = result.resolves.filter(entry => !findings.some(finding => finding.id === entry.id && finding.severity === "pre-existing" && finding.raisedBy !== "petrina") || result.confirms.includes(entry.id) || result.disputes.some(dispute => dispute.id === entry.id));
+  if (invalid.length) return `Use "resolves" only for a supplied pre-existing bug you proved was repaired in current code, without also confirming or disputing that id: ${invalid.map(entry => entry.id).join(", ")}. Include the original reproduction, current observed result and nearby controls in the evidence.`;
   const missing = new Set(result.confirms.filter((id) => {
     const finding = findings.find((entry) => entry.id === id);
     return finding && needsCurrentEvidence(finding) && !result.confirmationEvidence[id]?.trim();
@@ -82,11 +84,13 @@ function reopenFinding(finding: DeepMutable<Finding>, at: number, evidence?: str
     ...(finding.verification ? { verification: finding.verification } : {}),
     ...(finding.votes ? { votes: finding.votes } : {}),
     ...(finding.answer ? { answer: finding.answer } : {}),
+    ...(finding.resolution ? { resolution: finding.resolution } : {}),
   }];
   finding.confirmedBy = [];
   delete finding.disputes;
   delete finding.verification;
   delete finding.votes;
+  delete finding.resolution;
   finding.status = "open";
   finding.reopenedAt = at;
   if (evidence !== undefined) finding.evidence = evidence.trim();
@@ -381,6 +385,9 @@ export class Reviews {
       else if (finding) addEvidence(finding, evidence);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
+    if (task.hunt) for (const report of [...result.confirms.map(id => ({ id, resolved: false, evidence: result.confirmationEvidence[id] })), ...result.resolves.map(entry => ({ ...entry, resolved: true }))]) {
+      task.hunt.findingChecks = { ...task.hunt.findingChecks, [report.id]: { ...task.hunt.findingChecks?.[report.id], [reviewerKey]: { by: profileId, resolved: report.resolved, ...(report.evidence ? { evidence: report.evidence } : {}) } } };
+    }
     recordDisputes(task.findings.filter((finding) => !task.repositories || productsFor(task, finding.productIds).length > 0), result.disputes, profileId, Date.now());
     if (task.repositories && task.hunt) for (const finding of task.findings) {
       const owners = productsFor(task, finding.productIds);
@@ -417,12 +424,12 @@ export class Reviews {
     const important = raised.some((finding) => finding.severity === "blocking");
     // A confirmed existing finding asks for fixes just as a newly raised one does. Count each once.
     const created = new Set(raised.map((finding) => finding.id));
-    const seen = new Set([...(openStep(task)?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id)]);
+    const seen = new Set([...(openStep(task)?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id), ...result.resolves.map(finding => finding.id)]);
     recordStepResult(task, { findings: task.findings.filter((finding) => seen.has(finding.id) || created.has(finding.id)) });
     // This seat's own copy of the records it touched: later peers and rounds never rewrite it.
     const step = openStep(task);
     const own = step?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === profileId && (entry.inputIndex === undefined || step.agentInputs?.[entry.inputIndex]?.reviewerKey === reviewerKey));
-    if (own) own.findings = structuredClone(task.findings.filter((finding) => result.confirms.includes(finding.id) || result.disputes.some((dispute) => dispute.id === finding.id) || created.has(finding.id)));
+    if (own) own.findings = structuredClone(task.findings.filter((finding) => result.confirms.includes(finding.id) || result.disputes.some((dispute) => dispute.id === finding.id) || result.resolves.some(entry => entry.id === finding.id) || created.has(finding.id)));
     const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || created.has(finding.id)));
     this.k.tracking.verdict(task, roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
     const confirmed = result.confirms.length;
@@ -876,6 +883,24 @@ export class Reviews {
   private settleReviews(task: MTask, stage: MStage): void {
     if (!task.hunt || this.pendingReviewers(task, stage).length) return;
     const reviewers = Object.keys(task.hunt.reported);
+    let repairedAny = false;
+    for (const finding of task.findings) {
+      if (finding.status !== "open" || finding.severity !== "pre-existing" || finding.raisedBy === "petrina") continue;
+      const checks = Object.values(task.hunt.findingChecks?.[finding.id] ?? {});
+      const repaired = checks.find(check => check.resolved && check.evidence);
+      const versions = task.hunt.input?.heads;
+      // Omission and a passing review are not repair evidence. Any current confirmation
+      // keeps the bug open; resolving reports stay on their immutable journey results.
+      if (!repaired?.evidence || checks.some(check => !check.resolved) || !versions || !Object.keys(versions).length) continue;
+      finding.resolution = { by: repaired.by, evidence: repaired.evidence, at: Date.now(), versions: { ...versions } };
+      finding.status = "fixed";
+      addEvidence(finding, `Verified repaired: ${repaired.evidence}`);
+      repairedAny = true;
+    }
+    if (repairedAny) {
+      const seen = new Set(openStep(task)?.result?.findings?.map(finding => finding.id) ?? []);
+      recordStepResult(task, { findings: task.findings.filter(finding => seen.has(finding.id)) });
+    }
     for (const finding of task.findings) {
       if (finding.status !== "open" || finding.raisedBy === "petrina" || finding.text.startsWith("Failed acceptance check:")) continue;
       if (task.repositories && !productsFor(task, finding.productIds).length) continue;

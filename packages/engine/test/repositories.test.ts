@@ -1268,7 +1268,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       const id = engine.addTask({ productId: first, worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Welcome people in both products" });
       const ready = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
       expect(taskOf(ready, id).error).toBeUndefined();
-      const reviewers = fakes.openings("code reviewer").length, testers = fakes.openings("tester").length, builders = fakes.received("builder").length;
+      const reviewers = fakes.received("code reviewer").length, testers = fakes.openings("tester").length, builders = fakes.received("builder").length;
       expect(testers).toBe(1);
       // The API's checks change after approval and fail on what was about to ship.
       engine.setProductChecks(second, [{ name: "Welcome", command: script("welcome-file.cjs", "process.exit(require('node:fs').existsSync('welcome.txt') ? 0 : 1)") }]);
@@ -1282,7 +1282,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(lines.some((line) => line.startsWith("Checks: 1 of 1 failed (Welcome)"))).toBe(true);
       // Only the API's Builder repaired it; the fix was reviewed again and acceptance tried on the final code.
       expect(fakes.received("builder").length).toBeGreaterThan(builders);
-      expect(fakes.openings("code reviewer").length).toBeGreaterThan(reviewers);
+      expect(fakes.received("code reviewer").length).toBeGreaterThan(reviewers);
       expect(fakes.openings("tester")).toHaveLength(2);
       const repaired = task.repositories!.find((work) => work.productId === second)!;
       expect(repaired.checks!.results.every((run) => run.ok)).toBe(true);

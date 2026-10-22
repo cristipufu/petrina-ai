@@ -321,6 +321,8 @@ export interface TaskHistoryState {
    * The reports are the evidence; the description is the request the coordinator can edit.
    */
   followUp?: {
+    /** A coordinator-created bug request gained report links; keep its request and product scope intact. */
+    preserveRequest?: boolean;
     reports: readonly {
       taskId: Id;
       findingId: Id;

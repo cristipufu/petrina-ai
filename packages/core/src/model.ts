@@ -763,10 +763,13 @@ export interface Finding {
     verification?: FindingVerification;
     votes?: readonly Vote[];
     answer?: { fixed: boolean; text: string; at: number };
+    resolution?: Finding["resolution"];
   }[];
   /** The builder's answer when the finding came back to it. */
   answer?: { fixed: boolean; text: string; at: number };
   status: "open" | "fixed" | "dismissed" | "unverified";
+  /** Current-code proof that a reviewer verified an incidental repair of an older bug. */
+  resolution?: { by: Id; evidence: string; at: number; versions: Readonly<Record<Id, string>> };
   /** How to see this again, in plain language. */
   steps?: string;
   /** An open follow-up card this matches, or "none" when it is none of the cards the reviewer was shown. */
@@ -806,6 +809,8 @@ export interface Lesson {
 
 /** One review round's parallel work: each reviewer's findings as they arrive, then each voter's verdicts. */
 export interface Hunt {
+  /** Current-round explicit resolution/confirmation reports; settled only after all reviewer seats finish. */
+  findingChecks?: Readonly<Record<Id, Readonly<Record<Id, { by: Id; resolved: boolean; evidence?: string }>>>>;
   stageId: Id;
   round: number;
   /** Immutable round inputs and prepared repository evidence. Bodies stay outside live window state. */
