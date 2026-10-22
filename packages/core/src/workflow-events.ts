@@ -8,8 +8,9 @@ import type { AgentProfile, CheckAttemptEvidence, Finding, Id, InboxItem, InboxK
 import { JOURNEY_WORDS, landingOf, stepName, type Landing } from "./journey.js";
 import { copyNoLongerNeeded } from "./cleanup.js";
 import { historyItem, historyStatus, type HistoryStatus } from "./history.js";
-import { displayTask, landingState, taskProductIds } from "./repositories.js";
+import { assignedProducts, displayTask, landingState, taskProductIds } from "./repositories.js";
 import { roleForTask } from "./roles.js";
+import { findingReportCounts, outstandingReportsFirst } from "./finding-reports.js";
 
 export const WORKFLOW_EVENT_KINDS = [
   "task.created", "task.state", "task.waiting", "task.finished",
@@ -159,6 +160,7 @@ interface SeatResultFacts {
   productId?: Id;
   versions?: Readonly<Record<Id, string>>;
   findingCopies?: number;
+  findingIds?: readonly Id[];
   summary: string;
   images?: number;
 }
@@ -234,7 +236,7 @@ interface WorkFacts {
   approvedFor?: Work["approvedFor"];
   cleanup?: Work["cleanup"];
 }
-interface FindingFacts { id: Id; status: Finding["status"]; severity: Finding["severity"]; raisedBy: Id; roleId?: Id; reopenedAt?: number; answerFixed?: boolean; answerAt?: number; confirmed: number; verdict?: string; productIds?: readonly Id[]; evidence: boolean }
+interface FindingFacts { text: string; tracking?: Finding["tracking"]; id: Id; status: Finding["status"]; severity: Finding["severity"]; raisedBy: Id; roleId?: Id; reopenedAt?: number; answerFixed?: boolean; answerAt?: number; confirmed: number; verdict?: string; productIds?: readonly Id[]; evidence: boolean }
 
 /** A lone participant's handoff closes its node; parallel participants keep theirs. Follow only the
  * recorded handoff at the same workflow position, never a prior round, product or unrelated step. */
@@ -361,7 +363,7 @@ function nodeFacts(step: JourneyStep, index: number, journey: readonly JourneySt
     roleId: entry.roleId, profileId: entry.profileId, at: entry.at,
     ...(entry.productId ? { productId: entry.productId } : {}),
     ...(entry.versions ? { versions: entry.versions } : {}),
-    ...(entry.findings ? { findingCopies: entry.findings.length } : {}),
+    ...(entry.findings ? { findingCopies: entry.findings.length, findingIds: entry.findings.map((finding) => finding.id) } : {}),
     summary: clip(resultSummary(entry.value, role?.result))!,
     ...(entry.images?.length ? { images: entry.images.length } : {}),
   }));
@@ -429,7 +431,7 @@ export function workflowFacts(task: TaskState, ctx: WorkflowContext): WorkflowFa
       ...(work.baseSha ? { baseSha: work.baseSha } : {}), ...(work.reviewedSha ? { reviewedSha: work.reviewedSha } : {}), ...(work.reviewedTree ? { reviewedTree: work.reviewedTree } : {}),
       ...(work.approvedFor ? { approvedFor: work.approvedFor } : {}), ...(work.cleanup ? { cleanup: work.cleanup } : {}),
     })),
-    findings: task.findings.map((finding) => ({ id: finding.id, status: finding.status, severity: finding.severity, raisedBy: finding.raisedBy, ...(finding.roleId ? { roleId: finding.roleId } : {}), ...(finding.reopenedAt !== undefined ? { reopenedAt: finding.reopenedAt } : {}), ...(finding.answer ? { answerFixed: finding.answer.fixed, answerAt: finding.answer.at } : {}), confirmed: finding.confirmedBy.length, ...(finding.verification ? { verdict: finding.verification.verdict } : {}), ...(finding.productIds ? { productIds: finding.productIds } : {}), evidence: !!finding.evidence })),
+    findings: task.findings.map((finding) => ({ id: finding.id, text: clip(finding.text, 160)!, ...(finding.tracking ? { tracking: finding.tracking } : {}), status: finding.status, severity: finding.severity, raisedBy: finding.raisedBy, ...(finding.roleId ? { roleId: finding.roleId } : {}), ...(finding.reopenedAt !== undefined ? { reopenedAt: finding.reopenedAt } : {}), ...(finding.answer ? { answerFixed: finding.answer.fixed, answerAt: finding.answer.at } : {}), confirmed: finding.confirmedBy.length, ...(finding.verification ? { verdict: finding.verification.verdict } : {}), productIds: assignedProducts(task as Task, finding.productIds), evidence: !!finding.evidence })),
     capacityRetries: (task.capacityRetries ?? []).map((entry) => ({ key: `${entry.roleId}|${entry.profileId}|${entry.member ?? ""}`, tried: entry.tried })),
     landing,
     ...(shared ? { shared } : {}),
@@ -551,7 +553,20 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
       const attempt = node.kind === "petrina" && node.work === "checks" ? checkAttempt(node) : undefined;
       const checkSummary = attempt ? { ...(attempt.attemptId ? { attemptId: attempt.attemptId } : {}), ...(attempt.productId ? { productId: attempt.productId } : {}), attempts: attempt.attempts, ...checkTally(attempt.checks) } : undefined;
       push({ at: node.endedAt, kind: "node.finished", ...at, summary: `${node.name}: ${node.outcome ?? node.end ?? "ended"}${node.reason ? ` (${node.reason})` : ""}${review && !review.examined ? `; no completed review (${review.acceptedResults} of ${review.seats} accepted result${review.seats === 1 ? "" : "s"})` : ""}`, nodeKind: node.kind, ...(node.roleId ? { roleId: node.roleId } : {}), ...(node.profileId ? { profileId: node.profileId } : {}), ...(node.work ? { work: node.work } : {}), ...(node.waitsFor ? { waitsFor: node.waitsFor } : {}), ...(node.outcome ? { outcome: node.outcome } : {}), ...(node.reason ? { reason: node.reason } : {}), end: node.end ?? "done", ...(node.tone ? { tone: node.tone } : {}), elapsedMs: Math.max(0, node.endedAt - node.startedAt), ...(node.acceptance ? { acceptance: node.acceptance } : {}), ...(attempt && checkSummary ? { checks: checkSummary, versions: attemptVersions(node, attempt.attemptId, attempt.productId) } : {}), ...(role?.result === "build" ? { checks: "separate-step" } : {}), ...(review ? { review } : {}), refs: { node: { taskId: next.id, nodeId: node.id }, ...(attempt ? { checks: attempt.checks.filter((check) => check.ok !== undefined).map((check) => ({ taskId: next.id, nodeId: node.id, index: check.index })) } : {}), ...(review && !review.examined && node.results.length ? { results: resultRefs(next.id, node) } : {}) } });
-      if (reconciliation) push({ at: node.endedAt, kind: "review.finished", ...at, summary: `${node.name} finished: ${reconciliation.opening} finding${reconciliation.opening === 1 ? "" : "s"} before, ${reconciliation.closing} after; raised ${reconciliation.raised.length}, fixed ${reconciliation.fixed.length}, reopened ${reconciliation.reopened.length}, dismissed ${reconciliation.dismissed.length}, unverified ${reconciliation.unverified.length}, still open ${reconciliation.stillOpen.length}`, ...reconciliation, ...(role ? { roleId: node.roleId } : {}), ...(node.team ? { team: node.team } : {}), refs: { ...(node.reviewInput ? { reviewInput: { taskId: next.id, nodeId: node.id } } : {}), findings: { taskId: next.id, nodeId: node.id }, results: resultRefs(next.id, node) } });
+      if (reconciliation) {
+        const counts = reconciliation.reportCounts.closing;
+        const reports = outstandingReportsFirst(next.findings).map((finding) => {
+          const result = node.results.find((result) => result.findingIds?.includes(finding.id));
+          const read = { taskId: next.id, nodeId: node.id, findingId: finding.id };
+          return { id: finding.id, text: finding.text, severity: finding.severity, status: finding.status, productIds: finding.productIds ?? [],
+            ...(finding.tracking ? { tracking: finding.tracking } : {}),
+            evidence: node.resultFindings.some((copy) => copy.id === finding.id) ? { read } : result ? { read: { ...read, result: result.index } } : { unavailable: "This review saved no copy of this report. Current status may differ." } };
+        });
+        push({ at: node.endedAt, kind: "review.finished", ...at,
+          summary: `${node.name} finished: ${reconciliation.opening} ${reconciliation.opening === 1 ? "report" : "reports"} before, ${reconciliation.closing} after; ${counts.open.total} open ${counts.open.total === 1 ? "report" : "reports"} (${counts.open.important} Important, ${counts.open.nits} ${counts.open.nits === 1 ? "nit" : "nits"}, ${counts.open.preExisting} pre-existing ${counts.open.preExisting === 1 ? "follow-up" : "follow-ups"}); raised ${reconciliation.raised.length}, fixed ${reconciliation.fixed.length}, reopened ${reconciliation.reopened.length}, dismissed ${reconciliation.dismissed.length}, unverified ${reconciliation.unverified.length}`,
+          ...reconciliation, reports, omitted: { reportBodies: "Use each report’s evidence.read for full text, answers and verification, or its unavailable reason." }, ...(role ? { roleId: node.roleId } : {}), ...(node.team ? { team: node.team } : {}),
+          refs: { node: { taskId: next.id, nodeId: node.id }, ...(node.reviewInput ? { reviewInput: { taskId: next.id, nodeId: node.id } } : {}), findings: { taskId: next.id, nodeId: node.id }, results: resultRefs(next.id, node), inputs: node.inputs.map((input) => ({ taskId: next.id, nodeId: node.id, seat: input.seat, index: input.attempt - 1 })), currentRequests: { taskId: next.id } } });
+      }
       if (node.kind === "you") {
         const item = [...carried, ...before.inbox].find((entry) => LEGACY_KINDS[entry.kind] === node.waitsFor && !next.inbox.some((current) => current.id === entry.id));
         if (item) settledItems.add(item.id);
@@ -763,7 +778,13 @@ interface Reconciliation {
   reopened: { id: Id; evidence: boolean }[];
   dismissed: Id[];
   unverified: Id[];
+  /** Compatibility: open Important reports only, never all open reports. */
   stillOpen: Id[];
+  stillOpenPopulation: "open-important";
+  openImportant: Id[];
+  openNits: Id[];
+  openPreExisting: Id[];
+  reportCounts: { opening: ReturnType<typeof findingReportCounts>; closing: ReturnType<typeof findingReportCounts> };
   shortened?: true;
 }
 
@@ -779,7 +800,11 @@ function reconcile(baseline: FindingBaseline, closing: FindingFacts[]): Reconcil
   const dismissed = closing.filter((finding) => finding.status === "dismissed" && was.get(finding.id)?.status !== "dismissed").map((finding) => finding.id);
   const unverified = closing.filter((finding) => finding.status === "unverified" && was.get(finding.id)?.status !== "unverified").map((finding) => finding.id);
   const stillOpen = closing.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id);
-  return { opening: opening.length, closing: closing.length, since: baseline.since, raised, fixed, claimedFixed, reopened, dismissed, unverified, stillOpen };
+  return { opening: opening.length, closing: closing.length, since: baseline.since, raised, fixed, claimedFixed, reopened, dismissed, unverified, stillOpen,
+    stillOpenPopulation: "open-important", openImportant: stillOpen,
+    openNits: closing.filter((finding) => finding.status === "open" && finding.severity === "suggestion").map((finding) => finding.id),
+    openPreExisting: closing.filter((finding) => finding.status === "open" && finding.severity === "pre-existing").map((finding) => finding.id),
+    reportCounts: { opening: findingReportCounts(opening), closing: findingReportCounts(closing) } };
 }
 
 // ── The observer ───────────────────────────────────────────────────────

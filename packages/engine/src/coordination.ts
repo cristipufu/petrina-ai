@@ -1,16 +1,17 @@
 import { messageRemovalText } from "@petrina/core";
-import { checkProblem, displayTask, reviewDecisionPending } from "@petrina/core";
+import { checkProblem, displayTask, originalCheck, reviewDecisionPending } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, taskLanding, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Landing, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { operation } from "./operations.js";
 import { offeredLessons } from "./learnings.js";
 import { cursor, fingerprint, paginate, readText } from "./evidence-read.js";
-import { readCheckLog } from "./check-log-read.js";
+import { checkLogRevision, readCheckLog } from "./check-log-read.js";
 import { readConversation } from "./conversation-read.js";
 import { readExactInput } from "./exact-input.js";
 import { readReviewInput } from "./review-context.js";
 import { readAnalytics } from "./analytics-read.js";
+import { checkpointView } from "./checkpoint-read.js";
 
 export type Outcome =
   | "completed"
@@ -127,6 +128,16 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
     ...(task && ["plan", "design", "delivery", "disagreement"].includes(item.kind)
       ? {
           productId: task.productId,
+          title: task.title,
+          description: task.description,
+          selectedProducts: task.selectedProducts,
+          workRows: task.workRows,
+          workValidating: task.workValidating,
+          approvalExplanation: task.approvalExplanation,
+          leadProductId: task.leadProductId,
+          acceptance: { passed: task.acceptancePassed, blocked: task.acceptanceBlocked, unverified: task.acceptanceUnverified, testedPatch: task.testedPatch, testedVersions: task.testedVersions },
+          diagnostics: checkLogRevision(engine.dataDir, task.id, (task.repositories ?? [task]).flatMap((work) => work.checks?.results.flatMap((run) => [run.logPath, originalCheck(task, run)?.check.run?.logPath]) ?? [])),
+          evidence: task.journey?.map(({ id, kind, roleId, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats }) => ({ id, kind, roleId, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats })),
           plan: task.plan,
           source: task.source,
           proposedSource: task.proposedSource,
@@ -142,7 +153,7 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
           call: task.call,
           findings: task.findings,
           reviewDecision: task.reviewDecision,
-          repositories: task.repositories?.map((work) => ({ productId: work.productId, source: work.source, delivery: work.delivery, checkedSha: work.checkedSha, checkedPatch: work.checkedPatch, checks: work.checks })),
+          repositories: task.repositories?.map((work) => ({ productId: work.productId, source: work.source, workChoice: work.workChoice, delivery: work.delivery, checkedSha: work.checkedSha, checkedPatch: work.checkedPatch, checks: work.checks })),
           checkedSha: task.checkedSha,
           checkedPatch: task.checkedPatch,
           checks: task.checks,
@@ -272,7 +283,7 @@ export class Coordination {
       return clone(result);
     });
   }
-  private query(name: string, a: Args): Result | Promise<Result> {
+  private async query(name: string, a: Args): Promise<Result> {
     const e = this.engine,
       s = e.activeState();
     if (name === "watch.event") return e.events.log.read(a.eventId, a);
@@ -284,7 +295,7 @@ export class Coordination {
     if (name === "inbox.list" && a.taskId && !s.tasks.some((task) => task.id === a.taskId) && !e.store.history.item(a.taskId))
       return { outcome: "missing", message: "That task does not exist." };
     const product = s.products.find((product) => product.id === a.productId);
-    if (a.productId && !product) return { outcome: "missing", message: "That product does not exist." };
+    if (a.productId && !product && name !== "journey.check") return { outcome: "missing", message: "That product does not exist." };
     if (name === "task.history" || (name === "task.list" && a.states?.some((state: string) => state === "done" || state === "cancelled"))) {
       if (a.states?.some((state: string) => state !== "done" && state !== "cancelled"))
         return { outcome: "invalid", message: "Read current work and finished history separately. Use task.history for done and cancelled tasks." };
@@ -318,23 +329,26 @@ export class Coordination {
         evidence: node.toolActivity ? "recorded" : "unavailable" };
     }
     if (name === "task.conversation") return readConversation(task!, a);
-    if (name === "task.read")
+    if (name === "task.read") {
+      if (a.findingId && a.section !== "findings") return { outcome: "invalid", message: "A finding ID selects the findings section only." };
+      if (a.findingId && !task!.findings.some((finding) => finding.id === a.findingId)) return { outcome: "missing", message: "That current finding does not exist." };
       return readText(
         (
           {
             request: { title: task!.title, description: task!.description },
             conversation: task!.session,
             timeline: task!.timeline,
-            findings: task!.findings,
+            findings: a.findingId ? task!.findings.find((finding) => finding.id === a.findingId) : task!.findings,
             design: task!.brief || task!.objections.length || task!.call ? { brief: task!.brief ?? null, objections: task!.objections, call: task!.call ?? null } : undefined,
             messages: task!.queued,
-            source: { source: task!.source, choice: task!.workChoice, proposed: task!.proposedSource },
+            source: { source: task!.source, choice: task!.workChoice, proposed: task!.proposedSource, selectedProducts: task!.selectedProducts, rows: task!.workRows },
             error: task!.error,
           } as Record<string, unknown>
         )[a.section],
         a,
-        [name, a.taskId, a.section],
+        [name, a.taskId, a.section, a.findingId],
       );
+    }
     if (name === "plan.inspect") return readText(task!.plan, a, [name, a.taskId], { evidence: task!.plan ? "planned" : "unavailable" });
     if (name === "journey.list" || name === "journey.node") {
       const view = journeyView(task!, s);
@@ -366,7 +380,7 @@ export class Coordination {
         reviewInput: node?.reviewInput ? { digest: node.reviewInput.digest, read: { taskId: task!.id, nodeId: node.id } } : null,
       });
     }
-    if (name === "journey.check") return readCheckLog(e.dataDir, task!, { nodeId: a.nodeId, index: a.index, section: a.section, cursor: a.cursor, limit: a.limit });
+    if (name === "journey.check") return readCheckLog(e.dataDir, task!, { nodeId: a.nodeId, productId: a.productId, index: a.index, section: a.section, cursor: a.cursor, limit: a.limit, ifRevision: a.ifRevision });
     if (name === "journey.review-input") {
       const node = task!.journey?.find((step) => step.id === a.nodeId);
       if (!node) return { outcome: "missing", message: "That journey node does not exist." };
@@ -407,15 +421,12 @@ export class Coordination {
       const revision = requestRevision(e, item);
       const t = e.taskDetails(item.taskId);
       return readText(
-        {
+        t && ["plan", "design", "delivery", "disagreement"].includes(item.kind) ? JSON.stringify(await checkpointView(e, t, item), null, 1) : {
           request: item,
           ...(item.kind === "learnings"
             ? {
                 lessons: offeredLessons(item.body).map((text, position) => ({ position, text })),
               }
-            : {}),
-          ...(t && ["plan", "design", "delivery", "disagreement"].includes(item.kind)
-            ? { plan: t.plan, source: t.source, proposedSource: t.proposedSource, brief: t.brief, objections: t.objections, call: t.call, findings: t.findings, checks: t.checks }
             : {}),
         },
         a,

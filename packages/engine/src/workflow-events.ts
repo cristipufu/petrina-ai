@@ -34,7 +34,7 @@ export function boundEvent(event: WorkflowEvent, limit = EVENT_BYTES): WorkflowE
       shortened.add(key);
     }
   };
-  for (const key of ["products", "raised", "fixed", "claimedFixed", "reopened", "dismissed", "unverified", "stillOpen", "findingIds"]) trim(key, 20);
+  for (const key of ["products", "raised", "fixed", "claimedFixed", "reopened", "dismissed", "unverified", "stillOpen", "openImportant", "openNits", "openPreExisting", "reports", "findingIds"]) trim(key, 20);
   for (const key of ["summary", "reason", "detail", "answer", "title", "error"]) {
     const value = bounded[key];
     if (typeof value === "string" && value.length > 400) { bounded = { ...bounded, [key]: `${value.slice(0, 399)}…` }; shortened.add(key); }
@@ -44,8 +44,12 @@ export function boundEvent(event: WorkflowEvent, limit = EVENT_BYTES): WorkflowE
     shortened.add("cause.reason");
   }
   const result = () => ({ ...bounded, ...(shortened.size ? { shortened: true, shortenedFields: [...shortened], ...(Object.keys(totals).length ? { totals } : {}) } : {}) });
+  // Descriptions are supplemental: preserve the existing identity lists before shortening them.
+  // The core orders outstanding reports first, so the descriptions kept here explain remaining work.
+  const reports = bounded.reports;
+  if (Array.isArray(reports)) for (let keep = reports.length - 1; keep >= 0 && encoded(result()) > limit; keep--) trim("reports", keep);
   if (encoded(result()) <= limit) return result();
-  for (const [key, keep] of [["manifest", 4], ["products", 4], ["raised", 5], ["fixed", 5], ["claimedFixed", 5], ["reopened", 5], ["dismissed", 5], ["unverified", 5], ["stillOpen", 5], ["findingIds", 5], ["team", 6], ["seats", 6], ["waitsOn", 4], ["productIds", 8]] as const) trim(key, keep);
+  for (const [key, keep] of [["manifest", 4], ["products", 4], ["raised", 5], ["fixed", 5], ["claimedFixed", 5], ["reopened", 5], ["dismissed", 5], ["unverified", 5], ["stillOpen", 5], ["openImportant", 5], ["openNits", 5], ["openPreExisting", 5], ["reports", 5], ["findingIds", 5], ["team", 6], ["seats", 6], ["waitsOn", 4], ["productIds", 8]] as const) trim(key, keep);
   if (encoded(result()) <= limit) return result();
   // Preserve the transition and its identity. Complete compact details share the bounded log and have
   // their own paged read; no oversized nested explanation or reference can defeat this last size check.

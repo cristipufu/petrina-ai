@@ -1,40 +1,78 @@
 // Verify and page the diagnostic file belonging to one recorded check.
-import type { Task } from "@petrina/core";
-import { constants } from "node:fs";
+import type { CheckRun, Task } from "@petrina/core";
+import { constants, lstatSync } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { Result } from "./coordination.js";
 import { cursor, fingerprint, position, readText } from "./evidence-read.js";
+import { CHECK_EXIT_UNREPORTED } from "./checks.js";
+import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 
 export function matchesCheckLogIdentity(expected: { device: string; inode: string }, actual: { dev: bigint; ino: bigint }): boolean {
   return expected.device === actual.dev.toString() && expected.inode === actual.ino.toString();
 }
-export async function readCheckLog(dataDir: string, task: Task, a: { nodeId?: string; index: number; section?: string; cursor?: string; limit?: number }): Promise<Result> {
+export const SAVED_RESULT_PREVIEW = 1000;
+// Saved-result offsets stay in string units; move preview boundaries off a surrogate pair.
+const bisectsCharacter = (text: string, at: number) => (text.codePointAt(at - 1) ?? 0) > 0xffff;
+
+/** Older runs keep the runner's unknown-exit explanation rather than a separate flag. */
+export function unreportedCheckExit(run: CheckRun): boolean {
+  const ending = run.output.trimEnd();
+  return !run.ok && [CHECK_EXIT_UNREPORTED, `${CHECK_EXIT_UNREPORTED}\n${CLEANUP_INCOMPLETE}`]
+    .some((explanation) => ending === explanation || ending.endsWith(`\n${explanation}`));
+}
+export const checkCommandOutcome = (run?: CheckRun) => !run ? "unavailable" : unreportedCheckExit(run) ? "unknown" : run.interruption || run.interrupted || run.cleanupIncomplete || run.timedOut ? "unfinished" : run.ok ? "passed" : "failed";
+
+/** The same file facts used by diagnostic continuations, without loading process output. */
+export function checkLogRevision(dataDir: string, taskId: string, paths: readonly (string | undefined)[]) {
+  return [...new Set(paths.filter((path): path is string => !!path && resolve(path).startsWith(resolve(dataDir, "checks", taskId) + sep)))].map((path) => {
+    try {
+      const file = lstatSync(path, { bigint: true });
+      return [path, file.dev.toString(), file.ino.toString(), file.size.toString(), file.mtimeNs.toString(), file.nlink.toString()];
+    } catch { return [path, "unavailable"]; }
+  });
+}
+
+export async function readCheckLog(dataDir: string, task: Task, a: { nodeId?: string; productId?: string; index: number; section?: string; cursor?: string; limit?: number; ifRevision?: string; preview?: "ends" }): Promise<Result> {
   const node = a.nodeId ? task.journey?.find((node) => node.id === a.nodeId) : undefined;
   if (a.nodeId && !node) return { outcome: "missing", message: "That journey node does not exist." };
-  const run = a.nodeId ? node?.productChecks?.[a.index]?.run : task.checks?.results[a.index];
+  const work = a.productId ? (task.repositories ?? [task]).find((work) => work.productId === a.productId) : task;
+  if (a.productId && !work) return { outcome: "missing", message: "That product has no repository record on this task." };
+  const run = a.nodeId ? node?.productChecks?.[a.index]?.run : work?.checks?.results[a.index];
+  if (a.ifRevision && (!run || fingerprint(run) !== a.ifRevision)) return { outcome: "changed", message: "That saved check changed. Inspect the checkpoint again. No newer run is substituted." };
   const metadata = {
-    commandOutcome: !run ? "unavailable" : run.interrupted || run.cleanupIncomplete || run.timedOut ? "unfinished" : run.ok ? "passed" : "failed",
-    relevance: a.nodeId ? "historical" : task.checks?.sha || task.checks?.tree ? "recorded-version-only" : "unverified",
+    commandOutcome: checkCommandOutcome(run),
+    relevance: a.nodeId ? "historical" : work?.checks?.sha || work?.checks?.tree ? "recorded-version-only" : "unverified",
     command: run?.command ?? null,
+    ...(run && unreportedCheckExit(run) ? { exitUnreported: true } : {}),
   };
   if (!run) return { outcome: "unavailable", ...metadata, completeness: "missing", message: "This older evidence has no original diagnostic link." };
-  const resultScope = [task.id, a.nodeId, a.index, "saved-result"];
+  const resultScope = [task.id, a.nodeId, a.productId, a.index, "saved-result"];
   if (a.section === "result")
     return readText(run.output, a, resultScope, { ...metadata, source: "saved-result", completeness: "excerpt-only", unit: "characters" });
-  // Engine explanations (startup failures, deadlines and cleanup warnings) can exist only
-  // in the saved result. Show a bounded first page alongside the original process log.
-  const savedResult = { ...readText(run.output, { limit: Math.min(a.limit ?? 8000, 1000) }, resultScope), section: "result" };
-  const details = { ...metadata, savedResult };
+  // Focused reads retain their ordinary first page and cursor. A compact decision splits that
+  // same budget between the beginning and ending, where the runner appends its explanations.
+  const previewLimit = Math.min(a.limit ?? 8000, SAVED_RESULT_PREVIEW);
+  const split = a.preview === "ends" && run.output.length > previewLimit;
+  let headLimit = split ? Math.ceil(previewLimit / 2) : previewLimit;
+  if (bisectsCharacter(run.output, headLimit)) headLimit--;
+  const savedResult = { ...readText(run.output, { limit: headLimit }, resultScope), section: "result" };
+  let endingOffset = run.output.length - (previewLimit - headLimit);
+  if (bisectsCharacter(run.output, endingOffset)) endingOffset++;
+  const savedResultEnding = split ? {
+    ...readText(run.output, { limit: run.output.length - endingOffset, cursor: cursor({ key: fingerprint([resultScope, run.output]), at: endingOffset }) }, resultScope),
+    section: "result", omittedBefore: endingOffset,
+  } : undefined;
+  const details = { ...metadata, savedResult, ...(savedResultEnding ? { savedResultEnding } : {}) };
   const path = run.logPath && resolve(run.logPath);
   if (!path || !path.startsWith(resolve(dataDir, "checks", task.id) + sep))
-    return readText(run.output, a, [task.id, a.nodeId, a.index], {
+    return readText(run.output, a, [task.id, a.nodeId, a.productId, a.index], {
       ...details,
       completeness: "excerpt-only",
       message: "No complete diagnostic log was recorded. This is the saved excerpt.",
     });
   if (!run.logFileIdentity)
-    return readText(run.output, a, [task.id, a.nodeId, a.index, "unverified-log"], {
+    return readText(run.output, a, [task.id, a.nodeId, a.productId, a.index, "unverified-log"], {
       ...details,
       completeness: run.logError || run.logComplete === false ? "incomplete" : "legacy-unverified",
       message: "This saved run has no record of which file Petrina created. This is the saved excerpt.",
@@ -54,13 +92,24 @@ export async function readCheckLog(dataDir: string, task: Task, a: { nodeId?: st
       const size = Number(exact.size);
       const modified = exact.mtimeNs.toString();
       if (!exact.isFile() || exact.nlink !== 1n || exact.dev !== entry.dev || exact.ino !== entry.ino || !matchesCheckLogIdentity(run.logFileIdentity, exact)) throw new Error("The diagnostic file is not the file Petrina created for this check.");
-      const key = fingerprint([task.id, a.nodeId, a.index, path, exact.dev.toString(), exact.ino.toString(), size, modified]);
+      const key = fingerprint([task.id, a.nodeId, a.productId, a.index, path, exact.dev.toString(), exact.ino.toString(), size, modified]);
       const completeness = run.logError || run.logComplete === false ? "incomplete" : run.logComplete ? "complete" : "legacy-unverified";
       if (size === 0 && run.output)
         return readText(run.output, a, [resultScope, path, exact.dev.toString(), exact.ino.toString(), modified], {
           ...details, completeness, logError: run.logError ?? null, source: "saved-result", unit: "characters",
           message: "The process log is empty. This is the saved result, including any failure to start.",
         });
+      if (a.preview === "ends" && !a.cursor) {
+        const limit = a.limit ?? 8000;
+        const buffer = Buffer.alloc(Math.min(size, limit * 4));
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+        let start = 0;
+        while (start < bytesRead && (buffer[start]! & 0xc0) === 0x80) start++;
+        const text = Array.from(buffer.subarray(start, bytesRead).toString("utf8")).slice(-limit).join("");
+        const offset = size - Buffer.byteLength(text);
+        return { outcome: "completed", ...details, completeness, logError: run.logError ?? null,
+          text, offset, total: size, unit: "bytes", shortened: false, omittedBefore: offset, source: "process-log" };
+      }
       const at = position(a.cursor, key);
       if (at === undefined) return { outcome: "changed", message: "The diagnostic changed. Read it again from the beginning." };
       const buffer = Buffer.alloc((a.limit ?? 8000) * 4),
@@ -98,7 +147,7 @@ export async function readCheckLog(dataDir: string, task: Task, a: { nodeId?: st
       await file.close();
     }
   } catch {
-    return readText(run.output, a, [task.id, a.nodeId, a.index], {
+    return readText(run.output, a, [task.id, a.nodeId, a.productId, a.index], {
       ...details,
       completeness: "missing-file",
       message: "The original diagnostic file could not be verified or is unavailable. This is the saved excerpt.",

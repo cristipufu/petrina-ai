@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import * as processes from "node:child_process";
+import { PassThrough } from "node:stream";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { childState, descendantsKnown, lostExit, parseChildState, parseDescendants, readProcessList, sharedRead } from "../src/process-tree.js";
-import { defunctProcess, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { defunctProcess, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
 
 const snapshot = "11 10\n12 11\n40 1\n";
 
@@ -97,17 +99,124 @@ describe("a child's state from the process list", () => {
   });
 });
 
+describe("a process-list read's deadline", () => {
+  const controlled = () => {
+    const reports: ((error: Error | null, stdout: string, stderr: string) => void)[] = [];
+    const deadlines: { ms: number; fire: () => void; handle: ReturnType<typeof setTimeout> }[] = [];
+    const child = new processes.ChildProcess();
+    Object.defineProperty(child, "stdout", { value: new PassThrough() });
+    const kill = spyOn(child, "kill").mockReturnValue(true);
+    const spawn = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+      reports.push(args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void);
+      return child;
+    }) as typeof processes.execFile);
+    const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((fire: () => void, ms: number) => {
+      const handle = {} as ReturnType<typeof setTimeout>;
+      deadlines.push({ ms, fire, handle });
+      return handle;
+    }) as typeof setTimeout);
+    const cancel = spyOn(globalThis, "clearTimeout").mockImplementation(() => {});
+    return { child, reports, deadlines, kill, spawn, cancel, restore: () => { child.stdout?.destroy(); cancel.mockRestore(); schedule.mockRestore(); spawn.mockRestore(); kill.mockRestore(); } };
+  };
+
+  for (const error of [null, new Error("Process list unavailable")]) it(`cancels the fallback timer when the helper reports ${error ? "failure" : "success"}`, async () => {
+    const read = controlled();
+    try {
+      const result = readProcessList(4_000);
+      expect(read.spawn.mock.calls[0]).toEqual(["ps", ["-A", "-o", "pid=,ppid=,stat="], { timeout: 4_000 }, expect.any(Function)]);
+      read.reports[0]!(error, snapshot, "");
+      expect(await result).toBe(error ? undefined : snapshot);
+      expect(read.cancel).toHaveBeenCalledWith(read.deadlines[0]!.handle);
+      expect(read.kill).not.toHaveBeenCalled();
+    } finally { read.restore(); }
+  });
+
+  it("waits for the fallback deadline, kills an unreported helper and leaves the next read usable", async () => {
+    const read = controlled();
+    try {
+      let settled = false;
+      const result = readProcessList(4_000);
+      void result.then(() => { settled = true; });
+      // A complete successful-looking snapshot is not a successful read without the exit report.
+      const output: Buffer[] = [];
+      read.child.stdout!.on("data", (chunk: Buffer) => output.push(chunk));
+      read.child.stdout!.emit("data", Buffer.from(snapshot));
+      read.child.stdout!.emit("end");
+      expect(Buffer.concat(output).toString()).toBe(snapshot);
+      expect(read.deadlines).toHaveLength(1);
+      expect(read.deadlines[0]!.ms).toBe(4_100);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(read.kill).not.toHaveBeenCalled();
+      read.deadlines[0]!.fire();
+      expect(await result).toBeUndefined();
+      expect(read.kill).toHaveBeenCalledWith("SIGKILL");
+      // An exit reported after the deadline cannot turn the failed read into a success.
+      read.reports[0]!(null, snapshot, "");
+      expect(await result).toBeUndefined();
+      const next = readProcessList(4_000);
+      read.reports[1]!(null, snapshot, "");
+      expect(await next).toBe(snapshot);
+    } finally { read.restore(); }
+  });
+});
+
 describe("a live process-list read", () => {
   const folders: string[] = [];
   afterAll(() => folders.forEach(removeDir));
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
-  it.skipIf(process.platform === "win32")("lists this process and settles well within its deadline", async () => {
-    const started = Date.now();
-    const list = await readProcessList(4_000);
-    expect(Date.now() - started).toBeLessThan(4_000);
-    expect(list).toBeDefined();
-    expect(list!.split("\n").some((line) => Number(line.trim().split(/\s+/)[0]) === process.pid)).toBe(true);
+  it.skipIf(process.platform === "win32")("lists this process within the native probe's allowance", async () => {
+    // Native output and a reported exit are separate evidence. The system can lose the exit even
+    // after ps produced a complete snapshot: that read must remain unknown at its deadline.
+    const execute = processes.execFile;
+    let output = "", outputEnded = false, reported = false;
+    let failure: Error | null | undefined;
+    let child: processes.ChildProcess | undefined;
+    let kill: ReturnType<typeof spyOn<processes.ChildProcess, "kill">> | undefined;
+    const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+      const done = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+      args[args.length - 1] = (error: Error | null, stdout: string, stderr: string) => {
+        reported = true; failure = error;
+        done(error, stdout, stderr);
+      };
+      const spawned = Reflect.apply(execute, processes, args) as processes.ChildProcess;
+      child = spawned;
+      spawned.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+      spawned.stdout?.on("end", () => { outputEnded = true; });
+      kill = spyOn(spawned, "kill");
+      return spawned;
+    }) as typeof execute);
+    try {
+      const timeout = 4_000 * SLOW;
+      const started = Date.now();
+      const list = await readProcessList(timeout);
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeLessThan(5_000 * SLOW);
+      expect(outputEnded).toBe(true);
+      expect(output.split("\n").some((line) => Number(line.trim().split(/\s+/)[0]) === process.pid)).toBe(true);
+      if (list !== undefined) {
+        expect(reported).toBe(true);
+        expect(failure).toBeNull();
+        expect(list).toBe(output);
+      } else {
+        expect(list).toBeUndefined();
+        if (reported) {
+          expect(elapsed).toBeGreaterThanOrEqual(timeout);
+          expect(failure).toMatchObject({ killed: true });
+          expect(kill).toHaveBeenCalled();
+        } else {
+          expect(elapsed).toBeGreaterThanOrEqual(timeout + 100);
+          expect(kill).toHaveBeenCalledWith("SIGKILL");
+        }
+      }
+    } finally {
+      scan.mockRestore();
+      kill?.mockRestore();
+      try { child?.kill("SIGKILL"); } catch { /* Already gone. */ }
+      const pid = child?.pid;
+      if (pid) await waitFor(async () => (await childState(pid, 4_000)) === "ended", "the native process-list helper to be stopped", 10_000);
+    }
   });
 
   it.skipIf(process.platform === "win32")("reads whether a child is running, defunct or already collected", async () => {

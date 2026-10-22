@@ -173,7 +173,9 @@ describe("Claude Code's own sandbox", () => {
           const group = await traceTaskWait(!voting && unavailable ? "Reviewers without Claude Code's sandbox" : undefined, () => engine.state(), run.taskId, () => engine.until((state) => {
             const task = run.find(state);
             const agents = [task.agent, ...(task.helpers ?? [])];
-            return agents.length === expected.size && agents.every((agent) => agent?.roleId === roleId && expected.has(agent.profileId)) && fakes.received(promptRole).length === expected.size;
+            // The prompt sidecar can advance after this state snapshot was read. Wait for each
+            // Claude/Codex status in the snapshot too; other tools do not report a sandbox status.
+            return agents.length === expected.size && agents.every((agent) => agent?.roleId === roleId && expected.has(agent.profileId) && (expected.get(agent.profileId) === undefined || agent.sandbox !== undefined)) && fakes.received(promptRole).length === expected.size;
           }, "all group agents to start"));
           clearInterval(before);
           const task = run.find(group);

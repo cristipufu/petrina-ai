@@ -12,6 +12,7 @@ import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
 import { McpPending, mcpRequest } from "../src/mcp.js";
 import { ADAPTERS } from "../src/tools.js";
+import { saveExactMessage } from "../src/exact-input.js";
 import { boundEvent, EVENT_BYTES } from "../src/workflow-events.js";
 import { CLI, Fakes, engineEnv, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
@@ -829,4 +830,97 @@ describe("focused monitoring evidence regressions", () => {
     e.commit(task);
     expect(await events({ taskIds: [taskId], cursor: start.cursor, timeoutMs: 0 })).toMatchObject({ continuity: "continuous", events: [expect.objectContaining({ kind: "publishing.result", result: { kind: "merged", landed: true, number: 1, url: "https://example.com/1" } })] });
   });
+});
+
+it("takes a compact review event to its matching checkpoint and original seat evidence", async () => {
+  const { e, c, home, events } = fixture();
+  const taskId = e.addTask({ productId: "product", title: "Reports stay open" });
+  const task = e.task(taskId)!;
+  const exact = await saveExactMessage(home, taskId, "The original review instructions");
+  task.journey = [{ id: "review", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", stageId: "review-stage", round: 1, sub: 0, startedAt: 1, agentInputs: [{ at: 1, roleId: "code-reviewer", profileId: "opus-high", taskTitle: task.title, sections: [], mode: "fresh", exact }] }];
+  e.commit(task);
+  task.findings = [{ id: "old", text: "Earlier problem", severity: "pre-existing", status: "open", raisedBy: "opus-high", confirmedBy: [], tracking: { taskId: "follow-up" } }, { id: "nit", text: "A small improvement", severity: "suggestion", status: "open", raisedBy: "opus-high", confirmedBy: [] }];
+  task.journey[0]!.result = { findings: structuredClone(task.findings) };
+  task.journey[0]!.agentResults = [{ at: 2, roleId: "code-reviewer", profileId: "opus-high", inputIndex: 0, value: { findings: [], verdict: "pass" }, findings: structuredClone(task.findings) }];
+  task.journey[0]!.endedAt = 2;
+  e.commit(task);
+  const review = all(await events({ taskIds: [taskId], from: "oldest", kinds: ["review.finished"], timeoutMs: 0 }))[0]!;
+  expect(review.reportCounts).toEqual({ opening: { total: 0, open: { total: 0, important: 0, nits: 0, preExisting: 0 }, fixed: 0, dismissed: 0, unverified: 0 }, closing: { total: 2, open: { total: 2, important: 0, nits: 1, preExisting: 1 }, fixed: 0, dismissed: 0, unverified: 0 } });
+  expect(review.refs!.currentRequests).toEqual({ taskId });
+  expect((await c.call("inbox.list", { taskId })).items).toHaveLength(0); // A finished review need not be waiting for a decision.
+  const { findingCopies: _copies, ...resultRef } = (review.refs!.results as Record<string, unknown>[])[0]!;
+  expect(JSON.parse(String((await c.call("journey.result", resultRef)).text)).verdict).toBe("pass");
+  expect((await c.call("journey.input", (review.refs!.inputs as Record<string, unknown>[])[0]!)).text).toBe("The original review instructions");
+  task.journey.push({ id: "checkpoint", kind: "you", waitsFor: "delivery", startedAt: 3, round: 1, sub: 0, trigger: { after: "review", reason: "Review finished" } });
+  e.s.inbox.push({ id: "delivery-request", taskId, kind: "delivery", title: "Inspect the delivery", at: 3, blocking: false });
+  e.commit(task);
+  const request = all(await events({ taskIds: [taskId], from: "oldest", kinds: ["coordinator.request"], timeoutMs: 0 }))[0]!;
+  expect(request.refs!.request).toEqual({ itemId: "delivery-request" });
+  const checkpoint = await c.call("inbox.inspect", request.refs!.request as Record<string, unknown>);
+  const view = JSON.parse(String(checkpoint.text));
+  expect(view.supportingReview.nodeId).toBe(review.nodeId);
+  expect(view.findings.counts.open).toEqual({ total: 2, important: 0, nits: 1, preExisting: 1 });
+  task.findings[0]!.status = "fixed";
+  const report = (review.reports as any[]).find((report) => report.id === "old");
+  const historical = await c.call("journey.finding", report.evidence.read);
+  expect(JSON.parse(String(historical.text)).status).toBe("open");
+  const current = await c.call("task.read", { taskId, section: "findings", findingId: "old" });
+  expect(JSON.parse(String(current.text)).status).toBe("fixed");
+});
+
+for (const count of [12, 20]) it(`keeps ${count} mixed report identities before shortening supplemental descriptions`, async () => {
+  const { e, c, events } = fixture();
+  const taskId = e.addTask({ productId: "product", title: "Prioritize remaining reports" });
+  const task = e.task(taskId)!;
+  task.journey = [{ id: "review", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 1 }];
+  e.commit(task);
+  task.findings = Array.from({ length: count }, (_, index) => ({ id: `report-${index}`, text: `Report ${index}: `.padEnd(160, "x"), severity: (["blocking", "suggestion", "pre-existing"] as const)[index % 3]!, status: "open", raisedBy: "opus-high", confirmedBy: [], tracking: { taskId: `follow-up-${index}` } }));
+  task.journey[0]!.result = { findings: structuredClone(task.findings) };
+  task.journey[0]!.agentResults = [{ at: 2, roleId: "code-reviewer", profileId: "opus-high", value: { findings: [], verdict: "pass" }, findings: structuredClone(task.findings) }];
+  task.journey[0]!.endedAt = 2;
+  e.commit(task);
+  const page = await events({ taskIds: [taskId], from: "oldest", kinds: ["review.finished"], timeoutMs: 0 });
+  const event = all(page)[0]!;
+  expect(Buffer.byteLength(JSON.stringify(event))).toBeLessThanOrEqual(EVENT_BYTES);
+  expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(65536);
+  expect(event.raised).toEqual(task.findings.map((finding) => finding.id));
+  expect(event.stillOpen).toEqual(task.findings.filter((finding) => finding.severity === "blocking").map((finding) => finding.id));
+  expect(event.openImportant).toEqual(event.stillOpen);
+  expect(event.openNits).toEqual(task.findings.filter((finding) => finding.severity === "suggestion").map((finding) => finding.id));
+  expect(event.openPreExisting).toEqual(task.findings.filter((finding) => finding.severity === "pre-existing").map((finding) => finding.id));
+  if (count === 12) {
+    expect(event.reports).toHaveLength(count);
+    expect(event.shortened).toBeUndefined();
+  } else {
+    expect((event.reports as unknown[]).length).toBeLessThan(count);
+    expect(event.totals).toEqual({ reports: count });
+    expect(event.shortenedFields).toEqual(["reports"]);
+    let part = await c.call("watch.event", { eventId: event.id, limit: 400 });
+    let text = String(part.text);
+    while (part.next) { part = await c.call("watch.event", { eventId: event.id, limit: 400, cursor: part.next }); text += part.text; }
+    expect(JSON.parse(text).reports).toHaveLength(count);
+  }
+});
+
+it("keeps new open descriptions ahead of a long settled report history", async () => {
+  const { e, c, events } = fixture();
+  const taskId = e.addTask({ productId: "product", title: "Keep open work visible" });
+  const task = e.task(taskId)!;
+  task.findings = Array.from({ length: 22 }, (_, index) => ({ id: `old-${index}`, text: `Settled report ${index}`.padEnd(160, "x"), severity: "blocking", status: "fixed", raisedBy: "opus-high", confirmedBy: [] }));
+  task.journey = [{ id: "review", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 1 }];
+  e.commit(task);
+  task.findings.push({ id: "new-important", text: "The Important work that remains", severity: "blocking", status: "open", raisedBy: "opus-high", confirmedBy: [] }, { id: "new-nit", text: "The small improvement that remains", severity: "suggestion", status: "open", raisedBy: "opus-high", confirmedBy: [] });
+  task.journey[0]!.result = { findings: structuredClone(task.findings) };
+  task.journey[0]!.agentResults = [{ at: 2, roleId: "code-reviewer", profileId: "opus-high", value: { findings: [], verdict: "pass" } }];
+  task.journey[0]!.endedAt = 2;
+  e.commit(task);
+  const event = all(await events({ taskIds: [taskId], from: "oldest", kinds: ["review.finished"], timeoutMs: 0 }))[0]!;
+  expect((event.reports as { id: string }[]).slice(0, 2).map((report) => report.id)).toEqual(["new-important", "new-nit"]);
+  expect(event.reportCounts).toEqual({ opening: { total: 22, open: { total: 0, important: 0, nits: 0, preExisting: 0 }, fixed: 22, dismissed: 0, unverified: 0 }, closing: { total: 24, open: { total: 2, important: 1, nits: 1, preExisting: 0 }, fixed: 22, dismissed: 0, unverified: 0 } });
+  expect(event.raised).toEqual(["new-important", "new-nit"]);
+  let part = await c.call("watch.event", { eventId: event.id, limit: 300 });
+  let text = String(part.text);
+  while (part.next) { part = await c.call("watch.event", { eventId: event.id, limit: 300, cursor: part.next }); text += part.text; }
+  expect(JSON.parse(text).reports).toHaveLength(24);
+  expect(JSON.parse(text).reports.at(-1).id).toBe("old-21");
 });

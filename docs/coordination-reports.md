@@ -1,0 +1,52 @@
+# Checkpoint and review reports
+
+The CLI and MCP use the same read-only decision projection and existing saved evidence. This is the report contract; [coordination](coordination.md) covers connection, operations, retries and event monitoring. Inspection never executes checks, establishes a new pass or grants publishing permission.
+
+## Inspect a checkpoint
+
+`inbox inspect REQUEST --json` supplies the recorded request, task and product identities, available decisions, recommendation, choices and decision revision. A long request continues through `next`; it is never replaced by a generic summary. Read every shortened inspection page before deciding. Return the inspected revision with the decision and use a durable request reference as usual.
+
+Plan inspection includes the full ordered stages and assigned profiles, selected and proposed scope, validated product rows, proposed and approved starting points, destinations and validation problems. Design and disagreement inspection retain the brief, material objections, responses and coordinator call; their `designRead` also reads that evidence separately. Other checkpoints link to the existing plan read. Delivery identifies every product's delivery choice and destination, acceptance state, review decision, outstanding reports and check evidence. `approvalMeaning` explicitly distinguishes accepting unresolved review to continue final verification from delivery approval.
+
+A product's `checks.versions` binds its result entries to the recorded commit, code tree and check definition. An entry with a different original attempt supplies its own `versions`. These are recorded identities, not newly verified ones. `freshness` is `recorded-current` only when the saved current flag, code identity and definition exist, `stale` when the engine recorded changed inputs, and `unverified` otherwise. A recorded command pass can accompany either stale or unverified evidence. `state: none-configured` is an explicitly saved empty run; `unavailable` means no run was saved. Skipped checks remain `skipped` and `not-executed`.
+
+Each result keeps its outcome, attempt identity, execution start/end and duration when recorded, interruption information, and reuse time/basis when available. Reuse is a later selection of old evidence, never a new execution time. `reuseHistory` reads the original node's full reuse history. Diagnostic `completeness` describes what the existing diagnostic reader can verify now; `recordedComplete` separately preserves whether the saved run finished recording its output pipes. Missing timestamps and identities stay absent or null.
+
+Successful process output and the saved result are explicitly omitted. `diagnostics.read` uses `journey.check` to fetch the original log only when needed. Failed, unknown or unfinished runs share the existing 1,000-character saved-result preview budget between the beginning (`savedResult`) and ending (`savedResultEnding`) when the text is long. The ending preserves the final failure lines and the runner's appended deadline, unknown-exit and cleanup explanations; short results remain one complete preview. Offsets and `omittedBefore` identify the separate ending. Use `savedResultRead` with `section=result` and the beginning's `next` cursor to read the middle and remainder in original order; the separate ending is also part of that complete read. An exact saved runner explanation of an unreported exit produces `commandOutcome: unknown` and `exitUnreported: true`, preserving the recorded command result and all existing gates. If no saved explanation exists, a bounded ending of the verified process log is shown with its byte offset and omitted-prefix count. Quiet complete logs remain distinct from missing, incomplete or unverifiable logs.
+
+`original` identifies the unique original journey check. When provenance is unavailable, it stays null with an explanation. A retained latest-run fallback names its product and pins its exact contents through `ifRevision`; a changed run returns `changed`, never a replacement run. Historical original links are never guessed. Complete diagnostics still use the existing file-identity checks and honest saved-excerpt fallback. No second evidence store is created.
+
+Compact finding entries retain each report's identity, short description, stored severity/status, affected products, follow-up reference and focused current read. Full report text, evidence, answers and verification are explicitly omitted with `task.read` references using `section=findings` and `findingId`. Missing product assignments follow the existing assignment rule: a shared task does not assign an unrecorded or invalid list to every product. There is no deduplication of independent reports. Long populations continue through the inspection's ordinary bounded pages.
+
+Relevant changes invalidate both continuations and decisions, including changes inside omitted findings, saved check output, acceptance, other products' choices, review inputs/results and original diagnostic file facts. Passing time, reading evidence and unrelated activity do not. Existing durable decision receipts, review completion rules and publishing gates remain authoritative.
+
+## Read a review event
+
+`reportCounts.opening` and `reportCounts.closing` count reports at the respective observations:
+
+| Field | Population |
+| --- | --- |
+| `total` | All reports, including fixed, dismissed and unverified reports |
+| `open.total` | Every report whose status is open |
+| `open.important` | Open Important findings (stored severity `blocking`) |
+| `open.nits` | Open nits (stored severity `suggestion`) |
+| `open.preExisting` | Open pre-existing follow-ups |
+| `fixed`, `dismissed`, `unverified` | All closing/opening reports with that status |
+
+The event's numeric `opening` and `closing` retain their all-report meaning. `raised` lists newly observed report identities, including a report already settled when recorded. The summary names all open populations: two open reports can mean zero Important findings, one nit and one pre-existing follow-up. Only Important findings participate in the existing blocking rule. Zero open Important findings says nothing about checks, acceptance or permission to publish.
+
+`openImportant`, `openNits` and `openPreExisting` list those open populations. For compatibility, `stillOpen` retains its earlier Important-only meaning and `stillOpenPopulation` explicitly says `open-important`. New consumers should use the qualified fields. `reports` supplies compact closing entries and references to finding copies saved with that review or a participant result. Open Important findings come first, then open nits and pre-existing follow-ups, then unverified and settled history. All reports remain in the complete details; status totals are unaffected by ordering. Descriptions are shortened before the existing identity lists when the event needs to fit its byte budget. If that copy was never retained, the entry says it is unavailable; current evidence never replaces it.
+
+The existing transition lists keep their meanings: `claimedFixed` contains claims this completed review examined, `fixed` includes claims left standing, `reopened` records new reproductions, and `dismissed`/`unverified` record those changes. They may overlap and are not an equation for closing totals. Two blind reports of the same underlying bug remain two reports. Shortened lists retain full totals and a `refs.details` continuation through `watch.event`; full compact details expire with the existing event log.
+
+Only a review whose every seat handed back an accepted result gets `review.finished`. An incomplete review has `node.finished` with `review.examined: false`; any accepted participant results remain partial evidence. Outstanding fix claims stay under examination. Report counting changes none of these guarantees, severities, statuses, verification rules or follow-up eligibility.
+
+## From an event to a decision and warranted diagnostics
+
+1. Read `review.finished`: use its `nodeId`, qualified report counts and compact reports to identify the review and remaining work. `refs.results` supplies task/node/result index and optional seat for `journey.result` (its `findingCopies` is descriptive metadata). `refs.inputs` supplies arguments for `journey.input`; `refs.reviewInput`, when present, reads the saved blind-review snapshot or its versions/findings sections. Follow a report's `evidence.read` through `journey.finding` for that historical copy.
+2. List current requests with `inbox list --task-id TASK`, using `refs.currentRequests`. A finished review can have no pending checkpoint. When the ensuing `coordinator.request` arrives, its `refs.request.itemId` identifies the exact request to inspect. A prior review event never promises a future approval request.
+3. Inspect that request. `supportingReview` identifies the latest supporting review node and participant results/inputs. Its `findings` describe current reports; the event and saved finding copies retain the earlier statuses. Read any inspection continuation before deciding.
+4. Fetch only diagnostics warranted by a failed/unfinished result, stale or unverified evidence, an objection, or a specific question. Follow the supplied operation and arguments: `journey check --task-id TASK --node-id CHECK_NODE --index INDEX`, or `--section result` for a saved explanation. Pass that read's `next` as `--cursor`; never substitute a later check. Plan, design, report and exact-input reads likewise use the existing focused operations.
+5. Return the freshly inspected revision with the available decision. Accepting unresolved review only continues final verification. Inspect any later delivery request independently.
+
+MCP uses the same arguments with names such as `petrina_inbox_inspect`, `petrina_journey_check` and `petrina_task_read`.

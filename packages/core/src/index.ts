@@ -15,6 +15,7 @@ export * from "./setup.js";
 export * from "./takeover.js";
 export * from "./navigation.js";
 export * from "./findings.js";
+export * from "./finding-reports.js";
 export * from "./reviews.js";
 export * from "./flow.js";
 export * from "./check-evidence.js";

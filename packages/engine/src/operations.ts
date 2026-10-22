@@ -94,8 +94,8 @@ export const OPERATIONS = [
   ),
   op(
     "task.read",
-    "Read recorded task detail, conversation, findings, design or queued messages in bounded text pages. Older missing evidence is unavailable.",
-    { ...task, section: z.enum(["request", "conversation", "timeline", "findings", "design", "messages", "source", "error"]), ...evidence },
+    "Read recorded task detail, conversation, findings, design or queued messages in bounded text pages. findingId selects one current report in section=findings; its status may differ from a historical journey.finding copy. Older missing evidence is unavailable.",
+    { ...task, section: z.enum(["request", "conversation", "timeline", "findings", "design", "messages", "source", "error"]), findingId: id.optional(), ...evidence },
   ),
   ...["hold", "unhold", "pause", "resume", "cancel"].map((name) =>
     op(
@@ -177,7 +177,7 @@ export const OPERATIONS = [
   op(
     "journey.check",
     "Read an original check's diagnostics from beginning to end, with a bounded savedResult including startup failures and other engine explanations. Use section=result and its cursor to continue the saved result separately. Reports command outcome, relevance and log completeness; missing logs never become passes.",
-    { ...task, nodeId: id.optional(), index: z.number().int().min(0), section: z.enum(["diagnostics", "result"]).default("diagnostics"), ...evidence },
+    { ...task, nodeId: id.optional(), productId: id.optional().describe("Select one product’s latest saved run when nodeId is absent."), ifRevision: id.optional().describe("Pin a latest-run reference supplied by checkpoint inspection; changed evidence returns changed."), index: z.number().int().min(0), section: z.enum(["diagnostics", "result"]).default("diagnostics"), ...evidence },
   ),
   op("inbox.list", "List compact inbox requests, filtered inside the engine before pagination.", {
     ...filter,
@@ -187,7 +187,7 @@ export const OPERATIONS = [
   }),
   op(
     "inbox.inspect",
-    "Inspect a full request, choices, recommendation, evidence, available decisions and revision. Continue text pages to read all evidence.",
+    "Inspect the recorded request, choices, recommendation, available decisions and revision, with compact product/check/report evidence. Successful output is explicitly omitted with original journey.check references. Failed, unknown and unfinished checks include bounded beginning and ending saved explanations; follow section=result for the full text. Unreported exits stay unknown. Continue any shortened inspection pages; relevant changes require fresh inspection. Accepting unresolved review continues final verification, never approves delivery.",
     { itemId: id, ...evidence },
   ),
   op("inbox.answer", "Answer a question exactly once, tied to its inspected revision.", { ...decision, answer: text.max(4000) }, true),
@@ -269,7 +269,7 @@ export const OPERATIONS = [
   ),
   op(
     "watch.events",
-    "Wait for compact workflow events: node and seat starts and finishes, checks, task states, coordinator requests and decisions, repairs, retries, replacements, review completion and publishing results. Routine tool actions, streamed text and clocks are never events. Available events return at once; otherwise the request stays open until a batch, the deadline (default 30 seconds, up to an hour; 0 queries without waiting) or cancellation. Without a cursor, observation starts now; from=oldest replays this engine run's retained events. Return the cursor to continue; a restart or expired window reports lost continuity.",
+    "Wait for compact workflow events: node and seat starts and finishes, checks, task states, coordinator requests and decisions, repairs, retries, replacements, review completion and publishing results. Review counts include all reports and split open Important findings, nits and pre-existing follow-ups; stillOpen is an Important-only compatibility list. Follow coordinator.request to inbox.inspect; review completion alone grants no delivery approval. Routine tool actions, streamed text and clocks are never events. Available events return at once; otherwise the request stays open until a batch, the deadline (default 30 seconds, up to an hour; 0 queries without waiting) or cancellation. Without a cursor, observation starts now; from=oldest replays this engine run's retained events. Return the cursor to continue; a restart or expired window reports lost continuity.",
     {
       taskIds: z.array(id).max(100).optional().describe("Selected tasks. Omit for a product or all current work."),
       productId: id.optional().describe("A product's current work, including newly admitted tasks."),
