@@ -8,12 +8,13 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
-import { CLEANUP_INCOMPLETE, descendantsKnown } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit } from "./process-tree.js";
 import { machineInterruption } from "./check-interruption.js";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
 export const CHECK_TIMEOUT_MS = 20 * 60_000;
 const OUTPUT_KEPT = 6000;
+export const CHECK_EXIT_UNREPORTED = "The check ended, but the system did not report its exit, so whether it passed is unknown.";
 
 /** The scripts that usually prove a JavaScript project works, in the order they are worth running. */
 const SCRIPTS: readonly [string, string][] = [
@@ -144,7 +145,7 @@ export async function runChecks(
       const endedAt = Date.now();
       const result = { name: check.name, command: commandText(check.argv), startedAt: started, endedAt, ms: endedAt - started, ...await log?.close() };
       const output = [
-        run.error ? `Could not start: ${run.error}` : run.timedOut ? `${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.` : run.output,
+        run.error ? `Could not start: ${run.error}` : run.timedOut ? `${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.` : run.exitUnreported ? `${run.output}\n${CHECK_EXIT_UNREPORTED}` : run.output,
         ...(run.cleanupIncomplete ? [CLEANUP_INCOMPLETE] : []),
       ].filter(Boolean).join("\n");
       const finished: CheckRun = {
@@ -212,7 +213,7 @@ async function checkLog(directory: string): Promise<CheckLog> {
  * One command, with only the end of its output kept while it runs, so a noisy check never fills
  * memory. It gets a process group of its own: a timeout or a stopped task ends everything it started.
  */
-function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; cleanupIncomplete?: boolean; error?: string }> {
+function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; cleanupIncomplete?: boolean; exitUnreported?: boolean; error?: string }> {
   return new Promise((resolve) => {
     const windows = process.platform === "win32";
     let kept = "";
@@ -220,9 +221,13 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     let timedOut = false;
     let done = false;
     let outputComplete = false;
+    let exitSeen = false;
+    let exitUnreported = false;
     let endedPipes = 0;
     let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
+    // Ends the watch for a lost exit once the exit is reported or the check is settled.
+    const watch = new AbortController();
     let stopping: Promise<boolean> | undefined;
     const readers: { cancel(): Promise<void> }[] = [];
     const finish = (code: number | null, error?: string) => {
@@ -230,9 +235,10 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
       done = true;
       clearTimeout(timer);
       clearTimeout(grace);
+      watch.abort();
       signal?.removeEventListener("abort", stop);
       for (const reader of readers) void reader.cancel().catch(() => undefined);
-      const result = { code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, outputComplete, ...(error ? { error } : {}) };
+      const result = { code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, outputComplete, ...(exitUnreported ? { exitUnreported: true } : {}), ...(error ? { error } : {}) };
       // The parent can exit before detached workers. Do not release the working copy until their stop settles.
       void (stopping ?? Promise.resolve(true)).then((clean) => resolve({ ...result, ...(!clean ? { cleanupIncomplete: true } : {}) }));
     };
@@ -285,7 +291,25 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     const output = Promise.all([drain(child.stdout), drain(child.stderr)]).then(() => { outputComplete = endedPipes === 2; });
     // A background program can keep the pipes open after the check exits: don't wait on it for long.
     void child.exited.then((code) => {
+      exitSeen = true;
+      watch.abort();
       if (!done) grace ??= setTimeout(() => finish(code), 5000);
+    }, () => undefined);
+    // The mirror case: the output closed, but under load the system may never report the exit. Closed
+    // output alone proves nothing (a check can redirect its output and keep working within its deadline),
+    // so bounded state reads watch the child: only one observed gone or defunct without a reported exit
+    // settles as unknown, instead of holding until its deadline. A still-running check keeps its allowance.
+    const pid = child.pid;
+    void output.then(() => {
+      // A child without a process number (a test stand-in that already ended) has no state to read.
+      if (done || exitSeen || typeof pid !== "number") return;
+      return lostExit(pid, watch.signal, processList).then((state) => {
+        if (state !== "lost" || done || exitSeen) return;
+        exitUnreported = true;
+        // The check itself is gone or defunct: stop what it started, without waiting on the defunct leader.
+        stopping ??= stopAll(pid, windows, processList, true);
+        finish(null);
+      });
     }, () => undefined);
     void Promise.all([child.exited, output]).then(
       ([code]) => finish(code),
@@ -294,8 +318,8 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
   });
 }
 
-/** End a check and everything it started. */
-async function stopAll(pid: number | undefined, windows: boolean, processList?: (timeout: number) => Promise<string | undefined>): Promise<boolean> {
+/** End a check and everything it started. `leaderEnded`: the check itself was observed gone or defunct, so only what it started is waited for. */
+async function stopAll(pid: number | undefined, windows: boolean, processList?: (timeout: number) => Promise<string | undefined>, leaderEnded = false): Promise<boolean> {
   if (!pid) return true;
   if (windows) {
     return new Promise<boolean>((resolve) => execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, (error) => resolve(!error)));
@@ -309,7 +333,8 @@ async function stopAll(pid: number | undefined, windows: boolean, processList?: 
   }
   // A signal being accepted does not mean the worker has exited. Keep the copy reserved until
   // the group and the captured detached workers are gone, or report that cleanup is incomplete.
-  const alive = () => targets.some((target) => {
+  // A defunct leader keeps its number until the runtime collects it: it is not a running process.
+  const alive = () => targets.filter((target) => !leaderEnded || target !== pid).some((target) => {
     try { process.kill(target, 0); return true; }
     catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
   });

@@ -310,6 +310,7 @@ export class Engine extends Kernel implements Commands {
     // Stopped first: stopping agents still changes state, and nothing may save after the store closes.
     this.stopped = true;
     this.stopRequested.abort();
+    this.events.stop();
     this.stopIdleSleep();
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;

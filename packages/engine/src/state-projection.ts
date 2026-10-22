@@ -4,7 +4,7 @@ import type { Kernel, MTask } from "./kernel.js";
 import { settledHistoryTask } from "./store.js";
 import { executionOf, restoreRepositoryState, taskView, type RepositoryContext } from "./repository-context.js";
 
-type ProjectionHost = Pick<Kernel, "s" | "store" | "boot" | "stopped" | "activeState" | "save" | "drivers" | "settling" | "switching" | "copyCleanups" | "followsUpHeld" | "usageCoordinator">;
+type ProjectionHost = Pick<Kernel, "s" | "store" | "boot" | "stopped" | "activeState" | "save" | "drivers" | "settling" | "switching" | "copyCleanups" | "followsUpHeld" | "usageCoordinator" | "events">;
 export class StateProjection {
   constructor(private readonly k: ProjectionHost, private readonly normalize: (task: MTask) => void) {}
   /** Explicit compatibility/debug snapshot. Production never loads all archived conversations. */
@@ -33,9 +33,12 @@ export class StateProjection {
       const task = executionOf(target).task;
       this.dirtyTasks.add(task.id);
       this.taskRevisions.set(task.id, revision);
+      // Events are recorded on the shared change path, before a batched save or retirement can hide a transition.
+      this.k.events?.observe([task]);
     } else {
       this.allTasksDirty = true;
       for (const task of this.k.s.tasks) this.taskRevisions.set(task.id, revision);
+      this.k.events?.observe([...this.k.s.tasks, ...this.archiveCache.values()]);
     }
   }
 
@@ -98,6 +101,8 @@ export class StateProjection {
     if (!saved) return undefined;
     restoreRepositoryState(saved);
     this.normalize(saved);
+    // If settled facts were retired, the saved body is the exact baseline before any late edit.
+    this.k.events?.baseline([saved]);
     // On-demand reads stay bounded even when walking through years of finished work.
     if (this.archiveCache.size >= 16) {
       const first = this.archiveCache.keys().next().value!;
@@ -110,6 +115,8 @@ export class StateProjection {
 
   save(all: boolean): boolean {
     const revision = this.k.store.history.info().revision;
+    // A terminal transition saved without an ordinary change notification is still observed before retirement.
+    this.k.events?.observe(this.k.s.tasks);
     const retired = this.retiredTasks();
     const complete = all || this.allTasksDirty;
     const changedArchive = [...this.archiveCache.values()].filter((task) => all || this.dirtyTasks.has(task.id));

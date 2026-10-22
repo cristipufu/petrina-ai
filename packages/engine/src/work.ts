@@ -66,8 +66,6 @@ export class Work {
       // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
       const own = repository.builderSession;
       const back = (task.fixing || updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
-      const builderStep = openStep(task);
-      if (task.fixing && builderStep?.kind === "agent" && builderStep.roleId === roleId) builderStep.builderConversation = back ? "resumed" : "new";
       const result = savedResult !== undefined ? BuildResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, BuildResult, signal, {
         builderTree: startingTree,
         used,

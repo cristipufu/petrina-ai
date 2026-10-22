@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { IdleSleepAssertion } from "./awake.js";
-import { NO_ROLE_CHANGES, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
+import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, type Choice, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
 import type { Which } from "./setup.js";
@@ -23,6 +23,7 @@ import { ADAPTERS, detectTools, ENGINE_PROFILES } from "./tools.js";
 import type { ModelAtCapacity, UsageInfo, UsageLimited } from "./usage.js";
 import { Tracking } from "./tracking.js";
 import { recoverBrowserTemps } from "./browser.js";
+import { WorkflowEvents } from "./workflow-events.js";
 
 /** Repository execution fields cannot be read or written on the runtime task. */
 export type MTask = DeepMutable<library.TaskState>;
@@ -120,6 +121,8 @@ export interface EngineOptions {
   which?: Which;
   /** Tests: how long one tool check may take. */
   toolCheckTimeoutMs?: number;
+  /** Tests: a smaller retained workflow-event window, to exercise eviction. */
+  eventRetention?: { events?: number; bytes?: number };
   /** Tests: where Apple's developer tools are, instead of asking xcode-select. */
   developerTools?: () => Promise<string | undefined>;
   /** Tests: the home folder: where the clone finder looks, and what ~ means in a pasted path. */
@@ -282,6 +285,9 @@ export abstract class Kernel {
     this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
     this.tracking = new Tracking(this);
     this.tracking.start();
+    // What is loaded is the starting point: observation begins here, and only later changes are events.
+    this.events = new WorkflowEvents(this, options.eventRetention);
+    this.events.baseline(this.s.tasks);
     this.usageCoordinator.startReaders(this.dataDir, options);
   }
 
@@ -293,6 +299,20 @@ export abstract class Kernel {
 
   /** The work log: every agent turn and notable moment, the permanent product list and the tools' limits. */
   readonly tracking: Tracking;
+
+  /** Compact workflow events, recorded on every change through the state projection and retained per run. */
+  readonly events: WorkflowEvents;
+
+  /** A product scope covers a task that retains the product, live or archived. Archived membership comes from the history index, never a complete body. */
+  readonly taskInvolves = (taskId: Id, productId: Id): boolean => {
+    const task = this.s.tasks.find((entry) => entry.id === taskId);
+    if (task) return involvesProduct(task, productId);
+    const archived = this.store.history.item(taskId);
+    return !!archived && (archived.productIds ?? [archived.productId]).includes(productId);
+  };
+
+  /** Whether a task exists, live or archived, from the history index alone: no archived body is read. */
+  readonly taskKnown = (taskId: Id): boolean => this.s.tasks.some((entry) => entry.id === taskId) || this.store.history.has(taskId);
 
   private readonly idleSleep: IdleSleepAssertion;
 

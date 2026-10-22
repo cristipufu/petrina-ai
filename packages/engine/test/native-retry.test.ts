@@ -83,6 +83,7 @@ describe.concurrent("a native harness reconnecting by itself", () => {
     }
     try {
       await run.until((task) => task.todo === "Drafting the greeting" && task.statusLine === "Reading greeting.txt" && task, "the builder at work");
+      const cursor = (await run.engine.events.wait({ taskIds: [run.taskId], timeoutMs: 0 })).cursor as string;
       run.release("go-retry");
       const reconnecting = await run.until((task) => task.retrying === CODEX_RECONNECTING && task, "Codex reconnecting");
       expect(reconnecting.state).toBe("running");
@@ -108,6 +109,8 @@ describe.concurrent("a native harness reconnecting by itself", () => {
       expect(mainLine(resumed)).toBe("Drafting the greeting");
       expect(run.nowStep(resumed)?.live).toBe("Editing greeting.txt");
       expect(counts).toEqual({ commit: 4, commitNow: 0 });
+      // The tool's own reconnect, old-call updates and fresh text are activity within this workflow step.
+      expect((await run.engine.events.wait({ taskIds: [run.taskId], cursor, timeoutMs: 0 })).events).toEqual([]);
 
       run.release("go-finish");
       const task = await run.until((task) => task.state === "done" && task, "the task to finish");

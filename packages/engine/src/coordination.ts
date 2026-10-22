@@ -1,13 +1,15 @@
 import { messageRemovalText } from "@petrina/core";
 import { displayTask } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
-import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSteps, taskProductIds, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
+import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSteps, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { operation } from "./operations.js";
 import { offeredLessons } from "./learnings.js";
 import { cursor, fingerprint, paginate, readText } from "./evidence-read.js";
 import { readCheckLog } from "./check-log-read.js";
 import { readConversation } from "./conversation-read.js";
+import { readExactInput } from "./exact-input.js";
+import { readReviewInput } from "./review-context.js";
 
 export type Outcome =
   | "completed"
@@ -174,13 +176,21 @@ export class Coordination {
   ) {
     engine.store.database.run("CREATE TABLE IF NOT EXISTS coordination_receipts (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL)");
   }
-  async call(name: string, raw: unknown): Promise<Result> {
+  /** `signal`: the caller went away or cancelled; a wait releases its subscription and timer at once. */
+  async call(name: string, raw: unknown, signal?: AbortSignal): Promise<Result> {
     const spec = operation(name);
     if (!spec) return { outcome: "invalid", message: "Unknown coordination operation. Use help or tools/list." };
     const parsed = spec.schema.safeParse(raw);
     if (!parsed.success) return { outcome: "invalid", message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ") };
     const a: Args = parsed.data;
-    if (name === "watch.wait") return this.watch(a);
+    if (name === "watch.wait") return this.watch(a, signal);
+    if (name === "watch.events") {
+      if (a.taskIds && a.productId) return { outcome: "invalid", message: "Choose selected tasks or a product, not both." };
+      if (a.productId && !this.engine.s.products.some((product) => product.id === a.productId)) return { outcome: "missing", message: "That product does not exist." };
+      // Existence only: a quiet renewal over many archived tasks must never read their complete bodies.
+      for (const id of a.taskIds ?? []) if (!this.engine.taskKnown(id)) return { outcome: "missing", message: `Task ${id} does not exist.` };
+      return this.engine.events.wait(a, signal);
+    }
     if (name.startsWith("engine.")) {
       if (this.lifecycle) return name === "engine.status" ? this.lifecycle.status() : this.lifecycle.request(name.slice(7), a);
       if (name === "engine.status")
@@ -256,6 +266,7 @@ export class Coordination {
   private query(name: string, a: Args): Result | Promise<Result> {
     const e = this.engine,
       s = e.activeState();
+    if (name === "watch.event") return e.events.log.read(a.eventId, a);
     const needsTask = a.taskId && name !== "task.list" && name !== "task.history" && name !== "inbox.list";
     const task = needsTask ? e.taskDetails(a.taskId) : undefined;
     if (needsTask && !task) return { outcome: "missing", message: "That task does not exist." };
@@ -341,9 +352,36 @@ export class Coordination {
         result: node?.agentResults || node?.result ? "recorded" : "unavailable",
         trigger: node?.trigger ?? null,
         triggerEvidence: node?.trigger ? "recorded" : "unavailable",
+        reviewInput: node?.reviewInput ? { digest: node.reviewInput.digest, read: { taskId: task!.id, nodeId: node.id } } : null,
       });
     }
     if (name === "journey.check") return readCheckLog(e.dataDir, task!, { nodeId: a.nodeId, index: a.index, section: a.section, cursor: a.cursor, limit: a.limit });
+    if (name === "journey.review-input") {
+      const node = task!.journey?.find((step) => step.id === a.nodeId);
+      if (!node) return { outcome: "missing", message: "That journey node does not exist." };
+      const ref = node.reviewInput;
+      if (!ref) return { outcome: "unavailable", message: "This node recorded no blind-review snapshot reference." };
+      return readReviewInput(ref).then((input) => readText(a.section === "findings" ? input.findings : a.section === "versions" ? ref.heads : input, a, [name, task!.id, node.id, ref.digest, a.section], { evidence: "recorded", digest: ref.digest }), (error) => ({ outcome: /changed/.test(String(error)) ? "changed" : "unavailable", message: "The saved blind-review evidence is missing or changed. No newer evidence is substituted." }));
+    }
+    if (name === "journey.input") return readExactInput(task!, s.roles, a as Parameters<typeof readExactInput>[2]);
+    if (name === "journey.result" || name === "journey.finding") {
+      const node = task!.journey?.find((node) => node.id === a.nodeId);
+      if (!node) return { outcome: "missing", message: "That journey node does not exist." };
+      const results = (node.agentResults ?? []).map((result, index) => ({ result, index, seat: resultSeatOf(node, result, s.roles, task!) }));
+      if (name === "journey.result") {
+        const chosen = a.index !== undefined ? results[a.index] : [...results].reverse().find((entry) => !a.seat || entry.seat === a.seat);
+        if (!chosen || (a.seat && chosen.seat !== a.seat)) return { outcome: "unavailable", message: "No accepted result is recorded for that seat on this node." };
+        const { value, images, findings: _findings, ...rest } = chosen.result;
+        return readText(value, a, [name, a.taskId, a.nodeId, chosen.index], { seat: chosen.seat, index: chosen.index, ...rest, images: images?.map(({ id, caption }) => ({ id, caption })) ?? [], findingCopies: chosen.result.findings?.length ?? 0, evidence: "recorded" });
+      }
+      const copy = a.result !== undefined ? results[a.result]?.result.findings : node.result?.findings;
+      if (a.result !== undefined && !results[a.result]) return { outcome: "missing", message: "That result does not exist on this node." };
+      if (!copy) return { outcome: "unavailable", message: a.result !== undefined ? "That result saved no finding copies." : "This node recorded no finding copies." };
+      const finding = copy.find((entry) => entry.id === a.findingId);
+      if (!finding) return { outcome: "missing", message: "That finding is not in this recorded copy. A newer record is never substituted." };
+      return readText(finding, a, [name, a.taskId, a.nodeId, a.result, a.findingId], { findingId: a.findingId, copy: a.result !== undefined ? { kind: "seat-result", result: a.result, seat: results[a.result]!.seat } : { kind: "node" }, evidence: "recorded" });
+    }
+    if (name === "task.health") return this.health(task!);
     if (name === "inbox.list")
       return paginate(
         this.inbox(a).map(({ id, taskId, kind, title, blocking, at }) => ({ id, taskId, kind, title, blocking, at })),
@@ -632,7 +670,43 @@ export class Coordination {
     }
     return done(a.taskId ? { taskId: a.taskId } : {});
   }
-  private async watch(a: Args): Promise<Result> {
+  /** A bounded health read: recorded facts about the current step, with no verdict and no action. */
+  private health(task: Task): Result {
+    const state = this.engine.activeState();
+    const now = Date.now();
+    const node = [...(task.journey ?? [])].reverse().find((step) => step.endedAt === undefined) ?? task.journey?.at(-1);
+    const lines = task.session.filter((line) => line.step === node?.id && (line.from === "agent" || line.from === "activity"));
+    const status = task.timeline.filter((entry) => entry.step === node?.id && entry.tone === "status");
+    const seatOfKey = (key: string) => [task.agent, ...(task.helpers ?? [])].find((agent) => agent?.reviewKey === key);
+    const seats = Object.entries(task.hunt?.work ?? {}).map(([key, work]) => ({
+      seat: key, roleId: seatOfKey(key)?.roleId ?? null, profileId: seatOfKey(key)?.profileId ?? null,
+      workedMs: work.clock ? workedSoFar(work.clock, now) : null, working: work.clock?.since !== undefined,
+      todo: work.todo ?? null, lastActivity: work.toolActivity?.lastActivity ?? null, runningTool: work.toolActivity?.runningTool ? { description: work.toolActivity.runningTool.description, startedAt: work.toolActivity.runningTool.startedAt } : null,
+      actionCount: work.toolActivity?.actionCount ?? null, waiting: work.waiting ?? null, attempts: work.attempts,
+    }));
+    const estimate = timeLeft({ tasks: state.tasks, now, history: state.history }, task);
+    const lastObserved = Math.max(0, ...lines.map((line) => line.at), ...status.map((entry) => entry.at), task.toolActivity?.runningTool?.startedAt ?? 0, ...Object.values(node?.toolActivity ?? {}).map((activity) => activity.runningTool?.startedAt ?? 0));
+    return {
+      outcome: "completed",
+      observedAt: now,
+      state: task.state,
+      ...(node ? { node: { id: node.id, kind: node.kind, roleId: node.roleId ?? null, profileId: node.profileId ?? null, startedAt: node.startedAt, elapsedMs: now - node.startedAt, ended: node.endedAt !== undefined } } : { node: null }),
+      workedMs: task.stepClock ? workedSoFar(task.stepClock, now) : null,
+      working: task.stepClock?.since !== undefined,
+      attempts: task.stepAttempts ?? null,
+      lastObservedAt: lastObserved || null,
+      todo: task.todo ?? null,
+      lastActivity: task.toolActivity?.lastActivity ?? null,
+      runningTool: task.toolActivity?.runningTool ? { description: task.toolActivity.runningTool.description, startedAt: task.toolActivity.runningTool.startedAt } : null,
+      actionCount: task.toolActivity?.actionCount ?? null,
+      waitingReason: ["waiting", "needs-you", "paused", "queued", "failed", "backlog"].includes(task.state) ? task.statusLine : null,
+      seats,
+      estimate: estimate ? { text: estimate, basis: "The median of the last ten finished steps with the same role and first-or-repeat pass, with at least three samples. An estimate, never a threshold." } : null,
+      note: "Recorded facts only. A quiet step is not a stuck step, and this read never retries, cancels or replaces work.",
+    };
+  }
+
+  private async watch(a: Args, signal?: AbortSignal): Promise<Result> {
     const e = this.engine,
       deadline = Date.now() + a.timeoutMs;
     let selected: ReturnType<typeof taskSummary>[] | undefined;
@@ -686,16 +760,19 @@ export class Coordination {
                     : !!items?.length && items.every((t) => ["awaiting-merge", "landed"].includes(t.landing));
         if (matches) return { outcome: "completed", marker, result: current };
         if (e.stopped) return { outcome: "disconnected", marker, result: current };
+        if (signal?.aborted) return { outcome: "disconnected", marker, result: current, message: "The wait was cancelled." };
         if (Date.now() >= deadline) return { outcome: "timed-out", marker, result: current, message: "The deadline ended this wait. Work continues." };
         if (dirty) continue;
         await new Promise<void>((resolve) => {
           let timer: ReturnType<typeof setTimeout>;
           const done = () => {
             clearTimeout(timer);
+            signal?.removeEventListener("abort", done);
             wake = undefined;
             resolve();
           };
           wake = done;
+          signal?.addEventListener("abort", done, { once: true });
           timer = setTimeout(done, Math.min(1000, Math.max(0, deadline - Date.now())));
         });
       }

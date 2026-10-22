@@ -535,3 +535,28 @@ export async function waitForFile(path: string, ms = 60_000): Promise<void> {
     await Bun.sleep(30);
   }
 }
+
+/**
+ * A real defunct process: finished, but never collected by its parent, which is what a child whose exit
+ * the runtime lost looks like to the system. `release` ends the parent, so the system collects it.
+ */
+export async function defunctProcess(): Promise<{ pid: number; release(): Promise<void> }> {
+  const holder = Bun.spawn(["sh", "-c", "sleep 0.05 & echo $!; exec sleep 300"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const reader = holder.stdout.getReader();
+  let text = "";
+  while (!text.includes("\n")) {
+    const next = await reader.read();
+    if (next.done) break;
+    text += new TextDecoder().decode(next.value);
+  }
+  reader.releaseLock();
+  const pid = Number(text.trim());
+  if (!pid) throw new Error(`No defunct process was started: ${JSON.stringify(text)}`);
+  return {
+    pid,
+    async release() {
+      holder.kill("SIGKILL");
+      await holder.exited;
+    },
+  };
+}

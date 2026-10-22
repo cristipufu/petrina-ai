@@ -190,9 +190,10 @@ export class Shipping {
     } else if (landed === "decision") {
       task.state = "needs-you";
       task.column = "ready";
-      const names = task.repositories!.filter((work) => work.pr?.state === "closed" && !work.landingAccepted).map((work) => work.source!.product.name);
-      task.statusLine = `${names.join(", ")}: pull request closed without merging. Your decision is needed`;
-      if (!this.k.s.inbox.some((item) => item.taskId === task.id && item.kind === "shipping")) this.k.raise(task, "shipping", task.statusLine, false, { body: "Confirmed deliveries remain saved. Dependent tasks stay blocked until you explicitly decide this change has landed." });
+      const closed = task.repositories!.filter((work) => work.pr?.state === "closed" && !work.landingAccepted);
+      task.statusLine = `${closed.map((work) => work.source!.product.name).join(", ")}: pull request closed without merging. Your decision is needed`;
+      // The question belongs to the closed product, so the others keep their own recorded results.
+      if (!this.k.s.inbox.some((item) => item.taskId === task.id && item.kind === "shipping")) this.k.raise({ task, work: closed[0]! }, "shipping", task.statusLine, false, { body: "Confirmed deliveries remain saved. Dependent tasks stay blocked until you explicitly decide this change has landed." });
     } else if (landed === "waiting") {
       task.state = "pr-open"; task.column = "ready"; task.statusLine = "Waiting for every pull request to merge";
     } else if (landed === "landed") {
@@ -317,7 +318,7 @@ export class Shipping {
     this.k.commitNow();
     const tested = await this.releases.setVersion(scope, declared);
     // A version commit changes what ships: the checks run on it too.
-    if (tested !== start && (await this.checks.failing(scope, signal))) return this.preparationFailed(scope, `The product's checks fail with the version set to ${shipping.version}`, signal);
+    if (tested !== start && (await this.checks.failing(scope, signal, undefined, "publishing"))) return this.preparationFailed(scope, `The product's checks fail with the version set to ${shipping.version}`, signal);
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
     const preview = repository.releasePreview;
     if (task.repositories && preview && (preview.start !== start || preview.version !== shipping.version || preview.tag !== shipping.tag || preview.after !== shipping.after)) {
@@ -404,7 +405,7 @@ export class Shipping {
 
       await this.clearUnpublishedPreparations(task);
       // Check the restored work, so failures belonging only to the removed version do not reach a builder.
-      await this.checks.failing(scope, signal);
+      await this.checks.failing(scope, signal, undefined, "publishing");
 
       const delivery = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
       if (delivery < 0) throw new Error("The plan has no delivery check before release preparation");
@@ -1053,6 +1054,7 @@ export class Shipping {
       scope!.work.cleanup = { ...scope!.work.cleanup, pullRequest: "unconfirmed", ...(tested ? { checkedDelivery: { tested, base } } : {}) };
       if (!tested) delete scope!.work.cleanup.checkedDelivery;
     }
+    if (!scope!.work.pr && !scope!.work.release && (!scope!.work.landed || scope!.work.localUpdate?.pushed === false)) scope!.work.cleanup = { ...scope!.work.cleanup, markedDone: true };
     delete scope!.work.shipping;
     this.k.clearStep(task);
     this.k.tracking.delivered(task);

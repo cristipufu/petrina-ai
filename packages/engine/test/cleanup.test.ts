@@ -1,5 +1,6 @@
 import { displayTask } from "@petrina/core";
 import { executionFor } from "../src/repository-context.js";
+import { Coordination } from "../src/coordination.js";
 // Real worktrees and fake agents/GitHub: no network, no windows, and branches/history survive removal.
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -178,6 +179,9 @@ describe.concurrent("Finished tasks free their working copies", () => {
       }
       await until(engine, (s) => taskOf(s, id).pr?.state === "open", () => {});
       expect(taskOf(engine.getState(), id).state).toBe("done");
+      const c = new Coordination(engine);
+      const updates = async () => (await c.call("watch.events", { taskIds: [id], from: "oldest", kinds: ["publishing.result"], timeoutMs: 0, limit: 100 })).events as { result: unknown; landing: string }[];
+      expect((await updates()).at(-1)).toMatchObject({ landing: "marked-done", result: { kind: "unconfirmed", landed: false, lookup: { number: 77, state: "open" } } });
       expect(existsSync(copy)).toBe(true);
       expect(taskOf(engine.getState(), id).cleanup?.removedAt).toBeUndefined();
       w.setGitHub((github) => (github.prs[0]!.state = kind === "older interrupted" ? "MERGED" : "CLOSED"));
@@ -185,6 +189,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       gone(w, done);
       expect(done.state).toBe("done");
       expect(texts(done)).toContain(kind === "older interrupted" ? "Merged #77 on GitHub" : "Closed #77 without merging");
+      expect((await updates()).at(-1)).toMatchObject({ landing: "marked-done", result: { kind: "unconfirmed", landed: false, lookup: { number: 77, state: kind === "older interrupted" ? "merged" : "closed" } } });
     } finally { await engine.shutdown(); }
   });
 

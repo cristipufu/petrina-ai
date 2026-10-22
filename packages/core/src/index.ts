@@ -31,6 +31,7 @@ export * from "./summary.js";
 export * from "./history.js";
 export * from "./follow-ups.js";
 export * from "./repositories.js";
+export * from "./workflow-events.js";
 
 export * from "./combine-backlog.js";
 

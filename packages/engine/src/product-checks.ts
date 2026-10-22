@@ -10,7 +10,7 @@ import { CheckFinderResult } from "./roles.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { CheckAttemptEvidence, CheckRun, DeepMutable, JourneyProductCheck } from "@petrina/core";
+import type { CheckAttemptEvidence, CheckRun, DeepMutable, JourneyCheckReuse, JourneyProductCheck } from "@petrina/core";
 import { namedCheckFailures } from "./related-check-evidence.js";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, expectedCheckCommands, orderedChecks, staticCheck, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
@@ -32,6 +32,13 @@ function checkDiagnostic(output: string): string | undefined {
 
 type CheckEntries = Map<string, DeepMutable<JourneyProductCheck>>;
 type CheckState = { sha?: string; tree?: string; trackedChanged: boolean; hooks: string[]; definition: string; message?: string };
+
+/**
+ * Nothing to run: no check with a command and no commit hook. Such a run still records a checks step and its
+ * attempt's versions, so later steps can tell "no checks configured" from missing evidence, but it needs no turn
+ * on the check lane and touches no file: nothing ran, so there is nothing to put back, and uncommitted edits stay.
+ */
+const nothingToRun = (checks: readonly ProductCheck[], hooks: readonly string[]): boolean => !checks.some((check) => check.argv.length) && !hooks.length;
 
 export class ProductChecks {
   /**
@@ -224,7 +231,7 @@ export class ProductChecks {
     if (!repository.worktree) return 0;
     let state = prepared ?? await this.captureState(scope, checks);
     const hooks = state.hooks;
-    if (!checks.length && !hooks.length && !repository.checks) return 0;
+    const nothing = nothingToRun(checks, hooks);
     // Resuming unfinished release notes revalidates the preparation first. Those repeated checks belong
     // to the same step's timeline: they do not complete the notes or start another agent step.
     const open = openStep(task);
@@ -251,8 +258,8 @@ export class ProductChecks {
     let finished: Awaited<ReturnType<ProductChecks["turnToRun"]>> | undefined;
     let complete = false;
     try {
-      finished = await this.turnToRun(scope, signal);
-      if (finished.waited) {
+      finished = nothing ? undefined : await this.turnToRun(scope, signal);
+      if (finished?.waited) {
         state = await this.captureState(scope, checks);
         // Another run held the lane. Files and external hook inputs may have changed while waiting.
         kept = await this.savedProductResults(scope, checks, state);
@@ -263,7 +270,7 @@ export class ProductChecks {
           if (step) step.productChecks = [...(step.productChecks ?? []), entry];
         }
       }
-      const failures = await this.runAll(scope, checks, state, signal, entries, kept);
+      const failures = await this.runAll(scope, checks, state, signal, entries, kept, attempt.attemptId);
       complete = true;
       return failures;
     } finally {
@@ -278,7 +285,7 @@ export class ProductChecks {
     }
   }
 
-  private async runAll(scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState, signal: AbortSignal, entries: CheckEntries, kept?: readonly CheckRun[]): Promise<number> {
+  private async runAll(scope: RepositoryContext, checks: readonly ProductCheck[], state: CheckState, signal: AbortSignal, entries: CheckEntries, kept?: readonly CheckRun[], attemptId = entries.values().next().value?.attemptId): Promise<number> {
     const { task, work: repository } = scope;
     if (signal.aborted || this.k.stopped) throw new Aborted();
     if (!repository.worktree) return 0;
@@ -290,7 +297,6 @@ export class ProductChecks {
     const { hooks, definition } = state;
     const env = { ...withoutCredentials(process.env, await this.k.emptyGhConfig()), CI: "1", BROWSER: "none", PETRINA_AGENT: "1" };
     const step = openStep(task);
-    const attemptId = entries.values().next().value?.attemptId;
     const provenance: DeepMutable<CheckAttemptEvidence> | undefined = attemptId && step ? {
       id: attemptId, productId: repository.productId, sha: before, tree: state.trackedChanged ? undefined : state.tree,
       commands: checks.filter((check) => check.argv.length).map((check) => commandText(check.argv)), definition,
@@ -314,7 +320,9 @@ export class ProductChecks {
       this.k.commit();
     };
     let results: CheckRun[];
-    let checksRestored = false;
+    // A run that executed something gets one combined inspection afterwards; an empty run gets none.
+    const nothing = nothingToRun(checks, hooks);
+    let checksRestored = nothing;
     let hooksStarted = false;
     const restore = async (report = false) => {
       const status = await git.worktreeStatus(repository.worktree!);
@@ -346,7 +354,7 @@ export class ProductChecks {
         this.noteStopped(scope, ran, entries);
         throw new Aborted();
       }
-      await restore(true);
+      if (!nothing) await restore(true);
       checksRestored = true;
       const staticFailed = checks.some((check) => staticCheck(check) && ran.some((run) => !run.ok && run.command === commandText(check.argv)));
       hooksStarted = !staticFailed && hooks.length > 0;
@@ -388,7 +396,7 @@ export class ProductChecks {
     if ((failed.length || interrupted) && this.k.role(openStep(task)?.roleId ?? "")?.result === "delivery") {
       endAgentStep(task, { outcome: incomplete ?? W.interrupted, reason: incomplete ?? W.checksFailed(failed.length), tone: "back", end: "failed" }, Date.now());
     } else {
-      endPetrinaStep(task, incomplete ? { outcome: incomplete, reason: incomplete, tone: "back" } : failed.length ? { outcome: W.checks(failed.length, results.length), reason: W.checksFailed(failed.length), tone: "back" } : { outcome: W.checks(0, results.length), reason: W.checksPassed }, Date.now());
+      endPetrinaStep(task, incomplete ? { outcome: incomplete, reason: incomplete, tone: "back" } : failed.length ? { outcome: W.checks(failed.length, results.length), reason: W.checksFailed(failed.length), tone: "back" } : { outcome: W.checks(0, results.length), reason: results.length ? W.checksPassed : W.noChecks }, Date.now());
     }
     this.k.commit();
     return results.filter((run) => !run.ok || run.interruption || run.interrupted).length;
@@ -539,7 +547,7 @@ export class ProductChecks {
    * coordinator sees it. Exhausted returns are a failure, never permission to start final acceptance.
    */
   async checksBeforeDelivery(scope: RepositoryContext, signal: AbortSignal): Promise<"passed" | "returned" | "exhausted"> {
-    if (!(await this.failing(scope, signal))) return "passed";
+    if (!(await this.failing(scope, signal, undefined, "delivery-check"))) return "passed";
     return this.backToBuilder(scope, "right before your delivery check") ? "returned" : "exhausted";
   }
 
@@ -549,7 +557,7 @@ export class ProductChecks {
    */
   async checksBeforeShipping(scope: RepositoryContext, signal: AbortSignal): Promise<boolean> {
     const { task, work: repository } = scope;
-    if (!(await this.failing(scope, signal))) return false;
+    if (!(await this.failing(scope, signal, undefined, "publishing"))) return false;
     if (this.backToBuilder(scope, "on what was about to ship")) return true;
     const check = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.gate === "delivery");
     if (check < 0) throw new Error("The product's checks fail on the work about to ship");
@@ -563,17 +571,21 @@ export class ProductChecks {
     return true;
   }
 
-  /** Reuse a completed run, including failures, until the code or check definition changes. */
-  async failing(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[]): Promise<boolean> {
-    const { work: repository } = scope;
+  /**
+   * Reuse a completed run, including failures, until the code or check definition changes. A reuse is recorded
+   * on the step that ran the original, with its basis, so the evidence survives restarts and later runs.
+   */
+  async failing(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[], purpose: JourneyCheckReuse["purpose"] = "acceptance"): Promise<boolean> {
+    const { task, work: repository } = scope;
     if (!repository.worktree) return false;
     const product = this.k.productOf(scope);
     checks ??= product ? checksFor(product, repository.worktree) : [];
     const state = await this.captureState(scope, checks);
     if (await this.ranOn(scope, checks, state)) {
-      if (repository.checks) repository.checks.current = true;
+      const saved = repository.checks!;
+      saved.current = true;
       let records: string | undefined;
-      for (const run of repository.checks!.results) if (!run.ok && !run.interruption && !run.interrupted) {
+      for (const run of saved.results) if (!run.ok && !run.interruption && !run.interrupted) {
         const original = originalCheck(scope.task, run)?.check;
         const start = run.startedAt ?? original?.startedAt, end = run.endedAt ?? original?.endedAt;
         if (start === undefined || end === undefined) continue;
@@ -584,11 +596,15 @@ export class ProductChecks {
         if (interruption) { run.interruption = interruption; if (original?.run) original.run.interruption = interruption; }
       }
       // Rereading a saved failure is no new attempt; a saved pass on this code and these definitions is a genuine pass.
-      this.settleFindings(scope, repository.checks!.results);
-      if (repository.checks!.results.every((run) => run.ok && !run.interruption && !run.interrupted)) await this.closeEpisode(scope, state);
+      this.settleFindings(scope, saved.results);
+      const passed = saved.results.every((run) => run.ok && !run.interruption && !run.interrupted);
+      if (passed) await this.closeEpisode(scope, state);
+      // The reuse and its basis are saved on the step that ran the original, so the evidence survives restarts and later runs.
+      const host = (saved.provenance ? task.journey?.find((step) => step.id === saved.provenance!.nodeId) : undefined) ?? task.journey?.at(-1);
+      if (host) host.reuses = [...(host.reuses ?? []), { at: Date.now(), purpose, productId: repository.productId, ...(saved.provenance ? { attemptId: saved.provenance.attemptId } : {}), basis: state.tree && saved.tree === state.tree ? "same-tree" : "same-commit", originalAt: saved.at, ...(saved.sha ? { sha: saved.sha } : {}), ...(saved.tree ? { tree: saved.tree } : {}), ...(saved.definition ? { definition: saved.definition } : {}), passed }];
       recordCheckReuse(scope.task, repository, Date.now());
       this.k.commit();
-      return repository.checks!.results.some((run) => !run.ok || run.interruption || run.interrupted);
+      return saved.results.some((run) => !run.ok || run.interruption || run.interrupted);
     }
     return (await this.runProductChecks(scope, checks, signal, await this.savedProductResults(scope, checks, state), state)) > 0;
   }

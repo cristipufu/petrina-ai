@@ -54,15 +54,17 @@ export class EngineClient {
       return child.pid;
     },
   ) {}
-  private async request(name: string, args: Record<string, unknown>): Promise<Result> {
+  private async request(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<Result> {
     const connection = readConnection(this.home);
     if (!connection) return { outcome: "disconnected", message: "The engine has no local connection. Use engine start explicitly." };
     try {
+      // A wait's connection deadline leaves the engine room to return its bounded batch after its own deadline.
+      const deadline = AbortSignal.timeout(name.startsWith("watch.") ? Number(args.timeoutMs ?? 30000) + 5000 : 10000);
       const response = await fetch(`${connection.api}/api/coordinate`, {
         method: "POST",
         headers: { authorization: `Bearer ${connection.token}`, "content-type": "application/json" },
         body: JSON.stringify({ name, args }),
-        signal: AbortSignal.timeout(name === "watch.wait" ? Number(args.timeoutMs ?? 30000) + 3000 : 10000),
+        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
       });
       if (!response.ok)
         return {
@@ -74,10 +76,12 @@ export class EngineClient {
         };
       return (await response.json()) as Result;
     } catch {
+      if (signal?.aborted) return { outcome: "disconnected", cancelled: true, message: "The wait was cancelled by the caller. Work continues." };
       return { outcome: "disconnected", message: "The engine did not answer. A change may have been saved: retry with its original request reference." };
     }
   }
-  async call(name: string, raw: Record<string, unknown> = {}): Promise<Result> {
+  /** `options.signal`: the caller cancelled (an MCP cancellation, a closed connection); the pending wait ends at once. */
+  async call(name: string, raw: Record<string, unknown> = {}, options: { signal?: AbortSignal } = {}): Promise<Result> {
     const spec = operation(name),
       parsed = spec?.schema.safeParse(raw);
     if (!spec || !parsed?.success)
@@ -86,7 +90,9 @@ export class EngineClient {
         message: parsed && !parsed.success ? parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : "Unknown operation.",
       };
     const args = parsed.data as Record<string, unknown>;
-    if (name === "watch.wait") return this.watch(args);
+    if (name === "watch.wait") return this.watch(args, options.signal);
+    // One request per batch: the engine keeps it open until a batch, its deadline or cancellation.
+    if (name === "watch.events") return this.request(name, args, options.signal);
     let result = await this.request(name, args);
     if (name.startsWith("engine.") && result.outcome === "disconnected") {
       mkdirSync(this.home, { recursive: true, mode: 0o700 });
@@ -181,14 +187,15 @@ export class EngineClient {
     }
   }
 
-  private async watch(args: Record<string, unknown>): Promise<Result> {
+  private async watch(args: Record<string, unknown>, signal?: AbortSignal): Promise<Result> {
     const deadline = Date.now() + Number(args.timeoutMs);
     let marker = args.marker;
     let disconnected = false;
     for (;;) {
       const remaining = Math.max(0, deadline - Date.now());
-      const result = await this.request("watch.wait", { ...args, ...(marker ? { marker } : {}), timeoutMs: marker ? remaining : 0 });
+      const result = await this.request("watch.wait", { ...args, ...(marker ? { marker } : {}), timeoutMs: marker ? remaining : 0 }, signal);
       if (result.outcome === "disconnected") {
+        if (signal?.aborted) return { ...result, marker };
         disconnected = true;
         if (!marker || Date.now() >= deadline) return { ...result, marker };
         await Bun.sleep(Math.min(100, Math.max(0, deadline - Date.now())));

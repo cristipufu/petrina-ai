@@ -18,14 +18,20 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { CLEANUP_WORDS } from "@petrina/core";
 import { withGitConfig, withoutCredentials } from "./env.js";
 import { completeAll } from "./parallel.js";
+import { lostExit } from "./process-tree.js";
 
 export interface RunResult {
   code: number;
   stdout: string;
   stderr: string;
-  /** The command was stopped at its time limit. */
+  /** The command did not finish as far as Petrina can tell: stopped at its time limit, or its exit was never reported. */
   timedOut?: boolean;
+  /** The command ended (its output closed and the process was observed gone or defunct), but the system never reported its exit, so its result is unknown. */
+  exitUnreported?: boolean;
 }
+
+export { EXIT_GRACE_MS } from "./process-tree.js";
+export const EXIT_UNREPORTED = "Git finished, but the system did not report its exit";
 
 /** The `gh` command to run. Tests stand in a fake GitHub through the Engine's constructor. */
 export type Gh = readonly string[];
@@ -132,16 +138,27 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
     new Response(stderr).text(),
   ]);
   void output.catch(() => undefined);
-  if (options.timeoutMs) {
-    // Race the exit, not the output: git's network helpers can keep the pipes open after git is killed.
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<"timeout">((resolve) => (timer = setTimeout(() => resolve("timeout"), options.timeoutMs)));
-    const first = await Promise.race([proc.exited, deadline]);
-    clearTimeout(timer);
-    if (first === "timeout") {
-      proc.kill("SIGKILL");
-      return { code: 124, stdout: "", stderr: "timed out", timedOut: true };
-    }
+  // The exit, not the output, is what the deadline races: git's network helpers can keep the pipes open
+  // after git is killed, and a valid command can close its output and keep working inside its allowance.
+  // Under load the runtime can also lose a child's exit: the command ended, but the exit is never reported
+  // and the process stays defunct. Once the output is complete, bounded state reads watch the child; only
+  // one observed gone or defunct, with no exit reported after a short grace, fails plainly as lost, keeping
+  // the complete output it did produce. A child whose state cannot be read keeps waiting for its exit.
+  const watch = new AbortController();
+  const lost = output.then(() => lostExit(proc.pid, watch.signal), () => lostExit(proc.pid, watch.signal));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = options.timeoutMs ? new Promise<"timeout">((resolve) => (timer = setTimeout(() => resolve("timeout"), options.timeoutMs))) : undefined;
+  const first = await Promise.race([proc.exited.then(() => "exited" as const), lost, ...(deadline ? [deadline] : [])]);
+  watch.abort();
+  clearTimeout(timer);
+  if (first === "timeout") {
+    proc.kill("SIGKILL");
+    return { code: 124, stdout: "", stderr: "timed out", timedOut: true };
+  }
+  if (first === "lost") {
+    try { proc.kill("SIGKILL"); } catch { /* Already gone. */ }
+    const [out, err] = await output.catch(() => ["", ""] as const);
+    return { code: 124, stdout: options.rawOutput ? out : out.trim(), stderr: [err.trim(), EXIT_UNREPORTED].filter(Boolean).join("\n"), timedOut: true, exitUnreported: true };
   }
   const [[out, err], code] = await Promise.all([output, proc.exited]);
   return { code, stdout: options.rawOutput ? out : out.trim(), stderr: err.trim() };

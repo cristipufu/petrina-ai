@@ -276,6 +276,8 @@ export interface JourneyAsk {
  * A new round, send-back or retry is a new step; picking up after a restart or a pause is the same one.
  */
 export interface JourneyStep {
+  /** The immutable blind-review input shared by this round, retained after temporary review state ends. */
+  reviewInput?: NonNullable<Hunt["input"]>;
   /** Unique within the task. Timeline and session lines carry it. */
   id: Id;
   /** Why this step began, captured then rather than reconstructed from later task state. */
@@ -314,10 +316,18 @@ export interface JourneyStep {
   profileId?: Id;
   /** Every agent on the step when several work at once (a review round's reviewers, its voters), `profileId` first. */
   team?: readonly Id[];
+  /**
+   * The positions the step expects a result from, recorded by the engine as it admits participants: a review
+   * round's reviewer places (`reviewer:0`, `reviewer:1`) or a vote's electorate (`verifier:<planned profile>`).
+   * Profiles that start or stand in fill these positions; a planned seat nobody started is still expected.
+   */
+  seats?: readonly string[];
   /** The role-specific context given to each agent in this step. Older saved steps have no snapshot. */
   agentInputs?: readonly JourneyAgentInput[];
-  /** The original accepted response, plus any pictures saved with that response. */
-  agentResults?: readonly { roleId: Id; profileId: Id; at: number; value: unknown; images?: readonly ReportImage[]; productId?: Id; versions?: Readonly<Record<Id, string>> }[];
+  /** The original accepted response, plus any pictures saved with that response. `findings`: the finding records exactly as this seat's result left them; later peers and rounds never rewrite them. */
+  agentResults?: readonly { roleId: Id; profileId: Id; at: number; value: unknown; inputIndex?: number; images?: readonly ReportImage[]; productId?: Id; versions?: Readonly<Record<Id, string>>; findings?: readonly Finding[] }[];
+  /** Later steps that reused this step's run instead of running the checks again, with the basis for each reuse. */
+  reuses?: readonly JourneyCheckReuse[];
   /** The product checks Petrina ran during this checks step. */
   productChecks?: readonly JourneyProductCheck[];
   /** Immutable run versions; unlike the repository's latest checks these survive subsequent runs. */
@@ -409,8 +419,50 @@ export interface CheckRepairEvidence {
   answer: { fixed: boolean; text: string };
 }
 
+/** A later step consumed this step's saved run because the code and check definitions were unchanged. */
+export interface JourneyCheckReuse {
+  at: number;
+  /** The original attempt on its saved journey node, when recorded. */
+  attemptId?: string;
+  /** What the reused evidence was for. */
+  purpose: "acceptance" | "review" | "delivery-check" | "publishing";
+  productId?: Id;
+  /** How the unchanged code was recognized. */
+  basis: "same-tree" | "same-commit";
+  originalAt: number;
+  sha?: string;
+  tree?: string;
+  definition?: string;
+  passed: boolean;
+}
+
+/** The exact text handed to an agent, saved once as an immutable file beside the complete-context files. */
+export interface ExactMessage {
+  file: string;
+  digest: string;
+  size: number;
+}
+
+/** One section of an exact message: its name, size and content identity, never its body. */
+export interface InputManifestEntry {
+  name: string;
+  /** Distinguishes sections that share a name within one message. */
+  occurrence?: number;
+  size: number;
+  digest: string;
+  /** `reference`: an unchanged complete-context packet referenced instead of repeated. `omitted`: unchanged background left out of a continued conversation, recognized from recorded comparisons. */
+  kind: "text" | "instructions" | "reference" | "omitted";
+  file?: string;
+  reference?: string;
+}
+
 /** The job and task context actually handed to one agent, captured before sending. */
 export interface JourneyAgentInput {
+  /** The bound repository and its recorded versions at this handoff; absent on older records. */
+  productId?: Id;
+  stepAttempts?: number;
+  versions?: { base?: string; reviewed?: string; reviewedTree?: string; checks?: { at: number; sha?: string; tree?: string; definition?: string; passed: boolean; count: number; node?: Id } };
+  reviewInput?: NonNullable<Hunt["input"]>;
   at?: number;
   roleId: Id;
   profileId: Id;
@@ -429,8 +481,18 @@ export interface JourneyAgentInput {
   instructions?: string;
   sections: readonly { title: string; body: string }[];
   /** Further instructions sent in this step: answers, repairs, messages and interruption resumes. */
-  updates?: readonly { at: number; reason: TurnReason; text: string; messageId?: Id; delivery?: MessageDelivery["state"] }[];
+  updates?: readonly { at: number; reason: TurnReason; text: string; messageId?: Id; delivery?: MessageDelivery["state"]; exact?: ExactMessage }[];
   mode: "fresh" | "continued";
+  /** This continuation resumes an interrupted step, rather than starting a later step in the conversation. */
+  resumed?: boolean;
+  /** The complete opening text as sent, after context reduction and automatic additions. Absent on older records. */
+  exact?: ExactMessage;
+  /** The sections the opening text actually supplied, by name, size and identity. */
+  manifest?: readonly InputManifestEntry[];
+  /** Why a fresh conversation was needed instead of the saved one, when Petrina recorded it. */
+  freshReason?: string;
+  /** The native conversation this input went to. */
+  sessionId?: string;
 }
 
 export interface QueuedMessage {
@@ -828,6 +890,8 @@ export interface PullRequest {
 
 /** Removing a finished task's working copy. The branch, the history and the delivery details stay. */
 export interface Cleanup {
+  /** The coordinator ended an unconfirmed delivery; later lookups do not erase that decision. */
+  markedDone?: boolean;
   /** An uncertain delivery marked done still needs its branch checked for an open pull request. */
   pullRequest?: "unconfirmed" | "none";
   /** The exact work and destination checked before an interrupted delivery was marked done. */

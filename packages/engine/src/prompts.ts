@@ -172,62 +172,52 @@ Browser output belongs only in ${directory}, outside product files. Named captur
 Results that hand back notes, objections, a build, acceptance checks or findings may include an optional "images" array: [{"path":"a capture filename or its absolute path in that folder","caption":"What the picture demonstrates, in plain language"}]. Choose only pictures you want the coordinator to see; each needs a nonempty caption. Tool images are not automatically attached. Petrina preserves validated chosen captures with your report, then removes temporary browser files.`;
 }
 
-export function buildPrompt(ctx: PromptContext, recordJob?: (instructions: string) => void): string {
+type InputSections = PromptContext["sections"];
+type RecordPrompt = (instructions: string, supplied: InputSections) => void;
+const renderSections = (sections: InputSections) => sections.map(({ title, body }) => `## ${title}\n${body}`).join("\n\n");
+function productMap(ctx: PromptContext, continued: boolean): InputSections {
+  return ctx.task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility" || continued && section.title === "Current authoritative task context")
+    ? [{ title: "Complete approved product map and responsibility", body: ctx.task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
+}
+
+export function buildPrompt(ctx: PromptContext, recordJob?: RecordPrompt): string {
   if (ctx.sections.some((section) => section.title === PREPARED_REVIEW)) ctx = { ...ctx, preparedReview: true };
   const { task, product, role, worktree, branch } = ctx;
   const contract = contractFor(role);
   const job = `${contract.instructions(ctx)}${roleCard(ctx)}`;
-  recordJob?.(job);
-  const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
-  const sections = [...map, ...ctx.sections].map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
-  return `You are the ${role.name} in Petrina, a squad of AI agents working on the product "${product.name}" (${product.repo}).
-The coordinator who reads your work is a product person, not a developer: everything you write for them is plain language, short, and free of code.
-
-${role.id === "planner" ? `Your planning folder is ${worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.` : `Your working copy is ${worktree}, on branch ${branch}. ${task.repositories ? "You may read every copy in the approved product map below; change only the product assigned to your conversation." : "Stay inside it."}`}
-
-${background(ctx.screen ?? (mayAskScreen(role) ? "ask" : undefined))}
-
-${LOGINS}
-
-${FOCUSED_VERIFICATION}
-
-${INVESTIGATION_RULE}
-
-# The task: ${task.title}
-${task.description || "(no further description)"}
-
-# Your job
-${job}
-
-${sections}
-
-${TODO_PROMPT}
-${RESULT_FOOTER(shapeFor(contract, ctx))}`;
+  const introduction = `You are the ${role.name} in Petrina, a squad of AI agents working on the product "${product.name}" (${product.repo}).
+The coordinator who reads your work is a product person, not a developer: everything you write for them is plain language, short, and free of code.`;
+  const workspace = role.id === "planner" ? `Your planning folder is ${worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.` : `Your working copy is ${worktree}, on branch ${branch}. ${task.repositories ? "You may read every copy in the approved product map below; change only the product assigned to your conversation." : "Stay inside it."}`;
+  const backgroundRules = background(ctx.screen ?? (mayAskScreen(role) ? "ask" : undefined));
+  const request = `# The task: ${task.title}\n${task.description || "(no further description)"}`;
+  const sections = [...productMap(ctx, false), ...ctx.sections];
+  const ending = RESULT_FOOTER(shapeFor(contract, ctx));
+  recordJob?.(job, [
+    { title: "Agent introduction", body: introduction }, { title: "Working copy", body: workspace },
+    { title: "Background and screen rules", body: backgroundRules }, { title: "Logins and publishing rules", body: LOGINS },
+    { title: "Verification rules", body: FOCUSED_VERIFICATION }, { title: "Investigation rules", body: INVESTIGATION_RULE },
+    { title: "Task request", body: request }, { title: "Role instructions", body: job }, ...sections,
+    { title: "Progress reporting", body: TODO_PROMPT }, { title: "Result instructions", body: ending },
+  ]);
+  return [introduction, workspace, backgroundRules, LOGINS, FOCUSED_VERIFICATION, INVESTIGATION_RULE, request, `# Your job\n${job}`, renderSections(sections), `${TODO_PROMPT}\n${ending}`].join("\n\n");
 }
 
-/**
- * For an agent going back to its own conversation with the next piece of work on the same task: what it
- * already knows still holds, so it gets its job as it stands now and the context, without the introduction.
- */
-export function continuePrompt(ctx: PromptContext, options: { refreshRole?: boolean; recordJob?: (instructions: string) => void } = {}): string {
+/** Update a participant's own conversation, naming only the pieces actually supplied now. */
+export function continuePrompt(ctx: PromptContext, options: { refreshRole?: boolean; recordJob?: RecordPrompt } = {}): string {
   if (ctx.sections.some((section) => section.title === PREPARED_REVIEW)) ctx = { ...ctx, preparedReview: true };
-  const { task } = ctx;
   const contract = contractFor(ctx.role);
   const job = `${contract.instructions(ctx)}${options.refreshRole ? roleCard(ctx) : ""}`;
-  options.recordJob?.(job);
-  const map = task.repositories && !ctx.sections.some((section) => section.title === "Complete approved product map and responsibility" || section.title === "Current authoritative task context") ? [{ title: "Complete approved product map and responsibility", body: task.repositories.map((work) => `${work.source?.product.name ?? work.productId} (${work.productId}): ${work.source?.product.repo}; copy ${work.worktree}; base ${work.baseSha}; approved source ${work.source?.start.branch}; destination ${work.source?.destination.repo} · ${work.source?.destination.branch}`).join("\n") }] : [];
-  const sections = [...map, ...ctx.sections].map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
-  return `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}).${ctx.base ? ` The current base version is ${ctx.base}.` : ""} What you learned before still holds; here is where things stand now.
-
-# Your job now
-${INVESTIGATION_RULE}
-
-${job}
-
-${sections}
-
-${screenNow(ctx.screen ?? (mayAskScreen(ctx.role) ? "ask" : undefined))}${TODO_PROMPT}
-${RESULT_FOOTER(shapeFor(contract, ctx))}`;
+  const introduction = `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}).${ctx.base ? ` The current base version is ${ctx.base}.` : ""} What you learned before still holds; here is where things stand now.`;
+  const sections = [...productMap(ctx, true), ...ctx.sections];
+  const screen = screenNow(ctx.screen ?? (mayAskScreen(ctx.role) ? "ask" : undefined));
+  const ending = RESULT_FOOTER(shapeFor(contract, ctx));
+  options.recordJob?.(job, [
+    { title: "Conversation continuation", body: introduction }, { title: "Investigation rules", body: INVESTIGATION_RULE },
+    { title: "Role instructions", body: job }, ...sections,
+    ...(screen ? [{ title: "Current screen rules", body: screen }] : []),
+    { title: "Progress reporting", body: TODO_PROMPT }, { title: "Result instructions", body: ending },
+  ]);
+  return `${introduction}\n\n# Your job now\n${INVESTIGATION_RULE}\n\n${job}\n\n${renderSections(sections)}\n\n${screen}${TODO_PROMPT}\n${ending}`;
 }
 
 export function repairPrompt(error: string): string {

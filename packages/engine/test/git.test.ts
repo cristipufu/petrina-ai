@@ -5,7 +5,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { addCopy, commitAll, commitTree, contains, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
-import { firstLine, removeDir, testGitEnv } from "./support.js";
+import { childState } from "../src/process-tree.js";
+import { defunctProcess, firstLine, removeDir, testGitEnv, waitFor } from "./support.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();
@@ -350,6 +351,48 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     expect(result).toMatchObject({ ok: false, timedOut: true });
     await ensureWorktree(origin, join(temp, "wt"), "petrina/x", "main");
     expect(existsSync(join(temp, "wt", "a.txt"))).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("keeps a command that closed its output running inside its allowance, and still reports its exit, its timeout and a lost exit plainly", async () => {
+    // A valid command that closes both pipes and keeps working: closed output is no evidence that it ended.
+    const started = Date.now();
+    const live = await operations.run(["sh", "-c", "exec >&- 2>&-; sleep 6.5; exit 0"], temp, undefined, { timeoutMs: 10_000 });
+    expect(live).toEqual({ code: 0, stdout: "", stderr: "" });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(6_000);
+    // An exit reported after the pipes close is an ordinary result; the time limit still ends one that runs past it.
+    const reported = await operations.run(["sh", "-c", "echo done; exec >&- 2>&-; sleep 1; exit 3"], temp);
+    expect(reported).toEqual({ code: 3, stdout: "done", stderr: "" });
+    const limited = Date.now();
+    const late = await operations.run(["sh", "-c", "exec >&- 2>&-; exec sleep 30"], temp, undefined, { timeoutMs: 2_000 });
+    expect(late).toEqual({ code: 124, stdout: "", stderr: "timed out", timedOut: true });
+    expect(Date.now() - limited).toBeLessThan(operations.EXIT_GRACE_MS + 2_000);
+  });
+
+  it.skipIf(process.platform === "win32")("fails within a bounded grace when a command's exit is never reported, keeping its complete output", async () => {
+    // What a lost exit looks like: the output ended, the runtime never reports the exit, and the system shows the
+    // child gone or defunct. A real defunct process stands in for the child; the runtime's report never comes.
+    const defunct = await defunctProcess();
+    const gone = Bun.spawn(["sh", "-c", "exit 0"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    await gone.exited;
+    const standIn = (pid: number, out: string, err: string) => ({ pid, exited: new Promise<number>(() => {}), stdout: new Response(out).body!, stderr: new Response(err).body!, kill() {} }) as unknown as ReturnType<typeof Bun.spawn>;
+    const spawning = spyOn(Bun, "spawn");
+    try {
+      await waitFor(async () => (await childState(defunct.pid)) === "ended", "the stand-in to be defunct", 10_000);
+      spawning.mockReturnValueOnce(standIn(defunct.pid, "finished\n", "complaint\n"));
+      const started = Date.now();
+      const lost = await operations.run(["git", "status"], temp);
+      const elapsed = Date.now() - started;
+      expect(lost).toEqual({ code: 124, stdout: "finished", stderr: `complaint\n${operations.EXIT_UNREPORTED}`, timedOut: true, exitUnreported: true });
+      expect(elapsed).toBeGreaterThanOrEqual(operations.EXIT_GRACE_MS);
+      expect(elapsed).toBeLessThan(25_000);
+      // A child already collected without its exit reported, under a time limit that is not what ends the wait.
+      spawning.mockReturnValueOnce(standIn(gone.pid, "", ""));
+      const collected = await operations.run(["git", "status"], temp, undefined, { timeoutMs: 60_000 });
+      expect(collected).toEqual({ code: 124, stdout: "", stderr: operations.EXIT_UNREPORTED, timedOut: true, exitUnreported: true });
+    } finally {
+      spawning.mockRestore();
+      await defunct.release();
+    }
   });
 
   it("knows a GitHub address by its owner and name, SSH host nicknames included", () => {

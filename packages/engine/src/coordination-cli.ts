@@ -89,6 +89,7 @@ export function commandHelp(group?: string, verb?: string): string {
           `  --${kebab(key)}${value.type === "boolean" ? "" : " <value>"}${schema.required?.includes(key) ? " (required)" : ""}${value.enum ? ` [${value.enum.join(" | ")}]` : ""}${value.default !== undefined ? ` (default: ${JSON.stringify(value.default)})` : ""}${value.description ? ` — ${value.description}` : ""}${structured(value) ? `\n    JSON: ${shape(value)}\n    Example: --${kebab(key)} '${JSON.stringify(example(value))}'` : ""}`,
       ),
       "  --json  Machine-readable result",
+      ...(selected.name === "watch.events" ? ["  --follow  Keep waiting: one JSON batch per line, quiet deadlines renewed silently, until the connection or continuity is lost or you interrupt it"] : []),
       "Arrays and objects take a JSON value. Boolean flags accept true or false.",
     ].join("\n");
   }
@@ -105,6 +106,61 @@ export function commandHelp(group?: string, verb?: string): string {
     "Exit codes: 0 completed or accepted; 1 failed/disconnected; 2 invalid; 3 deadline; 4 missing/handled/unavailable; 5 changed/conflicting/superseded/lost continuity.",
   ].join("\n");
 }
+/**
+ * Continuous mode: one batch envelope per JSON line, quiet deadlines renewed silently from the returned
+ * cursor, and an explicit final result when the connection is lost, continuity is lost or the arguments
+ * are refused. Interruption and a closed output pipe end the stream without cancelling any task work.
+ */
+export async function followEvents(client: EngineClient, args: Record<string, unknown>, write: (line: string) => boolean = (line) => process.stdout.write(line)): Promise<number> {
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  process.stdout.once("error", stop);
+  process.stdout.once("close", stop);
+  let cursor = typeof args.cursor === "string" ? args.cursor : undefined;
+  try {
+    if (args.timeoutMs === 0) {
+      write(`${JSON.stringify({ outcome: "invalid", message: "Continuous monitoring needs a positive deadline. Omit --timeout-ms for the default wait; use zero for one query." })}\n`);
+      return 2;
+    }
+    for (;;) {
+      if (controller.signal.aborted) return 130;
+      const result: Result = await client.call("watch.events", { ...args, ...(cursor ? { cursor } : {}) }, { signal: controller.signal });
+      if (controller.signal.aborted) return 130;
+      const events = Array.isArray(result.events) ? result.events : [];
+      if (result.outcome === "timed-out" && !events.length) {
+        // A quiet deadline is renewed from the returned cursor without replaying anything.
+        if (typeof result.cursor === "string") cursor = result.cursor;
+        continue;
+      }
+      if (!write(`${JSON.stringify(result)}\n`)) {
+        // Wait for the pipe to drain; a closed pipe ends the stream through its error.
+        await new Promise<void>((resolve) => {
+          const finish = () => {
+            process.stdout.off("drain", finish);
+            controller.signal.removeEventListener("abort", finish);
+            resolve();
+          };
+          process.stdout.once("drain", finish);
+          controller.signal.addEventListener("abort", finish, { once: true });
+          if (controller.signal.aborted) finish();
+        });
+      }
+      if (result.outcome !== "completed") return exitCode(result.outcome);
+      if (typeof result.cursor !== "string") return exitCode("failed");
+      cursor = result.cursor;
+    }
+  } catch {
+    return controller.signal.aborted ? 130 : 1;
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+    process.stdout.off("error", stop);
+    process.stdout.off("close", stop);
+  }
+}
+
 export async function coordinationCli(argv: string[], client = new EngineClient()): Promise<number> {
   const [group, verb, ...rest] = argv;
   if (!group || group === "help" || group === "--help" || group === "-h") {
@@ -126,11 +182,12 @@ export async function coordinationCli(argv: string[], client = new EngineClient(
   }
   const args: Record<string, unknown> = {};
   const json = rest.includes("--json");
+  const follow = spec.name === "watch.events" && rest.includes("--follow");
   const schema = z.toJSONSchema(spec.schema) as FieldSchema & { properties: Record<string, FieldSchema> };
   try {
     for (let index = 0; index < rest.length; index++) {
       const flag = rest[index]!;
-      if (flag === "--json") continue;
+      if (flag === "--json" || (follow && flag === "--follow")) continue;
       if (!flag.startsWith("--")) {
         const key = schema.properties.taskId ? "taskId" : schema.properties.itemId ? "itemId" : schema.properties.productId ? "productId" : undefined;
         if (!key || args[key] !== undefined) throw new Error("Use named options shown in this command's help.");
@@ -166,6 +223,7 @@ export async function coordinationCli(argv: string[], client = new EngineClient(
       args.requestId = randomUUID();
       console.error(`Request reference: ${args.requestId}`);
     }
+    if (follow) return followEvents(client, args);
     const result: Result = await client.call(spec.name, args);
     console.log(json ? JSON.stringify(result) : human(result));
     return exitCode(result.outcome);

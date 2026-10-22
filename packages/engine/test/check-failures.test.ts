@@ -2,7 +2,7 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decisionEvidence, displayTask, draftOf, journeyProblems, journeyView, type DeepMutable, type State, type Task } from "@petrina/core";
+import { decisionEvidence, displayTask, draftOf, journeyProblems, journeyView, type DeepMutable, type State, type Task, type WorkflowEvent } from "@petrina/core";
 import { Engine } from "../src/engine.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "../src/store.js";
@@ -328,7 +328,16 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(task.checks).toEqual(captured);
       expect(task.checkReturns).toBe(2);
       expect(task.findings.filter((finding) => finding.text.startsWith("Check failed"))).toHaveLength(1);
-      expect(checkSteps(task)).toEqual(recordedChecks);
+      // The guarded review reuses the failure: no review or acceptance starts, and the allowance stays spent.
+      expect(checkSteps(task).map(({ reuses: _reuses, ...step }) => step)).toEqual(recordedChecks.map(({ reuses: _reuses, ...step }) => step));
+      expect(checkSteps(task)[0]!.reuses!.map((entry) => entry.purpose)).toEqual(["review", "review", "review"]);
+      expect(checkSteps(task)[0]!.reuses!.every((entry) => !entry.passed && entry.tree === captured!.tree)).toBe(true);
+      expect(checkSteps(task)[0]!.checkAttempts![0]).toMatchObject({ sha: captured!.sha, tree: captured!.tree, definition: captured!.definition });
+      expect(checkSteps(task)[0]!.checkAttempts![0]!.passed).toBeUndefined();
+      const blockedEvents = (await f.engine.events.wait({ taskIds: [f.taskId], from: "oldest", timeoutMs: 0, limit: 100 })).events as WorkflowEvent[];
+      expect(blockedEvents.find((event) => event.kind === "check.reused")).toMatchObject({ nodeId: captured!.provenance!.nodeId, purpose: "review", passed: false, tree: captured!.tree, definition: captured!.definition });
+      expect(blockedEvents.some((event) => event.kind === "seat.started" && ["code-reviewer", "tester"].includes(String(event.roleId)))).toBe(false);
+      expect(blockedEvents.find((event) => event.kind === "coordinator.request" && event.requestKind === "delivery")).toMatchObject({ title: blocker.title });
       expect(journeyProblems(task)).toEqual([]);
 
       f.fakes.scenario({ planner: "short", fixes: "change" });
@@ -337,20 +346,23 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(f.runs()).toEqual(["failed", "passed"]);
       expect(task.checks!.tree).not.toBe(captured!.tree);
       expect(task.checks!.results.every((run) => run.ok)).toBe(true);
+      expect(task.checkReturns).toBeUndefined();
       expect(task.findings.find((finding) => finding.id === failure.id)?.status).toBe("fixed");
       expect(task.rounds[review.id] ?? 1).toBe(1);
       expect(task.blockingAfter?.[review.id]).toEqual([0]);
       expect(f.fakes.openings("code reviewer")).toHaveLength(1);
       expect(checkSteps(task)).toHaveLength(2);
-      expect(checkSteps(task)[0]).toEqual(recordedChecks[0]);
+      expect((({ reuses: _reuses, ...step }) => step)(checkSteps(task)[0]!)).toEqual((({ reuses: _reuses, ...step }) => step)(recordedChecks[0]!));
       expect(checkSteps(task)[1]).toEqual(expect.objectContaining({ outcome: "The check passes", reason: "checks passed", end: "done" }));
+      const recoveredEvents = (await f.engine.events.wait({ taskIds: [f.taskId], from: "oldest", timeoutMs: 0, limit: 100 })).events as WorkflowEvent[];
+      expect(recoveredEvents.find((event) => event.kind === "node.started" && event.roleId === "code-reviewer")).toMatchObject({ checks: { basis: "ran", passed: true, nodeId: checkSteps(task)[1]!.id } });
       expect(task.journey!.find((step) => step.roleId === "code-reviewer")).toEqual(expect.objectContaining({ outcome: "1 nit", reason: "review passed", end: "done" }));
       expect(journeyProblems(task)).toEqual([]);
       f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
       await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       expect(f.runs()).toEqual(["failed", "passed"]);
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 

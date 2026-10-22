@@ -4,12 +4,12 @@ import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
-import { checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "../src/checks.js";
-import { CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
+import { CHECK_EXIT_UNREPORTED, checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "../src/checks.js";
+import { childState, CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
 import * as machine from "../src/check-interruption.js";
 import { Engine } from "../src/engine.js";
 import { Store } from "../src/store.js";
-import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
+import { defunctProcess, EngineProcess, Fakes, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -567,4 +567,54 @@ describe("a stopped check keeps an incomplete cleanup warning", () => {
       }
     });
   }
+});
+
+describe("a check that closes its output", () => {
+  it.skipIf(process.platform === "win32")("keeps running inside its allowance when it sends its output to a file, and is still stopped at its deadline", async () => {
+    const dir = root("petrina-checks-redirected-");
+    const log = join(dir, "check.log");
+    const started = Date.now();
+    // The check closes Petrina's pipes at once and does valid work for longer than any grace would allow.
+    const [run] = await runChecks(dir, [{ name: "Redirected", argv: ["sh", "-c", `exec >${JSON.stringify(log)} 2>&1; sleep 6.5; echo finished; exit 0`] }], process.env, 60_000 * SLOW, undefined, join(dir, "logs"));
+    expect(run!.ok).toBe(true);
+    expect(run!.timedOut).toBeUndefined();
+    expect(run!.output).not.toContain(CHECK_EXIT_UNREPORTED);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(6_000);
+    expect(readFileSync(log, "utf8")).toBe("finished\n");
+    const limited = Date.now();
+    const [late] = await runChecks(dir, [{ name: "Past its limit", argv: ["sh", "-c", "exec >&- 2>&-; exec sleep 120"] }], process.env, 2_000, undefined, join(dir, "logs"));
+    expect(late!.ok).toBe(false);
+    expect(late!.timedOut).toBe(true);
+    expect(late!.output).not.toContain(CHECK_EXIT_UNREPORTED);
+    expect(Date.now() - limited).toBeLessThan(12_000);
+  });
+});
+
+describe("a check whose exit the system never reports", () => {
+  it.skipIf(process.platform === "win32")("settles within the grace as unknown, keeps its output, and stops what it started", async () => {
+    // What a lost exit looks like: the output ended, the runtime never reports the exit, and the system shows the
+    // check defunct. A real defunct process stands in for the check; the runtime's report never comes.
+    const dir = root("petrina-checks-unreported-");
+    const defunct = await defunctProcess();
+    const standIn = { pid: defunct.pid, exited: new Promise<number>(() => {}), stdout: new Response("finished\n").body!, stderr: new Response("").body! } as unknown as Bun.Subprocess<"ignore", "pipe", "pipe">;
+    const spawning = spyOn(Bun, "spawn");
+    try {
+      await waitFor(async () => (await childState(defunct.pid)) === "ended", "the stand-in to be defunct", 10_000);
+      spawning.mockReturnValueOnce(standIn);
+      const started = Date.now();
+      const [run] = await runChecks(dir, [{ name: "Ended quietly", argv: ["petrina-ended-quietly"] }], process.env, 60_000 * SLOW, undefined, join(dir, "logs"));
+      expect(Date.now() - started).toBeLessThan(30_000 * SLOW);
+      expect(run!.ok).toBe(false);
+      expect(run!.timedOut).toBeUndefined();
+      expect(run!.output).toContain("finished");
+      expect(run!.output).toContain(CHECK_EXIT_UNREPORTED);
+      // A defunct check is not a running process: its cleanup is complete.
+      expect(run!.cleanupIncomplete).toBeUndefined();
+      expect(run!.output).not.toContain(CLEANUP_INCOMPLETE);
+      expect(run!.logComplete).toBe(true);
+    } finally {
+      spawning.mockRestore();
+      await defunct.release();
+    }
+  });
 });

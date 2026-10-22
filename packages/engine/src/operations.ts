@@ -1,5 +1,6 @@
 // One discoverable catalogue for the local API, CLI help and MCP tools.
 import { z } from "zod";
+import { WORKFLOW_EVENT_KINDS } from "@petrina/core";
 import { StartFromSchema, WorkChoiceSchema } from "./source-schema.js";
 
 const id = z.string().min(1).max(200);
@@ -149,6 +150,31 @@ export const OPERATIONS = [
     { ...task, nodeId: id, ...evidence },
   ),
   op(
+    "journey.review-input",
+    "Read the immutable blind-review snapshot saved on a journey node, its supplied finding baseline, or its code versions. This reference survives the review round; missing or changed files are never replaced by current evidence.",
+    { ...task, nodeId: id, section: z.enum(["snapshot", "findings", "versions"]).default("snapshot"), ...evidence },
+  ),
+  op(
+    "journey.input",
+    "Read one seat's exact saved input for a node: the complete opening message as sent (section=message), its bounded section manifest with names, sizes and content identities (section=manifest), or one later update such as an answer, repair or continuation (section=update with update index). Select the seat from a seat.started event; index picks an earlier attempt. Missing, changed or expired files report that condition and never substitute newer evidence.",
+    { ...task, nodeId: id, seat: id.optional().describe("The seat named by the event, for example reviewer:1 or builder. Defaults to the node's latest input."), index: z.number().int().min(0).optional().describe("Which input on that seat, oldest first. Defaults to the latest."), section: z.enum(["message", "manifest", "update"]).default("message"), update: z.number().int().min(0).optional().describe("With section=update: which update, oldest first."), ...evidence },
+  ),
+  op(
+    "journey.result",
+    "Read one seat's accepted result for a node exactly as it was handed back, with its recorded versions and picture references. Select it from a seat.finished event's result reference.",
+    { ...task, nodeId: id, seat: id.optional(), index: z.number().int().min(0).optional().describe("The result's position on the node, oldest first. Defaults to the latest for the seat."), ...evidence },
+  ),
+  op(
+    "journey.finding",
+    "Read the immutable copy of one finding saved with a node's recorded result: the node-level copy, or with result index the copy one seat's result left. Later peers and rounds cannot rewrite it. A finding absent from that copy reports missing rather than returning a newer record.",
+    { ...task, nodeId: id, findingId: id, result: z.number().int().min(0).optional().describe("A seat's result position on the node, for the copy that seat's result left."), ...evidence },
+  ),
+  op(
+    "task.health",
+    "Inspect a long step without judging it: observation time, the recorded working duration, last observed activity or progress per seat, the waiting reason, and Petrina's existing estimate when its shared rule supports one. Silence alone proves nothing; this read never retries, cancels or replaces work.",
+    task,
+  ),
+  op(
     "journey.check",
     "Read an original check's diagnostics from beginning to end, with a bounded savedResult including startup failures and other engine explanations. Use section=result and its cursor to continue the saved result separately. Reports command outcome, relevance and log completeness; missing logs never become passes.",
     { ...task, nodeId: id.optional(), index: z.number().int().min(0), section: z.enum(["diagnostics", "result"]).default("diagnostics"), ...evidence },
@@ -235,6 +261,24 @@ export const OPERATIONS = [
     period: z.enum(["today", "7d", "30d"]).default("7d"),
     ...evidence,
   }),
+  op(
+    "watch.event",
+    "Read one retained workflow event's complete compact details in bounded pages, including finding identities and product results omitted from its preview. The event identity pins the evidence; an expired event or earlier engine run reports unavailable.",
+    { eventId: id, ...evidence },
+  ),
+  op(
+    "watch.events",
+    "Wait for compact workflow events: node and seat starts and finishes, checks, task states, coordinator requests and decisions, repairs, retries, replacements, review completion and publishing results. Routine tool actions, streamed text and clocks are never events. Available events return at once; otherwise the request stays open until a batch, the deadline (default 30 seconds, up to an hour; 0 queries without waiting) or cancellation. Without a cursor, observation starts now; from=oldest replays this engine run's retained events. Return the cursor to continue; a restart or expired window reports lost continuity.",
+    {
+      taskIds: z.array(id).max(100).optional().describe("Selected tasks. Omit for a product or all current work."),
+      productId: id.optional().describe("A product's current work, including newly admitted tasks."),
+      kinds: z.array(z.enum(WORKFLOW_EVENT_KINDS)).min(1).optional().describe("A subset of event kinds. Omit for every kind."),
+      cursor: z.string().max(1000).optional(),
+      from: z.enum(["now", "oldest"]).default("now").describe("Without a cursor: start observing now, or replay the oldest retained events of this run."),
+      limit: z.number().int().min(1).max(100).default(25),
+      timeoutMs: wait.timeoutMs,
+    },
+  ),
   op(
     "watch.wait",
     "Wait for focused engine, task or inbox changes, a drained pool, a decision, delivery, landing or selected states. Already satisfied conditions return immediately. A deadline ends only this wait; a boot change reports lost continuity.",

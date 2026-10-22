@@ -170,7 +170,8 @@ export function byRoom<T>(items: readonly T[], roomOf: (item: T) => number | und
   return [...items].sort((a, b) => key(b) - key(a));
 }
 
-export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile; reason?: string } | { kind: "none"; waiting: string };
+/** `freshReason`: why a saved design or review conversation was not kept, when the choice starts that participant fresh. */
+export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile; reason?: string; freshReason?: string } | { kind: "none"; waiting: string };
 
 /**
  * Which profile actually works a step planned for `planned`. The planned one when it is free to work and

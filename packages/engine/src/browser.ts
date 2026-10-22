@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from "node
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
-import { descendants, descendantsKnown } from "./process-tree.js";
+import { descendants, descendantsKnown, processList } from "./process-tree.js";
 
 export class AgentBrowser {
   private closing?: Promise<void>;
@@ -202,16 +202,14 @@ function namesSession(command: string, directory: string): boolean {
 /** Processes whose command still names this session's folder, or undefined when the list cannot be read. */
 function processesUsing(directory: string): Promise<number[] | undefined> {
   const column = process.platform === "linux" ? "args=" : "command=";
-  return new Promise((resolve) => {
-    execFile("ps", ["-axww", "-o", `pid=,${column}`], { timeout: 2_000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
-      if (error) return resolve(undefined);
-      const pids: number[] = [];
-      for (const line of stdout.split("\n")) {
-        const match = /^(\d+)\s+(.*)$/.exec(line.trim());
-        if (match && namesSession(match[2]!, directory)) pids.push(Number(match[1]));
-      }
-      resolve(pids);
-    });
+  return processList(["-axww", "-o", `pid=,${column}`], 2_000, 32 * 1024 * 1024).then((stdout) => {
+    if (stdout === undefined) return undefined;
+    const pids: number[] = [];
+    for (const line of stdout.split("\n")) {
+      const match = /^(\d+)\s+(.*)$/.exec(line.trim());
+      if (match && namesSession(match[2]!, directory)) pids.push(Number(match[1]));
+    }
+    return pids;
   });
 }
 

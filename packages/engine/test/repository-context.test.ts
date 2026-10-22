@@ -368,12 +368,13 @@ describe("explicit repository execution contexts", () => {
       }
       return [];
     };
-    if (!hooks) writeFileSync(join(path, "check-artifact.txt"), "Build output\n");
+    // A run with nothing to run touches no file at all; a real check gets exactly one combined inspection afterwards.
+    const checksToRun = hooks ? [] : [{ name: "Build", argv: [process.execPath, "-e", "require('node:fs').writeFileSync('check-artifact.txt', 'Build output\\n')"] }];
     try {
-      expect(await engine["checks"]["runAll"](scope, [], { sha, tree, trackedChanged: false, hooks: hooks ? ["pre-commit"] : [], definition: "test" }, new AbortController().signal, new Map())).toBe(0);
+      expect(await engine["checks"]["runAll"](scope, checksToRun, { sha, tree, trackedChanged: false, hooks: hooks ? ["pre-commit"] : [], definition: "test" }, new AbortController().signal, new Map())).toBe(0);
       expect(heads).not.toHaveBeenCalled();
       expect(inspections).toHaveBeenCalledTimes(hooks ? 3 : 1);
-      expect(scope.work.checks).toMatchObject({ current: true, sha, tree, results: [] });
+      expect(scope.work.checks).toMatchObject({ current: true, sha, tree, results: hooks ? [] : [expect.objectContaining({ name: "Build", ok: true })] });
       expect(git(path, "rev-parse", "HEAD")).toBe(sha);
       expect(git(path, "show", "HEAD:README.md")).toBe(original);
       if (!hooks) expect(git(path, "status", "--porcelain")).toContain("check-artifact.txt");

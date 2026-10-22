@@ -97,6 +97,9 @@ function finishedVoters(findings: readonly Finding[]): Set<Id> {
   return new Set(findings[0]?.votes?.flatMap((vote) => vote.toolId && findings.every((finding) => finding.votes?.some((entry) => entry.toolId === vote.toolId)) ? [vote.toolId] : []));
 }
 
+/** What admission decided for a parallel seat: the words on its start, and why a saved conversation was not kept. */
+type SeatSelection = { selectionReason?: string; freshReason?: string };
+
 export class Reviews {
   private readonly inputs = new WeakMap<MTask, { digest: string; input: ReviewInput }>();
   constructor(
@@ -155,7 +158,7 @@ export class Reviews {
         this.k.log(scope, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
         // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
         // A failed run is evidence too: it returns to the builder without spending a review round.
-        failedChecks = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal)) || failedChecks;
+        failedChecks = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "review") || failedChecks;
       }
       if (failedChecks) {
         // The check fix can reach beyond the port's conflicted files, so its review must be ordinary.
@@ -224,10 +227,26 @@ export class Reviews {
     const scope = executionFor(task);
     const reported = task.hunt?.stageId === stage.id && task.hunt.round === (task.rounds[stage.id] ?? 1) ? task.hunt.reported : {};
     if (scope.work.portReview && Object.keys(reported).length) return [];
+    return this.plannedReviewers(task, stage).filter((entry) => !reported[entry.key]);
+  }
+
+  /** Every reviewer place the round waits for: the whole stage, or a port review's one reviewer. */
+  private plannedReviewers(task: MTask, stage: MStage): { key: string; profileId: Id }[] {
+    const scope = executionFor(task);
     const planned = stage.profileIds.map((profileId, index) => ({ key: String(index), profileId }));
     // The journey and the engine share the port reviewer's position; tool choice follows the latest builder.
-    const reviewers = scope.work.portReview ? [planned[portReviewerIndex(repositoryView(scope), stage.profileIds, (id) => this.k.profile(id)?.toolId, this.k.s.roles)]!] : planned;
-    return reviewers.filter((entry) => !reported[entry.key]);
+    return scope.work.portReview ? [planned[portReviewerIndex(repositoryView(scope), stage.profileIds, (id) => this.k.profile(id)?.toolId, this.k.s.roles)]!] : planned;
+  }
+
+  /** The positions the round's step expects a result from, recorded on the step as its participants are admitted. */
+  private plannedSeats(task: MTask, stage: MStage): string[] {
+    return this.plannedReviewers(task, stage).map(({ key }) => `reviewer:${key}`);
+  }
+
+  /** A vote's electorate is its step's expected seats: a revision under the usage-handoff rule is recorded on the open vote step, never on an ended one. */
+  private syncVoterSeats(task: MTask, planned: readonly Id[]): void {
+    const step = openStep(task);
+    if (step?.kind === "agent" && step.roleId && this.k.role(step.roleId)?.result === "votes") step.seats = planned.map((id) => `verifier:${id}`);
   }
 
   private rememberReviewer(task: MTask, key: string, profileId: Id): void {
@@ -307,12 +326,14 @@ export class Reviews {
       task.hunt = { ...task.hunt!, reported: { ...task.hunt!.reported, [key]: true } };
       this.k.commitNow();
     };
+    // What the step waits for: every planned place, not only the participants that happen to start.
+    const seats = this.plannedSeats(task, stage);
     if (stage.profileIds.length === 1 && !task.repositories) {
       const { key, profileId } = reviewers[0]!;
       const roleId = reviewerAt(stage, Number(key));
       const participant = { ...this.participant(scope, stage, key, profileId), reviewFindings: input.findings };
       let by = profileId;
-      const result = await this.turns.turn(scope, roleId, profileId, () => this.context.sectionsFor(scope, roleId, undefined, undefined, `review-${key}`, input), ReviewResult, signal, { ...participant, check, reviewerKey: key, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
+      const result = await this.turns.turn(scope, roleId, profileId, () => this.context.sectionsFor(scope, roleId, undefined, undefined, `review-${key}`, input), ReviewResult, signal, { ...participant, check, reviewerKey: key, seats, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
       await this.applyReview(scope, stage, result, by, roleId, key);
       reported(key);
       return;
@@ -328,15 +349,15 @@ export class Reviews {
         roleId: reviewerAt(stage, Number(key)),
         profileId,
         reviewerKey: key,
-        work: async (copy, room, seat, onUsed, agent, continuing, signal, selectionReason) => {
+        work: async (copy, room, seat, onUsed, agent, continuing, signal, selection) => {
           let by = profileId;
           const roleId = reviewerAt(stage, Number(key));
           const participant = { ...this.participant(scope, stage, key, profileId), reviewFindings: input.findings };
           const used = (id: Id) => { by = id; onUsed(id); };
           const given = () => this.context.sectionsFor(scope, roleId, `review-${key}`, this.turns.repositoryCopies.get(copy), undefined, input);
           const result = continuing
-            ? await this.turns.turn(scope, roleId, profileId, given, ReviewResult, signal, { ...participant, check, copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key })
-            : await this.turns.parallel(scope, roleId, profileId, copy, given, ReviewResult, signal, { ...participant, check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, selectionReason, reviewerKey: key, agent, refresh: false });
+            ? await this.turns.turn(scope, roleId, profileId, given, ReviewResult, signal, { ...participant, check, copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key, seats })
+            : await this.turns.parallel(scope, roleId, profileId, copy, given, ReviewResult, signal, { ...participant, check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, ...selection, reviewerKey: key, seats, agent, refresh: false });
           await this.applyReview(scope, stage, result, by, roleId, key);
           this.k.finishReviewWork(task, `reviewer:${key}`);
           reported(key);
@@ -398,6 +419,10 @@ export class Reviews {
     const created = new Set(raised.map((finding) => finding.id));
     const seen = new Set([...(openStep(task)?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id)]);
     recordStepResult(task, { findings: task.findings.filter((finding) => seen.has(finding.id) || created.has(finding.id)) });
+    // This seat's own copy of the records it touched: later peers and rounds never rewrite it.
+    const step = openStep(task);
+    const own = step?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === profileId && (entry.inputIndex === undefined || step.agentInputs?.[entry.inputIndex]?.reviewerKey === reviewerKey));
+    if (own) own.findings = structuredClone(task.findings.filter((finding) => result.confirms.includes(finding.id) || result.disputes.some((dispute) => dispute.id === finding.id) || created.has(finding.id)));
     const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || created.has(finding.id)));
     this.k.tracking.verdict(task, roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
     const confirmed = result.confirms.length;
@@ -445,6 +470,7 @@ export class Reviews {
       // Keep that preview provisional until work can start; an existing ballot stays durable.
       if (planned.length && task.hunt && !this.k.admissionsClosed) {
         task.hunt.voterProfiles = planned;
+        this.syncVoterSeats(task, planned);
         this.k.commitNow();
       }
     }
@@ -481,6 +507,7 @@ export class Reviews {
       if (JSON.stringify(available) !== JSON.stringify(planned)) {
         planned = available;
         task.hunt.voterProfiles = planned;
+        this.syncVoterSeats(task, planned);
         this.k.commitNow();
       }
     }
@@ -531,6 +558,8 @@ export class Reviews {
     const ids = new Set(claims.map((finding) => finding.id));
     // Keep each review position stable through model fallbacks and restarts.
     const planned = task.hunt?.voterProfiles ?? this.voters(task.plan!.stages[task.stageIndex]!);
+    // The electorate is what the vote step waits for, whoever stands in on each tool.
+    const seats = planned.map((id) => `verifier:${id}`);
     await this.together(
       task,
       voters.map((profileId) => {
@@ -544,7 +573,7 @@ export class Reviews {
         reviewKey,
         roleId: "verifier",
         profileId,
-        work: async (copy, room, seat, used, agent, continuing, signal, selectionReason) => {
+        work: async (copy, room, seat, used, agent, continuing, signal, selection) => {
           let by = seat;
           const missing = () => claims.filter((finding) => !task.findings.find((entry) => entry.id === finding.id)?.votes?.some((vote) => vote.toolId === this.k.profile(by)!.toolId));
           const given = async () => [...await this.context.sectionsFor(scope, "verifier", key, this.turns.repositoryCopies.get(copy), undefined, input), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing(), { complete: true }) }];
@@ -566,18 +595,21 @@ export class Reviews {
             return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left, { complete: true })}` : undefined;
           };
           const heard = (id: Id) => { by = id; used(id); };
-          if (continuing) await this.turns.turn(scope, "verifier", plannedId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room });
+          if (continuing) await this.turns.turn(scope, "verifier", plannedId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room, seats });
           else await this.turns.parallel(scope, "verifier", plannedId, copy, given, VerifyResult, signal, {
             key: reviewKey,
             room,
-            seat, selectionReason,
+            seat, ...selection,
             used: heard,
             member: key,
             check,
+            seats,
             agent,
             refresh: false,
           });
           task.hunt = { ...task.hunt!, voted: { ...task.hunt?.voted, [by]: true } };
+          const own = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === "verifier" && entry.profileId === by);
+          if (own) own.findings = structuredClone(task.findings.filter((finding) => ids.has(finding.id)));
           this.k.finishReviewWork(task, reviewKey);
           this.k.commit();
         },
@@ -621,7 +653,7 @@ export class Reviews {
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
    */
-  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selectionReason?: string) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
+  private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: SeatSelection) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string, canFinishWithoutUsage: () => boolean = () => false): Promise<void> {
     const scope = executionFor(task);
     const stop = new AbortController();
     const signal = AbortSignal.any([parentSignal, stop.signal]);
@@ -681,7 +713,7 @@ export class Reviews {
       } else if (!running.size) uses = uses.filter((use) => use.taskId !== task.id);
       return pickStarts({ candidates: [{ ...profile, taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
     };
-    const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, continuing: boolean, selectionReason?: string) => {
+    const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, continuing: boolean, selection?: SeatSelection) => {
       yielded.delete(member.key);
       const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0, reviewKey: member.reviewKey };
       let completed = false;
@@ -703,7 +735,7 @@ export class Reviews {
             }),
           ]);
           if (versions.length) this.turns.repositoryCopies.set(copy, copies);
-          try { await member.work(copy, room, seat, used, agent, continuing, signal, selectionReason); }
+          try { await member.work(copy, room, seat, used, agent, continuing, signal, selection); }
           finally {
             const saved = task.hunt?.screenTurns?.[member.key];
             if (saved && versions.length) { saved.copies = copies; saved.conversation.repositoryCopies = copies; this.k.commitNow(); }
@@ -770,7 +802,7 @@ export class Reviews {
         const profile = this.k.profile(seat)!;
         if (!room(profile.toolId, profile)) break;
         pending.shift();
-        startMember(member, join(folder, member.key), room, seat, false, choice?.reason);
+        startMember(member, join(folder, member.key), room, seat, false, choice ? { ...(choice.reason ? { selectionReason: choice.reason } : {}), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}) } : undefined);
       }
       this.k.commit();
     };

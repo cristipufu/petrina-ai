@@ -138,6 +138,20 @@ describe.concurrent("design participants' own conversations", () => {
     } finally { await run.engine().shutdown(); }
   });
 
+  it("records a rejected design continuation's known reason while the unaffected participant continues", async () => {
+    const run = await fixture("resume");
+    try {
+      await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && executionFor(run.task()).work.conversation?.briefed; }, "the first reviewer to receive the design");
+      run.task().description += " A changed recorded request.";
+      const task = await run.done();
+      const author = task.journey!.find(step => step.roleId === "architect" && step.round === 2)!.agentInputs![0]!;
+      expect(author).toMatchObject({ mode: "fresh", freshReason: "its role, profile, request or starting point changed" });
+      const reviewer = task.journey!.find(step => step.roleId === "design-reviewer" && step.round === 2)!.agentInputs![0]!;
+      expect(reviewer.mode).toBe("continued");
+      expect(reviewer.freshReason).toBeUndefined();
+    } finally { await run.engine().shutdown(); }
+  });
+
   for (const reopen of ["resume", "load"] as const) {
     it(`uses ${reopen} for both participants, passes only new context, and records the exact round inputs`, async () => {
       const run = await fixture(reopen);

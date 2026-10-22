@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, type ConversationNote, type Stage } from "@petrina/core";
 import { Engine } from "../src/engine.js";
+import { Coordination } from "../src/coordination.js";
 import { AgentBrowser } from "../src/browser.js";
 import { executionFor } from "../src/repository-context.js";
 import { currentStepAssignment } from "../src/prompts.js";
@@ -80,6 +81,41 @@ async function fixture() {
 }
 
 describe.concurrent("assignment in native and saved input", () => {
+  it("reports a lone Builder's takeover with the previous participant and its own saved input", async () => {
+    const f = await fixture();
+    try {
+      f.fakes.scenario({ builder: "plain", limited: [{ model: "opus", role: "builder", spendCap: true }] });
+      f.task.plan!.stages[0]!.roleId = "builder";
+      await f.engine["turns"].turn(f.scope, "builder", "opus-high", f.sections, BuildResult, new AbortController().signal);
+      const inputs = f.inputs();
+      expect(inputs).toHaveLength(2);
+      const nodes = f.task.journey!;
+      expect(nodes[0]!.reason).toBe("another agent took over");
+      const c = new Coordination(f.engine);
+      const page = await c.call("watch.events", { taskIds: [f.task.id], from: "oldest", kinds: ["profile.replaced", "seat.started"], timeoutMs: 0 });
+      const events = page.events as { kind: string; refs: { previousInput: Record<string, unknown> } }[];
+      expect(events.filter(event => event.kind === "profile.replaced")).toEqual([expect.objectContaining({ previousProfileId: "opus-high", profileId: inputs[1]!.profileId, previousNodeId: nodes[0]!.id, reason: "Claude Code's spend limit" })]);
+      const replaced = events.find(event => event.kind === "profile.replaced")!;
+      expect(await c.call("journey.input", replaced.refs.previousInput)).toMatchObject({ outcome: "completed", conversation: inputs[0]!.sessionId, profileId: "opus-high", evidence: "exact" });
+      expect(events.filter(event => event.kind === "seat.started")[1]).toMatchObject({ replaced: { previousProfileId: "opus-high", nodeId: nodes[0]!.id, conversation: inputs[0]!.sessionId } });
+    } finally { await f.close(); }
+  });
+
+  it("records the bound product before a shared agent starts, independently of the selected product", async () => {
+    const f = await fixture();
+    try {
+      const base = f.scope.work.baseSha!;
+      f.task.repositories = [{ ...f.scope.work, productId: "first", completedStages: [], baseSha: "first-base", stepAttempts: 1 }, { ...f.scope.work, completedStages: [], stepAttempts: 6 }];
+      delete f.task.repository;
+      f.task.activeProductId = "first";
+      const scope = executionFor(f.task, "product");
+      await f.engine["turns"].turn(scope, "researcher", "opus-high", f.sections, NotesResult, new AbortController().signal);
+      expect(f.inputs()[0]).toMatchObject({ productId: "product", stepAttempts: 7, versions: { base } });
+      const page = await new Coordination(f.engine).call("watch.events", { taskIds: [f.task.id], from: "oldest", kinds: ["seat.started"], timeoutMs: 0 });
+      expect(page.events).toContainEqual(expect.objectContaining({ productId: "product", stepAttempts: 7, versions: { base } }));
+    } finally { await f.close(); }
+  });
+
   it("sends a fresh supporting role its specific contribution and preserves the exact section", async () => {
     const f = await fixture();
     try {
@@ -96,6 +132,8 @@ describe.concurrent("assignment in native and saved input", () => {
       expect(sent).not.toContain("PRIVATE-");
       expect(saved.assignment?.reason).toBe("PRIVATE-SELECTION-REASON");
       expect(saved.taskDescription).toBe(REQUEST);
+      expect(readFileSync(saved.exact!.file, "utf8")).toBe(sent);
+      expect(saved.manifest).toContainEqual(expect.objectContaining({ name: ASSIGNMENT, kind: "text", size: section.body.length }));
     } finally { await f.close(); }
   });
 
@@ -123,6 +161,7 @@ describe.concurrent("assignment in native and saved input", () => {
       expect(f.fakes.prompts("builder")[2]).not.toContain(`## ${ASSIGNMENT}`);
       expect(readFileSync(third.context!.file, "utf8")).toContain("Planned step: Implement host wait monitoring");
       expect(readFileSync(third.context!.file, "utf8")).toContain(BRIEF);
+      expect(f.inputs()[2]!.manifest).toContainEqual(expect.objectContaining({ name: ASSIGNMENT, kind: "omitted" }));
     } finally { await f.close(); }
   });
 
@@ -159,6 +198,15 @@ describe.concurrent("assignment in native and saved input", () => {
       expect(retry.text).toContain("Planned step: Review the updated host wait handling");
       expect(retry.text).not.toContain(REQUEST); expect(retry.text).not.toContain(BRIEF);
       expect(f.inputs().at(-1)!.updates!.at(-1)!.text).toBe(retry.text);
+      const resumed = f.inputs().at(-1)!;
+      expect(resumed).toMatchObject({ resumed: true, mode: "continued", requestedProfileId: "opus-high", reviewerKey: "0", sessionId: completed.sessionId });
+      expect(resumed.sections.map(section => section.title)).toEqual([ASSIGNMENT]);
+      expect(readFileSync(resumed.exact!.file, "utf8")).toBe(retry.text);
+      const c = new Coordination(f.engine);
+      const events = await c.call("watch.events", { taskIds: [f.task.id], from: "oldest", kinds: ["seat.started"], timeoutMs: 0 });
+      expect(events.events).toContainEqual(expect.objectContaining({ seat: "reviewer:0", attempt: 4, mode: "resumed", conversation: completed.sessionId }));
+      expect(await c.call("journey.input", { taskId: f.task.id, nodeId: f.task.journey!.at(-1)!.id, seat: "reviewer:0", index: 3 })).toMatchObject({ mode: "resumed", evidence: "exact", text: retry.text });
+      expect(f.task.journey!.at(-1)!.agentResults!.map(result => result.inputIndex)).toEqual([0, 1, 2, 3]);
     } finally { await f.close(); }
   });
 
@@ -187,11 +235,16 @@ describe.concurrent("assignment in native and saved input", () => {
         expect(sent.session).toBe(original.session);
         expect(sent.text).not.toContain(REQUEST); expect(sent.text).not.toContain(BRIEF);
         expect(f.inputs().at(-1)!.updates!.at(-1)!.text).toBe(sent.text);
+        expect(f.inputs().at(-1)).toMatchObject({ resumed: true, mode: "continued", requestedProfileId: "opus-high", sessionId: original.session });
+        expect(f.inputs().at(-1)!.sections.map(section => section.title)).toEqual([ASSIGNMENT]);
       } else {
         expect(sent.session).not.toBe(original.session);
         expect(sent.text).toContain(REQUEST); expect(sent.text).toContain(BRIEF);
         expect(f.inputs().at(-1)!.sections.find(section => section.title === ASSIGNMENT)!.body).toContain("Research host wait limits and resume behavior");
+        expect(f.inputs().at(-1)!.freshReason).toBeString();
+        expect(f.inputs().at(-1)!.resumed).toBeUndefined();
       }
+      expect(readFileSync(f.inputs().at(-1)!.exact!.file, "utf8")).toBe(sent.text);
     } finally { abort.abort(); await running; await f.close(); }
   });
 });

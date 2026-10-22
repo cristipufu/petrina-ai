@@ -459,7 +459,7 @@ export class Driver {
             const work = scope.work;
             if (current.repositories) current.activeProductId = work.productId;
             if (!scope.work.conversation && await this.updates.upToDate(scope, signal) === "conflict") { conflict = true; break; }
-            failed = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal)) || failed;
+            failed = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "acceptance") || failed;
 
           }
           if (conflict) continue;

@@ -9,7 +9,7 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const reusable = (title: string) => /^(?:Current step assignment|Design brief|Product checks|Approved starting point and delivery|Complete approved product map and responsibility|The coordinator's notes on this task|What the builder reports|Previously inspected source locations|What earlier agents on this task handed back|Points the coordinator accepted for the review guide|Open follow-up cards|The pull request description you wrote last time|Earlier implementation and verification evidence)/.test(title);
 
 /** Delta only a confirmed continuation; an immutable full packet remains readable after compaction. */
-export async function builderContext(dataDir: string, task: Task, role: Role, sessionId: string, sections: readonly Section[], previous?: BuilderContext, options: { design?: boolean; knownSections?: readonly string[]; findings?: readonly Finding[] } = {}): Promise<{ sections: Section[]; snapshot?: BuilderContext }> {
+export async function builderContext(dataDir: string, task: Task, role: Role, sessionId: string, sections: readonly Section[], previous?: BuilderContext, options: { design?: boolean; knownSections?: readonly string[]; findings?: readonly Finding[] } = {}): Promise<{ sections: Section[]; snapshot?: BuilderContext; omitted?: { title: string; digest: string }[] }> {
   const all = sections.map((section) => ({ ...section }));
   if (!/^[a-zA-Z0-9_-]+$/.test(task.id)) return { sections: all };
   const root = join(dataDir, "contexts", task.id);
@@ -41,6 +41,8 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
       && await readFile(previous.file, "utf8").then((text) => hash(text) === previous.digest, () => false);
     if (!intact || !previous) return { sections: all, snapshot };
     let reducedFindings = false;
+    // Unchanged sections left out of this continuation, recognized only from the recorded comparison.
+    const omitted: { title: string; digest: string }[] = [];
     const sent = keyed.flatMap(({ section, key, digest }) => {
       if (findingSection(section.title) && findingRecords && previous.findingHashes && findingHashes) {
         const changed = findingRecords.filter((finding) => findingHashes[finding.id] !== previous.findingHashes![finding.id]);
@@ -51,14 +53,16 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
           ...(changed.length ? [{ title: answering(section.title) ? "New or changed review findings (answer every one by id; fix every Important one)" : "New or changed finding records (confirm or dispute by id)", body: formatFindings(changed, { complete: true }) }] : []),
         ];
       }
-      if (options.design && options.knownSections?.includes(section.title)) return [];
+      if (options.design && options.knownSections?.includes(section.title)) { omitted.push({ title: section.title, digest }); return []; }
       // Objections and coordinator calls remain explicit on every design continuation.
       const background = options.design ? !/^(?:Objections|The coordinator's call)/.test(section.title) : reusable(section.title);
-      return !background || previous.hashes[key] !== digest ? [{ ...section }] : [];
+      if (!background || previous.hashes[key] !== digest) return [{ ...section }];
+      omitted.push({ title: section.title, digest });
+      return [];
     });
     const removed = Object.keys(previous.hashes).filter((key) => !(key in snapshot.hashes));
     if (!reducedFindings && sent.length === all.length && !removed.length) return { sections: all, snapshot };
-    return { snapshot, sections: [{ title: "Current authoritative task context", body: `Unchanged background is not repeated in this continued conversation. The complete current request and sections are saved at ${file} (reference ${digest}). This packet replaces earlier versions. Read it before acting if context is missing or was compacted, or you need to recheck a constraint. New instructions and findings below remain authoritative.${removed.length ? `\nEarlier sections no longer apply: ${removed.join(", ")}.` : ""}` }, ...sent] };
+    return { snapshot, omitted, sections: [{ title: "Current authoritative task context", body: `Unchanged background is not repeated in this continued conversation. The complete current request and sections are saved at ${file} (reference ${digest}). This packet replaces earlier versions. Read it before acting if context is missing or was compacted, or you need to recheck a constraint. New instructions and findings below remain authoritative.${removed.length ? `\nEarlier sections no longer apply: ${removed.join(", ")}.` : ""}` }, ...sent] };
   } catch {
     // Optional context reduction must never remove requirements when storage is unavailable.
     return { sections: all };

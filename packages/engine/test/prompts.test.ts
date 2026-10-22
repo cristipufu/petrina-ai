@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, DESIGN_OBJECTION_RULE, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE } from "@petrina/core";
 import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, handBackNote, handBackPrompt, INVESTIGATION_RULE, LOGINS, mayAskScreen, parseResult, restartPrompt, screenPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
+import { inputManifest, numberInputManifest } from "../src/exact-input.js";
 
 const task = createDemoState(1_000_000_000).tasks[0]!;
 const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => ({
@@ -20,6 +21,31 @@ const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reaso
 const promptFor = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => buildPrompt(context(role, screen));
 
 describe("prompts", () => {
+  it("manifests the actual standard, automatic and supplied pieces of fresh and continued messages", () => {
+    const ctx = { ...context(BUILT_IN_ROLES.find(role => role.result === "notes")!), task: { ...task, repositories: [{ productId: "api", delivery: "local" as const, completedStages: [], baseSha: "api-base" }] }, sections: [{ title: "Research brief", body: "Find the actual host deadline" }] };
+    for (const continued of [false, true]) {
+      let manifest: ReturnType<typeof inputManifest> = [];
+      const recordJob = (job: string, supplied: readonly { title: string; body: string }[]) => {
+        manifest = inputManifest(job, supplied, [], true);
+        for (const section of supplied) expect(sent.includes(section.body)).toBe(true);
+      };
+      // Inspect the captured pieces after construction: they are the same values used to assemble the message.
+      let captured: Parameters<typeof recordJob> | undefined;
+      const capture = (...args: Parameters<typeof recordJob>) => { captured = args; };
+      const sent = continued ? continuePrompt(ctx, { recordJob: capture }) : buildPrompt(ctx, capture);
+      recordJob(...captured!);
+      expect(manifest.map(entry => entry.name)).toEqual(expect.arrayContaining(["Role instructions", "Research brief", "Complete approved product map and responsibility", "Investigation rules", "Progress reporting", "Result instructions"]));
+      if (continued) expect(manifest.map(entry => entry.name)).not.toContain("Task request");
+      else expect(manifest.map(entry => entry.name)).toEqual(expect.arrayContaining(["Background and screen rules", "Logins and publishing rules", "Verification rules", "Task request"]));
+      expect(manifest.find(entry => entry.name === "Research brief")!.size).toBe(ctx.sections[0]!.body.length);
+    }
+    const duplicates = inputManifest("job", [{ title: "Background", body: "changed" }], [{ title: "Background", digest: "one" }, { title: "Background", digest: "two" }]);
+    expect(duplicates.filter(entry => entry.name === "Background").map(entry => entry.occurrence)).toEqual([1, 2, 3]);
+    expect(duplicates.filter(entry => entry.kind === "omitted").map(entry => entry.size)).toEqual([0, 0]);
+    const automatic = numberInputManifest([...inputManifest("job", [{ title: "Browser instructions", body: "Supplied context" }]), ...inputManifest("", [{ title: "Browser instructions", body: "Automatic browser rules" }], [], true)]);
+    expect(automatic.filter(entry => entry.name === "Browser instructions").map(entry => entry.occurrence)).toEqual([1, 2]);
+  });
+
   it("describes hand-back time from the supplied duration, independently of process startup", () => {
     for (const [took, duration] of [[0, "less than a minute"], [29_999, "less than a minute"], [30_000, "1 minute"], [90_000, "2 minutes"], [90 * 60_000, "2 hours"]] as const) {
       const note = handBackNote({ role: "Builder", tool: "Codex", took, commits: 0, files: [], leftovers: false, note: "" });
