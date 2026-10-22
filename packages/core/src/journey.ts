@@ -132,7 +132,8 @@ export function dependencyLanding(task: Parameters<typeof landingOf>[0] & Pick<T
     work.nothingToPublish ? "no-changes" : work.pr?.state === "open" ? "awaiting-merge" : landingOf({ state: task.state, pr: work.pr, release: work.release, landed: work.landed });
   const deliveries = task.repositories ?? task.deliveries;
   if (deliveries?.length) {
-    const outcomes = deliveries.map(deliveryLanding);
+    // Like blocksDependents, an unfinished push keeps a shared delivery open, even on a task marked as done.
+    const outcomes = deliveries.map((work) => !work.nothingToPublish && work.pr?.state !== "open" && work.localUpdate?.pushed === false ? "open" : deliveryLanding(work));
     for (const outcome of ["closed", "marked-done", "awaiting-merge", "open"] as const) if (outcomes.includes(outcome)) return outcome;
     return outcomes.every((outcome) => outcome === "no-changes") ? "no-changes" : "landed";
   }

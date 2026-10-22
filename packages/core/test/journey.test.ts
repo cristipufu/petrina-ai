@@ -923,6 +923,31 @@ describe("whole-task prerequisite landing", () => {
     expect(waiting.journey![0]!.reason).toBe(`“${prerequisite.title}” did not land: closed without merging`);
   });
 
+  it.each([false, true])("keeps waiting for a done task's unpushed local commit (unpushed first: %s)", (swapped) => {
+    const merged = { productId: base.productId, delivery: "pull-request" as const, completedStages: [], pr: { ...pr, state: "merged" as const } };
+    const landed = { branch: "main", sha: "abc" };
+    const unpushed = { productId: "companion", delivery: "local" as const, completedStages: [], landed, localUpdate: { ...landed, pushed: false } };
+    const shared = (local: typeof unpushed) => swapped ? [local, merged] : [merged, local];
+    let prerequisite = repositoryTaskView({ ...base, state: "done", repositories: shared(unpushed) }, shared(unpushed)[0]!);
+    const waiting: JourneyTask & Pick<Task, "after"> = { stageIndex: -1, rounds: {}, sub: 0, fixing: false, after: [prerequisite.id], journey: [] };
+    const sync = (at: number) => syncWait(waiting, blocksDependents(prerequisite) ? [prerequisite] : [], () => prerequisite, at);
+
+    expect(blocksDependents(prerequisite)).toBe(true);
+    expect(dependencyLanding(prerequisite)).toBe("open");
+    expect(dependencyLanding(historyItem(prerequisite))).toBe("open");
+    sync(0);
+    sync(10);
+    expect(waiting.journey![0]!.endedAt).toBeUndefined();
+
+    // Once the push finishes, the scheduler and the waiting details agree it landed.
+    prerequisite = { ...prerequisite, repositories: shared({ ...unpushed, localUpdate: { ...landed, pushed: true } }) };
+    expect(blocksDependents(prerequisite)).toBe(false);
+    expect(dependencyLanding(prerequisite)).toBe("landed");
+    expect(dependencyLanding(historyItem(prerequisite))).toBe("landed");
+    sync(20);
+    expect(waiting.journey![0]).toMatchObject({ endedAt: 20, reason: `“${prerequisite.title}” landed` });
+  });
+
   it("keeps single-product records and no-change outcomes distinct", () => {
     const open = { state: "done" as const, pr: { ...pr, state: "open" as const } };
     expect(dependencyLanding(open)).toBe("awaiting-merge");
@@ -931,5 +956,23 @@ describe("whole-task prerequisite landing", () => {
     expect(dependencyLanding({ state: "done", maintenance: { noProductChanges: true } })).toBe("no-changes");
     expect(dependencyLanding({ state: "done" })).toBe("marked-done");
     expect(dependencyLanding({ state: "cancelled", landed: { branch: "main", sha: "abc" } })).toBe("cancelled");
+  });
+
+  // The scheduler releases these, so the closed wait keeps explaining how the task ended.
+  it.each([
+    ["without a recorded commit", undefined, "marked-done", "marked as done, delivery not confirmed"],
+    ["with a recorded commit", { branch: "main", sha: "abc" }, "landed", "landed"],
+  ] as const)("ends the wait for a one-product task marked done after its push failed, %s", (_, landed, landing, words) => {
+    const repository = { productId: base.productId, delivery: "local" as const, landed, localUpdate: { branch: "main", sha: "abc", pushed: false } };
+    const prerequisite = repositoryTaskView({ ...base, state: "done", repositories: undefined, repository }, repository);
+    const waiting: JourneyTask & Pick<Task, "after"> = { stageIndex: -1, rounds: {}, sub: 0, fixing: false, after: [prerequisite.id], journey: [] };
+    syncWait(waiting, [prerequisite], () => prerequisite, 0);
+
+    expect(blocksDependents(prerequisite)).toBe(false);
+    expect(dependencyLanding(prerequisite)).toBe(landing);
+    expect(dependencyLanding({ ...prerequisite, repository })).toBe(landing);
+    expect(dependencyLanding(historyItem(prerequisite))).toBe(landing);
+    syncWait(waiting, [], () => prerequisite, 10);
+    expect(waiting.journey![0]).toMatchObject({ endedAt: 10, reason: `“${prerequisite.title}” ${words}` });
   });
 });

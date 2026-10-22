@@ -1030,7 +1030,12 @@ describe('prerequisite outcomes in Waiting for others details', () => {
   const merged = { productId: 'merged', delivery: 'pull-request' as const, completedStages: [], pr: { ...pr, state: 'merged' as const } };
   const open = { ...merged, productId: 'companion', pr: { ...pr, number: 55, state: 'open' as const } };
   const closed = { ...open, pr: { ...open.pr, state: 'closed' as const } };
+  const unpushed = { ...local, productId: 'unpushed', localUpdate: { ...local.landed, pushed: false } };
+  const pushed = { ...unpushed, localUpdate: { ...local.landed, pushed: true } };
   const cases = [
+    { name: 'merged delivery with an unpushed companion commit', works: [merged, unpushed], state: 'done', words: 'not landed yet', blocks: true },
+    { name: 'unpushed commit shown beside a merged companion', works: [unpushed, merged], state: 'done', words: 'not landed yet', blocks: true },
+    { name: 'merged delivery with a pushed companion commit', works: [merged, pushed], state: 'done', words: 'landed', blocks: false },
     { name: 'local delivery with an open companion', works: [local, open], state: 'pr-open', words: 'not landed yet: awaiting merge', blocks: true },
     { name: 'merged delivery with a closed companion', works: [merged, closed], state: 'pr-open', words: 'did not land: closed without merging', blocks: true },
     { name: 'fully landed shared work', works: [local, merged], state: 'done', words: 'landed', blocks: false },
