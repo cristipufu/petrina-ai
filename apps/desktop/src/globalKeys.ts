@@ -49,6 +49,10 @@ export function useGlobalKeys(keys: GlobalKeys): void {
       if (target.closest("[role=dialog]:not(.sheet), [role=menu], .popover, .menu") || document.querySelector(".popover, .menu")) return;
       // Inline product editors discard their draft (or close removal confirmation) themselves.
       if (event.key === "Escape" && target.closest(".product-editor")) return;
+      // Usage history owns inspection keys and returning from its focused readings.
+      const inspectingHistory = target.closest(".limit-history-plot") && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Enter", "Escape"].includes(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey;
+      const leavingReadings = event.key === "Escape" && target.closest(".limit-history-readings-view");
+      if (!keys.sheetOpen && (inspectingHistory || leavingReadings)) return;
       if (event.key === "Escape") {
         event.preventDefault(); event.stopImmediatePropagation();
         if (isTyping(target)) target.blur();

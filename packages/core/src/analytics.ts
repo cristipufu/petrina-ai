@@ -1,8 +1,9 @@
 // What each view shows about the work log, worked out from the log itself. The app never
 // gets the log: it asks for one of these views and gets just its numbers.
 
+import { limitBuckets, limitsOverTime, readingsView, type LimitsOverTime, type ReadingsRequest, type ReadingsView } from "./limit-history-view.js";
 import { nodeUsage, type NodeUsage } from "./node-usage.js";
-import { limitsOverTime, tokensOverTime, type LimitsOverTime, type OverTimeView } from "./charts.js";
+import { tokensOverTime, type OverTimeView } from "./charts.js";
 import type { AgentProfile, Id, State, Task } from "./model.js";
 import { atLeastLine, count, durationText, type Figure, listWords } from "./numbers.js";
 import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, emptyTally, addTurn, lineModelLabel, modelLabel, sameModel, sessionModelLabel, turnModelLabel, type Tally, type TokenLine, type WorkLogReader, type WorkMoment, type WorkTurn } from "./worklog.js";
@@ -12,6 +13,7 @@ export type UsagePeriod = "today" | "7d" | "30d";
 export const USAGE_PERIODS: readonly UsagePeriod[] = ["today", "7d", "30d"];
 
 export type UsageRequest =
+  | ReadingsRequest
   | { view: "task"; taskId: Id }
   | { view: "node"; taskId: Id; nodeId: Id }
   | { view: "products" }
@@ -177,7 +179,7 @@ export interface AnalyticsUsage {
   chart: { hourly: boolean; tools: { toolId: Id; label: string }[]; buckets: ChartBucket[] };
   /** Tokens and agent time per day (per hour for Today), split by tool, by model and by provider. */
   overTime: OverTimeView;
-  /** Each usage limit's readings over the period, with its reset moments. */
+  /** Bounded daily/hourly allowance summaries; original readings use a separate page. */
   limits: LimitsOverTime;
   byTool: WorkUsageLine[];
   byModel: WorkUsageLine[];
@@ -189,9 +191,9 @@ export interface AnalyticsUsage {
   about: AboutCounts;
 }
 
-export type UsageView = NodeUsage | TaskUsage | ProductsUsage | TodayUsage | AnalyticsUsage;
+export type UsageView = ReadingsView | NodeUsage | TaskUsage | ProductsUsage | TodayUsage | AnalyticsUsage;
 
-export type UsageViewFor<R extends UsageRequest> = R extends { view: "node" } ? NodeUsage : R extends { view: "task" } ? TaskUsage : R extends { view: "products" } ? ProductsUsage : R extends { view: "today" } ? TodayUsage : AnalyticsUsage;
+export type UsageViewFor<R extends UsageRequest> = R extends { view: "readings" } ? ReadingsView : R extends { view: "node" } ? NodeUsage : R extends { view: "task" } ? TaskUsage : R extends { view: "products" } ? ProductsUsage : R extends { view: "today" } ? TodayUsage : AnalyticsUsage;
 
 const TOOL_NAMES: Record<Id, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", antigravity: "Antigravity" };
 
@@ -754,7 +756,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     atLeast: reasonsOf(tally, before),
     chart: { hourly: range.hourly, tools: toolIds.map((toolId) => ({ toolId, label: n.tool(toolId) })), buckets },
     overTime: tokensOverTime(turns, lines, range.buckets, range.hourly, n.tool),
-    limits: limitsOverTime(log.usageHistory({ from: range.from, to: range.to }), ctx.state.pool.usage ?? [], range, ctx.now, n.tool, ctx.state.tools.map((tool) => tool.id)),
+    limits: limitsOverTime(log.usageHistory({ from: ctx.now - 30 * 86_400_000, to: ctx.now + 1 }), ctx.state.pool.usage ?? [], limitBuckets(request.period, ctx.now), request.period === "today", ctx.now, n.tool, ctx.state.tools.map((tool) => tool.id)),
     byTool,
     byModel: modelSplit(turns, lines, before),
     byRole,
@@ -768,6 +770,8 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
 /** Work out one view from the log. */
 export function usageView<R extends UsageRequest>(log: WorkLogReader, request: R, ctx: UsageContext): UsageViewFor<R> {
   switch (request.view) {
+    case "readings":
+      return readingsView(log.usageHistory({ from: request.snapshotAt - 30 * 86_400_000, to: request.snapshotAt + 1 }), ctx.state.pool.usage ?? [], request) as UsageViewFor<R>;
     case "node":
       return nodeUsage(log, request, ctx) as UsageViewFor<R>;
     case "task":

@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
-import { HISTORY_STATUSES, type HistoryStatus, ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, type RoleIcon, type Tone, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
+import { MAX_READING_OFFSET, READING_PAGE_SIZE, allowanceKey, HISTORY_STATUSES, type HistoryStatus, ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, type RoleIcon, type Tone, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { Coordination, serial, type LifecycleControl } from "./coordination.js";
 
@@ -51,6 +51,7 @@ const RoleDraft = z.object({
 });
 
 const RoutineDraft = z.object({ name: z.string().max(100), productId: z.string(), roleId: z.string(), profileId: z.string(), focus: z.string().max(4000), zone: z.string().max(100), enabled: z.boolean(), schedule: z.discriminatedUnion("kind", [z.object({ kind: z.literal("daily"), time: z.string() }), z.object({ kind: z.literal("weekly"), time: z.string(), weekdays: z.array(z.number().int().min(0).max(6)).max(7) }), z.object({ kind: z.literal("cron"), expression: z.string().max(200) })]) });
+const HistoryReport = z.object({ toolId: z.string().min(1).max(200), kind: z.string().min(1).max(200), model: z.string().max(200).optional(), name: z.string().max(400).optional(), status: z.enum(["allowed", "allowed_warning", "rejected"]), at: z.number().int().min(0), utilization: z.number().optional(), windowMinutes: z.number().positive().optional(), resetsAt: z.number().min(0).optional(), overage: z.boolean().optional() }).strict();
 const ARGS = {
   profileChoices: z.tuple([z.object({ toolId: z.string().min(1).max(100), modelId: z.string().min(1).max(200).optional(), refresh: z.boolean().optional() }).strict()]),
   saveProfile: z.tuple([z.object({ toolId: z.string().min(1).max(100), modelId: z.string().min(1).max(200), effort: z.enum(["low", "medium", "high", "xhigh", "ultra"]), standby: z.boolean().optional() }).strict(), ClientId, z.string().optional()]),
@@ -130,6 +131,7 @@ const ARGS = {
       z.object({ view: z.literal("node"), taskId: z.string().min(1).max(200), nodeId: z.string().min(1).max(200) }).strict(),
       z.object({ view: z.literal("products") }).strict(),
       z.object({ view: z.literal("today") }).strict(),
+      z.object({ view: z.literal("readings"), toolId: z.string().min(1).max(200), allowanceKey: z.string().min(1).max(600), from: z.number().int().min(0), to: z.number().int().min(0), snapshotAt: z.number().int().min(0), latest: HistoryReport.optional(), offset: z.number().int().min(0).max(MAX_READING_OFFSET).multipleOf(READING_PAGE_SIZE) }).strict(),
       z.object({ view: z.literal("analytics"), period: z.enum(["today", "7d", "30d"]), productId: z.string().min(1).max(200).optional() }).strict(),
     ]),
   ]),
@@ -140,6 +142,11 @@ const Envelope = z.object({ name: z.enum(COMMAND_NAMES), args: z.array(z.unknown
 export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
   const { name, args } = Envelope.parse(raw);
   const checked = ARGS[name].parse(args) as unknown[];
+  if (name === "usage") {
+    const request = checked[0] as Parameters<Commands["usage"]>[0];
+    if (request.view === "readings" && (request.to <= request.from || request.to - request.from > 31 * 86_400_000)) throw new Error("Choose dates within 31 days");
+    if (request.view === "readings" && request.latest && (request.latest.at > request.snapshotAt || request.latest.toolId !== request.toolId || allowanceKey(request.latest) !== request.allowanceKey)) throw new Error("The latest report must belong to this allowance and snapshot");
+  }
   const method = engine[name] as (...args: unknown[]) => unknown;
   if (name === "profileChoices") return await method.apply(engine, checked);
   // Native discovery must not hold the coordinator mutation queue while a tool opens.

@@ -59,15 +59,6 @@ export function modelColors(labels: readonly string[]): Map<string, string> {
   return colors;
 }
 
-/** One fixed colour per kind of limit ("5-hour", "weekly", "weekly Opus"), the same for every tool. */
-const LIMIT_TONES: Readonly<Record<string, string>> = { "5-hour": "blue", weekly: "orange", "weekly Opus": "pink", "weekly Sonnet": "green", "extra usage": "purple", daily: "teal" };
-const OTHER_LIMIT_TONES = ["teal", "indigo", "amber", "purple"];
-
-export function limitColor(label: string): string {
-  const known = LIMIT_TONES[label] ?? LIMIT_TONES[label.split(",")[0]!];
-  return tone(known ?? OTHER_LIMIT_TONES[hashOf(label) % OTHER_LIMIT_TONES.length]!);
-}
-
 export function FigureText({ figure, kind, missing, bare }: { figure: Figure; kind: "tokens" | "time"; missing?: string; bare?: boolean }) {
   const text = figureText(figure, kind, { ...(missing ? { missing } : {}), ...(bare ? { bare } : {}) }).replace(/^at least /, "> ");
   // Keep the lower-bound marker next to its number.
@@ -318,7 +309,7 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
               {state.pool.usageReads?.[tool.id]?.state === "reading" && <div className="muted small" role="status">Updating usage…</div>}
               {state.pool.usageReads?.[tool.id]?.state === "unavailable" && <div className="muted small" role="status">Couldn’t refresh usage.{own.length ? " Showing the last report." : " No current reading is available."}</div>}
               {own.length === 0 && out.length === 0 && (
-                <div className="muted small">Not reported.{tool.id === "claude-code" ? " Claude Code reports its limits while it works." : ["codex", "grok", "antigravity"].includes(tool.id) ? ` Petrina asks the installed ${tool.name} when this page opens.` : ""}</div>
+                <div className="muted small">Not reported. Account readings refresh while Analytics is open. A percentage appears only when a tool reports one.</div>
               )}
               {own.map((report) => {
                 const text = limitWords(report, now);

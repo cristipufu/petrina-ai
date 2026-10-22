@@ -755,6 +755,7 @@ export function createFirstRunDemo(now: number): Demo {
     state: {
       ...state,
       products: [],
+      pool: { ...state.pool, usage: [], limited: [] },
       setup: {
         done: false,
         platform: "darwin",

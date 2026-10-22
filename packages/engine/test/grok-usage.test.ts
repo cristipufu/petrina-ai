@@ -114,7 +114,7 @@ describe("Grok account usage", () => {
       for (let n = 0; n < 5; n++) { engine.readUsage("grok"); engine.usage({ view: "analytics", period: "today" }); }
       await engine.usageCoordinator.readers.get("grok")!.refresh(60_000);
       expect(fake.asked().filter(r => r.method === "_x.ai/billing")).toHaveLength(1);
-      expect(engine.usage({ view: "analytics", period: "today" }).limits.tools.find(t => t.toolId === "grok")?.limits[0]?.readings.at(-1)?.used).toBe(0.85);
+      expect(engine.usage({ view: "analytics", period: "today" }).limits.tools.find(t => t.toolId === "grok")?.limits[0]?.latest.utilization).toBe(0.85);
       writeFileSync(join(fake.dir, "billing.json"), JSON.stringify({ hang: true, ignoreStop: true }));
       const reading = engine.usageCoordinator.readers.get("grok")!.refresh();
       await waitFor(() => fake.asked().filter(r => r.method === "_x.ai/billing").length === 2, "a pending account read");

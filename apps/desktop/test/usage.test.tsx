@@ -142,13 +142,16 @@ describe('usage by tool', () => {
     await show({ ...state, pool: { ...state.pool, usage: [] } }, true);
     expect(host.querySelectorAll('[role="meter"]')).toHaveLength(0);
     expect(host.textContent?.match(/Not reported/g)).toHaveLength(2);
+    for (const card of host.querySelectorAll('.limit-card')) {
+      expect(card.querySelector('.muted.small')?.textContent).toBe('Not reported. Account readings refresh while Analytics is open. A percentage appears only when a tool reports one.');
+    }
   });
 
   it('does not describe Grok as Codex when no limits were reported', async () => {
     const state = createDemoState(1_000_000_000);
     await show({ ...state, tools: [...state.tools, { id: 'grok', name: 'Grok', command: ['grok'], models: [], status: 'ready' }] }, true);
     const grok = [...host.querySelectorAll('.limit-card')].find((card) => card.querySelector('strong')?.textContent === 'Grok')!;
-    expect(grok.textContent).toBe('GrokNot reported. Petrina asks the installed Grok when this page opens.');
+    expect(grok.textContent).toBe('GrokNot reported. Account readings refresh while Analytics is open. A percentage appears only when a tool reports one.');
     expect(grok.textContent).not.toContain('Codex');
   });
 

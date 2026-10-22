@@ -1,10 +1,8 @@
 // The Analytics charts over time, worked out from the log the same way for the engine and the
 // simulator: tokens per day (per hour for Today) split by tool, by model or by provider, with
-// the running total; and each usage limit's readings over the period with its reset moments.
+// the running total. Account history has its own bounded summaries in limit-history-view.ts.
 
-import type { Id, UsageReport } from "./model.js";
-import { claudeWindow, kindWords } from "./usage.js";
-import { sameLimit } from "./usage-history.js";
+import type { Id } from "./model.js";
 import { lineModelLabel, turnModelLabel, type TokenLine, type WorkTurn } from "./worklog.js";
 
 // ── Providers ──────────────────────────────────────────────────────────────
@@ -181,82 +179,4 @@ export function tokensOverTime(turns: readonly WorkTurn[], lines: readonly Token
   for (const split of OVER_TIME_SPLITS) splits[split] = { series: orderSeries(seriesOf[split], pointsOf[split]), points: pointsOf[split] };
   const measures: OverTimeMeasure[] = ["tokens", ...(has.input ? (["input"] as const) : []), ...(has.cacheRead ? (["cacheRead"] as const) : []), ...(has.output ? (["output"] as const) : []), "time"];
   return { hourly, measures, splits };
-}
-
-// ── Usage limits over time ─────────────────────────────────────────────────
-
-export interface LimitReading {
-  at: number;
-  /** How much of the limit was used, from 0 to 1. */
-  used: number;
-}
-
-export interface LimitLine {
-  key: string;
-  toolId: Id;
-  /** The limit in plain words: "weekly Opus". */
-  label: string;
-  readings: LimitReading[];
-  /** The moments the limit reset inside the period, oldest first. */
-  resets: number[];
-  /** The next reset, when it is known and still inside the period. */
-  nextReset?: number;
-}
-
-export interface LimitsOverTime {
-  from: number;
-  to: number;
-  /** One group per tool with any reading in the period, in the order of the tool list. */
-  tools: { toolId: Id; label: string; limits: LimitLine[] }[];
-}
-
-/** How much a report says is used: its percentage, or everything when it says the limit is reached. */
-function usedOf(report: UsageReport): number | undefined {
-  if (report.utilization !== undefined) return Math.max(0, Math.min(1, report.utilization));
-  return report.status === "rejected" ? 1 : undefined;
-}
-
-/**
- * Each limit's readings in the period. The latest report in the pool is the last point when it
- * is newer than the history, so a line always reaches the latest word from the tool.
- */
-export function limitsOverTime(history: readonly UsageReport[], current: readonly UsageReport[], range: { from: number; to: number }, now: number, toolName: (toolId: Id) => string, toolOrder: readonly Id[] = []): LimitsOverTime {
-  const inRange = (at: number) => at >= range.from && at < range.to;
-  const reports = history.filter((report) => inRange(report.at)).map(report => claudeWindow(report));
-  for (const raw of current) {
-    const report = claudeWindow(raw);
-    if (!inRange(report.at)) continue;
-    const last = reports.findLast((entry) => sameLimit(entry, report));
-    if (!last || last.at < report.at) reports.push(report);
-  }
-  const lines = new Map<string, LimitLine & { resetTimes: Set<number> }>();
-  for (const report of [...reports].sort((a, b) => a.at - b.at)) {
-    const key = `${report.toolId}|${report.kind}|${report.model ?? ""}`;
-    let line = lines.get(key);
-    if (!line) {
-      line = { key, toolId: report.toolId, label: kindWords(report.kind, report.windowMinutes, report.name), readings: [], resets: [], resetTimes: new Set() };
-      lines.set(key, line);
-    }
-    const used = usedOf(report);
-    if (used !== undefined) line.readings.push({ at: report.at, used });
-    if (report.resetsAt !== undefined && inRange(report.resetsAt)) line.resetTimes.add(report.resetsAt);
-  }
-  const order = (toolId: Id) => {
-    const index = toolOrder.indexOf(toolId);
-    return index < 0 ? toolOrder.length : index;
-  };
-  const tools = new Map<Id, LimitLine[]>();
-  for (const { resetTimes, ...line } of lines.values()) {
-    if (line.readings.length === 0) continue;
-    const times = [...resetTimes].sort((a, b) => a - b);
-    line.resets = times.filter((at) => at <= now);
-    const next = times.find((at) => at > now);
-    if (next !== undefined) line.nextReset = next;
-    (tools.get(line.toolId) ?? tools.set(line.toolId, []).get(line.toolId)!).push(line);
-  }
-  return {
-    from: range.from,
-    to: range.to,
-    tools: [...tools.entries()].sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b)).map(([toolId, limits]) => ({ toolId, label: toolName(toolId), limits: limits.sort((a, b) => a.label.localeCompare(b.label)) })),
-  };
 }

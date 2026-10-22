@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Simulator, createDemo, reviewStats, type AnalyticsUsage, type UsageRequest } from '@petrina/core';
 import { AnalyticsPage } from '../src/components/Analytics';
-import { BarsOverTime, LinesOverTime, type BarPoint } from '../src/components/Charts';
+import { BarsOverTime, type BarPoint } from '../src/components/Charts';
 import { FigureText } from '../src/components/Usage';
 import { lookup } from '../src/lib';
 
@@ -90,22 +90,6 @@ describe('the Analytics charts', () => {
     expect(all('tbody tr')[1]!.textContent).toContain('not known');
   });
 
-  it('breaks a limit line at its reset and does not carry an expired reading into the next window', async () => {
-    await show();
-    await act(async () => root.render(<LinesOverTime from={0} to={100} ticks={[]} table={false} label="Account limits" format={(value) => `${value * 100}%`} when={String} series={[
-      { key: 'short', label: '5-hour', color: 'red', points: [{ at: 10, value: 1 }, { at: 80, value: 0.2 }], resets: [50] },
-      { key: 'week', label: 'weekly', color: 'blue', points: [{ at: 60, value: 0.5 }], resets: [] },
-    ]} />));
-    expect(el('path.series-line').getAttribute('d')!.match(/M/g)).toHaveLength(2);
-    expect(el('path.series-line').getAttribute('d')).not.toContain('L');
-    const svg = el('svg[role="img"]');
-    // ArrowLeft starts from the most recent reading; the next one is after the short window reset.
-    await act(async () => { svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); });
-    await act(async () => { svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); });
-    expect(el('[role="tooltip"]').textContent).toContain('weekly 50%');
-    expect(el('[role="tooltip"]').textContent).not.toContain('5-hour');
-  });
-
   it('draws tokens over time as stacked bars with a legend, a running total and a table of the same numbers', async () => {
     await show();
     const figure = el('.analytics .chart-figure:has(.band, .hit)');
@@ -149,23 +133,23 @@ describe('the Analytics charts', () => {
     expect(all('.analytics .chart-figure:has(.hit) .legend i').map((swatch) => swatch.getAttribute('style'))).toEqual(['background: var(--provider-anthropic, var(--slate));', 'background: var(--provider-openai, var(--slate));']);
   });
 
-  it('draws each tool\'s limits over time with the resets marked, the latest percentage in the legend, and a table', async () => {
+  it('shows one allowance per tool with matching bounded summaries and keyboard details', async () => {
     await show();
-    const charts = all('.limits-charts .chart-figure');
-    expect(charts).toHaveLength(2);
-    expect(charts.map((chart) => chart.querySelector('.chart-title')?.textContent)).toEqual(['Claude Code', 'Codex']);
-    const claude = charts[0]!;
-    expect([...claude.querySelectorAll('.legend > span:not(.reset-key)')].map((entry) => entry.textContent)).toEqual(['5-hour35%', 'weekly62%']);
-    expect(claude.querySelector('.legend .reset-key')?.textContent).toBe('reset');
-    expect(claude.querySelectorAll('svg path.series-line')).toHaveLength(2);
-    expect(claude.querySelectorAll('svg g.reset:not(.ahead)').length).toBeGreaterThan(3);
-    expect(charts[1]!.querySelectorAll('svg path.series-line')).toHaveLength(1);
-
-    await pick('Limits as a chart or a table', 'Table');
-    const table = el('.limits-charts table.chart-table');
-    expect([...table.querySelectorAll('thead th')].map((cell) => cell.textContent)).toEqual(['When', 'Limit', 'Used']);
-    expect(table.textContent).toContain('reset');
-    expect(table.textContent).toContain('62%');
+    expect(all('.limit-history-card')).toHaveLength(2);
+    expect(all('.limit-history-plot')).toHaveLength(2);
+    expect(el('.limit-history-choice select').textContent).toContain('5-hour · All models');
+    await act(async () => el('.limit-history-plot').focus());
+    expect(el('[role="tooltip"]').textContent).toContain('Possible resets:');
+    const description = el('[role="tooltip"]').textContent;
+    await pick('Usage history as a chart or a table', 'Table');
+    expect(all('.limit-history-card tbody tr')).toHaveLength(14);
+    expect(el('.limit-history-table').textContent).toContain('Highest reported');
+    expect(description).toContain(el('.limit-history-table tbody tr td').textContent);
+    await act(async () => el<HTMLButtonElement>('.limit-history-table tbody button').click());
+    expect(el('.limit-history-readings-view').textContent).toContain('Reported reset');
+    expect(all('.limit-history-readings-view tbody tr').length).toBeLessThanOrEqual(20);
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(el('.limit-history-table tbody button')).toBe(document.activeElement);
   });
 
   it('charts the hours of today when the period is Today', async () => {
@@ -174,8 +158,8 @@ describe('the Analytics charts', () => {
     await act(async () => { await Promise.resolve(); });
     expect(el('.chart-head.tokens').textContent).toContain('per hour, today');
     expect(el('.analytics .chart-figure:has(.hit)').querySelectorAll('svg rect.hit')).toHaveLength(24);
-    // The 5-hour window's next reset is still ahead today, marked more quietly.
-    expect(el('.limits-charts .chart-figure svg g.reset.ahead')).not.toBeNull();
+    expect(all(".limit-history-card .limit-history-slot")).toHaveLength(48);
+    expect(host.querySelector(".limit-history-card .reset")).toBeNull();
   });
 });
 

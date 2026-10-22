@@ -58,6 +58,85 @@ async function widen(width: number) { await act(async () => (window as unknown a
 async function taken(key: string, options: KeyboardEventInit = {}) { let carried = true; await act(async () => { carried = (document.activeElement ?? window).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options })); }); return !carried; }
 
 describe('the app keyboard', () => {
+  it('lets usage history inspect, open and leave readings without global Escape taking the key', async () => {
+    await act(async () => root.unmount()); host.remove();
+    const demo = createDemo(1_000_000_000);
+    await mount(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
+    await click('a[href*="/analytics"]');
+    await act(async () => { await Promise.resolve(); });
+    const chart = el('.limit-history-plot');
+    const id = chart.id;
+    await act(async () => chart.focus());
+    await key('Home'); await key('End');
+    expect(host.querySelector('[role="tooltip"]')).not.toBeNull();
+    await key('Escape');
+    expect(host.querySelector('[role="tooltip"]')).toBeNull();
+    await key('End'); await key('Enter');
+    expect(host.querySelector('.limit-history-readings-view')).not.toBeNull();
+    await key('k', { ctrlKey: true });
+    await key('Escape');
+    expect(host.querySelector('.limit-history-readings-view')).not.toBeNull();
+    await key('Escape');
+    expect(host.querySelector('.limit-history-readings-view')).toBeNull();
+    expect(document.activeElement?.id).toBe(id);
+  });
+
+  it('keeps readings open when Escape leaves an unrelated answer field, and closes them from their own controls', async () => {
+    await act(async () => root.unmount()); host.remove();
+    await widen(1440);
+    const demo = createDemo(1_000_000_000);
+    await mount(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
+    await click('a[href*="/analytics"]');
+    await act(async () => { await Promise.resolve(); });
+    await click('.limit-history-readings');
+    expect(host.querySelector('.limit-history-readings-view')).not.toBeNull();
+    await type('.inbox .reply input', 'Half done');
+    const answer = el<HTMLInputElement>('.inbox .reply input');
+    await key('Escape');
+    expect(document.activeElement).not.toBe(answer);
+    expect(el<HTMLInputElement>('.inbox .reply input').value).toBe('Half done');
+    expect(host.querySelector('.limit-history-readings-view')).not.toBeNull();
+    await act(async () => el('.limit-history-readings-view > button').focus());
+    await key('n', { ctrlKey: true });
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    await key('Escape');
+    expect(host.querySelector('.limit-history-readings-view')).not.toBeNull();
+    await key('Escape');
+    expect(host.querySelector('.limit-history-readings-view')).toBeNull();
+    expect(document.activeElement).toBe(el('.limit-history-readings'));
+    await type('.inbox .reply input', 'Still here');
+    await key('Escape');
+    expect(document.activeElement).not.toBe(answer);
+    expect(el<HTMLInputElement>('.inbox .reply input').value).toBe('Still here');
+  });
+
+  it('keeps app shortcuts available while usage history owns its inspection keys', async () => {
+    await act(async () => root.unmount()); host.remove();
+    const demo = createDemo(1_000_000_000);
+    await mount(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
+    const chart = async () => {
+      await click('a[href*="/analytics"]');
+      await act(async () => { await Promise.resolve(); el('.limit-history-plot').focus(); });
+    };
+    await chart();
+    await key('n', { ctrlKey: true });
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    await key('Escape');
+    await act(async () => el('.limit-history-plot').focus());
+    await key('?');
+    expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Keyboard shortcuts');
+    await key('Escape');
+    await act(async () => el('.limit-history-plot').focus());
+    await key(',', { ctrlKey: true });
+    expect(host.querySelector('.limit-history')).toBeNull();
+    expect(window.location.pathname).toBe('/settings');
+    for (const [letter, path] of [['b', '/'], ['a', '/agents'], ['l', '/library']]) {
+      await chart();
+      await key(letter!);
+      expect(window.location.pathname).toBe(path);
+    }
+  });
+
   it('does not leave a pointer-opened task selected after closing, and keeps its place for J and K', async () => {
     const ids = boardOrder(simulator.getState().tasks, () => true, false);
     await key('j');

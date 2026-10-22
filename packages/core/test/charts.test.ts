@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { periodRange } from "../src/analytics.js";
-import { OTHER_PROVIDER, limitsOverTime, pointTotal, providerOf, runningTotal, tokensOverTime } from "../src/charts.js";
+import { OTHER_PROVIDER, pointTotal, providerOf, runningTotal, tokensOverTime } from "../src/charts.js";
 import { createDemo } from "../src/demo.js";
 import type { UsageReport } from "../src/model.js";
 import { Simulator } from "../src/sim.js";
@@ -141,71 +141,6 @@ describe("Tokens over time", () => {
 
 const report = (extra: Partial<UsageReport> & Pick<UsageReport, "at">): UsageReport => ({ toolId: "claude-code", kind: "seven_day", status: "allowed", utilization: 0.5, ...extra });
 
-describe("Usage limits over time", () => {
-  const week = periodRange("7d", NOW);
-  const range = { from: week.from, to: week.to };
-
-  it("joins saved Claude model aliases with current readings without rewriting history", () => {
-    for (const [model, kind] of [["fable", "seven_day_overage_included"], ["opus", "seven_day_opus"], ["sonnet", "seven_day_sonnet"]]) {
-      const history = [0.05, 0.06, 0.08].map((utilization, index) => report({ kind: "seven_day_model", model, name: model, windowMinutes: 10_080,
-        utilization, at: NOW - (3 - index) * HOUR, resetsAt: NOW + HOUR,
-      }));
-      const before = history.map(entry => ({ ...entry }));
-      const current = [report({ kind, model, ...(model === "fable" ? { name: model, windowMinutes: 10_080 } : {}), utilization: 0.09, at: NOW - 1000, resetsAt: NOW + HOUR })];
-      const view = limitsOverTime(history, current, range, NOW, toolName);
-      expect(view.tools[0]!.limits).toHaveLength(1);
-      expect(view.tools[0]!.limits[0]!.readings.map(reading => reading.used)).toEqual([0.05, 0.06, 0.08, 0.09]);
-      expect(view.tools[0]!.limits[0]!.nextReset).toBe(NOW + HOUR);
-      expect(history).toEqual(before);
-      // A current copy of the last saved alias is not a second point, and the
-      // same names on another tool are not Claude aliases.
-      const duplicate = limitsOverTime([...history, ...current], current, range, NOW, toolName);
-      expect(duplicate).toEqual(view);
-      expect(limitsOverTime(history.map(entry => ({ ...entry, toolId: "other" })), current.map(entry => ({ ...entry, toolId: "other" })), range, NOW, toolName).tools[0]!.limits).toHaveLength(2);
-    }
-  });
-
-  it("draws each limit's readings in the period, named plainly, with its resets", () => {
-    const history = [
-      report({ at: NOW - 10 * DAY, utilization: 0.9 }),
-      report({ at: NOW - 3 * DAY, utilization: 0.4, resetsAt: NOW - 2 * DAY }),
-      report({ at: NOW - DAY, utilization: 0.1, resetsAt: NOW + 5 * DAY }),
-      report({ at: NOW - 2 * HOUR, kind: "seven_day_opus", model: "opus", utilization: 0.7, resetsAt: NOW + 4 * HOUR }),
-      report({ at: NOW - HOUR, toolId: "codex", kind: "codex:primary", windowMinutes: 300, utilization: 0.2, resetsAt: NOW + HOUR }),
-    ];
-    const view = limitsOverTime(history, [], range, NOW, toolName, ["claude-code", "codex"]);
-    expect(view.tools.map((tool) => tool.label)).toEqual(["Claude Code", "Codex"]);
-    const [claude, codex] = view.tools;
-    expect(claude!.limits.map((limit) => limit.label)).toEqual(["weekly", "weekly Opus"]);
-    const weekly = claude!.limits[0]!;
-    // The reading from ten days ago is outside the period.
-    expect(weekly.readings).toEqual([
-      { at: NOW - 3 * DAY, used: 0.4 },
-      { at: NOW - DAY, used: 0.1 },
-    ]);
-    expect(weekly.resets).toEqual([NOW - 2 * DAY]);
-    // The next reset is beyond this week, so it isn't marked; the Opus window's is still ahead today.
-    expect(weekly.nextReset).toBeUndefined();
-    expect(claude!.limits[1]!.nextReset).toBe(NOW + 4 * HOUR);
-    expect(claude!.limits[1]!.resets).toEqual([]);
-    expect(codex!.limits.map((limit) => limit.label)).toEqual(["5-hour"]);
-  });
-
-  it("ends each line on the pool's latest report when it is newer, and reads a reached limit as full", () => {
-    const history = [report({ at: NOW - DAY, utilization: 0.3 })];
-    const current = [report({ at: NOW - 60_000, utilization: 0.35 }), report({ at: NOW - 2 * DAY, utilization: 0.2 }), { toolId: "claude-code", kind: "overage", status: "rejected" as const, at: NOW - 30_000 }, { toolId: "codex", kind: "codex:primary", status: "allowed" as const, at: NOW - 30_000 }];
-    const view = limitsOverTime(history, current, range, NOW, toolName);
-    const claude = view.tools.find((tool) => tool.toolId === "claude-code")!;
-    expect(claude.limits.find((limit) => limit.label === "weekly")!.readings).toEqual([
-      { at: NOW - DAY, used: 0.3 },
-      { at: NOW - 60_000, used: 0.35 },
-    ]);
-    expect(claude.limits.find((limit) => limit.label === "extra usage")!.readings).toEqual([{ at: NOW - 30_000, used: 1 }]);
-    // A report with no percentage and nothing reached draws nothing.
-    expect(view.tools.some((tool) => tool.toolId === "codex")).toBe(false);
-  });
-});
-
 describe("The history of readings", () => {
   it("keeps a reading only when it differs from the last one of its limit, and only thirty days", () => {
     const history: UsageReport[] = [];
@@ -253,14 +188,14 @@ describe("The demo's charts", () => {
     expect(week.overTime.measures).toEqual(["tokens", "input", "cacheRead", "output", "time"]);
     expect(runningTotal(week.overTime.splits.tool.points, "tokens").at(-1)).toBe(week.headline.tokens.value);
     expect(week.limits.tools.map((tool) => tool.toolId)).toEqual(["claude-code", "codex"]);
-    const fiveHour = week.limits.tools[0]!.limits.find((limit) => limit.label === "5-hour")!;
-    expect(fiveHour.resets.length).toBeGreaterThan(3);
-    expect(fiveHour.readings.at(-1)).toEqual({ at: NOW, used: 0.35 });
+    const fiveHour = week.limits.tools[0]!.limits.find((limit) => limit.label === "5-hour · All models")!;
+    expect(fiveHour.buckets.reduce((sum, bucket) => sum + bucket.possibleResets, 0)).toBeGreaterThan(3);
+    expect(fiveHour.latest).toMatchObject({ at: NOW, utilization: 0.35 });
     const month = sim.usage({ view: "analytics", period: "30d" });
     expect(month.overTime.splits.tool.points.filter((point) => pointTotal(point, "tokens") > 0).length).toBeGreaterThan(20);
-    expect(month.limits.tools[0]!.limits.find((limit) => limit.label === "weekly")!.resets).toHaveLength(4);
+    expect(month.limits.tools[0]!.limits.find((limit) => limit.label === "Weekly · All models")!.buckets.reduce((sum, bucket) => sum + bucket.possibleResets, 0)).toBeGreaterThan(0);
     const today = sim.usage({ view: "analytics", period: "today" });
     expect(today.overTime.hourly).toBe(true);
-    expect(today.limits.tools[0]!.limits.find((limit) => limit.label === "5-hour")!.nextReset).toBe(NOW + 90 * 60_000);
+    expect(today.limits.tools[0]!.limits.find((limit) => limit.label === "5-hour · All models")!.latest.resetsAt).toBe(NOW + 90 * 60_000);
   });
 });

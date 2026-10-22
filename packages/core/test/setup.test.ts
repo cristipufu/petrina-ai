@@ -148,6 +148,7 @@ describe("first run's demo", () => {
     const demo = createFirstRunDemo(now);
     const sim = new Simulator(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });
     expect(sim.usage({ view: "analytics", period: "today" }).headline.turns).toBe(0);
+    expect(sim.usage({ view: "analytics", period: "today" }).limits.tools).toEqual([]);
     expect(demo.log.products()).toEqual([]);
     const product = DEMO_PRODUCTS[0]!;
     sim.addProduct(product);

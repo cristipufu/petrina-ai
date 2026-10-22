@@ -239,7 +239,7 @@ describe("The work log of a real engine", () => {
     expect(history.some((entry) => entry.toolId === "codex" && entry.utilization === 0.16)).toBe(true);
     const limitsToday = engine.usage({ view: "analytics", period: "today" }).limits;
     expect(limitsToday.tools.map((tool) => tool.toolId).sort()).toEqual(["claude-code", "codex"]);
-    expect(limitsToday.tools.find((tool) => tool.toolId === "claude-code")!.limits[0]!.readings.at(-1)!.used).toBe(0.81);
+    expect(limitsToday.tools.find((tool) => tool.toolId === "claude-code")!.limits[0]!.latest.utilization).toBe(0.81);
   });
 
   it("answers only the defined views and periods", async () => {

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
 import { OVER_TIME_SPLITS, count, durationText, runningTotal, tokenNumber, type AnalyticsUsage, type OverTimeMeasure, type OverTimeSeries, type OverTimeSplit, type SquadRow, type State, type WorkUsageLine, type UsagePeriod } from "@petrina/core";
-import { TOOL_COLORS, type Lookup } from "../lib";
+import { type Lookup } from "../lib";
 import { useUsage } from "../usage";
-import { BarsOverTime, LinesOverTime, ViewToggle, dayWords, whenWords, type BarPoint, type ChartSeries } from "./Charts";
-import { AboutNote, UsageList, ColumnChart, FigureText, SplitList, Stat, limitColor, modelColors, providerColor, toolColor } from "./Usage";
+import { BarsOverTime, ViewToggle, dayWords, type BarPoint, type ChartSeries } from "./Charts";
+import { AboutNote, UsageList, ColumnChart, FigureText, SplitList, Stat, modelColors, providerColor, toolColor } from "./Usage";
+import { LimitHistory } from "./LimitHistory";
 import { ReviewsPanel } from "./Reviews";
 
 const PERIODS: readonly { id: UsagePeriod; label: string; words: string }[] = [
@@ -29,7 +30,7 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
   const [period, setPeriod] = useState<UsagePeriod>("7d");
   const [showAbout, setShowAbout] = useState(about);
   // Kept here, so they stay as chosen while another period's numbers load.
-  const [choices, setChoices] = useState<Choices>({ measure: "tokens", split: "tool", table: false, limitsTable: false, details: false, squadDetails: false });
+  const [choices, setChoices] = useState<Choices>({ measure: "tokens", split: "tool", table: false, details: false, squadDetails: false });
   const productId = product !== "all" && state.products.some((entry) => entry.id === product) ? product : undefined;
   const view = useUsage({ view: "analytics", period, ...(productId ? { productId } : {}) }, state);
   const noteRef = useRef<HTMLDivElement>(null);
@@ -73,7 +74,7 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
         <p className="muted small">These account limits are shared across products and sessions, including work outside Petrina.</p>
       </header>
       <UsageList state={state} expanded />
-      {view && <LimitsOverTime view={view} words={words} table={choices.limitsTable} onTable={(limitsTable) => setChoices((all) => ({ ...all, limitsTable }))} />}
+      <LimitHistory history={view?.limits} period={period} />
       </section>
 
       {!view ? (
@@ -102,7 +103,6 @@ interface Choices {
   measure: OverTimeMeasure;
   split: OverTimeSplit;
   table: boolean;
-  limitsTable: boolean;
   details: boolean;
   extra?: Split;
   squadDetails: boolean;
@@ -115,53 +115,6 @@ const SPLIT_WORDS: Record<OverTimeSplit, string> = { tool: "By tool", model: "By
 function seriesColors(split: OverTimeSplit, series: readonly OverTimeSeries[]): ChartSeries[] {
   const models = split === "model" ? modelColors(series.map((entry) => entry.label)) : undefined;
   return series.map((entry) => ({ key: entry.key, label: entry.label, color: models ? models.get(entry.label)! : split === "tool" ? toolColor(entry.toolId) : providerColor(entry.providerId) }));
-}
-
-/** How much of each limit was used over the period, one small chart per tool, with the resets marked. */
-function LimitsOverTime({ view, words, table, onTable }: { view: AnalyticsUsage; words: string; table: boolean; onTable: (on: boolean) => void }) {
-  const { limits, overTime } = view;
-  const ticks = overTime.splits.tool.points.map((point) => ({ at: point.start, label: point.label }));
-  const percent = (value: number) => `${Math.round(value * 100)}%`;
-  return (
-    <>
-      <div className="chart-head limits row between wrap">
-        <span className="muted small">How much of each limit was used {words}, with its resets marked</span>
-        <ViewToggle table={table} onTable={onTable} label="Limits as a chart or a table" />
-      </div>
-      {limits.tools.length === 0 ? (
-        <div className="muted small">No readings {words}. Claude Code reports its limits while it works; Petrina asks the installed Codex and Grok when this page opens.</div>
-      ) : (
-        <div className="limits-charts">
-          {limits.tools.map((tool) => (
-            <LinesOverTime
-              key={tool.toolId}
-              from={limits.from}
-              to={limits.to}
-              series={tool.limits.map((limit) => ({
-                key: limit.key,
-                label: limit.label,
-                color: limitColor(limit.label),
-                points: limit.readings.map((reading) => ({ at: reading.at, value: reading.used })),
-                resets: limit.resets,
-                ...(limit.nextReset !== undefined ? { nextReset: limit.nextReset } : {}),
-              }))}
-              ticks={ticks}
-              format={percent}
-              when={(at) => whenWords(at, overTime.hourly)}
-              label={`${tool.label}: how much of each limit was used ${words}`}
-              title={
-                <div className="row chart-title">
-                  <i className="tool-dot" style={{ background: TOOL_COLORS[tool.toolId] ?? "var(--slate)" }} />
-                  <strong>{tool.label}</strong>
-                </div>
-              }
-              table={table}
-            />
-          ))}
-        </div>
-      )}
-    </>
-  );
 }
 
 function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period, choices, onChoices }: { view: AnalyticsUsage; state: State; find: Lookup; showAbout: boolean; onAbout: () => void; noteRef: React.RefObject<HTMLDivElement | null>; onOpen: (taskId: string) => void; period: UsagePeriod; choices: Choices; onChoices: (update: (all: Choices) => Choices) => void }) {

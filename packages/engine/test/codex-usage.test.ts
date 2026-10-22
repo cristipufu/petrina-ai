@@ -109,7 +109,7 @@ describe("the engine slows a tool down before its limit", () => {
       await engine.usageCoordinator.readers.get("codex")!.refresh();
       expect(server.asked().filter((entry) => entry.method === "account/rateLimits/read")).toHaveLength(2);
       const chart = engine.usage({ view: "analytics", period: "today" });
-      expect(chart.limits.tools.find((tool) => tool.toolId === "codex")!.limits[0]!.readings.at(-1)!.used).toBe(0.85);
+      expect(chart.limits.tools.find((tool) => tool.toolId === "codex")!.limits[0]!.latest.utilization).toBe(0.85);
       const productId = await engine.addProduct(repo);
       const ids = Array.from({ length: 4 }, (_, index) => engine.addTask({ productId, title: `Change ${index}`, description: "[no-check]" }));
       engine.setPoolPaused(false);

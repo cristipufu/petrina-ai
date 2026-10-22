@@ -47,7 +47,7 @@ function view(engine: Engine) {
   return {
     blocked: !!limitOf(pool, claude, Date.now()), room: headroom(pool, claude, Date.now()), cap: toolCapNow(pool, "claude-code", Date.now(), claude), near: nearLimit(pool, claude, Date.now()),
     choice: chooseProfile({ pool, tools: [], profiles: [claude, codex] }, claude, Date.now()).kind, line,
-    latest: analytics?.limits.map(limit => [limit.label, limit.readings.at(-1)?.used, limit.nextReset]),
+    latest: analytics?.limits.map(limit => [limit.label, limit.latest.utilization, limit.latest.resetsAt]),
   };
 }
 
@@ -253,7 +253,7 @@ it("reconciles live and account model windows in both recovery directions and wa
         expect(headroom(run.engine.s.pool, profile, NOW)).toBeGreaterThan(0);
         expect(run.engine.s.pool.usage!.filter(report => report.model === model)).toHaveLength(1);
         const chart = run.engine.usage({ view: "analytics", period: "today" }).limits.tools.find(tool => tool.toolId === "claude-code")!;
-        expect(chart.limits.find(line => line.key === `claude-code|${kind}|${model}`)?.readings.at(-1)?.used).toBe(0.1);
+        expect(chart.limits.find(line => line.key === `claude-code|${kind}|${model}`)?.latest.utilization).toBe(0.1);
         expect(wake.mock.calls.length).toBeGreaterThan(before);
       }
     }
@@ -322,10 +322,11 @@ it("continues saved Fable history on one Analytics line after a native account r
       model_scoped: [{ display_name: "Fable", utilization: 9, resets_at: new Date(reset).toISOString() }],
     } }));
     const chart = run.engine.usage({ view: "analytics", period: "today" }).limits.tools.find(tool => tool.toolId === "claude-code")!;
-    const lines = chart.limits.filter(line => line.label === "weekly, fable");
+    const lines = chart.limits.filter(line => line.label === "Weekly · Fable");
     expect(lines).toHaveLength(1);
-    expect(lines[0]!.readings.map(reading => reading.used)).toEqual([0.05, 0.06, 0.08, 0.09]);
-    expect(lines[0]!.nextReset).toBe(reset);
+    expect(lines[0]!.buckets.reduce((sum, bucket) => sum + bucket.numericCount, 0)).toBe(4);
+    expect(lines[0]!.latest.utilization).toBe(0.09);
+    expect(lines[0]!.latest.resetsAt).toBe(reset);
     expect(run.engine.tracking.log.usageHistory({}).filter(report => report.at < NOW)).toEqual(saved);
   } finally { await run.close(); }
 });
