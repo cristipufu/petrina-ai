@@ -1516,7 +1516,7 @@ input.select { cursor: text; }
 
 /* ── Products: switcher ────────────────────────────────────────────── */
 
-.switcher { min-width: 0; max-width: 15rem; justify-content: space-between; background: transparent; }
+.switcher { min-width: 0; max-width: min(15rem, 100%); justify-content: space-between; background: transparent; }
 .switcher:hover { background: var(--hover); }
 .switcher .label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .switcher-pop { width: min(21.5rem, calc(100vw - 32px)); left: 0; right: auto; padding: 12px; }

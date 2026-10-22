@@ -314,8 +314,21 @@ export function useViewport(): { width: number; height: number } {
   const [size, setSize] = useState(viewportSize);
   useEffect(() => {
     const onResize = () => setSize(viewportSize());
+    // A text-size change need not resize the window (or the root's border box). Observe a rem
+    // instead, so every caller follows the same breakpoints when text grows or shrinks.
+    const textSize = document.createElement("span");
+    textSize.style.cssText = "position: absolute; top: 0; left: 0; width: 1rem; height: 1rem; visibility: hidden; pointer-events: none; overflow: hidden;";
+    textSize.setAttribute("aria-hidden", "true");
+    document.body.append(textSize);
+    const observer = new ResizeObserver(onResize);
+    observer.observe(textSize);
+    onResize();
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      observer.disconnect();
+      textSize.remove();
+    };
   }, []);
   return size;
 }
