@@ -1,5 +1,5 @@
 import type { AgentProfile, Id, Pool, State, Task } from "./model.js";
-import { byRoom, currentReport, headroom, SLOW_DOWN, toolCapNow, usageCovers } from "./usage.js";
+import { byRoom, currentReport, headroom, pastSlowDown, toolCapNow, usageCovers } from "./usage.js";
 import { screenReady } from "./screen.js";
 import { blocksDependents } from "./repositories.js";
 
@@ -30,7 +30,7 @@ function fullQuota(pool: Pool, candidate: Candidate, uses: readonly SlotUse[], n
   const slowed = toolCapNow(pool, candidate.toolId, now, candidate);
   if (slowed === undefined) return undefined;
   for (const report of pool.usage ?? []) {
-    if (!currentReport(report, now) || !usageCovers(report, candidate) || (report.status === "allowed" && (report.utilization ?? 0) < SLOW_DOWN)) continue;
+    if (!currentReport(report, now) || !usageCovers(report, candidate) || !pastSlowDown(report)) continue;
     if (uses.filter(use => usageCovers(report, use)).length >= slowed) return { held: true, ...(report.model ? { model: report.model } : {}) };
   }
   return undefined;

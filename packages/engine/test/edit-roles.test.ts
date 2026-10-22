@@ -220,6 +220,11 @@ describe("roles the coordinator edits and adds", () => {
     const engine = new Engine(join(root, "data"), { toolPath: () => "/bin/true" });
     try {
       const reviewer = engine.addRole(start("security"));
+      // A provider warning at low measured usage moves no role off its planned profile.
+      engine.recordUsage({ toolId: "claude-code", kind: "five_hour", status: "allowed_warning", utilization: 0.26 });
+      for (const roleId of [reviewer, "builder", "code-reviewer", "security-reviewer", "design-reviewer", "verifier"]) {
+        expect(engine.choose("opus-high", undefined, roleId)).toMatchObject({ kind: "planned", profile: { id: "opus-high" } });
+      }
       engine.recordUsage({ toolId: "claude-code", kind: "five_hour", status: "allowed_warning", utilization: 0.95 });
       // An author planned on Claude Code moves to Codex; every reviewer keeps Claude Code instead.
       expect(engine.choose("opus-high", undefined, "builder")).toMatchObject({ kind: "substitute", profile: { toolId: "codex" } });

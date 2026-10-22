@@ -73,7 +73,7 @@ A replacement agent gets a new step, keeping the first agent's tool, elapsed tim
 ## Scheduling
 
 - The queue is an ordered list. Priority is position.
-- A pool limit caps running agents, with optional caps per tool. A tool past 80% of a usage window gets half its cap of new agents (see Balancing under Usage limits).
+- A pool limit caps running agents, with optional caps per tool. A tool measured past 80% of a usage window gets half its cap of new agents (see Balancing under Usage limits).
 - Taking a slot records the next agent and its profile (and therefore its tool) at the same moment, before working-copy setup or agent I/O. The card shows the correct step immediately; a new task shows Plan with its planner.
 - Before every new agent, including the same tool, a new design/review round or a new stage, check the pool and tool limits again, excluding this task's old slot. Keep the slot if there is room; otherwise release it and wait at the current step, keeping the working copy and progress. The status names the busy tool, a full pool, or a paused pool.
 - A step where several agents work at once (a review round's reviewers, its voters) holds a slot for each of them: the first takes the task's own slot, and each other one starts only when a slot of its own is free under the pool limit and its tool's cap. One that cannot get a slot waits for the next round of scheduling, like any other agent.
@@ -171,7 +171,11 @@ Silence alone never means a lost connection. Claude Code's connector sends its r
 
 #### Near-limit preferences
 
-New agents also prefer an equal profile on a tool that is not close to its limit (a warning, or 90% used), when there is one. Running agents are never interrupted for this.
+New agents also prefer an equal profile on a tool that is not close to its limit (90% of a covering window measured as used), when there is one. Running agents are never interrupted for this.
+
+#### Provider warnings
+
+A provider's own warning status (`allowed_warning`) is kept with its percentage, reset and history. Below Petrina's 90% mark, or without a percentage, the usage line and Analytics show it as the provider's ("provider warning", adding "percentage not reported" when it has none); from 90% they say what any reading that high says. Its threshold need not be Petrina's, so the 80% and 90% marks apply only to the measured percentage, before display rounding, and the same measurement gives the same decisions whether the provider reported permission or a warning. A warning without a usable current percentage means usage is unknown: it triggers neither mark, adds no figure to room or balancing, and on its own never says the allowance is nearly used or that fewer agents start. Other current measured windows still count, and omitted fields are retained only from the same unchanged window (see Account readers). A rejection stays effective with a low or missing percentage.
 
 #### Standby profiles
 
@@ -179,11 +183,11 @@ A usage-limit stand-in for Claude Code's Opus is Sonnet, which the planner is ne
 
 ### Balancing
 
-Reviews from both Claude and Codex are worth having, so the pool keeps their usage level instead of draining one tool first. A tool's room is the unused share of its tightest window per hour until that window resets (`headroom` in `@petrina/core`): 20% left with an hour to go beats 50% left with a week to go.
+Reviews from both Claude and Codex are worth having, so the pool keeps their usage level instead of draining one tool first. A tool's room is the unused share of its tightest measured window per hour until that window resets (`headroom` in `@petrina/core`): 20% left with an hour to go beats 50% left with a week to go. A used-up window has no room.
 
 Wherever a choice is open, the tool with more room wins: among stand-ins of the same independence, nearness and effort; among equal profiles when the planned tool is near its limit; and among work in progress waiting for a slot when the pool cannot take all of it. A tool that has said nothing is fine: it is neither held back nor pushed behind one that has.
 
-Past 80% of a window (`SLOW_DOWN`), new agents covered by that quota share half the tool's cap (`SLOW_DOWN_SHARE`, rounded up, at least one; the pool's limit stands in for a tool with no cap). A model-specific window counts only matching profiles, including helpers and background agents; other models keep their own room. A shared account window and the configured tool cap still count every model on that tool. Balancing compares the windows that cover the actual candidate profile, and a full model quota can yield to another model on the same tool. These rules use reported scopes for every provider. Out, the affected profiles wait until reset (`pool.limited`), while available stand-ins can continue.
+From 80% of a window measured as used, or a window reported as used up (`SLOW_DOWN`), new agents covered by that quota share half the tool's cap (`SLOW_DOWN_SHARE`, rounded up, at least one; the pool's limit stands in for a tool with no cap). A model-specific window counts only matching profiles, including helpers and background agents; other models keep their own room. A shared account window and the configured tool cap still count every model on that tool. Balancing compares the windows that cover the actual candidate profile, and a full model quota can yield to another model on the same tool. These rules use reported scopes for every provider. Out, the affected profiles wait until reset (`pool.limited`), while available stand-ins can continue.
 
 Today's rules stand: a reviewer runs on a tool other than the author's wherever both have room, a review with reviewers on both tools never collapses onto one while the other has room, reviewers and voters keep their planned tools when merely near a limit, and the security review stays away from the builder's tool. Running agents are never moved.
 

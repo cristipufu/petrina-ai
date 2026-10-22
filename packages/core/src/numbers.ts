@@ -3,7 +3,7 @@
 
 import type { LimitStatus } from "./worklog.js";
 import type { UsageReport } from "./model.js";
-import { currentReport, kindWords } from "./usage.js";
+import { currentReport, kindWords, measuredUsage, NEAR_LIMIT } from "./usage.js";
 
 /**
  * A total and whether whole turns are known to be missing from it. A missing value is "not
@@ -131,11 +131,16 @@ export interface LimitWords {
 export function limitWords(limit: UsageReport, now: number): LimitWords {
   const reset = limit.resetsAt !== undefined && limit.resetsAt <= now;
   const stale = !currentReport(limit, now);
-  const percent = limit.utilization === undefined ? undefined : Math.max(0, Math.min(100, Math.round(limit.utilization * 100)));
-  const status: LimitStatus = limit.status === "rejected" ? "reached" : limit.status === "allowed_warning" ? "close" : "fine";
+  const measured = measuredUsage(limit);
+  const percent = measured === undefined ? undefined : Math.max(0, Math.min(100, Math.round(measured * 100)));
+  // Close to the limit is Petrina's own mark on the measured share, before rounding. A provider's
+  // warning below it, or without a number, is kept as the provider's and claims nothing more.
+  const status: LimitStatus = limit.status === "rejected" ? "reached" : (measured ?? 0) >= NEAR_LIMIT ? "close" : "fine";
+  const warned = limit.status === "allowed_warning" && status === "fine";
   let used: string;
   if (stale) used = reset ? "has reset since it was last reported" : "not reported";
-  else if (percent !== undefined) used = `${percent}% used${status !== "fine" ? ` · ${limitStatusText(status)}` : ""}`;
+  else if (percent !== undefined) used = `${percent}% used${status !== "fine" ? ` · ${limitStatusText(status)}` : warned ? " · provider warning" : ""}`;
+  else if (warned) used = "provider warning · percentage not reported";
   else used = limit.toolId === "codex" ? "not reported" : limitStatusText(status);
   return {
     label: kindWords(limit.kind, limit.windowMinutes, limit.name),
@@ -150,7 +155,7 @@ export function limitWords(limit: UsageReport, now: number): LimitWords {
 
 /** The limit closest to running out, among those still current. */
 export function nearestLimit(limits: readonly UsageReport[], toolId: string, now: number): UsageReport | undefined {
-  const rank = (limit: UsageReport) => (limit.status === "rejected" ? 1000 : 0) + (limit.utilization !== undefined ? limit.utilization * 100 : limit.status === "allowed_warning" ? 90 : 0);
+  const rank = (limit: UsageReport) => (limit.status === "rejected" ? 1000 : 0) + (measuredUsage(limit) ?? 0) * 100;
   return limits
     .filter((limit) => limit.toolId === toolId && currentReport(limit, now))
     .sort((a, b) => rank(b) - rank(a) || (a.resetsAt ?? Infinity) - (b.resetsAt ?? Infinity))[0];

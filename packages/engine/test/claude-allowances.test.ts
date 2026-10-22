@@ -1,5 +1,5 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
-import { chooseProfile, headroom, limitOf, nearLimit, toolCapNow, usageLines, type AgentProfile } from "@petrina/core";
+import { chooseProfile, HOLDING_BACK, headroom, limitOf, nearLimit, pickStarts, toolCapNow, usageLines, type AgentProfile } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { claudeReports } from "../src/claude-usage-report.js";
 import { claudeAccountReports } from "../src/claude-usage.js";
@@ -87,6 +87,70 @@ it("keeps the pool and Analytics consistent for included and paid allowance comb
   } finally { await run.close(); }
 });
 
+it("keeps a healthy low-usage Claude window on its plan as account readings and live warnings alternate", async () => {
+  const weeklyReset = Date.parse("2026-10-28T12:00:00Z");
+  const snapshot = (weekly: number, complete = true) => ({ rate_limits_available: true, rate_limits: {
+    five_hour: { utilization: 2, resets_at: new Date(NOW + HOUR).toISOString() },
+    seven_day: { utilization: weekly, resets_at: new Date(weeklyReset).toISOString() },
+    ...(complete ? { model_scoped: [] } : {}),
+  } });
+  const warning = { status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.26, resetsAt: weeklyReset / 1000 };
+  const running = Array.from({ length: 4 }, (_, index) => ({ taskId: `running-${index}`, toolId: "claude-code", model: "Opus 5.5", modelId: "opus" }));
+  const fifth = { taskId: "fifth", toolId: "claude-code", model: "Opus 5.5", modelId: "opus" };
+  for (const order of ["account-first", "live-first"]) {
+    const run = await fixture();
+    try {
+      run.engine.s.pool.toolCaps["claude-code"] = 7;
+      run.engine.s.pool.limit = 10;
+      // Admission, the actual profile and the displayed status agree after every update.
+      const healthy = (shown: string, step: string) => {
+        const pool = run.engine.s.pool, opus = run.engine.profile("opus-xhigh")!;
+        expect(nearLimit(pool, opus, NOW), step).toBe(false);
+        expect(toolCapNow(pool, "claude-code", NOW, opus), step).toBe(7);
+        expect(pickStarts({ candidates: [fifth], inUse: running, pool: { ...pool, paused: false }, now: NOW }), step).toEqual(["fifth"]);
+        expect(run.engine.choose("opus-xhigh"), step).toMatchObject({ kind: "planned", profile: { id: "opus-xhigh" } });
+        const line = view(run.engine).line!;
+        expect(line.tone, step).toBe("fine");
+        expect(line.text, step).toContain(shown);
+        expect(line.text, step).not.toContain(HOLDING_BACK);
+      };
+      const account = (step: string) => { run.engine.recordAccountUsage("claude-code", claudeAccountReports(snapshot(27))); healthy("weekly 27%, resets", step); };
+      const live = (step: string) => { stream(run.engine, warning); healthy("weekly 26%, provider warning, resets", step); };
+      if (order === "account-first") { account("account"); live("live warning"); account("account again"); }
+      else { live("live warning"); account("account"); live("live warning again"); }
+      // A notice that omits the percentage retains it only from the same warning window; otherwise usage is unknown.
+      live("live warning before an omitted percentage");
+      stream(run.engine, { status: "allowed_warning", rateLimitType: "seven_day" });
+      expect(run.engine.s.pool.usage!.find(report => report.kind === "seven_day")).toMatchObject({ status: "allowed_warning", utilization: 0.26, resetsAt: weeklyReset });
+      account("account after the retained warning");
+      stream(run.engine, { status: "allowed_warning", rateLimitType: "seven_day" });
+      expect(run.engine.s.pool.usage!.find(report => report.kind === "seven_day")!.utilization).toBeUndefined();
+      healthy("weekly provider warning, percentage not reported", "warning without a percentage");
+      expect(headroom(run.engine.s.pool, claude, NOW)).toBeCloseTo(0.98);
+      // A partial account reading updates only its own windows.
+      run.engine.recordAccountUsage("claude-code", claudeAccountReports({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 3 } } }));
+      healthy("weekly provider warning, percentage not reported", "partial account");
+      run.engine.recordAccountUsage("claude-code", claudeAccountReports(snapshot(27, false)));
+      healthy("weekly 27%, resets", "account without a model list");
+      // Real measurements still slow and move new agents, whichever status reports them.
+      run.engine.recordAccountUsage("claude-code", claudeAccountReports(snapshot(85)));
+      expect(toolCapNow(run.engine.s.pool, "claude-code", NOW, claude)).toBe(4);
+      expect(run.engine.choose("opus-xhigh")).toMatchObject({ kind: "planned", profile: { id: "opus-xhigh" } });
+      stream(run.engine, { ...warning, utilization: 0.85 });
+      expect(toolCapNow(run.engine.s.pool, "claude-code", NOW, claude)).toBe(4);
+      expect(view(run.engine).line).toMatchObject({ tone: "near", text: expect.stringContaining(HOLDING_BACK) });
+      stream(run.engine, { ...warning, utilization: 0.9 });
+      expect(run.engine.choose("opus-xhigh")).toMatchObject({ kind: "substitute", profile: { toolId: "codex", effort: "xhigh" } });
+      // A request refusal outlives healthy readings and low warnings.
+      run.engine.s.pool.limited = [{ toolId: "claude-code", source: "refusal", until: NOW + HOUR, reason: "Claude Code refused the request", at: NOW }];
+      run.engine.recordAccountUsage("claude-code", claudeAccountReports(snapshot(27)));
+      stream(run.engine, warning);
+      expect(limitOf(run.engine.s.pool, claude, NOW)).toMatchObject({ source: "refusal", until: NOW + HOUR });
+      expect(run.engine.choose("opus-xhigh")).toMatchObject({ kind: "substitute", profile: { toolId: "codex" } });
+    } finally { await run.close(); }
+  }
+});
+
 it("retires an old false extra-usage cooldown immediately while keeping history and independent limits", async () => {
   const run = await fixture();
   const wake = spyOn(run.engine, "schedule").mockImplementation(() => {});
@@ -170,7 +234,10 @@ it("retains unrelated windows and known percentages across partial account and l
     const scoped = run.engine.s.pool.usage!.find(report => report.model === "opus")!;
     expect(scoped.utilization).toBeUndefined();
     expect(scoped.resetsAt).toBeUndefined();
-    expect(nearLimit(run.engine.s.pool, claude, NOW)).toBe(true);
+    // Kept and shown as the provider's warning, with no percentage invented for it.
+    expect(scoped.status).toBe("allowed_warning");
+    expect(view(run.engine).line!.text).toContain("weekly Opus provider warning, percentage not reported");
+    expect(nearLimit(run.engine.s.pool, claude, NOW)).toBe(false);
     expect(nearLimit(run.engine.s.pool, { ...claude, model: "Sonnet", modelId: "sonnet" }, NOW)).toBe(false);
   } finally { await run.close(); }
 });

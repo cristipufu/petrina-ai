@@ -215,7 +215,7 @@ describe("Builder continuity boundaries", () => {
         ["tool usage exhausted", () => { engine.s.pool.limited!.push({ toolId: "codex", until: later(), reason: "Codex is out" }); }],
         ["saved model exhausted", () => { engine.s.pool.limited!.push({ toolId: "codex", model: "sol", until: later(), reason: "Sol is out" }); }],
         ["90% near-limit mark", () => { engine.s.pool.usage![0]!.utilization = 0.9; }],
-        ["usage warning", () => { engine.s.pool.usage![0]!.status = "allowed_warning"; }],
+        ["usage warning at the 90% mark", () => { Object.assign(engine.s.pool.usage![0]!, { status: "allowed_warning", utilization: 0.9 }); }],
         ["no headroom on extra usage", () => { Object.assign(engine.s.pool.usage![0]!, { status: "rejected", overage: true }); }],
         ["logged out", () => { engine.s.setup!.checks[1]!.status = "logged-out"; }],
         ["not installed", () => { engine.s.setup!.checks[1]!.status = "not-installed"; }],
@@ -230,6 +230,10 @@ describe("Builder continuity boundaries", () => {
       ];
       for (const [why, change] of handoffs) {
         reset(); change(); expect(tool(), why).toBe("grok");
+      }
+      // A provider warning at 33%, or without a percentage, keeps the healthy saved Builder.
+      for (const utilization of [0.33, undefined]) {
+        reset(); Object.assign(engine.s.pool.usage![0]!, { status: "allowed_warning", utilization }); expect(tool(), `warning at ${utilization}`).toBe("codex");
       }
       reset();
       // A fallback build records who finished it, and still resumes for the profile the plan asked for.

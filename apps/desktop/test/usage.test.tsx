@@ -50,6 +50,28 @@ describe('usage by tool', () => {
     expect(host.querySelector('.usage-reported')?.textContent).toContain('reported just now');
   });
 
+  it('shows a low or unreported provider warning as the provider\'s, without claiming the tool is nearly used or held back', async () => {
+    const state = createDemoState(1_000_000_000);
+    const resetsAt = state.now + 6 * 24 * 60 * MINUTE;
+    const weekly = { toolId: 'claude-code', kind: 'seven_day', status: 'allowed_warning' as const, at: state.now - MINUTE, resetsAt };
+    const warned = { ...state, pool: { ...state.pool, usage: [{ ...weekly, utilization: 0.26 }] } };
+    await show(warned);
+    const row = [...host.querySelectorAll('.usage-row')].find((node) => node.textContent?.startsWith('Claude Code'))!;
+    expect(row.querySelector('.label')?.textContent).toBe(`weekly 26%, provider warning, resets ${untilWords(resetsAt, state.now)}`);
+    expect(row.querySelector('.label.warn')).toBeNull();
+    expect(usageNote(warned)).toBeUndefined();
+    act(() => root.unmount()); host.remove();
+    await show(warned, true);
+    const card = () => [...host.querySelectorAll('.limit-card')].find((node) => node.textContent?.includes('Claude Code'))!;
+    expect(card().textContent).toContain('26% used · provider warning');
+    expect(card().textContent).not.toContain('close to the limit');
+    expect(card().querySelector('[role="meter"]')?.className).toBe('meter ok');
+    act(() => root.unmount()); host.remove();
+    await show({ ...state, pool: { ...state.pool, usage: [weekly] } }, true);
+    expect(card().textContent).toContain('provider warning · percentage not reported');
+    expect(card().querySelector('[role="meter"]')).toBeNull();
+  });
+
   it('says who is out and until when', async () => {
     const state = createDemoState(1_000_000_000);
     const until = state.now + 2 * 60 * 60_000;
@@ -57,6 +79,22 @@ describe('usage by tool', () => {
     const codex = [...host.querySelectorAll('.usage-row')].find((row) => row.textContent?.startsWith('Codex'))!;
     expect(codex.querySelector('.label')?.textContent).toMatch(/out until (\d\d:\d\d|\w{3} \d\d:\d\d)$/);
     expect(codex.querySelector('.label.bad')).not.toBeNull();
+  });
+
+  it.each([0.85, 0.95])('keeps the measured %s cause visible in the pool summary and its button description', async (utilization) => {
+    const state = createDemoState(1_000_000_000);
+    const reading = { toolId: 'claude-code', at: state.now, resetsAt: state.now + 60 * MINUTE };
+    const current = { ...state, pool: { ...state.pool, usage: [
+      { ...reading, kind: 'seven_day', status: 'allowed_warning' as const, utilization: 0.26 },
+      { ...reading, kind: 'seven_day_opus', model: 'opus', status: 'allowed_warning' as const, utilization: 0.3 },
+      { ...reading, kind: 'five_hour', status: 'allowed' as const, utilization },
+    ] } };
+    await show(current);
+    const label = host.querySelector('.usage-row .label.warn')!;
+    expect(label.textContent).toMatch(new RegExp(`^5-hour ${utilization * 100}%`));
+    expect(label.textContent).toContain('provider warning');
+    expect(label.textContent).toContain('starting fewer agents on it');
+    expect(usageNote(current)).toBe(`Claude Code: ${label.textContent}`);
   });
 
   it('has nothing to flag when every tool is fine', () => {

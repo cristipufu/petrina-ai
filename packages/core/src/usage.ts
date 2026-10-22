@@ -120,14 +120,24 @@ export function withReport(reports: readonly UsageReport[] | undefined, report: 
 /** A report that still counts at `now`. */
 export const currentReport = (report: UsageReport, now: number): boolean => (report.resetsAt !== undefined ? report.resetsAt > now : now - report.at < STALE_REPORT_MS);
 
-/** Whether the profile's tool says it is close to a limit that covers this profile's model. */
+/**
+ * How much of its window a report says is used, or undefined when it gives no usable number. Petrina's marks
+ * apply to this alone: a provider's own warning may use another threshold, so it never stands in for a number.
+ */
+export const measuredUsage = (report: Pick<UsageReport, "utilization">): number | undefined =>
+  typeof report.utilization === "number" && Number.isFinite(report.utilization) ? report.utilization : undefined;
+
+/** A window past the slow-down mark: measured from 80%, or reported as used up. */
+export const pastSlowDown = (report: UsageReport): boolean => report.status === "rejected" || (measuredUsage(report) ?? 0) >= SLOW_DOWN;
+
+/** Whether a window covering this profile's model is measured at the near-limit mark. */
 export function nearLimit(pool: Pool, profile: AgentProfile, now: number): boolean {
-  return (pool.usage ?? []).some((report) => report.status !== "rejected" && usageCovers(report, profile) && currentReport(report, now) && (report.status === "allowed_warning" || (report.utilization ?? 0) >= NEAR_LIMIT));
+  return (pool.usage ?? []).some((report) => report.status !== "rejected" && usageCovers(report, profile) && currentReport(report, now) && (measuredUsage(report) ?? 0) >= NEAR_LIMIT);
 }
 
 /** A tool summary, or only the windows covering a named profile, past the slow-down mark. */
 export function slowingDown(pool: Pool, toolId: Id, now: number, profile?: Partial<Pick<AgentProfile, "model" | "modelId">>): boolean {
-  return (pool.usage ?? []).some((report) => usageCovers(report, { toolId, ...profile }) && currentReport(report, now) && (report.status !== "allowed" || (report.utilization ?? 0) >= SLOW_DOWN));
+  return (pool.usage ?? []).some((report) => usageCovers(report, { toolId, ...profile }) && currentReport(report, now) && pastSlowDown(report));
 }
 
 /**
@@ -149,7 +159,8 @@ export function headroom(pool: Pool, on: OnTool, now: number): number | undefine
   let least: number | undefined;
   for (const report of (pool.usage ?? []).filter((report) => usageCovers(report, on) && currentReport(report, now))) {
     if (report.status === "rejected") return 0;
-    const used = report.utilization ?? (report.status === "allowed_warning" ? NEAR_LIMIT : undefined);
+    // A warning without a number says nothing about how much is left.
+    const used = measuredUsage(report);
     if (used === undefined) continue;
     // With no reset time, the window counts as resetting within the hour.
     const hours = report.resetsAt === undefined ? 1 : Math.max(LEAST_HOURS, (report.resetsAt - now) / HOUR);
@@ -293,7 +304,7 @@ export function waitingWords(state: Pick<State, "tools" | "pool">, now: number):
 export interface UsageLine {
   toolId: Id;
   name: string;
-  /** "weekly 84%, resets Thu 13:00 · starting fewer agents on it", "Opus out until Fri 17:00", or "fine". */
+  /** "weekly 84%, resets Thu 13:00 · starting fewer agents on it", "weekly 26%, provider warning", "Opus out until Fri 17:00", or "fine". */
   text: string;
   tone: "fine" | "near" | "out";
 }
@@ -306,15 +317,20 @@ export function usageLines(state: Pick<State, "tools" | "pool">, now: number): U
   const lines = state.tools.map((tool) => {
     const reports = (state.pool.usage ?? []).filter((report) => report.toolId === tool.id && currentReport(report, now));
     // A window the tool reported as used up counts as full, whether or not it gave a percentage.
-    const fullness = (report: UsageReport) => (report.status === "rejected" ? 1 : (report.utilization ?? 0));
+    const fullness = (report: UsageReport) => (report.status === "rejected" ? 1 : (measuredUsage(report) ?? 0));
+    // Explain actual limits and measured slowdowns before provider warnings; keep warnings above healthy readings.
+    const priority = (report: UsageReport) => report.status === "rejected" ? 3 : pastSlowDown(report) ? 2 : report.status === "allowed_warning" ? 1 : 0;
     const words = (report: UsageReport) => {
-      const share = report.utilization !== undefined ? `${Math.round(report.utilization * 100)}%` : undefined;
+      const used = measuredUsage(report);
+      const share = used !== undefined ? `${Math.round(used * 100)}%` : undefined;
       if (report.status === "rejected") return `${share ?? "used up"}${report.overage ? ", on extra usage" : ""}`;
-      return share ?? "nearly used";
+      // The provider's own warning, below Petrina's near-limit mark or without a number: kept, never read as nearly used.
+      if (report.status === "allowed_warning" && (used ?? 0) < NEAR_LIMIT) return share ? `${share}, provider warning` : "provider warning, percentage not reported";
+      return share!;
     };
     const used = reports
-      .filter((report) => report.utilization !== undefined || report.status !== "allowed")
-      .sort((a, b) => fullness(b) - fullness(a))
+      .filter((report) => measuredUsage(report) !== undefined || report.status !== "allowed")
+      .sort((a, b) => priority(b) - priority(a) || fullness(b) - fullness(a))
       .slice(0, 2)
       .map((report) => `${kindWords(report.kind, report.windowMinutes, report.name)} ${words(report)}${report.resetsAt !== undefined ? `, resets ${untilWords(report.resetsAt, now)}` : ""}`);
     const out = displayLimits(state.pool, now)
@@ -322,7 +338,7 @@ export function usageLines(state: Pick<State, "tools" | "pool">, now: number): U
       .map((limit) => usagePauseWords(limit, now));
     const holding = !out.length && slowingDown(state.pool, tool.id, now);
     const parts = [...used, ...out, ...(holding ? [HOLDING_BACK] : [])];
-    return { line: { toolId: tool.id, name: tool.name, text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || report.utilization !== undefined) ? "fine" : "not reported", tone: (out.length ? "out" : holding ? "near" : "fine") as UsageLine["tone"] }, shown: tool.status === "ready" || parts.length > 0 };
+    return { line: { toolId: tool.id, name: tool.name, text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || measuredUsage(report) !== undefined) ? "fine" : "not reported", tone: (out.length ? "out" : holding ? "near" : "fine") as UsageLine["tone"] }, shown: tool.status === "ready" || parts.length > 0 };
   });
   // A tool that is not here and has said nothing is not listed.
   return lines.filter((entry) => entry.shown).map((entry) => entry.line);

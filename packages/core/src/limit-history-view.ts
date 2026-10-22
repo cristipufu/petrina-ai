@@ -68,6 +68,7 @@ export function reportedUsage(report: UsageReport): string {
   const level = reportedLevel(report);
   if (level !== undefined) return percentWords(level);
   if (report.toolId === "claude-code" && report.kind === "overage" && report.status === "rejected") return "Extra usage unavailable · percentage not reported";
+  if (report.status === "allowed_warning") return "Provider warning · percentage not reported";
   return report.status === "rejected" ? "Limit reached (reported) · no percentage" : "No percentage";
 }
 
@@ -160,7 +161,7 @@ export function limitsOverTime(history: readonly UsageReport[], current: readonl
     bucket.reports++;
     bucket.firstAt ??= report.at;
     // Keep the provider's status too, without retaining a list of numeric readings.
-    const status = reportedLevel(report) === undefined ? reportedUsage(report) : report.status === "rejected" ? "Limit reached (reported)" : report.status === "allowed_warning" ? "Near limit (reported)" : "Allowed (reported)";
+    const status = reportedLevel(report) === undefined ? reportedUsage(report) : report.status === "rejected" ? "Limit reached (reported)" : report.status === "allowed_warning" ? "Provider warning (reported)" : "Allowed (reported)";
     if (!bucket.statuses.includes(status)) bucket.statuses.push(status);
     if (change.possible) bucket.possibleResets++;
     const level = reportedLevel(report);

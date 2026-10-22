@@ -586,7 +586,8 @@ function recordUsageHistory(log: MemoryWorkLog, now: number): void {
       const start = resetsAt - (back + 1) * length;
       const peak = back === 0 ? current.utilization! / ((now - start) / length) : peaks[current.kind]![back % peaks[current.kind]!.length]!;
       const used = Math.round(peak * Math.pow((at - start) / length, 0.9) * 100) / 100;
-      readings.push({ ...current, utilization: used, status: used >= 0.8 ? "allowed_warning" : "allowed", resetsAt: start + length, at });
+      // Keep the sample's provider status independent of how full its window is.
+      readings.push({ ...current, utilization: used, resetsAt: start + length, at });
     }
   }
   for (const reading of readings.sort((a, b) => a.at - b.at)) log.recordUsage(reading);

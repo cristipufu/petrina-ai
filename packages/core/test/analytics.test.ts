@@ -636,7 +636,15 @@ describe("Words", () => {
 
   it("words limits with when they were reported, and never shows an old percentage as current", () => {
     const limit = { toolId: "claude-code", kind: "seven_day_opus", status: "allowed_warning" as const, utilization: 0.83, resetsAt: NOW + 2 * HOUR, at: NOW - 5 * MIN };
-    expect(limitWords(limit, NOW)).toMatchObject({ used: "83% used · close to the limit", reported: "reported 5m ago", stale: false });
+    expect(limitWords(limit, NOW)).toMatchObject({ used: "83% used · provider warning", status: "fine", reported: "reported 5m ago", stale: false });
+    // Petrina's near-limit mark applies to the measured share before rounding, whatever status reported it.
+    expect(limitWords({ ...limit, utilization: 0.895 }, NOW)).toMatchObject({ used: "90% used · provider warning", status: "fine" });
+    for (const status of ["allowed", "allowed_warning"] as const) expect(limitWords({ ...limit, status, utilization: 0.9 }, NOW)).toMatchObject({ used: "90% used · close to the limit", status: "close" });
+    expect(limitWords({ ...limit, utilization: 0 }, NOW)).toMatchObject({ used: "0% used · provider warning", percent: 0 });
+    const { utilization: _unknown, ...unmeasured } = limit;
+    expect(limitWords(unmeasured, NOW)).toMatchObject({ used: "provider warning · percentage not reported", status: "fine" });
+    expect(limitWords(unmeasured, NOW).percent).toBeUndefined();
+    expect(nearestLimit([unmeasured, { ...limit, kind: "five_hour", status: "allowed", utilization: 0.1 }], "claude-code", NOW)?.kind).toBe("five_hour");
     expect(limitWords(limit, NOW).resets).toMatch(/^resets today \d\d:\d\d$/);
     expect(limitWords(limit, NOW + 3 * HOUR)).toMatchObject({ used: "has reset since it was last reported", stale: true });
     const { resetsAt: _reset, ...withoutReset } = { ...limit, at: NOW - HOUR };
@@ -671,6 +679,18 @@ describe("Demos", () => {
     ["demo", createDemo],
     ["portfolio", createPortfolioDemo],
   ] as const) {
+    it(`keeps high measured usage separate from provider warnings in the ${name} history`, () => {
+      const demo = make(NOW);
+      const history = demo.log.usageHistory({});
+      const high = history.filter(reading => reading.utilization! >= 0.8);
+      expect(high.length).toBeGreaterThan(0);
+      expect(high.some(reading => reading.utilization! >= 0.9)).toBe(true);
+      expect(new Set(high.map(reading => reading.status))).toEqual(new Set(["allowed"]));
+      const codex = demo.state.pool.usage!.find(reading => reading.toolId === "codex")!;
+      expect(codex).toMatchObject({ utilization: 0.84, status: "allowed" });
+      expect(history.some(reading => reading.toolId === codex.toolId && reading.resetsAt === codex.resetsAt && reading.utilization! >= 0.8)).toBe(true);
+    });
+
     it(`completes each existing request once in the ${name}`, () => {
       const demo = make(NOW);
       const sim = new Simulator(demo.state, { log: demo.log, open: demo.open, quirks: demo.quirks, triggers: demo.triggers });

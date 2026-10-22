@@ -72,6 +72,11 @@ describe("bounded usage history", () => {
     expect(buckets[0]).toMatchObject({ reports: 0, numericCount: 0 });
     expect(buckets.at(-1)!.statuses).toEqual(["Allowed (reported)"]);
     expect(view([unavailable]).tools[0]!.limits[0]!.buckets.at(-1)!.highest).toBeUndefined();
+    // A provider warning keeps its own percentage, including zero, and never claims to be near the limit.
+    const warned = view([report({ status: "allowed_warning", utilization: 0, at: now - hour }), report({ status: "allowed_warning", utilization: undefined, at: now })]).tools[0]!.limits[0]!.buckets.at(-1)!;
+    expect(warned).toMatchObject({ highest: 0, reports: 2, numericCount: 1, statuses: ["Provider warning (reported)", "Provider warning · percentage not reported"] });
+    expect(reportedUsage(report({ status: "allowed_warning", utilization: undefined }))).toBe("Provider warning · percentage not reported");
+    expect(reportedUsage(report({ status: "allowed_warning", utilization: 0.26 }))).toBe("26%");
   });
 
   it("selects a measured current allowance by shortest window, then the newest current report, then newest history", () => {
