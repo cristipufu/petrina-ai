@@ -215,9 +215,14 @@ function reviewScope(task: Task, base: string, branch: string, useCodeReviewBase
   return `${reviewRound(task) > 1 ? `This is review round ${reviewRound(task)}. ` : ""}Review all repositories in the complete approved product map together. Name all affected products on every finding. For each product, use its own copy and comparison below:\n${repositories}`;
 }
 
-/** After three rounds of review the builder is asked to step back instead of patching again, in a fresh conversation. */
+/** After three rounds of review the builder is asked to reconsider the approach. */
 export function stepBack(task: Task): boolean {
   return reviewRound(task) > 3;
+}
+
+/** Start the deliberate late rethink once per assigned Builder, then keep its replacement's context. */
+export function freshBuilderRethink(task: Task, own: Task["builderSession"], stageId: string, plannedId: string): boolean {
+  return !!task.fixing && stepBack(task) && !(own?.stageId === stageId && (own.plannedProfileId ?? own.profileId) === plannedId && own.rethought);
 }
 
 const callInstructions = (canEdit: boolean) => `The architects disagreed and the coordinator made the call below. The call is final: do not reopen it, argue with it or ask for another review. Nobody reviews the design again; the coordinator checks the brief before anything is built.

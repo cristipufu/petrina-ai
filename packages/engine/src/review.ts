@@ -254,11 +254,11 @@ export class Reviews {
     this.k.commitNow();
   }
 
-  private forgetSessions(task: MTask, stageId: Id): void {
+  private releaseRoundInput(task: MTask): void {
     this.inputs.delete(task);
-    if (!task.reviewSessions) return;
-    delete task.reviewSessions[stageId];
-    if (!Object.keys(task.reviewSessions).length) delete task.reviewSessions;
+    // Keep one completed conversation per stage seat for later check/coordinator returns,
+    // including the same numbered round. Scope, context and ancestry are checked on reuse.
+    // Pause/cancellation and final context cleanup release these bounded references.
   }
 
   /** A seat returns only to its own completed conversation, with unchanged role and approved scope. */
@@ -929,7 +929,7 @@ export class Reviews {
       task.rounds[stage.id] = round + 1;
       if (task.repositories) {
         if (beginRepair(this.k, task, "review", task.stageIndex)) return "continue";
-        this.forgetSessions(task, stage.id);
+        this.releaseRoundInput(task);
         // Continue through any remaining acceptance stage after the decision, before delivery approval.
         const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
         if (delivery < 0) throw new Error("The plan has no delivery check after review");
@@ -947,7 +947,7 @@ export class Reviews {
       this.k.commit();
       return "continue";
     }
-    this.forgetSessions(task, stage.id);
+    this.releaseRoundInput(task);
     task.stageIndex += 1;
     task.sub = 0;
     if (end.kind === "used up") {

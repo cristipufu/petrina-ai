@@ -7,7 +7,7 @@ import { beginRepair, productsFor, versionsOf, acceptanceVersion, invalidateAcce
 import { builderReturnWords, checkProblem, recordStepResult, endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, openStep, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
-import { BuildResult, NotesResult, stepBack, TestResult, TEXT_LIMITS } from "./roles.js";
+import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
 import { Kernel, type MStage } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
@@ -65,7 +65,8 @@ export class Work {
       const checkFailures = assignedCheckFailures(scope);
       // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
       const own = repository.builderSession;
-      const back = (task.fixing || updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === profileId && !(task.fixing && stepBack(task as unknown as Task)) ? own : undefined;
+      const rethink = freshBuilderRethink(task as Task, own, stage.id, profileId);
+      const back = (task.fixing || updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === profileId && !rethink ? own : undefined;
       const result = savedResult !== undefined ? BuildResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, BuildResult, signal, {
         builderTree: startingTree,
         used,
@@ -77,7 +78,8 @@ export class Work {
           if (marked.length) return `these files still have git's conflict markers: ${marked.join(", ")}. Resolve them, run the checks again, then end with the result block.`;
           return tooLong(value);
         },
-        ...(back ? { resume: { sessionId: back.sessionId, toolId: back.toolId, model: back.model } } : {}),
+        ...(back ? { resume: back } : {}),
+        ...(rethink ? { freshReason: "A deliberate fresh rethink after three review rounds; later repairs can keep this replacement conversation." } : {}),
       });
       // A pull request's description: the builder's latest, or what it wrote before when it hands back none this time.
       const description = result.description?.trim() || repository.report?.description;
@@ -125,7 +127,7 @@ export class Work {
       }
       // The next fix round or update goes back to the conversation that really completed this build.
       const conversation = repository.conversation;
-      if (conversation?.briefed && conversation.roleId === roleId) repository.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId, ...(conversation.context ? { context: conversation.context } : {}) };
+      if (conversation?.briefed && conversation.roleId === roleId) repository.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId, ...(conversation.context ? { context: conversation.context } : {}), ...(rethink || back?.rethought ? { rethought: true } : {}) };
       const fixing = task.fixing;
       let fixed = 0;
       if (fixing) {

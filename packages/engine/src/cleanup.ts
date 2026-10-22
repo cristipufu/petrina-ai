@@ -169,7 +169,11 @@ export class Cleanup {
     if (this.k.stopped || this.k.followsUpHeld(taskId) || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
     const task = this.k.s.tasks.find((entry) => entry.id === taskId);
     if (task && !finishedTask(task as Task)) return;
-    await rm(join(this.k.dataDir, "contexts", taskId), { recursive: true, force: true }).catch(() => {});
+    const removed = await rm(join(this.k.dataDir, "contexts", taskId), { recursive: true, force: true }).then(() => true, () => false);
+    if (removed && task?.reviewSessions) {
+      delete task.reviewSessions;
+      this.k.commit(task);
+    }
   }
 
   async removeCaptures(taskId: Id): Promise<void> {

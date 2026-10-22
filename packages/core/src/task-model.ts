@@ -60,7 +60,7 @@ export interface RepositoryState {
   /** Final acceptance failures return to the builder twice, then wait for the coordinator. */
   acceptanceReturns?: number;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
-  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext };
+  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; rethought?: boolean };
   pr?: PullRequest;
   /** The task's own branch and working copy. */
   branch?: string;

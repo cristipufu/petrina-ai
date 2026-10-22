@@ -2,7 +2,7 @@
 import { chooseWithRoom, claudeWindow, currentReport, headroom, kindWords, limitOf, nearLimit, nextExpiry, UNKNOWN_LIMIT_MS, untilWords, usableAgentTools, withLimit, withReport, type Choice, type CheckId, type Id, type AgentProfile, type Task, type UsageReport } from "@petrina/core";
 import { executionOf, type RepositoryContext } from "./repository-context.js";
 import { notReady, stepKey, type Kernel, type MTask, type MState, type EngineOptions } from "./kernel.js";
-import { contractFor, stepBack } from "./roles.js";
+import { contractFor, freshBuilderRethink } from "./roles.js";
 import { ADAPTERS } from "./tools.js";
 import type { UsageReader } from "./usage-reader.js";
 import { agentEnv } from "./env.js";
@@ -72,7 +72,7 @@ export class UsageCoordinator {
     const own = repository.builderSession;
     const saved = current
       ? current.roleId === stage.roleId && current.briefed && current.step === stepKey(task) && (!current.plannedProfileId || current.plannedProfileId === plannedId) ? current : undefined
-      : (task.fixing || repository.updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === plannedId && !(task.fixing && stepBack(task as Task)) ? own : undefined;
+      : (task.fixing || repository.updating) && own?.stageId === stage.id && (own.plannedProfileId ?? own.profileId) === plannedId && !freshBuilderRethink(task as Task, own, stage.id, plannedId) ? own : undefined;
     const planned = this.k.profile(plannedId);
     if (!saved || !planned) return undefined;
     // The saved tool/model must still be offered. Prefer the planned effort for an earlier

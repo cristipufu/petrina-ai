@@ -30,7 +30,7 @@ export function participantConversation(k: Pick<Kernel, "s">, scope: RepositoryC
     if (reviewerAt(stage, Number(seat)) !== role.id) return;
     prior = task.reviewSessions?.[stage.id]?.[seat];
     requestedId = stage.profileIds[Number(seat)] ?? planned.id;
-    if (prior && prior.round >= (task.rounds[stage.id] ?? 1)) return;
+    if (prior && prior.round > (task.rounds[stage.id] ?? 1)) return;
     coordinator = stage.assignments?.[Number(seat)]?.by === "coordinator";
   }
   if (!prior) return;

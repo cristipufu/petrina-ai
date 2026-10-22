@@ -444,7 +444,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       const voterIds = new Set(f.fakes.received("verifier").map((entry) => entry.session));
       expect(voterIds.size).toBeGreaterThan(0);
       expect(f.fakes.opens().filter((entry) => voterIds.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
-      expect(task.reviewSessions).toBeUndefined();
+      expect(Object.values(task.reviewSessions ?? {}).flatMap(seats => Object.values(seats).map(seat => seat.sessionId)).sort()).toEqual([...sessions].sort());
       const copy = JSON.parse(readFileSync(join(f.fakes.dir, "conversations", `${[...sessions][0]}.json`), "utf8")).cwd as string;
       if (!single) expect(existsSync(copy)).toBe(false);
     } finally { await f.engine().shutdown(); }
