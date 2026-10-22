@@ -2,7 +2,7 @@
 // is removed to free disk space. The branch and the task's history stay.
 // The engine and the simulator share these rules and words so the demo cannot drift from the real thing.
 
-import type { Task } from "./model.js";
+import type { Cleanup, Task } from "./model.js";
 import { displayTask } from "./repositories.js";
 
 export const CLEANUP_WORDS = {
@@ -13,6 +13,14 @@ export const CLEANUP_WORDS = {
   unconfirmed: "GitHub could not confirm what went out before this task was cancelled",
   unconfirmedPr: "GitHub could not confirm whether this task still has an open pull request",
 } as const;
+
+/**
+ * You marked the work done without a confirmed delivery, here or in an older version. A pull request a later
+ * lookup finds is recorded beside that decision and never confirms the delivery.
+ */
+export function markedDoneUnconfirmed(task: Pick<Task, "state">, work: { cleanup?: Pick<Cleanup, "markedDone" | "pullRequest"> }): boolean {
+  return task.state === "done" && (!!work.cleanup?.markedDone || work.cleanup?.pullRequest !== undefined);
+}
 
 /** Marking work done is not evidence that its pull request ended, including work saved by older versions. */
 export function needsPullRequestCheck(task: Task): boolean {

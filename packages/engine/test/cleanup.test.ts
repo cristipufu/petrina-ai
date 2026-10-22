@@ -36,6 +36,13 @@ const listed = (w: World, path: string) => {
   const location = (path: string) => join(nativeParent(dirname(path)), basename(path));
   return git(w.clone, "worktree", "list", "--porcelain", "-z").split("\0").filter((field) => field.startsWith("worktree ")).some((field) => location(field.slice("worktree ".length)) === location(path));
 };
+/** Coordinator inspection, History and immediate delivery waits for a task you marked done: never confirmed. */
+async function expectUnconfirmed(engine: Engine, taskId: string): Promise<void> {
+  const c = new Coordination(engine);
+  expect((await c.call("task.inspect", { taskId })).task).toMatchObject({ landing: "marked-done", deliveryConfirmed: false });
+  expect((await c.call("task.history", { taskId })).items).toEqual([expect.objectContaining({ landing: "marked-done", deliveryConfirmed: false })]);
+  for (const condition of ["delivered", "landed"]) expect((await c.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome).toBe("timed-out");
+}
 function gone(w: World, task: Task): void {
   expect(existsSync(task.worktree!), `${task.id}: ${task.worktree} ${JSON.stringify(task.cleanup)}`).toBe(false);
   expect(listed(w, task.worktree!)).toBe(false);
@@ -175,6 +182,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
         gone(w, done);
         expect(done.cleanup?.pullRequest).toBe("none");
         expect(done.state).toBe("done");
+        await expectUnconfirmed(engine, id);
         return;
       }
       await until(engine, (s) => taskOf(s, id).pr?.state === "open", () => {});
@@ -182,6 +190,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const c = new Coordination(engine);
       const updates = async () => (await c.call("watch.events", { taskIds: [id], from: "oldest", kinds: ["publishing.result"], timeoutMs: 0, limit: 100 })).events as { result: unknown; landing: string }[];
       expect((await updates()).at(-1)).toMatchObject({ landing: "marked-done", result: { kind: "unconfirmed", landed: false, lookup: { number: 77, state: "open" } } });
+      await expectUnconfirmed(engine, id);
       expect(existsSync(copy)).toBe(true);
       expect(taskOf(engine.getState(), id).cleanup?.removedAt).toBeUndefined();
       w.setGitHub((github) => (github.prs[0]!.state = kind === "older interrupted" ? "MERGED" : "CLOSED"));
@@ -190,6 +199,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(done.state).toBe("done");
       expect(texts(done)).toContain(kind === "older interrupted" ? "Merged #77 on GitHub" : "Closed #77 without merging");
       expect((await updates()).at(-1)).toMatchObject({ landing: "marked-done", result: { kind: "unconfirmed", landed: false, lookup: { number: 77, state: kind === "older interrupted" ? "merged" : "closed" } } });
+      await expectUnconfirmed(engine, id);
     } finally { await engine.shutdown(); }
   });
 

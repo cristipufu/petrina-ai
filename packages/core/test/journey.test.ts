@@ -30,7 +30,7 @@ import type { JourneyStep, State, Task } from "../src/model.js";
 import type { DeepMutable } from "../src/flow.js";
 import { Simulator, type Triggers } from "../src/sim.js";
 import { blocksDependents, repositoryTaskView } from "../src/repositories.js";
-import { historyItem } from "../src/history.js";
+import { historyItem, historyStatus } from "../src/history.js";
 
 it("stops unfinished check displays without changing completed results or closing a resumable step", () => {
   const task = { journey: [{ id: "checks", kind: "petrina" as const, work: "checks" as const, round: 1, sub: 0, startedAt: 10, productChecks: [
@@ -964,17 +964,21 @@ describe("whole-task prerequisite landing", () => {
     ["without a recorded commit", undefined, "marked-done", "marked as done, delivery not confirmed"],
     ["with a recorded commit", { branch: "main", sha: "abc" }, "landed", "landed"],
   ] as const)("ends the wait for a one-product task marked done after its push failed, %s", (_, landed, landing, words) => {
-    const repository = { productId: base.productId, delivery: "local" as const, landed, localUpdate: { branch: "main", sha: "abc", pushed: false } };
-    const prerequisite = repositoryTaskView({ ...base, state: "done", repositories: undefined, repository }, repository);
-    const waiting: JourneyTask & Pick<Task, "after"> = { stageIndex: -1, rounds: {}, sub: 0, fixing: false, after: [prerequisite.id], journey: [] };
-    syncWait(waiting, [prerequisite], () => prerequisite, 0);
+    // Mark as done records your decision on the work; older records lack it.
+    for (const cleanup of [undefined, { markedDone: true }]) {
+      const repository = { productId: base.productId, delivery: "local" as const, landed, localUpdate: { branch: "main", sha: "abc", pushed: false }, cleanup };
+      const prerequisite = repositoryTaskView({ ...base, state: "done", repositories: undefined, repository }, repository);
+      const waiting: JourneyTask & Pick<Task, "after"> = { stageIndex: -1, rounds: {}, sub: 0, fixing: false, after: [prerequisite.id], journey: [] };
+      syncWait(waiting, [prerequisite], () => prerequisite, 0);
 
-    expect(blocksDependents(prerequisite)).toBe(false);
-    expect(dependencyLanding(prerequisite)).toBe(landing);
-    expect(dependencyLanding({ ...prerequisite, repository })).toBe(landing);
-    expect(dependencyLanding(historyItem(prerequisite))).toBe(landing);
-    syncWait(waiting, [], () => prerequisite, 10);
-    expect(waiting.journey![0]).toMatchObject({ endedAt: 10, reason: `“${prerequisite.title}” ${words}` });
+      expect(blocksDependents(prerequisite)).toBe(false);
+      expect(dependencyLanding(prerequisite)).toBe(landing);
+      expect(dependencyLanding({ ...prerequisite, repository })).toBe(landing);
+      expect(dependencyLanding(historyItem(prerequisite))).toBe(landing);
+      expect(taskLanding(historyItem(prerequisite))).toBe(landing);
+      syncWait(waiting, [], () => prerequisite, 10);
+      expect(waiting.journey![0]).toMatchObject({ endedAt: 10, reason: `“${prerequisite.title}” ${words}` });
+    }
   });
 });
 
@@ -1034,5 +1038,46 @@ describe("whole-task delivery for coordinator reads", () => {
     }
     expect(taskLanding({ state: "done" })).toBe("marked-done");
     expect(taskLanding(historyItem({ ...base, state: "done", repositories: undefined, repository: { ...repository, pr: { ...pr, state: "merged" } } }))).toBe("landed");
+  });
+
+  // The event feed reports these as unconfirmed with the later lookup beside it; every other read agrees.
+  it.each([
+    ["marked done now", { markedDone: true, pullRequest: "none" as const }],
+    ["marked done in an older version", { pullRequest: "none" as const }],
+  ])("keeps one product's work %s unconfirmed after a later lookup finds its pull request", (_, cleanup) => {
+    for (const state of ["open", "merged", "closed"] as const) {
+      const repository = { productId: base.productId, delivery: "pull-request" as const, pr: { ...pr, state }, cleanup };
+      const task = { ...base, state: "done" as const, repositories: undefined, repository };
+      const shown = repositoryTaskView(task, repository);
+      const saved = historyItem(shown);
+      for (const read of [task, shown, saved]) {
+        expect(taskLanding(read)).toBe("marked-done");
+        expect(dependencyLanding(read)).toBe("marked-done");
+      }
+      expect(landingOf(shown)).toBe("marked-done");
+      expect(saved.cleanup).toEqual({ markedDone: true });
+      expect(historyStatus(saved)).toBe("marked-done");
+      expect(historyStatus(JSON.parse(JSON.stringify(saved)))).toBe("marked-done");
+      // A task waiting for it says how it really ended.
+      const waiting: JourneyTask & Pick<Task, "after"> = { stageIndex: -1, rounds: {}, sub: 0, fixing: false, after: [shown.id], journey: [] };
+      syncWait(waiting, [shown], () => shown, 0);
+      syncWait(waiting, [], () => shown, 10);
+      expect(waiting.journey![0]).toMatchObject({ endedAt: 10, reason: `“${shown.title}” marked as done, delivery not confirmed` });
+    }
+    // The same merged pull request, delivered by Petrina, has landed; one Petrina reported closed did not.
+    for (const [state, landing, status] of [["merged", "landed", "merged"], ["closed", "closed", "closed"]] as const) {
+      const repository = { productId: base.productId, delivery: "pull-request" as const, pr: { ...pr, state } };
+      const task = { ...base, state: "done" as const, repositories: undefined, repository };
+      const saved = historyItem(repositoryTaskView(task, repository));
+      expect([taskLanding(task), taskLanding(saved), dependencyLanding(task)]).toEqual([landing, landing, landing]);
+      expect(saved.cleanup).toBeUndefined();
+      expect(historyStatus(saved)).toBe(status);
+    }
+    // A shared task's accepted closed companion stays closed, without the one-product decision.
+    const closed = { productId: "companion", delivery: "pull-request" as const, completedStages: [], pr: { ...pr, number: 55, state: "closed" as const }, landingAccepted: { at: 1 } };
+    const merged = { productId: base.productId, delivery: "pull-request" as const, completedStages: [], pr: { ...pr, state: "merged" as const } };
+    const shared = repositoryTaskView({ ...base, state: "done", repositories: [merged, closed], activeProductId: "companion" }, closed);
+    expect([taskLanding(shared), taskLanding(historyItem(shared))]).toEqual(["closed", "closed"]);
+    expect(historyItem(shared).cleanup).toBeUndefined();
   });
 });

@@ -6,7 +6,7 @@
 
 import type { AgentProfile, CheckAttemptEvidence, Finding, Id, InboxItem, InboxKind, InputManifestEntry, JourneyAgentInput, JourneyStep, Role, RunState, Task, TaskRepository, TaskState, UsageLimit } from "./model.js";
 import { JOURNEY_WORDS, landingOf, stepName, type Landing } from "./journey.js";
-import { copyNoLongerNeeded } from "./cleanup.js";
+import { copyNoLongerNeeded, markedDoneUnconfirmed } from "./cleanup.js";
 import { historyItem, historyStatus, type HistoryStatus } from "./history.js";
 import { assignedProducts, displayTask, landingState, taskProductIds } from "./repositories.js";
 import { roleForTask } from "./roles.js";
@@ -91,8 +91,7 @@ export function publishingResult(task: Pick<TaskState, "state" | "repositories" 
   const shared = work as Partial<TaskRepository>;
   if (work.shipping?.carriedOver) return { kind: "unknown", landed: false };
   if (shared.nothingToPublish || task.maintenance?.noProductChanges) return { kind: "no-changes", landed: null };
-  const marked = task.state === "done" && (work.cleanup?.markedDone || work.cleanup?.pullRequest !== undefined);
-  if (marked) return { kind: "unconfirmed", landed: false, pullRequestCheck: work.pr ? "found" : work.cleanup?.pullRequest ?? "pending", ...(work.pr ? { lookup: { number: work.pr.number, url: work.pr.url, state: work.pr.state } } : {}), ...(work.cleanup?.foreignPullRequest ? { foreignPullRequest: work.cleanup.foreignPullRequest } : {}) };
+  if (markedDoneUnconfirmed(task, work)) return { kind: "unconfirmed", landed: false, pullRequestCheck: work.pr ? "found" : work.cleanup?.pullRequest ?? "pending", ...(work.pr ? { lookup: { number: work.pr.number, url: work.pr.url, state: work.pr.state } } : {}), ...(work.cleanup?.foreignPullRequest ? { foreignPullRequest: work.cleanup.foreignPullRequest } : {}) };
   if (work.release) return { kind: "released", landed: true, tag: work.release.tag, url: work.release.url };
   if (work.pr?.state === "merged") return { kind: "merged", landed: true, number: work.pr.number, url: work.pr.url };
   if (work.pr?.state === "closed") return { kind: "pull-request-closed", landed: false, number: work.pr.number, url: work.pr.url, decision: task.repositories ? (shared.landingAccepted ? "accepted" : "needed") : "none" };

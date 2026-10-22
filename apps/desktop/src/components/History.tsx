@@ -48,6 +48,7 @@ function recordedDelivery(item: HistoryItem): string | undefined {
   }
   if (item.release) return `Released ${item.release.tag}`;
   if (item.landed) return item.localUpdate?.pushed ? `Committed to ${item.landed.branch} · pushed to GitHub` : `Committed locally to ${item.landed.branch}`;
+  if (landingOf(item) === "marked-done") return;
   if (item.pr?.state === "merged") return `Pull request #${item.pr.number} merged`;
   if (item.pr?.state === "open" && item.state === "cancelled") return `Pull request #${item.pr.number} still open`;
   if (item.pr && (item.pr.state === "closed" || landingOf(item) === "closed")) return `Pull request #${item.pr.number} closed without merging`;

@@ -116,6 +116,37 @@ it("keeps closed, unmerged pull requests unconfirmed in inspection, history and 
   for (const condition of ["delivered", "landed"]) expect((await c.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome).toBe("timed-out");
 });
 
+it("keeps a one-product task you marked done unconfirmed after a later lookup finds its pull request merged", async () => {
+  const { e, c, taskId, task } = fixture();
+  const confirmed = e.task(e.addTask({ productId: "product", title: "Published by Petrina" }))!;
+  const merged = { number: 1, state: "merged" as const, url: "https://github.com/example/product/pull/1", openedAt: 1 };
+  for (const [entry, cleanup] of [[task, { markedDone: true, pullRequest: "none" as const }], [confirmed, undefined]] as const) {
+    Object.assign(entry, { state: "done", column: "done", finishedAt: entry === task ? 200 : 100 });
+    Object.assign(executionFor(entry).work, { delivery: "pull-request", pr: merged, cleanup });
+  }
+  const delivery = async (id: string) => {
+    const { landing, deliveryConfirmed } = (await c.call("task.inspect", { taskId: id })).task as Record<string, unknown>;
+    const waits = await Promise.all(["delivered", "landed"].map(async (condition): Promise<string> => (await c.call("watch.wait", { target: "task", taskId: id, condition, timeoutMs: 0 })).outcome));
+    return { landing, deliveryConfirmed, waits };
+  };
+  const unconfirmed = { landing: "marked-done", deliveryConfirmed: false, waits: ["timed-out", "timed-out"] };
+  expect(await delivery(taskId)).toEqual(unconfirmed);
+  expect(await delivery(confirmed.id)).toEqual({ landing: "landed", deliveryConfirmed: true, waits: ["completed", "completed"] });
+  e.save();
+  const readBody = e.store.history.get.bind(e.store.history);
+  try {
+    e.store.history.get = () => { throw new Error("History pages must only read saved summaries"); };
+    for (const name of ["task.history", "task.list"]) expect((await c.call(name, { states: ["done"] })).items).toEqual([
+      expect.objectContaining({ id: taskId, landing: "marked-done", deliveryConfirmed: false }),
+      expect.objectContaining({ id: confirmed.id, landing: "landed", deliveryConfirmed: true }),
+    ]);
+  } finally { e.store.history.get = readBody; }
+  // Archived, the full record still answers inspection and waits the same way.
+  expect(e.activeState().tasks.map((entry) => entry.id)).not.toContain(taskId);
+  expect(await delivery(taskId)).toEqual(unconfirmed);
+  expect((await c.call("watch.wait", { target: "task", taskIds: [confirmed.id, taskId], condition: "landed", timeoutMs: 0 })).outcome).toBe("timed-out");
+});
+
 it("judges shared delivery across every product in CLI and MCP summaries, waits and History", async () => {
   const { e, home } = fixture();
   e.s.products.push({ id: "other", name: "Other", repo: "local/other", tone: "green" });

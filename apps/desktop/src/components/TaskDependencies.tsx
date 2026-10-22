@@ -28,7 +28,7 @@ export function dependencyOutcome(task: Choice): string {
     return outcomes.every((outcome) => outcome === "Landed") && stillBlocks(task) ? "Delivery recorded — landing not confirmed" : outcomes.join(" · ");
   }
   // An open delivery stays open even when an older broad task state says done.
-  if (task.pr?.state === "open") return "Awaiting merge — not landed yet";
+  if (task.pr?.state === "open" && landingOf(task) !== "marked-done") return "Awaiting merge — not landed yet";
   switch (landingOf(task)) {
     case "landed": return task.localUpdate?.pushed === false ? "Committed locally — push unfinished" : stillBlocks(task) ? "Delivery recorded — landing not confirmed" : "Landed";
     case "closed": return "Closed without merging — did not land";

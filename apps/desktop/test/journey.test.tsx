@@ -872,6 +872,12 @@ describe('unusual endings in words', () => {
     expect(deliveryText({ ...merged, state: 'cancelled', pr: { ...merged.pr!, state: 'closed' } })).toEqual({ text: `Pull request #${merged.pr!.number} closed without merging`, done: false });
     const { pr: _none, ...marked } = merged;
     expect(deliveryText(marked)).toEqual({ text: 'Marked as done · delivery not confirmed', done: false });
+    // A pull request a later lookup found does not deliver work you marked done, here or at the journey's end.
+    for (const prState of ['open', 'merged', 'closed'] as const) {
+      const found = { ...marked, state: 'done' as const, pr: { ...merged.pr!, state: prState }, cleanup: { markedDone: true, pullRequest: 'none' as const } };
+      expect(deliveryText(found)).toEqual({ text: 'Marked as done · delivery not confirmed', done: false });
+      expect(journeyView(found, contextOf(state)).end).toEqual({ text: 'Marked as done · delivery not confirmed', state: 'unconfirmed' });
+    }
   });
   it('keeps updated pull requests distinct while preserving older closed outcomes', () => {
     const product = state.products.find((entry) => entry.id === merged.productId)!;

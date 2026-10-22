@@ -2,7 +2,7 @@
 // history uses an index for its next page and reads a conversation only when it is opened.
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { EVIDENCE_STEP_LIMIT, EVIDENCE_TASK_LIMIT, type CheckEvidenceTask } from "./related-check-evidence.js";
-import { blocksDependents, combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyStatus, historyAt, historyCursor, historyItem, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryDependency, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
+import { blocksDependents, combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyStatus, historyAt, historyCursor, historyItem, markedDoneUnconfirmed, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryDependency, type HistoryItem, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
 
 interface Rollup { total: number; done: number; cancelled: number; shared?: number; blocked?: number; reviews: ReviewStats }
 const emptyRollup = (): Rollup => ({ total: 0, done: 0, cancelled: 0, reviews: reviewStats([]) });
@@ -56,7 +56,36 @@ export class TaskHistory {
       db.run("CREATE INDEX IF NOT EXISTS task_history_membership_newest ON task_history_products(product_id, finished_at DESC, task_id DESC)");
       if (!indexed) this.migrateMemberships();
     }).immediate();
+    db.run("CREATE TABLE IF NOT EXISTS task_history_upgrades (name TEXT PRIMARY KEY)");
+    db.transaction(() => {
+      if (db.query("SELECT 1 FROM task_history_upgrades WHERE name = 'marked-done'").get()) return;
+      this.upgradeMarkedDone();
+      db.run("INSERT INTO task_history_upgrades(name) VALUES('marked-done')");
+    }).immediate();
     this.reloadMetadata();
+  }
+
+  /**
+   * Summaries saved before they recorded that you marked one product's work done read a pull request found later
+   * as delivered. One upgrade, in bounded pages, reads only that saved decision from each body.
+   */
+  private upgradeMarkedDone(): void {
+    const read = this.db.query<{ id: string; item: string; cleanup: string | null }, [string]>(`SELECT id, item,
+      coalesce(json_extract(body, '$.repository.cleanup'), json_extract(body, '$.cleanup')) AS cleanup FROM task_history
+      WHERE id > ? AND state = 'done' AND json_extract(item, '$.pr') IS NOT NULL AND json_extract(item, '$.deliveries') IS NULL AND json_extract(item, '$.cleanup') IS NULL
+      ORDER BY id LIMIT 256`);
+    const write = this.db.query("UPDATE task_history SET item = ?, final_status = ? WHERE id = ?");
+    let after = "";
+    for (;;) {
+      const rows = read.all(after);
+      if (!rows.length) break;
+      for (const row of rows) {
+        if (!markedDoneUnconfirmed({ state: "done" }, { cleanup: row.cleanup ? JSON.parse(row.cleanup) : undefined })) continue;
+        const item: HistoryItem = { ...JSON.parse(row.item), cleanup: { markedDone: true } };
+        write.run(JSON.stringify(item), historyStatus(item), row.id);
+      }
+      after = rows.at(-1)!.id;
+    }
   }
 
   /** Called inside the snapshot's transaction, so a terminal result and its removal are atomic. */

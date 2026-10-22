@@ -4,11 +4,12 @@
 // The screen only draws what they recorded, and what the plan says comes next.
 
 import { callOn, followingCall } from "./call.js";
-import type { AgentProfile, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, RepositoryState, Role, Stage, Task } from "./model.js";
+import type { AgentProfile, Cleanup, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, RepositoryState, Role, Stage, Task } from "./model.js";
 import { decisionEvidence, evidenceFor, incompleteCheckOutcome, latestCheckResults, reusedCheckWords } from "./check-evidence.js";
 import { queueOf } from "./scheduler.js";
 import { reviewerAt, roleForTask } from "./roles.js";
 import { landingState } from "./repositories.js";
+import { markedDoneUnconfirmed } from "./cleanup.js";
 import type { HistoryItem } from "./history.js";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
@@ -108,17 +109,19 @@ export const JOURNEY_WORDS = {
 
 /**
  * How the displayed product's work ended up. A pull request closed without merging did not land, and
- * "Mark as done" confirms no delivery. `open`: not finished yet.
+ * "Mark as done" confirms no delivery, even once a later lookup finds its pull request. `open`: not finished yet.
  */
 export type Landing = "landed" | "awaiting-merge" | "closed" | "marked-done" | "no-changes" | "cancelled" | "open";
 
-export function landingOf(task: Pick<Task, "state" | "pr" | "release" | "landed"> & { maintenance?: Pick<NonNullable<Task["maintenance"]>, "noProductChanges"> }): Landing {
+export function landingOf(task: Pick<Task, "state" | "pr" | "release" | "landed"> & { maintenance?: Pick<NonNullable<Task["maintenance"]>, "noProductChanges">; cleanup?: Pick<Cleanup, "markedDone" | "pullRequest"> }): Landing {
   if (task.state === "cancelled") return "cancelled";
   if (task.state === "done" && task.maintenance?.noProductChanges) return "no-changes";
-  if (task.release || task.landed || task.pr?.state === "merged") return "landed";
+  // A pull request found after you marked the work done is not its delivery.
+  const pr = markedDoneUnconfirmed(task, task) ? undefined : task.pr;
+  if (task.release || task.landed || pr?.state === "merged") return "landed";
   // Recorded before "closed" was: a finished task whose pull request never merged.
-  if (task.pr && (task.pr.state === "closed" || task.state === "done")) return "closed";
-  if (task.pr && task.state === "pr-open") return "awaiting-merge";
+  if (pr && (pr.state === "closed" || task.state === "done")) return "closed";
+  if (pr && task.state === "pr-open") return "awaiting-merge";
   // A finished task with nothing delivered on record: the coordinator marked it as done.
   return task.state === "done" ? "marked-done" : "open";
 }
@@ -129,8 +132,8 @@ export function dependencyLanding(task: Parameters<typeof landingOf>[0] & Pick<T
   if (task.state === "done" && task.maintenance?.noProductChanges) return "no-changes";
   // Engine records keep delivery on its repository owner; public task views flatten one owner.
   // Read every shared delivery so a successful lead cannot hide an unsuccessful companion.
-  const deliveryLanding = (work: Pick<Task, "pr" | "release" | "landed"> & { nothingToPublish?: boolean }): Landing =>
-    work.nothingToPublish ? "no-changes" : work.pr?.state === "open" ? "awaiting-merge" : landingOf({ state: task.state, pr: work.pr, release: work.release, landed: work.landed });
+  const deliveryLanding = (work: Pick<Task, "pr" | "release" | "landed"> & { cleanup?: Pick<Cleanup, "markedDone" | "pullRequest">; nothingToPublish?: boolean }): Landing =>
+    work.nothingToPublish ? "no-changes" : work.pr?.state === "open" && !markedDoneUnconfirmed(task, work) ? "awaiting-merge" : landingOf({ state: task.state, pr: work.pr, release: work.release, landed: work.landed, cleanup: work.cleanup });
   const deliveries = task.repositories ?? task.deliveries;
   if (deliveries?.length) {
     // Like blocksDependents, an unfinished push keeps a shared delivery open, even on a task marked as done.
@@ -149,7 +152,7 @@ export function dependencyLanding(task: Parameters<typeof landingOf>[0] & Pick<T
 export function taskLanding(task: Parameters<typeof dependencyLanding>[0]): Landing {
   if (!(task.repositories ?? task.deliveries)?.length) {
     const work = task.repository ?? task;
-    return landingOf({ state: task.state, maintenance: task.maintenance, pr: work.pr, release: work.release, landed: work.landed });
+    return landingOf({ state: task.state, maintenance: task.maintenance, pr: work.pr, release: work.release, landed: work.landed, cleanup: work.cleanup });
   }
   const landing = dependencyLanding(task);
   return (landing === "landed" || landing === "awaiting-merge") && task.repositories && landingState(task.repositories) === "unfinished" ? "open" : landing;

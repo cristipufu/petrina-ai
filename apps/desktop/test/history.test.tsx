@@ -192,6 +192,18 @@ it("opens an unrelated Inbox task from routine runs without substituting the rou
   expect([...host!.querySelectorAll(".task-list-item")].map(item => item.textContent)).toEqual([expect.stringContaining("Unrelated task")]);
 });
 
+it("keeps a task you marked done unconfirmed after a later lookup finds its pull request merged", async () => {
+  const pr = { number: 77, url: "https://github.com/acme/demo/pull/77", state: "merged" as const, openedAt: 1 };
+  await mount("/history?demo", false, state => ({ ...state, tasks: state.tasks.map((task, index) => index === 54 ? { ...task, delivery: "pull-request", pr, cleanup: { markedDone: true, pullRequest: "none" } } : index === 53 ? { ...task, delivery: "pull-request", pr } : task) }));
+  const cards = () => [...host!.querySelectorAll(".history-card")].map(card => ({ id: card.getAttribute("data-task-id"), outcome: card.querySelector(".history-outcome")!.textContent, unconfirmed: card.querySelector(".history-outcome")!.classList.contains("unconfirmed") }));
+  expect(cards().slice(0, 2)).toEqual([
+    { id: "archive-54", outcome: "Marked as done · delivery not confirmed", unconfirmed: true },
+    { id: "archive-53", outcome: "Pull request #77 merged", unconfirmed: false },
+  ]);
+  await act(async () => { const select = host!.querySelector<HTMLSelectElement>('.history-status select')!; select.value = 'merged'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(cards().map(card => card.id)).toEqual(["archive-53"]);
+});
+
 it("keeps final status with search, pagination, task links and browser navigation", async () => {
   await mount("/history?demo&historyStatus=cancelled", false, state => ({ ...state, tasks: state.tasks.map((task, i) => ({ ...task, state: i < 30 ? "cancelled" : "done" })) }));
   expect(page).toHaveBeenLastCalledWith({ status: "cancelled", limit: 24 });

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, HISTORY_STATUSES, historyAt, historyItem, reviewStats, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
+import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, HISTORY_STATUSES, historyAt, historyItem, reviewStats, taskLanding, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
 import { serve } from "../src/server.js";
 import { makeWorld, removeDir, tempDir, type World } from "./support.js";
@@ -253,6 +253,36 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
       expect(reopened.history.page({ status: "committed" }).total).toBe(0);
       for (const productId of ["one", "two"]) expect(reopened.history.page({ productId, status: "mixed" }).total).toBe(1);
     } finally { reopened.close(); }
+  });
+
+  it("upgrades summaries saved before they recorded that you marked a task done, once", () => {
+    const { file, db } = store();
+    const pr = { number: 7, url: "https://github.com/first/one/pull/7", state: "merged" as const, openedAt: 1 };
+    const marked = task(1, { delivery: "pull-request", pr, cleanup: { markedDone: true, pullRequest: "none" } });
+    // Marked done by an older version, and saved the way the engine keeps one product's work.
+    const older = task(3, { repository: { productId: "one", delivery: "pull-request", pr, cleanup: { pullRequest: "none" } } });
+    const merged = task(5, { delivery: "pull-request", pr });
+    db.save(state([marked, older, merged]));
+    for (const entry of [marked, older]) {
+      expect(historyItem(entry).cleanup).toEqual({ markedDone: true });
+      db.database.query("UPDATE task_history SET item = ?, final_status = 'merged' WHERE id = ?").run(JSON.stringify({ ...historyItem(entry), cleanup: undefined }), entry.id);
+    }
+    db.database.run("DELETE FROM task_history_upgrades");
+    expect(db.history.page({ status: "merged" }).total).toBe(3);
+    db.close();
+    const reopened = new Store(file);
+    try {
+      expect(reopened.history.page({ status: "merged" }).items.map((item) => item.id)).toEqual([merged.id]);
+      const unconfirmed = reopened.history.page({ status: "marked-done" }).items;
+      expect(unconfirmed.map((item) => item.id).sort()).toEqual([marked.id, older.id]);
+      expect(unconfirmed.map(taskLanding)).toEqual(["marked-done", "marked-done"]);
+      expect(taskLanding(reopened.history.item(merged.id)!)).toBe("landed");
+      expect(reopened.history.dependency(older.id)).toMatchObject({ cleanup: { markedDone: true } });
+      // The upgrade is recorded and does not run again on later starts.
+      reopened.database.query("UPDATE task_history SET item = ? WHERE id = ?").run(JSON.stringify({ ...historyItem(marked), cleanup: undefined }), marked.id);
+    } finally { reopened.close(); }
+    const again = new Store(file);
+    try { expect(again.history.item(marked.id)!.cleanup).toBeUndefined(); } finally { again.close(); }
   });
 
   it("retains removal warnings in compact totals while a cancelled shared task still has an open pull request", () => {
