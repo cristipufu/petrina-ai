@@ -848,3 +848,33 @@ it("never substitutes creation for an execution start on cancelled or waiting wo
   expect(journeyView({ ...base, state: "queued" }, context).start.kind).toBe("queued");
   expect(journeyView({ ...base, state: "cancelled", startedAt: 500 }, context).start).toEqual({ kind: "started", at: 500 });
 });
+
+describe("shared task endings keep the displayed product's evidence", () => {
+  const state = createDemoState(1_000_000_000_000);
+  const base = state.tasks[0]!;
+  const pr = { number: 44, url: "https://example.test/44", state: "open" as const, openedAt: 1 };
+  const context = { roles: state.roles, profiles: state.profiles, tasks: [], inbox: [] };
+
+  it.each([["local", "open"], ["local", "closed"], ["release", "open"], ["release", "closed"]] as const)("keeps a displayed %s delivery separate from a %s companion pull request", (delivery, prState) => {
+    const work = delivery === "local" ? { landed: { branch: "main", sha: "abc" } } : { release: { tag: "v1.2.3", url: "https://example.test/v1.2.3" } };
+    const companion = { ...pr, state: prState };
+    const task: Task = { ...base, ...work, pr: undefined, state: prState === "open" ? "pr-open" : "done", repositories: [
+      { productId: "pr-product", delivery: "pull-request", pr: companion, ...(prState === "closed" ? { landingAccepted: { at: 1 } } : {}), completedStages: [] },
+      { productId: base.productId, delivery, ...work, completedStages: [] },
+    ] };
+    expect(journeyView(task, context).end).toEqual({ text: delivery === "local" ? "Delivered locally to main" : "Released v1.2.3", state: "done" });
+    const displayedPr: Task = { ...task, release: undefined, landed: undefined, pr: companion };
+    expect(journeyView(displayedPr, context).end).toEqual(prState === "open" ? { text: "Pull request #44 · awaiting merge", state: "pending" } : { text: "Pull request #44 closed without merging", state: "unconfirmed" });
+  });
+
+  it("does not attach a companion's closed outcome to a merged pull request", () => {
+    const merged = { ...pr, state: "merged" as const };
+    const closed = { ...pr, number: 55, state: "closed" as const };
+    const task: Task = { ...base, state: "done", pr: merged, release: undefined, landed: undefined, repositories: [
+      { productId: base.productId, delivery: "pull-request", pr: merged, completedStages: [] },
+      { productId: "other", delivery: "pull-request", pr: closed, completedStages: [] },
+    ] };
+    expect(journeyView(task, context).end).toEqual({ text: "Merged #44", state: "done" });
+    expect(journeyView({ ...task, pr: closed }, context).end).toEqual({ text: "Pull request #55 closed without merging", state: "unconfirmed" });
+  });
+});

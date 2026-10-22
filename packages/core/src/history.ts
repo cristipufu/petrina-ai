@@ -1,4 +1,4 @@
-import { displayTask } from "./repositories.js";
+import { blocksDependents, displayTask } from "./repositories.js";
 // Finished work is read a page at a time. The live board never needs its conversations or plans.
 import type { Id, State, StepRecord, Task } from "./model.js";
 import type { ReviewStats } from "./reviews.js";
@@ -7,6 +7,8 @@ import { involvesProduct, taskProductIds } from "./repositories.js";
 export interface HistoryQuery { status?: HistoryStatus; routineId?: Id; productId?: Id; query?: string; cursor?: string; limit?: number; states?: readonly ("done" | "cancelled")[]; taskId?: Id; held?: boolean }
 export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "state" | "createdAt" | "finishedAt" | "statusLine" | "delivery" | "pr" | "release" | "landed" | "localUpdate" | "combinedInto"> & {
   state: "done" | "cancelled";
+  /** Compact scheduling evidence; older summaries are refreshed by the archive reader. */
+  blocksDependents?: boolean;
   maintenance?: Pick<NonNullable<Task["maintenance"]>, "noProductChanges">;
   productIds?: readonly Id[];
   products?: readonly { id: Id; name: string }[];
@@ -65,7 +67,7 @@ export function historyItem(task: Task): HistoryItem {
   const productIds = taskProductIds(task);
   const products = task.repositories?.map((work) => ({ id: work.productId, name: work.source?.product.name ?? work.workProduct?.name ?? work.productId })) ?? task.workRows?.map((row) => ({ id: row.source?.product.id ?? row.choice.productId, name: row.source?.product.name ?? row.choice.productId })) ?? productIds.map((id) => ({ id, name: id }));
   const deliveries = task.repositories?.map(({ productId, delivery, pr, release, landed, localUpdate, nothingToPublish }) => ({ productId, delivery, pr, release, landed, localUpdate, nothingToPublish }));
-  return { id, productId, title, kind, state: state as HistoryItem["state"], createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, ...(task.maintenance?.noProductChanges ? { maintenance: { noProductChanges: true } } : {}), ...(combinedInto ? { combinedInto } : {}), ...(task.repositories || productIds.length > 1 ? { productIds, products, deliveries } : {}) };
+  return { blocksDependents: blocksDependents(task), id, productId, title, kind, state: state as HistoryItem["state"], createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, ...(task.maintenance?.noProductChanges ? { maintenance: { noProductChanges: true } } : {}), ...(combinedInto ? { combinedInto } : {}), ...(task.repositories || productIds.length > 1 ? { productIds, products, deliveries } : {}) };
 }
 export function historyCursor(item: Pick<Task, "id" | "finishedAt" | "createdAt">): string {
   return encodeURIComponent(JSON.stringify([historyAt(item), item.id]));

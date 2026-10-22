@@ -1,3 +1,5 @@
+import { DEPENDENCY_HELP, DependencyPicker } from "./TaskDependencies";
+import { uncertainReply } from "../commandFailures";
 import { Select } from "./Select";
 import { ChevronDown, Package, Search } from "lucide-react";
 import { EditorPanel } from "./EditorPanel";
@@ -21,7 +23,7 @@ function ProductPicker({ products, choices, onToggle, disabled }: { products: St
   const [search, setSearch] = useState("");
   const box = useRef<HTMLDivElement>(null);
   const id = useId();
-  useDismiss(box, open, () => setOpen(false));
+  useDismiss(box, open, () => setOpen(false), "click");
   const available = products.filter((product) => product.name.toLowerCase().includes(search.trim().toLowerCase()));
   const selected = choices.flatMap((choice) => products.find((product) => product.id === choice.productId)?.name ?? []).join(", ");
   return <div className="new-task-product-select" ref={box}>
@@ -103,6 +105,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const [kind, setKind] = useState<TaskKind>("feature");
   const [position, setPosition] = useState<Position>("bottom");
   const [backlog, setBacklog] = useState(true);
+  const [after, setAfter] = useState<string[]>([]);
   const supportsBacklog = mode === "demo" || state.history !== undefined;
   const [approvePlan, setApprovePlan] = useState(false);
   const [approveDelivery, setApproveDelivery] = useState(initial?.approveDelivery ?? true);
@@ -117,7 +120,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   useEffect(() => { if (!saving && focusNext.current) { focusNext.current = false; titleRef.current?.focus(); } }, [saving]);
   const [discard, setDiscard] = useState(false);
   const baseline = useRef<string | undefined>(undefined);
-  const draftKey = (name = title, details = description, titles = batch) => JSON.stringify([name, details, kind, position, backlog, approvePlan, approveDelivery, choices, titles]);
+  const draftKey = (name = title, details = description, titles = batch) => JSON.stringify([name, details, kind, position, backlog, approvePlan, approveDelivery, choices, after, titles]);
   baseline.current ??= draftKey();
   const dirty = draftKey() !== baseline.current;
   const close = () => { if (!saving) { if (dirty) setDiscard(true); else onClose(); } };
@@ -125,7 +128,7 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
   const add = async (another: boolean) => {
     if (adding.current || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)))) return;
     const request = pending.current ??= {
-      inputs: [title.trim(), ...batch.slice(1)].map(entry => ({ clientId: crypto.randomUUID(), productId: choices[0]?.productId ?? "", worksOn: choices, title: entry, description, kind, position, approvePlan: approvePlan || choices.length !== 1, approveDelivery, backlog })),
+      inputs: [title.trim(), ...batch.slice(1)].map(entry => ({ clientId: crypto.randomUUID(), productId: choices[0]?.productId ?? "", worksOn: choices, title: entry, description, kind, position, approvePlan: approvePlan || choices.length !== 1, approveDelivery, backlog, after: [...after] })),
       confirmed: 0, another,
     };
     adding.current = true;
@@ -134,7 +137,15 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
       while (request.confirmed < request.inputs.length) { await sim.addTask(request.inputs[request.confirmed]!); request.confirmed++; }
       pending.current = undefined;
       if (request.another) { baseline.current = draftKey("", "", []); setTitle(""); setDescription(""); setBatch([]); focusNext.current = true; } else onCreated();
-    } catch (failure) { setError(failureText(failure)); } finally { adding.current = false; setSaving(false); }
+    } catch (failure) {
+      setError(failureText(failure));
+      if (!uncertainReply(failure)) {
+        // A definite refusal created nothing for this entry. Keep only the remaining batch editable.
+        const remaining = request.inputs.slice(request.confirmed).map((input) => input.title);
+        setTitle(remaining[0] ?? title); setBatch(remaining.length > 1 ? remaining : []);
+        pending.current = undefined;
+      }
+    } finally { adding.current = false; setSaving(false); }
   };
   const change = (id: string, update: Partial<WorkChoice>) => setChoices(choices.map((choice) => choice.productId === id ? { ...choice, ...update } : choice));
   const disabled = saving || (!pending.current && (!title.trim() || invalidSource || (backlog && !supportsBacklog)));
@@ -187,9 +198,12 @@ export function NewTaskDialog({ state, defaultProduct, initialTitle = "", waitin
           </div>
           {!backlog && <div className="opt"><span id="new-task-queue-position">Place in the queue</span><div className="segmented" role="radiogroup" aria-labelledby="new-task-queue-position"><button role="radio" aria-checked={position === "bottom"} className={position === "bottom" ? "on" : ""} disabled={locked} onClick={() => setPosition("bottom")}>Bottom</button><button role="radio" aria-checked={position === "top"} className={position === "top" ? "on" : ""} disabled={locked} onClick={() => setPosition("top")}>Top</button></div></div>}
           <p className="quiet-text">{backlog ? "Saved for review. No agent starts until you queue it." : "Starts when the pool is running and a place is free."}</p>
+          <h3>Start after other tasks land <span className="quiet-text">Optional</span></h3>
+          <p className="quiet-text">{DEPENDENCY_HELP}</p>
+          <DependencyPicker state={state} ids={after} onChange={setAfter} disabled={locked} />
           {backlog && !supportsBacklog && <p className="note">Backlog will be available after the engine is updated.</p>}
         </section>
-        {error && <p role="alert" className="note bad">{error} Retry confirms these same tasks, without adding duplicates.</p>}
+        {error && <p role="alert" className="note bad">{error} {pending.current ? "Retry confirms these same tasks and prerequisites, without adding duplicates." : "Review your choices and try again."}</p>}
     </EditorPanel>
     {discard && <ConfirmDialog title="Discard task changes?" confirm="Discard changes" cancel="Keep editing" onCancel={() => setDiscard(false)} onConfirm={onClose}><p>Your unsaved task request will be lost. Tasks already added stay saved.</p></ConfirmDialog>}
   </>;

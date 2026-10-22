@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, journeyView, usageLines, type AgentProfile, type Task } from "@petrina/core";
@@ -385,10 +385,16 @@ describe.concurrent("an agent that runs out of usage", () => {
     try {
       const task = await run.done();
       expect(lines(task)).toContain("The Check finder could not finish, so Petrina uses no checks for now");
-      const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
-      expect(details.failuresByReason).toEqual([{ label: "unusable result", count: 1 }]);
-      expect(run.engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] })).toMatchObject([{ outcome: "unusable", roleId: "check-finder", profileId: expect.any(String) }]);
-      expect(details.redone).toBe(2);
+      const failures = run.engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] });
+      expect(failures).toMatchObject([{ outcome: "unusable", roleId: "check-finder", profileId: expect.any(String) }]);
+      // Include the repair attempts and failure even when they straddle midnight or delivery
+      // finishes the next day. The Guide keeper test covers Today's day-boundary filtering.
+      const clock = spyOn(Date, "now").mockReturnValue(failures[0]!.at);
+      try {
+        const details = run.engine.usage({ view: "analytics", period: "7d" }).squad.details;
+        expect(details.failuresByReason).toEqual([{ label: "unusable result", count: 1 }]);
+        expect(details.redone).toBe(2);
+      } finally { clock.mockRestore(); }
     } finally {
       run.engine.shutdown();
     }

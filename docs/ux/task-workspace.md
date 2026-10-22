@@ -183,6 +183,14 @@ Default branch, Branch (an exact name), or Pull request (number or GitHub link).
 
 Add to backlog (default) for review first, or Queue for work. Queue placement is Bottom (default) or Top when queuing directly.
 
+Start after other tasks land is optional for either destination. Its searchable checkbox picker shows each task’s title, products and current outcome, with a selected count, Clear all and Done. Live tasks can be found by title or product; finished work uses bounded History pages and title search with Show more. Selected tasks stay visible while searching, including unavailable choices that need removing or replacing. Tasks already waiting directly or indirectly on this one are disabled with the reason. Done closes the picker; creating the request or Save changes commits the choices.
+
+Prerequisites mean waiting for delivery to land, such as a merged pull request or a published release; finishing an agent turn is not enough. Priority only orders ready tasks. Backlog remembers the list and timeline entry without a waiting step or a changed status line. Queueing opens the waiting-for-others step only while something blocks.
+
+Overview links every saved prerequisite, with its outcome and whether it still blocks. Backlog and never-started queued tasks offer the same editor with Save changes and Cancel; card and sheet More menus offer Start after other tasks…. Opening the editor never holds work. Once work starts, the list is read-only; if work starts during editing, attempted choices remain visible with the reason they cannot be saved. A definite refusal keeps choices editable with a fix; an uncertain reply offers Retry confirmation for the same choices.
+
+Creation saves each request and its prerequisites together before scheduling. Retry confirmation reuses that request’s reference, including after an engine restart; pasted titles share the selection and partial-batch retries retain it. Add another keeps scheduling choices with a fresh request.
+
 ### Plan
 
 Auto (the planner decides) or a template.

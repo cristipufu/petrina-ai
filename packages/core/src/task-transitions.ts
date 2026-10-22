@@ -13,7 +13,7 @@ type MutableTask = DeepMutable<TaskState>;
 type Execution = DeepMutable<Pick<RepositoryState, "stepAttempts" | "conversation" | "sideStep">>;
 
 /** One request shape for coordinator-created real and scripted tasks. */
-export function createTaskState(input: NewTaskInput, products: readonly Product[], seed: { id: Id; timelineId: Id; now: number; priority: number; area?: string }): MutableTask {
+export function createTaskState(input: NewTaskInput, products: readonly Product[], seed: { id: Id; timelineId: Id; now: number; priority: number; area?: string }, find: (id: Id) => Pick<TaskState, "id" | "after"> | undefined = () => undefined): MutableTask {
   const selected = input.worksOn ?? (input.productId ? [{ productId: input.productId, startFrom: input.startFrom ?? { kind: "default" as const }, delivery: input.delivery ?? products.find((entry) => entry.id === input.productId)?.delivery ?? "pull-request" }] : []);
   if (selected.some((choice) => !products.some((entry) => entry.id === choice.productId))) throw new Error("Choose registered products.");
   if (new Set(selected.map((entry) => entry.productId)).size !== selected.length) throw new Error("Choose each product once.");
@@ -22,7 +22,9 @@ export function createTaskState(input: NewTaskInput, products: readonly Product[
   const title = input.title.trim();
   if (!title) throw new Error("A task needs a title");
   const choice: WorkChoice = selected[0] ?? { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" };
+  const after = validateTaskDependencies(seed.id, input.after ?? [], (id) => id === seed.id ? { id } : find(id));
   return {
+    ...(input.after ? { after } : {}),
     id: seed.id, productId: product?.id ?? "", selectedProducts: selected.map((choice) => ({ ...choice, startFrom: { ...choice.startFrom } })),
     explicitStart: input.startFrom !== undefined || (selected.length > 0 && input.worksOn !== undefined),
     workChoice: { ...choice, startFrom: { ...choice.startFrom } }, title, description: input.description?.trim() ?? "", area: seed.area ?? title.toLowerCase(),
@@ -68,13 +70,24 @@ export function combineBacklogTasks(combined: MutableTask, sources: MutableTask[
   queueBacklogTask(combined, priority);
 }
 
+/** Admission is the boundary: opening an editor never reserves or holds the task. */
+export function canEditTaskDependencies(task: Pick<TaskState, "state" | "startedAt">): boolean {
+  return task.startedAt === undefined && (task.state === "backlog" || task.state === "queued");
+}
+
+export function assertTaskDependenciesEditable(task: Pick<TaskState, "state" | "startedAt"> | undefined): asserts task is Pick<TaskState, "state" | "startedAt"> {
+  if (!task) throw new Error("This task is unavailable. Return to the board and choose another task.");
+  if (!canEditTaskDependencies(task)) throw new Error("This task has already started or finished. Prerequisites can only change in Backlog or before queued work starts.");
+}
+
 /** Validate the complete dependency graph before changing the task. Archived records can be looked up lazily. */
 export function validateTaskDependencies(taskId: Id, after: readonly Id[], find: (id: Id) => Pick<TaskState, "id" | "after"> | undefined): Id[] {
   if (!find(taskId)) throw new Error("Unknown task");
   const ids = [...new Set(after)];
+  if (ids.length > 20) throw new Error("Choose up to 20 prerequisites. Remove a task before adding another.");
   for (const id of ids) {
-    if (id === taskId) throw new Error("A task cannot wait for itself");
-    if (!find(id)) throw new Error(`Unknown task: ${id}`);
+    if (id === taskId) throw new Error("A task cannot wait for itself. Remove it from the prerequisites.");
+    if (!find(id)) throw new Error("Unknown task. Remove the unavailable prerequisite and choose another task.");
   }
   const reaches = (from: Id, seen = new Set<Id>()): boolean => {
     if (from === taskId) return true;
@@ -82,7 +95,7 @@ export function validateTaskDependencies(taskId: Id, after: readonly Id[], find:
     seen.add(from);
     return (find(from)?.after ?? []).some((next) => reaches(next, seen));
   };
-  if (ids.some((id) => reaches(id))) throw new Error("That would make tasks wait for each other");
+  if (ids.some((id) => reaches(id))) throw new Error("Those tasks would wait for each other. Remove a prerequisite that already waits on this task.");
   return ids;
 }
 

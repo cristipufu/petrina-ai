@@ -683,9 +683,10 @@ describe.concurrent("one task across products", () => {
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "A shared change" });
-      await finish(engine, id);
-      const dependent = engine.addTask({ productId: first, title: "Follow-up" });
-      engine.setAfter(dependent, [id]);
+      const completed = taskOf(await finish(engine, id), id);
+      expect(completed.error).toBeUndefined();
+      expect(completed.state).toBe("pr-open");
+      const dependent = engine.addTask({ productId: first, title: "Follow-up", after: [id] });
       if (!closed) shop.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
       if (closed) api.setGitHub((state) => { state.prs[0]!.state = "CLOSED"; });
       // Use the normal poll through its timer, without waiting a minute.

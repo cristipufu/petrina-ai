@@ -2,6 +2,7 @@ import { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDemoState, Simulator } from "@petrina/core";
+import { Lost } from "../src/commandFailures";
 import { App } from "../src/App";
 
 let simulator: Simulator;
@@ -21,7 +22,7 @@ vi.mock("../src/engine", () => ({
       addCalls++;
       if (holdAddReply) return holdAddReply.then(() => result);
     }
-    return (name === "combineBacklog" && loseCombineReply) || (name === "addTask" && addCalls === loseAddAt) ? Promise.resolve(result).then(() => { throw new Error("Confirmation was lost"); }) : result;
+    return (name === "combineBacklog" && loseCombineReply) || (name === "addTask" && addCalls === loseAddAt) ? Promise.resolve(result).then(() => { throw new Lost("Confirmation was lost"); }) : result;
   } }),
 }));
 let root: Root | undefined;
@@ -196,4 +197,33 @@ it("recognises a saved combination from the state update when the command confir
   expect(host!.querySelector('[aria-label="Combine backlog tasks"]')).toBeNull();
   expect(simulator.getState().tasks.filter((task) => task.title === "Saved despite lost reply")).toHaveLength(1);
   expect(host!.querySelector('.sheet')?.textContent).toContain("Saved despite lost reply");
+});
+
+it("opens prerequisites from both More menus and preserves attempted choices when queued work starts", async () => {
+  await mount();
+  let current = "", foundation = "";
+  await act(async () => {
+    const productId = simulator.getState().products[0]!.id;
+    current = simulator.addTask({ productId, title: "Queued request" });
+    foundation = simulator.addTask({ productId, title: "Foundation", backlog: true });
+  });
+  await click(`.card[data-task-id="${current}"] [aria-label="More"]`);
+  await button("Start after other tasks…");
+  expect(host!.querySelector('[aria-label="Start after other tasks land"]')).not.toBeNull();
+  expect(simulator.taskDetails(current)!.held).toBe(false);
+  await act(async () => [...host!.querySelectorAll('.dependency-results label')].find((row) => row.textContent?.includes("Foundation"))!.querySelector<HTMLInputElement>('input')!.click());
+  await button("Done"); await button("Save changes");
+  expect(simulator.taskDetails(current)!.after).toEqual([foundation]);
+  await click(`.card[data-task-id="${current}"] .card-open`);
+  expect(host!.querySelector('.dependency-selection')!.textContent).toContain("Foundation");
+  await click('.sheet-actions [aria-label="More"]');
+  await button("Start after other tasks…");
+  await button("Clear all");
+  await act(async () => simulator.cancel(foundation));
+  await act(async () => simulator.setPoolPaused(false));
+  expect(simulator.taskDetails(current)!.startedAt).toBeDefined();
+  expect(host!.querySelector('[aria-label="Start after other tasks land"]')).not.toBeNull();
+  expect(host!.querySelector('[aria-label="Start after other tasks land"]')!.textContent).toContain("Your attempted choices are still shown");
+  expect([...host!.querySelectorAll<HTMLButtonElement>('button')].find((node) => node.textContent === "Save changes")!.disabled).toBe(true);
+  expect(simulator.taskDetails(current)!.after).toEqual([foundation]);
 });

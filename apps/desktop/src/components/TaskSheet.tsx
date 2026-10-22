@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, ArrowUpToLine, Ban, Check, CheckCircle2, ChevronRight, Clock3, Ellipsis, ExternalLink, GitPullRequest, Hand, ListOrdered, LoaderCircle, MessageSquare, Monitor, Pause, Play, TriangleAlert, X } from "lucide-react";
-import { mainLine, openStep, sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
+import { canEditTaskDependencies, mainLine, openStep, sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { duration, safeUrl, STATE_LABEL, stateLabel, type Lookup } from "../lib";
 import { ProductName, useDismiss, useFocusTrap, useViewport, WaitingLine } from "./bits";
@@ -40,6 +40,7 @@ interface SheetProps {
   onAboutNumbers: () => void;
   /** Open a follow-up card, or the finished task a report came from. */
   onOpenTask?: (taskId: string) => void;
+  onDependencies?: (task: Task) => void;
 }
 
 const TABS: readonly { id: SheetTab; label: string }[] = [
@@ -63,7 +64,7 @@ function TaskActivity({ task }: { task: TaskListEntry }) {
   return <span className={`task-list-activity ${task.state}`}><Icon size={13} aria-hidden="true" /><span>{label}</span></span>;
 }
 
-export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, onStep, onClose, onToast, hasDraft, drafts, messageFocus, onMessageFocused, onMessage, onAboutNumbers, onOpenTask, waiting }: SheetProps) {
+export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, selectedStep, onStep, onClose, onToast, hasDraft, drafts, messageFocus, onMessageFocused, onMessage, onAboutNumbers, onOpenTask, onDependencies, waiting }: SheetProps) {
   const [pane, setPane] = useState(selectedStep || tab !== "overview" ? "details" : "flow");
   const [menu, setMenu] = useState(false);
   const [detailsTarget, setDetailsTarget] = useState<HTMLDivElement | null>(null);
@@ -174,6 +175,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
                 </button>
                 {menu && (
                   <div className="menu" role="menu" style={{ right: 0, top: "calc(100% + 4px)" }}>
+                    {canEditTaskDependencies(task) && onDependencies && <button role="menuitem" onClick={act(() => onDependencies(task))}>Start after other tasks…</button>}
                     {/* Its screen requests go ahead even while the switch is off, one agent at a time. */}
                     <button role="menuitemcheckbox" aria-checked={task.screenAllowed === true} autoFocus={task.state !== "queued"} onClick={act(() => sim.setTaskScreen(task.id, !task.screenAllowed))}>
                       <Monitor size={16} />
@@ -259,6 +261,7 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
                 state={state}
                 find={find}
                 onAboutNumbers={onAboutNumbers}
+                onDependencies={onDependencies}
                 onReadSession={readSession}
                 onPlan={() => onTab("plan")}
                 {...(onOpenTask ? { onOpenTask } : {})}

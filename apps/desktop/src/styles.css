@@ -2446,3 +2446,18 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .new-task-product-trigger[aria-expanded="true"] > svg:last-child { transform: rotate(180deg); }
 
 .routine-editor-actions { display: flex; flex: 1; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* Prerequisites use the same search and checkbox surfaces as Products & delivery. */
+.dependency-picker { display: grid; min-width: 0; gap: 12px; }
+.dependency-results { max-height: 18rem; }
+.dependency-results .new-task-product-choice { align-items: start; }
+.dependency-results .new-task-product-choice > span { display: grid; gap: 4px; min-width: 0; }
+.dependency-results .new-task-product-choice input { margin-top: 4px; }
+.dependency-results .new-task-product-choice:has(input:disabled) { cursor: default; color: var(--text-2); background: var(--sunken); }
+.dependency-results .quiet-text, .dependency-selection .quiet-text { font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.new-task-product-menu .dependency-search-hint { margin: 0; padding: 8px 12px; }
+.dependency-selection { list-style: none; display: grid; gap: 8px; padding: 0; margin: 0; }
+.dependency-selection li { display: flex; align-items: start; justify-content: space-between; gap: 8px; min-width: 0; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.dependency-selection li > div { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.dependency-selection li > button { flex: none; }
+.dependency-selection .linkish { text-align: left; }

@@ -13,6 +13,7 @@ interface BoardProps {
   visible: (task: Task) => boolean;
   selectedId: string | undefined;
   onOpen: (taskId: string, tab?: SheetTab) => void;
+  onDependencies?: (task: Task) => void;
   onFocus: (taskId?: string) => void;
   drafts: Readonly<Record<string, boolean>>;
   onPlace: (taskId: string, anchorId: string, side: "before" | "after") => void;
@@ -33,7 +34,7 @@ const SECTIONS = [
  * come first, then working ones, then waiting ones, then the queue in priority order (drag to
  * reorder), and work awaiting review in the backlog. Finished tasks live in History.
  */
-export function Board({ state, find, visible, selectedId, onOpen, onFocus, drafts, onPlace, onNewTask, onShowInbox, onAddProduct }: BoardProps) {
+export function Board({ state, find, visible, selectedId, onOpen, onDependencies, onFocus, drafts, onPlace, onNewTask, onShowInbox, onAddProduct }: BoardProps) {
   const [selecting, setSelecting] = useState(false);
   const [included, setIncluded] = useState<string[]>([]);
   const [combining, setCombining] = useState(false);
@@ -124,7 +125,7 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, draft
             </h2>
             <div className="card-grid">
               {sections[section.id].map((task) => (
-                <TaskCard key={task.id} task={task} state={state} find={find} selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)} onOpen={onOpen} />
+                <TaskCard key={task.id} task={task} state={state} find={find} selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)} onOpen={onOpen} onDependencies={onDependencies} />
               ))}
             </div>
           </section>
@@ -160,7 +161,7 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, draft
                       selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)}
                       queuePosition={index}
                       startsNext={nextUp.has(task.id)}
-                      onOpen={onOpen}
+                      onOpen={onOpen} onDependencies={onDependencies}
                       onDragStart={onDragStart}
                       onDragEnd={endDrag}
                       dragging={dragId === task.id}
@@ -178,7 +179,7 @@ export function Board({ state, find, visible, selectedId, onOpen, onFocus, draft
         {selecting && <div className="backlog-selection-bar"><span>{included.filter((id) => sections.backlog.some((task) => task.id === id)).length} selected</span><button className="btn small lead" disabled={included.filter((id) => sections.backlog.some((task) => task.id === id)).length < 2} onClick={() => setCombining(true)}>Combine and queue…</button><span className="quiet-text">Choose small fixes that belong together.</span></div>}
         {sections.backlog.length ? <div className="card-grid">{sections.backlog.map((task) => <div key={task.id} className={`backlog-choice ${selecting && included.includes(task.id) ? "included" : ""}`}>
           {selecting && <label className="backlog-select"><input type="checkbox" aria-label={`Include ${task.title}`} checked={included.includes(task.id)} onChange={(event) => setIncluded(event.target.checked ? [...included, task.id] : included.filter((id) => id !== task.id))} />Include in combined task</label>}
-          <TaskCard task={task} state={state} find={find} selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)} onOpen={onOpen} />
+          <TaskCard task={task} state={state} find={find} selected={task.id === selectedId} hasDraft={Boolean(drafts[task.id])} onFocus={() => onFocus(task.id)} onOpen={onOpen} onDependencies={onDependencies} />
         </div>)}</div> : <div className="board-section-empty"><span>{state.tasks.some((task) => task.state === "backlog") ? "No backlog requests match this view." : "No requests awaiting review."}</span><button className="btn small outline" onClick={onNewTask} disabled={!state.products.length} title={state.products.length ? undefined : "Add a product first"}>Add a request</button></div>}
         {combining && <CombineBacklog state={state} tasks={sections.backlog.filter((task) => included.includes(task.id))} onClose={() => setCombining(false)} onCreated={(id) => { setCombining(false); setSelecting(false); setIncluded([]); onOpen(id); }} />}
 

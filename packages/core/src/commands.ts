@@ -18,6 +18,8 @@ import type { Task } from "./model.js";
 export interface NewTaskInput {
   /** Wait for the coordinator to review the request before it joins the work queue. */
   backlog?: boolean;
+  /** Tasks that must land before admission, saved together with this request. */
+  after?: readonly Id[];
   worksOn?: readonly WorkChoice[];
   startFrom?: StartFrom;
   productId: Id;

@@ -1,4 +1,4 @@
-import { blocksDependents, sourceLabel, taskProductIds, mainLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
+import { canEditTaskDependencies, blocksDependents, sourceLabel, taskProductIds, mainLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
 import { useCallback, useRef, useState, type DragEvent } from "react";
 import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Monitor, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
 import { sim } from "../engine";
@@ -18,6 +18,7 @@ export interface CardProps {
   /** One of the cards that start as soon as a slot frees. */
   startsNext?: boolean;
   onOpen: (taskId: string, tab?: SheetTab) => void;
+  onDependencies?: (task: Task) => void;
   onDragStart?: (event: DragEvent, taskId: string) => void;
   onDragEnd?: () => void;
   dragging?: boolean;
@@ -37,7 +38,7 @@ function flagOf(task: Task, state: State): { text: string; tone: string } | unde
   return { text: stateLabel(task, state), tone: task.state === "pr-open" ? "" : task.state };
 }
 
-export function TaskCard({ task, state, find, selected, queuePosition, hasDraft, onFocus, startsNext, onOpen, onDragStart, onDragEnd, dragging, drop }: CardProps) {
+export function TaskCard({ task, state, find, selected, queuePosition, hasDraft, onFocus, startsNext, onOpen, onDependencies, onDragStart, onDragEnd, dragging, drop }: CardProps) {
   const [menu, setMenu] = useState(false);
   const menuBox = useRef<HTMLSpanElement>(null);
   const closeMenu = useCallback(() => setMenu(false), []);
@@ -182,6 +183,7 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
                   <PanelRightOpen size={16} />
                   Open details
                 </button>
+                {canEditTaskDependencies(task) && onDependencies && <button role="menuitem" onClick={act(() => onDependencies(task))}>Start after other tasks…</button>}
                 {task.agent && (
                   <button role="menuitem" onClick={act(() => onOpen(task.id, "session"))}>
                     <SquareTerminal size={16} />

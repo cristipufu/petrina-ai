@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { Window as HappyWindow } from 'happy-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Simulator, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task } from '@petrina/core';
+import { Simulator, repositoryTaskView, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task } from '@petrina/core';
 import { App } from '../src/App';
 import { JourneyEdge, JourneyList, spokenStep, startWords } from '../src/components/Journey';
 import { layoutJourney } from '../src/journeyLayout';
@@ -732,4 +732,22 @@ it("labels creation separately from the actual execution start", () => {
   const view = journeyView({ ...state.tasks[0]!, state: "cancelled", startedAt: undefined, createdAt: NOW - 7_200_000, journey: [] }, contextOf(state));
   expect(startWords(view, NOW)).toBe("Created 2h ago");
   expect(startWords({ ...view, start: { kind: "started", at: NOW - 60_000 } }, NOW)).toBe("Started 1m ago");
+});
+
+
+it.each(['local', 'release'] as const)('opens a shared task delivered by %s alongside an open pull request', async (delivery) => {
+  const state = createDemoState(NOW);
+  const [first, second] = state.products;
+  const base = state.tasks.find(task => task.state === 'done' && task.pr)!;
+  const pr = { number: 44, url: 'https://example.test/44', state: 'open' as const, openedAt: NOW };
+  const work: NonNullable<Task['repositories']>[number] = { productId: second!.id, delivery, completedStages: [], ...(delivery === 'local' ? { landed: { branch: 'main', sha: 'abc' } } : { release: { tag: 'v1.2.3', url: 'https://example.test/v1.2.3' } }) };
+  const task = repositoryTaskView({ ...base, id: 'shared-delivery', title: 'Shared delivery regression', productId: second!.id, activeProductId: second!.id, state: 'pr-open', repositories: [
+    { productId: first!.id, delivery: 'pull-request', completedStages: [], pr }, work,
+  ] }, work);
+  simulator = new Simulator({ ...state, tasks: [task], inbox: [], pool: { ...state.pool, paused: true } });
+  history.replaceState(null, '', '/tasks/shared-delivery?demo');
+  await render(<App />);
+  expect(host.querySelector('.sheet-title')).not.toBeNull();
+  expect(host.textContent).toContain(delivery === 'local' ? 'Delivered locally to main' : 'Released v1.2.3');
+  expect(host.textContent).toContain('Pull request #44');
 });

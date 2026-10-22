@@ -49,7 +49,7 @@ export const OPERATIONS = [
   ),
   op(
     "task.add",
-    "Create one task using existing product, source, delivery and approval choices. Safe to retry with its request reference.",
+    "Create one task and its prerequisites together before it can start. Safe to retry with its request reference.",
     {
       productId: z.string().max(200).default("").describe("Existing product ID, or leave empty to let the planner choose, as in the app."),
       title: z.string().min(1).max(200),
@@ -60,6 +60,7 @@ export const OPERATIONS = [
       delivery: delivery.optional(),
       approveDelivery: z.boolean().optional(),
       startFrom: StartFromSchema.optional(),
+      after: z.array(id).max(20).optional().describe("Tasks that must land first. Saved atomically with the request, independently of queue priority."),
       backlog: z.boolean().optional().describe("Save for coordinator review without starting agents. Queueing it later is a separate explicit action."),
     },
     true,
@@ -113,7 +114,7 @@ export const OPERATIONS = [
   ),
   op(
     "task.dependencies",
-    "Set tasks that must land first, using existing dependency and cycle checks. An empty list removes dependencies.",
+    "Set prerequisites on Backlog or queued tasks that have never started, using existing dependency and cycle checks. An empty list removes dependencies.",
     { ...task, after: z.array(id).max(20) },
     true,
   ),

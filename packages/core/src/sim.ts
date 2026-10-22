@@ -5,7 +5,7 @@ import { DEMO_RISK, DEMO_CHECKS, scriptFor, laterObjections, callAnswers, briefF
 import type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
 export { readCall } from "./sim-script.js";
 export type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
-import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, validateTaskDependencies, blockingDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState, finishTaskStep } from "./task-transitions.js";
+import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, blockingDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState, finishTaskStep } from "./task-transitions.js";
 import { combinedBacklogInput } from "./combine-backlog.js";
 import { companionPreview, involvesProduct, taskProductIds, withoutProduct } from "./repositories.js";
 import { deliveryLabel, workSummary, type WorkChoice } from "./source.js";
@@ -488,11 +488,12 @@ export class Simulator {
 
   /** Start this task only after the given tasks have landed. An empty list removes the wait. */
   setAfter(taskId: Id, after: readonly Id[]): void {
+    assertTaskDependenciesEditable(this.state.tasks.find((task) => task.id === taskId));
     const ids = validateTaskDependencies(taskId, after, (id) => this.state.tasks.find((task) => task.id === id));
     this.updateTask(taskId, (d, task) => {
       task.after = ids;
       const find = (id: Id) => d.tasks.find((entry) => entry.id === id);
-      syncWait(task, blockingDependencies(task, find), find, d.now);
+      if (task.state === "queued") syncWait(task, blockingDependencies(task, find), find, d.now);
       this.log(d, task, "you", ids.length ? AFTER_WORDS.starts(ids.map((id) => find(id)!.title)) : AFTER_WORDS.none);
       this.schedule(d);
     });
@@ -698,7 +699,7 @@ export class Simulator {
     let created = "";
     this.update((d) => {
       const id = this.id(d, "task"); created = id;
-      const task = createTaskState(input, d.products, { id, timelineId: this.id(d, id), now: d.now, priority: queueOf(d.tasks).length, area: input.area?.trim() || areaFromTitle(input.title) });
+      const task = createTaskState(input, d.products, { id, timelineId: this.id(d, id), now: d.now, priority: queueOf(d.tasks).length, area: input.area?.trim() || areaFromTitle(input.title) }, (id) => d.tasks.find((task) => task.id === id));
       // Only source resolution is scripted; task defaults and validation are shared with the engine.
       const product = d.products.find((entry) => entry.id === task.productId) ?? d.products[0];
       if (product) {
@@ -712,6 +713,11 @@ export class Simulator {
       if (input.worksOn) task.workRows = input.worksOn.map((choice) => ({ choice: { ...choice, startFrom: { ...choice.startFrom } }, source: demoSource(d.products.find((product) => product.id === choice.productId)!, choice) }));
       task.confirmWork = (input.worksOn ? input.worksOn.length !== 1 : !input.productId) || task.workChoice?.startFrom.kind === "pull-request";
       d.tasks.push(task);
+      if (task.after?.length) {
+        const find = (id: Id) => d.tasks.find((entry) => entry.id === id);
+        if (task.state === "queued") syncWait(task, blockingDependencies(task, find), find, d.now);
+        this.log(d, task, "you", AFTER_WORDS.starts(task.after.map((id) => find(id)!.title)));
+      }
       if (input.position === "top") queueOf(d.tasks).forEach((task, priority) => { d.tasks.find((entry) => entry.id === task.id)!.priority = priority; });
       this.schedule(d);
     });
@@ -747,6 +753,7 @@ export class Simulator {
   moveToBacklog(taskId: Id): void {
     this.updateTask(taskId, (d, task) => {
       if (!returnQueuedTaskToBacklog(task)) return;
+      syncWait(task, [], () => undefined, d.now);
       this.log(d, task, "you", "You moved it to the backlog for review");
     });
   }

@@ -186,11 +186,13 @@ export function dismissPopovers(): void {
 /**
  * Close a popover or menu on a click outside it, on Escape, or when a notification's item opens.
  * Escape from inside it hands focus back to the button that opens it, the first in `ref`.
+ * In-flow pickers dismiss on click once its target is fixed, so reflow cannot steal activation.
+ * Capture also avoids catching the opening click when a picker mounts during that click.
  */
-export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void): void {
+export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void, outsideEvent: "mousedown" | "click" = "mousedown"): void {
   useEffect(() => {
     if (!open) return;
-    const onDown = (event: MouseEvent) => {
+    const onOutside = (event: MouseEvent) => {
       if (ref.current && !ref.current.contains(event.target as Node)) close();
     };
     const onKey = (event: KeyboardEvent) => {
@@ -203,15 +205,15 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, cl
         close();
       }
     };
-    window.addEventListener("mousedown", onDown);
+    window.addEventListener(outsideEvent, onOutside, outsideEvent === "click");
     window.addEventListener("keydown", onKey, true);
     window.addEventListener(DISMISS, close);
     return () => {
-      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener(outsideEvent, onOutside, outsideEvent === "click");
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener(DISMISS, close);
     };
-  }, [ref, open, close]);
+  }, [ref, open, close, outsideEvent]);
 }
 
 /** Something typed and not sent yet, in any text field inside `root`. */

@@ -20,6 +20,7 @@ const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
 const NewTask = z.object({
   backlog: z.boolean().optional(),
+  after: z.array(TaskId).max(20).optional(),
   worksOn: z.array(WorkChoiceSchema).max(20).optional(),
   startFrom: StartFromSchema.optional(),
   productId: z.string(),
@@ -58,7 +59,7 @@ const ARGS = {
   setRoutineEnabled: z.tuple([z.string(), z.boolean()]),
   removeRoutine: z.tuple([z.string()]),
   resolveMaintenanceSettings: z.tuple([TaskId, z.enum(["keep", "stop"])]),
-  historyPage: z.tuple([z.object({ status: z.enum(Object.keys(HISTORY_STATUSES) as HistoryStatus[]).optional(), routineId: z.string().min(1).max(200).optional(), productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
+  historyPage: z.tuple([z.object({ taskId: TaskId.optional(), status: z.enum(Object.keys(HISTORY_STATUSES) as HistoryStatus[]).optional(), routineId: z.string().min(1).max(200).optional(), productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
   taskDetails: z.tuple([TaskId]),
   previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),
   saveRole: z.tuple([z.string(), RoleDraft]),

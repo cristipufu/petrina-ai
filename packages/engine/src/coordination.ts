@@ -248,6 +248,8 @@ export class Coordination {
           return result;
         })();
       }
+      // Task creation and its retry receipt are durable before the first admission pass.
+      if (name === "task.add" && result.outcome === "completed") this.engine.schedule();
       return clone(result);
     });
   }
@@ -529,7 +531,7 @@ export class Coordination {
         return done();
       case "task.add": {
         const { requestId, ...input } = a;
-        const taskId = e.addTask({ ...input, clientId: requestId } as Parameters<Engine["addTask"]>[0]);
+        const taskId = e.addTask({ ...input, clientId: requestId } as Parameters<Engine["addTask"]>[0], false);
         return done({ taskId });
       }
       case "task.queue":

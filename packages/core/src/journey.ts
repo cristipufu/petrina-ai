@@ -103,7 +103,7 @@ export const JOURNEY_WORDS = {
 } as const;
 
 /**
- * How a task's work ended up, honestly. A pull request closed without merging did not land, and
+ * How the displayed product's work ended up. A pull request closed without merging did not land, and
  * "Mark as done" confirms no delivery. `open`: not finished yet.
  */
 export type Landing = "landed" | "awaiting-merge" | "closed" | "marked-done" | "no-changes" | "cancelled" | "open";
@@ -117,6 +117,21 @@ export function landingOf(task: Pick<Task, "state" | "pr" | "release" | "landed"
   if (task.pr && task.state === "pr-open") return "awaiting-merge";
   // A finished task with nothing delivered on record: the coordinator marked it as done.
   return task.state === "done" ? "marked-done" : "open";
+}
+
+/** A prerequisite is the whole task. Keep aggregation out of displayed-product outcomes. */
+function dependencyLanding(task: Parameters<typeof landingOf>[0] & Pick<Task, "repository" | "repositories">): Landing {
+  if (task.state === "cancelled") return "cancelled";
+  if (task.state === "done" && task.maintenance?.noProductChanges) return "no-changes";
+  // Engine records keep delivery on its repository owner; public task views flatten one owner.
+  // Read every shared delivery so a successful lead cannot hide an unsuccessful companion.
+  if (task.repositories?.length) {
+    const outcomes = task.repositories.map((work) => work.nothingToPublish ? "no-changes" : landingOf({ state: task.state, pr: work.pr, release: work.release, landed: work.landed }));
+    for (const outcome of ["closed", "marked-done", "awaiting-merge", "open"] as const) if (outcomes.includes(outcome)) return outcome;
+    return outcomes.every((outcome) => outcome === "no-changes") ? "no-changes" : "landed";
+  }
+  if (task.repository) return landingOf({ state: task.state, pr: task.repository.pr, release: task.repository.release, landed: task.repository.landed });
+  return landingOf(task);
 }
 
 /** Waiting for other tasks to land: the timeline's words and the task's status line. */
@@ -356,7 +371,7 @@ export function withdrawAsks(task: JourneyTask, itemIds: readonly Id[], at: numb
  * Keep the waiting-for-others step in line with what the task still waits for. It starts between
  * steps only (a step under way keeps its box), and ends saying which tasks landed.
  */
-export function syncWait(task: JourneyTask & Pick<Task, "after">, blockers: readonly Pick<Task, "id" | "title">[], find: (id: Id) => Pick<Task, "state" | "title" | "pr" | "release" | "landed"> | undefined, at: number): void {
+export function syncWait(task: JourneyTask & Pick<Task, "after">, blockers: readonly Pick<Task, "id" | "title">[], find: (id: Id) => Pick<Task, "state" | "title" | "pr" | "release" | "landed" | "repository" | "repositories"> | undefined, at: number): void {
   const open = openStep(task);
   if (blockers.length) {
     if (!open) push(task, { kind: "wait", round: 1, sub: 0, waitsOn: blockers.map(({ id, title }) => ({ id, title })), startedAt: at });
@@ -372,7 +387,7 @@ export function syncWait(task: JourneyTask & Pick<Task, "after">, blockers: read
   const ended = (landing: Landing) =>
     still.flatMap((entry) => {
       const other = find(entry.id);
-      return other && landingOf(other) === landing ? [other.title] : [];
+      return other && dependencyLanding(other) === landing ? [other.title] : [];
     });
   const parts = [
     ...(ended("landed").length ? [JOURNEY_WORDS.landed(ended("landed"))] : []),

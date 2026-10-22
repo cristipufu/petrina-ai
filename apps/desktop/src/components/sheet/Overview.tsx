@@ -7,6 +7,7 @@ import { deliveryText, duration, profileText, type Lookup } from "../../lib";
 import { failureText, sim } from "../../engine";
 import { RoleAvatar } from "../bits";
 import { ImagePreview } from "../MessageBody";
+import { TaskDependencies } from "../TaskDependencies";
 import { WhatItUsed } from "./WhatItUsed";
 import { Journey } from "../Journey";
 import { TimelineList } from "../Timeline";
@@ -61,7 +62,7 @@ function nowLines(task: Task, state: State): { first: string; time?: string; sec
   return { first: task.statusLine, ...(time ? { time } : {}), ...(waitingOnYou && task.todo && task.todo !== task.statusLine ? { second: task.todo } : {}) };
 }
 
-export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, onOpenTask, separateFlow = false }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void; onOpenTask?: (taskId: string) => void; separateFlow?: boolean }) {
+export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, onOpenTask, onDependencies, separateFlow = false }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void; onOpenTask?: (taskId: string) => void; onDependencies?: (task: Task) => void; separateFlow?: boolean }) {
   const [all, setAll] = useState(false);
   // Waiting for the screen, the agent that asked is still the one this step is about.
   const role = find.role(task.agent?.roleId ?? task.screen?.roleId);
@@ -87,6 +88,8 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
           <p className="prose">{task.description}</p>
         </section>
       )}
+
+      <TaskDependencies key={`dependencies-${task.id}`} task={task} state={state} onOpenTask={onOpenTask} onEdit={onDependencies} />
 
       <section className="sheet-section">
         <h2>Right now</h2>

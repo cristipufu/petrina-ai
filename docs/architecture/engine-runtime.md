@@ -56,6 +56,10 @@ TypeScript owns roles, plans, the scheduler, the engine, ACP handling, worktrees
 
 State is saved in SQLite shortly after every change and at once for anything the coordinator says. Finished task summaries are indexed separately for History; the live window receives active work and compact historical metadata rather than every old conversation. Tasks pick up where they left off after a restart.
 
+Task creation accepts optional prerequisite IDs through the shared command and outside creation operation. Shared dependency validation runs before insertion; request, prerequisites and request reference are saved together before scheduling can admit the task. Retrying a window request reference returns the saved task, including from History, without comparing resent fields. The window retains identical arguments for uncertain replies. Outside-operation receipts also check the request’s arguments.
+
+Prerequisite edits use the same graph validation and are refused unless a task is in Backlog or queued and has never started. Backlog saves record the choices and timeline only. The scheduler opens a waiting step when queued work has blockers; queued edits also synchronize that step. Priority and holds remain separate. Existing delivery evidence decides blocking and honest outcomes, including unresolved deliveries and waits that end without landing.
+
 ### Live check evidence
 
 Live check evidence records each product check and repository hook as pending, running and completed, with its own start and finish times. Pending checks are saved before the shared check queue admits the task; queued and interrupted checks cannot be mistaken for passes. The same record powers the live node details and finished evidence.

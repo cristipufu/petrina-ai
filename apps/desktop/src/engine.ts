@@ -1,3 +1,5 @@
+import { Lost, Late } from "./commandFailures";
+export { Lost, Late } from "./commandFailures";
 import { useSyncExternalStore } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { COMMAND_NAMES, createDemo, createPortfolioDemo, Simulator, type CommandName, type Commands, type HandBackPreview, type Id, type Launched, type State, type WindowCommands, createFirstRunDemo, DEMO_PRODUCTS, demoClones, type NewTaskInput } from "@petrina/core";
@@ -116,12 +118,6 @@ function browserAddress(): Address | undefined {
 
 const EMPTY: State = { now: Date.now(), seq: 0, products: [], roles: [], tools: [], profiles: [], tasks: [], inbox: [], pool: { limit: 3, paused: false, toolCaps: {} } };
 const NOTHING_UNSENT: readonly Unsent[] = [];
-
-/** The connection closed before the engine answered: worth sending again. */
-export class Lost extends Error {}
-
-/** The engine did not answer in time. */
-export class Late extends Error {}
 
 /** The engine's reason when it is plain words; its checks of what was sent are not, so they get a plain line. */
 export function plainReason(error: string): string {

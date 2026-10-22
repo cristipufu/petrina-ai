@@ -1,6 +1,6 @@
 import { ProfileChoiceReader } from "./profile-choices.js";
 import { completeAll } from "./parallel.js";
-import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, validateTaskDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
+import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
 import { executionFor, scopesFor } from "./repository-context.js";
 // The real engine: the same state the UI renders, driven by real agents over ACP.
 // Each task runs as one async driver while it holds a pool slot. Gates and the queue
@@ -585,10 +585,11 @@ export class Engine extends Kernel implements Commands {
 
   // ── The queue and the pool ─────────────────────────────────────────────
 
-  addTask(input: NewTaskInput): Id {
+  addTask(input: NewTaskInput, schedule = true): Id {
     const id = this.createTask(input);
-    this.commit();
-    this.schedule();
+    this.commitNow();
+    // The outside operation schedules after its enclosing request-receipt transaction commits.
+    if (schedule) this.schedule();
     return id;
   }
 
@@ -596,7 +597,7 @@ export class Engine extends Kernel implements Commands {
     const known = input.clientId ? this.s.tasks.find((task) => task.clientId === input.clientId)?.id ?? this.store.history.byClient(input.clientId) : undefined;
     if (known) return known;
     // Validate before reserving ids, so a refused request changes no state.
-    const task = createTaskState(input, this.s.products, { id: "", timelineId: "", now: Date.now(), priority: queueOf(this.s.tasks).length });
+    const task = createTaskState(input, this.s.products, { id: "", timelineId: "", now: Date.now(), priority: queueOf(this.s.tasks).length }, (id) => this.task(id));
     let id = this.id("task");
     while (this.tracking.taskIdTaken(id)) id = this.id("task");
     task.id = id; task.timeline[0]!.id = this.id(id);
@@ -606,6 +607,10 @@ export class Engine extends Kernel implements Commands {
       ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
     };
     this.s.tasks.push(task);
+    if (task.after?.length) {
+      if (task.state === "queued") syncWait(task, this.blockers(task), (id) => this.task(id), Date.now());
+      this.log(task, "you", AFTER_WORDS.starts(task.after.map((id) => this.task(id)!.title)));
+    }
     this.renumberQueue();
     return id;
   }
@@ -664,6 +669,7 @@ export class Engine extends Kernel implements Commands {
   moveToBacklog(taskId: Id): void {
     const task = this.task(taskId);
     if (!task || !returnQueuedTaskToBacklog(task)) return;
+    syncWait(task, [], () => undefined, Date.now());
     this.renumberQueue();
     this.log(task, "you", "You moved it to the backlog for review");
     this.commitNow();
@@ -771,12 +777,13 @@ export class Engine extends Kernel implements Commands {
 
   /** Start this task only after the given tasks have landed. An empty list removes the wait. */
   setAfter(taskId: Id, after: readonly Id[]): void {
+    const task = this.task(taskId);
+    assertTaskDependenciesEditable(task);
     const ids = validateTaskDependencies(taskId, after, (id) => this.task(id));
-    const task = this.task(taskId)!;
     task.after = ids;
-    syncWait(task, this.blockers(task), (id) => this.task(id), Date.now());
+    if (task.state === "queued") syncWait(task, this.blockers(task), (id) => this.task(id), Date.now());
     this.log(task, "you", ids.length ? AFTER_WORDS.starts(ids.map((id) => this.task(id)!.title)) : AFTER_WORDS.none);
-    this.commit(); this.schedule();
+    this.commitNow(); this.schedule();
   }
 
   setPoolLimit(limit: number): void {

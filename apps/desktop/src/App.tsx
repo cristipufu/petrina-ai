@@ -19,6 +19,7 @@ import { ProductsPage } from "./components/Products";
 import { Rail } from "./components/Rail";
 import type { SheetTab } from "./components/TaskCard";
 import { TakeOverDialogs } from "./components/TakeOver";
+import { DependencyEditor } from "./components/TaskDependencies";
 import { TaskSheet } from "./components/TaskSheet";
 import { TopBar } from "./components/TopBar";
 import { SettingsPage } from "./components/Settings";
@@ -116,6 +117,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const [newTitle, setNewTitle] = useState("");
   const [inboxOpen, setInboxOpen] = useState(() => viewportSize().width >= DOCKED_INBOX);
   const [creating, setCreating] = useState(false);
+  const [dependencyTask, setDependencyTask] = useState<Task>();
   const [addingProduct, setAddingProduct] = useState(false);
   // The engine adds any clone. Of the demos, only first run's has clones to add, Skip setup included.
   const canAddProduct = mode === "engine" || state.setup !== undefined;
@@ -125,8 +127,8 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const focusArea = useRef<KeyArea | undefined>(undefined);
   const { toasts, showToast, toast, dismiss } = useToasts();
   // Read by notification clicks, which arrive outside React's renders.
-  const latest = useRef({ state, dialog: creating || addingProduct || Boolean(rolePanel) || routineDialog || productSettingsOpen, sheet: sheet !== undefined });
-  latest.current = { state, dialog: creating || addingProduct || Boolean(rolePanel) || routineDialog || productSettingsOpen, sheet: sheet !== undefined };
+  const latest = useRef({ state, dialog: creating || addingProduct || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen, sheet: sheet !== undefined });
+  latest.current = { state, dialog: creating || addingProduct || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen, sheet: sheet !== undefined };
 
   // What the top bar gives up as the window narrows (or zooms, or text grows), in this order: the
   // wordmark and repeated wording, then the search field, the pool's squares, then pool and theme
@@ -313,15 +315,15 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     const el = id ? Array.from(document.querySelectorAll<HTMLElement>(`[${attr}]`)).find((node) => node.getAttribute(attr) === id) : area === "inbox" ? inboxPanel.current : document.querySelector<HTMLElement>(view === "history" ? ".history-page" : ".board");
     if (id && !pressing.current) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
     // Give Tab a starting point at the highlighted item, without taking focus from a field.
-    if (el && !palette && !creating && !addingProduct && !rolePanel && !routineDialog && !productSettingsOpen && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
+    if (el && !palette && !creating && !addingProduct && !rolePanel && !dependencyTask && !routineDialog && !productSettingsOpen && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
       el.focus({ preventScroll: true });
       focusArea.current = undefined;
     }
-  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, rolePanel, routineDialog, productSettingsOpen, shortcuts, history.page]);
+  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, rolePanel, dependencyTask, routineDialog, productSettingsOpen, shortcuts, history.page]);
 
   useGlobalKeys({
     palette,
-    modal: creating || addingProduct || shortcuts || Boolean(rolePanel) || routineDialog || productSettingsOpen,
+    modal: creating || addingProduct || shortcuts || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen,
     sheetOpen: Boolean(sheet),
     area,
     singleKeys,
@@ -329,7 +331,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     boardId: currentBoardId,
     inboxId: currentInboxId,
     togglePalette: () => {
-      if (creating || addingProduct || rolePanel || routineDialog || productSettingsOpen) return;
+      if (creating || addingProduct || rolePanel || dependencyTask || routineDialog || productSettingsOpen) return;
       if (palette) setPalette(false);
       else openPalette();
     },
@@ -397,6 +399,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
             visible={visible}
             selectedId={area === "board" && boardKeyboard ? currentBoardId : undefined}
             onOpen={openBoard}
+            onDependencies={setDependencyTask}
             onFocus={(id) => { setOwner("board"); if (id) setBoardId(id); }}
             drafts={drafts}
             onPlace={place}
@@ -432,7 +435,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       {sheet && !sheetTask && (loadingDetails || detailsError) && <TaskLoading error={detailsError} onRetry={() => setDetailsRetry((value) => value + 1)} onClose={close} />}
 
       {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} tasks={runs && sheet.list === "history" ? runTasks : sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} onOpenTask={openLinked} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} hasDraft={Boolean(drafts[sheetTask.id])} drafts={draftStore} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
+        <TaskSheet task={sheetTask} tasks={runs && sheet.list === "history" ? runTasks : sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} onOpenTask={openLinked} onDependencies={setDependencyTask} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} onStep={(stepId) => setSheet({ ...sheet, stepId })} hasDraft={Boolean(drafts[sheetTask.id])} drafts={draftStore} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
       )}
 
       {!missing && rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}
@@ -479,6 +482,7 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
           requestJump(entry.target!);
         }}
       />
+      {dependencyTask && <DependencyEditor task={find.task(dependencyTask.id) ?? { ...dependencyTask, state: "done" }} state={state} onClose={() => setDependencyTask(undefined)} onOpenTask={(id) => { setDependencyTask(undefined); openLinked(id); }} />}
     </div>
   );
 }

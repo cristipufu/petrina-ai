@@ -305,7 +305,11 @@ export class TaskHistory {
     }
     args.push(size + 1);
     const rows = this.db.query<{ item: string }, SQLQueryBindings[]>(`SELECT h.item FROM ${from} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${order.split(", ").map((field) => `${field} DESC`).join(", ")} LIMIT ?`).all(...args);
-    const items = rows.slice(0, size).map((row) => JSON.parse(row.item) as HistoryPage["items"][number]);
+    const items = rows.slice(0, size).map((row) => {
+      const item = JSON.parse(row.item) as HistoryPage["items"][number];
+      // Older summaries lack this flag. Read only their compact delivery evidence, never bodies.
+      return item.blocksDependents === undefined ? this.dependency(item.id)! : item;
+    });
     return { items, total, ...(rows.length > size && items.length ? { nextCursor: historyCursor(items.at(-1)!) } : {}) };
   }
 

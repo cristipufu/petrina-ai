@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
@@ -120,9 +120,21 @@ describe.concurrent("a review guide that learns from misses", () => {
     try {
       expect(offers).toEqual([]);
       expect(lines(task)).toContain("The Guide keeper could not finish, so nothing was proposed for the review guide");
-      const details = engine.usage({ view: "analytics", period: "today" }).squad.details;
-      expect(details.failuresByReason).toEqual([{ label: "unusable result", count: 1 }]);
-      expect(engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] })).toMatchObject([{ outcome: "unusable", roleId: "guide-keeper" }]);
+      const failures = engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] });
+      expect(failures).toMatchObject([{ outcome: "unusable", roleId: "guide-keeper" }]);
+      // This workflow can cross midnight. Check the recorded day's Analytics, then prove that
+      // rolling into the next day changes Today without losing the recovered failure.
+      const clock = spyOn(Date, "now").mockReturnValue(failures[0]!.at);
+      try {
+        const details = engine.usage({ view: "analytics", period: "today" }).squad.details;
+        expect(details.failuresByReason).toEqual([{ label: "unusable result", count: 1 }]);
+        const nextDay = new Date(failures[0]!.at);
+        nextDay.setHours(24, 0, 0, 0);
+        clock.mockReturnValue(nextDay.getTime());
+        expect(engine.usage({ view: "analytics", period: "today" }).squad.details.failuresByReason).toEqual([]);
+        expect(engine.usage({ view: "analytics", period: "7d" }).squad.details.failuresByReason).toEqual([{ label: "unusable result", count: 1 }]);
+        expect(engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] })).toEqual(failures);
+      } finally { clock.mockRestore(); }
     } finally {
       engine.shutdown();
     }
