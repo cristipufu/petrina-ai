@@ -38,6 +38,28 @@ describe("process-tree snapshots", () => {
     expect(listed).toEqual([]);
   });
 
+  it("rejects a successful but unpaused snapshot and uses the next confirmed one", async () => {
+    const timeouts: number[] = [];
+    const result = await descendantsKnown([10, 11], 4_800, async timeout => {
+      timeouts.push(timeout);
+      return timeouts.length === 1 ? "10 1 T\n11 10 S\n" : "10 1 T\n11 10 T\n12 11 S\n40 1 S\n";
+    }, [4_000, 4_000], true);
+    expect(timeouts).toEqual([4_000, expect.any(Number)]);
+    expect(result).toEqual([12]);
+  });
+
+  for (const listed of [undefined, "10 1 S\n", "10 1\n"]) it(`does not confirm ownership when a list ${listed === undefined ? "fails" : listed.includes("S") ? "shows an owner running" : "lacks the owner's state"}`, async () => {
+    let reads = 0;
+    expect(await descendantsKnown([10], 4_800, async () => { reads++; return listed; }, [4_000, 4_000], true)).toBeUndefined();
+    expect(reads).toBe(2);
+  });
+
+  for (const listed of ["", "10 1 Z\n", "10 1 T+\n"]) it(`accepts one confirmed list with an owner ${listed === "" ? "gone" : listed.includes("Z") ? "defunct" : "paused"}`, async () => {
+    let reads = 0;
+    expect(await descendantsKnown([10], 4_800, async () => { reads++; return listed; }, [4_000, 4_000], true)).toEqual([]);
+    expect(reads).toBe(1);
+  });
+
   for (const delay of [2_500, 3_999]) it(`preserves a consistently slow ${delay}ms first snapshot before stopping the parent`, async () => {
     let now = 0;
     const clock = spyOn(Date, "now").mockImplementation(() => now);

@@ -9,7 +9,7 @@ import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, typ
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser } from "./browser.js";
-import { descendantsKnown } from "./process-tree.js";
+import { descendantsKnown, parseDescendants, readProcessList } from "./process-tree.js";
 import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 import type { RetryCause, SessionNotice } from "./provider-interruptions.js";
 import { AgentMessages, type AgentMessage } from "./agent-messages.js";
@@ -240,8 +240,9 @@ async function exited(pids: readonly number[], ms: number): Promise<boolean> {
 
 /**
  * Stop the tool and every program it started (a build, a test run, a server), which could otherwise keep
- * writing in the working copy after the tool is gone. They are found while the tool still runs, since they
- * lose their link to it once it exits. Resolves when they have all exited; forced after a few seconds.
+ * writing in the working copy after the tool is gone. Pause known owners before collecting their
+ * descendants: an owner running during a delayed snapshot could fork a detached worker it misses.
+ * Resolves when they have all exited; forced after a few seconds.
  */
 async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: boolean): Promise<boolean> {
   if (child.pid === undefined) return true;
@@ -257,34 +258,56 @@ async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: bo
   const rescanBudget = collectPrograms ? 3_200 : 0;
   let complete = true;
   let pids = [child.pid];
-  if (collectPrograms && running(child)) {
-    // Preserve the four-second first read: two shorter attempts cannot capture consistently
-    // slow snapshots. A failed read can retry with the time left before we must stop the parent.
-    // Recover a failed snapshot while the parent still owns its detached workers.
-    // Retrying only after SIGTERM can lose that relationship when the parent exits.
-    const workers = await descendantsKnown([child.pid], 4_800, undefined, [4_000, 4_000]);
+  let paused = false;
+  const resume = () => {
+    if (!paused) return;
+    send([-child.pid!, ...pids], "SIGCONT");
+    paused = false;
+  };
+  const collect = async (budget: number) => {
+    const owners: number[] = [];
+    const workers = await descendantsKnown(owners, budget, async (timeout) => {
+      // Repeat before every attempt. Only a snapshot showing known owners paused or gone
+      // can confirm ownership, even when the OS read succeeded but its delivery was delayed.
+      paused = true;
+      owners.splice(0, owners.length, ...pids.filter(alive));
+      send([-child.pid!, ...pids], "SIGSTOP");
+      const stdout = await readProcessList(timeout);
+      if (stdout !== undefined) {
+        // Keep discoveries even from an unconfirmed snapshot. On a retry they are known
+        // owners too, and must themselves appear paused before the list can be trusted.
+        const found = parseDescendants(stdout, owners);
+        send(found, "SIGSTOP");
+        pids = [...new Set([...pids, ...found])];
+      }
+      return stdout;
+    }, [4_000, 4_000], true);
     if (workers === undefined) complete = false;
-    else pids.push(...workers);
+  };
+  try {
+    if (collectPrograms && running(child)) {
+      // Preserve the four-second first read and recover failures before losing parent links.
+      await collect(4_800);
+    }
+    send([-child.pid], "SIGTERM");
+    send(pids, "SIGTERM");
+    resume(); // Deliver pending TERM and allow a normal shutdown during the existing grace.
+    // A slow or failed first lookup must not let the grace wait consume the final lookup.
+    // Still give SIGTERM time to take effect after a slow first read: a zero-length grace wait
+    // needlessly starts another slow scan even when all captured programs are exiting normally.
+    const graceLeft = Math.max(500, forceBy - rescanBudget - Date.now());
+    if (await exited([-child.pid, ...pids], Math.min(graceMs, graceLeft, Math.max(0, forceBy - Date.now())))) return complete;
+    // Pause again before finding anything started during graceful shutdown. Keep the full
+    // remaining read allowance: splitting it would discard consistently slow snapshots.
+    if (collectPrograms) await collect(Math.min(rescanBudget, Math.max(0, forceBy - Date.now())));
+    pids = pids.filter(alive);
+    send([-child.pid], "SIGKILL");
+    send(pids, "SIGKILL");
+    return (await exited([-child.pid, ...pids], 1_000)) && complete;
+  } finally {
+    // Even a failed read or a signal denied by the OS must never leave our programs paused.
+    resume();
   }
-  send([-child.pid], "SIGTERM");
-  send(pids, "SIGTERM");
-  // A slow or failed first lookup must not let the grace wait consume the final lookup.
-  // Still give SIGTERM time to take effect after a slow first read: a zero-length grace wait
-  // needlessly starts another slow scan even when all captured programs are exiting normally.
-  const graceLeft = Math.max(500, forceBy - rescanBudget - Date.now());
-  if (await exited([-child.pid, ...pids], Math.min(graceMs, graceLeft, Math.max(0, forceBy - Date.now())))) return complete;
-  // Whatever ignored the request to stop is killed, with anything it started meanwhile.
-  // Spend the remaining lookup budget on a full read before retrying. Splitting it into shorter
-  // attempts would also discard a slow snapshot of workers started during stopping.
-  if (collectPrograms) {
-    const workers = await descendantsKnown(pids.filter(alive), Math.min(rescanBudget, Math.max(0, forceBy - Date.now())), undefined, [4_000, 4_000]);
-    if (workers === undefined) complete = false;
-    else pids.push(...workers);
-  }
-  pids = [...new Set(pids)].filter(alive);
-  send([-child.pid], "SIGKILL");
-  send(pids, "SIGKILL");
-  return (await exited([-child.pid, ...pids], 1_000)) && complete;
 }
 
 export class AgentRun {

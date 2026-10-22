@@ -7,21 +7,31 @@ export function descendants(roots: readonly number[], timeout = 4_000): Promise<
   return readProcessList(timeout).then((stdout) => stdout === undefined ? undefined : parseDescendants(stdout, roots));
 }
 
-/** Retry a failed snapshot within a fixed budget. `undefined` means no complete snapshot was obtained. */
+/** Retry failed or unconfirmed snapshots within a fixed budget. `undefined` means none was usable. */
 export async function descendantsKnown(
   roots: readonly number[],
   budget = 3_200,
   read: (timeout: number) => Promise<string | undefined> = readProcessList,
   attempts: readonly number[] = [1_000, 2_000],
+  requirePaused = false,
 ): Promise<number[] | undefined> {
   const started = Date.now();
   for (const attempt of attempts) {
     const left = budget - (Date.now() - started);
     if (left < 50) break;
     const stdout = await read(Math.min(attempt, left));
-    if (stdout !== undefined) return parseDescendants(stdout, roots);
+    if (stdout !== undefined && (!requirePaused || pausedOrGone(stdout, roots))) return parseDescendants(stdout, roots);
   }
   return undefined;
+}
+
+/** A delayed successful read is unsafe if any known owner could still fork when it was listed. */
+function pausedOrGone(stdout: string, pids: readonly number[]): boolean {
+  for (const line of stdout.split("\n")) {
+    const [pid, , state] = line.trim().split(/\s+/);
+    if (pids.includes(Number(pid)) && !state?.startsWith("T") && !state?.startsWith("Z")) return false;
+  }
+  return true;
 }
 
 /** Parse one successful `ps` snapshot. An empty list is a valid result. */
