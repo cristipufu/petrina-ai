@@ -1,6 +1,6 @@
 import { afterAll, expect, it } from "bun:test";
 import { Kernel, MAX_SESSION_LINES, type MTask } from "../src/kernel.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 class Quiet extends Kernel {
   schedule(): void {}

@@ -6,7 +6,7 @@ import { Engine } from "./engine.js";
 import { claudeAccountReports } from "../src/claude-usage.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { UsageLimited, type UsageInfo } from "../src/usage.js";
-import { Fakes, removeDir, tempDir } from "./support.js";
+import { Fakes, removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

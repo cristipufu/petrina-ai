@@ -7,7 +7,7 @@ import { Engine } from "./engine.js";
 import { executionFor } from "../src/repository-context.js";
 import { participantConversation } from "../src/participant-conversation.js";
 import * as gitOps from "../src/git.js";
-import { Fakes, git, makeProduct, removeDir, tempDir } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 import { FixtureTrace } from "./fixture-trace.js";
 
 const roots: string[] = [];

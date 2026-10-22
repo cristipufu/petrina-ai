@@ -5,7 +5,7 @@ import { ADAPTERS, type ToolAdapter } from "../src/tools.js";
 import { Engine } from "./engine.js";
 import { UsageReader } from "../src/usage-reader.js";
 import { limitFromFailure } from "../src/usage.js";
-import { Fakes, removeDir, tempDir } from "./support.js";
+import { Fakes, removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

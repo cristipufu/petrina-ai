@@ -5,7 +5,7 @@ import { Aborted } from "../src/kernel.js";
 import { Connections, CONFIRM_ADDRESS } from "../src/connection.js";
 import { executionFor } from "../src/repository-context.js";
 import * as git from "../src/git.js";
-import { removeDir, tempDir, waitFor } from "./support.js";
+import { removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

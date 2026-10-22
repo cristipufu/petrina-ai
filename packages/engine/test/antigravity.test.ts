@@ -10,7 +10,7 @@ import { checkAgentTool } from "../src/setup.js";
 import { ADAPTERS } from "../src/tools.js";
 import { Engine } from "./engine.js";
 import type { UsageLimited } from "../src/usage.js";
-import { Fakes, removeDir, tempDir, waitFor, SLOW } from "./support.js";
+import { Fakes, removeDir, tempDir, waitFor, SLOW } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

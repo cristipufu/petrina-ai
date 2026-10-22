@@ -3,7 +3,7 @@ import { expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 import type { ToolActivityEvent } from "../src/tool-invocations.js";
 
 it("publishes richer metadata only for the latest visible tool, without duplicate or plumbing activity", async () => {

@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, wr
 import { join } from "node:path";
 import { dispatch } from "../src/server.js";
 import { askMode, clearEnded, detectTerminals, launchPlan, type LaunchInput, pickTerminal, type Platform, type Probe, sessionState, terminalEnv, toolArgs, UnsafeValue, writeLauncher } from "../src/terminal.js";
-import { newProgramsStart, removeDir, tempDir, waitFor } from "./support.js";
+import { newProgramsStart, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

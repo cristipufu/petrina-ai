@@ -1,7 +1,7 @@
 import { expect, it, spyOn } from "bun:test";
 import { Engine } from "./engine.js";
 import { ADAPTERS } from "../src/tools.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 it("never creates a native usage reader by default, but lets a test explicitly supply its own", async () => {
   const path = tempDir("petrina-usage-fixture-");

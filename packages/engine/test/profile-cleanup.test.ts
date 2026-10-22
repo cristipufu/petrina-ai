@@ -4,7 +4,7 @@ import { ProfileChoiceReader } from "../src/profile-choices.js";
 import { AgentRun } from "../src/acp-run.js";
 import type { Kernel } from "../src/kernel.js";
 import { demoProfileChoices } from "@petrina/core";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 it("waits for a failed startup's process cleanup before opening another configuration probe", async () => {
   const root = tempDir("profile-cleanup-");

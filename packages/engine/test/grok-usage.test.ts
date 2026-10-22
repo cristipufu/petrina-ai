@@ -9,7 +9,7 @@ import { Engine } from "./engine.js";
 import { grokReports, grokTurnReport, readGrokUsage } from "../src/grok-usage.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { WorkLog } from "../src/worklog.js";
-import { removeDir, tempDir, testBrowserRoot, waitFor } from "./support.js";
+import { removeDir, tempDir, testBrowserRoot, waitFor } from "./fixtures.js";
 
 // Conversations started here keep their browsers, in this file's own browser folder.
 const roots: string[] = [testBrowserRoot()];

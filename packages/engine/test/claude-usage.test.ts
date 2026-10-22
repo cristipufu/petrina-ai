@@ -4,7 +4,7 @@ import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeAccountReports, readClaudeUsage } from "../src/claude-usage.js";
-import { removeDir, tempDir, testGitEnv, waitFor } from "./support.js";
+import { removeDir, tempDir, testGitEnv, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

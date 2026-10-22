@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
-import { removeDir, tempDir, testGitEnv, waitFor } from "./support.js";
+import { removeDir, tempDir, testGitEnv, waitFor } from "./fixtures.js";
 import { testTempParent } from "./temp-parent.js";
 
 const fixture = tempDir("petrina-test-runner-");

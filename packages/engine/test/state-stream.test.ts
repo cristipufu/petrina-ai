@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { State } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { serve } from "../src/server.js";
-import { removeDir, tempDir, waitFor } from "./support.js";
+import { removeDir, tempDir, waitFor } from "./fixtures.js";
 
 interface Message { type: string; stateId?: number; state?: State; id?: number; ok?: boolean }
 

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { AgentBrowser } from "../src/browser.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { removeDir, tempDir, waitFor } from "./support.js";
+import { removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const root = tempDir("petrina-agent-lifetime-");
 afterAll(() => removeDir(root));

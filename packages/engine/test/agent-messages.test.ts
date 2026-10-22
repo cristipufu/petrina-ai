@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { AgentMessages, type AgentMessage } from "../src/agent-messages.js";
-import { waitFor } from "./support.js";
+import { waitFor } from "./fixtures.js";
 
 it("publishes public text while a turn is still running, coalescing token chunks into one bubble", async () => {
   const seen: AgentMessage[] = [];

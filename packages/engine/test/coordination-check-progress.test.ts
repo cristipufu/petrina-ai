@@ -8,7 +8,7 @@ import * as gitOps from "../src/git.js";
 import { Engine } from "./engine.js";
 import { Aborted } from "../src/kernel.js";
 import { Coordination } from "../src/coordination.js";
-import { git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 const engines: Engine[] = [];

@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "./engine.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

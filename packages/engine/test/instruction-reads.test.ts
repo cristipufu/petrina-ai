@@ -8,7 +8,7 @@ import { Context } from "../src/context.js";
 import { Engine } from "./engine.js";
 import { fileAt } from "../src/git.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
-import { makeProduct, removeDir, SLOW, tempDir } from "./support.js";
+import { makeProduct, removeDir, SLOW, tempDir } from "./fixtures.js";
 
 const folder = tempDir("petrina-instruction-read-");
 writeFileSync(join(folder, "package.json"), '{"private":true,"type":"module"}');

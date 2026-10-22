@@ -8,7 +8,7 @@ import sharp from "sharp";
 import { capturePath, guardCaptureWrites, preserveCaptures } from "../src/captures.js";
 import { restartPrompt, formatWhereYouWere } from "../src/prompts.js";
 import { BuildResult, TestResult, ObjectionsResult, ReviewResult, NotesResult } from "../src/roles.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const root = tempDir("petrina-captures-");
 afterAll(() => removeDir(root));

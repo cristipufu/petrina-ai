@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { removeDir, git, makeProduct, tempDir } from "./support.js";
+import { removeDir, git, makeProduct, tempDir } from "./fixtures.js";
 
 const root = tempDir("petrina-test-git-env-");
 afterAll(() => removeDir(root));

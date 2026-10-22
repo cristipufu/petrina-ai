@@ -15,7 +15,7 @@ import { dispatch } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { WaitClock, WorkLog } from "../src/worklog.js";
-import { removeDir, SLOW, testBrowserRoot, testGitEnv } from "./support.js";
+import { removeDir, SLOW, testBrowserRoot, testGitEnv } from "./fixtures.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const fakeCodex = join(import.meta.dir, "fake-codex.ts");

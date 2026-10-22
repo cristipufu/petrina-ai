@@ -9,7 +9,7 @@ import { EngineClient } from "../src/engine-client.js";
 import { exitCode } from "../src/coordination-cli.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
-import { removeDir, tempDir, waitFor } from "./support.js";
+import { removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 const engines: Engine[] = [];

@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pipelineOf, queueOf, slotUses, type State } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 

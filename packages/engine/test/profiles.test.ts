@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { Engine } from "./engine.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 it("recovers duplicate profile choices once and retains the old definition only for history", async () => {
   const root = tempDir("profile-recovery-");

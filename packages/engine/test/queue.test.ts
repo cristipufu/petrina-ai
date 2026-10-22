@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { queueOf } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { dispatch } from "../src/server.js";
-import { makeProduct, removeDir, tempDir } from "./support.js";
+import { makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 const dir = tempDir("petrina-keyboard-queue-");
 const engine = new Engine(join(dir, "data"));

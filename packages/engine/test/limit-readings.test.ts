@@ -4,7 +4,7 @@ import { grokReports } from "../src/grok-usage.js";
 import { expect, it, spyOn } from "bun:test";
 import { dispatch } from "../src/server.js";
 import { Engine } from "./engine.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 it("strictly checks readings requests, bounds their pages, freezes them and never refreshes accounts", async () => {
   const dir = tempDir("limit-readings-");

@@ -7,7 +7,7 @@ import { Engine } from "./engine.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import { SourcePointers } from "../src/roles.js";
 import { currentSourcePointers } from "../src/source-pointers.js";
-import { git, makeProduct, removeDir, tempDir } from "./support.js";
+import { git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 it("carries only bounded current source locations to design or a first builder, never independent reviewers", async () => {
   const root = tempDir("petrina-source-pointers-");

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { ReviewResult } from "../src/roles.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

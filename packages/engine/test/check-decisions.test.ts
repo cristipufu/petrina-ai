@@ -3,7 +3,7 @@ import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "../src/repository-context.js";
 import { mcpTools } from "../src/mcp.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

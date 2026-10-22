@@ -11,7 +11,7 @@ import type { Context } from "../src/context.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import type { Updates } from "../src/update.js";
 import type { Learnings } from "../src/learnings.js";
-import { git, makeProduct, removeDir, tempDir } from "./support.js";
+import { git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

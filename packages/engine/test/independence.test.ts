@@ -6,7 +6,7 @@ import { draftOf, independentVotes, slotUses } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { ADAPTERS } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

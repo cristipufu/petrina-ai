@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { addCopy, commitAll, commitTree, contains, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { childState } from "../src/process-tree.js";
-import { defunctProcess, firstLine, removeDir, testGitEnv, waitFor } from "./support.js";
+import { defunctProcess, firstLine, removeDir, testGitEnv, waitFor } from "./fixtures.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();

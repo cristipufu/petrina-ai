@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { childState, descendantsKnown, lostExit, parseChildState, parseDescendants, readProcessList, sharedRead } from "../src/process-tree.js";
-import { defunctProcess, removeDir, tempDir, waitFor } from "./support.js";
+import { defunctProcess, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const snapshot = "11 10\n12 11\n40 1\n";
 

@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor, SLOW } from "./support.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor, SLOW } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { journeyView, mainLine, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import type { NativeStep, Scenario } from "./fake-agent.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 // A native harness reporting its own reconnect, end to end: the participant's status on the task, its card,
 // Right now and its live flow step, with no prompt, retry loop or capacity record of Petrina's own.

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { draftOf, journeyProblems, JOURNEY_WORDS as W, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

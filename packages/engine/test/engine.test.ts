@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { removeDir, SLOW, testGitEnv } from "./support.js";
+import { removeDir, SLOW, testGitEnv } from "./fixtures.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));

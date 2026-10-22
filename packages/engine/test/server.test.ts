@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { Engine } from "./engine.js";
 import { serve } from "../src/server.js";
-import { removeDir, tempDir, waitFor } from "./support.js";
+import { removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const dir = tempDir("petrina-server-");
 const engine = new Engine(join(dir, "data"));

@@ -6,7 +6,7 @@ import { ownSession } from "../src/env.js";
 import { AgentRun } from "../src/acp-run.js";
 import { readProcessList } from "../src/process-tree.js";
 import { backgroundCommand } from "../src/codex-background.js";
-import { Fakes, removeDir, SLOW, tempDir } from "./support.js";
+import { Fakes, removeDir, SLOW, tempDir } from "./fixtures.js";
 
 const root = tempDir("petrina-managed-launch-");
 afterAll(() => removeDir(root));

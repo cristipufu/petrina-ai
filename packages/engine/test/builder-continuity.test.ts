@@ -6,7 +6,7 @@ import { draftOf, slotUses, slotWait } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { stepKey } from "../src/kernel.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

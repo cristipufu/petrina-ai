@@ -11,7 +11,7 @@ import * as gitOps from "../src/git.js";
 import { sessionState } from "../src/terminal.js";
 import type { CliScript } from "./fake-cli.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, git, makeProduct, newProgramsStart, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, newProgramsStart, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 beforeAll(() => newProgramsStart());

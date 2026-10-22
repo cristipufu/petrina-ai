@@ -6,7 +6,7 @@ import { FEWER_START, slotUses, type State } from "@petrina/core";
 import { codexReports, readCodexUsage } from "../src/codex-usage.js";
 import { Engine } from "./engine.js";
 import type { CodexScript } from "./fake-codex.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const fakeCodex = join(import.meta.dir, "fake-codex.ts");
 const fakeAgent = join(import.meta.dir, "fake-agent.ts");

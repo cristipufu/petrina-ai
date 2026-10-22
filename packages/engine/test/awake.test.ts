@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { IdleSleepAssertion } from "../src/awake.js";
 import { Engine } from "./engine.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

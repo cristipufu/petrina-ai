@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { Simulator, type NewTaskInput, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [], engines: Engine[] = [];
 afterAll(async () => {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { AcceptedPoints } from "../src/accepted-points.js";
 import { Engine } from "./engine.js";
 import { Learnings } from "../src/learnings.js";
-import { git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

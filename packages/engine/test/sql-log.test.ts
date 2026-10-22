@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Store } from "../src/store.js";
 import { WorkLog } from "../src/worklog.js";
 import { logSqlExecutions, SqlExecutionLog } from "../src/sql-log.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const root = tempDir("petrina-sql-log-");
 afterAll(() => removeDir(root));

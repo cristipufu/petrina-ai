@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Engine } from "./engine.js";
 import { executionFor } from "../src/repository-context.js";
 import { beginSideStep } from "../src/side-step.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

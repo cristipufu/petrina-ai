@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BUILT_IN_ROLES, journeyProblems, stepName, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const posix = process.platform !== "win32";
 const roots: string[] = [];

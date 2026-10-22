@@ -6,7 +6,7 @@ import { makeWorld, Fakes, FAKE_AGENT, until, removeDir } from "./support.js";
 import { normalizePlan } from "../src/plan.js";
 import { plannerRoles } from "../src/roles.js";
 import type { Engine } from "./engine.js";
-import { git } from "./support.js";
+import { git } from "./fixtures.js";
 
 function setup(name: string, behavior: Parameters<Fakes["scenario"]>[0]["maintenance"], objectFormat?: "sha1" | "sha256") {
   const world = makeWorld(`maintenance-${name}`, { objectFormat }), fakes = new Fakes(join(world.dir, "agents"));

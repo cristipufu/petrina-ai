@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { dispatch } from "../src/server.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [], engines: Engine[] = [];
 afterAll(async () => { await Promise.all(engines.map((engine) => engine.shutdown())); roots.forEach(removeDir); });

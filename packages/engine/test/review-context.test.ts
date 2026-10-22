@@ -10,7 +10,7 @@ import { Coordination } from "../src/coordination.js";
 import { executionFor, repositoryView, scopesFor } from "../src/repository-context.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewConversationScope } from "../src/review-context.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "./fixtures.js";
 import type { Scenario } from "./fake-agent.js";
 
 const roots: string[] = [];

@@ -8,7 +8,7 @@ import { AgentBrowser } from "../src/browser.js";
 import { executionFor } from "../src/repository-context.js";
 import { currentStepAssignment } from "../src/prompts.js";
 import { BuildResult, NotesResult, ReviewResult } from "../src/roles.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const ASSIGNMENT = "Current step assignment";
 const RESEARCH = "Research how agent hosts handle long waits";

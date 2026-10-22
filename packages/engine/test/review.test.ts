@@ -5,7 +5,7 @@ import { findingCount, reviewStats, ROLE_STARTS, type Task } from "@petrina/core
 import { Engine } from "./engine.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

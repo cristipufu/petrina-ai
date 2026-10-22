@@ -3,7 +3,7 @@ import { expect, it } from "bun:test";
 import { readFile, writeFile } from "node:fs/promises";
 import { createDemoState } from "@petrina/core";
 import { verificationContext } from "../src/verification-context.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 it("links earlier evidence to its node, code and confirmed settings without presenting old passes as current", async () => {
   const root = tempDir("verification-context-");

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Context } from "../src/context.js";
 import { Engine } from "./engine.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
-import { makeProduct, removeDir, tempDir } from "./support.js";
+import { makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 it("keeps a design revision instruction in its original phase without dropping later product decisions or legacy notes", async () => {
   const root = tempDir("petrina-phase-notes-");

@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { BACKGROUND_FEATURES } from "../src/codex-background.js";
-import { removeDir, SLOW, tempDir, waitFor } from "./support.js";
+import { removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
 
 const root = tempDir("petrina-codex-background-");
 afterAll(() => removeDir(root));

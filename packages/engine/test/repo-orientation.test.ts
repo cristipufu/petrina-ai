@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RepoOrientation } from "../src/repo-orientation.js";
-import { git, makeProduct, removeDir, tempDir } from "./support.js";
+import { git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 it("reuses navigation for one committed tree and refreshes it when that tree changes", async () => {

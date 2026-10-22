@@ -2,7 +2,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import type { CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { removeDir, tempDir, waitFor } from "./support.js";
+import { removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

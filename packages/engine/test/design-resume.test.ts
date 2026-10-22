@@ -7,7 +7,7 @@ import { Engine } from "./engine.js";
 import { designConversationScope } from "../src/design.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

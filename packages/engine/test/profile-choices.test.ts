@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { dispatch } from "../src/server.js";
 import { Engine } from "./engine.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 import { demoProfileChoices } from "@petrina/core";
 
 it("reads model-specific native efforts without a prompt or browser", async () => {

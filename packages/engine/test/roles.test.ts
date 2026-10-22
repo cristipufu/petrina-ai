@@ -7,7 +7,7 @@ import { type MState, renameRoles } from "../src/kernel.js";
 import type { PromptContext } from "../src/prompts.js";
 import { contractFor, ROLE_CONTRACTS, shapeFor } from "../src/roles.js";
 import { Store } from "../src/store.js";
-import { makeProduct, removeDir, tempDir } from "./support.js";
+import { makeProduct, removeDir, tempDir } from "./fixtures.js";
 import { Context } from "../src/context.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import { designReviewCases } from "./design-review-cases.js";

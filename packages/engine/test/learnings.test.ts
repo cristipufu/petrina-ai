@@ -8,7 +8,7 @@ import { Engine } from "./engine.js";
 import { addLearnings, Learnings } from "../src/learnings.js";
 import { hasPoint } from "../src/points.js";
 import * as gitOps from "../src/git.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

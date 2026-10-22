@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { TaskSource, WorkChoice } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

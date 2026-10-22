@@ -4,7 +4,7 @@ import { Engine } from "./engine.js";
 import { claudeReports } from "../src/claude-usage-report.js";
 import { claudeAccountReports } from "../src/claude-usage.js";
 import { limitFromFailure } from "../src/usage.js";
-import { removeDir, tempDir } from "./support.js";
+import { removeDir, tempDir } from "./fixtures.js";
 
 const NOW = Date.parse("2026-10-21T12:00:00Z"), HOUR = 3_600_000;
 const claude: AgentProfile = { id: "opus-high", toolId: "claude-code", model: "Opus", modelId: "opus", effort: "high" };

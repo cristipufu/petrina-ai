@@ -6,7 +6,7 @@ import { journeyProblems, slotUses, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Aborted } from "../src/kernel.js";
 import { WaitingForUsage } from "../src/usage.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

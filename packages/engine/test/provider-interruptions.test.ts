@@ -7,7 +7,7 @@ import { claudeInterruptions, codexInterruptions, GROK_OVERLOADED, grokInterrupt
 import { ADAPTERS } from "../src/tools.js";
 import { limitFromFailure, ModelAtCapacity, UsageLimited } from "../src/usage.js";
 import type { NativeStep, Scenario } from "./fake-agent.js";
-import { Fakes, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

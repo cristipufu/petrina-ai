@@ -5,7 +5,7 @@ import type { State, Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { serve } from "../src/server.js";
 import { Store } from "../src/store.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 describe("product settings in the engine", () => {
   it("enforces names and atomic saves through the API, preserves repository identity, and keeps old task choices", async () => {

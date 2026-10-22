@@ -8,7 +8,7 @@ import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { Aborted } from "../src/kernel.js";
 import { executionFor } from "../src/repository-context.js";
 import * as machine from "../src/check-interruption.js";
-import { makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

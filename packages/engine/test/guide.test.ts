@@ -6,7 +6,7 @@ import { Engine } from "./engine.js";
 import * as gitOps from "../src/git.js";
 import { appendPoints, cleanPoint, GUIDE, pointsText } from "../src/points.js";
 import type { Scenario } from "./fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
