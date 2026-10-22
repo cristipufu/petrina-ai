@@ -134,7 +134,9 @@ Most limits cover the whole tool. Claude Code's weekly Opus, Sonnet and Fable li
 
 One function (`chooseProfile` in `@petrina/core`, used through `Kernel.choose`) decides who really works a step: the planned profile when it is free, else another model on the same tool, else a profile on another tool (the same effort first, in the order of the profile list, never one the coordinator removed). It is used wherever an agent is chosen, so the slots count the right tool. With nobody left, the task waits without a slot ("Waiting for usage: …") and starts by itself when a limit ends.
 
-The plan is never rewritten: once the limit is over, later steps use the planned profile again. A usage stand-in whose tool is already at its cap yields to the next tool that has a seat (`chooseWithRoom`). The profile the plan named still waits for its own tool: the cap is there so one tool cannot take every seat.
+The plan is never rewritten: once the limit is over, later steps use the planned profile again, except returning Builders and eligible saved design or findings-review participants. A design or review seat keeps its own stand-in conversation across rounds only when its scope and planned profile still match, the coordinator did not choose that seat's profile, effort matches, it is not standby, and the usual selection would keep it with current usage, model capacity, readiness, tool slots and independence. Admission and turns use the same preference; voters remain fresh. A failed context, base-history or native-reopen check before instructions discards the preference and selects normally with complete context and the saved failure reason. See [continued conversations](agents.md#continued-design-conversations).
+
+A usage stand-in whose tool is already at its cap yields to the next tool that has a seat (`chooseWithRoom`). The profile the plan named still waits for its own tool: the cap is there so one tool cannot take every seat.
 
 #### Continuing after a usage limit
 

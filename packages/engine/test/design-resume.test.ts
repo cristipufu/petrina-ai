@@ -1,6 +1,6 @@
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, createDemoState } from "@petrina/core";
 import { Engine } from "../src/engine.js";
@@ -12,13 +12,14 @@ import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-async function fixture(reopen: Scenario["reopen"], limited?: Scenario["limited"]) {
+async function fixture(reopen: Scenario["reopen"], limited?: Scenario["limited"], standIn?: "author" | "reviewer") {
   const root = tempDir("petrina-design-resume-"); roots.push(root);
   const data = join(root, "data");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "limits", builder: "plain", controlled: true, reviseBrief: true, reopen, limited });
   const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" };
   let engine = new Engine(data, options);
+  engine.setPoolPaused(true); await engine.checkTools();
   const productId = await engine.addProduct(makeProduct(root));
   const taskId = engine.addTask({ productId, title: "Agree on the greeting", description: "ORIGINAL-DESIGN-REQUEST: keep it welcoming." });
   const task = () => engine.task(taskId)!;
@@ -36,10 +37,107 @@ async function fixture(reopen: Scenario["reopen"], limited?: Scenario["limited"]
     tick();
     return task().journey?.some((step) => step.roleId === "design-reviewer" && step.round === 2 && step.endedAt) && task();
   }, "both participants to finish their second design round");
+  if (standIn) engine.s.pool.limited = [{ toolId: standIn === "author" ? "claude-code" : "codex", until: Date.now() + 3_600_000, reason: "Controlled usage limit" }];
+  engine.setPoolPaused(false);
   return { fakes, task, tick, done, engine: () => engine, restart: async () => { await engine.shutdown(); engine = new Engine(data, options); } };
 }
 
 describe.concurrent("design participants' own conversations", () => {
+  for (const side of ["author", "reviewer"] as const) it(`keeps the healthy ${side} stand-in after the planned tool recovers`, async () => {
+    const run = await fixture("resume", undefined, side);
+    try {
+      await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && Object.keys(run.task().designSessions ?? {}).length; }, "the first design reviewer to hold the round");
+      const first = run.fakes.received(side === "author" ? "architect" : "design reviewer")[0]!;
+      run.engine().s.pool.limited = [];
+      const task = await run.done();
+      const input = task.journey!.find((step) => step.round === 2 && step.roleId === (side === "author" ? "architect" : "design-reviewer"))!.agentInputs![0]!;
+      expect(input.mode).toBe("continued");
+      expect(input.requestedProfileId).toBe(side === "author" ? "opus-xhigh" : "sol-xhigh");
+      expect(input.profileId).toBe(side === "author" ? "sol-xhigh" : "grok-xhigh");
+      expect(input.taskDescription).toBeUndefined();
+      expect(input.selectionReason).toContain("while the planned");
+      expect(input.selectionReason).toContain("is available");
+      expect(run.fakes.opens().filter((entry) => entry.session === first.session).map((entry) => entry.how)).toEqual(["new", "resume"]);
+      const prompt = run.fakes.received(side === "author" ? "architect" : "design reviewer").at(-1)!.text;
+      expect(prompt).not.toContain("ORIGINAL-DESIGN-REQUEST");
+      const author = task.journey!.find((step) => step.round === 2 && step.roleId === "architect")!.agentInputs![0]!;
+      const reviewer = task.journey!.find((step) => step.round === 2 && step.roleId === "design-reviewer")!.agentInputs![0]!;
+      expect(run.engine().profile(author.profileId)!.toolId).not.toBe(run.engine().profile(reviewer.profileId)!.toolId);
+    } finally { await run.engine().shutdown(); }
+  });
+
+  for (const side of ["author", "reviewer"] as const) it(`records the usual near-limit policy for the ${side} stand-in after the planned tool recovers`, async () => {
+    const run = await fixture("resume", undefined, side);
+    try {
+      await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && Object.keys(run.task().designSessions ?? {}).length; }, "the first design reviewer to hold the round");
+      const roleId = side === "author" ? "architect" : "design-reviewer";
+      const earlier = run.fakes.received(side === "author" ? "architect" : "design reviewer");
+      const first = earlier[0]!;
+      const firstInput = run.task().journey!.find((step) => step.round === 1 && step.roleId === roleId)!.agentInputs![0]!;
+      const previous = run.engine().profile(firstInput.profileId)!;
+      run.engine().s.pool.limited = [];
+      const now = Date.now();
+      run.engine().s.pool.usage = [{ toolId: previous.toolId, kind: "seven_day", utilization: 0.9, status: "allowed", at: now, resetsAt: now + 3_600_000 }];
+      const task = await run.done();
+      const input = task.journey!.find((step) => step.round === 2 && step.roleId === roleId)!.agentInputs![0]!;
+      expect(input.requestedProfileId).toBe(side === "author" ? "opus-xhigh" : "sol-xhigh");
+      const prompt = run.fakes.received(side === "author" ? "architect" : "design reviewer")[earlier.length]!;
+      if (side === "author") {
+        expect(input.mode).toBe("fresh");
+        expect(input.profileId).toBe("opus-xhigh");
+        expect(input.taskDescription).toContain("ORIGINAL-DESIGN-REQUEST");
+        expect(input.selectionReason).toContain("The saved profile is near a usage limit; selected another tool at the same effort with room available.");
+        expect(input.selectionReason).not.toContain("independence");
+        expect(prompt.session).not.toBe(first.session);
+        expect(prompt.text).toContain("ORIGINAL-DESIGN-REQUEST");
+        expect(run.fakes.opens().filter((entry) => entry.session === first.session).map((entry) => entry.how)).toEqual(["new"]);
+      } else {
+        expect(input.mode).toBe("continued");
+        expect(input.profileId).toBe(previous.id);
+        expect(input.taskDescription).toBeUndefined();
+        expect(input.selectionReason).toContain("while the planned");
+        expect(prompt.session).toBe(first.session);
+        expect(prompt.text).not.toContain("ORIGINAL-DESIGN-REQUEST");
+        expect(run.fakes.opens().filter((entry) => entry.session === first.session).map((entry) => entry.how)).toEqual(["new", "resume"]);
+      }
+      expect(task.timeline.some((entry) => entry.roleId === roleId && entry.text === input.selectionReason)).toBe(true);
+    } finally { await run.engine().shutdown(); }
+  });
+
+  for (const failure of ["context", "native"] as const) it(`reselects the planned author with full context after a late ${failure} failure`, async () => {
+    const run = await fixture("resume", undefined, "author");
+    try {
+      await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && Object.keys(run.task().designSessions ?? {}).length; }, "the stand-in author to finish");
+      const prior = Object.values(run.task().designSessions!)[0]!;
+      const heard = run.fakes.received("architect").filter((entry) => entry.session === prior.sessionId).length;
+      run.engine().s.pool.limited = [];
+      if (failure === "context") rmSync(prior.context!.file);
+      else rmSync(join(run.fakes.dir, "conversations", `${prior.sessionId}.json`));
+      const task = await run.done();
+      const input = task.journey!.find((step) => step.round === 2 && step.roleId === "architect" && step.agentInputs?.length)!.agentInputs![0]!;
+      expect(input.mode).toBe("fresh");
+      expect(input.profileId).toBe("opus-xhigh");
+      expect(input.taskDescription).toContain("ORIGINAL-DESIGN-REQUEST");
+      expect(input.selectionReason).toContain(failure === "context" ? "saved context is unavailable" : "could not reopen");
+      expect(run.fakes.received("architect").filter((entry) => entry.session === prior.sessionId)).toHaveLength(heard);
+    } finally { await run.engine().shutdown(); }
+  });
+
+  it("drops the saved reviewer stand-in when the new author now uses its tool", async () => {
+    const run = await fixture("resume", undefined, "reviewer");
+    try {
+      await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length; }, "the stand-in reviewer to hold the round");
+      run.engine().s.pool.limited = [];
+      run.task().plan!.stages.find((stage) => stage.kind === "converge")!.profileIds[0] = "grok-xhigh";
+      const task = await run.done();
+      const input = task.journey!.find((step) => step.round === 2 && step.roleId === "design-reviewer")!.agentInputs![0]!;
+      expect(input.mode).toBe("fresh");
+      expect(input.profileId).toBe("sol-xhigh");
+      expect(input.taskDescription).toContain("ORIGINAL-DESIGN-REQUEST");
+      expect(input.selectionReason).toContain("Selected a more independent tool or model for this review.");
+    } finally { await run.engine().shutdown(); }
+  });
+
   for (const reopen of ["resume", "load"] as const) {
     it(`uses ${reopen} for both participants, passes only new context, and records the exact round inputs`, async () => {
       const run = await fixture(reopen);

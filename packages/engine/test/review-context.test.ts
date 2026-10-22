@@ -488,7 +488,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       expect(inputs.find((input) => input.mode === "fresh")!.taskDescription).toContain("ORIGINAL-REVIEW-REQUEST");
       expect(inputs.find((input) => input.mode === "fresh")!.sections.some((section) => section.title === "Design brief")).toBe(true);
       expect(inputs.filter((input) => input.mode === "fresh").every((input) => !input.sections.some((section) => section.title === "The review base advanced since your last review"))).toBe(true);
-      const reason = changed === "context" ? "saved context is unavailable" : changed === "bases" ? "saved repository bases are unavailable" : changed === "native session" ? "Could not go back to its own review conversation" : "role, profile, request or starting point changed";
+      const reason = changed === "context" ? "saved context is unavailable" : changed === "bases" ? "saved repository bases are unavailable" : changed === "native session" ? "Could not go back to its own review conversation" : changed === "profile" ? "you changed who works on this seat" : "role, profile, request or starting point changed";
       expect(task.timeline.some((entry) => entry.text.includes(reason))).toBe(true);
     } finally { await f.engine().shutdown(); }
   });

@@ -18,6 +18,7 @@ import type { Learnings } from "./learnings.js";
 import { finishMessageGroup, routeMessages } from "./messages.js";
 import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
+import { participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
 import { completeAll } from "./parallel.js";
 
 /**
@@ -249,23 +250,16 @@ export class Reviews {
     return {
       reviewContext: true,
       resume: async (actual: AgentProfile, role: Role) => {
+        if (!planned) return;
+        const saved = participantConversation(this.k, scope, role, planned, seat);
+        if (!saved || saved.reason || saved.actual?.id !== actual.id) return;
         const prior = task.reviewSessions?.[stage.id]?.[seat];
-        if (!prior || prior.round >= round) return;
-        if (!prior.bases) {
-          this.k.log(scope, "status", "Started a fresh review conversation: its saved repository bases are unavailable", role.id, actual.id);
-          return;
-        }
-        if (prior.plannedProfileId === plannedId && prior.profileId === actual.id && prior.scope === reviewScopeKey(scope, stage.id, seat, role, planned, actual)) {
-          if (!(await reviewContextIntact(prior.context))) {
-            this.k.log(scope, "status", "Started a fresh review conversation: its saved context is unavailable", role.id, actual.id);
-            return;
-          }
-          const updates = await reviewBaseUpdates(scope, prior.bases, task.hunt?.input?.heads ?? {});
-          if (updates.reason) this.k.log(scope, "status", `Started a fresh review conversation: ${updates.reason}`, role.id, actual.id);
-          else return { ...prior, continuedSections: updates.sections };
-          return;
-        }
-        this.k.log(scope, "status", "Started a fresh review conversation: its role, profile, request or starting point changed", role.id, actual.id);
+        if (!prior) return;
+        if (!prior.bases) throw new ParticipantUnavailable("its saved repository bases are unavailable");
+        if (!(await reviewContextIntact(prior.context))) throw new ParticipantUnavailable("its saved context is unavailable");
+        const updates = await reviewBaseUpdates(scope, prior.bases, task.hunt?.input?.heads ?? {});
+        if (updates.reason) throw new ParticipantUnavailable(updates.reason);
+        return { ...prior, reselect: true, continuedSections: updates.sections };
       },
       started: () => {
         // An interrupted parallel attempt starts fresh unless it saved a screen conversation.

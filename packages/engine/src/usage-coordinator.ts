@@ -6,6 +6,7 @@ import { contractFor, stepBack } from "./roles.js";
 import { ADAPTERS } from "./tools.js";
 import type { UsageReader } from "./usage-reader.js";
 import { agentEnv } from "./env.js";
+import { participantConversation } from "./participant-conversation.js";
 import { join } from "node:path";
 import { CAPACITY_RETRY_DELAYS_MS, capacityWaiting, MODEL_CAPACITY_WAIT_MS, type ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 type UsageHost = Pick<Kernel, "s" | "profile" | "role" | "tracking" | "activeState" | "stopped" | "schedule" | "commitNow" | "commit" | "log" | "named">;
@@ -223,6 +224,36 @@ export class UsageCoordinator {
       const kept = chooseWithRoom(candidates, owed, now, rules, room);
       if (kept.kind === "planned" && kept.profile.id === owed.id) return { kind: "substitute", profile: owed, reason: "Continued the conversation that was waiting out a full model." };
     }
+    const participant = scope && role && !screen ? participantConversation(this.k, scope, role, planned, reviewerKey) : undefined;
+    let freshReason = participant?.reason;
+    const previous = participant?.actual;
+    if (participant && !freshReason && previous) {
+      const standIn = previous.id !== planned.id;
+      if (standIn && participant.coordinator) freshReason = "you chose this seat's profile, so it returns to your choice when available";
+      else if (standIn && previous.standby) freshReason = "its saved profile is a standby profile";
+      else if (standIn && previous.effort !== planned.effort) freshReason = "its saved profile has a different effort from the planned profile";
+      else if (limitOf(state.pool, previous, now)) freshReason = "its saved profile is out of usage";
+      else if (modelFull(previous)) freshReason = "its saved model is full";
+      else if (room && !room(previous.toolId, previous)) freshReason = "its saved tool has no free agent slot";
+      else {
+        const check = state.setup?.checks.find((check) => check.id === previous.toolId);
+        if (standIn && check?.checking) return { kind: "none", waiting: `Checking ${this.toolName(previous.toolId)} before returning to its saved conversation` };
+        if (!candidates.profiles.some((profile) => profile.id === previous.id) || !candidates.tools.some((tool) => tool.id === previous.toolId && tool.status === "ready")) {
+          freshReason = `its saved tool is ${check?.status === "logged-out" ? "logged out" : "not ready"}`;
+        } else if (standIn) {
+          const kept = chooseWithRoom(candidates, previous, now, rules, room);
+          if (kept.kind === "planned" && kept.profile.id === previous.id) {
+            const usual = chooseWithRoom(candidates, planned, now, rules, room);
+            const recovered = usual.kind === "planned" && usual.profile.id === planned.id;
+            return { kind: "substitute", profile: previous, reason: `Kept its own conversation on ${this.k.named(previous.id)}${recovered ? ` while the planned ${this.k.named(planned.id)} is available` : ` for the seat planned for ${this.k.named(planned.id)}`}.` };
+          }
+          // The saved profile is treated as planned for this check. Preserve why the usual
+          // choice rejected it, whether for usage headroom or review independence.
+          freshReason = (kept.kind === "none" ? kept.waiting : kept.reason ?? "the usual selection requires a different profile")
+            .replaceAll("planned profile", "saved profile").replace(/\.$/, "");
+        }
+      }
+    }
     const choice = chooseWithRoom(candidates, planned, now, rules, room);
     const full = fullOnly(planned);
     if (choice.kind === "none" && full) return { kind: "none", waiting: capacityWaiting(full, now) };
@@ -238,7 +269,9 @@ export class UsageCoordinator {
         if (next.kind !== "none") return next;
       }
     }
-    return choice;
+    return choice.kind !== "none" && participant && (participant.reason || choice.profile.id !== participant.prior.profileId)
+      ? { ...choice, reason: `Started a fresh conversation: ${freshReason ?? "the usual selection requires a different profile"}. ${choice.reason ?? ""}` }
+      : choice;
   }
 
   /**

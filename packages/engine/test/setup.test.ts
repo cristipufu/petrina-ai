@@ -799,7 +799,7 @@ describe("The squad uses tools that are ready", () => {
       expect(item).toMatchObject({ toolProblem: "wont-start" });
       expect(item.body).toContain("to see whether Codex works");
       const task = taskOf(state, taskId);
-      expect(task.timeline.some((entry) => entry.text === "Planner started" && entry.profileId === "sol-high")).toBe(true);
+      expect(task.timeline.filter((entry) => entry.text === "Planner started" && entry.profileId === "sol-high")).toHaveLength(1);
       const planner = task.journey!.find((step) => step.roleId === "planner")!;
       expect(planner).toMatchObject({ profileId: "sol-high", end: "failed", outcome: "Stuck", reason: task.error });
       expect(task.timeline.find((entry) => entry.text === "Stuck: Codex wouldn't start")?.step).toBe(planner.id);
@@ -825,6 +825,7 @@ describe("The squad uses tools that are ready", () => {
       expect(item.body).toContain("to see whether Codex works");
       expect(item.detail).toContain("Codex did not start within 2 seconds");
       expect(taskOf(state, taskId)).toMatchObject({ state: "failed", statusLine: "Stuck: Codex wouldn't start" });
+      expect(taskOf(state, taskId).timeline.filter((entry) => entry.text === "Planner started" && entry.profileId === "sol-high")).toHaveLength(1);
     } finally {
       engine.shutdown();
     }

@@ -1,6 +1,8 @@
 import { repositoryView, type RepositoryContext } from "./repository-context.js";
 import { designWorkKey } from "./repositories.js";
-import { createHash } from "node:crypto";
+import { designDigest as digest, designConversationScope, participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
+import { reviewContextIntact } from "./review-context.js";
+export { designConversationScope } from "./participant-conversation.js";
 // Design convergence: the architect writes the brief and a design reviewer objects, round after round,
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
@@ -11,12 +13,6 @@ import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 
-const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-/** A return is valid only for the same role, profiles, request and approved product sources. */
-export function designConversationScope(task: Task, role: unknown, planned: unknown, actual: unknown): string {
-  return digest({ role, planned, actual, productId: task.productId, path: task.worktree, title: task.title, request: task.description, source: task.source, base: task.baseSha, copies: task.repositories?.map((work) => ({ productId: work.productId, path: work.worktree, base: work.baseSha, source: work.source })) });
-}
-
 export class Design {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
 
@@ -24,13 +20,16 @@ export class Design {
     const { task, work: repository } = scope;
     const key = JSON.stringify([stage.id, side, repository.productId]);
     const planned = structuredClone(this.k.profile(plannedId));
-    const prior = task.designSessions?.[key];
-    const valid = prior && prior.plannedProfileId === plannedId && prior.scope === designConversationScope(repositoryView(scope), this.k.role(roleId), planned, this.k.profile(prior.profileId));
-    if (prior && !valid && !repository.conversation) this.k.log(scope, "status", "Started a fresh design conversation: its role, profile, request or starting point changed", roleId, plannedId);
-    const resume = valid ? { ...prior, ...(side === "author" && task.brief && prior.briefDigest === digest(task.brief) ? { knownSections: ["Design brief"] } : {}) } : undefined;
     let actual = planned;
     return {
-      resume,
+      resume: async (actual: import("@petrina/core").AgentProfile) => {
+        if (!planned) return;
+        const saved = participantConversation(this.k, scope, this.k.role(roleId)!, planned);
+        if (!saved || saved.reason || saved.actual?.id !== actual.id) return;
+        const prior = saved.prior;
+        if (!(await reviewContextIntact(prior.context))) throw new ParticipantUnavailable("its saved context is unavailable");
+        return { ...prior, reselect: true, ...(side === "author" && task.brief && "briefDigest" in prior && prior.briefDigest === digest(task.brief) ? { knownSections: ["Design brief"] } : {}) };
+      },
       used: (id: Id) => { actual = structuredClone(this.k.profile(id)); },
       remember: () => {
         const note = repository.conversation;

@@ -28,12 +28,13 @@ import { holdUnconfirmed, MessageTurn, recordMessage, takeMessages } from "./mes
 import { preserveCaptures } from "./captures.js";
 import { builderContext } from "./builder-context.js";
 import { recordToolActivity } from "./record-tool-activity.js";
+import { discardParticipant, ParticipantUnavailable } from "./participant-conversation.js";
 import type { ToolActivityEvent } from "./tool-invocations.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
 type Given = () => Section[] | Promise<Section[]>;
-type ResumeConversation = { sessionId: string; toolId: Id; model: string; context?: import("@petrina/core").BuilderContext; knownSections?: readonly string[]; continuedSections?: readonly Section[] };
+type ResumeConversation = { sessionId: string; toolId: Id; model: string; context?: import("@petrina/core").BuilderContext; knownSections?: readonly string[]; continuedSections?: readonly Section[]; reselect?: boolean };
 type ConversationOptions = {
   resume?: ResumeConversation | ((profile: AgentProfile, role: Role) => ResumeConversation | undefined | Promise<ResumeConversation | undefined>);
   reviewContext?: boolean;
@@ -156,6 +157,7 @@ export class Turns {
         return await this.attempt(scope, roleId, plannedId, profile, given, schema, signal, { ...options, selectionReason: [options.selectionReason, choice.reason].filter(Boolean).join(" ") });
       } catch (error) {
         if (signal.aborted) throw error;
+        if (this.discardUnavailableParticipant(scope, roleId, error, options.reviewerKey)) continue;
         if (error instanceof ModelAtCapacity) {
           // Keep the conversation and the work. The same model gets a few short continues before anyone else takes the step.
           // An agent that already has the screen keeps it: this is not a usage limit, and it does not give the screen up.
@@ -234,6 +236,7 @@ export class Turns {
     const assignment = assignedRole === roleId ? (designReview ? stage?.reviewerAssignments : stage?.assignments)?.[index] : undefined;
     const previous = step.agentInputs?.findLast(entry => entry.roleId === roleId && entry.profileId === profileId && entry.reviewerKey === reviewerKey);
     const reason = selectionReason || previous?.selectionReason;
+    if (reason && /^(Kept its own conversation|Started a fresh conversation:)/.test(reason)) this.k.log(scope, "status", reason, roleId, profileId);
     const input = {
       at: Date.now(),
       instructions,
@@ -316,13 +319,11 @@ export class Turns {
       }
     }
     this.k.pendingAgentAdmissions.delete(taskId);
-    repository.stepAttempts = (repository.stepAttempts ?? 0) + 1;
     // A step that starts fresh (a new step, after a pause, Try again) drops the old to-do item and starts its clock again.
     // After a restart, or with a stand-in taking over, both stay: the to-do item shows until the agent names its own.
     if (!same) delete task.todo;
     const reviewWork = options.reviewKey ? task.hunt?.work?.[options.reviewKey] : undefined;
     if (reviewWork) {
-      reviewWork.attempts = (reviewWork.attempts ?? 0) + 1;
       reviewWork.clock = reviewWork.clock ? resumeClock(reviewWork.clock, Date.now()) : startClock(repositoryView(scope), roleId, Date.now());
       delete reviewWork.waiting;
       task.stepClock = reviewWork.clock;
@@ -348,8 +349,6 @@ export class Turns {
       task.statusLine = options.status ?? `${role.name} is getting back to work`;
     } else {
       task.statusLine = options.status ?? `${role.name} is starting`;
-      this.k.say(scope, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-      this.k.log(scope, "milestone", `${role.name} started`, roleId, profileId);
     }
     if (same) { same.role = role; same.access = access; }
     this.k.commitNow(scope);
@@ -364,8 +363,17 @@ export class Turns {
     ]);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
     const opened = await this.openAgentRun(scope, role, profile, worktree, signal, agent, {
-      main: true, reviewKey: options.reviewKey, sessionId: (reopen ?? back)?.sessionId,
+      main: true, reviewKey: options.reviewKey, sessionId: (reopen ?? back)?.sessionId, reselect: back?.reselect,
+      onStarting: () => {
+        if (saved) return;
+        this.k.say(scope, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+        this.k.log(scope, "milestone", `${role.name} started`, roleId, profileId);
+      },
     });
+    // A failed cross-round reopen may choose again without receiving any instructions.
+    // Count only the startup that succeeded, so current notes stay current.
+    repository.stepAttempts = (repository.stepAttempts ?? 0) + 1;
+    if (reviewWork) reviewWork.attempts = (reviewWork.attempts ?? 0) + 1;
     const notBack = opened.reopenFailure;
     if (reopen && opened.reopenFailure) again = opened.reopenFailure;
     const { run } = opened;
@@ -607,10 +615,10 @@ export class Turns {
         this.prepareCapacityRetry(scope, roleId, stopped.profileId, stopped.error, options.member);
         throw new WaitingForCapacity(this.capacityWords(scope, stopped.profileId));
       }
-      // A later stand-in still has to fit the seat this member already holds. With no room, the group waits.
-      if (stopped && options.room && !options.room(profile.toolId, profile)) {
+      // Every new choice, including after a failed cross-round reopen, must fit this member's seat.
+      if (!accepted && options.room && !options.room(profile.toolId, profile)) {
         const tool = this.k.s.tools.find((entry) => entry.id === profile.toolId)?.name ?? profile.toolId;
-        if (!(stopped.error instanceof ModelAtCapacity)) this.k.tracking.owesRetry(scope, roleId, plannedId);
+        if (stopped && !(stopped.error instanceof ModelAtCapacity)) this.k.tracking.owesRetry(scope, roleId, plannedId);
         throw new WaitingForUsage(`Waiting for a free ${tool} slot`);
       }
       if (stopped && stopped.profileId === profile.id) throw stopped.error;
@@ -626,7 +634,7 @@ export class Turns {
       const previous = task.hunt?.work?.[key];
       const work = {
         ...previous,
-        attempts: (previous?.attempts ?? 0) + 1,
+        attempts: previous?.attempts ?? 0,
         clock: previous?.clock ? resumeClock(previous.clock, Date.now()) : startClock(repositoryView(scope), roleId, Date.now()),
       };
       delete work.waiting;
@@ -640,6 +648,7 @@ export class Turns {
         return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, selectionReason, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error instanceof ModelAtCapacity ? { refusal: "the selected model is at capacity" } : stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
       } catch (error) {
         if (signal.aborted) throw error;
+        if (this.discardUnavailableParticipant(scope, roleId, error, options.reviewerKey)) continue;
         if (error instanceof ModelAtCapacity) {
           refresh = true;
           work.clock = pauseClock(work.clock, Date.now());
@@ -693,24 +702,28 @@ export class Turns {
     const team = group?.kind === "agent" && group.roleId === journeyRole ? group.team ?? (group.profileId ? [group.profileId] : []) : [];
     const journeyStep = beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, [...new Set([...team, profileId])], repository);
     if (role.result === "build") journeyStep.buildProductId = repository.productId;
-    if (options.took) {
-      const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ${options.took.refusal ? `could not continue (${options.took.refusal})` : "ran out of usage"}`;
-      this.k.say(scope, "system", words, roleId, profileId);
-      this.k.log(scope, "milestone", words, roleId, profileId);
-    } else {
-      this.k.say(scope, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-      this.k.log(scope, "milestone", `${role.name} started`, roleId, profileId);
-    }
     this.k.commit(scope);
     const agent: TurnAgent = { roleId, profile, waits: new WaitClock(), journeyId: journeyStep.id, agentSeat: options.reviewerKey ?? options.key ?? roleId };
     const offered = typeof options.resume === "function" ? await options.resume(profile, role) : options.resume;
     // A same-round capacity wait is not an older round's saved review. Reopen that conversation for a short continue.
     const held = !offered ? task.capacityResume?.find((entry) => entry.roleId === roleId && entry.profileId === profileId && entry.member === options.member) : undefined;
     const opened = await this.openAgentRun(scope, role, profile, copy, signal, agent, {
-      main: false, reviewKey: options.key, sessionId: offered?.sessionId ?? held?.sessionId,
+      main: false, reviewKey: options.key, sessionId: offered?.sessionId ?? held?.sessionId, reselect: offered?.reselect,
+      onStarting: () => {
+        if (options.took) {
+          const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ${options.took.refusal ? `could not continue (${options.took.refusal})` : "ran out of usage"}`;
+          this.k.say(scope, "system", words, roleId, profileId);
+          this.k.log(scope, "milestone", words, roleId, profileId);
+        } else {
+          this.k.say(scope, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+          this.k.log(scope, "milestone", `${role.name} started`, roleId, profileId);
+        }
+      },
     });
     if (opened.reopenFailure) this.k.log(scope, "status", `Could not go back to its own review conversation (${opened.reopenFailure}), so it started fresh`, roleId, profileId);
     const { run, off } = opened;
+    const work = task.hunt?.work?.[options.key];
+    if (work) work.attempts = (work.attempts ?? 0) + 1;
     options.started?.();
     const wentBack = offered !== undefined && run.reopened !== undefined;
     const capacityBack = held !== undefined && run.reopened !== undefined;
@@ -997,7 +1010,7 @@ export class Turns {
 
   /** Shared startup, callbacks and reopen fallback for main turns and parallel members. */
   private async openAgentRun(scope: RepositoryContext, role: Role, profile: AgentProfile, cwd: string, signal: AbortSignal, agent: TurnAgent,
-    options: { main: boolean; reviewKey?: string; sessionId?: string }): Promise<{ run: AgentRun; off?: string; reopenFailure?: string }> {
+    options: { main: boolean; reviewKey?: string; sessionId?: string; reselect?: boolean; onStarting?: () => void }): Promise<{ run: AgentRun; off?: string; reopenFailure?: string }> {
     const { task } = scope, roleId = role.id, profileId = profile.id;
     const callbacks = {
       onMessage: this.messageStream(scope, roleId, profileId, signal, options.main),
@@ -1068,15 +1081,38 @@ export class Turns {
       if (sessionId !== undefined || signal.aborted || error instanceof SandboxUnavailable) throw error;
       throw await this.tools.problem(profile.toolId, error);
     });
+    // Ordinary starts remain visible even when the tool fails to open. A cross-round
+    // reopen is only a probe until it succeeds, and must not announce abandoned work.
+    let announced = false;
+    const announce = () => {
+      if (announced || signal.aborted) return;
+      announced = true;
+      options.onStarting?.();
+    };
     let reopenFailure: string | undefined;
     if (options.sessionId) {
-      try { return await start(options.sessionId); }
-      catch (error) {
+      if (!options.reselect) announce();
+      try {
+        const opened = await start(options.sessionId);
+        announce();
+        return opened;
+      } catch (error) {
         if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
+        if (options.reselect) throw new ParticipantUnavailable(`the tool could not reopen its saved conversation (${error.message})`);
         reopenFailure = error.message;
       }
     }
+    announce();
     return { ...await start(), ...(reopenFailure ? { reopenFailure } : {}) };
+  }
+
+  private discardUnavailableParticipant(scope: RepositoryContext, roleId: Id, error: unknown, reviewerKey?: string): boolean {
+    if (!(error instanceof ParticipantUnavailable)) return false;
+    if (!discardParticipant(scope, this.k.role(roleId, scope.task)!, error.message, reviewerKey)) return false;
+    const kind = this.k.role(roleId, scope.task)?.result === "findings" ? "review conversation" : "conversation";
+    this.k.log(scope, "status", `Could not go back to its own ${kind}: ${error.message}. Choosing this seat again before sending instructions.`, roleId);
+    this.k.commitNow(scope);
+    return true;
   }
 
   /**

@@ -196,7 +196,7 @@ export interface TaskDesignState {
   /** The coordinator's call on a disagreement. It stays, so no later design check reopens the design it settled. */
   call?: DesignCall;
   /** Separate completed design conversations per stage, participant and product. Never shared between author and reviewer. */
-  designSessions?: Readonly<Record<string, { scope: string; plannedProfileId: Id; profileId: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; briefDigest?: string }>>;
+  designSessions?: Readonly<Record<string, { scope: string; plannedProfileId: Id; profileId: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; briefDigest?: string; freshReason?: string }>>;
   /** Changes were asked at this design check: earlier checks of the same design pass by themselves on the way back to it. */
   returnToCheck?: number;
   designRevision?: number;
@@ -217,6 +217,7 @@ export interface TaskReviewState {
     context?: BuilderContext;
     /** Immutable bases this seat last reviewed; older saved seats start fresh once. */
     bases?: Readonly<Record<Id, string>>;
+    freshReason?: string;
   }>>>>;
   /** A review round's parallel work so far, so a restart only redoes what had not finished. */
   hunt?: Hunt;

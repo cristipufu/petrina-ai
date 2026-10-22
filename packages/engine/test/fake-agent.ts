@@ -211,6 +211,10 @@ interface ConfigOption {
 const dir = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
 const tool = process.argv.find((arg) => arg.startsWith("--tool="))?.slice("--tool=".length) as "claude-code" | "codex" | "grok" | "antigravity" | undefined;
 const recordedTool = process.argv.find((arg) => arg.startsWith("--record-tool="))?.slice("--record-tool=".length) ?? tool ?? "";
+const traceStartup = (stage: string, sessionId?: string) => {
+  if (dir && process.argv.includes("--trace-startup")) appendFileSync(join(dir, "startup.jsonl"), `${JSON.stringify({ pid: process.pid, at: Date.now(), stage, tool: recordedTool, sessionId })}\n`);
+};
+traceStartup("started");
 const sessions = new Map<string, Conversation>();
 const cancels = new Map<string, () => void>();
 const block = (value: unknown, prose = "Done.") => `${prose}\n\n\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
@@ -1279,7 +1283,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     }
     default: {
       // Source-start tests only need the added reviewer to see the brief. Blocking would open a vote and a fix round.
-      if (plan.addedReviewer === "pass" && roleOf(text) === "security specialist") return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
+      if (plan.addedReviewer === "pass" && session.role === "security specialist") return done({ verdict: "pass", findings: [], confirms: [], disputes: [] });
       // A reviewer the coordinator added answers in the review's shape: it blocks once, then passes.
       // The first time, it disputes the code reviewer's suggestion without a reason, then gives one when Petrina refuses that.
       const blocks = { verdict: "fail", findings: [{ text: SECURITY_FINDING, where: "greeting.txt:1", severity: "important", evidence: "Nothing limits it." }], confirms: [] };
@@ -1359,6 +1363,7 @@ function responseFor(reply: Reply, session: Conversation) {
 acp
   .agent({ name: "fake-agent" })
   .onRequest("initialize", async (ctx) => {
+    traceStartup("initialize");
     // After the answer, never before it: the login it runs on, or "none".
     if (!silentLogin) setImmediate(() => void ctx.client.notify("_auth/status_update", { authStatus: notLoggedIn ? { kind: "none", label: "Not logged in" } : { kind: "account", label: "Fake plan" } }).catch(() => undefined));
     const how = scenario().reopen;
@@ -1366,6 +1371,7 @@ acp
     return { protocolVersion: acp.PROTOCOL_VERSION, ...(scenario().live ? { _meta: { steering: { supported: true } } } : {}), agentCapabilities: { loadSession: how === "resume" || how === "load", ...(how === "resume" || how === "stall" ? { sessionCapabilities: { resume: {} } } : {}) } };
   })
   .onRequest("session/new", async (ctx) => {
+    traceStartup("new");
     if (loggedOut) throw acp.RequestError.authRequired();
     if (hangs) await new Promise(() => undefined);
     const holdOpen = process.argv.find((arg) => arg.startsWith("--hold-open="))?.slice("--hold-open=".length);
@@ -1381,11 +1387,13 @@ acp
     return { sessionId, configOptions: sessions.get(sessionId)!.options };
   })
   .onRequest("session/resume", async (ctx) => {
+    traceStartup("resume", ctx.params.sessionId);
     // A tool that never answers: Petrina gives up and starts a fresh conversation.
     if (scenario().reopen === "stall") await new Promise(() => undefined);
     return { configOptions: reopen(ctx.params.sessionId, "resume", ctx.params._meta).options };
   })
   .onRequest("session/load", async (ctx) => {
+    traceStartup("load", ctx.params.sessionId);
     const conversation = reopen(ctx.params.sessionId, "load", ctx.params._meta);
     // Load streams the whole conversation back before it answers.
     for (const update of conversation.history) await ctx.client.notify(acp.methods.client.session.update, { sessionId: ctx.params.sessionId, update });
@@ -1394,6 +1402,7 @@ acp
     return { configOptions: conversation.options };
   })
   .onRequest("session/set_config_option", (ctx) => {
+    traceStartup(`config:${ctx.params.configId}`, ctx.params.sessionId);
     const session = sessions.get(ctx.params.sessionId)!;
     if (ctx.params.configId === "model") session.model = String(ctx.params.value);
     if (["effort", "reasoning_effort", "thinking_level"].includes(ctx.params.configId)) session.effort = String(ctx.params.value);
