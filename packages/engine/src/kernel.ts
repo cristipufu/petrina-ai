@@ -15,6 +15,7 @@ import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
 import type { Which } from "./setup.js";
+import type { MachineRecords } from "./check-interruption.js";
 import { Store } from "./store.js";
 import { stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
@@ -131,6 +132,8 @@ export interface EngineOptions {
   checkEveryMs?: number;
   /** Tests: how long "For an hour" lasts. */
   screenHourMs?: number;
+  /** Tests: where failed checks' sleep evidence comes from, instead of this Mac's power log. */
+  machineRecords?: MachineRecords;
   /** Tests: observe when the engine owns work, without starting the macOS sleep assertion. */
   awakeObserver?: (active: boolean) => void;
   /**

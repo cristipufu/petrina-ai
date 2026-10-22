@@ -19,6 +19,12 @@ export function powerInterruption(startedAt: number | undefined, endedAt: number
   }
 }
 
+/**
+ * Where an engine or a check run gets the machine's sleep records: the raw records, or "" when they are
+ * unavailable. The caller's stop signal cancels the read. Production uses the installed Mac power log.
+ */
+export type MachineRecords = (signal?: AbortSignal) => Promise<string>;
+
 type PowerLogCommand = (file: string, args: readonly string[], options: { timeout: number; maxBuffer: number; windowsHide: boolean; signal?: AbortSignal }, done: (error: Error | null, stdout: string) => void) => unknown;
 
 /** Bounded read-only use of the installed Mac power log; unavailable records prove no cause. */
@@ -29,7 +35,18 @@ export async function readMachinePowerRecords(execute: PowerLogCommand = execFil
   return new Promise<string>((resolve) => execute("/usr/bin/pmset", ["-g", "log"], { timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true, signal }, (error, stdout) => resolve(error || signal?.aborted ? "" : stdout)));
 }
 
-export async function machineInterruption(startedAt?: number, endedAt?: number, signal?: AbortSignal): Promise<CheckRun["interruption"] | undefined> {
+/** Production's source. A test that needs this Mac's own records passes it explicitly. */
+export const livePowerRecords: MachineRecords =(signal) => readMachinePowerRecords(execFile, process.platform, signal);
+
+/** One snapshot from a source. A failed read, or one that ends after a stop, is unavailable evidence. */
+export async function readMachineRecords(source: MachineRecords, signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) return "";
+  let records = "";
+  try { records = await source(signal); } catch { /* Unavailable: it proves no cause. */ }
+  return signal?.aborted ? "" : records;
+}
+
+export async function machineInterruption(startedAt?: number, endedAt?: number, signal?: AbortSignal, source: MachineRecords = livePowerRecords): Promise<CheckRun["interruption"] | undefined> {
   if (startedAt === undefined || endedAt === undefined || signal?.aborted) return;
-  return powerInterruption(startedAt, endedAt, await readMachinePowerRecords(undefined, undefined, signal));
+  return powerInterruption(startedAt, endedAt, await readMachineRecords(source, signal));
 }

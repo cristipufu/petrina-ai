@@ -10,10 +10,9 @@ import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
 import { mcpRequest, mcpTools } from "../src/mcp.js";
-import { runChecks } from "../src/checks.js";
 import { ToolInvocations } from "../src/tool-invocations.js";
 import { recordToolActivity } from "../src/record-tool-activity.js";
-import { CLI, firstLine, removeDir, tempDir, engineEnv, SLOW, waitFor } from "./support.js";
+import { CLI, firstLine, removeDir, runChecks, tempDir, engineEnv, SLOW, waitFor } from "./support.js";
 const roots: string[] = [];
 const engines: Engine[] = [];
 afterAll(async () => {

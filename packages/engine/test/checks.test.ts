@@ -1,23 +1,19 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
-import { CHECK_EXIT_UNREPORTED, checksFingerprint, commandText, detectChecks, parseCommand, runChecks } from "../src/checks.js";
+import { CHECK_EXIT_UNREPORTED, checksFingerprint, commandText, detectChecks, parseCommand } from "../src/checks.js";
 import { childState, CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
-import * as machine from "../src/check-interruption.js";
 import { Engine } from "./engine.js";
 import { Store } from "../src/store.js";
-import { defunctProcess, EngineProcess, Fakes, HARNESS, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
+import { defunctProcess, EngineProcess, Fakes, HARNESS, heldMachineRecords, makeProduct, powerLogSleep, removeDir, runChecks, SLOW, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
-// Check behavior and cleanup limits do not depend on the host's power-log read. Evidence cases
-// below supply their own records; the native reader's contract lives in check-interruption.test.ts.
-let powerRecords: ReturnType<typeof spyOn<typeof machine, "readMachinePowerRecords">>;
-beforeEach(() => { powerRecords = spyOn(machine, "readMachinePowerRecords").mockResolvedValue(""); });
-afterEach(() => powerRecords.mockRestore());
+// Check behavior and cleanup limits do not depend on the host's power-log read: the fixtures' check runs and
+// engines supply no records. Evidence cases pass their own; the native reader's contract lives in check-interruption.test.ts.
 const root = (prefix: string) => {
   const dir = tempDir(prefix);
   roots.push(dir);
@@ -137,19 +133,19 @@ describe("a product's checks", () => {
       stderr: new Response("Details kept\n").body!,
     } as Bun.Subprocess<"ignore", "pipe", "pipe">;
     const spawning = spyOn(Bun, "spawn").mockReturnValue(child);
-    const interruption = { source: "macOS power log" as const, at: Date.now(), event: "Recorded sleep" };
-    const evidence = spyOn(machine, "machineInterruption").mockResolvedValue(interruption);
+    // This run's own records: sleep that began a minute ago and lasted an hour.
+    const sleep = powerLogSleep(Date.now() - 60_000, 3600);
+    const reads: (AbortSignal | undefined)[] = [];
     try {
-      const runs = await runChecks(root("petrina-checks-ended-"), [{ name: "Already ended", argv: ["petrina-already-ended"] }], process.env, 200 * SLOW);
+      const runs = await runChecks(root("petrina-checks-ended-"), [{ name: "Already ended", argv: ["petrina-already-ended"] }], process.env, 200 * SLOW, undefined, undefined, undefined, undefined, async (signal) => { reads.push(signal); return sleep; });
       expect(runs, JSON.stringify(runs)).toEqual([expect.objectContaining({
         name: "Already ended", command: "petrina-already-ended", ms: expect.any(Number), ok: code === 0, output: "Check finished\nDetails kept\n",
         startedAt: expect.any(Number), endedAt: expect.any(Number),
       })]);
       expect(runs[0]!.ms).toBe(runs[0]!.endedAt! - runs[0]!.startedAt!);
-      expect(runs[0]!.interruption).toEqual(code === 0 ? undefined : interruption);
-      if (code === 0) expect(evidence).not.toHaveBeenCalled();
-      else expect(evidence).toHaveBeenCalledWith(runs[0]!.startedAt, runs[0]!.endedAt, undefined);
-    } finally { spawning.mockRestore(); evidence.mockRestore(); }
+      expect(runs[0]!.interruption).toEqual(code === 0 ? undefined : { source: "macOS power log", at: Date.parse(sleep.slice(0, 25)), event: expect.stringContaining("Entering Sleep state") });
+      expect(reads).toEqual(code === 0 ? [] : [undefined]);
+    } finally { spawning.mockRestore(); }
   });
 
   it("records a cancelled check without starting an environment investigation", async () => {
@@ -158,16 +154,16 @@ describe("a product's checks", () => {
       exited: Promise.resolve(1), stdout: new Response("Original diagnostic\n").body!, stderr: new Response("").body!,
     } as Bun.Subprocess<"ignore", "pipe", "pipe">;
     const spawning = spyOn(Bun, "spawn").mockImplementation(() => { stop.abort(); return child; });
-    const evidence = spyOn(machine, "machineInterruption").mockResolvedValue(undefined);
+    const reads: (AbortSignal | undefined)[] = [];
     try {
-      const runs = await runChecks(root("petrina-checks-cancelled-"), [{ name: "Stopped", argv: ["stopped-check"] }, { name: "Pending", argv: ["pending-check"] }], process.env, 30_000, stop.signal);
+      const runs = await runChecks(root("petrina-checks-cancelled-"), [{ name: "Stopped", argv: ["stopped-check"] }, { name: "Pending", argv: ["pending-check"] }], process.env, 30_000, stop.signal, undefined, undefined, undefined, async (signal) => { reads.push(signal); return ""; });
       expect(runs).toHaveLength(1);
       expect(runs[0]!.ok).toBe(false);
       expect(runs[0]!.interrupted).toBe(true);
       expect(runs[0]!.output).toBe("Original diagnostic\n");
-      expect(evidence).not.toHaveBeenCalled();
+      expect(reads).toEqual([]);
       expect(spawning).toHaveBeenCalledTimes(1);
-    } finally { spawning.mockRestore(); evidence.mockRestore(); }
+    } finally { spawning.mockRestore(); }
   });
 
   it("cancels evidence collection after a completed failure without starting pending checks", async () => {
@@ -176,19 +172,13 @@ describe("a product's checks", () => {
       exited: Promise.resolve(7), stdout: new Response("Original failure\n").body!, stderr: new Response("").body!,
     } as Bun.Subprocess<"ignore", "pipe", "pipe">;
     const spawning = spyOn(Bun, "spawn").mockReturnValue(child);
-    let ready!: () => void;
-    const started = new Promise<void>((resolve) => { ready = resolve; });
-    let release: ((records: string) => void) | undefined;
-    const evidence = spyOn(machine, "readMachinePowerRecords").mockImplementation((_execute, _platform, signal) => new Promise<string>((resolve) => {
-      release = resolve;
-      signal?.addEventListener("abort", () => resolve(""), { once: true });
-      ready();
-    }));
+    // A read racing the stop answers with sleep covering the check: it arrives too late to count.
+    const held = heldMachineRecords(powerLogSleep(Date.now() - 60_000, 3600));
     let running: ReturnType<typeof runChecks> | undefined;
     try {
-      running = runChecks(root("petrina-checks-evidence-stop-"), [{ name: "Failed", argv: ["failed-check"] }, { name: "Pending", argv: ["pending-check"] }], process.env, 30_000, stop.signal);
-      await started;
-      expect(evidence.mock.calls[0]![2]).toBe(stop.signal);
+      running = runChecks(root("petrina-checks-evidence-stop-"), [{ name: "Failed", argv: ["failed-check"] }, { name: "Pending", argv: ["pending-check"] }], process.env, 30_000, stop.signal, undefined, undefined, undefined, held.source);
+      await held.started();
+      expect(held.reads).toEqual([stop.signal]);
       stop.abort();
       const runs = await running;
       expect(runs).toHaveLength(1);
@@ -199,8 +189,8 @@ describe("a product's checks", () => {
       expect(runs[0]!.ms).toBe(runs[0]!.endedAt! - runs[0]!.startedAt!);
       expect(spawning).toHaveBeenCalledTimes(1);
     } finally {
-      stop.abort(); release?.(""); await running;
-      spawning.mockRestore(); evidence.mockRestore();
+      stop.abort(); held.answer(""); await running;
+      spawning.mockRestore();
     }
   });
 

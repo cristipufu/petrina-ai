@@ -4,7 +4,7 @@ import { beginRepair, acceptanceVersion } from "./repositories.js";
 // checks become findings with the real output. Running commands is in checks.ts.
 
 import { beginPetrinaStep, checkCounts, checkProblem, checkResult, incompleteCheckOutcome, decisionEvidence, gateStatus, evidenceFor, originalCheck, recordCheckReuse, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
-import { powerInterruption, readMachinePowerRecords } from "./check-interruption.js";
+import { livePowerRecords, powerInterruption, readMachineRecords, type MachineRecords } from "./check-interruption.js";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -51,15 +51,18 @@ export class ProductChecks {
 
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
 
+  /** This engine's one source of sleep records, for its checks and hooks, failure reuse and startup recovery. */
+  private get machineRecords(): MachineRecords { return this.k.options.machineRecords ?? livePowerRecords; }
+
   /** Recover trustworthy evidence once at startup, including decisions already waiting on the coordinator. */
-  async restoreEvidence(records?: string): Promise<void> {
+  async restoreEvidence(): Promise<void> {
     const observations = this.k.s.tasks.filter((task) => !["running", "done", "cancelled", "pr-open"].includes(task.state)).flatMap((task) => scopesFor(task).flatMap((scope) => (scope.work.checks?.results ?? []).filter((run) => !run.ok && !run.interruption && !run.interrupted).flatMap((run) => {
       const original = originalCheck(task, run)?.check;
       const start = run.startedAt ?? original?.startedAt, end = run.endedAt ?? original?.endedAt;
       return start !== undefined && end !== undefined ? [{ scope, run, start, end }] : [];
     })));
     if (!observations.length) return;
-    records ??= await readMachinePowerRecords(undefined, undefined, this.k.stopRequested.signal);
+    const records = await readMachineRecords(this.machineRecords, this.k.stopRequested.signal);
     if (this.k.stopped || this.k.stopRequested.signal.aborted) return;
     const changed = new Set<MTask>();
     for (const { scope, run, start, end } of observations) {
@@ -339,7 +342,7 @@ export class ProductChecks {
       }
     };
     try {
-      const ran = kept ?? await runChecks(repository.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress(`check-${event.index}`, event));
+      const ran = kept ?? await runChecks(repository.worktree, checks, env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress(`check-${event.index}`, event), this.machineRecords);
       if (kept) {
         const shown = new Set<number>();
         kept.forEach((run) => {
@@ -613,7 +616,7 @@ export class ProductChecks {
         const start = run.startedAt ?? original?.startedAt, end = run.endedAt ?? original?.endedAt;
         if (start === undefined || end === undefined) continue;
         // All these executions have finished. One log snapshot covers the whole saved batch.
-        records ??= await readMachinePowerRecords(undefined, undefined, signal);
+        records ??= await readMachineRecords(this.machineRecords, signal);
         if (signal.aborted || this.k.stopped) throw new Aborted();
         const interruption = powerInterruption(start, end, records);
         if (interruption) { run.interruption = interruption; if (original?.run) original.run.interruption = interruption; }
@@ -662,7 +665,7 @@ export class ProductChecks {
       this.k.commitNow();
       await git.detachAt(worktree, base);
       try {
-        runs.push(...(await runChecks(worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress("hook-pre-commit", event))));
+        runs.push(...(await runChecks(worktree, [{ name: "Pre-commit hook", argv: ["git", "hook", "run", "--ignore-missing", "pre-commit"] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress("hook-pre-commit", event), this.machineRecords)));
       } finally {
         await git.reattach(worktree, branch);
         delete repository.hooking;
@@ -678,7 +681,7 @@ export class ProductChecks {
       try {
         const file = join(folder, "COMMIT_EDITMSG");
         await writeFile(file, `${message}\n`);
-        const [run] = await runChecks(worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress("hook-commit-msg", event));
+        const [run] = await runChecks(worktree, [{ name: "Commit message hook", argv: ["git", "hook", "run", "--ignore-missing", "commit-msg", "--", file] }], env, this.k.options.checkTimeoutMs, signal, join(this.k.dataDir, "checks", task.id), undefined, (event) => progress("hook-commit-msg", event), this.machineRecords);
         if (run) runs.push({ ...run, command: "git hook run commit-msg" });
       } finally {
         await rm(folder, { recursive: true, force: true });

@@ -9,7 +9,7 @@ import { type FileHandle, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
 import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit } from "./process-tree.js";
-import { machineInterruption } from "./check-interruption.js";
+import { livePowerRecords, machineInterruption, type MachineRecords } from "./check-interruption.js";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
 export const CHECK_TIMEOUT_MS = 20 * 60_000;
@@ -130,6 +130,8 @@ export async function runChecks(
   // A stand-in process list, so a test can fail one read. Absent, the live list is read.
   processList?: (timeout: number) => Promise<string | undefined>,
   onProgress?: (event: CheckProgress) => void,
+  // Where a failed check's sleep evidence comes from: the engine's own source. Absent, the Mac's power log.
+  machineRecords: MachineRecords = livePowerRecords,
 ): Promise<CheckRun[]> {
   if (signal?.aborted) return [];
   const ordered = checks.map((check, index) => ({ check, index })).filter(({ check }) => check.argv.length);
@@ -159,7 +161,7 @@ export async function runChecks(
       };
       // Cancellation already explains an incomplete check. Do not delay stopping the task
       // with a power-log read; a stop during evidence collection cancels that read too.
-      if (!finished.ok && !finished.interrupted) finished.interruption = await machineInterruption(started, endedAt, signal);
+      if (!finished.ok && !finished.interrupted) finished.interruption = await machineInterruption(started, endedAt, signal, machineRecords);
       if (signal?.aborted) finished.interrupted = true;
       onProgress?.({ kind: "finished", index, at: Date.now(), run: finished });
       runs.push(finished);

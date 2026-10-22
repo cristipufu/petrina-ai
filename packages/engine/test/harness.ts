@@ -5,6 +5,7 @@
 // unless the test supplies its own parent for their browser folders, which recovery uses too.
 import { join } from "node:path";
 import { launch } from "../src/launch.js";
+import { noMachineRecords } from "./fixtures.js";
 
 const [home, dir, remote] = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
 const browserTempRoot = process.argv.find((arg) => arg.startsWith("--browser-root="))?.slice("--browser-root=".length);
@@ -20,5 +21,7 @@ await launch({
     ...(browserTempRoot ? { browser: true, browserTempRoot } : {}),
     // Tests never open a real terminal window.
     terminals: () => [],
+    // Synthetic check failures never read this Mac's power log.
+    machineRecords: noMachineRecords,
   },
 });

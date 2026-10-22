@@ -8,15 +8,16 @@ import { versionsOf, invalidateAcceptance, acceptanceVersion, beginRepair } from
 import { Cleanup } from "../src/cleanup.js";
 import { scopesFor, detachRepositoryState, executionFor } from "../src/repository-context.js";
 import { Learnings } from "../src/learnings.js";
+import type { MachineRecords } from "../src/check-interruption.js";
 import { git, makeWorld, removeDir, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];
 afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
 
-async function fixture(name: string) {
+async function fixture(name: string, machineRecords?: MachineRecords) {
   const first = makeWorld(`context-first-${name}`), second = makeWorld(`context-second-${name}`);
   worlds.push(first, second);
-  const start = () => first.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
+  const start = () => first.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [], ...(machineRecords ? { machineRecords } : {}) });
   const engine = start();
   engine.setPoolPaused(true);
   engine.schedule = () => {};
@@ -880,7 +881,7 @@ describe("shared check repair episodes", () => {
   });
 
   it("recovers recorded sleep for an already waiting decision and preserves its original run across restart", async () => {
-    const f = await fixture("check-interruption-recovery");
+    const f = await fixture("check-interruption-recovery", async () => "2026-10-21 17:55:44 +0300 Sleep Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 74 secs");
     let engine = f.engine;
     try {
       engine.setPoolPaused(false); f.task.plan = plan(); f.task.stageIndex = 2;
@@ -897,7 +898,7 @@ describe("shared check repair episodes", () => {
       scope.work.checkReturns = 2;
       engine["checks"].blocked(f.task);
       const count = f.task.journey!.length;
-      await engine["checks"].restoreEvidence("2026-10-21 17:55:44 +0300 Sleep Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 74 secs");
+      await engine["checks"].restoreEvidence();
       expect(f.task.statusLine).toBe("Checks unverified. Your call");
       expect(f.task.journey).toHaveLength(count);
       expect(original.outcome).toBe(outcome);

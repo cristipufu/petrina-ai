@@ -58,6 +58,9 @@ it("parses TypeScript/TSX imports and ignores mentions of forbidden patterns in 
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `import type { Engine } from '../src/engine.js'; import { recordDisputes } from '../src/engine.js';`]]))).toEqual([]);
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `await import('../src/engine.js');`]]))).toHaveLength(1);
   expect(conventions(new Map([["packages/engine/test/re-export.ts", `export * from '../src/engine.js';`]]))).toHaveLength(1);
+  expect(conventions(new Map([["packages/engine/test/a.test.ts", `import { runChecks as run } from '../src/checks.js';`]]))).toHaveLength(1);
+  expect(conventions(new Map([["packages/engine/test/a.test.ts", `import { commandText } from '../src/checks.js'; import type { CheckProgress } from '../src/checks.js';`]]))).toEqual([]);
+  expect(conventions(new Map([["packages/engine/test/fixtures.ts", `import { runChecks } from '../src/checks.js';`]]))).toEqual([]);
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `it.only('example', () => {});`]]))).toHaveLength(1);
   expect(conventions(new Map([["apps/desktop/test/a.test.tsx", `import { test as check } from 'vitest'; check.concurrent.each([]).only('example', () => {});`]]))).toHaveLength(1);
 });

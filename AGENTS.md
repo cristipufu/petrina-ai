@@ -47,3 +47,4 @@ What agents learned about working in this repository, added with the coordinator
 - In engine tests where a child process writes a file that the test reads as soon as it appears, write it under a temporary name and rename it: a just-created file can be read empty, which happens on this machine under load.
 - Bun hides passing test lines when it detects a coding agent (CLAUDECODE, AGENT or REPL_ID set); a test that reads another Bun run's results should use its junit report, which records every outcome.
 - In engine follow-up tests, a done task without a working copy moves to History at the next save, so on-board follow-up passes no longer see it; hold it with engine.holdFollowUp(id) while the test needs it on the board.
+- The stand-in agent used in engine tests reports token usage only when started with --tool=<tool id> (as the work-log tests do); without it, every turn records 'not reported'.

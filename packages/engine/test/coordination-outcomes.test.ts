@@ -7,11 +7,11 @@ import { Engine } from "./engine.js";
 import { EngineClient } from "../src/engine-client.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { matchesCheckLogIdentity } from "../src/check-log-read.js";
-import { CHECK_EXIT_UNREPORTED, runChecks } from "../src/checks.js";
+import { CHECK_EXIT_UNREPORTED } from "../src/checks.js";
 import { mcpRequest, mcpTools } from "../src/mcp.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
-import { CLI, engineEnv, removeDir, tempDir, SLOW } from "./support.js";
+import { CLI, engineEnv, removeDir, runChecks, tempDir, SLOW } from "./support.js";
 
 const roots: string[] = [];
 const engines: Engine[] = [];

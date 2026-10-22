@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
-import { powerInterruption, readMachinePowerRecords } from "../src/check-interruption.js";
+import { machineInterruption, powerInterruption, readMachinePowerRecords, readMachineRecords } from "../src/check-interruption.js";
 
 const records = `2026-10-21 17:55:44 +0300 Sleep               Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 74 secs
 2026-10-21 17:56:58 +0300 DarkWake            DarkWake from Deep Idle
@@ -18,14 +18,14 @@ const at = (time: string) => Date.parse(`2026-10-21T${time}+03:00`);
 describe("recorded machine interruption", () => {
   it("allows a busy Mac's power-log read to finish before matching every affected execution", async () => {
     let finish!: (error: Error | null, stdout: string) => void;
+    const stop = new AbortController();
     const reading = readMachinePowerRecords((file, args, options, done) => {
-      expect(file).toBe("/usr/bin/pmset");
-      expect(args).toEqual(["-g", "log"]);
-      // Observed busy-machine reads take up to eleven seconds; retain a finite deadline.
-      expect(options.timeout).toBeGreaterThan(11_000);
-      expect(options.timeout).toBeLessThanOrEqual(60_000);
+      // Observed busy-machine reads take up to eleven seconds: a bounded 30-second read with a bounded output,
+      // stopped by the caller's own signal.
+      expect([file, args, options]).toEqual(["/usr/bin/pmset", ["-g", "log"], { timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true, signal: stop.signal }]);
+      expect(options.signal).toBe(stop.signal);
       finish = done;
-    }, "darwin");
+    }, "darwin", stop.signal);
     finish(null, records);
     const complete = await reading;
     expect(powerInterruption(at("17:54:07"), at("17:57:46"), complete)?.at).toBe(at("17:55:44"));
@@ -67,6 +67,27 @@ describe("recorded machine interruption", () => {
       child?.kill("SIGKILL");
       await closed;
     }
+  });
+  it("takes one snapshot from the caller's own source, and treats a failed or late read as unavailable", async () => {
+    const stop = new AbortController();
+    const reads: (AbortSignal | undefined)[] = [];
+    expect(await readMachineRecords(async (signal) => { reads.push(signal); return records; }, stop.signal)).toBe(records);
+    expect(reads).toEqual([stop.signal]);
+    expect(await readMachineRecords(async () => { throw new Error("Log unavailable"); })).toBe("");
+    expect(await readMachineRecords(() => { throw new Error("Log unavailable"); })).toBe("");
+    // Records that arrive after the stop never count, whatever the source does with the signal.
+    expect(await readMachineRecords(async () => { stop.abort(); return records; }, stop.signal)).toBe("");
+    expect(await readMachineRecords(() => { throw new Error("Must not read after a stop"); }, stop.signal)).toBe("");
+    expect(reads).toHaveLength(1);
+  });
+  it("matches a check's own interval against its source's records, and reads nothing without one", async () => {
+    let reads = 0;
+    const source = async () => { reads += 1; return records; };
+    expect((await machineInterruption(at("17:54:07"), at("17:57:46"), undefined, source))?.at).toBe(at("17:55:44"));
+    expect(await machineInterruption(at("17:01:00"), at("17:05:00"), undefined, source)).toBeUndefined();
+    expect(await machineInterruption(undefined, at("17:57:46"), undefined, source)).toBeUndefined();
+    expect(await machineInterruption(at("17:54:07"), at("17:57:46"), undefined, async () => { throw new Error("Log unavailable"); })).toBeUndefined();
+    expect(reads).toBe(2);
   });
   it.each([["17:54:07", "17:57:46"], ["17:52:18", "18:48:10"], ["18:10:00", "18:12:00"]])("matches actual sleep during %s–%s", (start, end) => {
     expect(powerInterruption(at(start), at(end), records)).toEqual(expect.objectContaining({ source: "macOS power log", at: expect.any(Number), event: expect.stringContaining("Entering Sleep state") }));

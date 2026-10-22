@@ -35,6 +35,9 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
     if (engine && file !== "packages/engine/test/engine.ts") for (const entry of facts.imports) {
       if (entry.runtime && /(?:^|\/)src\/(?:engine|index)\.[jt]s$/.test(entry.path) && entry.names.some(name => ["Engine", "*", "default"].includes(name))) errors.push(`${file}: import Engine from the isolated test/engine fixture`);
     }
+    if (engine && file !== "packages/engine/test/fixtures.ts") for (const entry of facts.imports) {
+      if (entry.runtime && /(?:^|\/)src\/checks\.[jt]s$/.test(entry.path) && entry.names.some(name => ["runChecks", "*", "default"].includes(name))) errors.push(`${file}: import runChecks from test/fixtures, which never reads this Mac's power log`);
+    }
     if (engine) for (const line of facts.promiseMatchers) errors.push(`${file}:${line}: await rejectionOf/expectRejection or the ordinary Promise before asserting; do not use Bun's promise matchers`);
     for (const line of facts.exclusiveTests) errors.push(`${file}:${line}: remove the exclusive test selection before handoff`);
   }

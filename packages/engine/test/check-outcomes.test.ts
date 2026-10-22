@@ -1,5 +1,5 @@
 import { rejectionOf } from "./rejections.js";
-import { afterAll, expect, it, spyOn } from "bun:test";
+import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { checkDecisionLabel, checkResult, journeyView, type CheckRun } from "@petrina/core";
 import { Engine } from "./engine.js";
@@ -7,8 +7,8 @@ import { Coordination } from "../src/coordination.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { Aborted } from "../src/kernel.js";
 import { executionFor } from "../src/repository-context.js";
-import * as machine from "../src/check-interruption.js";
-import { makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import type { MachineRecords } from "../src/check-interruption.js";
+import { heldMachineRecords, makeProduct, noMachineRecords, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -17,7 +17,10 @@ afterAll(() => roots.forEach(removeDir));
 it.each(["failed", "interrupted", "mixed", "passed"] as const)("keeps %s results consistent through recording, decision and reuse", async (kind) => {
   const root = tempDir("petrina-check-outcomes-");
   roots.push(root);
-  const engine = new Engine(join(root, "data"), { usageCommands: { codex: null, grok: null }, agentCommand: () => undefined, terminals: () => [] });
+  // This engine's own sleep records: each read is counted, and a step can hold one.
+  const reads: (AbortSignal | undefined)[] = [];
+  let records: MachineRecords = noMachineRecords;
+  const engine = new Engine(join(root, "data"), { usageCommands: { codex: null, grok: null }, agentCommand: () => undefined, terminals: () => [], machineRecords: (signal) => { reads.push(signal); return records(signal); } });
   engine.schedule = () => {};
   engine.setPoolPaused(true);
   try {
@@ -49,37 +52,27 @@ it.each(["failed", "interrupted", "mixed", "passed"] as const)("keeps %s results
     const decision = kind !== "passed" ? engine["checks"]["checkProblem"](task) : undefined;
     const label = checkDecisionLabel(engine.getState().tasks.find((entry) => entry.id === task.id)!);
     // Reuse and startup recovery each read one snapshot for all eligible saved failures.
-    const reader = spyOn(machine, "readMachinePowerRecords").mockResolvedValue("");
-    try {
-      expect(await engine["checks"].failing(scope, new AbortController().signal, checks)).toBe(kind !== "passed");
-      expect(reader).toHaveBeenCalledTimes(kind === "failed" || kind === "mixed" ? 1 : 0);
-      reader.mockClear();
-      await engine["checks"].restoreEvidence();
-      expect(reader).toHaveBeenCalledTimes(kind === "failed" || kind === "mixed" ? 1 : 0);
-    } finally { reader.mockRestore(); }
+    expect(await engine["checks"].failing(scope, new AbortController().signal, checks)).toBe(kind !== "passed");
+    expect(reads).toHaveLength(kind === "failed" || kind === "mixed" ? 1 : 0);
+    reads.length = 0;
+    await engine["checks"].restoreEvidence();
+    expect(reads).toHaveLength(kind === "failed" || kind === "mixed" ? 1 : 0);
     if (kind === "failed") {
       const stop = new AbortController();
-      let ready!: () => void;
-      const started = new Promise<void>((resolve) => { ready = resolve; });
-      let release: ((records: string) => void) | undefined;
-      const reading = spyOn(machine, "readMachinePowerRecords").mockImplementation((_execute, _platform, signal) => new Promise<string>((resolve) => {
-        release = resolve;
-        signal?.addEventListener("abort", () => resolve(""), { once: true });
-        ready();
-      }));
+      const held = heldMachineRecords();
+      records = held.source;
       let pending: Promise<boolean> | undefined;
       const reuseCount = task.journey!.filter((entry) => entry.work === "check-reuse").length;
       try {
         pending = engine["checks"].failing(scope, stop.signal, checks);
-        await started;
-        expect(reading.mock.calls[0]![2]).toBe(stop.signal);
+        await held.started();
+        expect(held.reads[0]).toBe(stop.signal);
         stop.abort();
         expect(await rejectionOf(pending)).toBeInstanceOf(Aborted);
         expect(task.journey!.filter((entry) => entry.work === "check-reuse")).toHaveLength(reuseCount);
         expect(scope.work.checkReturns).toBe(2);
       } finally {
-        stop.abort(); release?.(""); await pending?.catch(() => {});
-        reading.mockRestore();
+        stop.abort(); held.answer(""); await pending?.catch(() => {});
       }
     }
     if (kind === "mixed") {
@@ -124,19 +117,10 @@ it.each(["drain", "stop", "restart", "shutdown"] as const)("cancels startup evid
   executionFor(task).work.checks = { at, results: [{ name: "Tests", command: "test", ok: false, ms: 219_000, output: "Original failure", startedAt: at, endedAt: at + 219_000 }] };
   executionFor(task).work.checkReturns = 2;
   await seed.shutdown();
-  let release!: (records: string) => void;
-  let signal: AbortSignal | undefined;
-  let cancelled = false;
-  const reader = spyOn(machine, "readMachinePowerRecords").mockImplementation((_execute, _platform, stop) => new Promise<string>((resolve) => {
-    release = resolve;
-    signal = stop;
-    stop?.addEventListener("abort", () => {
-      cancelled = true;
-      // Even a completed read racing the stop must not update saved evidence.
-      resolve("2026-10-21 17:55:44 +0300 Sleep Entering Sleep state due to Clamshell Sleep 74 secs");
-    }, { once: true });
-  }));
-  const engine = new Engine(home, options);
+  // Even a completed read racing the stop must not update saved evidence.
+  const held = heldMachineRecords("2026-10-21 17:55:44 +0300 Sleep Entering Sleep state due to Clamshell Sleep 74 secs");
+  const cancelled = () => held.reads[0]?.aborted === true;
+  const engine = new Engine(home, { ...options, machineRecords: held.source });
   engine.schedule = () => {};
   const restored = engine.task(task.id)!;
   let life: EngineLifecycle | undefined, store: LifecycleStore | undefined;
@@ -144,32 +128,30 @@ it.each(["drain", "stop", "restart", "shutdown"] as const)("cancels startup evid
   try {
     await waitFor(() => engine.backgroundWork.size === 1, "startup work other than evidence recovery to settle");
     const before = structuredClone(restored);
-    expect(reader).toHaveBeenCalledTimes(1);
+    expect(held.reads).toHaveLength(1);
     expect(engine.backgroundWork.size).toBe(1);
     if (how === "drain") {
       const draining = engine.drain(60_000);
-      expect(cancelled).toBe(true);
+      expect(cancelled()).toBe(true);
       expect(await draining).toBe(0);
     } else if (how === "shutdown") {
       await engine.shutdown();
-      expect(cancelled).toBe(true);
+      expect(cancelled()).toBe(true);
     } else {
       new Coordination(engine);
       store = new LifecycleStore(home);
       life = new EngineLifecycle(engine, store, async () => { stops++; });
       expect((await life.request(how, { requestId: "stop-during-evidence" })).outcome).toBe("pending");
-      expect(cancelled).toBe(true);
+      expect(cancelled()).toBe(true);
       await waitFor(() => stops === 1, "the stop to finish without waiting for the power log");
     }
-    expect(signal?.aborted).toBe(true);
     await waitFor(() => engine.backgroundWork.size === 0, "the cancelled startup read to settle");
     expect(restored).toEqual(before);
-    expect(reader).toHaveBeenCalledTimes(1);
+    expect(held.reads).toHaveLength(1);
   } finally {
-    release("");
+    held.answer("");
     life?.close(); store?.close();
     await engine.shutdown();
     await Promise.allSettled([...engine.backgroundWork]);
-    reader.mockRestore();
   }
 });
