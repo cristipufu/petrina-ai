@@ -1080,6 +1080,10 @@ export interface CheckRun {
   logPath?: string;
   /** Identity captured from the file Petrina opened for this check; absent on older saved runs. */
   logFileIdentity?: { device: string; inode: string };
+  /** Settled length in bytes, read through that same opened file; absent on older saved runs. */
+  logFileLength?: number;
+  /** SHA-256 of that file's first 4,096 bytes (or all of a shorter file): bounded recognition, not proof of later bytes. */
+  logFileBeginning?: string;
   /** The log could not be saved completely; this never changes the command's own result. */
   logError?: string;
   /** Whether both output pipes reached their end before the command settled. Absent on older runs. */

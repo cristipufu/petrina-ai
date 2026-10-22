@@ -5,7 +5,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { mkdir, open } from "node:fs/promises";
+import { type FileHandle, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
 import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit } from "./process-tree.js";
@@ -170,7 +170,21 @@ export async function runChecks(
 
 interface CheckLog {
   write(bytes: Uint8Array): Promise<void>;
-  close(): Promise<Pick<CheckRun, "logPath" | "logFileIdentity" | "logError">>;
+  close(): Promise<Pick<CheckRun, "logPath" | "logFileIdentity" | "logFileLength" | "logFileBeginning" | "logError">>;
+}
+
+/** How much of a check log its recorded fingerprint covers: bounded recognition, not every later byte. */
+const CHECK_LOG_BEGINNING = 4096;
+
+/** SHA-256 of the first bytes of an opened log (the whole file when shorter), read by position. */
+export async function checkLogBeginning(file: FileHandle, size: number): Promise<string> {
+  const buffer = Buffer.alloc(Math.min(size, CHECK_LOG_BEGINNING));
+  for (let filled = 0; filled < buffer.length;) {
+    const { bytesRead } = await file.read(buffer, filled, buffer.length - filled, filled);
+    if (!bytesRead) throw new Error("The diagnostic ended before its recorded length.");
+    filled += bytesRead;
+  }
+  return createHash("sha256").update(buffer).digest("hex");
 }
 
 /** Stream all output to disk; at most one chunk from each pipe waits in memory. */
@@ -179,7 +193,8 @@ async function checkLog(directory: string): Promise<CheckLog> {
   const path = join(resolve(directory), `${Date.now()}-${randomUUID()}.log`);
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    file = await open(path, "wx", 0o600);
+    // Exclusive and private. Read access lets close() fingerprint this same file.
+    file = await open(path, "wx+", 0o600);
   } catch (error) {
     return { write: async () => {}, close: async () => ({ logError: String(error) }) };
   }
@@ -195,16 +210,20 @@ async function checkLog(directory: string): Promise<CheckLog> {
     },
     async close() {
       await pending;
-      let logFileIdentity: CheckRun["logFileIdentity"];
+      let facts: Pick<CheckRun, "logFileIdentity" | "logFileLength" | "logFileBeginning"> = {};
       try {
         const info = await handle.stat({ bigint: true });
-        if (info.isFile()) logFileIdentity = { device: info.dev.toString(), inode: info.ino.toString() };
-        else logError ??= "The diagnostic is not a regular file.";
+        if (info.isFile()) {
+          facts = { logFileIdentity: { device: info.dev.toString(), inode: info.ino.toString() } };
+          // A freed file number can be reused, so readers also recognise the settled length and beginning.
+          const length = Number(info.size);
+          facts = { ...facts, logFileLength: length, logFileBeginning: await checkLogBeginning(handle, length) };
+        } else logError ??= "The diagnostic is not a regular file.";
       } catch (error) {
         logError ??= String(error);
       }
       try { await handle.close(); } catch (error) { logError ??= String(error); }
-      return { logPath: path, ...(logFileIdentity ? { logFileIdentity } : {}), ...(logError ? { logError } : {}) };
+      return { logPath: path, ...facts, ...(logError ? { logError } : {}) };
     },
   };
 }

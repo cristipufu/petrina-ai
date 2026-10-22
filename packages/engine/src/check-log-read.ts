@@ -5,7 +5,7 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { Result } from "./coordination.js";
 import { cursor, fingerprint, position, readText } from "./evidence-read.js";
-import { CHECK_EXIT_UNREPORTED } from "./checks.js";
+import { CHECK_EXIT_UNREPORTED, checkLogBeginning } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 
 export function matchesCheckLogIdentity(expected: { device: string; inode: string }, actual: { dev: bigint; ino: bigint }): boolean {
@@ -71,11 +71,15 @@ export async function readCheckLog(dataDir: string, task: Task, a: { nodeId?: st
       completeness: "excerpt-only",
       message: "No complete diagnostic log was recorded. This is the saved excerpt.",
     });
-  if (!run.logFileIdentity)
+  // Facts are captured only when the log is created, never reconstructed from a current path.
+  const { logFileIdentity, logFileLength, logFileBeginning } = run;
+  if (!logFileIdentity || logFileLength === undefined || !logFileBeginning)
     return readText(run.output, a, [task.id, a.nodeId, a.productId, a.index, "unverified-log"], {
       ...details,
       completeness: run.logError || run.logComplete === false ? "incomplete" : "legacy-unverified",
-      message: "This saved run has no record of which file Petrina created. This is the saved excerpt.",
+      message: logFileIdentity
+        ? "This saved run has no record of the length and beginning of the file Petrina created. This is the saved excerpt."
+        : "This saved run has no record of which file Petrina created. This is the saved excerpt.",
     });
   try {
     const [entry, root, canonical] = await Promise.all([lstat(path, { bigint: true }), realpath(dataDir), realpath(path)]);
@@ -84,14 +88,17 @@ export async function readCheckLog(dataDir: string, task: Task, a: { nodeId?: st
     // Do not follow a substituted link. Use the opened file's identity and size for both
     // pagination and reading; a replaced file invalidates its previous continuation.
     // A second hard-link name can alias a private file, so both observations require one link.
-    // The saved file identity also proves this is the file Petrina created for this check;
+    // The saved file identity also ties this to the file Petrina created for this check;
     // link counts alone are insufficient after an atomic replacement removes the other name.
+    // A removed log's number can be reused by a later file, so the opened file must also have
+    // the recorded length and beginning. That recognises the file; it does not prove later bytes.
     const file = await open(canonical, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const exact = await file.stat({ bigint: true });
       const size = Number(exact.size);
       const modified = exact.mtimeNs.toString();
-      if (!exact.isFile() || exact.nlink !== 1n || exact.dev !== entry.dev || exact.ino !== entry.ino || !matchesCheckLogIdentity(run.logFileIdentity, exact)) throw new Error("The diagnostic file is not the file Petrina created for this check.");
+      if (!exact.isFile() || exact.nlink !== 1n || exact.dev !== entry.dev || exact.ino !== entry.ino || !matchesCheckLogIdentity(logFileIdentity, exact)
+        || exact.size !== BigInt(logFileLength) || await checkLogBeginning(file, size) !== logFileBeginning) throw new Error("The diagnostic file is not the file Petrina created for this check.");
       const key = fingerprint([task.id, a.nodeId, a.productId, a.index, path, exact.dev.toString(), exact.ino.toString(), size, modified]);
       const completeness = run.logError || run.logComplete === false ? "incomplete" : run.logComplete ? "complete" : "legacy-unverified";
       if (size === 0 && run.output)

@@ -1,5 +1,6 @@
 import { afterAll, expect, it } from "bun:test";
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckRun, DeepMutable, Finding, InboxKind, TaskSource } from "@petrina/core";
 import { Engine } from "./engine.js";
@@ -35,6 +36,12 @@ function fixture() {
   return { e, c, home, taskId, task, work: executionFor(task).work, offer };
 }
 const source = (id = "product", delivery: TaskSource["destination"]["mode"] = "local"): TaskSource => ({ product: { id, name: id === "product" ? "Example" : "API", repo: `local/${id}` }, start: { kind: "branch", branch: "main" }, destination: { mode: delivery, repo: `local/${id}`, branch: "main", kind: delivery === "local" ? "branch" : "new-pr" }, confirmed: true });
+// The facts Petrina records when it creates a log, taken here from a hand-built file.
+const verifiedLog = (path: string) => {
+  const info = statSync(path, { bigint: true });
+  const beginning = createHash("sha256").update(readFileSync(path).subarray(0, 4096)).digest("hex");
+  return { logPath: path, logFileIdentity: { device: String(info.dev), inode: String(info.ino) }, logFileLength: Number(info.size), logFileBeginning: beginning };
+};
 const run = (name: string, output = ""): CheckRun => ({ name, command: `check ${name}`, ok: true, ms: 150, startedAt: 1, endedAt: 151, output, logComplete: true });
 const finding = (id: string, severity: Finding["severity"] = "blocking"): DeepMutable<Finding> => ({ id, text: `Report ${id}`, severity, status: "open", raisedBy: "opus-high", confirmedBy: [] });
 async function complete(c: Coordination, name: string, args: Record<string, unknown> = {}) {
@@ -153,9 +160,8 @@ it("keeps startup explanations, unfinished results, skipped checks and quiet com
   mkdirSync(folder, { recursive: true });
   const log = join(folder, "quiet.log");
   writeFileSync(log, "");
-  const info = statSync(log, { bigint: true });
-  const quiet = { ...run("Quiet"), logPath: log, logFileIdentity: { device: String(info.dev), inode: String(info.ino) } };
-  const failed = { ...run("Startup", "Could not start the command.\n" + "Saved explanation\n".repeat(1000)), ok: false, logPath: log, logFileIdentity: quiet.logFileIdentity };
+  const quiet = { ...run("Quiet"), ...verifiedLog(log) };
+  const failed = { ...run("Startup", "Could not start the command.\n" + "Saved explanation\n".repeat(1000)), ok: false, ...verifiedLog(log) };
   const stopped = { ...run("Interrupted", "Stopped after machine sleep"), interruption: { source: "macOS power log" as const, at: 2, event: "Sleep" }, logComplete: false };
   const results = [quiet, failed, stopped].map((run, index) => ({ ...run, source: { stepId: "checks", attemptId: "a", checkId: `c${index}` } }));
   task.journey = [{ id: "checks", kind: "petrina", work: "checks", startedAt: 1, round: 1, sub: 0, productChecks: [...results.map((run, index) => ({ id: `c${index}`, attemptId: "a", productId: "product", name: run.name, result: index === 0 ? "pass" as const : "fail" as const, run })), { id: "skipped", attemptId: "a", productId: "product", name: "Skipped", result: "skipped" }] }];
@@ -178,7 +184,7 @@ it("keeps startup explanations, unfinished results, skipped checks and quiet com
 
 it("labels missing historical diagnostics honestly and pins fallback reads without substituting a newer run", async () => {
   const { c, task, work, taskId, offer, home } = fixture();
-  work.checks = { at: 10, sha: "old", results: [{ ...run("Older", "Saved failure"), ok: false, logPath: join(home, "checks", taskId, "missing.log"), logFileIdentity: { device: "1", inode: "1" }, source: { stepId: "lost", checkId: "lost", attemptId: "lost" } }] };
+  work.checks = { at: 10, sha: "old", results: [{ ...run("Older", "Saved failure"), ok: false, logPath: join(home, "checks", taskId, "missing.log"), logFileIdentity: { device: "1", inode: "1" }, logFileLength: 13, logFileBeginning: createHash("sha256").update("Saved failure").digest("hex"), source: { stepId: "lost", checkId: "lost", attemptId: "lost" } }] };
   task.journey = [];
   const itemId = offer("delivery");
   const { value } = await complete(c, "inbox.inspect", { itemId });
@@ -221,8 +227,7 @@ it("invalidates inspection and approval when omitted process diagnostics change,
   mkdirSync(folder, { recursive: true });
   const log = join(folder, "pass.log");
   writeFileSync(log, "Original successful output");
-  const info = statSync(log, { bigint: true });
-  work.checks = { current: true, at: 5, sha: "head", definition: "definition", results: [{ ...run("Pass"), logPath: log, logFileIdentity: { device: String(info.dev), inode: String(info.ino) } }] };
+  work.checks = { current: true, at: 5, sha: "head", definition: "definition", results: [{ ...run("Pass"), ...verifiedLog(log) }] };
   const itemId = offer("delivery");
   const first = await c.call("inbox.inspect", { itemId, limit: 500 });
   const read = await c.call("journey.check", { taskId, index: 0 });
@@ -287,8 +292,7 @@ for (const [name, flags, ending, outcome] of [
   const path = join(folder, "long.log");
   const processOutput = "é🙂 passing\n".repeat(1000) + "(fail) suite > final process failure";
   writeFileSync(path, processOutput);
-  const info = statSync(path, { bigint: true });
-  Object.assign(work.checks.results[0]!, { output: "", logPath: path, logFileIdentity: { device: String(info.dev), inode: String(info.ino) } });
+  Object.assign(work.checks.results[0]!, { output: "", ...verifiedLog(path) });
   const process = (await complete(c, "inbox.inspect", { itemId })).value.products[0].checks.results[0].diagnostics;
   expect(process.processExcerpt).toEndWith("(fail) suite > final process failure");
   expect(Array.from(process.processExcerpt).length).toBeLessThanOrEqual(1000);

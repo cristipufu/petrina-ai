@@ -1,6 +1,6 @@
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it } from "bun:test";
-import { linkSync, mkdirSync, renameSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
 import { Engine } from "./engine.js";
@@ -87,6 +87,10 @@ async function createdFailure(home: string, taskId: string, text: string): Promi
   }
 }
 
+// Point a saved run at another created log, with every fact Petrina recorded for that file.
+const retarget = (run: CheckRun, fresh: CheckRun, logPath = fresh.logPath) =>
+  Object.assign(run, { logPath, logFileIdentity: fresh.logFileIdentity, logFileLength: fresh.logFileLength, logFileBeginning: fresh.logFileBeginning });
+
 for (const kind of ["cli", "mcp"] as const) {
   it(`${kind} refuses a hard-linked connection file and preserves ordinary logs, symbolic-link refusal and paginated saved explanations`, async () => {
     const { home, engine, task } = fixture();
@@ -154,15 +158,70 @@ for (const kind of ["cli", "mcp"] as const) {
       expect(symbolic.text).toBe(saved.slice(0, 8000));
       unlinkSync(logPath);
       const ordinary = "Original ordinary diagnostic\n".repeat(500);
-      const fresh = await createdFailure(home, task.id, ordinary);
-      run.logPath = fresh.logPath;
-      run.logFileIdentity = fresh.logFileIdentity;
+      retarget(run, await createdFailure(home, task.id, ordinary));
       let page = await call("journey.check", { taskId: task.id, index: 0 });
       expect(page.completeness).toBe("complete");
       let text = String(page.text);
       while (page.next) { page = await call("journey.check", { taskId: task.id, index: 0, cursor: page.next }); text += page.text; }
       expect(text).toBe(ordinary);
       expect(text.includes(token)).toBe(false);
+    } finally { server.stop(true); }
+  });
+
+  it(`${kind} refuses a substituted connection file carrying the recorded device and file number`, async () => {
+    const { home, engine, task } = fixture();
+    const log = "Original process diagnostic\n".repeat(400);
+    const saved = "Ordinary saved explanation\n".repeat(400);
+    const run = await createdFailure(home, task.id, log);
+    run.output = saved;
+    const logPath = run.logPath!;
+    executionFor(task).work.checks = { at: 1, results: [run] };
+    task.journey = [{ id: "recorded-check", kind: "petrina", work: "checks", startedAt: 1, endedAt: 2, round: 1, sub: 0, productChecks: [{ name: run.name, result: "fail", run }] }];
+    const itemId = "substituted-preview";
+    engine.s.inbox.push({ id: itemId, taskId: task.id, kind: "delivery", title: "Inspect the delivery", body: "Check the recorded diagnostics", at: 2, blocking: false });
+    const token = "fixed-number-test-connection-key-1";
+    const server = serve(engine, { port: 0, token });
+    const connection = { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token };
+    writeConnection(home, connection);
+    const call = interfaceClient(kind, home);
+    try {
+      const args = { taskId: task.id, index: 0, limit: 40 };
+      const first = await call("journey.check", args);
+      expect(first.completeness).toBe("complete");
+      expect(first.text).toBe(log.slice(0, 40));
+      unlinkSync(logPath);
+      linkSync(join(home, "engine.json"), logPath);
+      unlinkSync(join(home, "engine.json"));
+      writeConnection(home, connection);
+      // Linux can give a removed log's number to the next file. Record the substitute's own device
+      // and number, so every platform reaches that state without depending on the allocator.
+      const alias = statSync(logPath, { bigint: true });
+      expect(alias.nlink).toBe(1n);
+      run.logFileIdentity = { device: alias.dev.toString(), inode: alias.ino.toString() };
+      for (const nodeId of [undefined, "recorded-check"]) {
+        const read = { taskId: task.id, index: 0, ...(nodeId ? { nodeId } : {}) };
+        const page = await call("journey.check", read);
+        expect(JSON.stringify(page)).not.toContain(token);
+        expect(page.completeness).toBe("missing-file");
+        expect(page.commandOutcome).toBe("failed");
+        expect(page.text).toBe(saved.slice(0, 8000));
+        expect((page.savedResult as Result).text).toBe(saved.slice(0, 1000));
+        const continued = await call("journey.check", { ...read, cursor: page.next });
+        expect(JSON.stringify(continued)).not.toContain(token);
+        expect(continued.text).toBe(saved.slice(8000));
+      }
+      // The genuine log's continuation is refused rather than continued in the substitute.
+      const stale = await call("journey.check", { ...args, cursor: first.next }, 5);
+      expect(stale.outcome).toBe("changed");
+      expect(JSON.stringify(stale)).not.toContain(token);
+      expect(stale).not.toHaveProperty("text");
+      const inspected = await call("inbox.inspect", { itemId });
+      expect(JSON.stringify(inspected)).not.toContain(token);
+      expect(inspected.shortened).toBe(false);
+      const diagnostics = JSON.parse(String(inspected.text)).products[0].checks.results[0].diagnostics;
+      expect(diagnostics.completeness).toBe("missing-file");
+      expect(diagnostics.savedResult.text).toBe(saved.slice(0, 500));
+      expect(diagnostics.processExcerpt).toBeUndefined();
     } finally { server.stop(true); }
   });
 
@@ -244,8 +303,7 @@ for (const kind of ["cli", "mcp"] as const) {
       const fresh = await createdFailure(home, task.id, log);
       renameSync(fresh.logPath!, logPath);
       utimesSync(logPath, timestamp, timestamp);
-      run.logPath = logPath;
-      run.logFileIdentity = fresh.logFileIdentity;
+      retarget(run, fresh, logPath);
       // Same name, length and timestamp; a new physical file still needs a fresh read.
       expect((await call("journey.check", { ...args, cursor: first.next }, 5)).outcome).toBe("changed");
       let page = await call("journey.check", args), full = String(page.text);
@@ -310,6 +368,8 @@ for (const kind of ["cli", "mcp"] as const) {
     ], engineEnv(home), 10000 * SLOW, undefined, join(home, "checks", task.id));
     expect(typeof runs[0]!.logFileIdentity?.device).toBe("string");
     expect(typeof runs[0]!.logFileIdentity?.inode).toBe("string");
+    expect(runs.map((run) => run.logFileLength)).toEqual([0, Buffer.byteLength("Error printed by the check\n"), 0]);
+    expect(runs.every((run) => /^[0-9a-f]{64}$/.test(run.logFileBeginning ?? ""))).toBe(true);
     expect(runs[0]!.output).toContain("Could not start:");
     executionFor(task).work.checks = { at: 1, sha: "original", results: runs };
     task.journey = [{ id: "original-checks", kind: "petrina", work: "checks", startedAt: 1, endedAt: 2, round: 1, sub: 0, productChecks: runs.map((run) => ({ name: run.name, result: run.ok ? "pass" : "fail", run })) }];
@@ -348,6 +408,13 @@ for (const kind of ["cli", "mcp"] as const) {
       expect(original.text).toBe(runs[0]!.output);
       expect(original.commandOutcome).toBe("failed");
       expect(original.relevance).toBe("historical");
+      const facts = ({ logFileIdentity, logFileLength, logFileBeginning }: CheckRun) => ({ logFileIdentity, logFileLength, logFileBeginning });
+      const restored = restarted.task(task.id)!;
+      expect(restored.journey!.find((node) => node.id === "original-checks")!.productChecks!.map((check) => facts(check.run!))).toEqual(runs.map(facts));
+      expect(executionFor(restored).work.checks!.results.map(facts)).toEqual([facts(runs[2]!)]);
+      const failed = await call("journey.check", { taskId: task.id, nodeId: "original-checks", index: 1 });
+      expect(failed.text).toBe("Error printed by the check\n");
+      expect(failed.completeness).toBe("complete");
     } finally { server.stop(true); }
   });
 }
@@ -365,6 +432,20 @@ it("labels older check logs without creation identity as unverified and uses onl
   expect(result.text).toBe(saved);
   expect(result.text).not.toContain("Unverified raw file content");
   expect(result.message).toContain("no record of which file Petrina created");
+  // Identity alone is not enough, even for the real file: its facts are never rebuilt from the path.
+  const info = statSync(logPath, { bigint: true });
+  const identified: CheckRun = { name: "Check", command: "stand-in", ok: false, ms: 1, output: saved, logPath, logComplete: true, logFileIdentity: { device: info.dev.toString(), inode: info.ino.toString() } };
+  executionFor(task).work.checks = { at: 2, results: [identified] };
+  const partial = await coordination.call("journey.check", { taskId: task.id, index: 0 });
+  expect(partial.completeness).toBe("legacy-unverified");
+  expect(partial.text).toBe(saved);
+  expect(partial.message).toContain("no record of the length and beginning");
+  identified.logError = "The log could not be fingerprinted.";
+  identified.logComplete = false;
+  const failedCapture = await coordination.call("journey.check", { taskId: task.id, index: 0 });
+  expect(failedCapture.completeness).toBe("incomplete");
+  expect(failedCapture.text).toBe(saved);
+  expect(failedCapture.commandOutcome).toBe("failed");
 });
 
 it("paginates legacy saved failure details independently of a long or empty process log", async () => {

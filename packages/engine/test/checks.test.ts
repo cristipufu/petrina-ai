@@ -37,6 +37,9 @@ describe("a product's checks", () => {
     });
     expect(run!.logComplete).toBe(true);
     expect(run!.logFileIdentity).toBeDefined();
+    // Length and beginning also come from the opened file, not the replacement at its old name.
+    expect(run!.logFileLength).toBe(Buffer.byteLength("original diagnostic"));
+    expect(run!.logFileBeginning).toBe(createHash("sha256").update("original diagnostic").digest("hex"));
     unlinkSync(logPath);
     renameSync(held, logPath);
     const exact = statSync(logPath, { bigint: true });
@@ -233,6 +236,10 @@ describe("a product's checks", () => {
       const digest = (value: string) => createHash("sha256").update(value).digest("hex");
       expect(digest(saved.replace("stderr trace\n", ""))).toBe(digest(text));
       if (process.platform !== "win32") expect(statSync(run.logPath!).mode & 0o777).toBe(0o600);
+      // The recorded fingerprint is bounded to the beginning; the length is the exact settled total.
+      const raw = readFileSync(run.logPath!);
+      expect(run.logFileLength).toBe(raw.length);
+      expect(run.logFileBeginning).toBe(createHash("sha256").update(raw.subarray(0, 4096)).digest("hex"));
     }
   });
 
@@ -249,6 +256,9 @@ describe("a product's checks", () => {
     for (const run of results) {
       expect(run.logError).toBeTruthy();
       expect(run.logPath).toBeUndefined();
+      expect(run.logFileIdentity).toBeUndefined();
+      expect(run.logFileLength).toBeUndefined();
+      expect(run.logFileBeginning).toBeUndefined();
     }
     expect(readFileSync(blocked, "utf8")).toBe("Keep this file.");
   });
