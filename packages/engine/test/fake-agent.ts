@@ -40,8 +40,10 @@ export interface Scenario {
   /** Retain scenarios used by source-start and screen coverage. */
   planner?: "short" | "parallel" | "two-codex" | "tester-after" | "tester-first" | "tester-with-design" | "research-first" | "limits" | "claude-build" | "grok-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
   notes?: "work";
-  /** The architect leaves product changes for the engine to save, in rounds and after a call. */
-  architect?: "writes";
+  /** "writes": the architect leaves product changes for the engine to save, in rounds and after a call. "plain": it asks no question first. */
+  architect?: "writes" | "plain";
+  /** Optional source locations a role hands back, by role name. A role left out omits the field. */
+  sourcePointers?: Record<string, unknown>;
   /** The second design brief changes a behavior so a resumed reviewer must receive it. */
   reviseBrief?: boolean;
   /** Scheduling tests: each fresh agent waits for its own release file before answering. */
@@ -587,6 +589,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (report.checks && session.role === "tester") report.checks = report.checks.map((check) => ({ ...check, productIds: ids, ...(typeof check.pass === "boolean" ? { result: check.pass ? "pass" : "fail", pass: undefined } : {}) }));
     }
     let result = learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value;
+    if (plan.sourcePointers && Object.hasOwn(plan.sourcePointers, session.role) && result && typeof result === "object" && !("needsInput" in result)) result = { ...result, sourcePointers: plan.sourcePointers[session.role] };
     if (plan.pictures && ["builder", "code reviewer", "security reviewer", "ux designer", "tester"].includes(session.role) && session.captures && dir) {
       writeFileSync(join(session.captures, "chosen.png"), readFileSync(join(dir, "picture.png")));
       writeFileSync(join(session.captures, "unchosen.png"), readFileSync(join(dir, "picture.png")));
@@ -975,7 +978,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         const answers = open.slice(0, open.length > 1 ? -1 : undefined).map((id, index) => (index === 0 ? { id, status: "rejected", byCall: true, answer: "Removed it from the brief, as the call says." } : { id, status: "accepted", byCall: false, answer: "Added it to the brief." }));
         return done({ ...brief, answers }, `Call: ${call}. Final: ${text.includes("The call is final") ? "yes" : "no"}. Open: ${open.join(", ")}.`);
       }
-      if (!text.includes("The coordinator answered")) return done({ needsInput: { question: "Should the greeting be formal?", options: ["Formal", "Casual"] } });
+      if (plan.architect !== "plain" && !text.includes("The coordinator answered")) return done({ needsInput: { question: "Should the greeting be formal?", options: ["Formal", "Casual"] } });
       return {
         ...done({ ...brief, answers: [] }),
         // A helper agent ran on Haiku: Claude Code's breakdown already includes it.

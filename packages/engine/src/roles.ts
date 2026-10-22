@@ -8,20 +8,28 @@ import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTI
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
+import { hintProducts } from "./source-pointers.js";
 
 const acceptanceStart = ({ task }: PromptContext) => task.retest ? "This is final acceptance testing after review. Earlier acceptance did not cover the final code or did not pass. Use the earlier evidence index to inspect what changed; old passes do not automatically satisfy this run. " : "";
 
-export const SourcePointers = z.array(z.object({
-  productId: z.string().trim().min(1).max(100),
-  revision: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i),
-  path: z.string().trim().min(1).max(180).refine((path) => !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes(".."), "Use a repository-relative location"),
-}).strict()).max(8);
+/** Optional navigation: the engine keeps each valid entry, so malformed hints never cost an otherwise usable result. */
+const SourcePointers = z.unknown().optional();
 
-const SOURCE_POINTER_RULE = `If you already inspected useful source locations, optionally return up to eight sourcePointers: {productId, revision: the full commit SHA you actually inspected, path: a repository-relative location}. Do no extra research to fill this field. Return locations only, never recommendations, a proposed architecture, inferred requirements or a research transcript. Omit it or return [] when there is nothing useful to carry forward.`;
-const DESIGN_RESEARCH_RULE = `${SOURCE_POINTER_RULE} When revising a design, start with the current objections and reconsider assumptions they contradict. Use verified source pointers to revisit relevant code; do not repeat broad discovery solely because this is a fresh conversation. These references are incomplete, not an endorsement of the earlier design. Investigate freely when they do not answer the objection.`;
+const quoted = (ids: readonly string[]) => ids.map((id) => JSON.stringify(id)).join(", ");
+/** Hints name products by exact registered id: Petrina never translates a repository address or a name into one. */
+const sourcePointerRule = (products: string) => `If you already inspected useful source locations, optionally return up to eight sourcePointers: {productId: ${products}, revision: the full commit SHA you actually inspected, path: a repository-relative location}. Copy the registered product id exactly, never a GitHub repository, folder or product name; Petrina leaves out locations under any other id. Do no extra research to fill this field. Return locations only, never recommendations, a proposed architecture, inferred requirements or a research transcript. Omit it or return [] when there is nothing useful to carry forward.`;
+const plannerPointerRule = (task: Task) => {
+  const selected = (task.selectedProducts ?? [task.workChoice]).flatMap((choice) => choice ? [choice.productId] : []);
+  return sourcePointerRule(`the registered id of a product in worksOn${selected.length ? ` (selected now: ${quoted(selected)})` : ""}`);
+};
+const designResearchRule = (task: Task) => {
+  const products = hintProducts(task);
+  const ids = products.length > 1 ? `one of ${quoted(products)} (this task's registered product ids)` : `${quoted(products)} (this task's registered product id)`;
+  return `${sourcePointerRule(ids)} When revising a design, start with the current objections and reconsider assumptions they contradict. Use verified source pointers to revisit relevant code; do not repeat broad discovery solely because this is a fresh conversation. These references are incomplete, not an endorsement of the earlier design. Investigate freely when they do not answer the objection.`;
+};
 
 export const PlanResult = z.object({
-  sourcePointers: SourcePointers.optional(),
+  sourcePointers: SourcePointers,
   worksOn: z.array(WorkChoiceSchema).max(20).optional(),
   leadProductId: z.string().optional(),
   rationale: z.string().min(3),
@@ -50,7 +58,7 @@ export const PlanResult = z.object({
 });
 
 export const BriefResult = z.object({
-  sourcePointers: SourcePointers.optional(),
+  sourcePointers: SourcePointers,
   summary: z.string().min(3),
   forUsers: z.array(z.string()).default([]),
   areas: z.array(z.string()).default([]),
@@ -295,7 +303,7 @@ Stage kinds:
 - "gate": the coordinator checks. Use gate "design" after a converge stage when the change affects what users see.
 
 Rules:
-- ${SOURCE_POINTER_RULE}
+- ${plannerPointerRule(ctx.task)}
 - For every agent seat, provide a short public reason for the role, model and effort: profileReasons aligned one-for-one with profileIds, and reviewerProfileReasons aligned with reviewerProfileIds. Explain the task need in at most 300 characters, without private reasoning or guessed quota information. The engine records any later substitution separately.
 - Size the plan to the task. A small fix can be a builder and two reviewers. Something new deserves research, a converge design, a design gate, a builder, maybe a tester, and a review chain.
 - Always include exactly one builder stage before the review chain.
@@ -495,7 +503,7 @@ export function contractFor(role: Role): RoleContract {
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx) + (role.category === "maintenance" ? '\nSet "complete" to true only after completing the bounded investigation. Return false for an incomplete investigation and explain what prevented completion. Distinguish findings from missing evidence.\n' : "");
     const designRuntime = role.result === "objections" ? designReviewRuntime(ctx.task) : "";
-    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [DESIGN_RESEARCH_RULE] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : [];
+    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
     return missing.length ? `${text}\n${missing.join("\n")}` : text;
   } };

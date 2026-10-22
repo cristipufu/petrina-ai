@@ -10,6 +10,7 @@ import { normalizePlan } from "./plan.js";
 import type { Sources } from "./sources.js";
 import type { Turns } from "./turn.js";
 import { RepoOrientation } from "./repo-orientation.js";
+import { checkSourceHints } from "./source-pointers.js";
 
 export class Planning {
   private readonly orientation = new RepoOrientation();
@@ -22,12 +23,16 @@ export class Planning {
     const selected = new Set((task.selectedProducts ?? [task.workChoice]).flatMap((choice) => choice ? [choice.productId] : []));
     const navigation = (await Promise.all(this.k.s.products.filter((product) => selected.has(product.id)).slice(0, 4).map((product) => this.orientation.read(product)))).filter((section) => section !== undefined);
     signal.throwIfAborted();
-    const result = await this.turns.turn(scope, "planner", planner, () => [{ title: "Registered products and starting choices", body: `Registered products (use registered ids; propose unregistered repositories explicitly with repo):\n${this.k.s.products.map((product) => JSON.stringify({ id: product.id, name: product.name, repo: product.repo, defaultBranch: product.defaultBranch ?? "main", existingLocalCopy: product.path })).join("\n")}\nCurrent coordinator choices: ${JSON.stringify(task.selectedProducts ?? [task.workChoice])}. The selected product and delivery mode are authoritative. ${task.explicitStart ? "The starting point was explicitly chosen too." : "You may propose a starting point from the task words."} Changes require the coordinator’s confirmation. Return worksOn as the complete ordered product list. Retain every coordinator-selected product. For each entry give a reason and builderProfileId, and propose the leadProductId for shared repairs. You may search GitHub, including private dependencies, with the coordinator’s login. Never guess an engine action from task wording. Each structured choice has: productId, startFrom ({kind: default}, {kind: branch, name}, or {kind: pull-request, value: number or link as text}), delivery (pull-request, local, release). Unknown products must be named honestly; never substitute another product. Never fetch, clone, create a worktree or change existing local work.` }, ...navigation], PlanResult, signal, { requestedProfileId: PLANNER_PROFILE, ...(planner !== PLANNER_PROFILE ? { selectionReason: "The configured Planner tool was unavailable; selected an installed tool." } : {}), used: (id) => (by = id) });
+    const result = await this.turns.turn(scope, "planner", planner, () => [{ title: "Registered products and starting choices", body: `Registered products (use these exact ids, never a repo, wherever a product id is asked for; propose unregistered repositories explicitly with repo):\n${this.k.s.products.map((product) => JSON.stringify({ id: product.id, name: product.name, repo: product.repo, defaultBranch: product.defaultBranch ?? "main", existingLocalCopy: product.path })).join("\n")}\nCurrent coordinator choices: ${JSON.stringify(task.selectedProducts ?? [task.workChoice])}. The selected product and delivery mode are authoritative. ${task.explicitStart ? "The starting point was explicitly chosen too." : "You may propose a starting point from the task words."} Changes require the coordinator’s confirmation. Return worksOn as the complete ordered product list. Retain every coordinator-selected product. For each entry give a reason and builderProfileId, and propose the leadProductId for shared repairs. You may search GitHub, including private dependencies, with the coordinator’s login. Never guess an engine action from task wording. Each structured choice has: productId, startFrom ({kind: default}, {kind: branch, name}, or {kind: pull-request, value: number or link as text}), delivery (pull-request, local, release). Unknown products must be named honestly; never substitute another product. Never fetch, clone, create a worktree or change existing local work.` }, ...navigation], PlanResult, signal, { requestedProfileId: PLANNER_PROFILE, ...(planner !== PLANNER_PROFILE ? { selectionReason: "The configured Planner tool was unavailable; selected an installed tool." } : {}), used: (id) => (by = id) });
     // Unrated work is treated as medium: never shipped unasked, never short of reviewers.
     task.risk = result.risk ?? { level: "medium", why: "The planner did not rate it." };
-    if (result.sourcePointers?.length) task.sourcePointers = result.sourcePointers;
-    else delete task.sourcePointers;
     await this.sources.propose(task, result.worksOn);
+    // Hints may name only the registered products Petrina resolved for this plan, by their exact ids.
+    const planned = task.workRows?.map((row) => row.source?.product.id ?? row.choice.productId) ?? [(task.proposedSource ?? scope.work.source)?.product.id ?? task.workProposal?.[0]?.productId ?? task.productId];
+    const hints = checkSourceHints(result.sourcePointers, planned.filter((id) => this.k.s.products.some((product) => product.id === id)));
+    if (hints.pointers.length) task.sourcePointers = hints.pointers;
+    else delete task.sourcePointers;
+    if (hints.left) this.k.log(task, "status", hints.left, "planner", by);
     task.plan = this.normalizePlan(task, result, by);
     const count = task.plan.stages.filter((stage) => stage.kind !== "gate").length;
     this.k.log(task, "milestone", `Plan ready: ${count} stages. ${result.rationale}`, "planner", by);

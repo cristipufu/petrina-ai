@@ -6,12 +6,13 @@ export { designConversationScope } from "./participant-conversation.js";
 // Design convergence: the architect writes the brief and a design reviewer objects, round after round,
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
-import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, JOURNEY_WORDS as W, recordStepResult, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type Stage } from "@petrina/core";
+import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, JOURNEY_WORDS as W, recordStepResult, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type SourcePointer, type Stage } from "@petrina/core";
 import { formatObjections } from "./prompts.js";
 import { BriefResult, ObjectionsResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
+import { checkSourceHints, hintProducts } from "./source-pointers.js";
 
 export class Design {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
@@ -61,8 +62,8 @@ export class Design {
           return missing.length ? `every objection you were shown needs an answer by id, accepted or rejected with your reason, and these have none:\n${formatObjections(missing as Task["objections"])}` : undefined;
         },
       });
-      const sourcePointers = result.sourcePointers ?? task.brief?.sourcePointers;
-      task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers?.length ? { sourcePointers } : {}) };
+      const sourcePointers = this.sourceHints(scope, result.sourcePointers, stage.roleId, by);
+      task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers.length ? { sourcePointers } : {}) };
       for (const answer of given.size ? given.values() : result.answers) {
         const objection = task.objections.find((entry) => entry.id === answer.id);
         if (objection && objection.status === "open") {
@@ -126,6 +127,17 @@ export class Design {
     return "continue";
   }
 
+  /**
+   * The brief's optional hints, each checked against the task's current products. A supplied list replaces the earlier
+   * one with its valid entries; an omitted list keeps the earlier hints that still qualify. What is left out is noted.
+   */
+  private sourceHints(scope: RepositoryContext, supplied: unknown, roleId: Id, by: Id): SourcePointer[] {
+    const { task } = scope;
+    const hints = checkSourceHints(supplied === undefined ? task.brief?.sourcePointers : supplied, hintProducts(task));
+    if (hints.left) this.k.log(scope, "status", hints.left, roleId, by);
+    return hints.pointers;
+  }
+
   private nextProduct(scope: RepositoryContext, stage: MStage): boolean {
     const { task, work: repository } = scope;
     if (!task.repositories || !this.k.role(stage.roleId)?.canEdit) return false;
@@ -160,8 +172,8 @@ export class Design {
         return missing.length ? `every objection listed for an answer needs one by id, and these have none:\n${formatObjections(missing)}` : undefined;
       },
     });
-    const sourcePointers = result.sourcePointers ?? task.brief?.sourcePointers;
-    task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers?.length ? { sourcePointers } : {}) };
+    const sourcePointers = this.sourceHints(scope, result.sourcePointers, stage.roleId, by);
+    task.brief = { summary: result.summary, forUsers: result.forUsers, areas: result.areas, acceptance: result.acceptance.map((text) => ({ text })), risks: result.risks, ...(sourcePointers.length ? { sourcePointers } : {}) };
     task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as MTask["objections"];
     participant.remember();
     recordStepResult(task, { objections: task.objections.filter((objection) => answers.has(objection.id) || call.open.includes(objection.id)) });

@@ -111,7 +111,7 @@ it("isolates simultaneous runner instances and never removes another run's live 
   const test = join(fixture, "simultaneous.test.ts");
   writeFileSync(test, `import { it, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeProduct, testBrowserRoot } from ${JSON.stringify(join(import.meta.dir, "support.ts"))};
@@ -122,7 +122,10 @@ it("owns only this run's repositories, database and captures", async () => {
   const browser = testBrowserRoot(); mkdirSync(join(browser, "captures"));
   const db = new Database(join(home, "petrina.db"));
   db.exec("CREATE TABLE own (value TEXT)"); db.query("INSERT INTO own VALUES (?)").run(label);
-  writeFileSync(join(${JSON.stringify(parent)}, label + ".json"), JSON.stringify({ folder, home, repo, browser }));
+  // The test reads the record as soon as its name appears, so publish it complete.
+  const record = join(${JSON.stringify(parent)}, label + ".json");
+  writeFileSync(record + ".tmp", JSON.stringify({ folder, home, repo, browser }));
+  renameSync(record + ".tmp", record);
   try {
     while (!existsSync(join(${JSON.stringify(parent)}, label + ".release"))) await Bun.sleep(20);
     expect(db.query("SELECT value FROM own").get()).toEqual({ value: label });
