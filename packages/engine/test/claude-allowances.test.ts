@@ -175,6 +175,34 @@ it("retains unrelated windows and known percentages across partial account and l
   } finally { await run.close(); }
 });
 
+it("keeps admission and percentage consistent when the live reset has seconds and the account reset has milliseconds", async () => {
+  const reset = NOW + HOUR + 118;
+  for (const order of ["account-first", "live-first"]) {
+    const run = await fixture();
+    try {
+      const raw = account(85, false, 100);
+      raw.rate_limits.five_hour.resets_at = new Date(reset).toISOString();
+      const snapshot = () => run.engine.recordAccountUsage("claude-code", claudeAccountReports(raw));
+      const notice = () => stream(run.engine, { status: "allowed", rateLimitType: "five_hour", resetsAt: Math.floor(reset / 1000) });
+      if (order === "account-first") { snapshot(); notice(); } else { notice(); snapshot(); }
+      const reading = run.engine.s.pool.usage!.find(report => report.kind === "five_hour")!;
+      expect(reading.utilization).toBe(0.85);
+      expect(reading.resetsAt).toBe(reset);
+      expect(toolCapNow(run.engine.s.pool, "claude-code", NOW, claude)).toBe(2);
+      // An actually different reset or two distinct precise timestamps establish a different reading.
+      for (const nextReset of [NOW + HOUR + 1_000, NOW + HOUR + 219]) {
+        snapshot();
+        run.engine.recordUsage({ toolId: "claude-code", kind: "five_hour", status: "allowed", resetsAt: nextReset });
+        expect(run.engine.s.pool.usage!.find(report => report.kind === "five_hour")!.utilization).toBeUndefined();
+      }
+      snapshot();
+      stream(run.engine, { status: "rejected", rateLimitType: "five_hour", resetsAt: Math.floor(reset / 1000) });
+      expect(run.engine.s.pool.usage!.find(report => report.kind === "five_hour")!.utilization).toBeUndefined();
+      expect(limitOf(run.engine.s.pool, claude, NOW)).toBeDefined();
+    } finally { await run.close(); }
+  }
+});
+
 it("releases included quota at its reset even when paid usage stays exhausted and repeats expired notices", async () => {
   const run = await fixture();
   try {

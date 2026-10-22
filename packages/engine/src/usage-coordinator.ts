@@ -348,10 +348,15 @@ export class UsageCoordinator {
         continue;
       }
       const older = previousWindows.findLast(report => report.kind === info.kind && (report.model ?? "") === (info.model ?? "") && currentReport(report, now));
-      // Missing live percentages/reset times are not new readings. Keep known fields only for
-      // the same status and window; a new reset or changed status starts a new reading.
-      const sameWindow = older?.status === info.status && (info.resetsAt === undefined || older.resetsAt === info.resetsAt);
+      // Account resets include milliseconds; live notices can truncate them to whole seconds.
+      // Match that precision difference only: two distinct precise resets still start a new reading.
+      const priorReset = older?.resetsAt, reset = info.resetsAt;
+      const sameReset = reset === undefined || priorReset === reset || priorReset !== undefined
+        && Number.isFinite(priorReset) && Number.isFinite(reset)
+        && (priorReset % 1000 === 0 || reset % 1000 === 0) && Math.floor(priorReset / 1000) === Math.floor(reset / 1000);
+      const sameWindow = older?.status === info.status && sameReset;
       const report = { ...(sameWindow ? older : {}), ...info, at: now };
+      if (sameWindow && priorReset !== undefined && reset !== undefined && priorReset % 1000 !== 0 && reset % 1000 === 0) report.resetsAt = priorReset;
       delete report.claudeAccountComplete;
       pool.usage = withReport(pool.usage, report);
       this.k.tracking.usageReported(report);
